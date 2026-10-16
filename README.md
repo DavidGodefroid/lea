@@ -1,6 +1,20 @@
-# lea
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="assets/logo.svg">
+    <img src="assets/logo-light.svg" alt="lea" width="280">
+  </picture>
+</p>
 
-**Run several Claude Code agents side by side, isolated from your workstation.**
+<h3 align="center">Many Claude Code agents. None of your machine.</h3>
+
+<p align="center">
+  <a href="https://github.com/DavidGodefroid/lea/releases/latest"><img alt="release" src="https://img.shields.io/github/v/release/DavidGodefroid/lea?color=89b4fa&labelColor=1e1e2e"></a>
+  <a href="https://github.com/DavidGodefroid/lea/actions/workflows/ci.yml"><img alt="ci" src="https://github.com/DavidGodefroid/lea/actions/workflows/ci.yml/badge.svg"></a>
+  <a href="LICENSE"><img alt="license" src="https://img.shields.io/badge/license-Apache_2.0-a6e3a1?labelColor=1e1e2e"></a>
+  <img alt="platforms" src="https://img.shields.io/badge/Linux%20%C2%B7%20macOS%20%C2%B7%20WSL2-cdd6f4?labelColor=1e1e2e">
+</p>
+
+<p align="center"><img src="assets/demo.svg" alt="Three Claude Code agents work in the lea container. One pushes to github.com through the proxy; its attempts to read ~/.ssh and to reach 192.168.1.10 are blocked. Another asks for a permission, answered from the deck." width="900"></p>
 
 lea starts Claude Code in a container that sees one directory of your projects (read/write), a
 read-only allow-list of your `~/.claude` configuration, and nothing else of your machine. The
@@ -21,6 +35,49 @@ selected agent's terminal on the right.
 │    shop · needs you         ││
 ╰─ n new · m msg · ? keys ────╯│
 ```
+
+## Why lea
+
+Claude Code does more when you stop approving every command, and a few agents in parallel do more
+than one. Both are risky on your workstation: an agent runs as you, with your keys, your tokens
+and your network. lea moves the boundary from the prompt to the container.
+
+- **Isolated by construction.** What an agent can reach is fixed by the container and the proxy,
+  not by its good behaviour. A prompt-injected agent with every permission granted still cannot
+  read `~/.ssh` or call your intranet.
+- **Many agents, one deck.** States, context use, branches and each agent's own task report at a
+  glance; one key to reach the next agent that needs you.
+- **Your Claude Code, unchanged.** Your settings, skills, plugins, hooks and agents, read-only.
+  lea runs the real Claude Code with your subscription or API key.
+- **Local and open.** No account, no server, no forge lock-in. Apache 2.0.
+
+```mermaid
+flowchart LR
+  subgraph host["Your machine"]
+    keys["~/.ssh, ~/.aws, ~/.kube<br/>Docker socket"]
+    lan["Private network<br/>192.168.0.0/16, 10.0.0.0/8 …"]
+    proj["~/projects"]
+    cfg["~/.claude (allow-list)"]
+    subgraph lea["lea container"]
+      a1["agent: lead"]
+      a2["agent: dev"]
+      a3["agent: reviewer"]
+      podman["rootless Podman"]
+    end
+    proxy["egress proxy"]
+  end
+  net["Internet: GitHub, npm, Claude API …"]
+  proj <-->|read/write| lea
+  cfg -->|read-only| lea
+  lea --> proxy -->|HTTPS, pinned SSH| net
+  proxy -.-x|refused| lan
+  keys -.-x|not mounted| lea
+```
+
+**Contents:** [Quick start](#quick-start) · [The deck](#the-deck) · [Git and forges](#git-and-forges) ·
+[Databases](#databases-with-locksql) · [Teams of agents](#teams-of-agents) · [Commands](#commands) ·
+[Configure](#configure) · [Safety](#how-lea-keeps-your-machine-safe) · [FAQ](#faq) ·
+[Troubleshooting](#troubleshooting) · [Development](#development)
 
 ## Quick start
 
@@ -189,6 +246,36 @@ projects directory cannot be `/`, your home directory or one of its parents, nor
 - Change Claude Code's configuration on the host: it is read-only in lea. After editing a single
   file (`settings.json`, a top-level `*.md`, `keybindings.json`), restart lea (`lea stop`).
 
+## FAQ
+
+**Is lea a replacement for Claude Code?** No. lea runs the real Claude Code, with your own
+configuration, and gives it a safe place to run and a deck to run several at once.
+
+**Why not `--dangerously-skip-permissions` on the host?** On the host that flag hands an agent
+everything your user can reach. In lea an agent can go just as fast, but what it can reach is fixed
+by the container and the proxy.
+
+**How is lea different from a devcontainer?** A devcontainer isolates a toolchain; lea isolates the
+agent: an egress proxy that refuses private networks, no credentials, a nested container engine, an
+audit of risky changes on exit, and a deck for many agents.
+
+**Does my code leave my machine?** Only the way Claude Code already sends it, to the Claude API. lea
+has no server and no account, and sends no telemetry of its own; Claude Code's usage metrics go
+nowhere unless you set `LEA_OTEL_UPSTREAM`.
+
+**Can an agent reach a service on my LAN?** Not by default. List the hosts it may reach in
+`LEA_INTERNAL_HOSTS` (format in `config/internal-hosts`).
+
+## Troubleshooting
+
+- **Start with `lea doctor`.** It checks Docker, the images, the proxy and the internal networks, tmux,
+  the AppArmor profile, the projects directory and the configuration.
+- **An agent cannot reach a host.** Private and link-local addresses are refused on purpose; add
+  the host to `LEA_INTERNAL_HOSTS`. The proxy's refusal page says which host it refused and why.
+- **A change to `~/.claude` does not show.** Single files are mounted as they were at start:
+  `lea stop`, then `lea`.
+- **`docker compose` fails with a network error.** Known limitation, below; `docker run` works.
+
 ## Install from source
 
 ```sh
@@ -230,4 +317,8 @@ checksums, and the images on `ghcr.io/davidgodefroid`.
 
 ## License
 
-[Apache 2.0](LICENSE)
+[Apache 2.0](LICENSE). lea is an independent project, not affiliated with Anthropic. Claude and
+Claude Code are trademarks of Anthropic.
+
+The brand assets (logo, demo) are in [`assets/`](assets), generated by [`tools/brand`](tools/brand);
+the website is [`site/`](site), published by `.github/workflows/pages.yml`.
