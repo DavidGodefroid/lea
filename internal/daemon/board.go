@@ -156,8 +156,8 @@ type leaseView struct {
 }
 
 // boardRead is the board for an agent (board_read): the tasks and leases of the caller's own
-// container, the host's lea board limited to it. Every text an agent or a brief wrote is marked
-// untrusted, as agents_list marks the task line.
+// container, the host's lea board limited to it. Every text an agent or a brief wrote (a lease's
+// glob included) is marked untrusted, as agents_list marks the task line.
 func (d *Daemon) boardRead(o Origin) (boardView, error) {
 	raw, _ := json.Marshal(map[string]string{"container": o.Container})
 	b, err := d.boardList(raw)
@@ -175,6 +175,9 @@ func (d *Daemon) boardRead(o Origin) (boardView, error) {
 		mark(&it.Status)
 		mark(&it.Next)
 		mark(&it.BlockedOn)
+	}
+	for i := range b.Leases {
+		mark(&b.Leases[i].Glob)
 	}
 	return b, nil
 }

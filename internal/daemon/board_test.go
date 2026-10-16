@@ -129,8 +129,12 @@ func TestBoardReadShowsTheCallersContainerUntrusted(t *testing.T) {
 	if err := call(t, e.bus, "kid", "task_update", upd, nil); err != nil {
 		t.Fatal(err)
 	}
+	if err := call(t, e.bus, "kid", "lease_acquire", map[string]any{"glob": "src/*.go", "ttl": 60}, nil); err != nil {
+		t.Fatal(err)
+	}
 	var b struct {
-		Items []boardItem `json:"items"`
+		Items  []boardItem `json:"items"`
+		Leases []leaseView `json:"leases"`
 	}
 	if err := call(t, e.bus, "boss", "board_read", nil, &b); err != nil {
 		t.Fatal(err)
@@ -147,5 +151,8 @@ func TestBoardReadShowsTheCallersContainerUntrusted(t *testing.T) {
 	if kid == nil || kid.Parent != "boss" || kid.Status != "untrusted: writing tests" || kid.Next != "untrusted: open the review" ||
 		kid.BlockedOn != "untrusted: a flaky test" {
 		t.Fatalf("board=%+v", b)
+	}
+	if len(b.Leases) != 1 || b.Leases[0].Glob != "untrusted: src/*.go" {
+		t.Fatalf("leases=%+v", b.Leases)
 	}
 }
