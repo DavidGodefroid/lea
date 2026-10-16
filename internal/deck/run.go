@@ -9,7 +9,7 @@ import (
 
 // Run draws the deck until its pane is closed.
 func Run(api API, container string, ascii bool) error {
-	_, err := tea.NewProgram(New(api, container, ascii, time.Now), tea.WithAltScreen(), tea.WithReportFocus(), tea.WithMouseCellMotion()).Run()
+	_, err := tea.NewProgram(New(api, container, ascii, time.Now).WithIntro(), tea.WithAltScreen(), tea.WithReportFocus(), tea.WithMouseCellMotion()).Run()
 	return err
 }
 

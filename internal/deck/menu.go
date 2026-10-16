@@ -24,7 +24,8 @@ func menuItems(a Agent) []menuItem {
 		}
 	}
 	return append(items, menuItem{"Show", "enter"}, menuItem{"Message", "m"}, menuItem{"Thread", "t"},
-		menuItem{"Rename", "e"}, menuItem{"Role", "r"}, menuItem{"Stop", "x"})
+		menuItem{"Rename", "e"}, menuItem{"Role", "r"}, menuItem{"Split horizontally", "-"},
+		menuItem{"Split vertically", "|"}, menuItem{"Stop", "x"})
 }
 
 // menuAgent is the agent whose menu is open, nil when none.

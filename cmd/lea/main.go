@@ -30,6 +30,8 @@ const usage = `usage: lea <command>
   agents                     list agents
   msg <agent> <text...>      send a message as the user
   inbox                      read the user's messages
+  inbox --agent [--wait [S]] read the agent's messages, or wait up to S seconds (3600) for one
+                             and leave it unread (inside lea)
   approvals                  list pending approvals
   approve <id> allow|deny|always   answer an approval
   board [--md] [--container NAME]   the tasks of every agent, as markdown

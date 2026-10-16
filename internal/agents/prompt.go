@@ -35,6 +35,13 @@ func firstPrompt(a store.Agent, repo, worktree string, brief bool) string {
 		b.WriteString(" When you need another agent, ask a lead with agents_request_spawn.")
 	}
 	b.WriteString(" Report progress with task_update.")
+	if a.Parent != "" {
+		// The lead that started the agent waits for its answer: task_update alone reaches the
+		// board, never the lead's inbox.
+		parent := a.Parent[strings.LastIndex(a.Parent, "/")+1:]
+		fmt.Fprintf(&b, " Your lead is %s: when your work is done, and whenever you are blocked or need a decision,"+
+			" tell it with msg_send (to %s, kind result or request), at most 5 lines: the outcome, its evidence, the open question.", parent, parent)
+	}
 	return b.String()
 }
 

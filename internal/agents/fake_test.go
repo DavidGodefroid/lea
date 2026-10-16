@@ -21,6 +21,7 @@ type fpane struct {
 	dead        bool
 	role, agent string
 	shell       string
+	split       string // @lea_split
 	cmd         []string
 	width       int
 	// remainOff: the pane's remain-on-exit is off (a shell): it closes, never dies, on exit.
@@ -215,7 +216,7 @@ func (f *fakeSession) Run(ctx context.Context, args ...string) ([]string, error)
 			if f.marked[p.win] {
 				m = "1"
 			}
-			out = append(out, strings.Join([]string{p.id, p.win, d, p.role, p.agent, fmt.Sprint(p.width), l, p.shell, m}, "|"))
+			out = append(out, strings.Join([]string{p.id, p.win, d, p.role, p.agent, fmt.Sprint(p.width), l, p.shell, m, p.split}, "|"))
 		}
 		return out, nil
 	case "set-option":
@@ -246,6 +247,8 @@ func (f *fakeSession) Run(ctx context.Context, args ...string) ([]string, error)
 				p.agent = args[5]
 			case optShell:
 				p.shell = args[5]
+			case optSplit:
+				p.split = args[5]
 			case "remain-on-exit":
 				p.remainOff = args[5] == "off"
 			case "remain-on-exit-format":

@@ -1,0 +1,64 @@
+#!/bin/sh
+# Keeps a control tower to its job (skill tower-control): once the session runs the skill, every
+# tool but the team's is denied, so the tower delegates the work instead of doing it.
+# Usage: tower-guard prompt|tool, with Claude Code's hook JSON on stdin.
+#   prompt: "/lea:tower-control" turns the guard on for this session, "/lea:tower-control off" off.
+#   tool:   when the guard is on, denies every tool outside the allowed list below.
+set -u
+in=$(cat)
+sid=$(printf '%s' "$in" | jq -r '.session_id // empty' 2>/dev/null) || exit 0
+case $sid in '' | *[!A-Za-z0-9_-]*) exit 0 ;; esac
+dir=${LEA_TOWER_DIR:-${TMPDIR:-/tmp}/lea-tower-$(id -u)}
+mark=$dir/$sid
+
+on() { (umask 077 && mkdir -p "$dir" && : >"$mark"); }
+
+deny() {
+  jq -n --arg r "$1" '{hookSpecificOutput: {hookEventName: "PreToolUse", permissionDecision: "deny", permissionDecisionReason: $r}}'
+  exit 0
+}
+
+case ${1:-} in
+prompt)
+  p=$(printf '%s' "$in" | jq -r '.prompt // empty')
+  # The first line only: the command, not text pasted after it.
+  p=$(printf '%s\n' "$p" | sed -n '1{s/^[[:space:]]*//;s/[[:space:]]*$//;p;}')
+  case $p in
+  "/lea:tower-control off" | "/tower-control off") rm -f "$mark" ;;
+  "/lea:tower-control" | "/lea:tower-control "* | "/tower-control" | "/tower-control "*) on ;;
+  esac
+  exit 0
+  ;;
+tool) ;;
+*) exit 0 ;;
+esac
+
+tool=$(printf '%s' "$in" | jq -r '.tool_name // empty')
+# The model can load the skill itself (the Skill tool): that turns the guard on as well.
+if [ "$tool" = Skill ]; then
+  case $(printf '%s' "$in" | jq -r '.tool_input.skill // empty') in
+  lea:tower-control | tower-control) on ;;
+  esac
+  exit 0
+fi
+[ -f "$mark" ] || exit 0
+
+case $tool in
+mcp__lea__agents_spawn | mcp__lea__agents_list | mcp__lea__agents_stop | mcp__lea__agents_request_spawn | \
+  mcp__lea__msg_send | mcp__lea__msg_reply | mcp__lea__msg_inbox | mcp__lea__msg_wait | \
+  mcp__lea__board_read | mcp__lea__task_update | AskUserQuestion | ToolSearch | TodoWrite)
+  exit 0
+  ;;
+Bash)
+  # One command only: the wait that wakes the tower when an agent writes to it.
+  c=$(printf '%s' "$in" | jq -r '.tool_input.command // empty')
+  case $c in
+  "lea inbox --agent --wait") exit 0 ;;
+  "lea inbox --agent --wait "*)
+    n=${c#"lea inbox --agent --wait "}
+    case $n in '' | *[!0-9]*) ;; *) exit 0 ;; esac
+    ;;
+  esac
+  ;;
+esac
+deny "tower-control: you are the control tower, you do not act yourself. Give this to an agent: agents_spawn a new one, or msg_send the agent already on this subject. Your tools: agents_spawn, agents_list, agents_stop, msg_send, msg_reply, msg_inbox, msg_wait, board_read, task_update, questions to the user, and the Bash job 'lea inbox --agent --wait'. The user leaves tower mode with '/lea:tower-control off'."

@@ -19,6 +19,11 @@ func (f *fakeAPI) OpenShell(ctx context.Context, c string) (Agent, error) {
 	return f.newShell, f.err
 }
 
+func (f *fakeAPI) SplitShell(ctx context.Context, k string, below bool) (Agent, error) {
+	f.rec(fmt.Sprintf("split %s below=%v", k, below))
+	return f.newShell, f.err
+}
+
 func shell(name string) Agent {
 	return Agent{Key: "shell:lea-a/" + name, Name: name, Kind: KindShell, State: "running", CtxPct: -1, CostUSD: -1}
 }

@@ -30,7 +30,7 @@ func TestViewIsAFramedColumnOfTheGivenSize(t *testing.T) {
 			t.Fatalf("line %d is %d wide: %q", i, w, l)
 		}
 	}
-	if !strings.HasPrefix(ls[0], "╭─ lea ") || !strings.HasSuffix(ls[0], " 2 agents ─╮") {
+	if !strings.HasPrefix(ls[0], "╭─ ●•• lea ") || !strings.HasSuffix(ls[0], " 2 agents ─╮") {
 		t.Fatalf("top %q", ls[0])
 	}
 	if !strings.HasPrefix(ls[11], "╰─ n new · m msg · ? keys ") || !strings.HasSuffix(ls[11], "╯") {
@@ -42,10 +42,10 @@ func TestViewRows(t *testing.T) {
 	m := sized(loaded(t, &fakeAPI{}, "lea-a/b", ag("a", "idle", clock.Unix()-30), ag("b", "working", clock.Unix()-120)), 34, 12)
 	ls := viewLines(m)
 	// a, launched first, stays first; b is selected.
-	if !strings.HasPrefix(ls[1], "│ ▍● a ") || !strings.Contains(ls[2], "p/shop · idle · now") {
+	if !strings.HasPrefix(ls[1], "│  ● a ") || !strings.Contains(ls[2], "p/shop · idle · now") {
 		t.Fatalf("row a %q / %q", ls[1], ls[2])
 	}
-	if !strings.HasPrefix(ls[3], "│›▍⠋ b ") || !strings.HasSuffix(ls[3], " claude     │") {
+	if !strings.HasPrefix(ls[3], "│› ⠋ b ") || !strings.HasSuffix(ls[3], " claude     │") {
 		t.Fatalf("row b %q", ls[3])
 	}
 	if !strings.Contains(ls[4], "p/shop · working · 2m") {
@@ -57,10 +57,10 @@ func TestViewRows(t *testing.T) {
 func TestViewRowShowsTheLabelInsteadOfTheName(t *testing.T) {
 	m := sized(loaded(t, &fakeAPI{}, "lea-a/claude-1", labelled("claude-1", "auth work"), ag("claude-2", "idle", 1)), 34, 10)
 	ls := viewLines(m)
-	if !strings.HasPrefix(ls[1], "│›▍○ auth work ") || strings.Contains(ls[1], "claude-1") {
+	if !strings.HasPrefix(ls[1], "│› ○ auth work ") || strings.Contains(ls[1], "claude-1") {
 		t.Fatalf("row %q", ls[1])
 	}
-	if !strings.HasPrefix(ls[3], "│ ▍○ claude-2 ") {
+	if !strings.HasPrefix(ls[3], "│  ○ claude-2 ") {
 		t.Fatalf("row %q", ls[3])
 	}
 }
@@ -118,7 +118,7 @@ func TestViewASCII(t *testing.T) {
 	m := sized(loaded(t, &fakeAPI{}, "lea-a/b", ag("b", "working", 1)), 34, 6)
 	m.ascii = true
 	ls := viewLines(m)
-	if !strings.HasPrefix(ls[0], "+- lea ") || !strings.HasPrefix(ls[1], "|>|. b ") {
+	if !strings.HasPrefix(ls[0], "+- Ooo lea ") || !strings.HasPrefix(ls[1], "|> . b ") {
 		t.Fatalf("view:\n%s", strings.Join(ls, "\n"))
 	}
 	for _, l := range ls {
@@ -471,5 +471,38 @@ func TestTheFrameShowsTheFocus(t *testing.T) {
 	m, _ = step(t, m, tea.BlurMsg{})
 	if m.frameStyle().GetForeground() != theme.Border {
 		t.Fatal("the frame kept the accent after blur")
+	}
+}
+
+// The logo is still while nothing works, a wave runs through its dots while an agent works, and
+// the start animation lights the dots, then the name.
+func TestViewLogoMoves(t *testing.T) {
+	still := sized(loaded(t, &fakeAPI{}, "lea-a/a", ag("a", "idle", 1)), 34, 6)
+	if ls := viewLines(still); !strings.HasPrefix(ls[0], "╭─ ●●● lea ") {
+		t.Fatalf("still logo %q", ls[0])
+	}
+	m := sized(loaded(t, &fakeAPI{}, "lea-a/a", ag("a", "working", 1)), 34, 6)
+	var tops []string
+	for i := 0; i < 3; i++ {
+		tops = append(tops, viewLines(m)[0][:len("╭─ ●•• lea")])
+		nm, _ := m.Update(frameMsg{})
+		for j := 1; j < waveStep; j++ {
+			nm, _ = nm.Update(frameMsg{})
+		}
+		m = nm.(Model)
+	}
+	if tops[0] != "╭─ ●•• lea" || tops[1] != "╭─ •●• lea" || tops[2] != "╭─ ••● lea" {
+		t.Fatalf("wave %q", tops)
+	}
+	in := sized(loaded(t, &fakeAPI{}, "lea-a/a", ag("a", "idle", 1)), 34, 6).WithIntro()
+	if ls := viewLines(in); !strings.HasPrefix(ls[0], "╭─     ") {
+		t.Fatalf("intro start %q", ls[0])
+	}
+	var nm tea.Model = in
+	for i := 0; i < introFrames; i++ {
+		nm, _ = nm.Update(frameMsg{})
+	}
+	if ls := viewLines(nm.(Model)); !strings.HasPrefix(ls[0], "╭─ ●●● lea ") {
+		t.Fatalf("intro end %q", ls[0])
 	}
 }

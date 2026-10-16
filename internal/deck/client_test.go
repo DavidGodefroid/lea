@@ -2,6 +2,7 @@ package deck
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -54,6 +55,10 @@ func (r *recAgents) SetLabel(ctx context.Context, k, label string) error {
 func (r *recAgents) OpenShell(ctx context.Context, c string) (agents.Row, error) {
 	r.calls = append(r.calls, "shell "+c)
 	return agents.Row{Key: agents.ShellKey(c, "sh-1"), Name: "sh-1", Kind: agents.KindShell, State: "running"}, nil
+}
+func (r *recAgents) SplitShell(ctx context.Context, k string, below bool) (agents.Row, error) {
+	r.calls = append(r.calls, fmt.Sprintf("split %s %v", k, below))
+	return agents.Row{Key: agents.ShellKey("lea-a", "sh-2"), Name: "sh-2", Kind: agents.KindShell, State: "running"}, nil
 }
 func (r *recAgents) Popup(ctx context.Context, k string, compose bool) error {
 	r.calls = append(r.calls, "popup "+k)

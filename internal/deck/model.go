@@ -73,6 +73,8 @@ type API interface {
 	Popup(ctx context.Context, key string, compose bool) error
 	SetLabel(ctx context.Context, key, label string) error
 	OpenShell(ctx context.Context, container string) (Agent, error)
+	// SplitShell opens a shell beside an agent, below it or at its right.
+	SplitShell(ctx context.Context, key string, below bool) (Agent, error)
 }
 
 // isShell reports whether a row is a shell.
@@ -132,6 +134,7 @@ type Model struct {
 	status        string
 	seq           int    // the latest selection; older delayed shows are dropped
 	frame         int    // the working spinner's frame
+	intro         int    // frames left of the logo's start animation (WithIntro)
 	focused       bool   // the deck's pane has the keyboard (focus events)
 	menuFor       string // key whose menu (right click) is open
 	menuSel       int    // the menu's highlighted item
@@ -143,7 +146,36 @@ func New(api API, container string, ascii bool, now func() time.Time) Model {
 	return Model{api: api, container: container, ascii: ascii, now: now, seen: map[string]int64{}}
 }
 
-func (m Model) Init() tea.Cmd { return m.watch() }
+// The logo's animation, in frames of frameDelay: the start lights a dot, then the name, every
+// introStep frames; the working wave moves every waveStep frames.
+const (
+	introStep   = 3
+	introFrames = 5 * introStep
+	waveStep    = 3
+)
+
+// WithIntro plays the logo's start animation (the deck run by lea; tests see the logo still).
+func (m Model) WithIntro() Model {
+	m.intro, m.ticking = introFrames, true
+	return m
+}
+
+func (m Model) Init() tea.Cmd {
+	if m.intro > 0 {
+		return tea.Batch(m.watch(), tea.Tick(frameDelay, func(time.Time) tea.Msg { return frameMsg{} }))
+	}
+	return m.watch()
+}
+
+// working reports whether an agent works: the spinner and the logo's wave then move.
+func (m Model) working() bool {
+	for _, a := range m.agents {
+		if a.State == "working" && !isShell(a) {
+			return true
+		}
+	}
+	return false
+}
 
 func (m Model) watch() tea.Cmd {
 	api, c, v := m.api, m.container, m.version
@@ -155,19 +187,15 @@ func (m Model) watch() tea.Cmd {
 	}
 }
 
-// animate schedules the next spinner frame while an agent works and none is pending. It sets
+// animate schedules the next frame (spinner, logo) while an agent works or the logo's start
+// animation runs, and none is pending. It sets
 // m.ticking through the pointer: Update returns the updated model.
 func (m *Model) animate() tea.Cmd {
-	if m.ticking {
+	if m.ticking || (m.intro == 0 && !m.working()) {
 		return nil
 	}
-	for _, a := range m.agents {
-		if a.State == "working" && !isShell(a) {
-			m.ticking = true
-			return tea.Tick(frameDelay, func(time.Time) tea.Msg { return frameMsg{} })
-		}
-	}
-	return nil
+	m.ticking = true
+	return tea.Tick(frameDelay, func(time.Time) tea.Msg { return frameMsg{} })
 }
 
 func (m Model) call(fn func(ctx context.Context) error) tea.Cmd {
@@ -211,6 +239,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case frameMsg:
 		m.ticking = false
 		m.frame++
+		if m.intro > 0 {
+			m.intro--
+		}
 		return m, m.animate()
 	case retryMsg:
 		return m, m.watch()
@@ -413,6 +444,20 @@ func (m Model) key(k string) (tea.Model, tea.Cmd) {
 			defer cancel()
 			a, err := api.OpenShell(ctx, c)
 			return newMsg{a, err}
+		}
+	case "-", "|":
+		// Split, as Terminator does: - puts a shell below the agent, | at its right.
+		a := m.selectedAgent()
+		if a == nil || isShell(*a) {
+			return m, nil
+		}
+		key, below := a.Key, k == "-"
+		m.status = "opening a shell beside " + display(*a) + "…"
+		return m, func() tea.Msg {
+			ctx, cancel := context.WithTimeout(context.Background(), callTimeout)
+			defer cancel()
+			sh, err := api.SplitShell(ctx, key, below)
+			return newMsg{sh, err}
 		}
 	case "?":
 		m.help = true
