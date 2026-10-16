@@ -619,3 +619,49 @@ func TestRealLongHyperlinkReachesTheTerminalWhole(t *testing.T) {
 		t.Errorf("the link reaches the terminal whole on %d rows, want 2 or more: %q", n, drawn)
 	}
 }
+
+// The terminal beside the deck says on its top border whether it has the keyboard: "typing here"
+// while it has it, the keys that give it the keyboard while the deck has it. The deck's border
+// and the empty slot's say nothing.
+func TestRealTheSlotSaysWhetherItHasTheKeyboard(t *testing.T) {
+	s := realServer(t)
+	tm := func(args ...string) string {
+		t.Helper()
+		// -u: the client is UTF-8, as the user's terminal is (the bar's · and ▶).
+		out, err := exec.Command("tmux", append([]string{"-u", "-L", "lea-test", "-f", s.Conf}, args...)...).CombinedOutput()
+		if err != nil {
+			t.Fatalf("%v: %v: %s", args, err, out)
+		}
+		return strings.TrimSpace(string(out))
+	}
+	tm("new-session", "-d", "-s", "lea-k", "-x", "160", "-y", "40", "sleep", "600")
+	tm("split-window", "-h", "-t", "=lea-k:", "sleep", "600")
+	tm("set-option", "-p", "-t", "=lea-k:.0", "@lea_role", "deck")
+	tm("set-option", "-p", "-t", "=lea-k:.1", "@lea_agent", "fix-login")
+	border := func(pane string) string { return tm("display-message", "-p", "-t", pane, "#{T:pane-border-format}") }
+	if v := tm("show-options", "-g", "-v", "pane-border-status"); v != "top" {
+		t.Fatalf("pane-border-status = %q, want top", v)
+	}
+	tm("select-pane", "-t", "=lea-k:.1")
+	if b := border("=lea-k:.1"); !strings.Contains(b, "fix-login · typing here") || !strings.Contains(b, "bg=#89b4fa") {
+		t.Errorf("the focused agent's border: %q", b)
+	}
+	if b := border("=lea-k:.0"); b != "" {
+		t.Errorf("the deck's border shows %q", b)
+	}
+	tm("select-pane", "-t", "=lea-k:.0")
+	if b := border("=lea-k:.1"); !strings.Contains(b, "fix-login · enter or ctrl+space: type here") || strings.Contains(b, "typing here") {
+		t.Errorf("the agent's border while the deck has the keyboard: %q", b)
+	}
+	tm("set-option", "-p", "-u", "-t", "=lea-k:.1", "@lea_agent")
+	tm("set-option", "-p", "-t", "=lea-k:.1", "@lea_shell", "sh-1")
+	tm("select-pane", "-t", "=lea-k:.1")
+	if b := border("=lea-k:.1"); !strings.Contains(b, "sh-1 · typing here") {
+		t.Errorf("a shell's border: %q", b)
+	}
+	tm("set-option", "-p", "-u", "-t", "=lea-k:.1", "@lea_shell")
+	tm("set-option", "-p", "-t", "=lea-k:.1", "@lea_role", "placeholder")
+	if b := border("=lea-k:.1"); b != "" {
+		t.Errorf("the empty slot's border shows %q", b)
+	}
+}

@@ -71,8 +71,9 @@ The mouse works too: click a row to select it, scroll to move, right-click a row
 - **States.** A red `●` needs you, an orange spinner is working, a green `●` has finished its
   turn, an empty `○` has been quiet for 30 minutes. Agents stay in the order you started them.
   Each row shows the agent's context use, its directory and branch, and its own report on its
-  task. The pane that has the keyboard is the bright one; the deck's frame turns blue when it
-  has it.
+  task. The pane that has the keyboard is the bright one: the deck's frame turns blue when it
+  has it; otherwise the terminal on the right shows a blue `▶ <agent> · typing here` bar on its
+  top border (grey, with the keys that give it the keyboard, while the deck has it).
 - **Sounds.** lea plays a sound when an agent starts waiting for you, and another when a turn
   ends (`LEA_SOUND=0` turns them off; `LEA_SOUND_ATTENTION` and `LEA_SOUND_DONE` pick the files).
 - **Names.** An agent you have not renamed is named after its first prompt, by a short
