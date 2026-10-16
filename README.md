@@ -7,6 +7,8 @@
 
 <h3 align="center">Many Claude Code agents. None of your machine.</h3>
 
+<p align="center"><a href="https://leadeck.dev"><strong>leadeck.dev</strong></a></p>
+
 <p align="center">
   <a href="https://github.com/DavidGodefroid/lea/releases/latest"><img alt="release" src="https://img.shields.io/github/v/release/DavidGodefroid/lea?color=89b4fa&labelColor=1e1e2e"></a>
   <a href="https://github.com/DavidGodefroid/lea/actions/workflows/ci.yml"><img alt="ci" src="https://github.com/DavidGodefroid/lea/actions/workflows/ci.yml/badge.svg"></a>
@@ -82,7 +84,7 @@ flowchart LR
 ## Quick start
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/DavidGodefroid/lea/main/install.sh | sh
+curl -fsSL https://leadeck.dev/install.sh | sh
 lea
 ```
 
