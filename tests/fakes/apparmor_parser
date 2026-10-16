@@ -1,0 +1,3 @@
+#!/bin/sh
+# Fake apparmor_parser: records the call and runs nothing.
+{ printf 'apparmor_parser'; for a in "$@"; do printf ' [%s]' "$a"; done; printf '\n'; } >>"${FAKE_LOG:?}"

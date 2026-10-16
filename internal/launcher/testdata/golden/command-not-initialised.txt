@@ -1,0 +1,6 @@
+status 1
+-- calls
+tmux [-V]
+-- lea
+lea: error: lea is not initialised on this workstation: run 'lea init' first
+-- stdout

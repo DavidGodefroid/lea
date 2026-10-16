@@ -1,0 +1,6 @@
+status 1
+-- calls
+kubectl [config] [get-contexts] [-o] [name]
+-- lea
+lea: error: no cluster issued a token for lea-dev; ask the Kubernetes admin to apply k8s/lea-readonly.yaml.tmpl for you (k8s/render.sh)
+-- stdout

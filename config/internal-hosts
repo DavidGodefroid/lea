@@ -1,0 +1,6 @@
+# Internal hosts lea may reach although they resolve to private addresses.
+# Format: <host name or IPv4 literal> <comma-separated ports>, one per line.
+# Point LEA_INTERNAL_HOSTS at your own file in the user config. Examples:
+#   git.example.internal      443
+#   10.0.0.10                 443
+# git SSH endpoints (LEA_GIT_SSH) are reached through the proxy's SSH forwarders, not listed here.

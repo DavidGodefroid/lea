@@ -1,0 +1,4 @@
+#!/bin/sh
+# Fake make for unit tests: records the call, exits FAKE_MAKE_RC (default 0).
+{ printf 'make'; for a in "$@"; do printf ' [%s]' "$a"; done; printf '\n'; } >>"${FAKE_LOG:?}"
+exit "${FAKE_MAKE_RC:-0}"

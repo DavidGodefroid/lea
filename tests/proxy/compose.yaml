@@ -1,0 +1,29 @@
+name: lea-proxy-test
+networks:
+  pub:  { internal: true, ipam: { config: [ { subnet: 198.51.100.0/24 } ] } }
+  priv: { internal: true, ipam: { config: [ { subnet: 10.99.0.0/24 } ] } }
+x-web: &web
+  image: busybox:1.37
+  command: sh -c 'mkdir -p /www && echo ok >/www/index.html && httpd -p 22 -h /www && httpd -p 443 -h /www && httpd -f -p 80 -h /www'
+services:
+  dns:
+    build: { context: ., dockerfile_inline: "FROM alpine:3.22\nRUN apk add --no-cache dnsmasq\n" }
+    command: [ "dnsmasq", "-k", "-C", "/etc/dnsmasq.conf" ]
+    volumes: [ "./dnsmasq.conf:/etc/dnsmasq.conf:ro" ]
+    networks: { pub: { ipv4_address: 198.51.100.53 } }
+  public-web:   { <<: *web, networks: { pub:  { ipv4_address: 198.51.100.80 } } }
+  internal-web: { <<: *web, networks: { priv: { ipv4_address: 10.99.0.80 } } }
+  private-web:  { <<: *web, networks: { priv: { ipv4_address: 10.99.0.81 } } }
+  literal-web:  { <<: *web, networks: { priv: { ipv4_address: 10.99.0.82 } } }
+  proxy:
+    image: lea-proxy:dev
+    dns: [ 198.51.100.53 ]
+    environment: { LEA_GIT_SSH: "gitlab.com:22 forge.test:443" }
+    volumes: [ "./internal-hosts:/etc/lea/internal-hosts:ro" ]
+    networks:
+      pub:  { ipv4_address: 198.51.100.2 }
+      priv: { ipv4_address: 10.99.0.2 }
+  client:
+    image: curlimages/curl:8.11.1
+    entrypoint: [ "sleep", "3600" ]
+    networks: { pub: { ipv4_address: 198.51.100.10 } }

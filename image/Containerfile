@@ -1,0 +1,60 @@
+# syntax=docker/dockerfile:1
+FROM quay.io/podman/stable:v5.8.7-immutable
+ARG TARGETARCH
+ARG CLAUDE_CODE_VERSION=2.1.296
+ARG RTK_VERSION=0.36.0
+ARG LEA_VERSION=dev
+# The base image's "podman" user would own uid 1000: lea creates the developer's user at start instead.
+RUN userdel -r podman \
+ && sed -i '/^podman:/d' /etc/subuid /etc/subgid \
+ && dnf -y install --setopt=install_weak_deps=False \
+      nodejs npm git openssh-clients make jq procps-ng util-linux findutils which curl \
+      python3 ripgrep podman-docker docker-compose kubernetes-client gh glab fuse-overlayfs passt abduco \
+ && dnf clean all \
+ && touch /etc/containers/nodocker \
+ && git config --system credential.helper 'store --file=/lea/state/git/credentials' \
+ && ln -s /usr/libexec/docker/cli-plugins/docker-compose /usr/local/bin/docker-compose
+RUN npm install -g "@anthropic-ai/claude-code@${CLAUDE_CODE_VERSION}" && npm cache clean --force
+RUN case "$TARGETARCH" in \
+      amd64) asset=rtk-x86_64-unknown-linux-musl.tar.gz ;; \
+      arm64) asset=rtk-aarch64-unknown-linux-gnu.tar.gz ;; \
+      *) echo "unsupported architecture: $TARGETARCH" >&2; exit 1 ;; \
+    esac \
+ && cd /tmp \
+ && curl -fsSLO "https://github.com/rtk-ai/rtk/releases/download/v${RTK_VERSION}/${asset}" \
+ && curl -fsSLO "https://github.com/rtk-ai/rtk/releases/download/v${RTK_VERSION}/checksums.txt" \
+ && grep " ${asset}\$" checksums.txt | sha256sum -c - \
+ && tar -xzf "$asset" -C /usr/local/bin rtk \
+ && rm -f "$asset" checksums.txt
+# locksql client of a console in its own container (shared volume locksql-run on /run/locksql).
+# The client reads the root-owned system.toml for the socket dir and refuses a socket not served by
+# the uid of the local account "locksql" (10001). /run/locksql has the console image's owner and
+# mode, so an empty locksql-run volume first mounted here is initialised as the console expects.
+RUN useradd -r -u 10001 -U -M -s /sbin/nologin locksql \
+ && install -d -m 0755 /etc/locksql \
+ && printf '%s\n' 'service_user = "locksql"' 'client_group = "locksql-clients"' 'socket_dir   = "/run/locksql"' 'x11          = "refuse"' > /etc/locksql/system.toml \
+ && chmod 0644 /etc/locksql/system.toml \
+ && case "$TARGETARCH" in amd64|arm64) ;; *) echo "unsupported architecture: $TARGETARCH" >&2; exit 1 ;; esac \
+ && cd /tmp && V=0.6.0 && A="locksql_${V}_linux_${TARGETARCH}.tar.gz" \
+ && curl -fsSLO "https://github.com/DavidGodefroid/locksql/releases/download/v$V/$A" \
+ && curl -fsSL "https://github.com/DavidGodefroid/locksql/releases/download/v$V/checksums.txt" | grep " $A\$" | sha256sum -c \
+ && tar -xzf "$A" locksql && install -m 0755 -o root -g root locksql /usr/local/bin/locksql \
+ && rm -f locksql "$A"
+RUN groupadd -g 10000 locksql-clients \
+ && install -d -m 2710 -o 10001 -g 10000 /run/locksql \
+ && install -d -m 0755 /lea /lea/podman /usr/local/share/lea /usr/local/libexec/lea /etc/claude-code
+COPY image/containers.conf.tmpl /usr/local/share/lea/containers.conf.tmpl
+COPY image/storage.conf /etc/containers/storage.conf
+COPY image/ssh_config.tmpl /usr/local/share/lea/ssh_config.tmpl
+COPY image/managed-settings.json /etc/claude-code/managed-settings.json
+COPY image/claude-settings.json /usr/local/share/lea/claude-settings.json
+COPY image/entrypoint image/user-init /usr/local/libexec/lea/
+COPY image/lea-session image/lea-agent image/wl-copy /usr/local/bin/
+RUN sed -i "s/@LEA_VERSION@/${LEA_VERSION}/" /etc/claude-code/managed-settings.json /usr/local/share/lea/claude-settings.json \
+ && chmod 0644 /etc/claude-code/managed-settings.json /usr/local/share/lea/claude-settings.json \
+ && chmod 0755 /usr/local/libexec/lea/entrypoint /usr/local/libexec/lea/user-init /usr/local/bin/lea-session /usr/local/bin/lea-agent /usr/local/bin/wl-copy
+ENV SSH_AUTH_SOCK=/run/lea/ssh-agent.sock \
+    GH_CONFIG_DIR=/lea/state/gh \
+    GLAB_CONFIG_DIR=/lea/state/glab-cli \
+    REGISTRY_AUTH_FILE=/lea/state/containers/auth.json
+ENTRYPOINT ["/usr/local/libexec/lea/entrypoint"]

@@ -1,0 +1,6 @@
+status 1
+-- calls
+tmux [-V]
+-- lea
+lea: error: the deck needs tmux 3.2 or later; found 'tmux 3.1c'. Upgrade it with: sudo dnf install tmux, or build a static one with: make -C "$R" tmux-build
+-- stdout

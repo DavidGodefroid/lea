@@ -1,0 +1,6 @@
+status 1
+-- calls
+tmux [-V]
+-- lea
+lea: error: $W/data/lea/state cannot be a projects directory: it overlaps $W/data/lea
+-- stdout

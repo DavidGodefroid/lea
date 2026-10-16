@@ -1,0 +1,12 @@
+status 0
+-- calls
+docker [ps] [--filter] [label=lea.prefix=lea] [--format] [{{.ID}}	{{.Label "lea.projects"}}]
+docker [stop] [c1]
+docker [stop] [c2]
+docker [network] [ls] [--filter] [label=lea.prefix=lea] [--format] [{{.Name}}]
+docker [network] [disconnect] [-f] [lea-internal-abc] [lea-proxy]
+docker [network] [rm] [lea-internal-abc]
+tmux [-L] [lea] [-f] [$W/data/lea/host/tmux.conf] [kill-server]
+-- lea
+lea: WARNING: no start snapshot for $W/projects; the exit scan cannot compare
+-- stdout

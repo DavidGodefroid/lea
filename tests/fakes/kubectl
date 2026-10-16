@@ -1,0 +1,19 @@
+#!/bin/sh
+# Fake kubectl: records the call; contexts from FAKE_KUBE_CONTEXTS, failures from FAKE_KUBE_FAIL_<ctx>.
+{ printf 'kubectl'; for a in "$@"; do printf ' [%s]' "$a"; done; printf '\n'; } >>"${FAKE_LOG:?}"
+case "$*" in
+  "config get-contexts -o name")
+    # shellcheck disable=SC2086
+    printf '%s\n' ${FAKE_KUBE_CONTEXTS:-} ;;
+  *" create token "*)
+    key=$(printf '%s' "$2" | tr -c 'A-Za-z0-9' '_')
+    eval "fail=\${FAKE_KUBE_FAIL_$key:-}"
+    # shellcheck disable=SC2154
+    if [ -n "$fail" ]; then echo "error: serviceaccounts \"x\" is forbidden" >&2; exit 1; fi
+    printf 'token-%s\n' "$2" ;;
+  *"cluster.server}"*) printf 'https://%s.example:443' "$2" ;;
+  *"certificate-authority-data}"*) printf 'Q0EtREFUQQ==' ;;
+  *"cluster.certificate-authority}"*) printf '%s' "${FAKE_KUBE_CA_PATH:-}" ;;
+  *"insecure-skip-tls-verify}"*) printf '%s' "${FAKE_KUBE_INSECURE:-}" ;;
+  *) exit 0 ;;
+esac

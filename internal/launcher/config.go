@@ -1,0 +1,363 @@
+// Package launcher is lea's host launcher in Go. It prepares a projects directory's container
+// (networks, proxy, mounts, bus), the daemon and the deck. It was ported from the shell launcher
+// (bin/lea and lib/*.sh, now retired): comments name the shell function each part came from
+// (lea_*), every path, format and docker argument is the shell's, and the golden files under
+// testdata/golden, recorded from the last parity run against the shell, lock that behaviour. The
+// shell still running on the host (libexec/lea-sh: init, update, doctor, kube refresh, the scans)
+// shares the same host files.
+package launcher
+
+import (
+	"errors"
+	"fmt"
+	"os"
+	"path/filepath"
+	"regexp"
+	"strconv"
+	"strings"
+)
+
+// protectedKeys: a non-empty value in the environment beats both configuration files
+// (lea_load_config saves them before reading the files).
+var protectedKeys = map[string]bool{
+	"LEA_PROJECTS_DIR": true, "LEA_APPROVALS": true,
+	"LEA_APPROVAL_TIMEOUT": true, "LEA_MAX_AGENTS": true,
+}
+
+// ExportedKeys are the keys lea_load_config exports to every child: the daemon, docker, the
+// core subcommands and libexec/lea-sh.
+var ExportedKeys = []string{
+	"LEA_PREFIX", "LEA_IMAGE", "LEA_PROXY_IMAGE", "LEA_GIT_SSH", "LEA_GIT_KNOWN_HOSTS", "LEA_LOCKSQL", "LEA_LOCKSQL_IMAGE", "LEA_LOCKSQL_REF",
+	"LEA_OTEL_UPSTREAM", "LEA_NESTED_NETWORKS", "LEA_K8S_NAMESPACE", "LEA_INTERNAL_HOSTS", "LEA_PROJECTS_DIR",
+	"LEA_APPROVALS", "LEA_APPROVAL_TIMEOUT", "LEA_MAX_AGENTS",
+}
+
+// Config is what lea_load_config gives the shell: the environment, overlaid by the assignments of
+// config/lea.conf and of the user configuration, then resolved and validated.
+type Config struct {
+	getenv func(string) string
+	file   map[string]string // assignments of both files, the later one winning
+	from   map[string]string // the file each assignment of file comes from
+	final  map[string]string // resolved keys
+	extra  []string          // keys exported by the launcher at run time (LEA_TMUX_BIN)
+}
+
+// Get is the value the shell would see for key after lea_load_config: a resolved key, else the
+// files' assignment, else the environment.
+func (c *Config) Get(key string) string {
+	if v, ok := c.final[key]; ok {
+		return v
+	}
+	if v, ok := c.file[key]; ok {
+		return v
+	}
+	return c.getenv(key)
+}
+
+// Export sets key for this run and its children (the shell's `X=v; export X`).
+func (c *Config) Export(key, value string) {
+	c.final[key] = value
+	for _, k := range c.extra {
+		if k == key {
+			return
+		}
+	}
+	c.extra = append(c.extra, key)
+}
+
+// Environ is base as the children of a shell that ran lea_load_config see it: a variable of base
+// that a configuration file assigned carries the file's value, and the exported keys carry theirs.
+func (c *Config) Environ(base []string) []string {
+	exported := map[string]bool{}
+	for _, k := range append(append([]string{}, ExportedKeys...), c.extra...) {
+		exported[k] = true
+	}
+	out := make([]string, 0, len(base)+len(exported))
+	for _, kv := range base {
+		k, _, _ := strings.Cut(kv, "=")
+		switch {
+		case exported[k]:
+		case hasKey(c.file, k):
+			out = append(out, k+"="+c.file[k])
+		default:
+			out = append(out, kv)
+		}
+	}
+	for _, k := range append(append([]string{}, ExportedKeys...), c.extra...) {
+		out = append(out, k+"="+c.Get(k))
+	}
+	return out
+}
+
+func hasKey(m map[string]string, k string) bool { _, ok := m[k]; return ok }
+
+// LoadConfig reads root/config/lea.conf, then the user configuration ($LEA_CONFIG, else
+// $XDG_CONFIG_HOME/lea/lea.conf, else ~/.config/lea/lea.conf; a relative path is relative to
+// cwd), and validates the result as lea_load_config does, with the same messages.
+func LoadConfig(getenv func(string) string, root, cwd string) (*Config, error) {
+	c := &Config{getenv: getenv, file: map[string]string{}, from: map[string]string{}, final: map[string]string{}}
+	if err := c.readFile(filepath.Join(root, "config", "lea.conf")); err != nil {
+		return nil, err
+	}
+	user := c.UserConfigPath()
+	if !strings.HasPrefix(user, "/") {
+		user = filepath.Join(cwd, user)
+	}
+	if c.Get("LEA_CONFIG") != "" || isRegular(user) {
+		if err := c.readFile(user); err != nil {
+			return nil, err
+		}
+	}
+	if err := c.resolve(root); err != nil {
+		return nil, err
+	}
+	return c, nil
+}
+
+// UserConfigPath is lea_user_config_path.
+func (c *Config) UserConfigPath() string {
+	if p := c.Get("LEA_CONFIG"); p != "" {
+		return p
+	}
+	return nonEmpty(c.Get("XDG_CONFIG_HOME"), c.Get("HOME")+"/.config") + "/lea/lea.conf"
+}
+
+func (c *Config) resolve(root string) error {
+	pick := func(k, def string) string {
+		if protectedKeys[k] {
+			if v := c.getenv(k); v != "" {
+				return v
+			}
+		}
+		return nonEmpty(c.Get(k), def)
+	}
+	c.final["LEA_PROJECTS_DIR"] = pick("LEA_PROJECTS_DIR", "")
+	appr, at := pick("LEA_APPROVALS", "deck"), pick("LEA_APPROVAL_TIMEOUT", "60")
+	c.final["LEA_APPROVALS"], c.final["LEA_APPROVAL_TIMEOUT"] = appr, at
+	if appr != "deck" && appr != "pane" {
+		return fmt.Errorf("LEA_APPROVALS must be deck or pane, not '%s'", appr)
+	}
+	if n, ok := plainNumber(at, 3); !ok || n < 1 || n > 600 {
+		return fmt.Errorf("LEA_APPROVAL_TIMEOUT must be a number of seconds from 1 to 600 without leading zeros, not '%s'", at)
+	}
+	ma := pick("LEA_MAX_AGENTS", "12")
+	c.final["LEA_MAX_AGENTS"] = ma
+	if _, ok := plainNumber(ma, 2); !ok {
+		return fmt.Errorf("LEA_MAX_AGENTS must be a number of agents from 1 to 99 without leading zeros, not '%s'", ma)
+	}
+	c.final["LEA_INTERNAL_HOSTS"] = nonEmpty(c.Get("LEA_INTERNAL_HOSTS"), root+"/config/internal-hosts")
+	// The git SSH endpoints (none by default: git over HTTPS needs none). LEA_GITLAB_SSH and
+	// LEA_GITLAB_KNOWN_HOSTS are the keys of lea before any forge could be used: read when the
+	// new ones are unset.
+	c.final["LEA_GIT_SSH"] = strings.Join(strings.Fields(nonEmpty(c.Get("LEA_GIT_SSH"), c.Get("LEA_GITLAB_SSH"))), " ")
+	if _, err := gitEndpoints(c.final["LEA_GIT_SSH"]); err != nil {
+		return err
+	}
+	conf := nonEmpty(c.Get("XDG_CONFIG_HOME"), c.Get("HOME")+"/.config") + "/lea"
+	kh := nonEmpty(c.Get("LEA_GIT_KNOWN_HOSTS"), c.Get("LEA_GITLAB_KNOWN_HOSTS"))
+	if kh == "" {
+		kh = conf + "/git_known_hosts"
+		if _, err := os.Stat(kh); err != nil {
+			if _, err := os.Stat(conf + "/gitlab_known_hosts"); err == nil {
+				kh = conf + "/gitlab_known_hosts"
+			}
+		}
+	}
+	c.final["LEA_GIT_KNOWN_HOSTS"] = kh
+	ls := nonEmpty(c.Get("LEA_LOCKSQL"), "1")
+	if ls != "0" && ls != "1" {
+		return fmt.Errorf("LEA_LOCKSQL must be 1 (wire lea for a locksql console) or 0, not '%s'", ls)
+	}
+	c.final["LEA_LOCKSQL"] = ls
+	return nil
+}
+
+// maxGitEndpoints caps LEA_GIT_SSH: one proxy forwarder (port 2222 + index) per endpoint.
+const maxGitEndpoints = 16
+
+// gitEndpoints splits LEA_GIT_SSH into host:port endpoints: a plain host name (it is written into
+// the image's ssh configuration) and a port from 1 to 65535.
+func gitEndpoints(v string) ([]string, error) {
+	eps := strings.Fields(v)
+	if len(eps) > maxGitEndpoints {
+		return nil, fmt.Errorf("LEA_GIT_SSH lists %d endpoints, at most %d", len(eps), maxGitEndpoints)
+	}
+	seen := map[string]bool{}
+	for _, ep := range eps {
+		h, port, ok := strings.Cut(ep, ":")
+		n, pok := plainNumber(port, 5)
+		if !ok || h == "" || strings.Trim(h, "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789.-") != "" ||
+			!pok || n < 1 || n > 65535 {
+			return nil, fmt.Errorf("LEA_GIT_SSH must list host:port endpoints with plain host names, got '%s'", ep)
+		}
+		if seen[h] {
+			return nil, fmt.Errorf("LEA_GIT_SSH lists %s twice", h)
+		}
+		seen[h] = true
+	}
+	return eps, nil
+}
+
+// plainNumber accepts what the shell's case patterns accept: digits only, no leading zero, at
+// most max digits.
+func plainNumber(s string, max int) (int, bool) {
+	if s == "" || len(s) > max || s[0] == '0' || strings.Trim(s, "0123456789") != "" {
+		return 0, false
+	}
+	n, err := strconv.Atoi(s)
+	return n, err == nil
+}
+
+func (c *Config) readFile(path string) error {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return fmt.Errorf("cannot read the configuration %s: %v", path, err)
+	}
+	for i, line := range strings.Split(string(data), "\n") {
+		k, v, ok, err := parseLine(line, c.Get("HOME"))
+		if err != nil {
+			return fmt.Errorf("%s line %d: %v (the Go launcher reads KEY=value lines and does not run them as shell): "+
+				"rewrite the line as KEY='value'", path, i+1, err)
+		}
+		if ok {
+			c.file[k], c.from[k] = v, path
+		}
+	}
+	return nil
+}
+
+var keyRe = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
+
+// parseLine reads one line: blank, a comment, or KEY=VALUE, optionally after "export ".
+func parseLine(line, home string) (key, val string, ok bool, err error) {
+	s := strings.TrimLeft(line, " \t")
+	if s == "" || s[0] == '#' {
+		return "", "", false, nil
+	}
+	s = strings.TrimPrefix(s, "export ")
+	k, rest, found := strings.Cut(s, "=")
+	if !found || !keyRe.MatchString(k) {
+		return "", "", false, errors.New("not a KEY=value line")
+	}
+	v, err := parseValue(rest, home)
+	if err != nil {
+		return "", "", false, err
+	}
+	return k, v, true, nil
+}
+
+// bare are the characters a value may hold outside quotes, plus any non-ASCII byte.
+const bare = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_./:@%+,=-"
+
+// parseValue reads what sh would assign, for the subset lea accepts: bare characters, '...'
+// (literal), "..." without backquotes, \ or any $ other than $HOME and ${HOME}, \c (the
+// character c), $HOME and ${HOME} (expanded to home, also inside "..."), and a leading ~ or ~/
+// (home), up to blanks and an optional comment. Everything else, in particular any other $,
+// $(...) and backquotes, is refused, never guessed.
+func parseValue(s, home string) (string, error) {
+	var b strings.Builder
+	for i := 0; i < len(s); {
+		c := s[i]
+		switch {
+		case c == '\'':
+			j := strings.IndexByte(s[i+1:], '\'')
+			if j < 0 {
+				return "", errors.New("a ' is not closed")
+			}
+			b.WriteString(s[i+1 : i+1+j])
+			i += j + 2
+		case c == '"':
+			j := strings.IndexByte(s[i+1:], '"')
+			if j < 0 {
+				return "", errors.New(`a " is not closed`)
+			}
+			in := s[i+1 : i+1+j]
+			if strings.ContainsAny(in, "`\\") {
+				return "", errors.New(`backquotes and \ are not read inside "...": use '...'`)
+			}
+			x, err := expandHome(in, home)
+			if err != nil {
+				return "", err
+			}
+			b.WriteString(x)
+			i += j + 2
+		case c == '\\':
+			if i+1 >= len(s) {
+				return "", errors.New(`a line ending in \ is not read`)
+			}
+			b.WriteByte(s[i+1])
+			i += 2
+		case c == '$':
+			n, err := homeVar(s[i:])
+			if err != nil {
+				return "", err
+			}
+			b.WriteString(home)
+			i += n
+		case c == '~' && i == 0:
+			if len(s) > 1 && s[1] != '/' && s[1] != ' ' && s[1] != '\t' {
+				return "", errors.New("only ~ and ~/... are read (~user is not)")
+			}
+			b.WriteString(home)
+			i++
+		case c == ' ' || c == '\t':
+			rest := strings.TrimLeft(s[i:], " \t")
+			if rest == "" || rest[0] == '#' {
+				return b.String(), nil
+			}
+			return "", errors.New("one value per line (a blank outside quotes ends it)")
+		case c >= 0x80 || strings.IndexByte(bare, c) >= 0:
+			b.WriteByte(c)
+			i++
+		default:
+			return "", fmt.Errorf("%q outside quotes is shell syntax lea does not read: quote the value with '...'", c)
+		}
+	}
+	return b.String(), nil
+}
+
+// homeVar returns the length of the $HOME or ${HOME} that starts s; any other use of $ is an error.
+func homeVar(s string) (int, error) {
+	for _, v := range []string{"${HOME}", "$HOME"} {
+		if strings.HasPrefix(s, v) {
+			if v == "$HOME" && len(s) > len(v) && isNameByte(s[len(v)]) {
+				break
+			}
+			return len(v), nil
+		}
+	}
+	return 0, errors.New("only $HOME and ${HOME} are read: other variables, $(...) and arithmetic are shell syntax (use '...' for a literal $)")
+}
+
+func isNameByte(c byte) bool {
+	return c == '_' || c >= '0' && c <= '9' || c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z'
+}
+
+// expandHome replaces $HOME and ${HOME} in the inside of a double-quoted string.
+func expandHome(s, home string) (string, error) {
+	var b strings.Builder
+	for i := 0; i < len(s); {
+		if s[i] != '$' {
+			b.WriteByte(s[i])
+			i++
+			continue
+		}
+		n, err := homeVar(s[i:])
+		if err != nil {
+			return "", err
+		}
+		b.WriteString(home)
+		i += n
+	}
+	return b.String(), nil
+}
+
+// GitSSH is LEA_GIT_SSH: the git SSH endpoints, space separated ("" when git uses HTTPS only).
+func (c *Config) GitSSH() string { return c.Get("LEA_GIT_SSH") }
+
+// Locksql reports whether lea is wired for a locksql console (LEA_LOCKSQL=1, the default).
+func (c *Config) Locksql() bool { return c.Get("LEA_LOCKSQL") != "0" }
+
+// gitStateDirs are the state sub-directories (relative to the state dir) where the forge tools
+// inside lea keep their credentials: git's credential store, gh and glab.
+var gitStateDirs = []string{"git", "gh", "glab-cli"}

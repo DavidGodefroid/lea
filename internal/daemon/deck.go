@@ -1,0 +1,204 @@
+package daemon
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"log"
+	"time"
+
+	"github.com/DavidGodefroid/lea/internal/agents"
+	"github.com/DavidGodefroid/lea/internal/roles"
+	"github.com/DavidGodefroid/lea/internal/wire"
+)
+
+// Agents is the deck side of the daemon (package agents): tmux sessions and the agents lea
+// spawned. Its methods are host-only: no container may spawn, show, stop or watch agents.
+type Agents interface {
+	Ensure(ctx context.Context, container, workdir string) error
+	New(ctx context.Context, r agents.NewRequest) (agents.Row, error)
+	Focus(ctx context.Context, key string, focus bool) error
+	Stop(ctx context.Context, key string) error
+	// RemoveEnded removes an agent only while it is ended (the deck's x on a done row).
+	RemoveEnded(ctx context.Context, key string) error
+	Detach(ctx context.Context, container string) error
+	Watch(ctx context.Context, container string, since int64, timeout time.Duration) (agents.Snapshot, error)
+	ForgetEnded(ctx context.Context, container string) error
+	Attached(ctx context.Context, container string) (bool, error)
+	Popup(ctx context.Context, key string, compose bool) error
+	// SetLabel renames an agent for display (the deck's e); OpenShell opens a shell in the
+	// container (the deck's s). Both are the user's only.
+	SetLabel(ctx context.Context, key, label string) error
+	OpenShell(ctx context.Context, container string) (agents.Row, error)
+	Changed()
+}
+
+// deckMethods are host-only: dispatchDeck refuses them on a container's bus socket, which is
+// all an agent (its MCP tools, lea inside the container) can reach.
+var deckMethods = map[string]bool{
+	"deck_ensure": true, "agent_new": true, "agent_focus": true,
+	"agent_stop": true, "deck_detach": true, "agents_watch": true, "agents_forget_ended": true,
+	"deck_attached": true, "deck_popup": true, "agent_label": true, "shell_open": true,
+}
+
+func (d *Daemon) SetAgents(a Agents) {
+	d.mu.Lock()
+	d.agents = a
+	d.mu.Unlock()
+}
+
+// changed tells watching decks that agent facts changed.
+func (d *Daemon) changed() {
+	d.mu.Lock()
+	a := d.agents
+	d.mu.Unlock()
+	if a != nil {
+		a.Changed()
+	}
+}
+
+func (d *Daemon) dispatchDeck(ctx context.Context, o Origin, req wire.Request) (any, error) {
+	if o.Container != "" {
+		return nil, fmt.Errorf("%s: host only", req.Method)
+	}
+	d.mu.Lock()
+	a := d.agents
+	d.mu.Unlock()
+	if a == nil {
+		return nil, errors.New("agents are not available in this daemon")
+	}
+	ok := struct{}{}
+	switch req.Method {
+	case "deck_ensure":
+		var p struct{ Container, Workdir string }
+		if err := json.Unmarshal(req.Params, &p); err != nil {
+			return nil, err
+		}
+		return ok, a.Ensure(ctx, p.Container, p.Workdir)
+	case "agent_new":
+		var p struct {
+			Container, Workdir, Profile, Name string
+			Args                              []string
+			Focus                             bool
+			Role, Repo, Branch, Brief         string
+		}
+		if err := json.Unmarshal(req.Params, &p); err != nil {
+			return nil, err
+		}
+		if p.Role == "" {
+			p.Role = roles.Default
+		}
+		if _, err := roles.Get(p.Role); err != nil {
+			return nil, err
+		}
+		if err := checkBrief(p.Brief, false); err != nil {
+			return nil, err
+		}
+		// Host-only method: the brief is the user's own, whatever the request says.
+		from := ""
+		if p.Brief != "" {
+			from = "user"
+		}
+		return a.New(ctx, agents.NewRequest{Container: p.Container, Workdir: p.Workdir, Profile: p.Profile,
+			Name: p.Name, Args: p.Args, Focus: p.Focus, Role: p.Role, Repo: p.Repo, Branch: p.Branch,
+			Brief: p.Brief, BriefFrom: from})
+	case "agent_focus":
+		var p struct {
+			Key   string
+			Focus bool
+		}
+		if err := json.Unmarshal(req.Params, &p); err != nil {
+			return nil, err
+		}
+		return ok, a.Focus(ctx, p.Key, p.Focus)
+	case "agent_stop":
+		var p struct {
+			Key   string
+			Ended bool // only while the agent is ended: x without y on a done row
+		}
+		if err := json.Unmarshal(req.Params, &p); err != nil {
+			return nil, err
+		}
+		stop := a.Stop
+		if p.Ended {
+			stop = a.RemoveEnded
+		}
+		err := stop(ctx, p.Key)
+		d.pruneForgotten()
+		return ok, err
+	case "agents_forget_ended":
+		var p struct{ Container string }
+		if err := json.Unmarshal(req.Params, &p); err != nil {
+			return nil, err
+		}
+		err := a.ForgetEnded(ctx, p.Container)
+		d.pruneForgotten()
+		return ok, err
+	case "deck_attached":
+		var p struct{ Container string }
+		if err := json.Unmarshal(req.Params, &p); err != nil {
+			return nil, err
+		}
+		att, err := a.Attached(ctx, p.Container)
+		return map[string]bool{"attached": att}, err
+	case "deck_detach":
+		var p struct{ Container string }
+		if err := json.Unmarshal(req.Params, &p); err != nil {
+			return nil, err
+		}
+		return ok, a.Detach(ctx, p.Container)
+	case "deck_popup":
+		var p struct {
+			Key     string
+			Compose bool
+		}
+		if err := json.Unmarshal(req.Params, &p); err != nil {
+			return nil, err
+		}
+		return ok, a.Popup(ctx, p.Key, p.Compose)
+	case "agent_label":
+		var p struct{ Key, Label string }
+		if err := json.Unmarshal(req.Params, &p); err != nil {
+			return nil, err
+		}
+		return ok, a.SetLabel(ctx, p.Key, p.Label)
+	case "shell_open":
+		var p struct{ Container string }
+		if err := json.Unmarshal(req.Params, &p); err != nil {
+			return nil, err
+		}
+		return a.OpenShell(ctx, p.Container)
+	case "agents_watch":
+		var p struct {
+			Container string
+			Since     int64
+			TimeoutS  int `json:"timeout_s"`
+		}
+		if err := json.Unmarshal(req.Params, &p); err != nil {
+			return nil, err
+		}
+		if p.TimeoutS < 1 || p.TimeoutS > 60 {
+			return nil, errors.New("timeout_s must be between 1 and 60")
+		}
+		return a.Watch(ctx, p.Container, p.Since, time.Duration(p.TimeoutS)*time.Second)
+	}
+	return nil, fmt.Errorf("unknown method %q", req.Method)
+}
+
+// deckAttached reports whether someone can answer an approval in the container's deck. Without
+// an agent manager (phase 0 daemons, tests) the host CLI answers, as before.
+func (d *Daemon) deckAttached(ctx context.Context, container string) bool {
+	d.mu.Lock()
+	a := d.agents
+	d.mu.Unlock()
+	if a == nil {
+		return true
+	}
+	ok, err := a.Attached(ctx, container)
+	if err != nil {
+		log.Printf("lea daemon: clients of %s: %v", container, err)
+		return false
+	}
+	return ok
+}

@@ -1,0 +1,6 @@
+status 1
+-- calls
+tmux [-V]
+-- lea
+lea: error: refusing to use $W/home/.claude/projects/$SLUG: $W/home/.claude/projects/$SLUG is a symbolic link (remove it, then retry)
+-- stdout

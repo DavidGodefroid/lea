@@ -1,0 +1,34 @@
+# Defaults for containers started by lea's rootless Podman.
+# Rendered by the entrypoint over the base image's /etc/containers/containers.conf. It keeps what
+# quay.io/podman/stable sets for Podman inside a container (its root file and the deleted podman
+# user's ~/.config/containers/containers.conf): /proc bind and no default sysctls (a nested
+# container cannot mount a fresh procfs or set sysctls under Docker's masked /proc), no cgroups,
+# file logs and events (no systemd, no journald). Its netns/userns/ipcns/cgroupns = "host" lines
+# are left out on purpose: they serve root Podman, and nested containers need their own network
+# namespaces (pasta, compose networks).
+[containers]
+# Only HTTPS goes through the proxy: plain HTTP between compose services must stay direct.
+http_proxy = false
+env = [
+  "HTTPS_PROXY=http://@LEA_PROXY_IP@:3128",
+  "https_proxy=http://@LEA_PROXY_IP@:3128",
+  "NO_PROXY=localhost,127.0.0.1,::1",
+  "no_proxy=localhost,127.0.0.1,::1",
+  "SSH_AUTH_SOCK=/run/lea/ssh-agent.sock",
+  "GIT_SSH_COMMAND=ssh -F /run/lea/ssh_config",
+]
+volumes = [
+  "/proc:/proc",
+  "/run/lea:/run/lea:ro",
+]
+default_sysctls = []
+cgroups = "disabled"
+# A nested container cannot set its own hostname: lea's user namespace has no CAP_SYS_ADMIN in
+# its bounding set (Docker drops it), so crun's sethostname would fail. It shares lea's instead.
+utsns = "host"
+log_driver = "k8s-file"
+
+[engine]
+cgroup_manager = "cgroupfs"
+events_logger = "file"
+runtime = "crun"

@@ -1,0 +1,12 @@
+status 1
+-- calls
+tmux [-V]
+core [agents]
+core [version]
+docker [network] [inspect] [lea-egress]
+docker [network] [inspect] [-f] [{{.Internal}}] [lea-internal-$ID]
+docker [inspect] [-f] [{{.State.Running}}] [lea-proxy]
+docker [rm] [-f] [lea-proxy]
+docker [run] [-d] [--name] [lea-proxy] [--restart] [unless-stopped] [--network] [lea-egress] [--label] [lea.prefix=lea] [--label] [lea.role=proxy] [--label] [lea.git-ssh=] [--mount] [type=bind,src=$R/config/internal-hosts,dst=/etc/lea/internal-hosts,readonly] [-e] [LEA_GIT_SSH=] [-e] [LEA_OTEL_UPSTREAM=] [lea-proxy:dev]
+-- lea
+-- stdout

@@ -1,0 +1,6 @@
+#!/bin/sh
+# Fake curl: records argv, prints FAKE_CURL_BODY (the installer script lea update pipes to sh),
+# exits FAKE_CURL_RC.
+{ printf 'curl'; for a in "$@"; do printf ' [%s]' "$a"; done; printf '\n'; } >>"${FAKE_LOG:?}"
+if [ -n "${FAKE_CURL_BODY:-}" ]; then printf '%s\n' "$FAKE_CURL_BODY"; fi
+exit "${FAKE_CURL_RC:-0}"

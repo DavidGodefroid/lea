@@ -1,0 +1,15 @@
+#!/bin/sh
+# lea: runs the lea binary, build/lea, of this installation (~/.local/bin/lea links here). In a
+# source checkout, the first run builds it (make go-build).
+set -eu
+self=$0
+while [ -L "$self" ]; do
+  link=$(readlink "$self")
+  case $link in /*) self=$link ;; *) self=$(dirname "$self")/$link ;; esac
+done
+LEA_ROOT=$(cd "$(dirname "$self")/.." && pwd -P)
+if [ ! -x "$LEA_ROOT/build/lea" ]; then
+  echo "lea: building the lea binary (make go-build)" >&2
+  make -C "$LEA_ROOT" go-build >&2 || { echo "lea: error: make go-build failed" >&2; exit 1; }
+fi
+exec "$LEA_ROOT/build/lea" "$@"

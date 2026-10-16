@@ -1,0 +1,98 @@
+{
+  "env": {
+    "CLAUDE_CODE_ENABLE_TELEMETRY": "1",
+    "OTEL_METRICS_EXPORTER": "otlp",
+    "OTEL_LOGS_EXPORTER": "otlp",
+    "OTEL_EXPORTER_OTLP_PROTOCOL": "http/protobuf",
+    "OTEL_EXPORTER_OTLP_ENDPOINT": "http://lea-proxy:4318",
+    "OTEL_RESOURCE_ATTRIBUTES": "service.name=lea,service.version=@LEA_VERSION@",
+    "DISABLE_UPDATES": "1"
+  },
+  "statusLine": {
+    "type": "command",
+    "command": "[ -x /usr/local/bin/lea ] && exec /usr/local/bin/lea statusline; exit 0"
+  },
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "[ -x /usr/local/bin/lea ] && exec /usr/local/bin/lea hook claude SessionStart; exit 0"
+          }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "[ -x /usr/local/bin/lea ] && exec /usr/local/bin/lea hook claude UserPromptSubmit; exit 0"
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "[ -x /usr/local/bin/lea ] && exec /usr/local/bin/lea hook claude PreToolUse; exit 0"
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "[ -x /usr/local/bin/lea ] && exec /usr/local/bin/lea hook claude PostToolUse; exit 0"
+          }
+        ]
+      }
+    ],
+    "PermissionRequest": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "timeout": 620,
+            "command": "[ -x /usr/local/bin/lea ] && exec /usr/local/bin/lea hook claude PermissionRequest; exit 0"
+          }
+        ]
+      }
+    ],
+    "Notification": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "[ -x /usr/local/bin/lea ] && exec /usr/local/bin/lea hook claude Notification; exit 0"
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "[ -x /usr/local/bin/lea ] && exec /usr/local/bin/lea hook claude Stop; exit 0"
+          }
+        ]
+      }
+    ],
+    "SessionEnd": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "[ -x /usr/local/bin/lea ] && exec /usr/local/bin/lea hook claude SessionEnd; exit 0"
+          }
+        ]
+      }
+    ]
+  }
+}

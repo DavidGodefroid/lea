@@ -1,0 +1,49 @@
+# Read-only Kubernetes access for one lea developer. Rendered by k8s/render.sh; applied by a cluster admin.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: @NS@
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: lea-@DEV@
+  namespace: @NS@
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: lea-@DEV@-view
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: view
+subjects:
+  - kind: ServiceAccount
+    name: lea-@DEV@
+    namespace: @NS@
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: lea-@DEV@-mint-token
+  namespace: @NS@
+rules:
+  - apiGroups: [""]
+    resources: ["serviceaccounts/token"]
+    resourceNames: ["lea-@DEV@"]
+    verbs: ["create"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: lea-@DEV@-mint-token
+  namespace: @NS@
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: lea-@DEV@-mint-token
+subjects:
+  - kind: @KIND@
+    name: @NAME@
+@EXTRA@

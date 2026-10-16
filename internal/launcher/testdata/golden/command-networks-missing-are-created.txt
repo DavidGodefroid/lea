@@ -1,0 +1,18 @@
+status 0
+-- calls
+tmux [-V]
+core [agents]
+core [version]
+docker [network] [inspect] [lea-egress]
+docker [network] [create] [--label] [lea.prefix=lea] [lea-egress]
+docker [network] [inspect] [-f] [{{.Internal}}] [lea-internal-$ID]
+docker [network] [create] [--label] [lea.prefix=lea] [--label] [lea.id=$ID] [--internal] [-o] [com.docker.network.bridge.gateway_mode_ipv4=isolated] [lea-internal-$ID]
+docker [inspect] [-f] [{{.State.Running}}] [lea-proxy]
+docker [inspect] [--format] [{{index .Config.Labels "lea.git-ssh"}}] [lea-proxy]
+docker [container] [inspect] [--format] [{{with index .NetworkSettings.Networks "lea-internal-$ID"}}{{.IPAddress}}{{end}}] [lea-proxy]
+docker [inspect] [-f] [{{.State.Running}}] [lea-$ID]
+core [attach-container] [lea-$ID]
+core [deck-open] [--container] [lea-$ID] [--workdir] [$W/projects]
+tmux [-L] [lea] [-f] [$W/data/lea/host/tmux.conf] [attach-session] [-t] [=lea-$ID]
+-- lea
+-- stdout

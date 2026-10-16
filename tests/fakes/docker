@@ -1,0 +1,31 @@
+#!/bin/sh
+# Fake docker for unit tests: records the call, answers from FAKE_DOCKER_OUT_/SEQ_/RC_<KEY>
+# (<KEY> is the first two arguments) or <KEY>_AT_<last argument>, and FAKE_DOCKER_OUTSEQ_<KEY>.
+{ printf 'docker'; for a in "$@"; do printf ' [%s]' "$a"; done; printf '\n'; } >>"${FAKE_LOG:?}"
+key=$(printf '%s_%s' "${1:-}" "${2:-}" | tr '[:lower:]' '[:upper:]' | tr -c 'A-Z0-9_' '_')
+eval "out=\${FAKE_DOCKER_OUT_$key:-}"
+eval "seq=\${FAKE_DOCKER_SEQ_$key:-}"
+eval "rc=\${FAKE_DOCKER_RC_$key:-0}"
+# <KEY>_AT_<LAST ARGUMENT> answers for one target only (a container name, an image), over <KEY>.
+for last in "$@"; do :; done
+at=$(printf '%s_AT_%s' "$key" "${last:-}" | tr '[:lower:]' '[:upper:]' | tr -c 'A-Z0-9_' '_')
+eval "[ -z \"\${FAKE_DOCKER_OUT_$at+x}\" ] || out=\$FAKE_DOCKER_OUT_$at"
+eval "[ -z \"\${FAKE_DOCKER_RC_$at+x}\" ] || rc=\$FAKE_DOCKER_RC_$at"
+# FAKE_DOCKER_OUTSEQ_<KEY>="a|b|…": the n-th call with <KEY> prints the n-th field (empty: nothing).
+eval "oseq=\${FAKE_DOCKER_OUTSEQ_$key:-}"
+# shellcheck disable=SC2154
+if [ -n "$oseq" ]; then
+  onfile="$FAKE_LOG.$key.o"
+  n=$(cat "$onfile" 2>/dev/null || echo 0); n=$((n + 1)); echo "$n" >"$onfile"
+  out=$(printf '%s\n' "$oseq" | tr '|' '\n' | sed -n "${n}p")
+fi
+# shellcheck disable=SC2154
+if [ -n "$seq" ]; then
+  nfile="$FAKE_LOG.$key.n"
+  n=$(cat "$nfile" 2>/dev/null || echo 0); n=$((n + 1)); echo "$n" >"$nfile"
+  # shellcheck disable=SC2086
+  rc=$(printf '%s\n' $seq | sed -n "${n}p"); rc=${rc:-0}
+fi
+# shellcheck disable=SC2154
+if [ -n "$out" ]; then printf '%s\n' "$out"; fi
+exit "$rc"

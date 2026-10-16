@@ -1,0 +1,6 @@
+status 1
+-- calls
+tmux [-V]
+-- lea
+lea: error: $W/home cannot be a projects directory: it is / or contains your home directory
+-- stdout

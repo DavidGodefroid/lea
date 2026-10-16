@@ -1,0 +1,7 @@
+status 1
+-- calls
+
+-- lea
+lea: $W/home/.local/bin is not on your PATH: add it in your shell profile to run lea by name
+lea: error: no github.com key in $W/config/lea/git_known_hosts: pin the host keys of github.com there (see the README, SSH)
+-- stdout

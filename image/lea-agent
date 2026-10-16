@@ -1,0 +1,101 @@
+#!/bin/sh
+# Deck agents inside lea. `run` is what abduco starts for an agent: it records the agent's pid,
+# then becomes Claude Code through lea-session (exec keeps the pid). `ls` prints the live agents;
+# `stop` ends one. The deck's shells (s) work the same way: `shell` is what abduco starts for one
+# (the user's login shell, never an agent: no LEA_AGENT), `shells` prints the live ones and
+# `stop-shell` ends one. The host reaches this script only through `docker exec`.
+set -eu
+dir=${LEA_AGENT_RUN_DIR:-/run/lea/agents}
+shell_dir=${LEA_SHELL_RUN_DIR:-/run/lea/shells}
+wait_s=${LEA_AGENT_STOP_WAIT:-5}
+
+valid() {
+  case $1 in [abcdefghijklmnopqrstuvwxyz]*) ;; *) return 1 ;; esac
+  case $1 in *[!abcdefghijklmnopqrstuvwxyz0123456789-]*) return 1 ;; esac
+  [ "${#1}" -le 24 ]
+}
+
+# A shell is sh-N.
+valid_shell() {
+  case $1 in sh-[123456789] | sh-[123456789][0123456789] | sh-[123456789][0123456789][0123456789]) ;; *) return 1 ;; esac
+}
+
+# alive NAME [DIR VAR]: prints the pid of NAME while its process runs with VAR=NAME (LEA_AGENT,
+# pid files in $dir by default); a pid file left by an ended process may point at a reused pid,
+# which is not it.
+alive() {
+  d=${2:-$dir}
+  v=${3:-LEA_AGENT}
+  [ -f "$d/$1.pid" ] || return 1
+  p=$(head -c 16 "$d/$1.pid" | tr -cd 0-9)
+  if [ -z "$p" ] || ! kill -0 "$p" 2>/dev/null; then return 1; fi
+  tr '\0' '\n' <"/proc/$p/environ" 2>/dev/null | grep -qx "$v=$1" || return 1
+  printf '%s\n' "$p"
+}
+
+# end PID: TERM, the wait, then KILL.
+end() {
+  kill -TERM "$1" 2>/dev/null || true
+  i=0
+  while kill -0 "$1" 2>/dev/null && [ "$i" -lt $((wait_s * 10)) ]; do sleep 0.1; i=$((i + 1)); done
+  kill -KILL "$1" 2>/dev/null || true
+}
+
+case ${1:-} in
+  run)
+    name=${2:-}
+    valid "$name" || { echo "lea-agent: invalid agent name '$name'" >&2; exit 2; }
+    shift 2
+    if [ "${1:-}" = -- ]; then shift; fi
+    mkdir -p "$dir"
+    printf '%s\n' "$$" >"$dir/$name.pid"
+    LEA_AGENT=$name
+    export LEA_AGENT
+    exec lea-session --claude "$@"
+    ;;
+  ls)
+    [ -d "$dir" ] || exit 0
+    for f in "$dir"/*.pid; do
+      [ -f "$f" ] || continue
+      n=${f##*/}; n=${n%.pid}
+      if valid "$n" && alive "$n" >/dev/null; then printf '%s\n' "$n"; else rm -f "$f"; fi
+    done
+    ;;
+  stop)
+    name=${2:-}
+    valid "$name" || { echo "lea-agent: invalid agent name '$name'" >&2; exit 2; }
+    if p=$(alive "$name"); then end "$p"; fi
+    rm -f "$dir/$name.pid"
+    ;;
+  shell)
+    name=${2:-}
+    valid_shell "$name" || { echo "lea-agent: invalid shell name '$name'" >&2; exit 2; }
+    mkdir -p "$shell_dir"
+    printf '%s\n' "$$" >"$shell_dir/$name.pid"
+    unset LEA_AGENT
+    LEA_SHELL=$name
+    export LEA_SHELL
+    sh=${LEA_AGENT_SHELL:-$(getent passwd "$(id -u)" | cut -d: -f7)}
+    [ -n "$sh" ] && [ -x "$sh" ] || sh=/bin/sh
+    exec "$sh" -l
+    ;;
+  shells)
+    [ -d "$shell_dir" ] || exit 0
+    for f in "$shell_dir"/*.pid; do
+      [ -f "$f" ] || continue
+      n=${f##*/}; n=${n%.pid}
+      if valid_shell "$n" && alive "$n" "$shell_dir" LEA_SHELL >/dev/null; then printf '%s\n' "$n"; else rm -f "$f"; fi
+    done
+    ;;
+  stop-shell)
+    name=${2:-}
+    valid_shell "$name" || { echo "lea-agent: invalid shell name '$name'" >&2; exit 2; }
+    # HUP first, as when a terminal closes: an interactive shell ignores TERM.
+    if p=$(alive "$name" "$shell_dir" LEA_SHELL); then kill -HUP "$p" 2>/dev/null || true; end "$p"; fi
+    rm -f "$shell_dir/$name.pid"
+    ;;
+  *)
+    echo "usage: lea-agent run NAME [-- ARGS...] | ls | stop NAME | shell NAME | shells | stop-shell NAME" >&2
+    exit 2
+    ;;
+esac

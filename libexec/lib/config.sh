@@ -1,0 +1,96 @@
+# shellcheck shell=sh
+# Loads the organisation configuration, then the user configuration ($LEA_CONFIG, else
+# ~/.config/lea/lea.conf, written by lea init). A non-empty LEA_PROJECTS_DIR in the environment
+# beats both (so do LEA_APPROVALS, LEA_APPROVAL_TIMEOUT and LEA_MAX_AGENTS).
+
+lea_user_config_path() {
+  printf '%s' "${LEA_CONFIG:-${XDG_CONFIG_HOME:-$HOME/.config}/lea/lea.conf}"
+}
+
+lea_load_config() {
+  _lc_env=${LEA_PROJECTS_DIR:-}
+  _lc_appr=${LEA_APPROVALS:-}
+  _lc_appt=${LEA_APPROVAL_TIMEOUT:-}
+  _lc_max=${LEA_MAX_AGENTS:-}
+  # shellcheck source=/dev/null
+  . "$LEA_ROOT/config/lea.conf"
+  _lc_user=$(lea_user_config_path)
+  case $_lc_user in /*) ;; *) _lc_user=./$_lc_user ;; esac
+  if [ -n "${LEA_CONFIG:-}" ] || [ -f "$_lc_user" ]; then
+    # shellcheck source=/dev/null
+    . "$_lc_user"
+  fi
+  LEA_PROJECTS_DIR=${_lc_env:-${LEA_PROJECTS_DIR:-}}
+  LEA_APPROVALS=${_lc_appr:-${LEA_APPROVALS:-deck}}
+  LEA_APPROVAL_TIMEOUT=${_lc_appt:-${LEA_APPROVAL_TIMEOUT:-60}}
+  case $LEA_APPROVALS in deck|pane) ;; *) lea_die "LEA_APPROVALS must be deck or pane, not '$LEA_APPROVALS'" ;; esac
+  case $LEA_APPROVAL_TIMEOUT in
+    ''|0*|*[!0-9]*|????*) lea_die "LEA_APPROVAL_TIMEOUT must be a number of seconds from 1 to 600 without leading zeros, not '$LEA_APPROVAL_TIMEOUT'" ;;
+  esac
+  if [ "$LEA_APPROVAL_TIMEOUT" -lt 1 ] || [ "$LEA_APPROVAL_TIMEOUT" -gt 600 ]; then
+    lea_die "LEA_APPROVAL_TIMEOUT must be a number of seconds from 1 to 600 without leading zeros, not '$LEA_APPROVAL_TIMEOUT'"
+  fi
+  LEA_MAX_AGENTS=${_lc_max:-${LEA_MAX_AGENTS:-12}}
+  case $LEA_MAX_AGENTS in
+    ''|0*|*[!0-9]*|???*) lea_die "LEA_MAX_AGENTS must be a number of agents from 1 to 99 without leading zeros, not '$LEA_MAX_AGENTS'" ;;
+  esac
+  LEA_INTERNAL_HOSTS=${LEA_INTERNAL_HOSTS:-$LEA_ROOT/config/internal-hosts}
+  # The git SSH endpoints (none by default: git over HTTPS needs none). LEA_GITLAB_SSH and
+  # LEA_GITLAB_KNOWN_HOSTS, the keys of lea before any forge could be used, are read when the new
+  # ones are unset.
+  # shellcheck disable=SC2086
+  LEA_GIT_SSH=$(set -f; echo ${LEA_GIT_SSH:-${LEA_GITLAB_SSH:-}})
+  lea__check_git_ssh
+  _lc_conf=${XDG_CONFIG_HOME:-$HOME/.config}/lea
+  LEA_GIT_KNOWN_HOSTS=${LEA_GIT_KNOWN_HOSTS:-${LEA_GITLAB_KNOWN_HOSTS:-}}
+  if [ -z "$LEA_GIT_KNOWN_HOSTS" ]; then
+    LEA_GIT_KNOWN_HOSTS=$_lc_conf/git_known_hosts
+    if [ ! -e "$LEA_GIT_KNOWN_HOSTS" ] && [ -e "$_lc_conf/gitlab_known_hosts" ]; then
+      LEA_GIT_KNOWN_HOSTS=$_lc_conf/gitlab_known_hosts
+    fi
+  fi
+  LEA_LOCKSQL=${LEA_LOCKSQL:-1}
+  case $LEA_LOCKSQL in 0|1) ;; *) lea_die "LEA_LOCKSQL must be 1 (wire lea for a locksql console) or 0, not '$LEA_LOCKSQL'" ;; esac
+  unset LEA_GITLAB_SSH LEA_GITLAB_KNOWN_HOSTS LEA_REGISTRY
+  export LEA_PREFIX LEA_IMAGE LEA_PROXY_IMAGE LEA_GIT_SSH LEA_GIT_KNOWN_HOSTS LEA_LOCKSQL LEA_LOCKSQL_IMAGE LEA_LOCKSQL_REF \
+    LEA_OTEL_UPSTREAM LEA_NESTED_NETWORKS LEA_K8S_NAMESPACE LEA_INTERNAL_HOSTS LEA_PROJECTS_DIR \
+    LEA_APPROVALS LEA_APPROVAL_TIMEOUT LEA_MAX_AGENTS
+}
+
+# lea__check_git_ssh: LEA_GIT_SSH lists at most 16 host:port endpoints, each a plain host name
+# (written into the image's ssh configuration) and a port from 1 to 65535, no host twice.
+lea__check_git_ssh() {
+  _cg_n=0 _cg_seen=' '
+  set -f
+  for _cg_ep in $LEA_GIT_SSH; do
+    _cg_n=$((_cg_n + 1))
+    _cg_h=${_cg_ep%%:*} _cg_p=${_cg_ep#*:}
+    case $_cg_ep in *:*) ;; *) _cg_p= ;; esac
+    case $_cg_h in ''|*[!ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789.-]*) _cg_p= ;; esac
+    case $_cg_p in ''|0*|*[!0-9]*|??????*) _cg_bad=1 ;; *) _cg_bad= ;; esac
+    if [ -z "$_cg_bad" ] && [ "$_cg_p" -gt 65535 ]; then _cg_bad=1; fi
+    if [ -n "$_cg_bad" ]; then
+      set +f; lea_die "LEA_GIT_SSH must list host:port endpoints with plain host names, got '$_cg_ep'"
+    fi
+    case $_cg_seen in *" $_cg_h "*) set +f; lea_die "LEA_GIT_SSH lists $_cg_h twice" ;; esac
+    _cg_seen="$_cg_seen$_cg_h "
+  done
+  set +f
+  [ "$_cg_n" -le 16 ] || lea_die "LEA_GIT_SSH lists $_cg_n endpoints, at most 16"
+}
+
+# lea_user_config_set KEY VALUE: sets KEY='VALUE' in the user config and keeps every other line.
+# The file is private; a symlinked file is refused.
+lea_user_config_set() {
+  _cs_f=$(lea_user_config_path)
+  if [ -L "$_cs_f" ]; then lea_die "refusing to write $_cs_f: it is a symbolic link"; fi
+  mkdir -p "${_cs_f%/*}"
+  _cs_v=$(printf '%s' "$2" | sed "s/'/'\\\\''/g")
+  _cs_t=$(mktemp "$_cs_f.XXXXXX") || lea_die "cannot create a temporary file next to $_cs_f"
+  if {
+    if [ -f "$_cs_f" ]; then grep -v "^$1=" "$_cs_f" || true; fi
+    printf "%s='%s'\n" "$1" "$_cs_v"
+  } >"$_cs_t" && chmod 600 "$_cs_t" && mv -f "$_cs_t" "$_cs_f"; then return 0; fi
+  rm -f "$_cs_t"
+  return 1
+}

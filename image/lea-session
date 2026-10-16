@@ -1,0 +1,21 @@
+#!/bin/sh
+# One lea session: loads lea's git SSH key into the agent if there is one, then runs a shell / command with --shell, or Claude Code with lea's hook settings: with
+# --claude (a deck agent, lea-agent run) and by default.
+set -eu
+key=/lea/state/ssh/id_ed25519
+if [ -f "$key" ] && ! ssh-add -l >/dev/null 2>&1; then
+  ssh-add "$key" || echo "lea: the lea SSH key is not loaded; run ssh-add $key" >&2
+fi
+if [ "${1:-}" = --shell ]; then
+  shift
+  if [ $# -gt 0 ]; then exec "$@"; fi
+  exec bash -l
+fi
+# lea's Claude hooks (agent state, bus wake-up, approvals) and telemetry env come in through
+# --settings: file-based managed settings are skipped whenever an organisation has
+# server-managed settings.
+settings=${LEA_CLAUDE_SETTINGS:-/usr/local/share/lea/claude-settings.json}
+lea_settings() { [ -f "$settings" ] && printf '%s\n' "$settings"; }
+if [ "${1:-}" = --claude ]; then shift; fi
+if s=$(lea_settings); then set -- --settings "$s" "$@"; fi
+exec claude "$@"

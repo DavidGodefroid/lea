@@ -1,0 +1,50 @@
+#!/bin/sh
+# lea root entrypoint: creates the host user, sub-ids and runtime dirs, then drops privileges.
+set -eu
+: "${LEA_UID:?}" "${LEA_GID:?}" "${LEA_USER:?}" "${HOME:?}" "${LEA_PROXY_IP:?}"
+for ep in ${LEA_GIT_SSH:-}; do
+  case ${ep%%:*} in ''|*[!ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789.-]*)
+    echo "lea: invalid LEA_GIT_SSH endpoint" >&2; exit 1 ;;
+  esac
+done
+[ "$LEA_UID" -ne 0 ] || { echo "lea: refusing to run the session as root" >&2; exit 1; }
+[ "$LEA_GID" -ne 0 ] || { echo "lea: refusing to run the session with group root" >&2; exit 1; }
+# A name useradd accepts everywhere: ^[a-z_][a-z0-9_-]*$, at most 32 characters.
+case $LEA_USER in [abcdefghijklmnopqrstuvwxyz_]*) ;; *) LEA_USER=u$LEA_UID ;; esac
+case $LEA_USER in *[!abcdefghijklmnopqrstuvwxyz0123456789_-]*) LEA_USER=u$LEA_UID ;; esac
+[ "${#LEA_USER}" -le 32 ] || LEA_USER=u$LEA_UID
+
+getent group "$LEA_GID" >/dev/null || groupadd -g "$LEA_GID" "$LEA_USER"
+if ! getent passwd "$LEA_UID" >/dev/null; then
+  useradd -M -N -d "$HOME" -u "$LEA_UID" -g "$LEA_GID" -s /bin/bash "$LEA_USER"
+fi
+user=$(getent passwd "$LEA_UID" | cut -d: -f1)
+if [ "${LEA_LOCKSQL:-0}" = 1 ]; then usermod -aG locksql-clients "$user"; fi
+grep -q "^$user:" /etc/subuid || echo "$user:200000:65536" >>/etc/subuid
+grep -q "^$user:" /etc/subgid || echo "$user:200000:65536" >>/etc/subgid
+
+install -d -m 0700 -o "$LEA_UID" -g "$LEA_GID" "/run/user/$LEA_UID"
+install -d -m 0755 -o "$LEA_UID" -g "$LEA_GID" /run/lea
+chown "$LEA_UID:$LEA_GID" /lea/podman
+install -d -o "$LEA_UID" -g "$LEA_GID" "$HOME"
+for d in "$HOME/.config" "$HOME/.kube"; do
+  if [ -d "$d" ]; then chown "$LEA_UID:$LEA_GID" "$d"; fi
+done
+
+sed -e "s/@LEA_PROXY_IP@/$LEA_PROXY_IP/g" /usr/local/share/lea/containers.conf.tmpl >/etc/containers/containers.conf
+# Each git SSH endpoint goes to its forwarder on the proxy (port 2222 + its index), by IP so that
+# nested containers (GIT_SSH_COMMAND -F /run/lea/ssh_config) reach it too.
+{
+  echo "# git SSH endpoints of LEA_GIT_SSH, through the lea-proxy forwarders (written at start)."
+  port=2222
+  for ep in ${LEA_GIT_SSH:-}; do
+    printf 'Host %s\n  HostName %s\n  Port %s\n  HostKeyAlias %s\n  UserKnownHostsFile /run/lea/known_hosts\n  StrictHostKeyChecking yes\n  IdentityAgent /run/lea/ssh-agent.sock\n' \
+      "${ep%%:*}" "$LEA_PROXY_IP" "$port" "${ep%%:*}"
+    port=$((port + 1))
+  done
+} >/run/lea/ssh_config
+chmod 0644 /run/lea/ssh_config
+install -m 0644 /usr/local/share/lea/ssh_config.tmpl /etc/ssh/ssh_config.d/10-lea.conf
+if [ -f /lea/state/ssh/known_hosts ]; then install -m 0644 /lea/state/ssh/known_hosts /run/lea/known_hosts; fi
+
+exec setpriv --reuid "$LEA_UID" --regid "$LEA_GID" --init-groups /usr/local/libexec/lea/user-init

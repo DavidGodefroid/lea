@@ -1,0 +1,4 @@
+# The git SSH endpoints (LEA_GIT_SSH) are reached through the lea-proxy forwarders: the entrypoint
+# writes one Host block per endpoint into /run/lea/ssh_config. Installed as
+# /etc/ssh/ssh_config.d/10-lea.conf, mode 0644 (ssh refuses a group-writable file).
+Include /run/lea/ssh_config

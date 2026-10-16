@@ -1,0 +1,42 @@
+# A static tmux for hosts that have none (or one older than 3.2). Built from pinned upstream
+# release tarballs, each verified by SHA-256. `make tmux-build` runs it and copies /out/tmux to
+# build/tmux. Pure musl static link: it runs on any Linux of the same CPU architecture.
+FROM alpine:3.20
+RUN apk add --no-cache build-base linux-headers ncurses bison pkgconf curl
+WORKDIR /src
+
+ARG TMUX_VERSION=3.5a
+ARG TMUX_SHA256=16216bd0877170dfcc64157085ba9013610b12b082548c7c9542cc0103198951
+ARG LIBEVENT_VERSION=2.1.12-stable
+ARG LIBEVENT_SHA256=92e6de1be9ec176428fd2367677e61ceffc2ee1cb119035037a27d346b0403bb
+ARG NCURSES_VERSION=6.5
+ARG NCURSES_SHA256=136d91bc269a9a5785e5f9e980bc76ab57428f604ce3e5a5a90cebc767971cc6
+
+RUN set -eu; \
+    fetch() { curl -fsSL -o "$1" "$2"; echo "$3  $1" | sha256sum -c -; tar xzf "$1"; }; \
+    fetch tmux.tgz "https://github.com/tmux/tmux/releases/download/${TMUX_VERSION}/tmux-${TMUX_VERSION}.tar.gz" "$TMUX_SHA256"; \
+    fetch libevent.tgz "https://github.com/libevent/libevent/releases/download/release-${LIBEVENT_VERSION}/libevent-${LIBEVENT_VERSION}.tar.gz" "$LIBEVENT_SHA256"; \
+    fetch ncurses.tgz "https://ftp.gnu.org/gnu/ncurses/ncurses-${NCURSES_VERSION}.tar.gz" "$NCURSES_SHA256"
+
+# ncurses: static, wide-char, with the common terminals compiled in as fallbacks (so tmux works
+# with no terminfo database) and the usual host database paths as a second source.
+RUN set -eu; cd ncurses-*; \
+    ./configure --prefix=/opt/deps --without-shared --with-normal --without-debug --without-ada \
+      --without-cxx --without-cxx-binding --without-manpages --without-tests --enable-widec \
+      --disable-stripping --with-default-terminfo-dir=/usr/share/terminfo \
+      --with-terminfo-dirs=/etc/terminfo:/lib/terminfo:/usr/share/terminfo:/usr/lib/terminfo \
+      --with-fallbacks="tmux-256color,tmux,xterm-256color,xterm,screen-256color,screen,linux,vt100"; \
+    make -j"$(nproc)"; make install.libs install.includes
+
+RUN set -eu; cd libevent-*; \
+    ./configure --prefix=/opt/deps --disable-shared --enable-static --disable-openssl --disable-samples --disable-libevent-regress; \
+    make -j"$(nproc)"; make install
+
+RUN set -eu; cd tmux-*; \
+    PKG_CONFIG_PATH=/opt/deps/lib/pkgconfig \
+    CFLAGS="-I/opt/deps/include -I/opt/deps/include/ncursesw" LDFLAGS="-static -L/opt/deps/lib" \
+    LIBNCURSES_CFLAGS="-I/opt/deps/include/ncursesw" LIBNCURSES_LIBS="-L/opt/deps/lib -lncursesw" \
+    LIBEVENT_CFLAGS="-I/opt/deps/include" LIBEVENT_LIBS="-L/opt/deps/lib -levent" \
+    ./configure --enable-static; \
+    make -j"$(nproc)"; \
+    mkdir /out; strip -o /out/tmux tmux; /out/tmux -V

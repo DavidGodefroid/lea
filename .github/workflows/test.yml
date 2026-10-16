@@ -1,0 +1,13 @@
+name: test
+on: [push, pull_request]
+jobs:
+  unit:
+    runs-on: ubuntu-latest
+    container: python:3.12-slim
+    steps:
+      # This setup mirrors tests/Containerfile.
+      - run: apt-get update && apt-get install -y --no-install-recommends ca-certificates git jq openssh-client
+      - run: pip install --no-cache-dir shellcheck-py==0.10.0.1
+      - run: git clone --depth 1 --branch v1.11.1 https://github.com/bats-core/bats-core.git /opt/bats && /opt/bats/install.sh /usr/local
+      - uses: actions/checkout@v4
+      - run: tests/check.sh

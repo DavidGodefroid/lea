@@ -1,0 +1,14 @@
+status 1
+-- calls
+tmux [-V]
+core [agents]
+core [version]
+docker [network] [inspect] [lea-egress]
+docker [network] [inspect] [-f] [{{.Internal}}] [lea-internal-$ID]
+docker [inspect] [-f] [{{.State.Running}}] [lea-proxy]
+docker [inspect] [--format] [{{index .Config.Labels "lea.git-ssh"}}] [lea-proxy]
+docker [container] [inspect] [--format] [{{with index .NetworkSettings.Networks "lea-internal-$ID"}}{{.IPAddress}}{{end}}] [lea-proxy]
+docker [network] [connect] [--alias] [lea-proxy] [lea-internal-$ID] [lea-proxy]
+-- lea
+lea: error: could not connect lea-proxy to lea-internal-$ID
+-- stdout

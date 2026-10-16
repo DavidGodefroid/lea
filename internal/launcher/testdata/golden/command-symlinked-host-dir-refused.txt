@@ -1,0 +1,6 @@
+status 1
+-- calls
+tmux [-V]
+-- lea
+lea: error: refusing to use $W/data/lea/host/locks/$ID: $W/data/lea/host is a symbolic link (remove it, then retry)
+-- stdout

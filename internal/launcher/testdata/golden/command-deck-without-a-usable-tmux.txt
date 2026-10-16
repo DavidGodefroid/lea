@@ -1,0 +1,6 @@
+status 1
+-- calls
+
+-- lea
+lea: error: the deck needs tmux 3.2 or later on the host, and LEA_TMUX_BIN=$W/none is not an executable file. Unset it, or point it at tmux 3.2 or later
+-- stdout

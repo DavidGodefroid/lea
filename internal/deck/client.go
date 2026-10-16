@@ -1,0 +1,99 @@
+package deck
+
+import (
+	"context"
+	"encoding/json"
+
+	"github.com/DavidGodefroid/lea/internal/client"
+	"github.com/DavidGodefroid/lea/internal/wire"
+)
+
+// Client is the deck's API over the daemon's host socket.
+type Client struct{ Sock string }
+
+func (c Client) call(ctx context.Context, method string, params, result any) error {
+	raw, err := json.Marshal(params)
+	if err != nil {
+		return err
+	}
+	return client.Call(ctx, c.Sock, wire.Request{Method: method, Params: raw}, result)
+}
+
+func (c Client) Watch(ctx context.Context, container string, since int64) (Snapshot, error) {
+	var s Snapshot
+	err := c.call(ctx, "agents_watch", map[string]any{"container": container, "since": since, "timeout_s": watchWait}, &s)
+	return s, err
+}
+
+func (c Client) New(ctx context.Context, container string) (Agent, error) {
+	var a Agent
+	err := c.call(ctx, "agent_new", map[string]any{"container": container, "profile": "claude", "focus": true}, &a)
+	return a, err
+}
+
+func (c Client) Show(ctx context.Context, key string, focus bool) error {
+	return c.call(ctx, "agent_focus", map[string]any{"key": key, "focus": focus}, nil)
+}
+
+func (c Client) Stop(ctx context.Context, key string) error {
+	return c.call(ctx, "agent_stop", map[string]any{"key": key}, nil)
+}
+
+// RemoveEnded removes an agent the deck shows as done, only while it is still ended.
+func (c Client) RemoveEnded(ctx context.Context, key string) error {
+	return c.call(ctx, "agent_stop", map[string]any{"key": key, "ended": true}, nil)
+}
+
+// SetRole changes an agent's role (the deck's r): the host socket's caller is the user.
+func (c Client) SetRole(ctx context.Context, key, role string) error {
+	return c.call(ctx, "agent_role", map[string]any{"agent": key, "role": role}, nil)
+}
+
+func (c Client) Detach(ctx context.Context, container string) error {
+	return c.call(ctx, "deck_detach", map[string]any{"container": container}, nil)
+}
+
+func (c Client) Decide(ctx context.Context, id int64, verdict string) error {
+	return c.call(ctx, "approval_decide", map[string]any{"id": id, "verdict": verdict}, nil)
+}
+
+func (c Client) Popup(ctx context.Context, key string, compose bool) error {
+	return c.call(ctx, "deck_popup", map[string]any{"key": key, "compose": compose}, nil)
+}
+
+// SetLabel renames an agent for display (the deck's e); "" clears the label.
+func (c Client) SetLabel(ctx context.Context, key, label string) error {
+	return c.call(ctx, "agent_label", map[string]any{"key": key, "label": label}, nil)
+}
+
+// OpenShell opens a shell in the container (the deck's s).
+func (c Client) OpenShell(ctx context.Context, container string) (Agent, error) {
+	var a Agent
+	err := c.call(ctx, "shell_open", map[string]any{"container": container}, &a)
+	return a, err
+}
+
+// Label is an agent's display label ("" when none), from the host's agents_list.
+func (c Client) Label(ctx context.Context, key string) (string, error) {
+	var as []struct{ Key, Label string }
+	if err := c.call(ctx, "agents_list", nil, &as); err != nil {
+		return "", err
+	}
+	for _, a := range as {
+		if a.Key == key {
+			return a.Label, nil
+		}
+	}
+	return "", nil
+}
+
+func (c Client) Thread(ctx context.Context, key string) ([]Message, error) {
+	var ms []Message
+	err := c.call(ctx, "thread_list", map[string]any{"key": key}, &ms)
+	return ms, err
+}
+
+// Send writes to an agent as the user (a note): the host socket's caller is always "user".
+func (c Client) Send(ctx context.Context, key, body string) error {
+	return c.call(ctx, "msg_send", map[string]any{"to": key, "body": body, "kind": "note"}, nil)
+}

@@ -1,0 +1,6 @@
+status 1
+-- calls
+tmux [-V]
+-- lea
+lea: error: another lea holds the 'global' lock (remove $W/data/lea/host/locks/global if it is stale)
+-- stdout

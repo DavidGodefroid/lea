@@ -1,0 +1,7 @@
+status 0
+-- calls
+curl [-fsSL] [https://raw.githubusercontent.com/DavidGodefroid/lea/main/install.sh]
+-- lea
+lea: updating this release install with the installer (https://raw.githubusercontent.com/DavidGodefroid/lea/main/install.sh)
+lea: updated; running lea containers keep their image until they stop (lea stop --all)
+-- stdout

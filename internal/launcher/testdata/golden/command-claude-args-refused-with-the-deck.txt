@@ -1,0 +1,6 @@
+status 1
+-- calls
+
+-- lea
+lea: error: with the deck, claude arguments go to a new agent: lea new -- --resume
+-- stdout

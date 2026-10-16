@@ -1,0 +1,12 @@
+#!/bin/sh
+# lea's wl-copy: there is no display in lea. The text goes to the host clipboard through the
+# launcher's copy-only FIFO (see internal/launcher/clipboard.go); options such as --type are ignored, and nothing can
+# be read back. Without a host reader within 5 s, the copy is dropped.
+f=/lea/clipboard/copy
+if [ ! -p "$f" ]; then
+  cat >/dev/null
+  echo "wl-copy: no lea clipboard bridge (restart lea: lea stop)" >&2
+  exit 1
+fi
+# shellcheck disable=SC2016
+exec timeout 5 sh -c 'exec cat >"$1"' wl-copy "$f"

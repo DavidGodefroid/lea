@@ -1,0 +1,36 @@
+abi <abi/@ABI@>,
+include <tunables/global>
+
+# lea: docker-default's denies except /proc writes and mount, which rootless Podman needs
+# (to be narrowed after validation).
+# docker-default's /proc write denies (@{PROC}/* w, @{PROC}/{[^1-9],...}/** w, @{PROC}/sys/[^k]** w)
+# and mount restrictions are deliberately omitted pending validation in Task 12: they may break
+# rootless Podman (writes under /proc/self, nested netns sysctls).
+profile lea flags=(attach_disconnected,mediate_deleted) {
+  include <abstractions/base>
+@USERNS@
+  network,
+  capability,
+  file,
+  mount,
+  umount,
+  remount,
+  pivot_root,
+  ptrace peer=lea,
+  signal peer=lea,
+  signal (receive) peer=unconfined,
+  signal (receive) peer=runc,
+  signal (receive) peer=dockerd,
+  unix,
+  deny @{PROC}/sysrq-trigger rwklx,
+  deny @{PROC}/kcore rwklx,
+  deny @{PROC}/sys/kernel/{?,??,[^s][^h][^m]**} w,
+  deny /sys/[^f]*/** wklx,
+  deny /sys/f[^s]*/** wklx,
+  deny /sys/fs/[^c]*/** wklx,
+  deny /sys/fs/c[^g]*/** wklx,
+  deny /sys/fs/cg[^r]*/** wklx,
+  deny /sys/devices/virtual/powercap/** rwklx,
+  deny /sys/firmware/** rwklx,
+  deny /sys/kernel/security/** rwklx,
+}

@@ -1,0 +1,6 @@
+status 1
+-- calls
+tmux [-V]
+-- lea
+lea: error: refusing to use $W/data/lea/state/claude.json: $W/data/lea/state is a symbolic link (remove it, then retry)
+-- stdout

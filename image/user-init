@@ -1,0 +1,35 @@
+#!/bin/sh
+# Runs as the developer: ssh-agent, rootless Podman service, nested networks; then holds the container.
+set -eu
+: "${XDG_RUNTIME_DIR:?}"
+rm -f /run/lea/ready /run/lea/ssh-agent.sock
+ssh-agent -a /run/lea/ssh-agent.sock >/dev/null
+mkdir -p "$XDG_RUNTIME_DIR/podman"
+podman info --format '{{.Host.Security.Rootless}}' | grep -qx true
+podman system service --time=0 "unix://$XDG_RUNTIME_DIR/podman/podman.sock" &
+i=0
+while [ ! -S "$XDG_RUNTIME_DIR/podman/podman.sock" ]; do
+  i=$((i + 1))
+  if [ "$i" -gt 300 ]; then echo "lea: podman service socket did not appear within 30s" >&2; exit 1; fi
+  sleep 0.1
+done
+for n in ${LEA_NESTED_NETWORKS:-}; do
+  podman network exists "$n" || podman network create "$n" >/dev/null
+done
+# lea mcp in the container's own Claude state: written in place, since ~/.claude.json is a
+# single-file bind mount that a rename would detach. The file is shared by every container of
+# this projects dir, so it is left untouched once registered; failure never blocks readiness.
+cj=$HOME/.claude.json
+if [ -x /usr/local/bin/lea ] && [ -f "$cj" ] && command -v jq >/dev/null 2>&1 \
+   && ! jq -e '.mcpServers.lea.command == "/usr/local/bin/lea"' "$cj" >/dev/null 2>&1; then
+  tmp=
+  if tmp=$(mktemp) \
+     && jq '.mcpServers.lea = {"type":"stdio","command":"/usr/local/bin/lea","args":["mcp"]}' "$cj" >"$tmp" \
+     && [ -s "$tmp" ] && cat "$tmp" >"$cj"; then :
+  else
+    echo "lea: warning: could not register the lea MCP server in $cj" >&2
+  fi
+  rm -f "$tmp"
+fi
+touch /run/lea/ready
+exec sleep infinity

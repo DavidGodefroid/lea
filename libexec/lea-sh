@@ -1,0 +1,40 @@
+#!/bin/sh
+# The parts of lea still written in shell (libexec/lib/*.sh), run by the Go launcher (build/lea):
+# the start and exit scans, init, update, doctor and kube refresh (spec 3.3: "called by the binary
+# until ported"). One command per call, from the fixed list below; arguments are passed as they
+# are, and a scan DIR must be absolute. Anything else exits 2 without running a lea function.
+set -eu
+LEA_ROOT=$(cd "$(dirname "$0")/.." && pwd -P)
+export LEA_ROOT
+usage() { echo "usage: lea-sh scan-begin DIR | scan-finish DIR | init [ARGS] | update | doctor | kube-refresh" >&2; exit 2; }
+[ $# -gt 0 ] || usage
+cmd=$1; shift
+case $cmd in
+  scan-begin|scan-finish)
+    # One absolute directory: anything else could reach find(1) as an expression (-delete).
+    [ $# -eq 1 ] || usage
+    case $1 in /*) ;; *) usage ;; esac ;;
+  init) ;;
+  update|doctor|kube-refresh) [ $# -eq 0 ] || usage ;;
+  *) usage ;;
+esac
+for lib in "$LEA_ROOT"/libexec/lib/*.sh; do
+  # shellcheck source=/dev/null
+  . "$lib"
+done
+# The scans need no configuration key (only XDG_DATA_HOME and HOME), so the Go start path never
+# sources the configuration files. They run with errexit off (lea_scan_begin ... || exit 1,
+# lea_scan_finish ... || exit 1): under set -e a single unreadable file would empty the snapshot
+# and silence the exit-scan warning.
+case $cmd in
+  scan-begin|scan-finish) ;;
+  *) lea_load_config ;;
+esac
+case $cmd in
+  scan-begin) lea_scan_begin "$1" || exit 1 ;;
+  scan-finish) lea_scan_finish "$1" || exit 1 ;;
+  init) lea_init "$@" ;;
+  update) lea_update ;;
+  doctor) lea_doctor ;;
+  kube-refresh) lea_kube_refresh ;;
+esac

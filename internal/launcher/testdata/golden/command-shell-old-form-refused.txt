@@ -1,0 +1,6 @@
+status 2
+-- calls
+
+-- lea
+lea: error: lea no longer takes a directory: LEA_PROJECTS_DIR=$W/projects lea (or rerun 'lea init' to change the default)
+-- stdout

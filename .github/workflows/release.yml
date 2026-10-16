@@ -1,0 +1,63 @@
+name: release
+on:
+  push:
+    tags: ['v*.*.*']
+permissions:
+  contents: write
+  packages: write
+jobs:
+  images:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          - name: lea
+            file: image/Containerfile
+          - name: lea-proxy
+            file: proxy/Containerfile
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-qemu-action@v3
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - id: v
+        run: echo "version=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ${{ matrix.file }}
+          platforms: linux/amd64,linux/arm64
+          push: true
+          build-args: LEA_VERSION=${{ github.ref_name }}
+          labels: org.opencontainers.image.source=https://github.com/${{ github.repository }}
+          tags: |
+            ghcr.io/davidgodefroid/${{ matrix.name }}:${{ steps.v.outputs.version }}
+            ghcr.io/davidgodefroid/${{ matrix.name }}:latest
+  release:
+    needs: images
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - run: make go-test-tmux
+      - uses: docker/setup-qemu-action@v3
+      - uses: docker/setup-buildx-action@v3
+      - name: static tmux for the Linux archives
+        run: |
+          mkdir -p dist-tmux
+          for arch in amd64 arm64; do
+            docker buildx build --platform "linux/$arch" --load -t "lea-tmux:$arch" -f tools/tmux/Containerfile tools/tmux
+            id=$(docker create --platform "linux/$arch" "lea-tmux:$arch")
+            docker cp "$id:/out/tmux" "dist-tmux/tmux-$arch"
+            docker rm "$id"
+          done
+      - run: tools/dist.sh "$GITHUB_REF_NAME"
+      - env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh release create "$GITHUB_REF_NAME" dist/*.tar.gz dist/checksums.txt dist/install.sh --title "lea $GITHUB_REF_NAME" --generate-notes
