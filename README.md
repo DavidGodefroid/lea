@@ -13,11 +13,11 @@ selected agent's terminal on the right.
 
 ```
 ╭─ ●●● lea ──────── 3 agents ─╮│
-│›▍⠹ fix login timeout  42%   ││  ✻ Claude Code
+│› ⠹ fix login timeout  42%   ││  ✻ Claude Code
 │    shop · fix/login · 2m    ││
-│ ▍● review cart api    18%   ││  > the timeout is set in session.go…
+│  ● review cart api    18%   ││  > the timeout is set in session.go…
 │    reviewer · shop · now    ││
-│ ▍● add dark mode       7%   ││
+│  ● add dark mode       7%   ││
 │    shop · needs you         ││
 ╰─ n new · m msg · ? keys ────╯│
 ```

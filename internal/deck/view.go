@@ -300,13 +300,13 @@ func (m Model) row(a Agent, inner int) []string {
 		mark = c.mark
 	}
 	const profW, ctxW = 6, 4
-	nameW := inner - 4 - (1 + profW) - (1 + ctxW) // mark, bar, glyph, space
+	nameW := inner - 4 - (1 + profW) - (1 + ctxW) // mark, space, glyph, space
 	g, gc := stateMark(a.State, a.Updated, m.now().Unix(), m.frame, m.ascii)
 	if isShell(a) {
 		g, gc = "$", theme.Unknown
 	}
 	line1 := bg(lipgloss.NewStyle().Foreground(theme.Accent)).Render(mark) +
-		bg(lipgloss.NewStyle().Foreground(AgentColor(a.Key))).Render(c.bar) +
+		bg(plain).Render(" ") +
 		bg(lipgloss.NewStyle().Foreground(gc)).Render(g) +
 		bg(plain).Render(" ") +
 		bg(lipgloss.NewStyle().Foreground(theme.Text).Bold(sel)).Render(padRight(fit(display(a), nameW, c), nameW)) +

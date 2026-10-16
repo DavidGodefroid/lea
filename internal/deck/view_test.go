@@ -42,10 +42,10 @@ func TestViewRows(t *testing.T) {
 	m := sized(loaded(t, &fakeAPI{}, "lea-a/b", ag("a", "idle", clock.Unix()-30), ag("b", "working", clock.Unix()-120)), 34, 12)
 	ls := viewLines(m)
 	// a, launched first, stays first; b is selected.
-	if !strings.HasPrefix(ls[1], "│ ▍● a ") || !strings.Contains(ls[2], "p/shop · idle · now") {
+	if !strings.HasPrefix(ls[1], "│  ● a ") || !strings.Contains(ls[2], "p/shop · idle · now") {
 		t.Fatalf("row a %q / %q", ls[1], ls[2])
 	}
-	if !strings.HasPrefix(ls[3], "│›▍⠋ b ") || !strings.HasSuffix(ls[3], " claude     │") {
+	if !strings.HasPrefix(ls[3], "│› ⠋ b ") || !strings.HasSuffix(ls[3], " claude     │") {
 		t.Fatalf("row b %q", ls[3])
 	}
 	if !strings.Contains(ls[4], "p/shop · working · 2m") {
@@ -57,10 +57,10 @@ func TestViewRows(t *testing.T) {
 func TestViewRowShowsTheLabelInsteadOfTheName(t *testing.T) {
 	m := sized(loaded(t, &fakeAPI{}, "lea-a/claude-1", labelled("claude-1", "auth work"), ag("claude-2", "idle", 1)), 34, 10)
 	ls := viewLines(m)
-	if !strings.HasPrefix(ls[1], "│›▍○ auth work ") || strings.Contains(ls[1], "claude-1") {
+	if !strings.HasPrefix(ls[1], "│› ○ auth work ") || strings.Contains(ls[1], "claude-1") {
 		t.Fatalf("row %q", ls[1])
 	}
-	if !strings.HasPrefix(ls[3], "│ ▍○ claude-2 ") {
+	if !strings.HasPrefix(ls[3], "│  ○ claude-2 ") {
 		t.Fatalf("row %q", ls[3])
 	}
 }
@@ -118,7 +118,7 @@ func TestViewASCII(t *testing.T) {
 	m := sized(loaded(t, &fakeAPI{}, "lea-a/b", ag("b", "working", 1)), 34, 6)
 	m.ascii = true
 	ls := viewLines(m)
-	if !strings.HasPrefix(ls[0], "+- Ooo lea ") || !strings.HasPrefix(ls[1], "|>|. b ") {
+	if !strings.HasPrefix(ls[0], "+- Ooo lea ") || !strings.HasPrefix(ls[1], "|> . b ") {
 		t.Fatalf("view:\n%s", strings.Join(ls, "\n"))
 	}
 	for _, l := range ls {
