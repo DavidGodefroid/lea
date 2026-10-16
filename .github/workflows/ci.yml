@@ -14,6 +14,8 @@ jobs:
         with:
           go-version-file: go.mod
       - run: go vet ./...
+      - name: build for every release platform
+        run: for p in linux/amd64 linux/arm64 darwin/amd64 darwin/arm64; do GOOS=${p%/*} GOARCH=${p#*/} CGO_ENABLED=0 go build -o /dev/null ./cmd/lea; done
       # The tests in a container with the tmux lea is tested against (the runner's is older).
       - run: make go-test-tmux
   images:

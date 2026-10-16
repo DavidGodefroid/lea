@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/charmbracelet/x/term"
 	"golang.org/x/sys/unix"
 )
 
@@ -316,6 +317,5 @@ func IsTerminal(x any) bool {
 	if !ok {
 		return false
 	}
-	_, err := unix.IoctlGetTermios(int(f.Fd()), unix.TCGETS)
-	return err == nil
+	return term.IsTerminal(f.Fd())
 }
