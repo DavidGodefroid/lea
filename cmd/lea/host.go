@@ -273,6 +273,9 @@ func runHost(args []string, stdout, stderr io.Writer) int {
 		if len(args) > 1 && args[1] == "--agent" {
 			call = agentCall
 		}
+		if len(args) > 2 && args[1] == "--agent" && args[2] == "--wait" {
+			return runInboxWait(args[3:], stdout, stderr)
+		}
 		var ms []struct{ Text string }
 		if err := call("msg_inbox", nil, &ms); err != nil {
 			return fail(err)
@@ -661,4 +664,40 @@ func approvalTimeout(v string) int {
 		return 0
 	}
 	return n
+}
+
+// runInboxWait is lea inbox --agent --wait [SECONDS] (inside lea, an hour by default): it returns
+// once the agent has an unread message, printing how many and from whom, and leaves them unread.
+// Run as a background job, it wakes an agent whose turn is over: Claude Code starts a turn when
+// the job ends. Exit 0 on a message, 1 when the time runs out with none.
+func runInboxWait(args []string, stdout, stderr io.Writer) int {
+	secs := 3600
+	if len(args) > 1 {
+		fmt.Fprintln(stderr, "usage: lea inbox --agent --wait [SECONDS]")
+		return 2
+	}
+	if len(args) == 1 {
+		n, err := strconv.Atoi(args[0])
+		if err != nil || n < 1 || n > 3600 {
+			fmt.Fprintln(stderr, "usage: lea inbox --agent --wait [SECONDS]   (1 to 3600)")
+			return 2
+		}
+		secs = n
+	}
+	var r struct {
+		Count int
+		Text  string
+	}
+	err := callSock(identity.BusSock(os.Getenv), identity.Agent(os.Getenv), "msg_watch", map[string]any{"timeout_s": secs}, &r,
+		time.Duration(secs)*time.Second+5*time.Second)
+	if err != nil {
+		fmt.Fprintln(stderr, "lea:", clean(err.Error(), false))
+		return 1
+	}
+	if r.Count == 0 {
+		fmt.Fprintln(stdout, "lea: no message")
+		return 1
+	}
+	fmt.Fprintln(stdout, clean(r.Text, false))
+	return 0
 }

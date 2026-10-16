@@ -1081,6 +1081,13 @@ func TestNewForALeadsChildRecordsTheParent(t *testing.T) {
 	if ms, _ := e.st.Unread(kid.Key, 8); len(ms) != 1 || ms[0].From != lead.Key {
 		t.Fatalf("kid inbox=%+v", ms)
 	}
+	// The child reports to its lead in the lead's inbox, not only on the board.
+	if p := lastArg(s, "dev-1"); !strings.Contains(p, "Your lead is boss:") || !strings.Contains(p, "msg_send (to boss,") {
+		t.Fatalf("kid prompt %q", p)
+	}
+	if strings.Contains(lastArg(s, "boss"), "Your lead is") {
+		t.Fatalf("the user's lead got a lead: %q", lastArg(s, "boss"))
+	}
 	if _, err := e.m.New(bg, NewRequest{Container: C, Role: "lead", Parent: lead.Key}); err == nil || !strings.Contains(err.Error(), "never spawns") {
 		t.Fatalf("a lead's child made a lead: err=%v", err)
 	}

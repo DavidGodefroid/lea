@@ -118,3 +118,34 @@ func TestAgentsListHidesTaskTextFromOtherContainers(t *testing.T) {
 		}
 	}
 }
+
+// board_read gives an agent its own container's board, every agent text marked untrusted.
+func TestBoardReadShowsTheCallersContainerUntrusted(t *testing.T) {
+	e := start(t)
+	e.d.SetAgents(&fakeAgents{})
+	boss := spawned(t, e, "boss", "lead", "")
+	spawned(t, e, "kid", "dev", boss)
+	upd := map[string]any{"status_text": "writing tests", "next": "open the review", "blocked_on": "a flaky test"}
+	if err := call(t, e.bus, "kid", "task_update", upd, nil); err != nil {
+		t.Fatal(err)
+	}
+	var b struct {
+		Items []boardItem `json:"items"`
+	}
+	if err := call(t, e.bus, "boss", "board_read", nil, &b); err != nil {
+		t.Fatal(err)
+	}
+	var kid *boardItem
+	for i := range b.Items {
+		if b.Items[i].Container != "lea-a" {
+			t.Fatalf("another container on the board: %+v", b.Items[i])
+		}
+		if b.Items[i].Agent == "kid" {
+			kid = &b.Items[i]
+		}
+	}
+	if kid == nil || kid.Parent != "boss" || kid.Status != "untrusted: writing tests" || kid.Next != "untrusted: open the review" ||
+		kid.BlockedOn != "untrusted: a flaky test" {
+		t.Fatalf("board=%+v", b)
+	}
+}

@@ -34,16 +34,22 @@ For each thing the user asks:
 3. Write a self-contained brief (the agent knows nothing else):
    - the goal and the acceptance criteria, in the user's words when they gave them;
    - the repo, the branch, what not to touch;
-   - **how to report**: "Send me (`<your name>`) a `msg_send` of kind `result` when done, kind
-     `request` when blocked or when a decision is needed. At most 5 lines: outcome, evidence
-     (tests, commit, PR), open question. Keep `task_update` current."
+   - **how to report** (lea tells it too, but say it): "Send me (`<your name>`) a `msg_send` of
+     kind `result` when done, kind `request` when blocked or when a decision is needed. At most
+     5 lines: outcome, evidence (tests, commit, PR), open question. Keep `task_update` current."
 4. Keep a ledger, one line per agent: name, task in 6 words, state, last news. It is your memory;
    rewrite it, never append to it.
 
 ## Running the team
 
-- Wait with `msg_wait` (a timeout of a few minutes) whenever no user message is pending; read
-  `msg_inbox` at the start of every turn.
+- **Never end a turn deaf.** A message that arrives after your turn ends waits in your inbox and
+  nothing wakes you. Before you end every turn while an agent works, make sure one background
+  Bash job runs `lea inbox --agent --wait` (`run_in_background`; an hour at most, then start it
+  again). It ends as soon as a message arrives, and that wakes you: read `msg_inbox` then. Keep
+  one such job, not one per turn.
+- Read `msg_inbox` at the start of every turn.
+- Follow the team with `board_read` (every agent's status, next step and blocker), rather than
+  asking each agent; ask only an agent whose row says nothing new.
 - An agent's question you can answer from the user's request or the code: answer it yourself with
   `msg_reply`. Only the user's decisions go up to the user.
 - A dev done: start a reviewer on its branch when the user wants reviews, or report it done.
@@ -73,7 +79,7 @@ Needs you: <question, or "nothing">
 
 The user can ask, in their own words:
 
-- **board / statut**: every agent, one line each, then `Needs you:`.
+- **board / statut**: `board_read`, then every agent, one line each, then `Needs you:`.
 - **detail <agent>**: at most 8 lines on that agent (what it did, evidence, what is left).
 - **stop <agent>**: stop it, confirm in one line.
 - a new request: take it as above, answer with the lines of the agents you started.

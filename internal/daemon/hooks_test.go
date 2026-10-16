@@ -356,3 +356,41 @@ func TestForgottenAgentsAreDroppedFromTheHookMaps(t *testing.T) {
 		t.Fatalf("stopped=%v blocks=%v", e.d.stopped, e.d.blocks)
 	}
 }
+
+// msg_watch returns once a message arrives, says who sent it, and leaves it unread: the job that
+// runs it (lea inbox --agent --wait) only wakes the agent, which reads with msg_inbox.
+func TestMsgWatchWakesOnAMessageAndLeavesItUnread(t *testing.T) {
+	e := start(t)
+	call(t, e.bus, "dev", "agents_list", nil, nil)
+	type notice struct {
+		Count int
+		Text  string
+	}
+	got := make(chan notice, 1)
+	errs := make(chan error, 1)
+	go func() {
+		var r notice
+		errs <- call(t, e.bus, "dev", "msg_watch", map[string]any{"timeout_s": 10}, &r)
+		got <- r
+	}()
+	time.Sleep(100 * time.Millisecond)
+	call(t, e.api, "", "msg_send", map[string]any{"to": "dev", "body": "secret body", "kind": "note"}, nil)
+	if err := <-errs; err != nil {
+		t.Fatal(err)
+	}
+	r := <-got
+	if r.Count != 1 || !strings.Contains(r.Text, "user") || !strings.Contains(r.Text, "msg_inbox") || strings.Contains(r.Text, "secret body") {
+		t.Fatalf("notice=%+v", r)
+	}
+	var ms []delivered
+	if err := call(t, e.bus, "dev", "msg_inbox", nil, &ms); err != nil || len(ms) != 1 {
+		t.Fatalf("the message was taken: %+v err=%v", ms, err)
+	}
+	var none notice
+	if err := call(t, e.bus, "dev", "msg_watch", map[string]any{"timeout_s": 1}, &none); err != nil || none.Count != 0 {
+		t.Fatalf("an empty inbox: %+v err=%v", none, err)
+	}
+	if err := call(t, e.bus, "dev", "msg_watch", map[string]any{"timeout_s": 3601}, nil); err == nil {
+		t.Fatal("a watch over an hour accepted")
+	}
+}

@@ -78,6 +78,30 @@ func TestHostMsgAndAgents(t *testing.T) {
 	}
 }
 
+// lea inbox --agent --wait returns on a message, names its sender, and leaves it to msg_inbox.
+func TestAgentInboxWaitEndsOnAMessage(t *testing.T) {
+	api, bus := startDaemon(t)
+	agent := map[string]string{"LEA_BUS_SOCK": bus, "LEA_AGENT": "dev"}
+	if rc, out, _ := runEnv(t, agent, "inbox", "--agent", "--wait", "1"); rc != 1 || !strings.Contains(out, "no message") {
+		t.Fatalf("empty wait rc=%d out=%q", rc, out)
+	}
+	if rc, _, e := runEnv(t, map[string]string{"LEA_DAEMON_SOCK": api}, "msg", "dev", "hello"); rc != 0 {
+		t.Fatalf("msg rc=%d %s", rc, e)
+	}
+	rc, out, e := runEnv(t, agent, "inbox", "--agent", "--wait", "5")
+	if rc != 0 || !strings.Contains(out, "1 unread message(s) from user") || strings.Contains(out, "hello") {
+		t.Fatalf("wait rc=%d out=%q err=%q", rc, out, e)
+	}
+	if rc, out, _ := runEnv(t, agent, "inbox", "--agent"); rc != 0 || !strings.Contains(out, "hello") {
+		t.Fatalf("the wait took the message: rc=%d out=%q", rc, out)
+	}
+	for _, bad := range [][]string{{"0"}, {"3601"}, {"x"}, {"1", "2"}} {
+		if rc, _, _ := runEnv(t, agent, append([]string{"inbox", "--agent", "--wait"}, bad...)...); rc != 2 {
+			t.Fatalf("--wait %q rc=%d, want 2", bad, rc)
+		}
+	}
+}
+
 func TestHostAgentsShowsTheLabelBesideTheName(t *testing.T) {
 	api, _, st := startDaemonWithStore(t)
 	for _, n := range []string{"claude-1", "claude-2"} {
