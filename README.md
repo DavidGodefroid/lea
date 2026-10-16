@@ -79,8 +79,10 @@ The mouse works too: click a row to select it, scroll to move, right-click a row
 - **Names.** An agent you have not renamed is named after its first prompt, by a short
   `claude -p` run on the host with a small model (`LEA_AUTONAME_MODEL`, `haiku` by default;
   `LEA_AUTONAME=0` turns it off). The prompt is not stored.
-- **Copy.** Drag to select text in an agent's terminal: releasing the button copies it to your
-  clipboard and flashes "Copied". lea can write your clipboard, never read it.
+- **Copy and paste.** Drag to select text in an agent's terminal: releasing the button copies it
+  to your clipboard and flashes "Copied". `ctrl+v` pastes your clipboard's text into the pane that
+  has the keyboard (the agent's input, a shell, the deck). lea reads your clipboard only when you
+  press `ctrl+v` (with `wl-paste`, `xclip` or `pbpaste`); agents never read it.
 - **Permissions.** When an agent asks for a permission, its row shows the request and the deck
   answers it. Unanswered after `LEA_APPROVAL_TIMEOUT` seconds (60), Claude asks in its own
   terminal as usual; `LEA_APPROVALS=pane` keeps Claude's dialog only.

@@ -312,7 +312,7 @@ func TestRealConfLocksTheLayoutAndIsIdempotent(t *testing.T) {
 	if out, err := tm("new-session", "-d", "-s", "lea-l", "-n", "deck", "sleep", "600"); err != nil {
 		t.Fatalf("new-session: %v: %s", err, out)
 	}
-	if got, want := keyNames(t, tm, "root"), []string{"C-Space", "MouseDown1Pane", "MouseDown3Pane", "MouseDrag1Pane", "WheelDownPane", "WheelUpPane"}; !slices.Equal(got, want) {
+	if got, want := keyNames(t, tm, "root"), []string{"C-Space", "C-v", "MouseDown1Pane", "MouseDown3Pane", "MouseDrag1Pane", "WheelDownPane", "WheelUpPane"}; !slices.Equal(got, want) {
 		t.Fatalf("root table %q, want %q", got, want)
 	}
 	for _, k := range []string{"MouseDown3Status", "MouseDrag1Border", "M-MouseDown3Pane"} {
@@ -663,5 +663,39 @@ func TestRealTheSlotSaysWhetherItHasTheKeyboard(t *testing.T) {
 	tm("set-option", "-p", "-t", "=lea-k:.1", "@lea_role", "placeholder")
 	if b := border("=lea-k:.1"); b != "" {
 		t.Errorf("the empty slot's border shows %q", b)
+	}
+}
+
+// ctrl+v pastes the host clipboard's text into the pane that has the keyboard (here pbpaste, the
+// first reader found with no display set), and leaves no buffer and no file behind.
+func TestRealCtrlVPastesTheHostClipboard(t *testing.T) {
+	bin := t.TempDir()
+	if err := os.WriteFile(filepath.Join(bin, "pbpaste"), []byte("#!/bin/sh\nprintf 'from the clipboard: h\\303\\251llo'\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+	t.Setenv("WAYLAND_DISPLAY", "")
+	t.Setenv("DISPLAY", "")
+	s := realServer(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	got := filepath.Join(os.Getenv("TMUX_TMPDIR"), "pasted")
+	c, err := s.Open(ctx, "lea-v", []string{"sh", "-c", `stty raw -echo; exec cat > "$1"`, "sh", got})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c.Close()
+	client := attachTerminal(t, ctx, s, c, "lea-v", filepath.Join(os.Getenv("TMUX_TMPDIR"), "terminal"))
+	// send-keys -K: the key as the user's terminal sends it, through the key bindings.
+	if out, err := exec.Command("tmux", "-L", "lea-test", "send-keys", "-K", "-c", client, "C-v").CombinedOutput(); err != nil {
+		t.Fatalf("send-keys -K: %v: %s", err, out)
+	}
+	waitFor(t, "the paste in the pane", func() bool { b, _ := os.ReadFile(got); return string(b) == "from the clipboard: héllo" })
+	if out, _ := exec.Command("tmux", "-L", "lea-test", "list-buffers", "-F", "#{buffer_name}").Output(); strings.Contains(string(out), "lea-paste") {
+		t.Errorf("the paste buffer is left: %q", out)
+	}
+	sock := SocketPath(os.Getenv, os.Getuid(), "lea-test")
+	if _, err := os.Stat(sock + ".paste"); !os.IsNotExist(err) {
+		t.Errorf("the paste file is left: %v", err)
 	}
 }
