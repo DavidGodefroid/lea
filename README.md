@@ -160,6 +160,12 @@ Needs you: palette for dark-mode
 
 Ask it for the `board`, the `detail` of an agent, or to `stop` one, in your own words.
 
+The tower never does the work itself, not even a `git push`: every request goes to an agent. The
+plugin enforces it with a hook: once `/lea:tower-control` runs, the session may only use lea's
+team tools (`agents_*`, `msg_*`, `board_read`, `task_update`), ask you questions and run
+`lea inbox --agent --wait`; any other tool (Bash, Edit, Read, git, gh, the web…) is denied with a
+reminder to delegate. `/lea:tower-control off` gives the session its tools back.
+
 `lea new --brief FILE` gives a new agent its first message; `--repo NAME` starts it in a
 directory of the projects directory; `--branch B` has it work in its own git worktree under
 `<projects>/.lea/worktrees/<repo>/<agent>`.

@@ -1,0 +1,11 @@
+{
+  "description": "tower-control delegates: once /lea:tower-control runs, the session keeps only the team's tools.",
+  "hooks": {
+    "UserPromptSubmit": [
+      { "hooks": [ { "type": "command", "command": "sh \"${CLAUDE_PLUGIN_ROOT}/hooks/tower-guard\" prompt" } ] }
+    ],
+    "PreToolUse": [
+      { "matcher": "*", "hooks": [ { "type": "command", "command": "sh \"${CLAUDE_PLUGIN_ROOT}/hooks/tower-guard\" tool" } ] }
+    ]
+  }
+}
