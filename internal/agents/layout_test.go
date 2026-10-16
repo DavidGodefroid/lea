@@ -28,8 +28,11 @@ func checkLayout(t *testing.T, s *fakeSession) {
 	if d.dead || !reflect.DeepEqual(d.cmd, []string{leaBin, "deck", "--container", C}) {
 		t.Errorf("deck pane %+v", d)
 	}
+	var split []*fpane // split shells in the deck window: only the slot's agent's may be there
 	for _, p := range s.panes {
-		if p.win == d.win {
+		if p.win == d.win && p.split != "" {
+			split = append(split, p)
+		} else if p.win == d.win {
 			inDeck = append(inDeck, p)
 		}
 	}
@@ -39,6 +42,9 @@ func checkLayout(t *testing.T, s *fakeSession) {
 	slot := inDeck[0]
 	if slot == d {
 		slot = inDeck[1]
+	}
+	if len(split) > 1 || (len(split) == 1 && (slot.agent == "" || !strings.HasPrefix(split[0].split, slot.agent+":"))) {
+		t.Errorf("split shells %+v beside slot %+v: only the shown agent's one may be there", split, slot)
 	}
 	if !s.atLeft(d) || s.atLeft(slot) {
 		t.Errorf("deck at left %v, slot at left %v: the deck must be the left column", s.atLeft(d), s.atLeft(slot))

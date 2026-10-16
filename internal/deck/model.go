@@ -73,6 +73,8 @@ type API interface {
 	Popup(ctx context.Context, key string, compose bool) error
 	SetLabel(ctx context.Context, key, label string) error
 	OpenShell(ctx context.Context, container string) (Agent, error)
+	// SplitShell opens a shell beside an agent, below it or at its right.
+	SplitShell(ctx context.Context, key string, below bool) (Agent, error)
 }
 
 // isShell reports whether a row is a shell.
@@ -442,6 +444,20 @@ func (m Model) key(k string) (tea.Model, tea.Cmd) {
 			defer cancel()
 			a, err := api.OpenShell(ctx, c)
 			return newMsg{a, err}
+		}
+	case "-", "|":
+		// Split, as Terminator does: - puts a shell below the agent, | at its right.
+		a := m.selectedAgent()
+		if a == nil || isShell(*a) {
+			return m, nil
+		}
+		key, below := a.Key, k == "-"
+		m.status = "opening a shell beside " + display(*a) + "…"
+		return m, func() tea.Msg {
+			ctx, cancel := context.WithTimeout(context.Background(), callTimeout)
+			defer cancel()
+			sh, err := api.SplitShell(ctx, key, below)
+			return newMsg{sh, err}
 		}
 	case "?":
 		m.help = true

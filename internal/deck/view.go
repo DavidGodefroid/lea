@@ -101,6 +101,7 @@ var helpLines = []string{
 	"space       next needing you",
 	"n           new agent",
 	"s           new shell",
+	"- |         split with a shell",
 	"m           message the agent",
 	"t           its thread",
 	"e           rename",

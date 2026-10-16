@@ -542,19 +542,22 @@ func TestRespawnsOfAPaneThatKeepsDyingAreSpacedOut(t *testing.T) {
 	}
 }
 
-// namesTypingOnPurpose are the only sources allowed to name the typing commands: this test, and
-// the internal/tmux tests that check the allow-list refuses them.
+// namesTypingOnPurpose are the only sources allowed to name the typing commands: this test, the
+// internal/tmux tests that check the allow-list refuses them, and its real tests, which press the
+// user's keys (send-keys -K) to run the conf's bindings.
 var namesTypingOnPurpose = map[string]bool{
 	filepath.Join("internal", "agents", "manager_test.go"): true,
 	filepath.Join("internal", "tmux", "conn_test.go"):      true,
+	filepath.Join("internal", "tmux", "real_test.go"):      true,
 }
 
 // confFile may forward the user's own input and nothing else: send-keys -M passes the user's
-// mouse event on to the pane under the pointer, and send-keys -X runs a copy-mode command
-// (scroll, cancel). Neither sends text of lea's.
+// mouse event on to the pane under the pointer, send-keys -X runs a copy-mode command (scroll,
+// cancel), and paste-buffer of the lea-paste buffer pastes what the user copied, when the user
+// presses ctrl+v. None sends text of lea's.
 var (
 	confFile     = filepath.Join("internal", "tmux", "lea.tmux.conf")
-	confForwards = regexp.MustCompile(`send-keys -[MX]\b`)
+	confForwards = regexp.MustCompile(`send-keys -[MX]\b|paste-buffer -p -d -b lea-paste$`)
 )
 
 // TestNothingTypesIntoATerminal enforces spec §7.1.8 on every Go and shell source of lea, tests
@@ -590,7 +593,7 @@ func TestNothingTypesIntoATerminal(t *testing.T) {
 		}
 		scanned[rel] = true
 		if rel == confFile {
-			b = confForwards.ReplaceAll(b, nil)
+			b = regexp.MustCompile(`(?m)`+confForwards.String()).ReplaceAll(b, nil)
 		}
 		for _, bad := range []string{"send-keys", "send-prefix", "paste-buffer"} {
 			if bytes.Contains(b, []byte(bad)) {

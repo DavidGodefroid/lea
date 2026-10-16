@@ -2,6 +2,7 @@ package agents
 
 import (
 	"errors"
+	"os"
 	"path/filepath"
 	"reflect"
 	"slices"
@@ -459,5 +460,130 @@ func TestALostConnectionDropsTheShellRows(t *testing.T) {
 			t.Fatalf("shell rows after the connection dropped: %+v", snap)
 		}
 		time.Sleep(5 * time.Millisecond)
+	}
+}
+
+// splitShell is SplitShell, with the shell recorded as running in the container (as lea-agent
+// shell does).
+func (e env) splitShell(t *testing.T, key string, below bool) Row {
+	t.Helper()
+	r, err := e.m.SplitShell(bg, key, below)
+	if err != nil {
+		t.Fatal(err)
+	}
+	e.ctr.mu.Lock()
+	if e.ctr.shells == nil {
+		e.ctr.shells = map[string][]string{}
+	}
+	if !slices.Contains(e.ctr.shells[C], r.Name) {
+		e.ctr.shells[C] = append(e.ctr.shells[C], r.Name)
+	}
+	e.ctr.mu.Unlock()
+	return r
+}
+
+// A split opens a shell beside the agent, as Terminator does: below it or at its right, in the
+// agent's directory, with the keyboard. The shell shows with its agent and parks while another
+// agent is shown; showing the shell's row shows its agent too; splitting again reuses it.
+func TestSplitShellOpensAShellBesideItsAgent(t *testing.T) {
+	e := newEnv(t)
+	s := e.ensure(t, "/p")
+	a := e.spawn(t, "a1")
+	b := e.spawn(t, "b1")
+	if err := e.m.Focus(bg, a.Key, true); err != nil {
+		t.Fatal(err)
+	}
+	mark := s.mark()
+	r := e.splitShell(t, a.Key, true)
+	sh := s.byShell(r.Name)
+	if r.Name != "sh-1" || sh == nil || sh.split != "a1:below" || !reflect.DeepEqual(sh.cmd, shellCmd("sh-1", "/p", false)) {
+		t.Fatalf("row=%+v pane=%+v", r, sh)
+	}
+	deck := s.byRole(roleDeck)
+	if sh.win != deck.win || s.slot() != s.byAgent("a1") {
+		t.Fatalf("the shell is not beside its agent: shell %+v slot %+v", sh, s.slot())
+	}
+	joined := false
+	for _, l := range s.since(mark) {
+		joined = joined || l == "join-pane -d -v -l 35% -s "+sh.id+" -t "+s.byAgent("a1").id
+	}
+	if !joined || !s.logged("select-pane -t "+sh.id) {
+		t.Fatalf("no join below and focus: %q", s.since(mark))
+	}
+	checkLayout(t, s)
+	checkSettled(t, e, s)
+	// Another agent shown: the shell parks; its agent again: the shell comes back beside it.
+	if err := e.m.Focus(bg, b.Key, true); err != nil {
+		t.Fatal(err)
+	}
+	if sh.win == deck.win || s.slot() != s.byAgent("b1") {
+		t.Fatalf("the shell stayed beside another agent: shell %+v slot %+v", sh, s.slot())
+	}
+	checkLayout(t, s)
+	if err := e.m.Focus(bg, a.Key, true); err != nil {
+		t.Fatal(err)
+	}
+	if sh.win != deck.win || s.slot() != s.byAgent("a1") {
+		t.Fatalf("the shell did not come back with its agent: shell %+v slot %+v", sh, s.slot())
+	}
+	checkLayout(t, s)
+	// The shell's row shows its agent, the shell beside it, with the keyboard.
+	e.m.Focus(bg, b.Key, true)
+	mark = s.mark()
+	if err := e.m.Focus(bg, ShellKey(C, "sh-1"), true); err != nil {
+		t.Fatal(err)
+	}
+	if s.slot() != s.byAgent("a1") || sh.win != deck.win || !slices.Contains(s.since(mark), "select-pane -t "+sh.id) {
+		t.Fatalf("the shell's row: slot %+v shell %+v log %q", s.slot(), sh, s.since(mark))
+	}
+	checkLayout(t, s)
+	// Split again: the same shell.
+	if again := e.splitShell(t, a.Key, false); again.Name != "sh-1" || len(e.ctr.shells[C]) != 1 {
+		t.Fatalf("a second split opened another shell: %+v %q", again, e.ctr.shells[C])
+	}
+	// At the right of the other agent.
+	mark = s.mark()
+	r2 := e.splitShell(t, b.Key, false)
+	sh2 := s.byShell(r2.Name)
+	if r2.Name != "sh-2" || sh2.split != "b1:right" || !slices.Contains(s.since(mark), "join-pane -d -h -l 50% -s "+sh2.id+" -t "+s.byAgent("b1").id) {
+		t.Fatalf("split right: %+v %q", sh2, s.since(mark))
+	}
+	if sh.win == deck.win {
+		t.Fatal("the first agent's shell stayed beside the second agent")
+	}
+	checkLayout(t, s)
+	if _, err := e.m.SplitShell(bg, ShellKey(C, "sh-1"), true); err == nil {
+		t.Fatal("a shell was split")
+	}
+}
+
+// The split shell starts in the agent's worktree once the agent made it, else in its repository.
+func TestSplitShellStartsInTheAgentsDirectory(t *testing.T) {
+	e := newEnv(t)
+	projects := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(projects, "shop"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	e.ctr.mu.Lock()
+	e.ctr.projects[C] = projects
+	e.ctr.mu.Unlock()
+	s := e.ensure(t, projects)
+	r, err := e.m.New(bg, NewRequest{Container: C, Name: "w1", Repo: "shop", Branch: "fix/x"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	sh := s.byShell(e.splitShell(t, r.Key, true).Name)
+	if !reflect.DeepEqual(sh.cmd, shellCmd("sh-1", filepath.Join(projects, "shop"), false)) {
+		t.Fatalf("before the worktree: %q", sh.cmd)
+	}
+	e.m.Stop(bg, ShellKey(C, "sh-1"))
+	e.ctr.setShells(C)
+	wt := filepath.Join(projects, ".lea", "worktrees", "shop", "w1")
+	if err := os.MkdirAll(wt, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	sh = s.byShell(e.splitShell(t, r.Key, true).Name)
+	if !reflect.DeepEqual(sh.cmd, shellCmd(sh.shell, wt, false)) {
+		t.Fatalf("in the worktree: %q", sh.cmd)
 	}
 }

@@ -31,6 +31,8 @@ type Agents interface {
 	// container (the deck's s). Both are the user's only.
 	SetLabel(ctx context.Context, key, label string) error
 	OpenShell(ctx context.Context, container string) (agents.Row, error)
+	// SplitShell opens a shell beside an agent (the deck's split), below it or at its right.
+	SplitShell(ctx context.Context, key string, below bool) (agents.Row, error)
 	Changed()
 }
 
@@ -40,6 +42,7 @@ var deckMethods = map[string]bool{
 	"deck_ensure": true, "agent_new": true, "agent_focus": true,
 	"agent_stop": true, "deck_detach": true, "agents_watch": true, "agents_forget_ended": true,
 	"deck_attached": true, "deck_popup": true, "agent_label": true, "shell_open": true,
+	"shell_split": true,
 }
 
 func (d *Daemon) SetAgents(a Agents) {
@@ -169,6 +172,15 @@ func (d *Daemon) dispatchDeck(ctx context.Context, o Origin, req wire.Request) (
 			return nil, err
 		}
 		return a.OpenShell(ctx, p.Container)
+	case "shell_split":
+		var p struct {
+			Key   string
+			Below bool
+		}
+		if err := json.Unmarshal(req.Params, &p); err != nil {
+			return nil, err
+		}
+		return a.SplitShell(ctx, p.Key, p.Below)
 	case "agents_watch":
 		var p struct {
 			Container string

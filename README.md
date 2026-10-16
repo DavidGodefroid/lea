@@ -62,11 +62,14 @@ closing the deck, or the terminal, does not stop it: the next `lea` reattaches.
 | `a` / `d` / `A` | allow / deny / always allow the selected agent's permission request |
 | `r`, then `l` / `d` / `r` | make the selected agent a lead, a dev or a reviewer |
 | `s` | open a shell in the container (`exit` or `x` closes it) |
+| `-` / `\|` | split: a shell below the selected agent, or at its right, in its directory |
 | `x`, then `y` | stop the selected agent |
 | `q` | leave the deck; agents keep running |
 | `?` | list the keys |
 
-The mouse works too: click a row to select it, scroll to move, right-click a row for its menu.
+The mouse works too: click a row to select it, scroll to move, right-click a row for its menu
+(Split horizontally / Split vertically open a shell beside the agent, as Terminator does; the
+shell shows with its agent and steps aside while another agent is shown).
 
 - **States.** A red `●` needs you, an orange spinner is working, a green `●` has finished its
   turn, an empty `○` has been quiet for 30 minutes. Agents stay in the order you started them.

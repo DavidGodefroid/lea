@@ -188,6 +188,10 @@ func (c *cliAgents) OpenShell(ctx context.Context, ctr string) (agents.Row, erro
 	c.rec("shell " + ctr)
 	return agents.Row{}, nil
 }
+func (c *cliAgents) SplitShell(ctx context.Context, k string, below bool) (agents.Row, error) {
+	c.rec("split " + k)
+	return agents.Row{}, nil
+}
 func (c *cliAgents) Ensure(ctx context.Context, ctr, w string) error {
 	c.rec("ensure " + ctr + " " + w)
 	return c.ensureErr

@@ -73,6 +73,13 @@ func (c Client) OpenShell(ctx context.Context, container string) (Agent, error) 
 	return a, err
 }
 
+// SplitShell opens a shell beside an agent (the deck's - and |): below it, or at its right.
+func (c Client) SplitShell(ctx context.Context, key string, below bool) (Agent, error) {
+	var a Agent
+	err := c.call(ctx, "shell_split", map[string]any{"key": key, "below": below}, &a)
+	return a, err
+}
+
 // Label is an agent's display label ("" when none), from the host's agents_list.
 func (c Client) Label(ctx context.Context, key string) (string, error) {
 	var as []struct{ Key, Label string }

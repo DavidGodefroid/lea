@@ -13,6 +13,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"os"
 	"regexp"
 	"slices"
 	"sort"
@@ -39,13 +40,16 @@ const (
 	optAgent   = "@lea_agent"
 	optWorkdir = "@lea_workdir"
 	optShell   = "@lea_shell"
+	// optSplit marks a shell opened beside an agent (the deck's split): "<agent>:below" or
+	// "<agent>:right". The shell shows with that agent and parks when another one is shown.
+	optSplit = "@lea_split"
 	// optDeck marks the deck window (a window option): the conf's resize hook and the layout
 	// repair find it by this mark, never by its name.
 	optDeck    = "@lea_deck"
 	roleDeck   = "deck"
 	rolePlace  = "placeholder"
-	paneFormat = "#{pane_id}|#{window_id}|#{pane_dead}|#{@lea_role}|#{@lea_agent}|#{pane_width}|#{pane_at_left}|#{@lea_shell}|#{@lea_deck}"
-	paneFields = 9
+	paneFormat = "#{pane_id}|#{window_id}|#{pane_dead}|#{@lea_role}|#{@lea_agent}|#{pane_width}|#{pane_at_left}|#{@lea_shell}|#{@lea_deck}|#{@lea_split}"
+	paneFields = 10
 	// subscription reports pane deaths; panesSubscription reports a pane that closed without
 	// dying (a shell's: remain-on-exit is off for it), which no %window-close announces when
 	// the pane was in the slot.
@@ -575,7 +579,26 @@ type pane struct {
 	Width       int
 	AtLeft      bool // touches the left edge of its window
 	Shell       string
-	DeckWin     bool // its window carries the deck mark (@lea_deck)
+	DeckWin     bool   // its window carries the deck mark (@lea_deck)
+	Split       string // a split shell's agent and side (@lea_split), "" for any other pane
+}
+
+// splitAgent is the agent a split shell belongs to ("" for any other pane), and whether it
+// sits below the agent (else at its right).
+func (p pane) splitAgent() (agent string, below bool) {
+	if p.Shell == "" {
+		return "", false
+	}
+	a, side, ok := strings.Cut(p.Split, ":")
+	if !ok || !nameRe.MatchString(a) {
+		return "", false
+	}
+	return a, side == "below"
+}
+
+// companion is agent's split shell, if it has one.
+func companion(ps []pane, agent string) (pane, bool) {
+	return findPane(ps, func(p pane) bool { a, _ := p.splitAgent(); return agent != "" && a == agent })
 }
 
 // tagged reports whether lea made the pane: every pane of lea's carries @lea_role, @lea_agent or
@@ -598,7 +621,7 @@ func listPanes(ctx context.Context, s Session, container string) ([]pane, error)
 			return nil, fmt.Errorf("unexpected list-panes line %q", l)
 		}
 		out = append(out, pane{ID: f[0], Window: f[1], Dead: f[2] == "1", Role: f[3], Agent: f[4], Width: width,
-			AtLeft: f[6] == "1", Shell: f[7], DeckWin: f[8] == "1"})
+			AtLeft: f[6] == "1", Shell: f[7], DeckWin: f[8] == "1", Split: f[9]})
 	}
 	return out, nil
 }
@@ -624,9 +647,14 @@ func byShell(ps []pane, name string) (pane, bool) {
 	return findPane(ps, func(p pane) bool { return p.Shell == name })
 }
 
-// slotOf is the pane next to deck in the deck window.
+// slotOf is the pane next to deck in the deck window: never a split shell beside the agent shown
+// there, unless it is alone.
 func slotOf(ps []pane, deck pane) (pane, bool) {
-	return findPane(ps, func(p pane) bool { return p.Window == deck.Window && p.ID != deck.ID })
+	in := func(p pane) bool { return p.Window == deck.Window && p.ID != deck.ID }
+	if p, ok := findPane(ps, func(p pane) bool { a, _ := p.splitAgent(); return in(p) && a == "" }); ok {
+		return p, true
+	}
+	return findPane(ps, in)
 }
 
 func deckAndSlot(ps []pane) (deck, slot pane, ok bool) {
@@ -718,6 +746,9 @@ func (m *Manager) ensureLayout(ctx context.Context, container string, s Session,
 	for _, p := range ps {
 		if p.ID == deck.ID || p.Window != deck.Window || p.ID == slot.ID {
 			continue
+		}
+		if a, _ := p.splitAgent(); a != "" && slot.Agent == a && !p.Dead {
+			continue // the shown agent's split shell stays beside it
 		}
 		name := p.Agent
 		if name == "" {
@@ -1112,28 +1143,9 @@ func (m *Manager) OpenShell(ctx context.Context, container string) (Row, error) 
 	if err != nil {
 		return Row{}, err
 	}
-	live, err := m.cfg.Containers.Shells(ctx, container)
+	name, err := m.freeShell(ctx, container, ps)
 	if err != nil {
 		return Row{}, err
-	}
-	// A dead pane holds its shell's name until the reconcile removes it: never two panes of one name.
-	taken := map[string]bool{}
-	for _, p := range ps {
-		if p.Shell != "" {
-			taken[p.Shell] = true
-		}
-	}
-	for _, n := range live {
-		taken[n] = true
-	}
-	if len(taken) >= MaxShells {
-		return Row{}, errShellLimit
-	}
-	name := ""
-	for i := 1; name == ""; i++ {
-		if n := fmt.Sprintf("sh-%d", i); !taken[n] {
-			name = n
-		}
 	}
 	workdir := ""
 	if out, err := s.Run(ctx, "display-message", "-p", "-t", "="+container+":", "#{"+optWorkdir+"}"); err == nil &&
@@ -1163,6 +1175,131 @@ func (m *Manager) OpenShell(ctx context.Context, container string) (Row, error) 
 	return shellRow(container, name), nil
 }
 
+// freeShell is the lowest free sh-N of the container, or errShellLimit at MaxShells shells
+// (counting those still running without a pane).
+func (m *Manager) freeShell(ctx context.Context, container string, ps []pane) (string, error) {
+	live, err := m.cfg.Containers.Shells(ctx, container)
+	if err != nil {
+		return "", err
+	}
+	// A dead pane holds its shell's name until the reconcile removes it: never two panes of one name.
+	taken := map[string]bool{}
+	for _, p := range ps {
+		if p.Shell != "" {
+			taken[p.Shell] = true
+		}
+	}
+	for _, n := range live {
+		taken[n] = true
+	}
+	if len(taken) >= MaxShells {
+		return "", errShellLimit
+	}
+	for i := 1; ; i++ {
+		if n := fmt.Sprintf("sh-%d", i); !taken[n] {
+			return n, nil
+		}
+	}
+}
+
+// SplitShell opens a shell beside an agent, as Terminator splits a terminal: below it (below)
+// or at its right, in the agent's own directory (its worktree once it exists, else its
+// repository, else where it started). The shell shows with the agent from then on, and takes the
+// keyboard. An agent has one split shell: asking again shows it.
+func (m *Manager) SplitShell(ctx context.Context, key string, below bool) (Row, error) {
+	a, err := m.spawned(key)
+	if err != nil {
+		return Row{}, err
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	s, err := m.session(ctx, a.Container)
+	if err != nil {
+		return Row{}, err
+	}
+	ps, err := listPanes(ctx, s, a.Container)
+	if err != nil {
+		return Row{}, err
+	}
+	ap, ok := byAgent(ps, a.Name)
+	if !ok || ap.Dead {
+		return Row{}, fmt.Errorf("agent %s has no terminal to split", a.Name)
+	}
+	name := ""
+	id := ""
+	if c, ok := companion(ps, a.Name); ok && !c.Dead {
+		name, id = c.Shell, c.ID
+	} else {
+		if name, err = m.freeShell(ctx, a.Container, ps); err != nil {
+			return Row{}, err
+		}
+		side := "right"
+		if below {
+			side = "below"
+		}
+		id, err = m.newShellPane(ctx, s, a.Container, name, m.agentDir(ctx, a), false)
+		if err == nil {
+			_, err = s.Run(ctx, "set-option", "-p", "-t", id, optSplit, a.Name+":"+side)
+		}
+		if err != nil {
+			ctx := context.WithoutCancel(ctx)
+			if id != "" {
+				s.Run(ctx, "kill-pane", "-t", id)
+				if serr := m.cfg.Containers.StopShell(ctx, a.Container, name); serr != nil {
+					log.Printf("lea daemon: stop shell %s of %s after a failed split: %v", name, a.Container, serr)
+				}
+			}
+			return Row{}, err
+		}
+		if ps, err = listPanes(ctx, s, a.Container); err != nil {
+			return Row{}, err
+		}
+	}
+	if err := m.show(ctx, s, ps, ap, false); err != nil {
+		return Row{}, err
+	}
+	if deck, ok := byRole(ps, roleDeck); ok {
+		if _, err := s.Run(ctx, "select-window", "-t", deck.Window); err != nil {
+			return Row{}, err
+		}
+	}
+	if _, err := s.Run(ctx, "select-pane", "-t", id); err != nil {
+		return Row{}, err
+	}
+	if ps, err = listPanes(ctx, s, a.Container); err != nil {
+		return Row{}, err
+	}
+	m.publish(a.Container, ps)
+	m.setShown(a.Container, a.Key)
+	return shellRow(a.Container, name), nil
+}
+
+// agentDir is the directory an agent works in, as its first prompt names it: its worktree once
+// the agent has made it, else its repository, else where it started.
+func (m *Manager) agentDir(ctx context.Context, a store.Agent) string {
+	dir := a.Workdir
+	if a.Repo == "" && a.Branch == "" {
+		return dir
+	}
+	projects, err := m.cfg.Containers.Projects(ctx, a.Container)
+	if err != nil || projects == "" {
+		return dir
+	}
+	if a.Repo != "" {
+		if d, err := repoDir(projects, a.Repo); err == nil {
+			dir = d
+		}
+	}
+	if a.Branch != "" {
+		if wt := worktreePath(projects, a.Workdir, a); checkWorkdir(wt) == nil {
+			if fi, err := os.Stat(wt); err == nil && fi.IsDir() {
+				dir = wt
+			}
+		}
+	}
+	return dir
+}
+
 // errShellLimit refuses a shell over MaxShells. It fits the deck's 31-character status line.
 var errShellLimit = limitError(fmt.Sprintf("at most %d shells: x closes one", MaxShells))
 
@@ -1187,6 +1324,34 @@ func (m *Manager) focusShell(ctx context.Context, container, name string, focus 
 	p, ok := byShell(ps, name)
 	if !ok || p.Dead {
 		return fmt.Errorf("shell %s has ended", name)
+	}
+	if agent, _ := p.splitAgent(); agent != "" {
+		if ap, ok := byAgent(ps, agent); ok {
+			// Its agent takes the slot, the shell beside it.
+			if err := m.show(ctx, s, ps, ap, false); err != nil {
+				return err
+			}
+			if focus {
+				if deck, ok := byRole(ps, roleDeck); ok {
+					if _, err := s.Run(ctx, "select-window", "-t", deck.Window); err != nil {
+						return err
+					}
+				}
+				if _, err := s.Run(ctx, "select-pane", "-t", p.ID); err != nil {
+					return err
+				}
+			}
+			if ps, err = listPanes(ctx, s, container); err != nil {
+				return err
+			}
+			m.publish(container, ps)
+			return nil
+		}
+		// Its agent is gone: the shell is an ordinary one from now on.
+		if _, err := s.Run(ctx, "set-option", "-p", "-t", p.ID, optSplit, ""); err != nil {
+			return err
+		}
+		p.Split = ""
 	}
 	if err := m.show(ctx, s, ps, p, focus); err != nil {
 		return err
@@ -1273,8 +1438,38 @@ func (m *Manager) show(ctx context.Context, s Session, ps []pane, p pane, focus 
 	if !ok {
 		return errors.New("the deck window has no slot")
 	}
+	// A split shell shows with its agent only: any other one in the deck window parks first.
+	mine := ""
+	if p.Agent != "" {
+		mine = p.Agent
+	}
+	relaid := false
+	for _, q := range ps {
+		if a, _ := q.splitAgent(); a != "" && a != mine && q.Window == deck.Window {
+			if _, err := s.Run(ctx, "break-pane", "-d", "-s", q.ID, "-n", q.Shell); err != nil {
+				return err
+			}
+			relaid = true
+		}
+	}
 	if slot.ID != p.ID {
 		if _, err := s.Run(ctx, "swap-pane", "-d", "-s", p.ID, "-t", slot.ID); err != nil {
+			return err
+		}
+	}
+	if c, ok := companion(ps, mine); ok && !c.Dead && c.Window != deck.Window {
+		_, below := c.splitAgent()
+		side, size := "-h", "50%"
+		if below {
+			side, size = "-v", "35%"
+		}
+		if _, err := s.Run(ctx, "join-pane", "-d", side, "-l", size, "-s", c.ID, "-t", p.ID); err != nil {
+			return err
+		}
+		relaid = true
+	}
+	if relaid {
+		if _, err := s.Run(ctx, "resize-pane", "-t", deck.ID, "-x", strconv.Itoa(DeckWidth)); err != nil {
 			return err
 		}
 	}
