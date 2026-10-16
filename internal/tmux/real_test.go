@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 	"syscall"
 	"testing"
@@ -698,4 +699,28 @@ func TestRealCtrlVPastesTheHostClipboard(t *testing.T) {
 	if _, err := os.Stat(sock + ".paste"); !os.IsNotExist(err) {
 		t.Errorf("the paste file is left: %v", err)
 	}
+}
+
+// A pane keeps its history when its program asks for the alternate screen: abduco, which runs
+// every agent and shell, asks for it when it attaches, and the history (Claude Code's
+// conversation) would be gone from the wheel's reach.
+func TestRealAPaneKeepsItsHistoryUnderAbduco(t *testing.T) {
+	s := realServer(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	c, err := s.Open(ctx, "lea-h2", []string{"sh", "-c", `printf '\033[?1049h\033[H'; seq 1 200; exec sleep 600`})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c.Close()
+	var out []string
+	waitFor(t, "the pane's history", func() bool {
+		out, err = c.Run(ctx, "display-message", "-p", "-t", "=lea-h2:", "#{alternate_on}|#{history_size}")
+		if err != nil || len(out) != 1 {
+			return false
+		}
+		alt, n, _ := strings.Cut(out[0], "|")
+		h, _ := strconv.Atoi(n)
+		return alt == "0" && h > 100
+	})
 }
