@@ -138,17 +138,35 @@ func (m Model) frameStyle() lipgloss.Style {
 }
 
 // logo is lea's mark on one line, the deck's three states in their colours (needs you, working,
-// done: assets/logo-mark.svg), then the name.
+// done: assets/logo-mark.svg), then the name. It moves only while the deck animates anyway: at
+// start the dots light up one by one, then the name; while an agent works, a wave runs through
+// them (one full dot, the others small). Still otherwise.
 func (m Model) logo() string {
-	dot := "●"
+	full, small := "●", "•"
 	if m.ascii {
-		dot = "o"
+		full, small = "O", "o"
 	}
+	wave := -1
+	if m.working() {
+		wave = (m.frame / waveStep) % 3
+	}
+	elapsed := introFrames - m.intro
 	var b strings.Builder
-	for _, col := range []lipgloss.AdaptiveColor{theme.Blocked, theme.Working, theme.Done} {
-		b.WriteString(lipgloss.NewStyle().Foreground(col).Render(dot))
+	for i, col := range []lipgloss.AdaptiveColor{theme.Blocked, theme.Working, theme.Done} {
+		switch {
+		case m.intro > 0 && elapsed < (i+1)*introStep:
+			b.WriteString(" ")
+		case wave >= 0 && i != wave:
+			b.WriteString(lipgloss.NewStyle().Foreground(col).Render(small))
+		default:
+			b.WriteString(lipgloss.NewStyle().Foreground(col).Render(full))
+		}
 	}
-	return b.String() + " " + lipgloss.NewStyle().Foreground(theme.Accent).Bold(true).Render("lea")
+	name := "lea"
+	if m.intro > 0 && elapsed < 4*introStep {
+		name = "   "
+	}
+	return b.String() + " " + lipgloss.NewStyle().Foreground(theme.Accent).Bold(true).Render(name)
 }
 
 func (m Model) top(w int) string {
