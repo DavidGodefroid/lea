@@ -119,7 +119,7 @@ func TestNewSpawnsClaudeUnderAbducoAndShowsIt(t *testing.T) {
 	}
 	p := s.byAgent("claude-1")
 	cmd := []string{"docker", "exec", "-it", "-u", "1000:1000", "-e", "TERM=xterm-256color", "-e", "COLORTERM=truecolor",
-		"-e", "LEA_AGENT=claude-1", "-e", "LEA_APPROVALS=deck", "-w", "/home/u/p/it's here", C,
+		"-e", "FORCE_HYPERLINK=1", "-e", "LEA_AGENT=claude-1", "-e", "LEA_APPROVALS=deck", "-w", "/home/u/p/it's here", C,
 		"abduco", "-c", "ag-claude-1", "lea-agent", "run", "claude-1", "--", "--resume"}
 	if p == nil || !reflect.DeepEqual(p.cmd, cmd) {
 		t.Fatalf("pane=%+v", p)

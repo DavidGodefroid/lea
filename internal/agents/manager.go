@@ -334,11 +334,12 @@ func (m *Manager) placeholderCmd() []string { return []string{m.cfg.LeaBin, "dec
 
 // paneCmd is an agent's pane: docker exec into the container, then abduco, which keeps the
 // agent's terminal alive when this pane, the deck or the tmux server goes away. attach joins
-// the agent's existing abduco session and never starts a new agent.
+// the agent's existing abduco session and never starts a new agent. FORCE_HYPERLINK: Claude Code
+// writes links as hyperlinks (OSC 8), which tmux passes on whole to the user's terminal (lea.tmux.conf).
 func (m *Manager) paneCmd(container string, a store.Agent, args []string, attach bool) []string {
 	cmd := []string{m.cfg.Docker, "exec", "-it", "-u", fmt.Sprintf("%d:%d", m.cfg.UID, m.cfg.GID),
-		"-e", "TERM=xterm-256color", "-e", "COLORTERM=truecolor", "-e", "LEA_AGENT=" + a.Name,
-		"-e", "LEA_APPROVALS=" + m.cfg.Approvals}
+		"-e", "TERM=xterm-256color", "-e", "COLORTERM=truecolor", "-e", "FORCE_HYPERLINK=1",
+		"-e", "LEA_AGENT=" + a.Name, "-e", "LEA_APPROVALS=" + m.cfg.Approvals}
 	if m.cfg.ApprovalTimeout > 0 {
 		cmd = append(cmd, "-e", "LEA_APPROVAL_TIMEOUT="+strconv.Itoa(m.cfg.ApprovalTimeout))
 	}
@@ -356,7 +357,7 @@ func (m *Manager) paneCmd(container string, a store.Agent, args []string, attach
 // user's, not an agent. attach joins the shell's existing abduco session.
 func (m *Manager) shellCmd(container, name, workdir string, attach bool) []string {
 	cmd := []string{m.cfg.Docker, "exec", "-it", "-u", fmt.Sprintf("%d:%d", m.cfg.UID, m.cfg.GID),
-		"-e", "TERM=xterm-256color", "-e", "COLORTERM=truecolor"}
+		"-e", "TERM=xterm-256color", "-e", "COLORTERM=truecolor", "-e", "FORCE_HYPERLINK=1"}
 	if workdir != "" {
 		cmd = append(cmd, "-w", workdir)
 	}

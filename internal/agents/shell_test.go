@@ -76,7 +76,8 @@ func TestSetLabelChangesOnlyTheDisplayName(t *testing.T) {
 // shellCmd is what a shell pane runs: docker exec into the container, abduco, then lea-agent's
 // shell; never LEA_AGENT, MCP or hooks.
 func shellCmd(name, workdir string, attach bool) []string {
-	cmd := []string{"docker", "exec", "-it", "-u", "1000:1000", "-e", "TERM=xterm-256color", "-e", "COLORTERM=truecolor"}
+	cmd := []string{"docker", "exec", "-it", "-u", "1000:1000", "-e", "TERM=xterm-256color", "-e", "COLORTERM=truecolor",
+		"-e", "FORCE_HYPERLINK=1"}
 	if workdir != "" {
 		cmd = append(cmd, "-w", workdir)
 	}

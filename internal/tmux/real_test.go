@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strings"
 	"syscall"
@@ -504,5 +505,117 @@ func TestRealDragEndCopiesIntoTheClipboardFifo(t *testing.T) {
 		}
 	case <-time.After(5 * time.Second):
 		t.Fatal("nothing reached the FIFO")
+	}
+}
+
+// attachTerminal attaches a user's terminal (script, 120x40) to session and returns its client;
+// everything tmux draws on it is written to the file log.
+func attachTerminal(t *testing.T, ctx context.Context, s Server, c *Conn, session, log string) string {
+	t.Helper()
+	if _, err := exec.LookPath("script"); err != nil {
+		t.Skip("script (util-linux) is needed to attach a terminal")
+	}
+	in, w, err := os.Pipe() // keeps the terminal's input open
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { w.Close() })
+	att := exec.Command("script", "-qfc", "stty cols 120 rows 40; exec tmux -L lea-test -f "+Quote(s.Conf)+" attach-session -t ="+session, log)
+	att.Stdin = in
+	att.Env = append(os.Environ(), "TERM=xterm-256color", "SHELL=/bin/sh")
+	if err := att.Start(); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { att.Process.Kill(); att.Wait() })
+	var client string
+	waitFor(t, "the user's terminal to attach", func() bool {
+		out, err := c.Run(ctx, "list-clients", "-t", "="+session, "-F", "#{client_name}|#{client_control_mode}")
+		if err != nil {
+			return false
+		}
+		for _, l := range out {
+			if name, ctl, ok := strings.Cut(l, "|"); ok && ctl == "0" {
+				client = name
+				return true
+			}
+		}
+		return false
+	})
+	return client
+}
+
+// The popup a drag's release opens says Copied, centred: its command, run as the binding runs it,
+// writes the word and no shell error (tmux expands no format in it: #{client_width} once reached
+// the shell as it is, expr failed and printf printed "%*s").
+func TestRealDragEndFlashesCopied(t *testing.T) {
+	s := realServer(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	c, err := s.Open(ctx, "lea-f", []string{"sleep", "600"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c.Close()
+	log := filepath.Join(os.Getenv("TMUX_TMPDIR"), "terminal")
+	client := attachTerminal(t, ctx, s, c, "lea-f", log)
+	var popup string
+	for _, l := range strings.Split(Conf(), "\n") {
+		if f := strings.Fields(l); len(f) > 3 && f[0] == "bind-key" && f[2] == "copy-mode" && f[3] == "MouseDragEnd1Pane" {
+			_, popup, _ = strings.Cut(l, `\; display-popup `)
+		}
+	}
+	if popup == "" {
+		t.Fatal("copy-mode's MouseDragEnd1Pane opens no popup")
+	}
+	// source-file parses the command as the configuration file does.
+	cmd := filepath.Join(os.Getenv("TMUX_TMPDIR"), "popup.conf")
+	if err := os.WriteFile(cmd, []byte("display-popup -c "+client+" "+popup+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if out, err := exec.Command("tmux", "-L", "lea-test", "source-file", cmd).CombinedOutput(); err != nil {
+		t.Fatalf("source-file: %v: %s", err, out)
+	}
+	var drawn string
+	waitFor(t, "Copied on the terminal", func() bool {
+		b, _ := os.ReadFile(log)
+		drawn = string(b)
+		return strings.Contains(drawn, "Copied")
+	})
+	for _, bad := range []string{"expr", "%*s", "#{", "not found"} {
+		if strings.Contains(drawn, bad) {
+			t.Errorf("the popup shows %q: %q", bad, drawn)
+		}
+	}
+	// Centred on the 120-column terminal: (120-6)/2 = 57 columns before the word, at column 58 of
+	// the popup's second row.
+	if !regexp.MustCompile(`\x1b\[2;58H(\x1b\[[0-9;]*m)*Copied`).MatchString(drawn) {
+		t.Errorf("Copied is not at column 58 of the second row: %q", drawn)
+	}
+}
+
+// A hyperlink (OSC 8) longer than the pane is wide reaches the user's terminal whole, on every
+// row it wraps over: the terminal then opens the full link wherever it is clicked.
+func TestRealLongHyperlinkReachesTheTerminalWhole(t *testing.T) {
+	s := realServer(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	url := "https://claude.ai/oauth/authorize?code=true&client_id=" + strings.Repeat("0123456789", 25)
+	c, err := s.Open(ctx, "lea-h", []string{"sh", "-c", `printf '\033]8;;%s\033\\%s\033]8;;\033\\\n' "$1" "$1"; exec sleep 600`, "sh", url})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c.Close()
+	log := filepath.Join(os.Getenv("TMUX_TMPDIR"), "terminal")
+	attachTerminal(t, ctx, s, c, "lea-h", log)
+	var drawn string
+	waitFor(t, "the link on the terminal", func() bool {
+		b, _ := os.ReadFile(log)
+		drawn = string(b)
+		return strings.Contains(drawn, "0123456789\x1b]8;")
+	})
+	// tmux opens the link on each row it draws (OSC 8 with an id, then the URL): at least two
+	// rows of 120 columns hold the 300-character link, each carrying it whole.
+	if n := strings.Count(drawn, ";"+url+"\x1b\\"); n < 2 {
+		t.Errorf("the link reaches the terminal whole on %d rows, want 2 or more: %q", n, drawn)
 	}
 }
