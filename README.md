@@ -134,6 +134,22 @@ Agents get lea's tools through MCP:
 - before editing files another agent may touch, an agent claims them with `lease_acquire` and
   lets go with `lease_release` (advisory, shown in `lea board --md`).
 
+### Tower control
+
+lea brings its own Claude Code plugin, `lea`, loaded in every agent (from the image, for the
+session only: nothing is installed in your `~/.claude`). Its skill `/lea:tower-control` turns a
+lead into your control tower: you talk to it only, it splits your requests into tasks, starts
+`dev` and `reviewer` agents with self-contained briefs, answers their questions when it can, and
+briefs you in one line per agent:
+
+```
+fix-login · done · PR #42, 18 tests pass
+dark-mode · blocked · which palette: Catppuccin or Nord?
+Needs you: palette for dark-mode
+```
+
+Ask it for the `board`, the `detail` of an agent, or to `stop` one, in your own words.
+
 `lea new --brief FILE` gives a new agent its first message; `--repo NAME` starts it in a
 directory of the projects directory; `--branch B` has it work in its own git worktree under
 `<projects>/.lea/worktrees/<repo>/<agent>`.

@@ -51,3 +51,21 @@ EOT
   run calls
   [ "$output" = "claude [--settings] [$LEA_CLAUDE_SETTINGS]" ]
 }
+
+# lea's plugin (its skills, /lea:tower-control) loads for the session only, from the image.
+@test "the session loads lea's Claude plugin when the image has it" {
+  export LEA_CLAUDE_PLUGIN="$BATS_TEST_TMPDIR/claude-plugin"; mkdir -p "$LEA_CLAUDE_PLUGIN"
+  export LEA_CLAUDE_SETTINGS="$BATS_TEST_TMPDIR/claude-settings.json"; echo '{}' >"$LEA_CLAUDE_SETTINGS"
+  run "$SESSION" --claude --resume
+  [ "$status" -eq 0 ]
+  run calls
+  [ "$output" = "claude [--settings] [$LEA_CLAUDE_SETTINGS] [--plugin-dir] [$LEA_CLAUDE_PLUGIN] [--resume]" ]
+}
+
+@test "the session runs Claude without a plugin when the image has none" {
+  export LEA_CLAUDE_PLUGIN="$BATS_TEST_TMPDIR/no-plugin"
+  run "$SESSION" --claude --resume
+  [ "$status" -eq 0 ]
+  run calls
+  [ "$output" = "claude [--resume]" ]
+}

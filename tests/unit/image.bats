@@ -201,6 +201,20 @@ lea_sha256_file() { sha256sum "$1" | cut -d' ' -f1; }
   grep -q 'settings=${LEA_CLAUDE_SETTINGS:-/usr/local/share/lea/claude-settings.json}' "$I/lea-session"
 }
 
+# lea's Claude plugin comes with the image: a manifest named lea and the tower-control skill.
+@test "the image ships lea's Claude plugin with the tower-control skill" {
+  p="$I/claude-plugin"
+  [ "$(jq -r .name "$p/.claude-plugin/plugin.json")" = lea ]
+  k="$p/skills/tower-control/SKILL.md"
+  [ "$(sed -n 1p "$k")" = --- ]
+  grep -q '^name: tower-control$' "$k"
+  grep -q '^description: Use when ' "$k"
+  for t in agents_spawn agents_list msg_wait msg_reply task_update; do grep -q "$t" "$k"; done
+  grep -q '^COPY image/claude-plugin /usr/local/share/lea/claude-plugin$' "$I/Containerfile"
+  grep -q 'chmod -R u=rwX,go=rX /usr/local/share/lea/claude-plugin' "$I/Containerfile"
+  grep -q 'plugin=${LEA_CLAUDE_PLUGIN:-/usr/local/share/lea/claude-plugin}' "$I/lea-session"
+}
+
 # Server-managed settings replace the file-based managed settings, env included: lea's telemetry
 # env also comes in through the --settings file, which keeps it on such hosts.
 @test "lea's telemetry env is in the --settings file too, with the version filled in" {
