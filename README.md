@@ -12,7 +12,7 @@ You drive them from **the deck**: a terminal with your agents in a column on the
 selected agent's terminal on the right.
 
 ```
-╭─ lea ──────────── 3 agents ─╮│
+╭─ ●●● lea ──────── 3 agents ─╮│
 │›▍⠹ fix login timeout  42%   ││  ✻ Claude Code
 │    shop · fix/login · 2m    ││
 │ ▍● review cart api    18%   ││  > the timeout is set in session.go…

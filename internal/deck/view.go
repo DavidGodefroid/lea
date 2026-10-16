@@ -137,9 +137,24 @@ func (m Model) frameStyle() lipgloss.Style {
 	return border
 }
 
+// logo is lea's mark on one line, the deck's three states in their colours (needs you, working,
+// done: assets/logo-mark.svg), then the name.
+func (m Model) logo() string {
+	dot := "●"
+	if m.ascii {
+		dot = "o"
+	}
+	var b strings.Builder
+	for _, col := range []lipgloss.AdaptiveColor{theme.Blocked, theme.Working, theme.Done} {
+		b.WriteString(lipgloss.NewStyle().Foreground(col).Render(dot))
+	}
+	return b.String() + " " + lipgloss.NewStyle().Foreground(theme.Accent).Bold(true).Render("lea")
+}
+
 func (m Model) top(w int) string {
 	c := m.cs()
-	title := lipgloss.NewStyle().Foreground(theme.Accent).Bold(true).Render("lea")
+	title := m.logo()
+	tw := lipgloss.Width(title)
 	n := 0
 	for _, a := range m.agents {
 		if !isShell(a) {
@@ -150,10 +165,10 @@ func (m Model) top(w int) string {
 	if n == 1 {
 		count = "1 agent"
 	}
-	// c.tl+c.h+" " (3) + "lea" (3) + " " + fill + " " + count + " "+c.h+c.tr (3)
-	fill := w - 11 - lipgloss.Width(count)
+	// c.tl+c.h+" " (3) + title + " " + fill + " " + count + " "+c.h+c.tr (3)
+	fill := w - 8 - tw - lipgloss.Width(count)
 	if fill < 1 {
-		return m.frameStyle().Render(c.tl+c.h+" ") + title + m.frameStyle().Render(" "+strings.Repeat(c.h, max(0, w-8))+c.tr)
+		return m.frameStyle().Render(c.tl+c.h+" ") + title + m.frameStyle().Render(" "+strings.Repeat(c.h, max(0, w-5-tw))+c.tr)
 	}
 	return m.frameStyle().Render(c.tl+c.h+" ") + title + m.frameStyle().Render(" "+strings.Repeat(c.h, fill)+" ") +
 		muted.Render(count) + m.frameStyle().Render(" "+c.h+c.tr)

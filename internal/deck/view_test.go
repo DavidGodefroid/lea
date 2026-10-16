@@ -30,7 +30,7 @@ func TestViewIsAFramedColumnOfTheGivenSize(t *testing.T) {
 			t.Fatalf("line %d is %d wide: %q", i, w, l)
 		}
 	}
-	if !strings.HasPrefix(ls[0], "╭─ lea ") || !strings.HasSuffix(ls[0], " 2 agents ─╮") {
+	if !strings.HasPrefix(ls[0], "╭─ ●●● lea ") || !strings.HasSuffix(ls[0], " 2 agents ─╮") {
 		t.Fatalf("top %q", ls[0])
 	}
 	if !strings.HasPrefix(ls[11], "╰─ n new · m msg · ? keys ") || !strings.HasSuffix(ls[11], "╯") {
@@ -118,7 +118,7 @@ func TestViewASCII(t *testing.T) {
 	m := sized(loaded(t, &fakeAPI{}, "lea-a/b", ag("b", "working", 1)), 34, 6)
 	m.ascii = true
 	ls := viewLines(m)
-	if !strings.HasPrefix(ls[0], "+- lea ") || !strings.HasPrefix(ls[1], "|>|. b ") {
+	if !strings.HasPrefix(ls[0], "+- ooo lea ") || !strings.HasPrefix(ls[1], "|>|. b ") {
 		t.Fatalf("view:\n%s", strings.Join(ls, "\n"))
 	}
 	for _, l := range ls {
