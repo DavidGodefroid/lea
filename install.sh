@@ -78,8 +78,17 @@ curl -fsSL -o "$tmp/$asset" "$base/$asset" || die "cannot download $base/$asset"
 curl -fsSL -o "$tmp/checksums.txt" "$base/checksums.txt" || die "cannot download $base/checksums.txt"
 # checksums.txt is signed keyless by the release workflow, on a v* tag (Sigstore, GitHub OIDC).
 bundle=checksums.txt.sigstore.json
-if have cosign; then
-  curl -fsSL -o "$tmp/$bundle" "$base/$bundle" || die "cannot download $base/$bundle"
+if have cosign && ! curl -fsSL -o "$tmp/$bundle" "$base/$bundle"; then
+  if [ "${LEA_REQUIRE_COSIGN:-}" = 1 ]; then
+    die "cannot download the Sigstore bundle $base/$bundle and LEA_REQUIRE_COSIGN=1"
+  fi
+  case $version in
+    # The releases made before signing: no bundle, checksum only. Any later release is signed,
+    # so a missing bundle there is suspicious.
+    v0.1.0|v0.1.1) say "warning: no Sigstore bundle for this release (pre-signing version), checksum only" ;;
+    *) die "cannot download the Sigstore bundle $base/$bundle" ;;
+  esac
+elif have cosign; then
   cosign verify-blob --bundle "$tmp/$bundle" \
     --certificate-identity-regexp '^https://github\.com/DavidGodefroid/lea/\.github/workflows/release\.yml@refs/tags/v[0-9]' \
     --certificate-oidc-issuer https://token.actions.githubusercontent.com \

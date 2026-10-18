@@ -174,16 +174,65 @@ nothing_installed() {
   nothing_installed
 }
 
-@test "with cosign, a missing signature bundle is refused and nothing is installed" {
+@test "with cosign, a signed release (v0.2.0) without its bundle is refused and nothing is installed" {
   if command -v cosign >/dev/null; then skip "cosign is installed in the test image"; fi
   with_cosign
+  release v0.2.0
   rm "$REL/checksums.txt.sigstore.json"
-  run sh "$INSTALL" --version v1.2.3
+  run sh "$INSTALL" --version v0.2.0
   [ "$status" -eq 1 ]
-  [[ "$output" == *"cannot download "*"/checksums.txt.sigstore.json"* ]]
+  [[ "$output" == *"cannot download the Sigstore bundle "*"/v0.2.0/checksums.txt.sigstore.json"* ]]
+  [[ "$output" != *"pre-signing version"* ]]
+  [ ! -e "$LEA_INSTALL_DIR/v0.2.0" ]
   nothing_installed
   run calls
   [[ "$output" != *"cosign "* ]]
+}
+
+@test "with cosign, v0.1.1 (before signing) without a bundle installs on the checksum, with a warning" {
+  if command -v cosign >/dev/null; then skip "cosign is installed in the test image"; fi
+  with_cosign
+  release v0.1.1
+  rm "$REL/checksums.txt.sigstore.json"
+  # stderr only: the warning must reach the terminal even when stdout is piped away.
+  run sh -c 'sh "$1" --version v0.1.1 --no-init 2>&1 >/dev/null' _ "$INSTALL"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"warning: no Sigstore bundle for this release (pre-signing version), checksum only"* ]]
+  [[ "$output" != *"signature verified"* ]]
+  [ -x "$LEA_INSTALL_DIR/v0.1.1/bin/lea" ]
+  [ "$(readlink "$LEA_BIN_DIR/lea")" = "$LEA_INSTALL_DIR/v0.1.1/bin/lea" ]
+  ! grep -q '^cosign ' "$FAKE_LOG"
+}
+
+@test "with cosign, v0.1.0 without a bundle still refuses an archive that does not match its checksum" {
+  if command -v cosign >/dev/null; then skip "cosign is installed in the test image"; fi
+  with_cosign
+  release v0.1.0
+  rm "$REL/checksums.txt.sigstore.json"
+  printf '%064d  lea_0.1.0_linux_amd64.tar.gz\n' 0 >"$REL/checksums.txt"
+  run sh "$INSTALL" --version v0.1.0
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"pre-signing version"* ]]
+  [[ "$output" == *"lea_0.1.0_linux_amd64.tar.gz does not match its checksum"* ]]
+  [ ! -e "$LEA_INSTALL_DIR/v0.1.0" ]
+}
+
+@test "LEA_REQUIRE_COSIGN=1 with cosign refuses a release without a bundle, even one before signing" {
+  if command -v cosign >/dev/null; then skip "cosign is installed in the test image"; fi
+  with_cosign
+  rm "$REL/checksums.txt.sigstore.json"
+  LEA_REQUIRE_COSIGN=1 run sh "$INSTALL" --version v1.2.3
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"cannot download the Sigstore bundle "*"LEA_REQUIRE_COSIGN=1"* ]]
+  nothing_installed
+  release v0.1.1
+  rm "$REL/checksums.txt.sigstore.json"
+  LEA_REQUIRE_COSIGN=1 run sh "$INSTALL" --version v0.1.1
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"LEA_REQUIRE_COSIGN=1"* ]]
+  [[ "$output" != *"pre-signing version"* ]]
+  [ ! -e "$LEA_INSTALL_DIR/v0.1.1" ]
+  ! grep -q '^cosign ' "$FAKE_LOG"
 }
 
 @test "without cosign, the installer warns and installs on the checksum alone" {
@@ -193,6 +242,8 @@ nothing_installed() {
   [[ "$output" == *"warning: cosign is missing, checksums.txt signature not verified (checksum only)"* ]]
   [ -x "$LEA_INSTALL_DIR/v1.2.3/bin/lea" ]
   [ -L "$LEA_BIN_DIR/lea" ]
+  run calls
+  [[ "$output" != *".sigstore.json"* ]]
 }
 
 @test "without cosign, LEA_REQUIRE_COSIGN=1 is refused before anything is downloaded or installed" {

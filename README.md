@@ -110,9 +110,11 @@ AppArmor: it installs lea's AppArmor profile, and only when that profile changed
 Each release is signed keyless with [cosign](https://docs.sigstore.dev) (Sigstore, GitHub
 OIDC) by the release workflow, on its `v*` tag: `checksums.txt` (bundle
 `checksums.txt.sigstore.json`, a release asset) and the `lea` and `lea-proxy` images, by digest.
-With `cosign` installed, the installer verifies `checksums.txt` before trusting it and stops on a
-bad or missing signature; without it, it warns and relies on the checksum alone.
-`LEA_REQUIRE_COSIGN=1` makes it refuse to install without `cosign`:
+With `cosign` installed, the installer verifies `checksums.txt` before trusting it. It stops on a
+bad signature. It stops on a missing signature, except for v0.1.0 and v0.1.1, which predate
+signing and are verified by checksum only, with a warning. Without `cosign`, it warns and relies
+on the checksum alone. `LEA_REQUIRE_COSIGN=1` makes the signature mandatory with no exception: it
+refuses to install without `cosign` or without a signature:
 
 ```sh
 curl -fsSL https://leadeck.dev/install.sh | LEA_REQUIRE_COSIGN=1 sh
