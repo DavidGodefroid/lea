@@ -82,12 +82,17 @@ if have cosign && ! curl -fsSL -o "$tmp/$bundle" "$base/$bundle"; then
   if [ "${LEA_REQUIRE_COSIGN:-}" = 1 ]; then
     die "cannot download the Sigstore bundle $base/$bundle and LEA_REQUIRE_COSIGN=1"
   fi
+  # The releases made before signing have no bundle: their checksums.txt is accepted only when
+  # it is the genuine one (its SHA-256 pinned here), so a forged one served without a bundle is
+  # refused. Any later release is signed, so a missing bundle there is refused too.
   case $version in
-    # The releases made before signing: no bundle, checksum only. Any later release is signed,
-    # so a missing bundle there is suspicious.
-    v0.1.0|v0.1.1) say "warning: no Sigstore bundle for this release (pre-signing version), checksum only" ;;
+    v0.1.0) pin=f1fb4cce4cdc570bd59b433b4f6b5e0f1044e48d659138013097aa3490fca2da ;;
+    v0.1.1) pin=e7fd06c427e20cd43f30b09f98cd5ac2dd23b1048256d81b73516c1b3e01398f ;;
     *) die "cannot download the Sigstore bundle $base/$bundle" ;;
   esac
+  [ "$(sum "$tmp/checksums.txt")" = "$pin" ] ||
+    die "checksums.txt of $version (released before signing, no Sigstore bundle) is not the genuine one: its SHA-256 differs from the one pinned in install.sh"
+  say "warning: no Sigstore bundle for this release (pre-signing version), genuine checksums.txt (pinned SHA-256), checksum only"
 elif have cosign; then
   cosign verify-blob --bundle "$tmp/$bundle" \
     --certificate-identity-regexp '^https://github\.com/DavidGodefroid/lea/\.github/workflows/release\.yml@refs/tags/v[0-9]' \

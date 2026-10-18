@@ -112,7 +112,8 @@ OIDC) by the release workflow, on its `v*` tag: `checksums.txt` (bundle
 `checksums.txt.sigstore.json`, a release asset) and the `lea` and `lea-proxy` images, by digest.
 With `cosign` installed, the installer verifies `checksums.txt` before trusting it. It stops on a
 bad signature. It stops on a missing signature, except for v0.1.0 and v0.1.1, which predate
-signing and are verified by checksum only, with a warning. Without `cosign`, it warns and relies
+signing: their `checksums.txt` must then be the genuine one, whose SHA-256 the installer pins
+(it stops otherwise), and the install goes on by checksum, with a warning. Without `cosign`, it warns and relies
 on the checksum alone. `LEA_REQUIRE_COSIGN=1` makes the signature mandatory with no exception: it
 refuses to install without `cosign` or without a signature:
 
