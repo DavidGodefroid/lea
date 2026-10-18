@@ -114,32 +114,32 @@ git_ssh() { export LEA_GIT_SSH="$1"; lea_load_config; }
 }
 
 @test "a missing locksql image is built from locksql's repository at LEA_LOCKSQL_REF" {
-  export FAKE_DOCKER_RC_IMAGE_INSPECT_AT_LOCKSQL_0_6_0=1
+  export FAKE_DOCKER_RC_IMAGE_INSPECT_AT_LOCKSQL_0_7_0=1
   run lea_init </dev/null
   [ "$status" -eq 0 ]
   run calls
-  [[ "$output" == *"docker [image] [inspect] [locksql:0.6.0]"* ]]
-  [[ "$output" == *"docker [build] [-t] [locksql:0.6.0] [https://github.com/DavidGodefroid/locksql.git#v0.6.0]"* ]]
+  [[ "$output" == *"docker [image] [inspect] [locksql:0.7.0]"* ]]
+  [[ "$output" == *"docker [build] [-t] [locksql:0.7.0] [https://github.com/DavidGodefroid/locksql.git#v0.7.0]"* ]]
 }
 
 @test "a present locksql image is not rebuilt" {
   lea_init </dev/null 2>/dev/null
   run calls
-  [[ "$output" == *"docker [image] [inspect] [locksql:0.6.0]"* ]]
+  [[ "$output" == *"docker [image] [inspect] [locksql:0.7.0]"* ]]
   [[ "$output" != *"docker [build]"* ]]
 }
 
 @test "a failing locksql build is only a warning" {
-  export FAKE_DOCKER_RC_IMAGE_INSPECT_AT_LOCKSQL_0_6_0=1 FAKE_DOCKER_RC_BUILD__T=1
+  export FAKE_DOCKER_RC_IMAGE_INSPECT_AT_LOCKSQL_0_7_0=1 FAKE_DOCKER_RC_BUILD__T=1
   run lea_init </dev/null
   [ "$status" -eq 0 ]
-  [[ "$output" == *"warning: could not build locksql:0.6.0"* ]]
+  [[ "$output" == *"warning: could not build locksql:0.7.0"* ]]
   [[ "$output" == *"ready. Run: lea"* ]]
 }
 
 @test "LEA_LOCKSQL=0 skips the locksql image" {
   lea_user_config_set LEA_LOCKSQL 0; lea_load_config
-  export FAKE_DOCKER_RC_IMAGE_INSPECT_AT_LOCKSQL_0_6_0=1
+  export FAKE_DOCKER_RC_IMAGE_INSPECT_AT_LOCKSQL_0_7_0=1
   run lea_init </dev/null
   [ "$status" -eq 0 ]
   run calls
@@ -399,25 +399,169 @@ update_root() {
   [[ "$output" != *curl* ]]
 }
 
-@test "update of a release install runs the installer with --no-init, nothing else" {
+# fake_release VERSION: the release VERSION as lea update downloads it. $REL holds its install.sh
+# (logs "installer ARGS", unpacks a copy of this checkout at $NEW, versioned images in its lea.conf, and
+# links $LEA_BIN_DIR/lea to it) and its checksums.txt; the fake curl serves them and resolves the
+# latest release to VERSION.
+fake_release() {
+  REL="$BATS_TEST_TMPDIR/release"; NEW="$BATS_TEST_TMPDIR/inst/$1"; mkdir -p "$REL"
+  src=$(cd "$BATS_TEST_DIRNAME/../.." && pwd -P)
+  cat >"$REL/install.sh" <<EOT
+echo "installer \$*" >>"\$FAKE_LOG"
+mkdir -p "$NEW"
+cp -R "$src/bin" "$src/libexec" "$src/config" "$NEW/"
+sed -i -e 's|^LEA_IMAGE=.*|LEA_IMAGE=ghcr.io/davidgodefroid/lea:${1#v}|' \\
+  -e 's|^LEA_PROXY_IMAGE=.*|LEA_PROXY_IMAGE=ghcr.io/davidgodefroid/lea-proxy:${1#v}|' \\
+  -e 's|^LEA_LOCKSQL_IMAGE=.*|LEA_LOCKSQL_IMAGE=locksql:9.0.0|' -e 's|^LEA_LOCKSQL_REF=.*|LEA_LOCKSQL_REF=v9.0.0|' "$NEW/config/lea.conf"
+mkdir -p "$LEA_BIN_DIR"
+ln -sfn "$NEW/bin/lea" "$LEA_BIN_DIR/lea"
+EOT
+  (cd "$REL" && sha256sum install.sh >checksums.txt)
+  export FAKE_CURL_DIR="$REL" FAKE_CURL_EFFECTIVE="https://github.com/DavidGodefroid/lea/releases/tag/$1"
+}
+
+@test "update of a release install runs the installer of the latest release, never main's" {
   update_root
-  export FAKE_CURL_BODY='echo "installer $*" >>"$FAKE_LOG"'
+  fake_release v9.9.9
   run lea_update
   [ "$status" -eq 0 ]
-  [[ "$output" == *"updating this release install with the installer ($LEA_INSTALL_URL)"* ]]
+  [[ "$output" == *"updating this release install to lea v9.9.9 with its installer (https://github.com/DavidGodefroid/lea/releases/download/v9.9.9/install.sh)"* ]]
+  [[ "$output" == *"updated; running lea containers keep their image until they stop"* ]]
   run calls
-  [[ "$output" == *"curl [-fsSL] [https://raw.githubusercontent.com/DavidGodefroid/lea/main/install.sh]"* ]]
-  [[ "$output" == *"installer --no-init"* ]]
+  [[ "$output" == *"curl [-fsSLI] [-o] [/dev/null] [-w] [%{url_effective}] [https://github.com/DavidGodefroid/lea/releases/latest]"* ]]
+  [[ "$output" == *"[https://github.com/DavidGodefroid/lea/releases/download/v9.9.9/install.sh]"* ]]
+  [[ "$output" == *"[https://github.com/DavidGodefroid/lea/releases/download/v9.9.9/checksums.txt]"* ]]
+  [[ "$output" == *"installer --version v9.9.9 --no-init"* ]]
+  [[ "$output" != *raw.githubusercontent.com* ]]
+  [[ "$output" != *"/main/"* ]]
   [[ "$output" != *"make "* ]]
+  [ ! -e "$XDG_DATA_HOME/lea/host/update" ]
+}
+
+@test "release update ends with the new versioned lea and proxy images pulled and the new locksql image built" {
+  update_root
+  fake_release v9.9.9
+  export FAKE_DOCKER_RC_IMAGE_INSPECT_AT_LOCKSQL_9_0_0=1
+  run lea_update
+  [ "$status" -eq 0 ]
+  run calls
+  [[ "$output" == *"installer --version v9.9.9 --no-init"*"docker [pull] [ghcr.io/davidgodefroid/lea:9.9.9]"* ]]
+  [[ "$output" == *"docker [pull] [ghcr.io/davidgodefroid/lea-proxy:9.9.9]"* ]]
+  [[ "$output" == *"docker [image] [inspect] [locksql:9.0.0]"* ]]
+  [[ "$output" == *"docker [build] [-t] [locksql:9.0.0] [https://github.com/DavidGodefroid/locksql.git#v9.0.0]"* ]]
+  [[ "$output" != *"locksql:0.7.0"* ]]
+}
+
+@test "release update does not rebuild a present locksql image" {
+  update_root
+  fake_release v9.9.9
+  run lea_update
+  [ "$status" -eq 0 ]
+  run calls
+  [[ "$output" == *"docker [image] [inspect] [locksql:9.0.0]"* ]]
   [[ "$output" != *"docker [build]"* ]]
+}
+
+@test "release update with LEA_LOCKSQL=0 builds no locksql image" {
+  update_root
+  fake_release v9.9.9
+  lea_user_config_set LEA_LOCKSQL 0
+  export FAKE_DOCKER_RC_IMAGE_INSPECT=1
+  run lea_update
+  [ "$status" -eq 0 ]
+  run calls
+  [[ "$output" == *"docker [pull] [ghcr.io/davidgodefroid/lea:9.9.9]"* ]]
+  [[ "$output" != *locksql* ]]
+}
+
+@test "a failing locksql build is a warning, the release update still succeeds" {
+  update_root
+  fake_release v9.9.9
+  export FAKE_DOCKER_RC_IMAGE_INSPECT_AT_LOCKSQL_9_0_0=1 FAKE_DOCKER_RC_BUILD__T=1
+  run lea_update
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"warning: could not build locksql:9.0.0"* ]]
+  [[ "$output" == *"updated; running lea containers keep their image"* ]]
+}
+
+@test "an installer that does not match the release's checksums.txt is never run" {
+  update_root
+  fake_release v9.9.9
+  echo 'echo tampered >>"$FAKE_LOG"' >>"$REL/install.sh"
+  run lea_update
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"the installer of lea v9.9.9 does not match its checksums.txt"* ]]
+  run calls
+  [[ "$output" != *installer* ]]
+  [[ "$output" != *tampered* ]]
+}
+
+@test "an installer missing from checksums.txt is never run" {
+  update_root
+  fake_release v9.9.9
+  echo "0000  lea_9.9.9_linux_amd64.tar.gz" >"$REL/checksums.txt"
+  run lea_update
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"does not match its checksums.txt"* ]]
+  run calls
+  [[ "$output" != *"installer "* ]]
+}
+
+@test "update fails when the latest release cannot be found" {
+  update_root
+  export FAKE_CURL_EFFECTIVE=https://github.com/DavidGodefroid/lea/releases
+  run lea_update
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"could not find the latest lea release"* ]]
+}
+
+@test "update fails when the installer cannot be downloaded" {
+  update_root
+  fake_release v9.9.9
+  rm "$REL/install.sh"
+  run lea_update
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"cannot download the installer of lea v9.9.9"* ]]
 }
 
 @test "a failing installer fails the update" {
   update_root
-  export FAKE_CURL_BODY='exit 3'
+  fake_release v9.9.9
+  echo 'exit 3' >"$REL/install.sh"
+  (cd "$REL" && sha256sum install.sh >checksums.txt)
   run lea_update
   [ "$status" -eq 1 ]
   [[ "$output" == *"the installer failed"* ]]
+  run calls
+  [[ "$output" != *"docker [pull]"* ]]
+}
+
+@test "a failing image pull in the new release fails the update, naming the rerun" {
+  update_root
+  fake_release v9.9.9
+  export FAKE_DOCKER_RC_PULL_GHCR_IO_DAVIDGODEFROID_LEA_9_9_9=1
+  run lea_update
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"lea v9.9.9 is installed but its images could not be refreshed: rerun lea update"* ]]
+}
+
+@test "update of a checkout builds a missing locksql image" {
+  update_root checkout
+  export FAKE_DOCKER_RC_IMAGE_INSPECT_AT_LOCKSQL_0_7_0=1
+  run lea_update
+  [ "$status" -eq 0 ]
+  run calls
+  [[ "$output" == *"docker [build] [-t] [locksql:0.7.0] [https://github.com/DavidGodefroid/locksql.git#v0.7.0]"* ]]
+}
+
+@test "update of a checkout with LEA_LOCKSQL=0 builds no locksql image" {
+  update_root checkout
+  lea_user_config_set LEA_LOCKSQL 0
+  export FAKE_DOCKER_RC_IMAGE_INSPECT=1
+  run lea_update
+  [ "$status" -eq 0 ]
+  run calls
+  [[ "$output" != *locksql* ]]
 }
 
 @test "update rebuilds locally built images instead of pulling them" {

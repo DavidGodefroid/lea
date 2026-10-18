@@ -111,7 +111,8 @@ EOT
 }
 
 # The locksql console image (LEA_LOCKSQL_IMAGE), built from locksql's own repository at
-# LEA_LOCKSQL_REF when it is not there yet. Never fatal: lea runs without it.
+# LEA_LOCKSQL_REF when it is not there yet. Never fatal: lea runs without it. lea init and lea
+# update (lea_refresh_images) both call it.
 lea__init_locksql() {
   if docker image inspect "$LEA_LOCKSQL_IMAGE" >/dev/null 2>&1; then
     lea_log "locksql console image $LEA_LOCKSQL_IMAGE: present"
@@ -121,7 +122,7 @@ lea__init_locksql() {
   if docker build -t "$LEA_LOCKSQL_IMAGE" "https://github.com/DavidGodefroid/locksql.git#$LEA_LOCKSQL_REF" >&2; then
     return 0
   fi
-  lea_log "warning: could not build $LEA_LOCKSQL_IMAGE; lea works without it (rerun lea init, or set LEA_LOCKSQL=0)"
+  lea_log "warning: could not build $LEA_LOCKSQL_IMAGE; lea works without it (rerun lea init or lea update, or set LEA_LOCKSQL=0)"
 }
 
 lea_init() {
