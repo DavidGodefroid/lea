@@ -8,6 +8,10 @@ permissions:
 jobs:
   images:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+      id-token: write # cosign keyless: the GitHub OIDC token Sigstore certifies
     strategy:
       matrix:
         include:
@@ -26,7 +30,9 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
       - id: v
         run: echo "version=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
-      - uses: docker/build-push-action@v6
+      - uses: sigstore/cosign-installer@v4
+      - id: build
+        uses: docker/build-push-action@v6
         with:
           context: .
           file: ${{ matrix.file }}
@@ -37,9 +43,16 @@ jobs:
           tags: |
             ghcr.io/davidgodefroid/${{ matrix.name }}:${{ steps.v.outputs.version }}
             ghcr.io/davidgodefroid/${{ matrix.name }}:latest
+      # Signed by digest, never by tag: a tag can be moved, the digest is what was built.
+      - env:
+          IMAGE: ghcr.io/davidgodefroid/${{ matrix.name }}@${{ steps.build.outputs.digest }}
+        run: cosign sign --yes "$IMAGE"
   release:
     needs: images
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      id-token: write # cosign keyless: the GitHub OIDC token Sigstore certifies
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
@@ -58,6 +71,8 @@ jobs:
             docker rm "$id"
           done
       - run: tools/dist.sh "$GITHUB_REF_NAME"
+      - uses: sigstore/cosign-installer@v4
+      - run: cosign sign-blob --yes --bundle dist/checksums.txt.sigstore.json dist/checksums.txt
       - env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: gh release create "$GITHUB_REF_NAME" dist/*.tar.gz dist/checksums.txt dist/install.sh --title "lea $GITHUB_REF_NAME" --generate-notes
+        run: gh release create "$GITHUB_REF_NAME" dist/*.tar.gz dist/checksums.txt dist/checksums.txt.sigstore.json dist/install.sh --title "lea $GITHUB_REF_NAME" --generate-notes

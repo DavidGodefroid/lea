@@ -1,0 +1,4 @@
+#!/bin/sh
+# Fake cosign: records argv, exits FAKE_COSIGN_RC (non-zero: a signature that does not verify).
+{ printf 'cosign'; for a in "$@"; do printf ' [%s]' "$a"; done; printf '\n'; } >>"${FAKE_LOG:?}"
+exit "${FAKE_COSIGN_RC:-0}"

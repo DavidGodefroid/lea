@@ -2,15 +2,16 @@
 # lea installer: curl -fsSL https://raw.githubusercontent.com/DavidGodefroid/lea/main/install.sh | sh
 #
 # Checks the requirements, downloads the release archive for this platform, verifies it against
-# the release's checksums.txt, unpacks it into ~/.local/share/lea-install/<version>, links
-# ~/.local/bin/lea, then runs lea init (which pulls the images and, unless --no-locksql, builds
-# the locksql console image). Never runs sudo itself: lea init asks once, only for the AppArmor
-# profile on hosts that need it.
+# the release's checksums.txt (whose Sigstore signature cosign checks, when cosign is installed),
+# unpacks it into ~/.local/share/lea-install/<version>, links ~/.local/bin/lea, then runs lea init
+# (which pulls the images and, unless --no-locksql, builds the locksql console image). Never runs
+# sudo itself: lea init asks once, only for the AppArmor profile on hosts that need it.
 #
 #   sh install.sh [--version vX.Y.Z] [--no-locksql] [--no-init]
 #
 # LEA_INSTALL_DIR (default ~/.local/share/lea-install) and LEA_BIN_DIR (default ~/.local/bin)
-# change where lea goes.
+# change where lea goes. LEA_REQUIRE_COSIGN=1 refuses to install without cosign, instead of
+# warning and trusting the checksum alone.
 set -eu
 repo=DavidGodefroid/lea
 version=${LEA_VERSION:-}
@@ -23,7 +24,7 @@ while [ $# -gt 0 ]; do
     --no-locksql) locksql=--no-locksql ;;
     --locksql) locksql=--locksql ;;
     --no-init) init= ;;
-    -h|--help) sed -n '2,15p' "$0" 2>/dev/null | sed 's/^# \{0,1\}//'; exit 0 ;;
+    -h|--help) sed -n '2,14p' "$0" 2>/dev/null | sed 's/^# \{0,1\}//'; exit 0 ;;
     *) echo "lea install: unknown option $1" >&2; exit 2 ;;
   esac
   shift
@@ -52,6 +53,9 @@ have ssh-keygen || die "ssh-keygen is missing (package openssh-client)"
 if have sha256sum; then sum() { sha256sum "$1" | cut -d' ' -f1; }
 elif have shasum; then sum() { shasum -a 256 "$1" | cut -d' ' -f1; }
 else die "neither sha256sum nor shasum is installed"; fi
+if [ "${LEA_REQUIRE_COSIGN:-}" = 1 ] && ! have cosign; then
+  die "cosign is missing and LEA_REQUIRE_COSIGN=1: install cosign (https://docs.sigstore.dev), then rerun"
+fi
 
 tmux_ok=
 if have tmux; then
@@ -72,6 +76,32 @@ trap 'rm -rf "$tmp"' EXIT
 say "downloading lea $version for $os/$arch"
 curl -fsSL -o "$tmp/$asset" "$base/$asset" || die "cannot download $base/$asset"
 curl -fsSL -o "$tmp/checksums.txt" "$base/checksums.txt" || die "cannot download $base/checksums.txt"
+# checksums.txt is signed keyless by the release workflow, on a v* tag (Sigstore, GitHub OIDC).
+bundle=checksums.txt.sigstore.json
+if have cosign && ! curl -fsSL -o "$tmp/$bundle" "$base/$bundle"; then
+  if [ "${LEA_REQUIRE_COSIGN:-}" = 1 ]; then
+    die "cannot download the Sigstore bundle $base/$bundle and LEA_REQUIRE_COSIGN=1"
+  fi
+  # The releases made before signing have no bundle: their checksums.txt is accepted only when
+  # it is the genuine one (its SHA-256 pinned here), so a forged one served without a bundle is
+  # refused. Any later release is signed, so a missing bundle there is refused too.
+  case $version in
+    v0.1.0) pin=f1fb4cce4cdc570bd59b433b4f6b5e0f1044e48d659138013097aa3490fca2da ;;
+    v0.1.1) pin=e7fd06c427e20cd43f30b09f98cd5ac2dd23b1048256d81b73516c1b3e01398f ;;
+    *) die "cannot download the Sigstore bundle $base/$bundle" ;;
+  esac
+  [ "$(sum "$tmp/checksums.txt")" = "$pin" ] ||
+    die "checksums.txt of $version (released before signing, no Sigstore bundle) is not the genuine one: its SHA-256 differs from the one pinned in install.sh"
+  say "warning: no Sigstore bundle for this release (pre-signing version), genuine checksums.txt (pinned SHA-256), checksum only"
+elif have cosign; then
+  cosign verify-blob --bundle "$tmp/$bundle" \
+    --certificate-identity-regexp '^https://github\.com/DavidGodefroid/lea/\.github/workflows/release\.yml@refs/tags/v[0-9]' \
+    --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+    "$tmp/checksums.txt" >&2 || die "checksums.txt does not match its Sigstore signature"
+  say "checksums.txt signature verified (cosign)"
+else
+  say "warning: cosign is missing, checksums.txt signature not verified (checksum only)"
+fi
 want=$(awk -v f="$asset" '$2 == f { print $1 }' "$tmp/checksums.txt")
 [ -n "$want" ] || die "$asset is not in checksums.txt"
 [ "$(sum "$tmp/$asset")" = "$want" ] || die "$asset does not match its checksum"
