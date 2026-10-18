@@ -89,7 +89,8 @@ lea
 ```
 
 The installer checks the requirements, downloads the release for your platform and verifies its
-checksum, links `~/.local/bin/lea`, then runs `lea init`, which asks for your projects directory
+checksum (and, when `cosign` is installed, the release's signature: see
+[Verify a release](#verify-a-release)), links `~/.local/bin/lea`, then runs `lea init`, which asks for your projects directory
 and pulls the images. In the first agent, run `/login` once (Claude Code's own login, kept per
 projects directory). Press `n` for another agent.
 
@@ -103,6 +104,36 @@ projects directory). Press `n` for another agent.
 
 lea never runs `sudo` itself, except once in `lea init` on Linux hosts where Docker uses
 AppArmor: it installs lea's AppArmor profile, and only when that profile changed.
+
+### Verify a release
+
+Each release is signed keyless with [cosign](https://docs.sigstore.dev) (Sigstore, GitHub
+OIDC) by the release workflow, on its `v*` tag: `checksums.txt` (bundle
+`checksums.txt.sigstore.json`, a release asset) and the `lea` and `lea-proxy` images, by digest.
+With `cosign` installed, the installer verifies `checksums.txt` before trusting it and stops on a
+bad or missing signature; without it, it warns and relies on the checksum alone.
+`LEA_REQUIRE_COSIGN=1` makes it refuse to install without `cosign`:
+
+```sh
+curl -fsSL https://leadeck.dev/install.sh | LEA_REQUIRE_COSIGN=1 sh
+```
+
+By hand, with the same identity and issuer:
+
+```sh
+cosign verify-blob --bundle checksums.txt.sigstore.json \
+  --certificate-identity-regexp '^https://github\.com/DavidGodefroid/lea/\.github/workflows/release\.yml@refs/tags/v[0-9]' \
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+  checksums.txt
+cosign verify \
+  --certificate-identity-regexp '^https://github\.com/DavidGodefroid/lea/\.github/workflows/release\.yml@refs/tags/v[0-9]' \
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+  ghcr.io/davidgodefroid/lea:<version>   # and ghcr.io/davidgodefroid/lea-proxy:<version>
+```
+
+The limit: the installer comes from the same GitHub account as the release. The signature
+protects against a tampered asset or mirror, and every signature is logged publicly (Rekor), so
+it can be audited; it does not replace trusting that account.
 
 ## The deck
 
