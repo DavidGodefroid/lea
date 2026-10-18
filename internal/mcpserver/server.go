@@ -121,6 +121,10 @@ func New(sock, agent, version string) *mcp.Server {
 		func(ctx context.Context, _ *mcp.CallToolRequest, in taskIn) (*mcp.CallToolResult, any, error) {
 			return proxy(ctx, sock, agent, "task_update", short, in), nil, nil
 		})
+	mcp.AddTool(s, &mcp.Tool{Name: "board_read", Description: "Read the board of your lea: every agent's task (status, next, blocker, state, branch, parent) and the file leases. Use it to follow a team without asking each agent."},
+		func(ctx context.Context, _ *mcp.CallToolRequest, in empty) (*mcp.CallToolResult, any, error) {
+			return proxy(ctx, sock, agent, "board_read", short, in), nil, nil
+		})
 	mcp.AddTool(s, &mcp.Tool{Name: "lease_acquire", Description: "Claim the files a glob names before you edit them, for ttl seconds, so the other agents on this repository keep off. Advisory: refused, with the holder, when another agent holds an overlapping lease; calling it again on the same glob extends it."},
 		func(ctx context.Context, _ *mcp.CallToolRequest, in leaseIn) (*mcp.CallToolResult, any, error) {
 			return proxy(ctx, sock, agent, "lease_acquire", short, in), nil, nil

@@ -101,6 +101,7 @@ var helpLines = []string{
 	"space       next needing you",
 	"n           new agent",
 	"s           new shell",
+	"- |         split with a shell",
 	"m           message the agent",
 	"t           its thread",
 	"e           rename",
@@ -137,9 +138,42 @@ func (m Model) frameStyle() lipgloss.Style {
 	return border
 }
 
+// logo is lea's mark on one line, the deck's three states in their colours (needs you, working,
+// done: assets/logo-mark.svg), then the name. It moves only while the deck animates anyway: at
+// start the dots light up one by one, then the name; while an agent works, a wave runs through
+// them (one full dot, the others small). Still otherwise.
+func (m Model) logo() string {
+	full, small := "●", "•"
+	if m.ascii {
+		full, small = "O", "o"
+	}
+	wave := -1
+	if m.working() {
+		wave = (m.frame / waveStep) % 3
+	}
+	elapsed := introFrames - m.intro
+	var b strings.Builder
+	for i, col := range []lipgloss.AdaptiveColor{theme.Blocked, theme.Working, theme.Done} {
+		switch {
+		case m.intro > 0 && elapsed < (i+1)*introStep:
+			b.WriteString(" ")
+		case wave >= 0 && i != wave:
+			b.WriteString(lipgloss.NewStyle().Foreground(col).Render(small))
+		default:
+			b.WriteString(lipgloss.NewStyle().Foreground(col).Render(full))
+		}
+	}
+	name := "lea"
+	if m.intro > 0 && elapsed < 4*introStep {
+		name = "   "
+	}
+	return b.String() + " " + lipgloss.NewStyle().Foreground(theme.Accent).Bold(true).Render(name)
+}
+
 func (m Model) top(w int) string {
 	c := m.cs()
-	title := lipgloss.NewStyle().Foreground(theme.Accent).Bold(true).Render("lea")
+	title := m.logo()
+	tw := lipgloss.Width(title)
 	n := 0
 	for _, a := range m.agents {
 		if !isShell(a) {
@@ -150,10 +184,10 @@ func (m Model) top(w int) string {
 	if n == 1 {
 		count = "1 agent"
 	}
-	// c.tl+c.h+" " (3) + "lea" (3) + " " + fill + " " + count + " "+c.h+c.tr (3)
-	fill := w - 11 - lipgloss.Width(count)
+	// c.tl+c.h+" " (3) + title + " " + fill + " " + count + " "+c.h+c.tr (3)
+	fill := w - 8 - tw - lipgloss.Width(count)
 	if fill < 1 {
-		return m.frameStyle().Render(c.tl+c.h+" ") + title + m.frameStyle().Render(" "+strings.Repeat(c.h, max(0, w-8))+c.tr)
+		return m.frameStyle().Render(c.tl+c.h+" ") + title + m.frameStyle().Render(" "+strings.Repeat(c.h, max(0, w-5-tw))+c.tr)
 	}
 	return m.frameStyle().Render(c.tl+c.h+" ") + title + m.frameStyle().Render(" "+strings.Repeat(c.h, fill)+" ") +
 		muted.Render(count) + m.frameStyle().Render(" "+c.h+c.tr)
@@ -266,13 +300,13 @@ func (m Model) row(a Agent, inner int) []string {
 		mark = c.mark
 	}
 	const profW, ctxW = 6, 4
-	nameW := inner - 4 - (1 + profW) - (1 + ctxW) // mark, bar, glyph, space
+	nameW := inner - 4 - (1 + profW) - (1 + ctxW) // mark, space, glyph, space
 	g, gc := stateMark(a.State, a.Updated, m.now().Unix(), m.frame, m.ascii)
 	if isShell(a) {
 		g, gc = "$", theme.Unknown
 	}
 	line1 := bg(lipgloss.NewStyle().Foreground(theme.Accent)).Render(mark) +
-		bg(lipgloss.NewStyle().Foreground(AgentColor(a.Key))).Render(c.bar) +
+		bg(plain).Render(" ") +
 		bg(lipgloss.NewStyle().Foreground(gc)).Render(g) +
 		bg(plain).Render(" ") +
 		bg(lipgloss.NewStyle().Foreground(theme.Text).Bold(sel)).Render(padRight(fit(display(a), nameW, c), nameW)) +

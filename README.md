@@ -28,12 +28,12 @@ You drive them from **the deck**: a terminal with your agents in a column on the
 selected agent's terminal on the right.
 
 ```
-╭─ lea ──────────── 3 agents ─╮│
-│›▍⠹ fix login timeout  42%   ││  ✻ Claude Code
+╭─ ●●● lea ──────── 3 agents ─╮│
+│› ⠹ fix login timeout  42%   ││  ✻ Claude Code
 │    shop · fix/login · 2m    ││
-│ ▍● review cart api    18%   ││  > the timeout is set in session.go…
+│  ● review cart api    18%   ││  > the timeout is set in session.go…
 │    reviewer · shop · now    ││
-│ ▍● add dark mode       7%   ││
+│  ● add dark mode       7%   ││
 │    shop · needs you         ││
 ╰─ n new · m msg · ? keys ────╯│
 ```
@@ -121,24 +121,30 @@ closing the deck, or the terminal, does not stop it: the next `lea` reattaches.
 | `a` / `d` / `A` | allow / deny / always allow the selected agent's permission request |
 | `r`, then `l` / `d` / `r` | make the selected agent a lead, a dev or a reviewer |
 | `s` | open a shell in the container (`exit` or `x` closes it) |
+| `-` / `\|` | split: a shell below the selected agent, or at its right, in its directory |
 | `x`, then `y` | stop the selected agent |
 | `q` | leave the deck; agents keep running |
 | `?` | list the keys |
 
-The mouse works too: click a row to select it, scroll to move, right-click a row for its menu.
+The mouse works too: click a row to select it, scroll to move, right-click a row for its menu
+(Split horizontally / Split vertically open a shell beside the agent, as Terminator does; the
+shell shows with its agent and steps aside while another agent is shown).
 
 - **States.** A red `●` needs you, an orange spinner is working, a green `●` has finished its
   turn, an empty `○` has been quiet for 30 minutes. Agents stay in the order you started them.
   Each row shows the agent's context use, its directory and branch, and its own report on its
-  task. The pane that has the keyboard is the bright one; the deck's frame turns blue when it
-  has it.
+  task. The pane that has the keyboard is the bright one: the deck's frame turns blue when it
+  has it; otherwise the terminal on the right shows a blue `▶ <agent> · typing here` bar on its
+  top border (grey, with the keys that give it the keyboard, while the deck has it).
 - **Sounds.** lea plays a sound when an agent starts waiting for you, and another when a turn
   ends (`LEA_SOUND=0` turns them off; `LEA_SOUND_ATTENTION` and `LEA_SOUND_DONE` pick the files).
 - **Names.** An agent you have not renamed is named after its first prompt, by a short
   `claude -p` run on the host with a small model (`LEA_AUTONAME_MODEL`, `haiku` by default;
   `LEA_AUTONAME=0` turns it off). The prompt is not stored.
-- **Copy.** Drag to select text in an agent's terminal: releasing the button copies it to your
-  clipboard and flashes "Copied". lea can write your clipboard, never read it.
+- **Copy and paste.** Drag to select text in an agent's terminal: releasing the button copies it
+  to your clipboard and flashes "Copied". `ctrl+v` pastes your clipboard's text into the pane that
+  has the keyboard (the agent's input, a shell, the deck). lea reads your clipboard only when you
+  press `ctrl+v` (with `wl-paste`, `xclip` or `pbpaste`); agents never read it.
 - **Permissions.** When an agent asks for a permission, its row shows the request and the deck
   answers it. Unanswered after `LEA_APPROVAL_TIMEOUT` seconds (60), Claude asks in its own
   terminal as usual; `LEA_APPROVALS=pane` keeps Claude's dialog only.
@@ -187,11 +193,37 @@ Agents get lea's tools through MCP:
 - any other agent asks a lead with `agents_request_spawn`; without a lead the request comes to
   you (`lea requests`, `lea request accept <id>`, `lea request decline <id> [reason]`);
 - agents message each other (`msg_send`, `msg_reply`); a message waits in the inbox until the
-  agent's next turn;
+  agent's next turn. An agent whose turn is over keeps a background job on
+  `lea inbox --agent --wait`: it ends when a message arrives, and Claude Code starts a turn;
+- an agent started by a lead is told to report to it with `msg_send` when it is done or blocked;
+- `board_read` shows an agent every task of its lea, as `lea board` shows them to you;
 - every agent reports on its task with `task_update`: its row shows it, and `lea board --md`
   prints every task as markdown;
 - before editing files another agent may touch, an agent claims them with `lease_acquire` and
   lets go with `lease_release` (advisory, shown in `lea board --md`).
+
+### Tower control
+
+lea brings its own Claude Code plugin, `lea`, loaded in every agent (from the image, for the
+session only: nothing is installed in your `~/.claude`). Its skill `/lea:tower-control` turns a
+lead into your control tower: you talk to it only, it splits your requests into tasks, starts
+`dev` and `reviewer` agents with self-contained briefs, answers their questions when it can, and
+follows them with `board_read`, and briefs you in one line per agent. Between your requests it
+waits on a background `lea inbox --agent --wait`, so an agent's report wakes it:
+
+```
+fix-login · done · PR #42, 18 tests pass
+dark-mode · blocked · which palette: Catppuccin or Nord?
+Needs you: palette for dark-mode
+```
+
+Ask it for the `board`, the `detail` of an agent, or to `stop` one, in your own words.
+
+The tower never does the work itself, not even a `git push`: every request goes to an agent. The
+plugin enforces it with a hook: once `/lea:tower-control` runs, the session may only use lea's
+team tools (`agents_*`, `msg_*`, `board_read`, `task_update`), ask you questions and run
+`lea inbox --agent --wait`; any other tool (Bash, Edit, Read, git, gh, the web…) is denied with a
+reminder to delegate. `/lea:tower-control off` gives the session its tools back.
 
 `lea new --brief FILE` gives a new agent its first message; `--repo NAME` starts it in a
 directory of the projects directory; `--branch B` has it work in its own git worktree under

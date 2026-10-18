@@ -119,7 +119,7 @@ func TestNewSpawnsClaudeUnderAbducoAndShowsIt(t *testing.T) {
 	}
 	p := s.byAgent("claude-1")
 	cmd := []string{"docker", "exec", "-it", "-u", "1000:1000", "-e", "TERM=xterm-256color", "-e", "COLORTERM=truecolor",
-		"-e", "LEA_AGENT=claude-1", "-e", "LEA_APPROVALS=deck", "-w", "/home/u/p/it's here", C,
+		"-e", "FORCE_HYPERLINK=1", "-e", "LEA_AGENT=claude-1", "-e", "LEA_APPROVALS=deck", "-w", "/home/u/p/it's here", C,
 		"abduco", "-c", "ag-claude-1", "lea-agent", "run", "claude-1", "--", "--resume"}
 	if p == nil || !reflect.DeepEqual(p.cmd, cmd) {
 		t.Fatalf("pane=%+v", p)
@@ -542,19 +542,22 @@ func TestRespawnsOfAPaneThatKeepsDyingAreSpacedOut(t *testing.T) {
 	}
 }
 
-// namesTypingOnPurpose are the only sources allowed to name the typing commands: this test, and
-// the internal/tmux tests that check the allow-list refuses them.
+// namesTypingOnPurpose are the only sources allowed to name the typing commands: this test, the
+// internal/tmux tests that check the allow-list refuses them, and its real tests, which press the
+// user's keys (send-keys -K) to run the conf's bindings.
 var namesTypingOnPurpose = map[string]bool{
 	filepath.Join("internal", "agents", "manager_test.go"): true,
 	filepath.Join("internal", "tmux", "conn_test.go"):      true,
+	filepath.Join("internal", "tmux", "real_test.go"):      true,
 }
 
 // confFile may forward the user's own input and nothing else: send-keys -M passes the user's
-// mouse event on to the pane under the pointer, and send-keys -X runs a copy-mode command
-// (scroll, cancel). Neither sends text of lea's.
+// mouse event on to the pane under the pointer, send-keys -X runs a copy-mode command (scroll,
+// cancel), and paste-buffer of the lea-paste buffer pastes what the user copied, when the user
+// presses ctrl+v. None sends text of lea's.
 var (
 	confFile     = filepath.Join("internal", "tmux", "lea.tmux.conf")
-	confForwards = regexp.MustCompile(`send-keys -[MX]\b`)
+	confForwards = regexp.MustCompile(`send-keys -[MX]\b|paste-buffer -p -d -b lea-paste$`)
 )
 
 // TestNothingTypesIntoATerminal enforces spec §7.1.8 on every Go and shell source of lea, tests
@@ -590,7 +593,7 @@ func TestNothingTypesIntoATerminal(t *testing.T) {
 		}
 		scanned[rel] = true
 		if rel == confFile {
-			b = confForwards.ReplaceAll(b, nil)
+			b = regexp.MustCompile(`(?m)`+confForwards.String()).ReplaceAll(b, nil)
 		}
 		for _, bad := range []string{"send-keys", "send-prefix", "paste-buffer"} {
 			if bytes.Contains(b, []byte(bad)) {
@@ -1080,6 +1083,13 @@ func TestNewForALeadsChildRecordsTheParent(t *testing.T) {
 	}
 	if ms, _ := e.st.Unread(kid.Key, 8); len(ms) != 1 || ms[0].From != lead.Key {
 		t.Fatalf("kid inbox=%+v", ms)
+	}
+	// The child reports to its lead in the lead's inbox, not only on the board.
+	if p := lastArg(s, "dev-1"); !strings.Contains(p, "Your lead is boss:") || !strings.Contains(p, "msg_send (to boss,") {
+		t.Fatalf("kid prompt %q", p)
+	}
+	if strings.Contains(lastArg(s, "boss"), "Your lead is") {
+		t.Fatalf("the user's lead got a lead: %q", lastArg(s, "boss"))
 	}
 	if _, err := e.m.New(bg, NewRequest{Container: C, Role: "lead", Parent: lead.Key}); err == nil || !strings.Contains(err.Error(), "never spawns") {
 		t.Fatalf("a lead's child made a lead: err=%v", err)

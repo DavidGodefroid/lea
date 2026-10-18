@@ -289,6 +289,18 @@ func (d *Daemon) dispatch(ctx context.Context, o Origin, req wire.Request) (any,
 		return d.taskUpdate(o, me, req.Params)
 	case "board_list":
 		return d.boardList(req.Params)
+	case "board_read":
+		return d.boardRead(o)
+	case "msg_watch":
+		var p struct {
+			TimeoutS int `json:"timeout_s"`
+		}
+		if len(req.Params) > 0 {
+			if err := json.Unmarshal(req.Params, &p); err != nil {
+				return nil, err
+			}
+		}
+		return d.watch(ctx, me, p.TimeoutS)
 	case "thread_list":
 		return d.threadList(req.Params)
 	case "container_attach":
@@ -562,6 +574,63 @@ func (d *Daemon) wait(ctx context.Context, me string, timeoutS int) (batch, erro
 	}
 }
 
+// unreadNotice counts the caller's unread messages and names their senders. Only the count and
+// the senders: no body content enters the context outside the untrusted wrapping that msg_inbox
+// applies.
+func (d *Daemon) unreadNotice(me string) (map[string]any, error) {
+	n, err := d.st.UnreadCount(me)
+	if err != nil || n == 0 {
+		return map[string]any{"count": 0, "text": ""}, err
+	}
+	ms, err := d.st.Unread(me, inboxBatch)
+	if err != nil {
+		return nil, err
+	}
+	var from []string
+	seen := map[string]bool{}
+	for _, m := range ms {
+		if !seen[m.From] {
+			seen[m.From] = true
+			from = append(from, m.From)
+		}
+	}
+	text := fmt.Sprintf("lea: %d unread message(s) from %s. Read them with the msg_inbox tool.",
+		n, strings.Join(from, ", "))
+	return map[string]any{"count": n, "text": text}, nil
+}
+
+// maxWatch is the longest msg_watch: an hour, the span of a background job that wakes an idle
+// agent.
+const maxWatch = 3600
+
+// watch waits until the caller has an unread message or the timeout ends, and answers with
+// unreadNotice, leaving the messages unread. An agent whose turn is over hears of no message
+// (Stop delivers them only while a turn ends): a background job running lea inbox --wait, which
+// calls this, ends when one arrives, and Claude Code then starts a turn to read it.
+func (d *Daemon) watch(ctx context.Context, me string, timeoutS int) (map[string]any, error) {
+	if timeoutS < 1 || timeoutS > maxWatch {
+		return nil, fmt.Errorf("timeout_s must be between 1 and %d", maxWatch)
+	}
+	deadline := time.After(time.Duration(timeoutS) * time.Second)
+	for {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		ch := d.waitChan(me)
+		n, err := d.unreadNotice(me)
+		if err != nil || n["count"] != 0 {
+			return n, err
+		}
+		select {
+		case <-ch:
+		case <-deadline:
+			return n, nil
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		}
+	}
+}
+
 var hookState = map[string]string{
 	"SessionStart": "idle", "UserPromptSubmit": "working", "PreToolUse": "working",
 	"PostToolUse": "working", "PermissionRequest": "blocked", "Stop": "idle", "SessionEnd": "done",
@@ -704,27 +773,7 @@ func (d *Daemon) dispatchHooks(ctx context.Context, o Origin, me string, req wir
 		parts = append(parts, "Answer with the msg_reply tool when a reply is expected.")
 		return stopVerdict{Block: true, Reason: strings.Join(parts, "\n\n"), from: ms}, nil
 	case "context_unread":
-		n, err := d.st.UnreadCount(me)
-		if err != nil || n == 0 {
-			return map[string]any{"count": 0, "text": ""}, err
-		}
-		ms, err := d.st.Unread(me, inboxBatch)
-		if err != nil {
-			return nil, err
-		}
-		// Only the count and the senders: no body content enters the context outside the
-		// untrusted wrapping that msg_inbox applies.
-		var from []string
-		seen := map[string]bool{}
-		for _, m := range ms {
-			if !seen[m.From] {
-				seen[m.From] = true
-				from = append(from, m.From)
-			}
-		}
-		text := fmt.Sprintf("lea: %d unread message(s) from %s. Read them with the msg_inbox tool.",
-			n, strings.Join(from, ", "))
-		return map[string]any{"count": n, "text": text}, nil
+		return d.unreadNotice(me)
 	case "approval_request":
 		var p struct {
 			Tool     string          `json:"tool"`

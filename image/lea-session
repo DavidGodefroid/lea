@@ -16,6 +16,10 @@ fi
 # server-managed settings.
 settings=${LEA_CLAUDE_SETTINGS:-/usr/local/share/lea/claude-settings.json}
 lea_settings() { [ -f "$settings" ] && printf '%s\n' "$settings"; }
+# lea's own Claude plugin (its skills, /lea:tower-control) comes with the image and loads for
+# this session only: nothing is installed in the user's Claude configuration.
+plugin=${LEA_CLAUDE_PLUGIN:-/usr/local/share/lea/claude-plugin}
 if [ "${1:-}" = --claude ]; then shift; fi
+if [ -d "$plugin" ]; then set -- --plugin-dir "$plugin" "$@"; fi
 if s=$(lea_settings); then set -- --settings "$s" "$@"; fi
 exec claude "$@"

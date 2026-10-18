@@ -73,6 +73,10 @@ func (f *fakeAgents) OpenShell(ctx context.Context, c string) (agents.Row, error
 	f.rec("shell " + c)
 	return agents.Row{Key: agents.ShellKey(c, "sh-1"), Name: "sh-1", Kind: agents.KindShell}, nil
 }
+func (f *fakeAgents) SplitShell(ctx context.Context, k string, below bool) (agents.Row, error) {
+	f.rec(fmt.Sprintf("split %s below=%v", k, below))
+	return agents.Row{Key: agents.ShellKey("lea-a", "sh-1"), Name: "sh-1", Kind: agents.KindShell}, nil
+}
 func (f *fakeAgents) Changed() { f.mu.Lock(); f.changed++; f.mu.Unlock() }
 
 func TestDeckMethodsAreHostOnly(t *testing.T) {
