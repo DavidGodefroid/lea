@@ -1,7 +1,16 @@
 status 0
 -- calls
-curl [-fsSL] [https://raw.githubusercontent.com/DavidGodefroid/lea/main/install.sh]
+curl [-fsSLI] [-o] [/dev/null] [-w] [%{url_effective}] [https://github.com/DavidGodefroid/lea/releases/latest]
+curl [-fsSL] [-o] [$W/data/lea/host/update/install.sh] [https://github.com/DavidGodefroid/lea/releases/download/v9.9.9/install.sh]
+curl [-fsSL] [-o] [$W/data/lea/host/update/checksums.txt] [https://github.com/DavidGodefroid/lea/releases/download/v9.9.9/checksums.txt]
+installer [--version] [v9.9.9] [--no-init]
+docker [build] [-t] [lea:dev] [--build-arg] [LEA_VERSION=dev] [-f] [$R/image/Containerfile] [$R]
+docker [build] [-t] [lea-proxy:dev] [-f] [$R/proxy/Containerfile] [$R]
+docker [image] [inspect] [locksql:0.7.0]
 -- lea
-lea: updating this release install with the installer (https://raw.githubusercontent.com/DavidGodefroid/lea/main/install.sh)
+lea: updating this release install to lea v9.9.9 with its installer (https://github.com/DavidGodefroid/lea/releases/download/v9.9.9/install.sh)
+lea: building lea image from $R (several minutes the first time)
+lea: building proxy image from $R (several minutes the first time)
+lea: locksql console image locksql:0.7.0: present
 lea: updated; running lea containers keep their image until they stop (lea stop --all)
 -- stdout

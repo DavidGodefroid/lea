@@ -38,12 +38,10 @@ lea__guard_projects() {
 }
 
 # lea_update: a git checkout pulls and rebuilds; a release install (no .git) is replaced by the
-# installer, which lea update runs for the latest release.
+# latest release, installed with that release's own installer.
 lea_update() {
   if [ ! -e "$LEA_ROOT/.git" ]; then
-    lea_log "updating this release install with the installer ($LEA_INSTALL_URL)"
-    curl -fsSL "$LEA_INSTALL_URL" | sh -s -- --no-init || lea_die "the installer failed"
-    lea_log "updated; running lea containers keep their image until they stop (lea stop --all)"
+    lea__update_release
     return 0
   fi
   git -C "$LEA_ROOT" pull --ff-only
@@ -51,6 +49,59 @@ lea_update() {
   lea_load_config
   lea_refresh_images
   lea_log "updated; running lea containers keep their image until they stop (lea stop --all); the daemon restarts on the new binary at the next lea"
+}
+
+# lea__sha256 FILE: the SHA-256 of FILE, in hex.
+lea__sha256() {
+  if command -v sha256sum >/dev/null 2>&1; then sha256sum "$1" | cut -d' ' -f1
+  else shasum -a 256 "$1" | cut -d' ' -f1; fi
+}
+
+# lea__link_root LINK: the installation LINK (a launcher link, ~/.local/bin/lea) leads to, the
+# directory above its bin/lea; fails when LINK does not exist.
+lea__link_root() {
+  _lr=$1
+  [ -e "$_lr" ] || return 1
+  while [ -L "$_lr" ]; do
+    _lr_l=$(readlink "$_lr")
+    case $_lr_l in /*) _lr=$_lr_l ;; *) _lr=$(dirname "$_lr")/$_lr_l ;; esac
+  done
+  (cd "$(dirname "$_lr")/.." && pwd -P)
+}
+
+# lea__update_release: resolves the latest release under LEA_RELEASES_URL, runs that release's
+# install.sh (downloaded to <data>/lea/host/update, checked against the release's checksums.txt)
+# with --no-init, then hands over to the new installation (its libexec/lea-sh refresh-images) to
+# pull its versioned images and build its locksql console image.
+lea__update_release() {
+  _ur_v=$(curl -fsSLI -o /dev/null -w '%{url_effective}' "$LEA_RELEASES_URL/latest" | sed 's|.*/tag/||') || _ur_v=
+  case $_ur_v in v*) ;; *) lea_die "could not find the latest lea release ($LEA_RELEASES_URL/latest)" ;; esac
+  _ur_base=$LEA_RELEASES_URL/download/$_ur_v
+  lea_log "updating this release install to lea $_ur_v with its installer ($_ur_base/install.sh)"
+  _ur_tmp=$(lea_host_dir)/update
+  lea_safe_path "$(lea_data_dir)" "$_ur_tmp"
+  rm -rf "$_ur_tmp"
+  lea_mkdirs "$(lea_data_dir)" "$_ur_tmp"
+  if ! curl -fsSL -o "$_ur_tmp/install.sh" "$_ur_base/install.sh" ||
+     ! curl -fsSL -o "$_ur_tmp/checksums.txt" "$_ur_base/checksums.txt"; then
+    rm -rf "$_ur_tmp"
+    lea_die "cannot download the installer of lea $_ur_v from $_ur_base"
+  fi
+  _ur_want=$(awk '$2 == "install.sh" { print $1 }' "$_ur_tmp/checksums.txt")
+  if [ -z "$_ur_want" ] || [ "$(lea__sha256 "$_ur_tmp/install.sh")" != "$_ur_want" ]; then
+    rm -rf "$_ur_tmp"
+    lea_die "the installer of lea $_ur_v does not match its checksums.txt"
+  fi
+  if ! sh "$_ur_tmp/install.sh" --version "$_ur_v" --no-init; then
+    rm -rf "$_ur_tmp"
+    lea_die "the installer failed"
+  fi
+  rm -rf "$_ur_tmp"
+  _ur_link=${LEA_BIN_DIR:-$HOME/.local/bin}/lea
+  _ur_new=$(lea__link_root "$_ur_link") || lea_die "the installer left no $_ur_link"
+  "$_ur_new/libexec/lea-sh" refresh-images ||
+    lea_die "lea $_ur_v is installed but its images could not be refreshed: rerun lea update"
+  lea_log "updated; running lea containers keep their image until they stop (lea stop --all)"
 }
 
 lea_container_running() { [ "$(docker inspect -f '{{.State.Running}}' "$1" 2>/dev/null)" = true ]; }

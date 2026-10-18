@@ -1,6 +1,8 @@
 package launcher
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -538,10 +540,12 @@ func TestCommandsMatchTheGoldenFiles(t *testing.T) {
 				os.WriteFile(w.home+"/.claude/"+n, []byte("x"), 0o600)
 			}
 		}, want: []string{"[type=bind,src=$W/home/.claude/B.md,dst=$W/home/.claude/B.md,readonly] [--mount] [type=bind,src=$W/home/.claude/Z.md"}},
-		{name: "update", args: []string{"update"},
-			want: []string{"curl [-fsSL] [https://raw.githubusercontent.com/DavidGodefroid/lea/main/install.sh]",
-				"lea: updating this release install with the installer", "lea: updated; running lea containers keep their image until they stop"},
-			absent: []string{"go-build"}},
+		{name: "update", args: []string{"update"}, setup: fakeRelease,
+			env: map[string]string{"FAKE_CURL_DIR": "$W/release", "FAKE_CURL_EFFECTIVE": "https://github.com/DavidGodefroid/lea/releases/tag/v9.9.9"},
+			want: []string{"curl [-fsSL] [-o] [$W/data/lea/host/update/install.sh] [https://github.com/DavidGodefroid/lea/releases/download/v9.9.9/install.sh]",
+				"installer [--version] [v9.9.9] [--no-init]", "docker [image] [inspect] [locksql:",
+				"lea: updating this release install to lea v9.9.9 with its installer", "lea: updated; running lea containers keep their image until they stop"},
+			absent: []string{"go-build", "raw.githubusercontent.com"}},
 		{name: "doctor", args: []string{"doctor"}, exit: 1,
 			want: []string{"ok    docker reachable", "FAIL  user config"}, absent: []string{"launcher"}},
 		{name: "kube refresh", args: []string{"kube", "refresh"}, exit: 1, env: map[string]string{"LEA_K8S_USER": "dev"},
@@ -582,6 +586,24 @@ func TestCommandsMatchTheGoldenFiles(t *testing.T) {
 			}
 			checkGolden(t, "command", sc.name, g.golden())
 		})
+	}
+}
+
+// fakeRelease is the release lea update downloads, served by the fake curl from $W/release: an
+// install.sh (listed in its checksums.txt) that logs its arguments and links ~/.local/bin/lea to
+// this world's installation, whose lea-sh then refreshes the images.
+func fakeRelease(w *world) {
+	dir := w.dir + "/release"
+	inst := "{ printf installer; for a in \"$@\"; do printf ' [%s]' \"$a\"; done; printf '\\n'; } >>\"$FAKE_LOG\"\n" +
+		"mkdir -p \"$HOME/.local/bin\" && ln -sfn '" + w.root + "/bin/lea' \"$HOME/.local/bin/lea\"\n"
+	sum := sha256.Sum256([]byte(inst))
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		w.t.Fatal(err)
+	}
+	for name, body := range map[string]string{"install.sh": inst, "checksums.txt": hex.EncodeToString(sum[:]) + "  install.sh\n"} {
+		if err := os.WriteFile(dir+"/"+name, []byte(body), 0o644); err != nil {
+			w.t.Fatal(err)
+		}
 	}
 }
 

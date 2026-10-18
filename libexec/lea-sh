@@ -6,7 +6,7 @@
 set -eu
 LEA_ROOT=$(cd "$(dirname "$0")/.." && pwd -P)
 export LEA_ROOT
-usage() { echo "usage: lea-sh scan-begin DIR | scan-finish DIR | init [ARGS] | update | doctor | kube-refresh" >&2; exit 2; }
+usage() { echo "usage: lea-sh scan-begin DIR | scan-finish DIR | init [ARGS] | update | refresh-images | doctor | kube-refresh" >&2; exit 2; }
 [ $# -gt 0 ] || usage
 cmd=$1; shift
 case $cmd in
@@ -15,7 +15,7 @@ case $cmd in
     [ $# -eq 1 ] || usage
     case $1 in /*) ;; *) usage ;; esac ;;
   init) ;;
-  update|doctor|kube-refresh) [ $# -eq 0 ] || usage ;;
+  update|refresh-images|doctor|kube-refresh) [ $# -eq 0 ] || usage ;;
   *) usage ;;
 esac
 for lib in "$LEA_ROOT"/libexec/lib/*.sh; do
@@ -35,6 +35,7 @@ case $cmd in
   scan-finish) lea_scan_finish "$1" || exit 1 ;;
   init) lea_init "$@" ;;
   update) lea_update ;;
+  refresh-images) lea_refresh_images ;;
   doctor) lea_doctor ;;
   kube-refresh) lea_kube_refresh ;;
 esac

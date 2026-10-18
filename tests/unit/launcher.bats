@@ -15,6 +15,19 @@ setup() {
   [ "$status" -eq 2 ]
 }
 
+@test "lea-sh refresh-images takes no argument, and refreshes the images and the locksql image" {
+  run "$LEA_ROOT/libexec/lea-sh" refresh-images extra
+  [ "$status" -eq 2 ]
+  [[ "$output" == *"usage: lea-sh"*"refresh-images"* ]]
+  export FAKE_DOCKER_RC_IMAGE_INSPECT=1
+  run "$LEA_ROOT/libexec/lea-sh" refresh-images
+  [ "$status" -eq 0 ]
+  run calls
+  [[ "$output" == *"docker [build] [-t] [lea:dev]"* ]]
+  [[ "$output" == *"docker [build] [-t] [lea-proxy:dev]"* ]]
+  [[ "$output" == *"docker [build] [-t] [locksql:0.7.0] [https://github.com/DavidGodefroid/locksql.git#v0.7.0]"* ]]
+}
+
 @test "lea-sh scan-begin takes exactly one directory" {
   run "$LEA_ROOT/libexec/lea-sh" scan-begin
   [ "$status" -eq 2 ]

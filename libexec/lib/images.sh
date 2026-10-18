@@ -30,8 +30,10 @@ lea_ensure_images() {
   lea__ensure_image proxy "$LEA_PROXY_IMAGE" LEA_PROXY_IMAGE
 }
 
-# lea_refresh_images: lea update. Rebuilds local images, pulls registry ones.
+# lea_refresh_images: lea update. Rebuilds local images, pulls registry ones, and builds the
+# locksql console image when it is absent (unless LEA_LOCKSQL=0; never fatal).
 lea_refresh_images() {
   case $LEA_IMAGE in lea:dev) lea__build_image lea ;; *) docker pull "$LEA_IMAGE" ;; esac
   case $LEA_PROXY_IMAGE in lea-proxy:dev) lea__build_image proxy ;; *) docker pull "$LEA_PROXY_IMAGE" ;; esac
+  if [ "$LEA_LOCKSQL" = 1 ]; then lea__init_locksql; fi
 }
