@@ -1,0 +1,131 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 640" width="1200" height="640" role="img" aria-label="lea: Claude Code agents side by side in an isolated container; the internet is reachable through a proxy, your SSH keys and private network are not.">
+<title>lea: Claude Code agents, side by side, isolated from your machine</title>
+<style>@keyframes k1{0.00%{stroke:#313244} 43.33%{stroke:#313244} 44.58%{stroke:#f38ba8} 56.67%{stroke:#f38ba8} 61.67%{stroke:#313244} 100.00%{stroke:#313244}}
+.k1{animation:k1 12.0s linear infinite}
+@keyframes k2{0.00%{opacity:0} 44.17%{opacity:0} 46.25%{opacity:1} 60.83%{opacity:1} 62.92%{opacity:0} 100.00%{opacity:0}}
+.k2{animation:k2 12.0s linear infinite}
+@keyframes k3{0.00%{stroke:#313244} 63.33%{stroke:#313244} 64.58%{stroke:#f38ba8} 76.67%{stroke:#f38ba8} 81.67%{stroke:#313244} 100.00%{stroke:#313244}}
+.k3{animation:k3 12.0s linear infinite}
+@keyframes k4{0.00%{opacity:0} 64.17%{opacity:0} 66.25%{opacity:1} 80.83%{opacity:1} 82.92%{opacity:0} 100.00%{opacity:0}}
+.k4{animation:k4 12.0s linear infinite}
+@keyframes k5{0.00%{stroke:#313244} 23.33%{stroke:#313244} 24.58%{stroke:#a6e3a1} 36.67%{stroke:#a6e3a1} 41.67%{stroke:#313244} 100.00%{stroke:#313244}}
+.k5{animation:k5 12.0s linear infinite}
+@keyframes k6{0.00%{opacity:0} 24.17%{opacity:0} 26.25%{opacity:1} 40.83%{opacity:1} 42.92%{opacity:0} 100.00%{opacity:0}}
+.k6{animation:k6 12.0s linear infinite}
+@keyframes k7{0.00%{stroke:#89b4fa} 43.33%{stroke:#89b4fa} 44.17%{stroke:#f38ba8} 49.17%{stroke:#89b4fa} 63.33%{stroke:#89b4fa} 64.17%{stroke:#f38ba8} 69.17%{stroke:#89b4fa} 100.00%{stroke:#89b4fa}}
+.k7{animation:k7 12.0s linear infinite}
+@keyframes k8{0.00%{opacity:0} 2.50%{opacity:0} 4.58%{opacity:1} 95.00%{opacity:1} 97.08%{opacity:0} 100.00%{opacity:0}}
+.k8{animation:k8 12.0s linear infinite}
+@keyframes k9{0.00%{fill:#fab387} 27.42%{fill:#fab387} 27.50%{fill:#a6e3a1} 100.00%{fill:#a6e3a1}}
+.k9{animation:k9 12.0s linear infinite}
+@keyframes k10{0.00%{opacity:0} 2.50%{opacity:0} 4.58%{opacity:1} 27.42%{opacity:1} 29.50%{opacity:0} 100.00%{opacity:0}}
+.k10{animation:k10 12.0s linear infinite}
+@keyframes k11{0.00%{opacity:0} 27.50%{opacity:0} 27.92%{opacity:1} 95.00%{opacity:1} 95.42%{opacity:0} 100.00%{opacity:0}}
+.k11{animation:k11 12.0s linear infinite}
+@keyframes k12{0.00%{opacity:0} 5.83%{opacity:0} 7.92%{opacity:1} 95.00%{opacity:1} 97.08%{opacity:0} 100.00%{opacity:0}}
+.k12{animation:k12 12.0s linear infinite}
+@keyframes k13{0.00%{fill:#fab387} 84.92%{fill:#fab387} 85.00%{fill:#a6e3a1} 100.00%{fill:#a6e3a1}}
+.k13{animation:k13 12.0s linear infinite}
+@keyframes k14{0.00%{opacity:0} 5.83%{opacity:0} 7.92%{opacity:1} 84.92%{opacity:1} 87.00%{opacity:0} 100.00%{opacity:0}}
+.k14{animation:k14 12.0s linear infinite}
+@keyframes k15{0.00%{opacity:0} 85.00%{opacity:0} 85.42%{opacity:1} 95.00%{opacity:1} 95.42%{opacity:0} 100.00%{opacity:0}}
+.k15{animation:k15 12.0s linear infinite}
+@keyframes k16{0.00%{opacity:0} 9.17%{opacity:0} 11.25%{opacity:1} 95.00%{opacity:1} 97.08%{opacity:0} 100.00%{opacity:0}}
+.k16{animation:k16 12.0s linear infinite}
+@keyframes k17{0.00%{fill:#fab387} 69.92%{fill:#fab387} 70.00%{fill:#f38ba8} 79.92%{fill:#f38ba8} 80.00%{fill:#fab387} 100.00%{fill:#fab387}}
+.k17{animation:k17 12.0s linear infinite}
+@keyframes k18{0.00%{opacity:0} 9.17%{opacity:0} 11.25%{opacity:1} 69.92%{opacity:1} 72.00%{opacity:0} 100.00%{opacity:0}}
+.k18{animation:k18 12.0s linear infinite}
+@keyframes k19{0.00%{opacity:0} 70.00%{opacity:0} 70.42%{opacity:1} 79.92%{opacity:1} 80.33%{opacity:0} 100.00%{opacity:0}}
+.k19{animation:k19 12.0s linear infinite}
+@keyframes k20{0.00%{opacity:0} 80.00%{opacity:0} 80.42%{opacity:1} 95.00%{opacity:1} 95.42%{opacity:0} 100.00%{opacity:0}}
+.k20{animation:k20 12.0s linear infinite}
+@keyframes k21{0.00%{opacity:0} 74.17%{opacity:0} 75.00%{opacity:1} 80.83%{opacity:1} 81.67%{opacity:0} 100.00%{opacity:0}}
+.k21{animation:k21 12.0s linear infinite}
+@keyframes k22{0.00%{opacity:0} 12.50%{opacity:0} 14.58%{opacity:1} 95.00%{opacity:1} 97.08%{opacity:0} 100.00%{opacity:0}}
+.k22{animation:k22 12.0s linear infinite}
+@keyframes k23{0.00%{opacity:0} 25.00%{opacity:0} 27.08%{opacity:1} 95.00%{opacity:1} 97.08%{opacity:0} 100.00%{opacity:0}}
+.k23{animation:k23 12.0s linear infinite}
+@keyframes k24{0.00%{opacity:0} 35.00%{opacity:0} 37.08%{opacity:1} 95.00%{opacity:1} 97.08%{opacity:0} 100.00%{opacity:0}}
+.k24{animation:k24 12.0s linear infinite}
+@keyframes k25{0.00%{opacity:0} 45.00%{opacity:0} 47.08%{opacity:1} 95.00%{opacity:1} 97.08%{opacity:0} 100.00%{opacity:0}}
+.k25{animation:k25 12.0s linear infinite}
+@keyframes k26{0.00%{opacity:0} 45.00%{opacity:0} 47.08%{opacity:1} 95.00%{opacity:1} 97.08%{opacity:0} 100.00%{opacity:0}}
+.k26{animation:k26 12.0s linear infinite}
+@keyframes k27{0.00%{opacity:0} 55.00%{opacity:0} 57.08%{opacity:1} 95.00%{opacity:1} 97.08%{opacity:0} 100.00%{opacity:0}}
+.k27{animation:k27 12.0s linear infinite}
+@keyframes k28{0.00%{opacity:0} 65.00%{opacity:0} 67.08%{opacity:1} 95.00%{opacity:1} 97.08%{opacity:0} 100.00%{opacity:0}}
+.k28{animation:k28 12.0s linear infinite}
+@keyframes k29{0.00%{opacity:0} 65.00%{opacity:0} 67.08%{opacity:1} 95.00%{opacity:1} 97.08%{opacity:0} 100.00%{opacity:0}}
+.k29{animation:k29 12.0s linear infinite}
+@keyframes k30{0.00%{transform:translate(880px,180px);opacity:0} 16.67%{transform:translate(880px,180px);opacity:0} 17.08%{transform:translate(880px,180px);opacity:1} 23.33%{transform:translate(940px,187px);opacity:1} 24.58%{transform:translate(940px,187px);opacity:0} 100.00%{transform:translate(940px,187px);opacity:0}}
+.k30{animation:k30 12.0s linear infinite}
+@keyframes k31{0.00%{transform:translate(590px,220px);opacity:0} 38.33%{transform:translate(590px,220px);opacity:0} 38.75%{transform:translate(590px,220px);opacity:1} 43.33%{transform:translate(300px,187px);opacity:1} 44.58%{transform:translate(300px,187px);opacity:0} 100.00%{transform:translate(300px,187px);opacity:0}}
+.k31{animation:k31 12.0s linear infinite}
+@keyframes k32{0.00%{transform:translate(590px,300px);opacity:0} 58.33%{transform:translate(590px,300px);opacity:0} 58.75%{transform:translate(590px,300px);opacity:1} 63.33%{transform:translate(300px,407px);opacity:1} 64.58%{transform:translate(300px,407px);opacity:0} 100.00%{transform:translate(300px,407px);opacity:0}}
+.k32{animation:k32 12.0s linear infinite}
+@keyframes k33{0.00%{opacity:0} 0.42%{opacity:0} 2.50%{opacity:1} 22.50%{opacity:1} 24.58%{opacity:0} 100.00%{opacity:0}}
+.k33{animation:k33 12.0s linear infinite}
+@keyframes k34{0.00%{opacity:0} 24.58%{opacity:0} 26.67%{opacity:1} 39.17%{opacity:1} 41.25%{opacity:0} 100.00%{opacity:0}}
+.k34{animation:k34 12.0s linear infinite}
+@keyframes k35{0.00%{opacity:0} 41.25%{opacity:0} 43.33%{opacity:1} 71.67%{opacity:1} 73.75%{opacity:0} 100.00%{opacity:0}}
+.k35{animation:k35 12.0s linear infinite}
+@keyframes k36{0.00%{opacity:0} 73.75%{opacity:0} 75.83%{opacity:1} 93.33%{opacity:1} 95.42%{opacity:0} 100.00%{opacity:0}}
+.k36{animation:k36 12.0s linear infinite}
+@media (prefers-reduced-motion: reduce){*{animation-delay:-5.6s!important;animation-play-state:paused!important}}</style>
+<rect width="1200" height="640" rx="24" fill="#11111b"/>
+<text x="40" y="70" class="" font-family="Inter,'Segoe UI',system-ui,-apple-system,Helvetica,Arial,sans-serif" font-size="13" fill="#6c7086" font-weight="700" text-anchor="start" xml:space="preserve">YOUR MACHINE</text>
+<rect x="30" y="150" width="230" height="74" rx="12" fill="#181825" stroke="#313244" stroke-width="2" class="k1"/>
+<text x="50" y="182" class="" font-family="'JetBrains Mono','SF Mono',Menlo,Consolas,'DejaVu Sans Mono',monospace" font-size="17" fill="#cdd6f4" font-weight="400" text-anchor="start" xml:space="preserve">~/.ssh</text>
+<text x="50" y="206" class="" font-family="Inter,'Segoe UI',system-ui,-apple-system,Helvetica,Arial,sans-serif" font-size="13" fill="#6c7086" font-weight="400" text-anchor="start" xml:space="preserve">your keys</text>
+<g class="k2"><rect x="166" y="194" width="80" height="24" rx="12" fill="#f38ba8"/><text x="206" y="211" class="" font-family="Inter,'Segoe UI',system-ui,-apple-system,Helvetica,Arial,sans-serif" font-size="12" fill="#11111b" font-weight="700" text-anchor="middle" xml:space="preserve">blocked</text></g>
+<rect x="30" y="260" width="230" height="74" rx="12" fill="#181825" stroke="#313244" stroke-width="2" class=""/>
+<text x="50" y="292" class="" font-family="'JetBrains Mono','SF Mono',Menlo,Consolas,'DejaVu Sans Mono',monospace" font-size="17" fill="#cdd6f4" font-weight="400" text-anchor="start" xml:space="preserve">~/.aws</text>
+<text x="50" y="316" class="" font-family="Inter,'Segoe UI',system-ui,-apple-system,Helvetica,Arial,sans-serif" font-size="13" fill="#6c7086" font-weight="400" text-anchor="start" xml:space="preserve">credentials</text>
+<rect x="30" y="370" width="230" height="74" rx="12" fill="#181825" stroke="#313244" stroke-width="2" class="k3"/>
+<text x="50" y="402" class="" font-family="'JetBrains Mono','SF Mono',Menlo,Consolas,'DejaVu Sans Mono',monospace" font-size="17" fill="#cdd6f4" font-weight="400" text-anchor="start" xml:space="preserve">192.168.1.10</text>
+<text x="50" y="426" class="" font-family="Inter,'Segoe UI',system-ui,-apple-system,Helvetica,Arial,sans-serif" font-size="13" fill="#6c7086" font-weight="400" text-anchor="start" xml:space="preserve">private network</text>
+<g class="k4"><rect x="166" y="414" width="80" height="24" rx="12" fill="#f38ba8"/><text x="206" y="431" class="" font-family="Inter,'Segoe UI',system-ui,-apple-system,Helvetica,Arial,sans-serif" font-size="12" fill="#11111b" font-weight="700" text-anchor="middle" xml:space="preserve">blocked</text></g>
+<text x="940" y="70" class="" font-family="Inter,'Segoe UI',system-ui,-apple-system,Helvetica,Arial,sans-serif" font-size="13" fill="#6c7086" font-weight="700" text-anchor="start" xml:space="preserve">INTERNET</text>
+<rect x="940" y="150" width="230" height="74" rx="12" fill="#181825" stroke="#313244" stroke-width="2" class="k5"/>
+<text x="960" y="182" class="" font-family="'JetBrains Mono','SF Mono',Menlo,Consolas,'DejaVu Sans Mono',monospace" font-size="16" fill="#cdd6f4" font-weight="400" text-anchor="start" xml:space="preserve">github.com</text>
+<text x="960" y="206" class="" font-family="Inter,'Segoe UI',system-ui,-apple-system,Helvetica,Arial,sans-serif" font-size="13" fill="#6c7086" font-weight="400" text-anchor="start" xml:space="preserve">git push</text>
+<g class="k6"><rect x="1068" y="194" width="88" height="24" rx="12" fill="#a6e3a1"/><text x="1112" y="211" class="" font-family="Inter,'Segoe UI',system-ui,-apple-system,Helvetica,Arial,sans-serif" font-size="12" fill="#11111b" font-weight="700" text-anchor="middle" xml:space="preserve">allowed</text></g>
+<rect x="940" y="260" width="230" height="74" rx="12" fill="#181825" stroke="#313244" stroke-width="2" class=""/>
+<text x="960" y="292" class="" font-family="'JetBrains Mono','SF Mono',Menlo,Consolas,'DejaVu Sans Mono',monospace" font-size="16" fill="#cdd6f4" font-weight="400" text-anchor="start" xml:space="preserve">registry.npmjs.org</text>
+<text x="960" y="316" class="" font-family="Inter,'Segoe UI',system-ui,-apple-system,Helvetica,Arial,sans-serif" font-size="13" fill="#6c7086" font-weight="400" text-anchor="start" xml:space="preserve">packages</text>
+<rect x="940" y="370" width="230" height="74" rx="12" fill="#181825" stroke="#313244" stroke-width="2" class=""/>
+<text x="960" y="402" class="" font-family="'JetBrains Mono','SF Mono',Menlo,Consolas,'DejaVu Sans Mono',monospace" font-size="16" fill="#cdd6f4" font-weight="400" text-anchor="start" xml:space="preserve">api.anthropic.com</text>
+<text x="960" y="426" class="" font-family="Inter,'Segoe UI',system-ui,-apple-system,Helvetica,Arial,sans-serif" font-size="13" fill="#6c7086" font-weight="400" text-anchor="start" xml:space="preserve">Claude</text>
+<rect x="300" y="96" width="600" height="444" rx="20" fill="#1e1e2e" stroke="#89b4fa" stroke-width="3" class="k7"/>
+<rect x="324" y="82" width="236" height="28" rx="14" fill="#89b4fa"/>
+<text x="442" y="101" class="" font-family="Inter,'Segoe UI',system-ui,-apple-system,Helvetica,Arial,sans-serif" font-size="13" fill="#11111b" font-weight="700" text-anchor="middle" xml:space="preserve">lea · isolated container</text>
+<rect x="324" y="128" width="248" height="300" rx="10" fill="#181825" stroke="#45475a" stroke-width="1.5"/>
+<text x="338" y="154" class="" font-family="'JetBrains Mono','SF Mono',Menlo,Consolas,'DejaVu Sans Mono',monospace" font-size="13" fill="#a6adc8" font-weight="400" text-anchor="start" xml:space="preserve">lea ─ 3 agents</text>
+<g class="k8"><rect x="330" y="164" width="236" height="62" rx="8" fill="#313244"/><rect x="330" y="164" width="4" height="62" rx="2" fill="#89b4fa"/><circle cx="350" cy="179" r="7" class="k9"/><text x="366" y="184" class="" font-family="'JetBrains Mono','SF Mono',Menlo,Consolas,'DejaVu Sans Mono',monospace" font-size="15" fill="#cdd6f4" font-weight="400" text-anchor="start" xml:space="preserve">fix login timeout</text><g class="k10"><text x="366" y="208" class="" font-family="'JetBrains Mono','SF Mono',Menlo,Consolas,'DejaVu Sans Mono',monospace" font-size="12" fill="#6c7086" font-weight="400" text-anchor="start" xml:space="preserve">shop · fix/login · now</text></g><g class="k11"><text x="366" y="208" class="" font-family="'JetBrains Mono','SF Mono',Menlo,Consolas,'DejaVu Sans Mono',monospace" font-size="12" fill="#6c7086" font-weight="400" text-anchor="start" xml:space="preserve">shop · pushed · done</text></g></g>
+<g class="k12"><circle cx="350" cy="255" r="7" class="k13"/><text x="366" y="260" class="" font-family="'JetBrains Mono','SF Mono',Menlo,Consolas,'DejaVu Sans Mono',monospace" font-size="15" fill="#cdd6f4" font-weight="400" text-anchor="start" xml:space="preserve">review cart api</text><g class="k14"><text x="366" y="284" class="" font-family="'JetBrains Mono','SF Mono',Menlo,Consolas,'DejaVu Sans Mono',monospace" font-size="12" fill="#6c7086" font-weight="400" text-anchor="start" xml:space="preserve">reviewer · shop · 2m</text></g><g class="k15"><text x="366" y="284" class="" font-family="'JetBrains Mono','SF Mono',Menlo,Consolas,'DejaVu Sans Mono',monospace" font-size="12" fill="#6c7086" font-weight="400" text-anchor="start" xml:space="preserve">reviewer · approved</text></g></g>
+<g class="k16"><circle cx="350" cy="331" r="7" class="k17"/><text x="366" y="336" class="" font-family="'JetBrains Mono','SF Mono',Menlo,Consolas,'DejaVu Sans Mono',monospace" font-size="15" fill="#cdd6f4" font-weight="400" text-anchor="start" xml:space="preserve">add dark mode</text><g class="k18"><text x="366" y="360" class="" font-family="'JetBrains Mono','SF Mono',Menlo,Consolas,'DejaVu Sans Mono',monospace" font-size="12" fill="#6c7086" font-weight="400" text-anchor="start" xml:space="preserve">shop · ui · working</text></g><g class="k19"><text x="366" y="360" class="" font-family="'JetBrains Mono','SF Mono',Menlo,Consolas,'DejaVu Sans Mono',monospace" font-size="12" fill="#f38ba8" font-weight="400" text-anchor="start" xml:space="preserve">needs you: npm install?</text></g><g class="k20"><text x="366" y="360" class="" font-family="'JetBrains Mono','SF Mono',Menlo,Consolas,'DejaVu Sans Mono',monospace" font-size="12" fill="#6c7086" font-weight="400" text-anchor="start" xml:space="preserve">shop · ui · allowed</text></g></g>
+<g class="k21"><rect x="338" y="390" width="220" height="26" rx="6" fill="#f38ba8"/><text x="448" y="408" class="" font-family="'JetBrains Mono','SF Mono',Menlo,Consolas,'DejaVu Sans Mono',monospace" font-size="13" fill="#11111b" font-weight="700" text-anchor="middle" xml:space="preserve">a  allow   d  deny</text></g>
+<rect x="590" y="128" width="290" height="300" rx="10" fill="#11111b" stroke="#45475a" stroke-width="1.5"/>
+<text x="604" y="154" class="" font-family="'JetBrains Mono','SF Mono',Menlo,Consolas,'DejaVu Sans Mono',monospace" font-size="13" fill="#fab387" font-weight="400" text-anchor="start" xml:space="preserve">✻ Claude Code</text>
+<text x="604" y="190" class="k22" font-family="'JetBrains Mono','SF Mono',Menlo,Consolas,'DejaVu Sans Mono',monospace" font-size="13" fill="#cdd6f4" font-weight="400" text-anchor="start" xml:space="preserve">&gt; git push</text>
+<text x="604" y="219" class="k23" font-family="'JetBrains Mono','SF Mono',Menlo,Consolas,'DejaVu Sans Mono',monospace" font-size="13" fill="#a6e3a1" font-weight="400" text-anchor="start" xml:space="preserve">✓ pushed to github.com</text>
+<text x="604" y="248" class="k24" font-family="'JetBrains Mono','SF Mono',Menlo,Consolas,'DejaVu Sans Mono',monospace" font-size="13" fill="#cdd6f4" font-weight="400" text-anchor="start" xml:space="preserve">&gt; cat ~/.ssh/id_ed25519</text>
+<text x="604" y="277" class="k25" font-family="'JetBrains Mono','SF Mono',Menlo,Consolas,'DejaVu Sans Mono',monospace" font-size="13" fill="#f38ba8" font-weight="400" text-anchor="start" xml:space="preserve">✕ no such file:</text>
+<text x="604" y="306" class="k26" font-family="'JetBrains Mono','SF Mono',Menlo,Consolas,'DejaVu Sans Mono',monospace" font-size="13" fill="#f38ba8" font-weight="400" text-anchor="start" xml:space="preserve">  your keys are not in lea</text>
+<text x="604" y="335" class="k27" font-family="'JetBrains Mono','SF Mono',Menlo,Consolas,'DejaVu Sans Mono',monospace" font-size="13" fill="#cdd6f4" font-weight="400" text-anchor="start" xml:space="preserve">&gt; curl 192.168.1.10</text>
+<text x="604" y="364" class="k28" font-family="'JetBrains Mono','SF Mono',Menlo,Consolas,'DejaVu Sans Mono',monospace" font-size="13" fill="#f38ba8" font-weight="400" text-anchor="start" xml:space="preserve">✕ 403: private network</text>
+<text x="604" y="393" class="k29" font-family="'JetBrains Mono','SF Mono',Menlo,Consolas,'DejaVu Sans Mono',monospace" font-size="13" fill="#f38ba8" font-weight="400" text-anchor="start" xml:space="preserve">  refused by the proxy</text>
+<rect x="891" y="200" width="18" height="96" rx="9" fill="#a6e3a1"/>
+<text x="900" y="190" class="" font-family="Inter,'Segoe UI',system-ui,-apple-system,Helvetica,Arial,sans-serif" font-size="12" fill="#a6e3a1" font-weight="700" text-anchor="middle" xml:space="preserve">proxy</text>
+<rect x="324" y="448" width="552" height="64" rx="12" fill="#181825" stroke="#a6e3a1" stroke-width="1.5" stroke-dasharray="6 5"/>
+<text x="346" y="486" class="" font-family="'JetBrains Mono','SF Mono',Menlo,Consolas,'DejaVu Sans Mono',monospace" font-size="16" fill="#a6e3a1" font-weight="400" text-anchor="start" xml:space="preserve">~/projects</text>
+<text x="854" y="486" class="" font-family="Inter,'Segoe UI',system-ui,-apple-system,Helvetica,Arial,sans-serif" font-size="13" fill="#a6adc8" font-weight="400" text-anchor="end" xml:space="preserve">the only directory lea sees · read/write</text>
+<circle r="7" cx="0" cy="0" fill="#a6e3a1" class="k30"/>
+<circle r="7" cx="0" cy="0" fill="#f38ba8" class="k31"/>
+<circle r="7" cx="0" cy="0" fill="#f38ba8" class="k32"/>
+<text x="600.0" y="598" class="k33" font-family="Inter,'Segoe UI',system-ui,-apple-system,Helvetica,Arial,sans-serif" font-size="26" fill="#cdd6f4" font-weight="650" text-anchor="middle" xml:space="preserve">Claude Code agents, side by side.</text>
+<text x="600.0" y="598" class="k34" font-family="Inter,'Segoe UI',system-ui,-apple-system,Helvetica,Arial,sans-serif" font-size="26" fill="#cdd6f4" font-weight="650" text-anchor="middle" xml:space="preserve">The internet: yes, through lea's proxy.</text>
+<text x="600.0" y="598" class="k35" font-family="Inter,'Segoe UI',system-ui,-apple-system,Helvetica,Arial,sans-serif" font-size="26" fill="#cdd6f4" font-weight="650" text-anchor="middle" xml:space="preserve">Your keys and your network: no.</text>
+<text x="600.0" y="598" class="k36" font-family="Inter,'Segoe UI',system-ui,-apple-system,Helvetica,Arial,sans-serif" font-size="26" fill="#cdd6f4" font-weight="650" text-anchor="middle" xml:space="preserve">You answer every agent from one deck.</text>
+</svg>

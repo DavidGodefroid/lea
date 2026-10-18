@@ -1,0 +1,19 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 360 128" role="img" aria-label="lea">
+  <title>lea</title>
+  <g>
+    <rect x="6" y="6" width="116" height="116" rx="28" fill="#1e1e2e"/>
+    <rect x="6" y="6" width="116" height="116" rx="28" fill="none" stroke="#89b4fa" stroke-width="5"/>
+    <circle cx="36" cy="40" r="8" fill="#f38ba8"/>
+    <rect x="52" y="34" width="44" height="12" rx="6" fill="#cdd6f4"/>
+    <circle cx="36" cy="64" r="8" fill="#fab387"/>
+    <rect x="52" y="58" width="32" height="12" rx="6" fill="#cdd6f4" opacity=".75"/>
+    <circle cx="36" cy="88" r="8" fill="#a6e3a1"/>
+    <rect x="52" y="82" width="40" height="12" rx="6" fill="#cdd6f4" opacity=".5"/>
+  </g>
+  <!-- Wordmark, drawn as paths-free geometric strokes so it renders the same everywhere. -->
+  <g fill="none" stroke="#89b4fa" stroke-width="14" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M160 22 V96 Q160 106 170 106"/>
+    <path d="M204 75 H260 Q260 44 232 44 Q204 44 204 75 Q204 106 232 106 Q250 106 258 96"/>
+    <path d="M338 50 V106 M338 76 Q338 44 308 44 Q280 44 280 75 Q280 106 308 106 Q338 106 338 76"/>
+  </g>
+</svg>
