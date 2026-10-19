@@ -30,7 +30,7 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
       - id: v
         run: echo "version=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
-      - uses: sigstore/cosign-installer@v4
+      - uses: sigstore/cosign-installer@v4.1.2
       - id: build
         uses: docker/build-push-action@v6
         with:
@@ -71,7 +71,7 @@ jobs:
             docker rm "$id"
           done
       - run: tools/dist.sh "$GITHUB_REF_NAME"
-      - uses: sigstore/cosign-installer@v4
+      - uses: sigstore/cosign-installer@v4.1.2
       - run: cosign sign-blob --yes --bundle dist/checksums.txt.sigstore.json dist/checksums.txt
       - env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
