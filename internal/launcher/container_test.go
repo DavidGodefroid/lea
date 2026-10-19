@@ -173,7 +173,7 @@ func TestContainerStartSequence(t *testing.T) {
 	if _, err := os.Stat(w.hostDir() + "/scan/" + w.id() + ".start"); err != nil {
 		t.Fatalf("no start snapshot: %v", err)
 	}
-	if !strings.Contains(w.errb.String(), "locksql console for this directory") {
+	if !strings.Contains(w.errb.String(), "run locksql (or lea locksql)") {
 		t.Fatalf("stderr %q", w.errb.String())
 	}
 }

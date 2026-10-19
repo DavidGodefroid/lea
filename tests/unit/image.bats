@@ -32,7 +32,7 @@ setup() { setup_fakes; I="$LEA_ROOT/image"; }
   grep -q '^FROM quay.io/podman/stable:v5.8.7-immutable$' "$c"
   grep -q '^ARG CLAUDE_CODE_VERSION=2.1.296$' "$c"
   grep -q '^ARG RTK_VERSION=0.36.0$' "$c"
-  grep -q ' V=0.6.0 ' "$c"
+  grep -q ' V=0.7.0 ' "$c"
 }
 
 @test "Containerfile installs the locksql client of a console in another container" {

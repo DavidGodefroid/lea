@@ -230,7 +230,7 @@ func normalize(w *world, s string) string {
 func leaLines(s string) string {
 	var b strings.Builder
 	for _, l := range strings.Split(s, "\n") {
-		if strings.HasPrefix(l, "lea:") || strings.HasPrefix(l, "  docker run -it --rm --name locksql-console") {
+		if strings.HasPrefix(l, "lea:") {
 			b.WriteString(l + "\n")
 		}
 	}

@@ -117,6 +117,12 @@ if [ -e "$bindir/lea" ] && [ ! -L "$bindir/lea" ]; then
   die "$bindir/lea exists and is not a link: move it away, then rerun"
 fi
 ln -sfn "$dir/$version/bin/lea" "$bindir/lea"
+# locksql starts lea's locksql console; a locksql installed on the host keeps the name.
+if [ "$locksql" != --no-locksql ] && { [ -L "$bindir/locksql" ] || [ ! -e "$bindir/locksql" ]; }; then
+  case $(readlink "$bindir/locksql" 2>/dev/null || echo "$dir/") in
+    "$dir/"*) ln -sfn "$dir/$version/bin/locksql" "$bindir/locksql" ;;
+  esac
+fi
 say "installed lea $version in $dir/$version, linked as $bindir/lea"
 case ":$PATH:" in *":$bindir:"*) ;; *) say "add $bindir to your PATH (in your shell profile) to run lea by name" ;; esac
 if [ -x "$dir/$version/build/tmux" ]; then tmux_ok=1; fi # the archive's own static tmux

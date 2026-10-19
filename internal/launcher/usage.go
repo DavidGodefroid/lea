@@ -3,6 +3,8 @@ package launcher
 // Usage is lea's usage (recorded in testdata/golden/command-help.txt).
 const Usage = `Usage:
   lea init [--no-locksql]     set up lea on this workstation (once; rerun at will)
+  lea locksql [vault ARGS]    the locksql console of your projects, on this terminal (also
+                              locksql; vault: the vault CLI as the console account)
   lea                         open the deck: your agents on the left, the selected one on the right
                               (keys: j/k select, enter focus, ctrl+space back, n new, x stop, q quit)
   lea new [-r role] [--repo R] [--branch B] [--brief file] [name] [-- claude args]
