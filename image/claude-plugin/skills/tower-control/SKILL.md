@@ -64,7 +64,7 @@ For each thing the user asks:
    choice is truly theirs (scope, priority, a trade-off); otherwise decide and say what you chose.
 3. Start each new agent with `agents_spawn`: `role` dev (or reviewer to check a dev's branch), the
    `repo` it works in, and a `branch` named after the task (`fix/…`, `feat/…`) so it gets its own
-   worktree. At most 6 children: when full, queue the task and say so.
+   worktree. At most 20 children: when full, queue the task and say so.
 4. Write a self-contained brief (the agent knows nothing else):
    - the goal and the acceptance criteria, in the user's words when they gave them;
    - the repo, the branch, what not to touch;

@@ -1,1 +1,1 @@
-error LEA_MAX_AGENTS must be a number of agents from 1 to 99 without leading zeros, not '012'
+error LEA_APPROVAL_TIMEOUT must be a number of seconds from 1 to 600 without leading zeros, not '060'

@@ -77,7 +77,6 @@ func TestConfigValidatesLikeTheShell(t *testing.T) {
 		"LEA_APPROVALS=popup\n":      "LEA_APPROVALS must be deck or pane, not 'popup'",
 		"LEA_APPROVAL_TIMEOUT=601\n": "LEA_APPROVAL_TIMEOUT must be a number of seconds from 1 to 600 without leading zeros, not '601'",
 		"LEA_APPROVAL_TIMEOUT=060\n": "not '060'",
-		"LEA_MAX_AGENTS=100\n":       "LEA_MAX_AGENTS must be a number of agents from 1 to 99 without leading zeros, not '100'",
 	}
 	for conf, want := range cases {
 		writeUserConf(t, w, conf)
@@ -101,7 +100,7 @@ func TestConfigEnvironmentAndFiles(t *testing.T) {
 		t.Fatalf("APPROVALS=%q PREFIX=%q", c.Get("LEA_APPROVALS"), c.Get("LEA_PREFIX"))
 	}
 	env := strings.Join(c.Environ([]string{"LEA_CLIPBOARD=1", "LEA_PREFIX=env", "OTHER=x"}), "\n")
-	for _, want := range []string{"LEA_CLIPBOARD=0", "LEA_PREFIX=mine", "OTHER=x", "LEA_APPROVALS=deck", "LEA_MAX_AGENTS=12"} {
+	for _, want := range []string{"LEA_CLIPBOARD=0", "LEA_PREFIX=mine", "OTHER=x", "LEA_APPROVALS=deck"} {
 		if !strings.Contains(env+"\n", want+"\n") {
 			t.Errorf("Environ lacks %s:\n%s", want, env)
 		}

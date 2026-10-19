@@ -141,7 +141,7 @@ func TestOpenShellRunsAShellInTheContainerAndShowsIt(t *testing.T) {
 	if snap.Shown != r.Key || !reflect.DeepEqual(shellRows(snap), []string{"sh-1"}) {
 		t.Fatalf("snap=%+v", snap)
 	}
-	// Not an agent: no row in the store, so not on the board, not in agents_*, not under max_agents.
+	// Not an agent: no row in the store, so not on the board, not in agents_*.
 	if as, _ := e.st.Agents(); len(as) != 0 {
 		t.Fatalf("agents=%+v", as)
 	}
@@ -150,9 +150,8 @@ func TestOpenShellRunsAShellInTheContainerAndShowsIt(t *testing.T) {
 	}
 }
 
-func TestShellsAreCappedPerContainerButNotByMaxAgents(t *testing.T) {
+func TestShellsAreCappedPerContainer(t *testing.T) {
 	e := newEnv(t)
-	e.m.cfg.MaxAgents = 1
 	e.ensure(t, "/p")
 	e.spawn(t, "")
 	for i := 1; i <= MaxShells; i++ {
