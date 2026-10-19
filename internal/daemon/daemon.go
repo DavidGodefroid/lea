@@ -74,12 +74,17 @@ type Daemon struct {
 	// sounder plays the attention and done sounds (nil: off); rang is when each kind last rang.
 	sounder Sounder
 	rang    map[string]time.Time
+	// doneDelay holds back the done sound (a test seam): another Stop hook can still block the
+	// stop. doneTimers: the pending done sound of each agent, cancelled by its next hook.
+	doneDelay  time.Duration
+	doneTimers map[string]*time.Timer
 }
 
 func New(st *store.Store, runDir string, now func() int64) *Daemon {
 	return &Daemon{st: st, lim: bus.Default, now: now, runDir: runDir,
 		attached: map[string]string{}, notify: map[string]chan struct{}{},
-		verdicts: map[int64]chan string{}, blocks: map[string]int{}, stopped: map[string]bool{}, keyMu: map[string]*sync.Mutex{}, statusPaths: map[string]string{}, named: map[string]bool{}, rang: map[string]time.Time{}}
+		verdicts: map[int64]chan string{}, blocks: map[string]int{}, stopped: map[string]bool{}, keyMu: map[string]*sync.Mutex{}, statusPaths: map[string]string{}, named: map[string]bool{}, rang: map[string]time.Time{},
+		doneDelay: doneDelay, doneTimers: map[string]*time.Timer{}}
 }
 
 func (d *Daemon) Serve(ctx context.Context, l net.Listener, o Origin) {
@@ -655,6 +660,9 @@ func (d *Daemon) pruneForgotten() {
 	for k := range d.named {
 		keys = append(keys, k)
 	}
+	for k := range d.doneTimers {
+		keys = append(keys, k)
+	}
 	d.mu.Unlock()
 	for _, k := range keys {
 		if _, err := d.st.AgentByKey(k); errors.Is(err, store.ErrNotFound) {
@@ -662,6 +670,7 @@ func (d *Daemon) pruneForgotten() {
 			delete(d.stopped, k)
 			delete(d.blocks, k)
 			delete(d.named, k)
+			d.cancelDoneLocked(k)
 			d.mu.Unlock()
 		}
 	}
@@ -698,6 +707,17 @@ func (d *Daemon) dispatchHooks(ctx context.Context, o Origin, me string, req wir
 		}
 		d.mu.Lock()
 		stopped := d.stopped[me]
+		switch {
+		case p.Event == "Notification":
+		case stopped && (p.Event == "PreToolUse" || p.Event == "PostToolUse"):
+			// After Stop, a tool is an agent-type Stop hook at work, or the agent itself once
+			// another hook blocked the stop: the wait starts over. Cancelling would leave a stop
+			// the hook lets through without its sound, since no stop_check follows.
+			d.restartDoneLocked(me)
+		default:
+			// A new turn began, or a new Stop comes with its own stop_check.
+			d.cancelDoneLocked(me)
+		}
 		switch {
 		case p.Event == "UserPromptSubmit" || p.Event == "SessionStart":
 			delete(d.blocks, me)
@@ -745,19 +765,24 @@ func (d *Daemon) dispatchHooks(ctx context.Context, o Origin, me string, req wir
 		d.mu.Lock()
 		n := d.blocks[me]
 		d.mu.Unlock()
-		// The turn ends unless the stop is blocked: the done sound.
+		// The turn ends unless the stop is blocked: the done sound. Claude runs the Stop hooks in
+		// parallel and another one can still block the stop, so the sound waits for the agent to
+		// stay quiet (armDone).
 		if n >= maxStopBlocks {
-			d.sound(SoundDone)
+			d.armDone(me)
 			return stopVerdict{}, nil
 		}
 		ms, err := d.take(me)
 		if err != nil || len(ms.items) == 0 {
 			if err == nil {
-				d.sound(SoundDone)
+				d.armDone(me)
+			} else {
+				d.cancelDone(me)
 			}
 			return stopVerdict{}, err
 		}
 		d.mu.Lock()
+		d.cancelDoneLocked(me)
 		d.blocks[me] = n + 1
 		delete(d.stopped, me)
 		d.mu.Unlock()
