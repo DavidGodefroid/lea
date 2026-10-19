@@ -25,7 +25,7 @@ setup() {
   run calls
   [[ "$output" == *"docker [build] [-t] [lea:dev]"* ]]
   [[ "$output" == *"docker [build] [-t] [lea-proxy:dev]"* ]]
-  [[ "$output" == *"docker [build] [-t] [locksql:0.7.0] [https://github.com/DavidGodefroid/locksql.git#v0.7.0]"* ]]
+  [[ "$output" == *"docker [build] [-t] [locksql:0.8.0] [https://github.com/DavidGodefroid/locksql.git#v0.8.0]"* ]]
 }
 
 @test "lea-sh scan-begin takes exactly one directory" {

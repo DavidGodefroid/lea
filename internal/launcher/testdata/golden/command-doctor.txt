@@ -7,7 +7,7 @@ docker [image] [inspect] [lea-proxy:dev]
 tmux [-V]
 docker [inspect] [-f] [{{.State.Running}}] [lea-proxy]
 docker [network] [ls] [--filter] [label=lea.prefix=lea] [--format] [{{.Name}}]
-docker [image] [inspect] [locksql:0.7.0]
+docker [image] [inspect] [locksql:0.8.0]
 docker [volume] [inspect] [locksql-run]
 -- lea
 -- stdout
@@ -21,6 +21,6 @@ ok    tmux (tmux 3.4, host)
 ok    proxy running
 ok    internal networks: none (each lea creates its own at start)
 ok    telemetry: off (LEA_OTEL_UPSTREAM)
-ok    locksql image locksql:0.7.0
+ok    locksql image locksql:0.8.0
 ok    locksql-run volume
 warn  kubernetes token: none (optional): lea kube refresh
