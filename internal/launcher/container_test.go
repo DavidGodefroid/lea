@@ -233,6 +233,7 @@ func TestRunArgsContents(t *testing.T) {
 		"type=bind,src=" + st + "/ssh,dst=/lea/state/ssh,readonly", "type=bind,src=" + st + "/git,dst=/lea/state/git",
 		"type=bind,src=" + st + "/gh,dst=/lea/state/gh",
 		"type=bind,src=" + st + "/glab-cli,dst=/lea/state/glab-cli", "type=bind,src=" + st + "/containers,dst=/lea/state/containers",
+		"type=bind,src=" + st + "/go,dst=/lea/state/go",
 		"type=volume,src=locksql-run,dst=/run/locksql", "10000", "LEA_LOCKSQL=1", "LEA_GIT_SSH=",
 		"type=bind,src=" + st + "/kube,dst=" + w.home + "/.kube/lea,readonly", "KUBECONFIG=" + w.home + "/.kube/lea/config",
 		"/dev/fuse", "/dev/net/tun", "seccomp=" + repoRoot(t) + "/image/seccomp.json",

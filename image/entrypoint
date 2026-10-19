@@ -26,6 +26,9 @@ grep -q "^$user:" /etc/subgid || echo "$user:200000:65536" >>/etc/subgid
 install -d -m 0700 -o "$LEA_UID" -g "$LEA_GID" "/run/user/$LEA_UID"
 install -d -m 0755 -o "$LEA_UID" -g "$LEA_GID" /run/lea
 chown "$LEA_UID:$LEA_GID" /lea/podman
+# Go's state (GOPATH, GOCACHE): the bind mount of the state dir go, or a dir of this container
+# when the launcher does not mount it.
+[ -d /lea/state/go ] || install -d -o "$LEA_UID" -g "$LEA_GID" /lea/state/go
 install -d -o "$LEA_UID" -g "$LEA_GID" "$HOME"
 for d in "$HOME/.config" "$HOME/.kube"; do
   if [ -d "$d" ]; then chown "$LEA_UID:$LEA_GID" "$d"; fi

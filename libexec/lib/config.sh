@@ -1,7 +1,7 @@
 # shellcheck shell=sh
 # Loads the organisation configuration, then the user configuration ($LEA_CONFIG, else
 # ~/.config/lea/lea.conf, written by lea init). A non-empty LEA_PROJECTS_DIR in the environment
-# beats both (so do LEA_APPROVALS, LEA_APPROVAL_TIMEOUT and LEA_MAX_AGENTS).
+# beats both (so do LEA_APPROVALS and LEA_APPROVAL_TIMEOUT).
 
 lea_user_config_path() {
   printf '%s' "${LEA_CONFIG:-${XDG_CONFIG_HOME:-$HOME/.config}/lea/lea.conf}"
@@ -11,7 +11,6 @@ lea_load_config() {
   _lc_env=${LEA_PROJECTS_DIR:-}
   _lc_appr=${LEA_APPROVALS:-}
   _lc_appt=${LEA_APPROVAL_TIMEOUT:-}
-  _lc_max=${LEA_MAX_AGENTS:-}
   # shellcheck source=/dev/null
   . "$LEA_ROOT/config/lea.conf"
   _lc_user=$(lea_user_config_path)
@@ -30,10 +29,6 @@ lea_load_config() {
   if [ "$LEA_APPROVAL_TIMEOUT" -lt 1 ] || [ "$LEA_APPROVAL_TIMEOUT" -gt 600 ]; then
     lea_die "LEA_APPROVAL_TIMEOUT must be a number of seconds from 1 to 600 without leading zeros, not '$LEA_APPROVAL_TIMEOUT'"
   fi
-  LEA_MAX_AGENTS=${_lc_max:-${LEA_MAX_AGENTS:-12}}
-  case $LEA_MAX_AGENTS in
-    ''|0*|*[!0-9]*|???*) lea_die "LEA_MAX_AGENTS must be a number of agents from 1 to 99 without leading zeros, not '$LEA_MAX_AGENTS'" ;;
-  esac
   LEA_INTERNAL_HOSTS=${LEA_INTERNAL_HOSTS:-$LEA_ROOT/config/internal-hosts}
   # The git SSH endpoints (none by default: git over HTTPS needs none). LEA_GITLAB_SSH and
   # LEA_GITLAB_KNOWN_HOSTS, the keys of lea before any forge could be used, are read when the new
@@ -54,7 +49,7 @@ lea_load_config() {
   unset LEA_GITLAB_SSH LEA_GITLAB_KNOWN_HOSTS LEA_REGISTRY
   export LEA_PREFIX LEA_IMAGE LEA_PROXY_IMAGE LEA_GIT_SSH LEA_GIT_KNOWN_HOSTS LEA_LOCKSQL LEA_LOCKSQL_IMAGE LEA_LOCKSQL_REF LEA_LOCKSQL_VAULT_ADDR \
     LEA_OTEL_UPSTREAM LEA_NESTED_NETWORKS LEA_K8S_NAMESPACE LEA_INTERNAL_HOSTS LEA_PROJECTS_DIR \
-    LEA_APPROVALS LEA_APPROVAL_TIMEOUT LEA_MAX_AGENTS
+    LEA_APPROVALS LEA_APPROVAL_TIMEOUT
 }
 
 # lea__check_git_ssh: LEA_GIT_SSH lists at most 16 host:port endpoints, each a plain host name

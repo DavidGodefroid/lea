@@ -944,7 +944,6 @@ func TestSummary(t *testing.T) {
 func TestSnapshotStaysSmallWithOversizedToolNames(t *testing.T) {
 	e := newEnv(t)
 	e.ensure(t, "/p")
-	e.m.cfg.MaxAgents = 20 // more agents than the default cap
 	for i := 0; i < 20; i++ {
 		name := fmt.Sprintf("a%d", i)
 		e.spawn(t, name)
@@ -1197,19 +1196,9 @@ func TestNewRefusesBadReposAndBranches(t *testing.T) {
 	}
 }
 
-func TestNewCapsAgentsAndChildren(t *testing.T) {
+func TestNewCapsChildren(t *testing.T) {
 	e := newEnv(t)
-	s := e.ensure(t, "/p")
-	e.m.cfg.MaxAgents = 2
-	e.spawn(t, "a1")
-	e.spawn(t, "a2")
-	if _, err := e.m.New(bg, NewRequest{Container: C, Name: "a3"}); !errors.Is(err, store.ErrLimit) || !strings.Contains(err.Error(), "max_agents 2") {
-		t.Fatalf("third agent: err=%v", err)
-	}
-	if s.byAgent("a3") != nil {
-		t.Fatal("a refused spawn started a pane")
-	}
-	e.m.cfg.MaxAgents = 20
+	e.ensure(t, "/p")
 	lead, err := e.m.New(bg, NewRequest{Container: C, Name: "boss", Role: "lead"})
 	if err != nil {
 		t.Fatal(err)
@@ -1220,8 +1209,8 @@ func TestNewCapsAgentsAndChildren(t *testing.T) {
 		}
 	}
 	if _, err := e.m.New(bg, NewRequest{Container: C, Parent: lead.Key, NamePrefix: "dev", Hidden: true}); !errors.Is(err, store.ErrLimit) ||
-		!strings.Contains(err.Error(), "max_children 6") {
-		t.Fatalf("seventh child: err=%v", err)
+		!strings.Contains(err.Error(), "max_children 20") {
+		t.Fatalf("one child too many: err=%v", err)
 	}
 }
 

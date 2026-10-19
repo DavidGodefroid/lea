@@ -1,0 +1,13 @@
+#!/bin/sh
+# go for another platform, without a GOOS=... GOARCH=... prefix: permission rules never match a
+# command that starts with variable assignments.
+# Usage: go-cross <GOOS> <GOARCH> <go arguments...>, e.g. go-cross darwin arm64 vet ./...
+set -eu
+if [ $# -lt 3 ]; then
+  echo "usage: go-cross <GOOS> <GOARCH> <go arguments...>" >&2
+  exit 2
+fi
+GOOS=$1 GOARCH=$2
+export GOOS GOARCH
+shift 2
+exec go "$@"

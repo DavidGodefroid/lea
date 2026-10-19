@@ -99,12 +99,12 @@ func TestConfigMatchesTheGoldenFiles(t *testing.T) {
 		{"defaults", "", nil},
 		{"user file", "LEA_IMAGE='registry.example.com/lea:1'\nLEA_PROXY_IMAGE=lea-proxy:dev\n", nil},
 		{"quotes written by lea_user_config_set", "LEA_PROJECTS_DIR='/srv/it'\\''s'\n", map[string]string{"LEA_PROJECTS_DIR": ""}},
-		{"environment wins for protected keys", "LEA_APPROVALS=pane\nLEA_MAX_AGENTS=5\n", map[string]string{"LEA_APPROVALS": "deck", "LEA_MAX_AGENTS": ""}},
+		{"environment wins for protected keys", "LEA_APPROVALS=pane\nLEA_APPROVAL_TIMEOUT=5\n", map[string]string{"LEA_APPROVALS": "deck", "LEA_APPROVAL_TIMEOUT": ""}},
 		{"files win over the environment otherwise", "LEA_PREFIX=x\n", map[string]string{"LEA_PREFIX": "y", "LEA_INTERNAL_HOSTS": "/etc/h"}},
 		{"export, comments, blank lines", "# c\n\nexport LEA_OTEL_UPSTREAM=otel.example.com:4317 # trailing\n", nil},
 		{"known hosts follow XDG_CONFIG_HOME", "", map[string]string{"LEA_GITLAB_KNOWN_HOSTS": ""}},
 		{"home expansion", "LEA_IMAGE=~/i\nLEA_PROXY_IMAGE=\"$HOME/p\"\nLEA_REGISTRY=${HOME}\n", nil},
-		{"leading zero", "LEA_MAX_AGENTS=012\n", nil},
+		{"leading zero", "LEA_APPROVAL_TIMEOUT=060\n", nil},
 	}
 	root := repoRoot(t)
 	for _, tc := range cases {
@@ -485,7 +485,7 @@ func TestCommandsMatchTheGoldenFiles(t *testing.T) {
 		// The fake core always answers `agents`: both launchers loop 50 times waiting for the old
 		// daemon to stop, then die with the same message after the same 51 calls.
 		{name: "daemon records differ and the old daemon never stops", setup: func(w *world) {
-			os.WriteFile(w.hostDir()+"/daemon.policy", []byte("5"), 0o600)
+			os.WriteFile(w.hostDir()+"/daemon.approvals", []byte("pane 5"), 0o600)
 		}, exit: 1, want: []string{"lea: error: the running lea daemon did not stop (kill it, then retry)"}, absent: []string{"docker"}},
 		{name: "daemon not running and never starts", env: map[string]string{"FAKE_CORE_RC_agents": "1"}, exit: 1,
 			want: []string{"core [agents]\ncore [agents]", "the lea daemon did not start in 5 s"}, absent: []string{"docker", "[daemon]"},
