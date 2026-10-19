@@ -97,27 +97,6 @@ setup() { setup_fakes; load_lea; U="$HOME/.config/lea/lea.conf"; }
   done
 }
 
-@test "LEA_MAX_AGENTS: 12 by default, the user config, then the environment" {
-  lea_load_config
-  [ "$LEA_MAX_AGENTS" = 12 ]
-  mkdir -p "${U%/*}"; printf 'LEA_MAX_AGENTS=4\n' >"$U"
-  LEA_MAX_AGENTS=
-  lea_load_config
-  [ "$LEA_MAX_AGENTS" = 4 ]
-  export LEA_MAX_AGENTS=7
-  lea_load_config
-  [ "$LEA_MAX_AGENTS" = 7 ]
-}
-
-@test "bad LEA_MAX_AGENTS values are refused" {
-  for v in 0 100 07 x -1 1.5; do
-    export LEA_MAX_AGENTS=$v
-    run lea_load_config
-    [ "$status" -eq 1 ]
-    [[ "$output" == *"LEA_MAX_AGENTS must be a number of agents from 1 to 99"* ]]
-  done
-}
-
 @test "LEA_LAUNCHER is ignored, whatever its value and wherever it is set" {
   run grep -q LEA_LAUNCHER "$LEA_ROOT/config/lea.conf"
   [ "$status" -eq 1 ]

@@ -59,6 +59,8 @@ type=bind,src=$W/data/lea/state/glab-cli,dst=/lea/state/glab-cli
 --mount
 type=bind,src=$W/data/lea/state/containers,dst=/lea/state/containers
 --mount
+type=bind,src=$W/data/lea/state/go,dst=/lea/state/go
+--mount
 type=bind,src=$W/data/lea/state/kube,dst=$W/home/.kube/lea,readonly
 --mount
 type=volume,src=lea-podman-$ID,dst=/lea/podman

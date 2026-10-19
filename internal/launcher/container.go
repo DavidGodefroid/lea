@@ -184,7 +184,7 @@ func (l *Launcher) runArgs(proj, pip string) ([]string, error) {
 	if err := noComma(proj, home, st, l.Root); err != nil {
 		return nil, err
 	}
-	if err := Mkdirs(l.Cfg.DataDir(), st+"/ssh", st+"/git", st+"/gh", st+"/glab-cli", st+"/containers", st+"/kube"); err != nil {
+	if err := Mkdirs(l.Cfg.DataDir(), st+"/ssh", st+"/git", st+"/gh", st+"/glab-cli", st+"/containers", st+"/go", st+"/kube"); err != nil {
 		return nil, die("%v", err)
 	}
 	p := l.prefix()
@@ -204,6 +204,7 @@ func (l *Launcher) runArgs(proj, pip string) ([]string, error) {
 		"--mount", "type=bind,src=" + st + "/gh,dst=/lea/state/gh",
 		"--mount", "type=bind,src=" + st + "/glab-cli,dst=/lea/state/glab-cli",
 		"--mount", "type=bind,src=" + st + "/containers,dst=/lea/state/containers",
+		"--mount", "type=bind,src=" + st + "/go,dst=/lea/state/go",
 		"--mount", "type=bind,src=" + st + "/kube,dst=" + home + "/.kube/lea,readonly",
 		"--mount", "type=volume,src=" + p + "-podman-" + id + ",dst=/lea/podman"}
 	if l.Cfg.Locksql() {

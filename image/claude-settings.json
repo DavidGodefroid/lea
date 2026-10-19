@@ -8,6 +8,14 @@
     "OTEL_RESOURCE_ATTRIBUTES": "service.name=lea,service.version=@LEA_VERSION@",
     "DISABLE_UPDATES": "1"
   },
+  "permissions": {
+    "allow": [
+      "Bash(go *)",
+      "Bash(go-cross *)",
+      "Bash(staticcheck *)",
+      "Bash(govulncheck *)"
+    ]
+  },
   "statusLine": {
     "type": "command",
     "command": "[ -x /usr/local/bin/lea ] && exec /usr/local/bin/lea statusline; exit 0"
@@ -80,6 +88,12 @@
           {
             "type": "command",
             "command": "[ -x /usr/local/bin/lea ] && exec /usr/local/bin/lea hook claude Stop; exit 0"
+          },
+          {
+            "type": "command",
+            "command": "[ -x /usr/local/bin/lea ] && exec /usr/local/bin/lea hook claude Rewake; exit 0",
+            "asyncRewake": true,
+            "timeout": 3600
           }
         ]
       }

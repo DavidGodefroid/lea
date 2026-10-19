@@ -43,7 +43,7 @@ git_ssh() { export LEA_GIT_SSH="$1"; lea_load_config; }
 
 @test "init creates the state dirs of git, gh and glab, and no gitlab dir" {
   lea_init </dev/null 2>/dev/null
-  for d in ssh git gh containers glab-cli kube claude; do [ -d "$S/$d" ]; done
+  for d in ssh git gh containers glab-cli go kube claude; do [ -d "$S/$d" ]; done
   [ ! -e "$S/gitlab" ]
 }
 

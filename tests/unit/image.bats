@@ -35,6 +35,41 @@ setup() { setup_fakes; I="$LEA_ROOT/image"; }
   grep -q ' V=0.8.0 ' "$c"
 }
 
+@test "Containerfile ships Go 1.26 by digest, staticcheck and govulncheck pinned, with Go's state in the state dir go" {
+  c="$I/Containerfile"
+  grep -q '^ARG GO_IMAGE=docker.io/library/golang:1\.26\.[0-9]*@sha256:[0-9a-f]\{64\}$' "$c"
+  grep -q '^FROM --platform=$BUILDPLATFORM ${GO_IMAGE} AS go-tools$' "$c"
+  grep -q '^ARG STATICCHECK_VERSION=v0.8.1$' "$c"
+  grep -q '^ARG GOVULNCHECK_VERSION=v1.8.0$' "$c"
+  grep -q '^COPY --from=go /usr/local/go /usr/local/go$' "$c"
+  grep -q '^ENV PATH=/usr/local/go/bin:/lea/state/go/bin:$PATH' "$c"
+  for v in GOTOOLCHAIN=local GOPATH=/lea/state/go GOCACHE=/lea/state/go/cache GOFLAGS=-modcacherw; do grep -q "^ *$v\( \\\\\)\?\$" "$c"; done
+  grep -q '^\[ -d /lea/state/go \] || install -d -o "$LEA_UID" -g "$LEA_GID" /lea/state/go$' "$I/entrypoint"
+}
+
+@test "go-cross runs go for another platform without a variable prefix" {
+  g="$I/go-cross"
+  [ -x "$g" ]
+  grep -q '^COPY image/go-cross /usr/local/bin/$' "$I/Containerfile"
+  grep -q 'chmod 0755 .*/usr/local/bin/go-cross' "$I/Containerfile"
+  mkdir -p "$BATS_TEST_TMPDIR/bin"
+  printf '#!/bin/sh\necho "$GOOS/$GOARCH $*"\n' >"$BATS_TEST_TMPDIR/bin/go"
+  chmod +x "$BATS_TEST_TMPDIR/bin/go"
+  PATH="$BATS_TEST_TMPDIR/bin:$PATH" run "$g" darwin arm64 vet ./...
+  [ "$status" -eq 0 ]
+  [ "$output" = "darwin/arm64 vet ./..." ]
+  run "$g" darwin arm64
+  [ "$status" -eq 2 ]
+}
+
+@test "lea's Claude settings let agents run go, go-cross, staticcheck and govulncheck" {
+  s="$I/claude-settings.json"
+  for r in 'Bash(go *)' 'Bash(go-cross *)' 'Bash(staticcheck *)' 'Bash(govulncheck *)'; do
+    jq -e --arg r "$r" '.permissions.allow | index($r)' "$s" >/dev/null
+  done
+  [ "$(jq -r '.permissions // "none"' "$I/managed-settings.json")" = none ]
+}
+
 @test "Containerfile installs the locksql client of a console in another container" {
   c="$I/Containerfile"
   grep -q 'useradd -r -u 10001 -U -M -s /sbin/nologin locksql' "$c"

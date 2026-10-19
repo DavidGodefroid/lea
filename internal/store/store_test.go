@@ -481,36 +481,26 @@ func TestRegisterRecordsRoleAndTree(t *testing.T) {
 	}
 }
 
-func TestRegisterCapsAgentsAndChildren(t *testing.T) {
+func TestRegisterCapsChildrenOnly(t *testing.T) {
 	s := open(t)
-	for i := 0; i < 3; i++ {
+	// A project runs as many agents as it starts: only a lead's children are capped.
+	for i := 0; i < 30; i++ {
 		role := "dev"
 		if i == 1 {
 			role = "lead" // a1 gets children below
 		}
-		if _, err := reg(t, s, fmt.Sprintf("a%d", i), role, "", Caps{MaxAgents: 3}); err != nil {
-			t.Fatal(err)
+		if _, err := reg(t, s, fmt.Sprintf("a%d", i), role, "", Caps{}); err != nil {
+			t.Fatalf("agent %d: %v", i, err)
 		}
-	}
-	if _, err := reg(t, s, "a3", "dev", "", Caps{MaxAgents: 3}); !errors.Is(err, ErrLimit) || !strings.Contains(err.Error(), "max_agents 3") {
-		t.Fatalf("fourth agent: err=%v", err)
-	}
-	if a, _ := s.AgentByKey("lea-a/a3"); a.Key != "" {
-		t.Fatal("a refused agent left a row")
-	}
-	s.SetState("lea-a/a0", "done", "", 2)  // an ended agent frees its place
-	s.UpsertAgent("lea-a", "hook-only", 2) // registered by a hook only: never counted
-	if _, err := reg(t, s, "a3", "dev", "", Caps{MaxAgents: 3}); err != nil {
-		t.Fatalf("after an agent ended: %v", err)
-	}
-	if _, err := s.Register(NewAgent{Container: "lea-b", Name: "b", Profile: "claude", Workdir: "/q", Role: "dev"}, Caps{MaxAgents: 3}, 3); err != nil {
-		t.Fatalf("another project is counted apart: %v", err)
 	}
 	if _, err := reg(t, s, "k1", "dev", "lea-a/a1", Caps{MaxChildren: 1}); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := reg(t, s, "k2", "dev", "lea-a/a1", Caps{MaxChildren: 1}); !errors.Is(err, ErrLimit) || !strings.Contains(err.Error(), "a1 already runs 1 agents (max_children 1)") {
 		t.Fatalf("second child: err=%v", err)
+	}
+	if a, _ := s.AgentByKey("lea-a/k2"); a.Key != "" {
+		t.Fatal("a refused agent left a row")
 	}
 	s.SetState("lea-a/k1", "done", "", 4)
 	if _, err := reg(t, s, "k2", "dev", "lea-a/a1", Caps{MaxChildren: 1}); err != nil {
@@ -529,7 +519,7 @@ func TestRegisterCapsHoldUnderConcurrentSpawns(t *testing.T) {
 		go func(i int) {
 			defer wg.Done()
 			_, err := s.Register(NewAgent{Container: "lea-a", Name: fmt.Sprintf("c%d", i), Profile: "claude", Workdir: "/p",
-				Role: "dev", Parent: "lea-a/boss"}, Caps{MaxAgents: 5, MaxChildren: 3}, 1)
+				Role: "dev", Parent: "lea-a/boss"}, Caps{MaxChildren: 3}, 1)
 			mu.Lock()
 			defer mu.Unlock()
 			switch {
