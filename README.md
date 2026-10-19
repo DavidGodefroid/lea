@@ -234,8 +234,10 @@ Agents get lea's tools through MCP:
 - any other agent asks a lead with `agents_request_spawn`; without a lead the request comes to
   you (`lea requests`, `lea request accept <id>`, `lea request decline <id> [reason]`);
 - agents message each other (`msg_send`, `msg_reply`); a message waits in the inbox until the
-  agent's next turn. An agent whose turn is over keeps a background job on
-  `lea inbox --agent --wait`: it ends when a message arrives, and Claude Code starts a turn;
+  agent's next turn. An agent whose turn is over is woken when a message arrives: its Stop hook
+  starts a background job (Claude Code's `asyncRewake`) that ends with the unread notice, and
+  Claude Code starts a turn. A working agent, or one waiting on a permission dialog, is not
+  interrupted; only the newest job of an agent stays, so one message wakes it once;
 - an agent started by a lead is told to report to it with `msg_send` when it is done or blocked;
 - `board_read` shows an agent every task of its lea, as `lea board` shows them to you;
 - every agent reports on its task with `task_update`: its row shows it, and `lea board --md`
@@ -249,8 +251,8 @@ lea brings its own Claude Code plugin, `lea`, loaded in every agent (from the im
 session only: nothing is installed in your `~/.claude`). Its skill `/lea:tower-control` turns a
 lead into your control tower: you talk to it only, it splits your requests into tasks, starts
 `dev` and `reviewer` agents with self-contained briefs, answers their questions when it can, and
-follows them with `board_read`, and briefs you in one line per agent. Between your requests it
-waits on a background `lea inbox --agent --wait`, so an agent's report wakes it:
+follows them with `board_read`, and briefs you in one line per agent. Between your requests an
+agent's report wakes it, as it wakes every agent whose turn is over:
 
 ```
 fix-login · done · PR #42, 18 tests pass
