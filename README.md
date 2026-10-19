@@ -230,7 +230,7 @@ Only you change a role (`r` in the deck, `lea role <agent> <role>`, `lea new -r 
 Agents get lea's tools through MCP:
 
 - a lead starts `dev` and `reviewer` agents with `agents_spawn` and stops its own with
-  `agents_stop` (at most 6 children; at most `LEA_MAX_AGENTS`, 12, per projects directory);
+  `agents_stop` (at most 20 children at a time);
 - any other agent asks a lead with `agents_request_spawn`; without a lead the request comes to
   you (`lea requests`, `lea request accept <id>`, `lea request decline <id> [reason]`);
 - agents message each other (`msg_send`, `msg_reply`); a message waits in the inbox until the
@@ -304,7 +304,6 @@ projects directory cannot be `/`, your home directory or one of its parents, nor
 | `LEA_INTERNAL_HOSTS` | none | private hosts the proxy may reach (format in `config/internal-hosts`) |
 | `LEA_NESTED_NETWORKS` | empty | networks your compose files expect, created at start |
 | `LEA_APPROVALS`, `LEA_APPROVAL_TIMEOUT` | `deck`, `60` | who answers permission requests |
-| `LEA_MAX_AGENTS` | `12` | running agents per projects directory |
 | `LEA_SOUND`, `LEA_AUTONAME` | on | the deck's sounds, automatic names (`0`: off) |
 | `LEA_OTEL_UPSTREAM` | empty | send Claude Code usage telemetry to this OTLP collector |
 | `LEA_ASCII` | off | ASCII marks in the deck (`1`) |

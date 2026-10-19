@@ -179,13 +179,6 @@ func runDaemon(stderr io.Writer) int {
 		fmt.Fprintln(stderr, "lea:", clean(err.Error(), false))
 		return 1
 	}
-	// Same pattern for the agent cap: the launcher restarts a daemon that recorded another one.
-	ma := maxAgents(os.Getenv("LEA_MAX_AGENTS"))
-	_ = os.Remove(filepath.Join(host, "daemon.policy"))
-	if err := os.WriteFile(filepath.Join(host, "daemon.policy"), []byte(strconv.Itoa(ma)), 0o600); err != nil {
-		fmt.Fprintln(stderr, "lea:", clean(err.Error(), false))
-		return 1
-	}
 	exe, err := os.Executable()
 	if err != nil {
 		fmt.Fprintln(stderr, "lea:", clean(err.Error(), false))
@@ -198,7 +191,6 @@ func runDaemon(stderr io.Writer) int {
 		LeaBin:     exe,
 		UID:        os.Getuid(),
 		GID:        os.Getgid(),
-		MaxAgents:  ma,
 
 		Approvals:       approvalsMode(os.Getenv("LEA_APPROVALS")),
 		ApprovalTimeout: approvalTimeout(os.Getenv("LEA_APPROVAL_TIMEOUT")),
@@ -646,15 +638,6 @@ func approvalsMode(v string) string {
 		return "pane"
 	}
 	return "deck"
-}
-
-// maxAgents is LEA_MAX_AGENTS (1-99), roles.MaxAgents otherwise.
-func maxAgents(v string) int {
-	n, err := strconv.Atoi(v)
-	if err != nil || n < 1 || n > 99 {
-		return roles.MaxAgents
-	}
-	return n
 }
 
 // approvalTimeout is LEA_APPROVAL_TIMEOUT in seconds (1-600), 0 (the hook's default) otherwise.

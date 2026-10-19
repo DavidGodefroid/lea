@@ -16,9 +16,7 @@ const (
 	// Default is the role of an agent started without one (lea new, n, agents_spawn).
 	Default = Dev
 	// MaxChildren caps the running agents one lead started (spec §5.2 max_children).
-	MaxChildren = 6
-	// MaxAgents is the default cap of running agents per projects directory (LEA_MAX_AGENTS).
-	MaxAgents = 12
+	MaxChildren = 20
 )
 
 // Role is what an agent of that role may do.
