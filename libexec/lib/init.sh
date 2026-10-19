@@ -256,7 +256,7 @@ lea_init() {
   _in_h=$(lea_host_dir)
   lea__init_launcher
   lea__init_projects
-  lea_mkdirs "$(lea_data_dir)" "$_in_s/ssh" "$_in_s/git" "$_in_s/gh" "$_in_s/containers" "$_in_s/glab-cli" "$_in_s/kube" \
+  lea_mkdirs "$(lea_data_dir)" "$_in_s/ssh" "$_in_s/git" "$_in_s/gh" "$_in_s/containers" "$_in_s/glab-cli" "$_in_s/go" "$_in_s/kube" \
     "$_in_s/claude" "$_in_h/scan" "$_in_h/sessions" "$_in_h/locks"
   if [ -n "$LEA_GIT_SSH" ]; then
     lea__init_known_hosts "$_in_s"
