@@ -116,32 +116,32 @@ git_ssh() { export LEA_GIT_SSH="$1"; lea_load_config; }
 }
 
 @test "a missing locksql image is built from locksql's repository at LEA_LOCKSQL_REF" {
-  export FAKE_DOCKER_RC_IMAGE_INSPECT_AT_LOCKSQL_0_7_0=1
+  export FAKE_DOCKER_RC_IMAGE_INSPECT_AT_LOCKSQL_0_8_0=1
   run lea_init </dev/null
   [ "$status" -eq 0 ]
   run calls
-  [[ "$output" == *"docker [image] [inspect] [locksql:0.7.0]"* ]]
-  [[ "$output" == *"docker [build] [-t] [locksql:0.7.0] [https://github.com/DavidGodefroid/locksql.git#v0.7.0]"* ]]
+  [[ "$output" == *"docker [image] [inspect] [locksql:0.8.0]"* ]]
+  [[ "$output" == *"docker [build] [-t] [locksql:0.8.0] [https://github.com/DavidGodefroid/locksql.git#v0.8.0]"* ]]
 }
 
 @test "a present locksql image is not rebuilt" {
   lea_init </dev/null 2>/dev/null
   run calls
-  [[ "$output" == *"docker [image] [inspect] [locksql:0.7.0]"* ]]
+  [[ "$output" == *"docker [image] [inspect] [locksql:0.8.0]"* ]]
   [[ "$output" != *"docker [build]"* ]]
 }
 
 @test "a failing locksql build is only a warning" {
-  export FAKE_DOCKER_RC_IMAGE_INSPECT_AT_LOCKSQL_0_7_0=1 FAKE_DOCKER_RC_BUILD__T=1
+  export FAKE_DOCKER_RC_IMAGE_INSPECT_AT_LOCKSQL_0_8_0=1 FAKE_DOCKER_RC_BUILD__T=1
   run lea_init </dev/null
   [ "$status" -eq 0 ]
-  [[ "$output" == *"warning: could not build locksql:0.7.0"* ]]
+  [[ "$output" == *"warning: could not build locksql:0.8.0"* ]]
   [[ "$output" == *"ready. Run: lea"* ]]
 }
 
 @test "LEA_LOCKSQL=0 skips the locksql image" {
   lea_user_config_set LEA_LOCKSQL 0; lea_load_config
-  export FAKE_DOCKER_RC_IMAGE_INSPECT_AT_LOCKSQL_0_7_0=1
+  export FAKE_DOCKER_RC_IMAGE_INSPECT_AT_LOCKSQL_0_8_0=1
   run lea_init </dev/null
   [ "$status" -eq 0 ]
   run calls
@@ -451,7 +451,7 @@ EOT
   [[ "$output" == *"docker [pull] [ghcr.io/davidgodefroid/lea-proxy:9.9.9]"* ]]
   [[ "$output" == *"docker [image] [inspect] [locksql:9.0.0]"* ]]
   [[ "$output" == *"docker [build] [-t] [locksql:9.0.0] [https://github.com/DavidGodefroid/locksql.git#v9.0.0]"* ]]
-  [[ "$output" != *"locksql:0.7.0"* ]]
+  [[ "$output" != *"locksql:0.8.0"* ]]
 }
 
 @test "release update does not rebuild a present locksql image" {
@@ -549,11 +549,11 @@ EOT
 
 @test "update of a checkout builds a missing locksql image" {
   update_root checkout
-  export FAKE_DOCKER_RC_IMAGE_INSPECT_AT_LOCKSQL_0_7_0=1
+  export FAKE_DOCKER_RC_IMAGE_INSPECT_AT_LOCKSQL_0_8_0=1
   run lea_update
   [ "$status" -eq 0 ]
   run calls
-  [[ "$output" == *"docker [build] [-t] [locksql:0.7.0] [https://github.com/DavidGodefroid/locksql.git#v0.7.0]"* ]]
+  [[ "$output" == *"docker [build] [-t] [locksql:0.8.0] [https://github.com/DavidGodefroid/locksql.git#v0.8.0]"* ]]
 }
 
 @test "update of a checkout with LEA_LOCKSQL=0 builds no locksql image" {
@@ -615,7 +615,7 @@ y"
   [[ "$output" == *"locksql has no database profile for $P yet"* ]]
   [[ "$output" == *"run locksql (or lea locksql) in a terminal you keep in view"* ]]
   run calls
-  [[ "$output" == *"docker [run] [-it] [--rm] [--user] [$(id -u):$(id -g)] [-e] [HOME=/tmp] [-v] [$P:$P] [-w] [$P] [locksql:0.7.0] [profile] [add] [--project] [$P]"* ]]
+  [[ "$output" == *"docker [run] [-it] [--rm] [--user] [$(id -u):$(id -g)] [-e] [HOME=/tmp] [-v] [$P:$P] [-w] [$P] [locksql:0.8.0] [profile] [add] [--project] [$P]"* ]]
 }
 
 @test "the profile wizard is skipped when declined, without input, or when a profile exists" {
@@ -653,9 +653,9 @@ y
   [ "$status" -eq 0 ]
   grep -qx "LEA_LOCKSQL_VAULT_ADDR='https://vault.example.com'" "$U"
   run calls
-  [[ "$output" == *"docker [build] [--target] [vault] [-t] [locksql:0.7.0] [https://github.com/DavidGodefroid/locksql.git#v0.7.0]"* ]]
-  [[ "$output" == *"[-e] [VAULT_ADDR=https://vault.example.com] [--entrypoint] [vault] [locksql:0.7.0] [token] [lookup]"* ]]
-  [[ "$output" == *"docker [run] [-i] [--rm] [--user] [locksql] [-v] [locksql-home:/home/locksql] [-e] [VAULT_ADDR=https://vault.example.com] [--entrypoint] [vault] [locksql:0.7.0] [login] [-method=oidc]"* ]]
+  [[ "$output" == *"docker [build] [--target] [vault] [-t] [locksql:0.8.0] [https://github.com/DavidGodefroid/locksql.git#v0.8.0]"* ]]
+  [[ "$output" == *"[-e] [VAULT_ADDR=https://vault.example.com] [--entrypoint] [vault] [locksql:0.8.0] [token] [lookup]"* ]]
+  [[ "$output" == *"docker [run] [-i] [--rm] [--user] [locksql] [-v] [locksql-home:/home/locksql] [-e] [VAULT_ADDR=https://vault.example.com] [--entrypoint] [vault] [locksql:0.8.0] [login] [-method=oidc]"* ]]
 }
 
 @test "without a terminal the guided locksql steps are skipped" {
@@ -668,18 +668,18 @@ y
 @test "a missing image is built with the vault CLI when a profile needs it" {
   mkdir -p "$P/.locksql"
   printf '[profiles.uat]\nengine = "postgres"\nhost = "db"\ncredentials = "vault"\nvault_path = "x/y"\n' >"$P/.locksql/config.toml"
-  export FAKE_DOCKER_RC_IMAGE_INSPECT_AT_LOCKSQL_0_7_0=1
+  export FAKE_DOCKER_RC_IMAGE_INSPECT_AT_LOCKSQL_0_8_0=1
   lea_init </dev/null 2>/dev/null
   run calls
-  [[ "$output" == *"docker [build] [--target] [vault] [-t] [locksql:0.7.0]"* ]]
+  [[ "$output" == *"docker [build] [--target] [vault] [-t] [locksql:0.8.0]"* ]]
 }
 
 @test "LEA_LOCKSQL_REF may be a local locksql checkout" {
-  export LEA_LOCKSQL_REF="$BATS_TEST_TMPDIR/locksql" FAKE_DOCKER_RC_IMAGE_INSPECT_AT_LOCKSQL_0_7_0=1
+  export LEA_LOCKSQL_REF="$BATS_TEST_TMPDIR/locksql" FAKE_DOCKER_RC_IMAGE_INSPECT_AT_LOCKSQL_0_8_0=1
   mkdir -p "$LEA_LOCKSQL_REF"
   lea_init </dev/null 2>/dev/null
   run calls
-  [[ "$output" == *"docker [build] [-t] [locksql:0.7.0] [$LEA_LOCKSQL_REF]"* ]]
+  [[ "$output" == *"docker [build] [-t] [locksql:0.8.0] [$LEA_LOCKSQL_REF]"* ]]
 }
 
 @test "init links locksql next to lea, takes over an older lea's, keeps a host locksql" {

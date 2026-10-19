@@ -2,10 +2,10 @@ status 0
 -- calls
 docker [image] [inspect] [lea:dev]
 docker [image] [inspect] [lea-proxy:dev]
-docker [image] [inspect] [locksql:0.7.0]
+docker [image] [inspect] [locksql:0.8.0]
 docker [info] [--format] [{{json .SecurityOptions}}]
 -- lea
 lea: $W/home/.local/bin is not on your PATH: add it in your shell profile to run lea by name
-lea: locksql console image locksql:0.7.0: present
+lea: locksql console image locksql:0.8.0: present
 lea: ready. Run: lea
 -- stdout

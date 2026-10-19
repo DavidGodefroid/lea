@@ -208,10 +208,13 @@ footer .row { display:flex; justify-content:space-between; gap:18px; flex-wrap:w
       to install its AppArmor profile on Linux hosts that use it.</p>
     <ol class="steps">
       <li><strong>Install.</strong> The installer checks the requirements, verifies the release checksum, links
-        <code>~/.local/bin/lea</code> and asks for your projects directory.
+        <code>~/.local/bin/lea</code> and asks for your projects directory, then for a first database profile
+        for <a href="https://github.com/DavidGodefroid/locksql">locksql</a> (never its password).
         <div class="install" style="margin:12px 0 0;max-width:none"><code id="cmd2">curl -fsSL https://leadeck.dev/install.sh | sh</code><button class="copy" data-copy="cmd2">Copy</button></div></li>
       <li><strong>Run <code>lea</code>.</strong> In the first agent, type <code>/login</code> once. Press
         <kbd>n</kbd> for the next agent.</li>
+      <li><strong>Optional: databases.</strong> Run <code>locksql</code> in a terminal you keep in view: the console where you
+        approve each statement your agents propose. It alone holds the credentials, typed or read from Vault.</li>
       <li><strong>Optional: git over SSH.</strong> List your forges in <code>~/.config/lea/lea.conf</code>, rerun
         <code>lea init</code>, add the printed key to your forge. HTTPS works out of the box.</li>
     </ol>
