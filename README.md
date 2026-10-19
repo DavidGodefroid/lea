@@ -239,12 +239,14 @@ Only you change a role (`r` in the deck, `lea role <agent> <role>`, `lea new -r 
 Agents get lea's tools through MCP:
 
 - a lead starts `dev` and `reviewer` agents with `agents_spawn` and stops its own with
-  `agents_stop` (at most 6 children; at most `LEA_MAX_AGENTS`, 12, per projects directory);
+  `agents_stop` (at most 20 children at a time);
 - any other agent asks a lead with `agents_request_spawn`; without a lead the request comes to
   you (`lea requests`, `lea request accept <id>`, `lea request decline <id> [reason]`);
 - agents message each other (`msg_send`, `msg_reply`); a message waits in the inbox until the
-  agent's next turn. An agent whose turn is over keeps a background job on
-  `lea inbox --agent --wait`: it ends when a message arrives, and Claude Code starts a turn;
+  agent's next turn. An agent whose turn is over is woken when a message arrives: its Stop hook
+  starts a background job (Claude Code's `asyncRewake`) that ends with the unread notice, and
+  Claude Code starts a turn. A working agent, or one waiting on a permission dialog, is not
+  interrupted; only the newest job of an agent stays, so one message wakes it once;
 - an agent started by a lead is told to report to it with `msg_send` when it is done or blocked;
 - `board_read` shows an agent every task of its lea, as `lea board` shows them to you;
 - every agent reports on its task with `task_update`: its row shows it, and `lea board --md`
@@ -258,8 +260,8 @@ lea brings its own Claude Code plugin, `lea`, loaded in every agent (from the im
 session only: nothing is installed in your `~/.claude`). Its skill `/lea:tower-control` turns a
 lead into your control tower: you talk to it only, it splits your requests into tasks, starts
 `dev` and `reviewer` agents with self-contained briefs, answers their questions when it can, and
-follows them with `board_read`, and briefs you in one line per agent. Between your requests it
-waits on a background `lea inbox --agent --wait`, so an agent's report wakes it:
+follows them with `board_read`, and briefs you in one line per agent. Between your requests an
+agent's report wakes it, as it wakes every agent whose turn is over:
 
 ```
 fix-login · done · PR #42, 18 tests pass
@@ -311,7 +313,6 @@ projects directory cannot be `/`, your home directory or one of its parents, nor
 | `LEA_INTERNAL_HOSTS` | none | private hosts the proxy may reach (format in `config/internal-hosts`) |
 | `LEA_NESTED_NETWORKS` | empty | networks your compose files expect, created at start |
 | `LEA_APPROVALS`, `LEA_APPROVAL_TIMEOUT` | `deck`, `60` | who answers permission requests |
-| `LEA_MAX_AGENTS` | `12` | running agents per projects directory |
 | `LEA_SOUND`, `LEA_AUTONAME` | on | the deck's sounds, automatic names (`0`: off) |
 | `LEA_OTEL_UPSTREAM` | empty | send Claude Code usage telemetry to this OTLP collector |
 | `LEA_ASCII` | off | ASCII marks in the deck (`1`) |

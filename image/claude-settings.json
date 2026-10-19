@@ -88,6 +88,12 @@
           {
             "type": "command",
             "command": "[ -x /usr/local/bin/lea ] && exec /usr/local/bin/lea hook claude Stop; exit 0"
+          },
+          {
+            "type": "command",
+            "command": "[ -x /usr/local/bin/lea ] && exec /usr/local/bin/lea hook claude Rewake; exit 0",
+            "asyncRewake": true,
+            "timeout": 3600
           }
         ]
       }

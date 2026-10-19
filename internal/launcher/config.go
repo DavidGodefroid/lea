@@ -21,7 +21,7 @@ import (
 // (lea_load_config saves them before reading the files).
 var protectedKeys = map[string]bool{
 	"LEA_PROJECTS_DIR": true, "LEA_APPROVALS": true,
-	"LEA_APPROVAL_TIMEOUT": true, "LEA_MAX_AGENTS": true,
+	"LEA_APPROVAL_TIMEOUT": true,
 }
 
 // ExportedKeys are the keys lea_load_config exports to every child: the daemon, docker, the
@@ -29,7 +29,7 @@ var protectedKeys = map[string]bool{
 var ExportedKeys = []string{
 	"LEA_PREFIX", "LEA_IMAGE", "LEA_PROXY_IMAGE", "LEA_GIT_SSH", "LEA_GIT_KNOWN_HOSTS", "LEA_LOCKSQL", "LEA_LOCKSQL_IMAGE", "LEA_LOCKSQL_REF", "LEA_LOCKSQL_VAULT_ADDR",
 	"LEA_OTEL_UPSTREAM", "LEA_NESTED_NETWORKS", "LEA_K8S_NAMESPACE", "LEA_INTERNAL_HOSTS", "LEA_PROJECTS_DIR",
-	"LEA_APPROVALS", "LEA_APPROVAL_TIMEOUT", "LEA_MAX_AGENTS",
+	"LEA_APPROVALS", "LEA_APPROVAL_TIMEOUT",
 }
 
 // Config is what lea_load_config gives the shell: the environment, overlaid by the assignments of
@@ -139,11 +139,6 @@ func (c *Config) resolve(root string) error {
 	}
 	if n, ok := plainNumber(at, 3); !ok || n < 1 || n > 600 {
 		return fmt.Errorf("LEA_APPROVAL_TIMEOUT must be a number of seconds from 1 to 600 without leading zeros, not '%s'", at)
-	}
-	ma := pick("LEA_MAX_AGENTS", "12")
-	c.final["LEA_MAX_AGENTS"] = ma
-	if _, ok := plainNumber(ma, 2); !ok {
-		return fmt.Errorf("LEA_MAX_AGENTS must be a number of agents from 1 to 99 without leading zeros, not '%s'", ma)
 	}
 	c.final["LEA_INTERNAL_HOSTS"] = nonEmpty(c.Get("LEA_INTERNAL_HOSTS"), root+"/config/internal-hosts")
 	// The git SSH endpoints (none by default: git over HTTPS needs none). LEA_GITLAB_SSH and

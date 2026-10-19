@@ -477,11 +477,6 @@ func TestApprovalSettingsFromTheEnvironment(t *testing.T) {
 			t.Errorf("approvalTimeout(%q)=%d, want %d", in, got, want)
 		}
 	}
-	for in, want := range map[string]int{"": 12, "4": 4, "99": 99, "0": 12, "100": 12, "x": 12} {
-		if got := maxAgents(in); got != want {
-			t.Errorf("maxAgents(%q)=%d, want %d", in, got, want)
-		}
-	}
 }
 
 func TestRequestCommands(t *testing.T) {
