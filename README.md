@@ -205,6 +205,15 @@ lea needs no forge account, and works with any of them.
 - **Container registries.** `podman login` (or `docker login`) in lea; the login is kept for the
   next sessions.
 
+## Go
+
+The image ships Go 1.26 with `staticcheck` and `govulncheck`, and agents run `go`, `staticcheck`
+and `govulncheck` without a permission prompt. Go never downloads another toolchain
+(`GOTOOLCHAIN=local`); its module and build caches, and what `go install` builds, live in lea's
+state (`/lea/state/go`) and are kept for the next sessions. A permission rule never matches a
+command that starts with `GOOS=… GOARCH=…`, so cross-compile with `go-cross <GOOS> <GOARCH> …`
+instead, for example `go-cross darwin arm64 vet ./...`.
+
 ## Databases, with locksql
 
 lea comes with [locksql](https://github.com/DavidGodefroid/locksql): a console that stands

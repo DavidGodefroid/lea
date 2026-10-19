@@ -1,4 +1,18 @@
 # syntax=docker/dockerfile:1
+# Go for the agents: the toolchain of the target platform, and staticcheck and govulncheck cross-
+# compiled on the build platform (no emulated go build in a multi-platform build).
+ARG GO_IMAGE=docker.io/library/golang:1.26.9@sha256:37cfcca63222ec499bec5e8ad7aad52dbf7529db36d5812b8eae2f0621aa92d6
+FROM ${GO_IMAGE} AS go
+FROM --platform=$BUILDPLATFORM ${GO_IMAGE} AS go-tools
+ARG TARGETARCH
+ARG STATICCHECK_VERSION=v0.8.1
+ARG GOVULNCHECK_VERSION=v1.8.0
+ENV CGO_ENABLED=0 GOOS=linux GOARCH=${TARGETARCH} GOPATH=/tmp/gopath GOFLAGS=-trimpath
+RUN go install "honnef.co/go/tools/cmd/staticcheck@${STATICCHECK_VERSION}" \
+ && go install "golang.org/x/vuln/cmd/govulncheck@${GOVULNCHECK_VERSION}" \
+ && mkdir /out \
+ && find /tmp/gopath/bin -type f -exec mv -t /out {} +
+
 FROM quay.io/podman/stable:v5.8.7-immutable
 ARG TARGETARCH
 ARG CLAUDE_CODE_VERSION=2.1.296
@@ -51,10 +65,20 @@ COPY image/claude-settings.json /usr/local/share/lea/claude-settings.json
 COPY image/claude-plugin /usr/local/share/lea/claude-plugin
 COPY image/entrypoint image/user-init /usr/local/libexec/lea/
 COPY image/lea-session image/lea-agent image/wl-copy /usr/local/bin/
+COPY image/go-cross /usr/local/bin/
+COPY --from=go /usr/local/go /usr/local/go
+COPY --from=go-tools /out/ /usr/local/bin/
 RUN sed -i "s/@LEA_VERSION@/${LEA_VERSION}/" /etc/claude-code/managed-settings.json /usr/local/share/lea/claude-settings.json \
  && chmod 0644 /etc/claude-code/managed-settings.json /usr/local/share/lea/claude-settings.json \
  && chmod -R u=rwX,go=rX /usr/local/share/lea/claude-plugin \
- && chmod 0755 /usr/local/libexec/lea/entrypoint /usr/local/libexec/lea/user-init /usr/local/bin/lea-session /usr/local/bin/lea-agent /usr/local/bin/wl-copy
+ && chmod 0755 /usr/local/libexec/lea/entrypoint /usr/local/libexec/lea/user-init /usr/local/bin/lea-session /usr/local/bin/lea-agent /usr/local/bin/wl-copy /usr/local/bin/go-cross
+# Go's caches and installed tools live in the persistent state dir go (/lea/state/go); the
+# toolchain never downloads another one (GOTOOLCHAIN=local).
+ENV PATH=/usr/local/go/bin:/lea/state/go/bin:$PATH \
+    GOTOOLCHAIN=local \
+    GOPATH=/lea/state/go \
+    GOCACHE=/lea/state/go/cache \
+    GOFLAGS=-modcacherw
 ENV SSH_AUTH_SOCK=/run/lea/ssh-agent.sock \
     GH_CONFIG_DIR=/lea/state/gh \
     GLAB_CONFIG_DIR=/lea/state/glab-cli \

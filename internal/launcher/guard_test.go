@@ -77,7 +77,7 @@ func TestGuardRefusesTheInstallation(t *testing.T) {
 // A symlink planted on a path the launcher mounts, writes or removes stops lea shell before any
 // docker call, and nothing is written or removed through it (open.bats symlink refusals).
 func TestPlantedSymlinksStopTheSessionBeforeDocker(t *testing.T) {
-	for _, rel := range []string{"state/claude.json", "state/claude/ID", "state/kube", "host/sessions/ID", "host/scan/ID.start",
+	for _, rel := range []string{"state/claude.json", "state/claude/ID", "state/kube", "state/go", "host/sessions/ID", "host/scan/ID.start",
 		"HOME/.claude/projects/SLUG"} {
 		t.Run(strings.ReplaceAll(rel, "/", "_"), func(t *testing.T) {
 			w := newWorld(t, repoRoot(t))
