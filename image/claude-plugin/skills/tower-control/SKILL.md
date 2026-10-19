@@ -89,6 +89,14 @@ For each thing the user asks:
 - A dev done: start a reviewer on its branch when the user wants reviews, or report it done.
 - An agent stuck twice on the same point, or silent while `agents_list` shows it idle: ask it for
   a 3-line status; if it is lost, stop it (`agents_stop`) and start a fresh one with a better brief.
+- **Watch every child's context.** `agents_list` gives each agent's `ctx_pct` (percent of its
+  context window used; absent until its status line reports it). Check it each time you read the
+  board. Above 50%, or after a child finishes a big task: ask it (`msg_send`, kind `request`) to
+  write `.tower-handoff.md` in its worktree, kept out of git (`.git/info/exclude`): its state,
+  commit SHAs, PRs, decisions, gotchas and next steps, then to reply. Once it confirms, stop it
+  (`agents_stop`) and start a successor on the same repo and branch whose brief begins with
+  "Read `.tower-handoff.md` in your worktree first". lea cannot clear a child's context: a fresh
+  agent is the only way.
 - Never forward an agent's message as it is. Read it, keep the substance, drop the rest.
 - Keep your own `task_update` current: `tower · 3 working, 1 needs you`.
 
