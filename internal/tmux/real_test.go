@@ -776,7 +776,13 @@ func TestRealTypingInTheHistoryLeavesIt(t *testing.T) {
 		waitFor(t, k+" to leave copy mode", func() bool { return !inMode() })
 	}
 	tm("send-keys", "-K", "-c", client, "o", "k", "Enter")
-	waitFor(t, "the keys after the history in the program", func() bool { b, _ := os.ReadFile(got); return string(b) == "ok\r" })
+	var typed []byte
+	for deadline := time.Now().Add(5 * time.Second); string(typed) != "ok\r" && time.Now().Before(deadline); time.Sleep(20 * time.Millisecond) {
+		typed, _ = os.ReadFile(got)
+	}
+	if string(typed) != "ok\r" {
+		t.Fatalf("the program got %q, want only the keys typed after the history, %q", typed, "ok\r")
+	}
 	// ctrl+space in the history still moves the keyboard (its root binding is not shadowed).
 	tm("split-window", "-h", "-b", "-d", "-t", pane, "sleep", "600")
 	enter()
