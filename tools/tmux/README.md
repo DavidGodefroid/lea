@@ -5,9 +5,12 @@ runs `sudo`; it can build its own instead:
 
     make tmux-build
 
-This builds tmux 3.5a (libevent 2.1.12-stable, ncurses 6.5) in an `alpine:3.20` container from
-upstream release tarballs, each checked against the SHA-256 pinned in `Containerfile`, links it
-statically (with common terminfo entries compiled in) and writes `build/tmux` (git-ignored).
+This builds tmux 3.5a (libevent 2.1.12-stable, ncurses 6.5, utf8proc 2.10.0) in an `alpine:3.20`
+container from upstream release tarballs, each checked against the SHA-256 pinned in
+`Containerfile`, links it statically (with common terminfo entries compiled in) and writes
+`build/tmux` (git-ignored). utf8proc gives tmux the character widths of current Unicode: musl's
+own table predates the recent emoji, which tmux would count one cell wide where terminals draw
+two.
 
 lea uses the host `tmux` when it is 3.2 or later, otherwise `build/tmux`. `lea doctor` says which
 one is in use. To bump a version, change the `ARG`s in `Containerfile` and record the new hash
