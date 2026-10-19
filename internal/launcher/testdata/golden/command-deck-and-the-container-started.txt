@@ -18,6 +18,5 @@ core [attach-container] [lea-$ID]
 core [deck-open] [--container] [lea-$ID] [--workdir] [$W/projects] [--fresh]
 tmux [-L] [lea] [-f] [$W/data/lea/host/tmux.conf] [attach-session] [-t] [=lea-$ID]
 -- lea
-lea: locksql console for this directory (run it in a terminal you keep in view):
-  docker run -it --rm --name locksql-console --user locksql -v "$W/projects:$W/projects" -v locksql-run:/run/locksql -v locksql-home:/home/locksql locksql:0.7.0 console --project "$W/projects"
+lea: locksql console: run locksql (or lea locksql) in a terminal you keep in view
 -- stdout

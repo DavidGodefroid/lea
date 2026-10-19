@@ -14,6 +14,8 @@ setup() {
   echo '{"a":1}' >"$HOME/.claude.json"
   S=$(lea_state_dir); H=$(lea_host_dir)
 }
+# interactive: lea init as on a terminal (the guided locksql steps need one).
+interactive() { unset LEA_INIT_NONINTERACTIVE; lea__init_tty() { :; }; }
 # git_ssh ENDPOINTS: LEA_GIT_SSH for this test, loaded (and checked) as lea loads it.
 git_ssh() { export LEA_GIT_SSH="$1"; lea_load_config; }
 
@@ -172,7 +174,7 @@ git_ssh() { export LEA_GIT_SSH="$1"; lea_load_config; }
 }
 
 @test "interactive init asks for the projects dir, defaulting to the current value" {
-  unset LEA_INIT_NONINTERACTIVE
+  interactive
   mkdir -p "$BATS_TEST_TMPDIR/other"
   printf '%s\n' "$BATS_TEST_TMPDIR/other" >"$BATS_TEST_TMPDIR/a2"
   run lea_init <"$BATS_TEST_TMPDIR/a2"
@@ -602,4 +604,99 @@ EOT
   run lea_update
   [ "$status" -eq 0 ]
   [[ "$output" == *"make go-build failed"* ]]
+}
+
+@test "an interactive init with no locksql profile runs the profile wizard in the console image" {
+  interactive
+  export FAKE_DOCKER_OUT_RUN___RM_AT_HELP='  profile  add [--project DIR] [--engine E ...]'
+  run lea_init <<<"
+y"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"locksql has no database profile for $P yet"* ]]
+  [[ "$output" == *"run locksql (or lea locksql) in a terminal you keep in view"* ]]
+  run calls
+  [[ "$output" == *"docker [run] [-it] [--rm] [--user] [$(id -u):$(id -g)] [-e] [HOME=/tmp] [-v] [$P:$P] [-w] [$P] [locksql:0.7.0] [profile] [add] [--project] [$P]"* ]]
+}
+
+@test "the profile wizard is skipped when declined, without input, or when a profile exists" {
+  interactive
+  export FAKE_DOCKER_OUT_RUN___RM_AT_HELP='  profile  add [--project DIR] [--engine E ...]'
+  run lea_init <<<"
+n"
+  [[ "$output" == *"later: lea init again"* ]]
+  lea_init </dev/null 2>/dev/null
+  mkdir -p "$P/.locksql"; printf '[profiles.dev]\nengine = "sqlite"\npath = "a.db"\n' >"$P/.locksql/config.toml"
+  lea_init <<<"
+y" 2>/dev/null
+  run calls
+  [[ "$output" != *"[profile] [add]"* ]]
+}
+
+@test "a locksql without the profile wizard gets the by-hand hint" {
+  interactive
+  run lea_init <<<"
+y"
+  [[ "$output" == *"has no profile wizard: add a database profile to $P/.locksql/config.toml by hand"* ]]
+  run calls
+  [[ "$output" != *"[profile] [add]"* ]]
+}
+
+@test "a Vault profile: vault CLI built in, address saved, vault login as the console account" {
+  interactive
+  mkdir -p "$P/.locksql"
+  printf '[profiles.uat]\nengine = "mariadb"\nhost = "db"\ncredentials = "vault"\nvault_path = "database/creds/uat"\n' >"$P/.locksql/config.toml"
+  export FAKE_DOCKER_RC_RUN___RM_AT_COMMAND__V_VAULT=1 FAKE_DOCKER_RC_RUN__I_AT_LOOKUP=1
+  run lea_init <<<"
+https://vault.example.com
+y
+"
+  [ "$status" -eq 0 ]
+  grep -qx "LEA_LOCKSQL_VAULT_ADDR='https://vault.example.com'" "$U"
+  run calls
+  [[ "$output" == *"docker [build] [--target] [vault] [-t] [locksql:0.7.0] [https://github.com/DavidGodefroid/locksql.git#v0.7.0]"* ]]
+  [[ "$output" == *"[-e] [VAULT_ADDR=https://vault.example.com] [--entrypoint] [vault] [locksql:0.7.0] [token] [lookup]"* ]]
+  [[ "$output" == *"docker [run] [-i] [--rm] [--user] [locksql] [-v] [locksql-home:/home/locksql] [-e] [VAULT_ADDR=https://vault.example.com] [--entrypoint] [vault] [locksql:0.7.0] [login] [-method=oidc]"* ]]
+}
+
+@test "without a terminal the guided locksql steps are skipped" {
+  unset LEA_INIT_NONINTERACTIVE
+  lea_init </dev/null 2>/dev/null
+  run calls
+  [[ "$output" != *"[help]"* ]]
+}
+
+@test "a missing image is built with the vault CLI when a profile needs it" {
+  mkdir -p "$P/.locksql"
+  printf '[profiles.uat]\nengine = "postgres"\nhost = "db"\ncredentials = "vault"\nvault_path = "x/y"\n' >"$P/.locksql/config.toml"
+  export FAKE_DOCKER_RC_IMAGE_INSPECT_AT_LOCKSQL_0_7_0=1
+  lea_init </dev/null 2>/dev/null
+  run calls
+  [[ "$output" == *"docker [build] [--target] [vault] [-t] [locksql:0.7.0]"* ]]
+}
+
+@test "LEA_LOCKSQL_REF may be a local locksql checkout" {
+  export LEA_LOCKSQL_REF="$BATS_TEST_TMPDIR/locksql" FAKE_DOCKER_RC_IMAGE_INSPECT_AT_LOCKSQL_0_7_0=1
+  mkdir -p "$LEA_LOCKSQL_REF"
+  lea_init </dev/null 2>/dev/null
+  run calls
+  [[ "$output" == *"docker [build] [-t] [locksql:0.7.0] [$LEA_LOCKSQL_REF]"* ]]
+}
+
+@test "init links locksql next to lea, takes over an older lea's, keeps a host locksql" {
+  lea_init </dev/null 2>/dev/null
+  [ "$(readlink "$LEA_BIN_DIR/locksql")" = "$LEA_ROOT/bin/locksql" ]
+  old="$BATS_TEST_TMPDIR/old/bin"; mkdir -p "$old"; : >"$old/lea"; : >"$old/locksql"
+  ln -sfn "$old/locksql" "$LEA_BIN_DIR/locksql"
+  lea_init </dev/null 2>/dev/null
+  [ "$(readlink "$LEA_BIN_DIR/locksql")" = "$LEA_ROOT/bin/locksql" ]
+  rm "$LEA_BIN_DIR/locksql"; echo host >"$LEA_BIN_DIR/locksql"
+  run lea_init </dev/null
+  [ "$(cat "$LEA_BIN_DIR/locksql")" = host ]
+  [[ "$output" == *"$LEA_BIN_DIR/locksql exists and is not lea's locksql: left as is"* ]]
+}
+
+@test "LEA_LOCKSQL=0 links no locksql" {
+  lea_user_config_set LEA_LOCKSQL 0; lea_load_config
+  lea_init </dev/null 2>/dev/null
+  [ ! -e "$LEA_BIN_DIR/locksql" ] && [ ! -L "$LEA_BIN_DIR/locksql" ]
 }

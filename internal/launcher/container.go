@@ -1,7 +1,6 @@
 package launcher
 
 import (
-	"fmt"
 	"os"
 	"path/filepath"
 	"sort"
@@ -251,11 +250,9 @@ func (l *Launcher) busAttach(proj string) error {
 	return l.run(l.Core, "attach-container", l.Cfg.ContainerName(proj))
 }
 
-// locksqlHint is lea_locksql_hint, word for word.
-func (l *Launcher) locksqlHint(proj string) {
-	l.logf("locksql console for this directory (run it in a terminal you keep in view):")
-	fmt.Fprintf(l.Stderr, "  docker run -it --rm --name locksql-console --user locksql -v \"%s:%s\" -v locksql-run:/run/locksql -v locksql-home:/home/locksql %s console --project \"%s\"\n",
-		proj, proj, nonEmpty(l.Cfg.Get("LEA_LOCKSQL_IMAGE"), "locksql"), proj)
+// locksqlHint names the command that starts the locksql console (libexec/lib/locksql.sh).
+func (l *Launcher) locksqlHint() {
+	l.logf("locksql console: run locksql (or lea locksql) in a terminal you keep in view")
 }
 
 // containerStart is lea_container_start: the run arguments, the start snapshot (lea-sh
@@ -289,7 +286,7 @@ func (l *Launcher) containerStart(proj, pip string) error {
 		l.logf("warning: the container's bus socket could not be bound; agents run without lea messaging")
 	}
 	if l.Cfg.Locksql() {
-		l.locksqlHint(proj)
+		l.locksqlHint()
 	}
 	return nil
 }

@@ -209,9 +209,16 @@ lea needs no forge account, and works with any of them.
 
 lea comes with [locksql](https://github.com/DavidGodefroid/locksql): a console that stands
 between your agents and your databases. The agents propose SQL; you approve each statement in the
-console, which alone holds the credentials. `lea init` builds the locksql console image and every
-lea container is wired for it; at start, lea prints the command that opens the console for your
-projects directory. Run it in a terminal you keep in view, then ask an agent about your data.
+console, which alone holds the credentials. `lea init` builds the locksql console image, wires
+every lea container for it and, when your projects directory has no database profile yet, walks
+you through a first one (engine, host, TLS, where the password comes from; never the password).
+A profile that reads its login from HashiCorp Vault gets the vault CLI in the console image, its
+address (`LEA_LOCKSQL_VAULT_ADDR`) and a `vault login` as the console account.
+
+`lea init` also links `locksql` next to `lea`: run `locksql` (or `lea locksql`) in a terminal you
+keep in view to open the console, then ask an agent about your data. `locksql vault login` logs the
+console account in to Vault again when its token expires. A `locksql` already installed on the
+host keeps its name; `lea locksql` then opens lea's console.
 
 The two projects are independent: lea runs without locksql, and locksql works with any agent.
 `lea init --no-locksql` (or `LEA_LOCKSQL=0`) leaves no trace of locksql in lea.
@@ -291,6 +298,7 @@ projects directory cannot be `/`, your home directory or one of its parents, nor
 | `LEA_GIT_SSH` | empty | git SSH endpoints (`host:port …`) |
 | `LEA_GIT_KNOWN_HOSTS` | `~/.config/lea/git_known_hosts` | their pinned host keys |
 | `LEA_LOCKSQL` | `1` | wire lea for a locksql console (`0`: no locksql) |
+| `LEA_LOCKSQL_VAULT_ADDR` | asked by `lea init` | Vault address of the locksql console, for a Vault profile |
 | `LEA_INTERNAL_HOSTS` | none | private hosts the proxy may reach (format in `config/internal-hosts`) |
 | `LEA_NESTED_NETWORKS` | empty | networks your compose files expect, created at start |
 | `LEA_APPROVALS`, `LEA_APPROVAL_TIMEOUT` | `deck`, `60` | who answers permission requests |

@@ -368,6 +368,8 @@ func (l *Launcher) dispatch(args []string) error {
 		return err
 	case "init":
 		return l.sh("init", rest...)
+	case "locksql":
+		return l.sh("locksql", rest...)
 	case "shell":
 		if len(rest) > 0 {
 			if err := l.oldForm(rest[0]); err != nil {
