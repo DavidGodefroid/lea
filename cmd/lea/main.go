@@ -82,6 +82,9 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		if len(args) != 3 || args[1] != "claude" {
 			return 0 // unknown vendor or arity: never fail an agent's hook
 		}
+		if args[2] == "Rewake" {
+			return hook.Rewake(context.Background(), stdin, stderr, os.Getenv)
+		}
 		hook.Claude(context.Background(), args[2], stdin, stdout, os.Getenv)
 		return 0
 	case "mcp":

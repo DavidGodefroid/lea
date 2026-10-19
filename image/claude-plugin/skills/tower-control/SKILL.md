@@ -76,11 +76,9 @@ For each thing the user asks:
 
 ## Running the team
 
-- **Never end a turn deaf.** A message that arrives after your turn ends waits in your inbox and
-  nothing wakes you. Before you end every turn while an agent works, make sure one background
-  Bash job runs `lea inbox --agent --wait` (`run_in_background`; an hour at most, then start it
-  again). It ends as soon as a message arrives, and that wakes you: read `msg_inbox` then. Keep
-  one such job, not one per turn.
+- **You are woken.** A message that arrives after your turn ends wakes you: lea's Stop hook
+  waits for it in the background and Claude Code starts a turn. Read `msg_inbox` then. Start no
+  `lea inbox --agent --wait` job of your own: it would wake you a second time.
 - Read `msg_inbox` at the start of every turn.
 - Follow the team with `board_read` (every agent's status, next step and blocker), rather than
   asking each agent; ask only an agent whose row says nothing new.
