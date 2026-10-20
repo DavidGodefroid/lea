@@ -2,7 +2,8 @@
 # lea installer: curl -fsSL https://raw.githubusercontent.com/DavidGodefroid/lea/main/install.sh | sh
 #
 # Checks the requirements, downloads the release archive for this platform, verifies it against
-# the release's checksums.txt (whose Sigstore signature cosign checks, when cosign is installed),
+# the release's checksums.txt (whose Sigstore signature cosign checks: the cosign on PATH, else a
+# pinned cosign release downloaded and checked against its SHA-256 below),
 # unpacks it into ~/.local/share/lea-install/<version>, links ~/.local/bin/lea, then runs lea init
 # (which pulls the images and, unless --no-locksql, builds the locksql console image). Never runs
 # sudo itself: lea init asks once, only for the AppArmor profile on hosts that need it.
@@ -12,8 +13,8 @@
 # --no-link unpacks the release and leaves ~/.local/bin/lea as it is (lea's background update
 # links it once the release's images are in place).
 # LEA_INSTALL_DIR (default ~/.local/share/lea-install) and LEA_BIN_DIR (default ~/.local/bin)
-# change where lea goes. LEA_REQUIRE_COSIGN=1 refuses to install without cosign, instead of
-# warning and trusting the checksum alone.
+# change where lea goes. LEA_REQUIRE_COSIGN=1 also refuses v0.1.0 and v0.1.1, which predate
+# signing (their checksums.txt is otherwise accepted only when it is the genuine one, pinned here).
 set -eu
 repo=DavidGodefroid/lea
 version=${LEA_VERSION:-}
@@ -28,7 +29,7 @@ while [ $# -gt 0 ]; do
     --locksql) locksql=--locksql ;;
     --no-init) init= ;;
     --no-link) link= ;;
-    -h|--help) sed -n '2,16p' "$0" 2>/dev/null | sed 's/^# \{0,1\}//'; exit 0 ;;
+    -h|--help) sed -n '2,17p' "$0" 2>/dev/null | sed 's/^# \{0,1\}//'; exit 0 ;;
     *) echo "lea install: unknown option $1" >&2; exit 2 ;;
   esac
   shift
@@ -57,9 +58,6 @@ have ssh-keygen || die "ssh-keygen is missing (package openssh-client)"
 if have sha256sum; then sum() { sha256sum "$1" | cut -d' ' -f1; }
 elif have shasum; then sum() { shasum -a 256 "$1" | cut -d' ' -f1; }
 else die "neither sha256sum nor shasum is installed"; fi
-if [ "${LEA_REQUIRE_COSIGN:-}" = 1 ] && ! have cosign; then
-  die "cosign is missing and LEA_REQUIRE_COSIGN=1: install cosign (https://docs.sigstore.dev), then rerun"
-fi
 
 tmux_ok=
 if have tmux; then
@@ -82,7 +80,7 @@ curl -fsSL -o "$tmp/$asset" "$base/$asset" || die "cannot download $base/$asset"
 curl -fsSL -o "$tmp/checksums.txt" "$base/checksums.txt" || die "cannot download $base/checksums.txt"
 # checksums.txt is signed keyless by the release workflow, on a v* tag (Sigstore, GitHub OIDC).
 bundle=checksums.txt.sigstore.json
-if have cosign && ! curl -fsSL -o "$tmp/$bundle" "$base/$bundle"; then
+if ! curl -fsSL -o "$tmp/$bundle" "$base/$bundle"; then
   if [ "${LEA_REQUIRE_COSIGN:-}" = 1 ]; then
     die "cannot download the Sigstore bundle $base/$bundle and LEA_REQUIRE_COSIGN=1"
   fi
@@ -97,14 +95,33 @@ if have cosign && ! curl -fsSL -o "$tmp/$bundle" "$base/$bundle"; then
   [ "$(sum "$tmp/checksums.txt")" = "$pin" ] ||
     die "checksums.txt of $version (released before signing, no Sigstore bundle) is not the genuine one: its SHA-256 differs from the one pinned in install.sh"
   say "warning: no Sigstore bundle for this release (pre-signing version), genuine checksums.txt (pinned SHA-256), checksum only"
-elif have cosign; then
-  cosign verify-blob --bundle "$tmp/$bundle" \
+else
+  # Without cosign on PATH, this cosign release is downloaded and checked against its SHA-256,
+  # pinned here (the digests of sigstore/cosign-installer and of the release's
+  # cosign_checksums.txt). Never "latest": a new version changes these lines.
+  if have cosign; then cosign=cosign
+  else
+    cosign_version=v3.0.6
+    case $os-$arch in
+      linux-amd64) cosign_pin=c956e5dfcac53d52bcf058360d579472f0c1d2d9b69f55209e256fe7783f4c74 ;;
+      linux-arm64) cosign_pin=bedac92e8c3729864e13d4a17048007cfafa79d5deca993a43a90ffe018ef2b8 ;;
+      darwin-amd64) cosign_pin=4c3e7af8372d3ca3296e62fa56f23fcbb5721cc6ac1827900d398f110d7cd280 ;;
+      darwin-arm64) cosign_pin=5fadd012ae6381a6a29ff86a7d39aa873878852f1073fc90b15995961ecfb084 ;;
+    esac
+    cosign_url=https://github.com/sigstore/cosign/releases/download/$cosign_version/cosign-$os-$arch
+    say "cosign is not installed: downloading cosign $cosign_version to verify the release"
+    curl -fsSL -o "$tmp/cosign" "$cosign_url" ||
+      die "cannot download cosign from $cosign_url: install cosign (https://docs.sigstore.dev), then rerun"
+    [ "$(sum "$tmp/cosign")" = "$cosign_pin" ] ||
+      die "the cosign downloaded from $cosign_url does not match its pinned SHA-256: install cosign (https://docs.sigstore.dev), then rerun"
+    chmod +x "$tmp/cosign"
+    cosign=$tmp/cosign
+  fi
+  "$cosign" verify-blob --bundle "$tmp/$bundle" \
     --certificate-identity-regexp '^https://github\.com/DavidGodefroid/lea/\.github/workflows/release\.yml@refs/tags/v[0-9]' \
     --certificate-oidc-issuer https://token.actions.githubusercontent.com \
     "$tmp/checksums.txt" >&2 || die "checksums.txt does not match its Sigstore signature"
   say "checksums.txt signature verified (cosign)"
-else
-  say "warning: cosign is missing, checksums.txt signature not verified (checksum only)"
 fi
 want=$(awk -v f="$asset" '$2 == f { print $1 }' "$tmp/checksums.txt")
 [ -n "$want" ] || die "$asset is not in checksums.txt"

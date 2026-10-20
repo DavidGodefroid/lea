@@ -30,6 +30,7 @@ lea_load_config() {
     lea_die "LEA_APPROVAL_TIMEOUT must be a number of seconds from 1 to 600 without leading zeros, not '$LEA_APPROVAL_TIMEOUT'"
   fi
   LEA_INTERNAL_HOSTS=${LEA_INTERNAL_HOSTS:-$LEA_ROOT/config/internal-hosts}
+  lea__check_egress_allow
   # The git SSH endpoints (none by default: git over HTTPS needs none). LEA_GITLAB_SSH and
   # LEA_GITLAB_KNOWN_HOSTS, the keys of lea before any forge could be used, are read when the new
   # ones are unset.
@@ -62,8 +63,31 @@ lea_load_config() {
   unset LEA_GITLAB_SSH LEA_GITLAB_KNOWN_HOSTS LEA_REGISTRY
   export LEA_PREFIX LEA_IMAGE LEA_PROXY_IMAGE LEA_GIT_SSH LEA_GIT_KNOWN_HOSTS LEA_LOCKSQL LEA_LOCKSQL_IMAGE LEA_LOCKSQL_REF LEA_LOCKSQL_VAULT_ADDR \
     LEA_LOCKMQ LEA_LOCKFILE LEA_LOCKMQ_REF LEA_LOCKFILE_REF \
-    LEA_OTEL_UPSTREAM LEA_NESTED_NETWORKS LEA_K8S_NAMESPACE LEA_INTERNAL_HOSTS LEA_PROJECTS_DIR \
+    LEA_OTEL_UPSTREAM LEA_NESTED_NETWORKS LEA_K8S_NAMESPACE LEA_INTERNAL_HOSTS LEA_EGRESS_ALLOW LEA_PROJECTS_DIR \
     LEA_APPROVALS LEA_APPROVAL_TIMEOUT LEA_SOUND LEA_SOUND_ATTENTION LEA_SOUND_DONE
+}
+
+# lea__check_egress_allow: LEA_EGRESS_ALLOW lists at most 64 domain names, separated by commas or
+# blanks (each one also stands for its subdomains; no IP literal, no wildcard). Empty: no
+# allowlist. Normalized to lower-case names joined by commas.
+lea__check_egress_allow() {
+  _ce_n=0 _ce_out=
+  set -f
+  for _ce_d in $(printf '%s' "${LEA_EGRESS_ALLOW:-}" | tr ',' ' '); do
+    _ce_n=$((_ce_n + 1))
+    case $_ce_d in
+      *[!ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789.-]*|.*|*.|*..*) _ce_bad=1 ;;
+      *[!0-9.]*) _ce_bad= ;;
+      *) _ce_bad=1 ;;
+    esac
+    if [ -n "$_ce_bad" ]; then
+      set +f; lea_die "LEA_EGRESS_ALLOW must list domain names separated by commas, got '$_ce_d'"
+    fi
+    _ce_out="$_ce_out,$(printf '%s' "$_ce_d" | tr '[:upper:]' '[:lower:]')"
+  done
+  set +f
+  [ "$_ce_n" -le 64 ] || lea_die "LEA_EGRESS_ALLOW lists $_ce_n domains, at most 64"
+  LEA_EGRESS_ALLOW=${_ce_out#,}
 }
 
 # lea__check_git_ssh: LEA_GIT_SSH lists at most 16 host:port endpoints, each a plain host name

@@ -82,10 +82,17 @@ type Daemon struct {
 	// stop. doneTimers: the pending done sound of each agent, cancelled by its next hook.
 	doneDelay  time.Duration
 	doneTimers map[string]*time.Timer
+	// subs: the subagents each agent runs (trackSubagents); subTTL forgets them (a test seam).
+	subs   map[string]*subagents
+	subTTL time.Duration
 }
 
 func New(st *store.Store, runDir string, now func() int64) *Daemon {
-	return &Daemon{st: st, lim: bus.Default, now: now, runDir: runDir,
+	// The running subagents live in memory: counts a previous daemon left are stale.
+	if err := st.ClearSubagents(); err != nil {
+		log.Printf("lea daemon: clear subagents: %v", err)
+	}
+	return &Daemon{subs: map[string]*subagents{}, subTTL: subagentTTL, st: st, lim: bus.Default, now: now, runDir: runDir,
 		attached: map[string]string{}, notify: map[string]chan struct{}{},
 		verdicts: map[int64]chan string{}, blocks: map[string]int{}, stopped: map[string]bool{}, rewakes: map[string]int{}, keyMu: map[string]*sync.Mutex{}, statusPaths: map[string]string{}, named: map[string]bool{}, rang: map[string]time.Time{},
 		doneDelay: doneDelay, doneTimers: map[string]*time.Timer{}}
@@ -344,7 +351,9 @@ type agentView struct {
 	// CtxPct is the percent of its context window the agent's status line last reported; absent
 	// while unknown.
 	CtxPct *int `json:"ctx_pct,omitempty"`
-	You    bool `json:"you,omitempty"`
+	// Subagents counts the subagents the agent still runs (its Subagent hooks), for display.
+	Subagents int  `json:"subagents,omitempty"`
+	You       bool `json:"you,omitempty"`
 }
 
 // agentsList lists the agents (spec §6.1: name, role, profile, state, branch; never screen
@@ -356,6 +365,7 @@ func (d *Daemon) agentsList(o Origin, me string) ([]agentView, error) {
 		return nil, err
 	}
 	usages := map[string]map[string]store.Usage{}
+	subs := map[string]map[string]int{}
 	out := []agentView{}
 	for _, a := range as {
 		v := agentView{Key: a.Key, Name: a.Name, State: a.State, Updated: a.Updated, You: a.Key == me}
@@ -370,6 +380,14 @@ func (d *Daemon) agentsList(o Origin, me string) ([]agentView, error) {
 			if p := u[a.Key].CtxPct; p >= 0 {
 				v.CtxPct = &p
 			}
+			n, ok := subs[a.Container]
+			if !ok {
+				if n, err = d.st.Subagents(a.Container); err != nil {
+					return nil, err
+				}
+				subs[a.Container] = n
+			}
+			v.Subagents = n[a.Key]
 		}
 		if a.Profile != "" {
 			v.Role, v.Profile, v.Repo, v.Branch = a.Role, a.Profile, a.Repo, a.Branch
@@ -718,6 +736,9 @@ func (d *Daemon) pruneForgotten() {
 	for k := range d.doneTimers {
 		keys = append(keys, k)
 	}
+	for k := range d.subs {
+		keys = append(keys, k)
+	}
 	d.mu.Unlock()
 	for _, k := range keys {
 		if _, err := d.st.AgentByKey(k); errors.Is(err, store.ErrNotFound) {
@@ -726,6 +747,7 @@ func (d *Daemon) pruneForgotten() {
 			delete(d.blocks, k)
 			delete(d.named, k)
 			d.cancelDoneLocked(k)
+			d.forgetSubagentsLocked(k)
 			d.mu.Unlock()
 		}
 	}
@@ -747,6 +769,11 @@ func (d *Daemon) dispatchHooks(ctx context.Context, o Origin, me string, req wir
 		}
 		if err := d.st.AddEvent(me, "hook", p.Event, string(p.Payload), d.now()); err != nil {
 			return nil, err
+		}
+		d.trackSubagents(me, p.Event, p.Payload)
+		if p.Event == "SubagentStart" || p.Event == "SubagentStop" {
+			// Display only: a subagent neither starts nor ends the agent's turn, nor its done sound.
+			return struct{}{}, nil
 		}
 		s, ok := hookState[p.Event]
 		if p.Event == "Notification" {

@@ -28,6 +28,15 @@ services:
     networks:
       pub:  { ipv4_address: 198.51.100.2 }
       priv: { ipv4_address: 10.99.0.2 }
+  # The same proxy with an egress allowlist.
+  proxy-allow:
+    image: lea-proxy:dev
+    dns: [ 198.51.100.53 ]
+    environment: { LEA_EGRESS_ALLOW: "public.test" }
+    volumes: [ "./internal-hosts:/etc/lea/internal-hosts:ro" ]
+    networks:
+      pub:  { ipv4_address: 198.51.100.3 }
+      priv: { ipv4_address: 10.99.0.3 }
   client:
     image: curlimages/curl:8.11.1
     entrypoint: [ "sleep", "3600" ]

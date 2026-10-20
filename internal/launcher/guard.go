@@ -43,14 +43,23 @@ func (l *Launcher) projectsDir() (string, error) {
 	return physDir(p), nil
 }
 
+// credentialDirs are the directories under $HOME that hold credentials (lea__guard_projects'
+// LEA_GUARD_CREDENTIALS): no projects directory may overlap one.
+var credentialDirs = []string{".ssh", ".gnupg", ".aws", ".config/gh", ".kube", ".docker"}
+
 // guardProjects is lea__guard_projects: refuses /, $HOME and its ancestors, and any directory
-// that is, contains or lies inside ~/.claude, the lea data dir or the lea installation.
+// that is, contains or lies inside ~/.claude, a credential directory, the lea data dir or the lea
+// installation.
 func (l *Launcher) guardProjects(p string) error {
 	home := l.Cfg.Get("HOME")
 	if p == "/" || under(p, phys(home)) {
 		return die("%s cannot be a projects directory: it is / or contains your home directory", p)
 	}
-	for _, x := range []string{phys(home + "/.claude"), phys(l.Cfg.DataDir()), l.Root} {
+	guarded := []string{phys(home + "/.claude")}
+	for _, c := range credentialDirs {
+		guarded = append(guarded, phys(home+"/"+c))
+	}
+	for _, x := range append(guarded, phys(l.Cfg.DataDir()), l.Root) {
 		if under(p, x) || under(x, p) {
 			return die("%s cannot be a projects directory: it overlaps %s", p, x)
 		}

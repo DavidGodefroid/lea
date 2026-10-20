@@ -68,6 +68,10 @@ lea_doctor() {
   done
   if [ "$_dnets" -eq 0 ]; then lea__ok "internal networks: none (each lea creates its own at start)"; fi
 
+  # The domains the proxy always allows: EGRESS_ALWAYS of proxy/render-squid-conf.sh.
+  if [ -n "${LEA_EGRESS_ALLOW:-}" ]; then lea__ok "egress allowlist: $LEA_EGRESS_ALLOW (always: anthropic.com,claude.ai,claude.com)"
+  else lea__ok "egress allowlist: off, any web destination (LEA_EGRESS_ALLOW)"; fi
+
   if [ -n "$LEA_OTEL_UPSTREAM" ]; then lea__ok "telemetry upstream $LEA_OTEL_UPSTREAM"
   else lea__ok "telemetry: off (LEA_OTEL_UPSTREAM)"; fi
 
