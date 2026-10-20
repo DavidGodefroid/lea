@@ -174,7 +174,8 @@ shell shows with its agent and steps aside while another agent is shown).
   go back`. Any typed key (`q`, `Escape`, `Enter`, a letter…) goes back to the prompt; that key is
   not typed, the next ones are.
 - **Sounds.** lea plays a sound when an agent starts waiting for you, and another when a turn
-  ends (`LEA_SOUND=0` turns them off; `LEA_SOUND_ATTENTION` and `LEA_SOUND_DONE` pick the files).
+  ends, while a deck shows the agent (`LEA_SOUND=0` turns them off; `LEA_SOUND_ATTENTION` and
+  `LEA_SOUND_DONE` pick the files).
 - **Names.** An agent you have not renamed is named after its first prompt, by a short
   `claude -p` run on the host with a small model (`LEA_AUTONAME_MODEL`, `haiku` by default;
   `LEA_AUTONAME=0` turns it off). The prompt is not stored.
