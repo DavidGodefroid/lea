@@ -2,6 +2,7 @@ package mcpserver
 
 import (
 	"context"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -66,7 +67,7 @@ func TestToolsRoundTrip(t *testing.T) {
 	for _, tl := range tools.Tools {
 		names[tl.Name] = true
 	}
-	for _, n := range []string{"agents_list", "msg_send", "msg_inbox", "msg_wait", "msg_reply"} {
+	for _, n := range []string{"agents_list", "msg_send", "msg_inbox", "msg_wait", "msg_reply", "ask"} {
 		if !names[n] {
 			t.Errorf("missing tool %s", n)
 		}
@@ -190,5 +191,71 @@ func TestSpawnToolsAreListedAndRefusedToAgentsLeaDidNotStart(t *testing.T) {
 	r, err = dev.CallTool(ctx, &mcp.CallToolParams{Name: "agents_request_spawn", Arguments: map[string]any{"brief": "x", "reason": "y"}})
 	if err != nil || !r.IsError || !strings.Contains(text(r), "agents_request_spawn: only running agents lea started") {
 		t.Fatalf("request by an unknown agent: err=%v result=%s", err, text(r))
+	}
+}
+
+// TestAskRoundTrip is ask end to end over MCP and the bus socket: dev asks rev, rev reads the
+// question with msg_wait and answers with msg_reply, dev's ask returns the answer.
+func TestAskRoundTrip(t *testing.T) {
+	bus := newBus(t)
+	dev, rev := session(t, bus, "dev"), session(t, bus, "rev")
+	ctx := context.Background()
+	if _, err := rev.CallTool(ctx, &mcp.CallToolParams{Name: "agents_list", Arguments: map[string]any{}}); err != nil {
+		t.Fatal(err)
+	}
+	got := make(chan *mcp.CallToolResult, 1)
+	go func() {
+		r, err := dev.CallTool(ctx, &mcp.CallToolParams{Name: "ask", Arguments: map[string]any{"to": "rev", "question": "which DB?", "timeout_s": 20}})
+		if err != nil {
+			r = &mcp.CallToolResult{IsError: true, Content: []mcp.Content{&mcp.TextContent{Text: err.Error()}}}
+		}
+		got <- r
+	}()
+	r, err := rev.CallTool(ctx, &mcp.CallToolParams{Name: "msg_wait", Arguments: map[string]any{"timeout_s": 10}})
+	if err != nil || r.IsError {
+		t.Fatalf("wait: %v %s", err, text(r))
+	}
+	var qs []struct {
+		ID   int64
+		Kind string
+		Text string
+	}
+	if err := json.Unmarshal([]byte(text(r)), &qs); err != nil || len(qs) != 1 || qs[0].Kind != "question" || !strings.Contains(qs[0].Text, "which DB?") {
+		t.Fatalf("question: %v %s", err, text(r))
+	}
+	if r, err := rev.CallTool(ctx, &mcp.CallToolParams{Name: "msg_reply", Arguments: map[string]any{"id": qs[0].ID, "status": "ok", "body": "postgres"}}); err != nil || r.IsError {
+		t.Fatalf("reply: %v %s", err, text(r))
+	}
+	select {
+	case r := <-got:
+		if r.IsError || !strings.Contains(text(r), `"answered":true`) || !strings.Contains(text(r), "[status: ok] postgres") {
+			t.Fatalf("ask: %s", text(r))
+		}
+	case <-time.After(15 * time.Second):
+		t.Fatal("ask did not return")
+	}
+}
+
+// TestCancelledAskFreesTheAsker: an ask whose client goes away ends, so the asker can ask again.
+func TestCancelledAskFreesTheAsker(t *testing.T) {
+	bus := newBus(t)
+	dev, rev := session(t, bus, "dev"), session(t, bus, "rev")
+	ctx := context.Background()
+	if _, err := rev.CallTool(ctx, &mcp.CallToolParams{Name: "agents_list", Arguments: map[string]any{}}); err != nil {
+		t.Fatal(err)
+	}
+	actx, cancel := context.WithCancel(ctx)
+	done := make(chan struct{})
+	go func() {
+		dev.CallTool(actx, &mcp.CallToolParams{Name: "ask", Arguments: map[string]any{"to": "rev", "question": "q1", "timeout_s": 30}})
+		close(done)
+	}()
+	time.Sleep(300 * time.Millisecond) // let the ask reach the daemon
+	cancel()
+	<-done
+	time.Sleep(300 * time.Millisecond) // let the cancellation propagate
+	r, err := dev.CallTool(ctx, &mcp.CallToolParams{Name: "ask", Arguments: map[string]any{"to": "rev", "question": "q2", "timeout_s": 1}})
+	if err != nil || r.IsError || !strings.Contains(text(r), "no answer") {
+		t.Fatalf("second ask: %v %s", err, text(r))
 	}
 }

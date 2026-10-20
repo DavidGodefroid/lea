@@ -50,6 +50,8 @@ type Daemon struct {
 	attached map[string]string
 	notify   map[string]chan struct{}
 	verdicts map[int64]chan string
+	// asks: the asks in flight, by asker (one each); in memory, a restart ends them.
+	asks map[string]pendingAsk
 
 	// afterWait is a test seam: it runs after an approval waiter woke, before it deregisters.
 	afterWait func()
@@ -87,7 +89,7 @@ type Daemon struct {
 func New(st *store.Store, runDir string, now func() int64) *Daemon {
 	return &Daemon{st: st, lim: bus.Default, now: now, runDir: runDir,
 		attached: map[string]string{}, notify: map[string]chan struct{}{},
-		verdicts: map[int64]chan string{}, blocks: map[string]int{}, stopped: map[string]bool{}, rewakes: map[string]int{}, keyMu: map[string]*sync.Mutex{}, statusPaths: map[string]string{}, named: map[string]bool{}, rang: map[string]time.Time{},
+		verdicts: map[int64]chan string{}, asks: map[string]pendingAsk{}, blocks: map[string]int{}, stopped: map[string]bool{}, rewakes: map[string]int{}, keyMu: map[string]*sync.Mutex{}, statusPaths: map[string]string{}, named: map[string]bool{}, rang: map[string]time.Time{},
 		doneDelay: doneDelay, doneTimers: map[string]*time.Timer{}}
 }
 
@@ -261,6 +263,9 @@ func (d *Daemon) dispatch(ctx context.Context, o Origin, req wire.Request) (any,
 		if err := json.Unmarshal(req.Params, &p); err != nil {
 			return nil, err
 		}
+		if p.Kind == "question" {
+			return nil, errors.New("kind question is the ask tool's: use ask to wait for an answer")
+		}
 		return d.send(me, p.To, p.Body, p.Kind, p.ReplyTo)
 	case "msg_reply":
 		var p struct {
@@ -273,6 +278,8 @@ func (d *Daemon) dispatch(ctx context.Context, o Origin, req wire.Request) (any,
 		return d.reply(me, p.ID, p.Status, p.Body)
 	case "msg_inbox":
 		return d.inbox(me)
+	case "ask":
+		return d.ask(ctx, o, me, req.Params)
 	case "msg_wait":
 		var p struct {
 			TimeoutS int `json:"timeout_s"`

@@ -16,6 +16,9 @@ type boardItem struct {
 	Repo, Branch, Title, Status, Next     string
 	BlockedOn                             string `json:"blocked_on"`
 	Updated, Ended                        int64
+	// WaitsOn and Question: the agent waits on an answer to its ask (the daemon's, not its text).
+	WaitsOn  string `json:"waits_on"`
+	Question int64
 }
 
 type board struct {
@@ -130,8 +133,12 @@ func renderBoard(w io.Writer, b board) {
 				if it.Parent != "" && hasAgent(open, it.Parent) {
 					name = "↳ " + name
 				}
+				blocked := it.BlockedOn
+				if it.WaitsOn != "" {
+					blocked = strings.TrimSuffix(fmt.Sprintf("answer from %s to question #%d; %s", it.WaitsOn, it.Question, blocked), "; ")
+				}
 				fmt.Fprintf(w, "| %s | %s | %s | %s | %s | %s | %s | %s | %s |\n", name, mdCell(it.Role), mdCell(it.State),
-					mdCell(it.Branch), mdCell(it.Title), mdCell(it.Status), mdCell(it.Next), mdCell(it.BlockedOn), stamp(it.Updated))
+					mdCell(it.Branch), mdCell(it.Title), mdCell(it.Status), mdCell(it.Next), mdCell(blocked), stamp(it.Updated))
 			}
 		}
 		if ls := leases[c]; len(ls) > 0 {

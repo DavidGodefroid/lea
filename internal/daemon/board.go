@@ -86,6 +86,10 @@ type boardItem struct {
 	BlockedOn string `json:"blocked_on"`
 	Updated   int64  `json:"updated"`
 	Ended     int64  `json:"ended"`
+	// WaitsOn is the agent its ask waits on (container/name), Question the question's id: an ask
+	// in flight. Both are the daemon's, never an agent's text.
+	WaitsOn  string `json:"waits_on,omitempty"`
+	Question int64  `json:"question,omitempty"`
 }
 
 type boardView struct {
@@ -119,6 +123,12 @@ func (d *Daemon) boardList(raw json.RawMessage) (boardView, error) {
 	for _, a := range as {
 		by[a.Key] = a
 	}
+	d.mu.Lock()
+	asks := make(map[string]pendingAsk, len(d.asks))
+	for k, v := range d.asks {
+		asks[k] = v
+	}
+	d.mu.Unlock()
 	out := boardView{Items: []boardItem{}, Leases: []leaseView{}}
 	for i, t := range ts {
 		if i == boardMax {
@@ -130,6 +140,9 @@ func (d *Daemon) boardList(raw json.RawMessage) (boardView, error) {
 			it.Role, it.State, it.Repo, it.Branch = a.Role, a.State, a.Repo, a.Branch
 			if a.Parent != "" {
 				it.Parent = shortName(a.Parent)
+			}
+			if q, ok := asks[t.Agent]; ok {
+				it.WaitsOn, it.Question = q.target, q.id
 			}
 		}
 		out.Items = append(out.Items, it)

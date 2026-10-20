@@ -37,6 +37,7 @@ CREATE TABLE IF NOT EXISTS messages(
   hops INTEGER NOT NULL DEFAULT 0, at INTEGER NOT NULL, read_at INTEGER NOT NULL DEFAULT 0);
 CREATE INDEX IF NOT EXISTS messages_unread ON messages(recipient, read_at);
 CREATE INDEX IF NOT EXISTS messages_sender ON messages(sender);
+CREATE INDEX IF NOT EXISTS messages_reply ON messages(reply_to);
 CREATE TABLE IF NOT EXISTS approvals(
   id INTEGER PRIMARY KEY AUTOINCREMENT, agent TEXT NOT NULL, tool TEXT NOT NULL,
   input TEXT NOT NULL, verdict TEXT NOT NULL DEFAULT '', at INTEGER NOT NULL);
@@ -712,6 +713,17 @@ func (s *Store) Thread(key string, limit int) ([]Message, error) {
 		out = append(out, m)
 	}
 	return out, rows.Err()
+}
+
+// ReplyFrom returns the first message from sent in reply to message id, read or not; ErrNotFound
+// while there is none.
+func (s *Store) ReplyFrom(id int64, from string) (Message, error) {
+	m, err := scanMsg(s.db.QueryRow(`SELECT `+msgCols+` FROM messages WHERE reply_to=? AND sender=?
+		ORDER BY id LIMIT 1`, id, from))
+	if errors.Is(err, sql.ErrNoRows) {
+		return Message{}, ErrNotFound
+	}
+	return m, err
 }
 
 func (s *Store) SentSince(from string, since int64) (int, error) {
