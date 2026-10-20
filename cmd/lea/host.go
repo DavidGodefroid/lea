@@ -23,6 +23,7 @@ import (
 	"github.com/DavidGodefroid/lea/internal/deck"
 	"github.com/DavidGodefroid/lea/internal/identity"
 	"github.com/DavidGodefroid/lea/internal/roles"
+	"github.com/DavidGodefroid/lea/internal/settings"
 	"github.com/DavidGodefroid/lea/internal/store"
 	"github.com/DavidGodefroid/lea/internal/textsafe"
 	"github.com/DavidGodefroid/lea/internal/tmux"
@@ -450,7 +451,13 @@ func runDeck(args []string, stderr io.Writer) int {
 			b, _ := os.ReadFile(filepath.Join(identity.HostDir(os.Getenv), "update-notice"))
 			return deck.UpdateNotice(string(b), version)
 		}
-		err = deck.Run(deck.Client{Sock: identity.DaemonSock(os.Getenv)}, args[1], ascii, notice)
+		exe, _ := executable()
+		if real, err := filepath.EvalSymlinks(exe); err == nil {
+			exe = real
+		}
+		cwd, _ := os.Getwd()
+		st, off := deckSettings(os.Getenv, fileExists, exe, cwd)
+		err = deck.Run(deck.Client{Sock: identity.DaemonSock(os.Getenv)}, args[1], ascii, notice, st, off)
 	case len(args) >= 2 && args[0] == "--thread" && (len(args) == 2 || (len(args) == 3 && args[2] == "--compose")):
 		err = deck.RunThread(deck.Client{Sock: identity.DaemonSock(os.Getenv)}, args[1], len(args) == 3, ascii)
 	default:
@@ -462,6 +469,20 @@ func runDeck(args []string, stderr io.Writer) int {
 		return 1
 	}
 	return 0
+}
+
+// deckSettings is the store of the deck's settings screen: the configuration of the lea installed
+// at exe (<root>/build/lea), read from cwd. Inside a lea container there is none: the screen is
+// the user's, on the host, and an agent never reaches it.
+func deckSettings(getenv func(string) string, exists func(string) bool, exe, cwd string) (deck.SettingsStore, string) {
+	if insideLea(getenv, exists) {
+		return nil, "host only, not inside lea"
+	}
+	root := filepath.Dir(filepath.Dir(exe))
+	if exe == "" || !exists(filepath.Join(root, "config", "lea.conf")) {
+		return nil, "no config/lea.conf next to " + exe
+	}
+	return settings.Store{Root: root, Cwd: cwd, Getenv: getenv}, ""
 }
 
 type newOpts struct {

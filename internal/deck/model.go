@@ -12,6 +12,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 
+	"github.com/DavidGodefroid/lea/internal/settings"
 	"github.com/DavidGodefroid/lea/internal/textsafe"
 )
 
@@ -150,7 +151,14 @@ type Model struct {
 	focused       bool          // the deck's pane has the keyboard (focus events)
 	menuFor       string        // key whose menu (right click) is open
 	menuSel       int           // the menu's highlighted item
-	ticking       bool          // a frame tick is pending
+	settings      SettingsStore // the settings screen's store (WithSettings), nil when none
+	settingsOff   string        // why there is none
+	setOpen       bool          // the settings screen (,) is shown
+	setList       []settings.Setting
+	setSel        int    // its selected setting
+	setEditing    bool   // the selected text setting's field is open
+	setDraft      []rune // the field's text
+	ticking       bool   // a frame tick is pending
 	width, height int
 }
 
@@ -291,6 +299,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.help { // any key closes the key list, and does nothing else
 			m.help = false
 			return m, nil
+		}
+		if m.setOpen {
+			return m.settingsKey(msg)
 		}
 		if m.editFor != "" {
 			return m.editKey(msg)
@@ -491,6 +502,8 @@ func (m Model) key(k string) (tea.Model, tea.Cmd) {
 	case "?":
 		m.help = true
 		return m, nil
+	case ",":
+		return m.openSettings()
 	case "e":
 		if a := m.selectedAgent(); a != nil && !isShell(*a) {
 			m.editFor, m.draft, m.status = a.Key, []rune(a.Label), ""

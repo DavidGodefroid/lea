@@ -14,7 +14,7 @@ type menuItem struct{ label, key string }
 // menuItems are the actions of a row, in the order the menu shows them.
 func menuItems(a Agent) []menuItem {
 	if isShell(a) {
-		return []menuItem{{"Show", "enter"}, {"Close", "x"}}
+		return []menuItem{{"Show", "enter"}, {"Close", "x"}, {"Settings", ","}}
 	}
 	var items []menuItem
 	if ap := a.Approval; ap != nil {
@@ -25,7 +25,7 @@ func menuItems(a Agent) []menuItem {
 	}
 	return append(items, menuItem{"Show", "enter"}, menuItem{"Message", "m"}, menuItem{"Thread", "t"},
 		menuItem{"Rename", "e"}, menuItem{"Role", "r"}, menuItem{"Split horizontally", "-"},
-		menuItem{"Split vertically", "|"}, menuItem{"Stop", "x"})
+		menuItem{"Split vertically", "|"}, menuItem{"Stop", "x"}, menuItem{"Settings", ","})
 }
 
 // menuAgent is the agent whose menu is open, nil when none.
@@ -91,7 +91,7 @@ func (m Model) menuKey(k string) (tea.Model, tea.Cmd) {
 
 // mouse handles a mouse event over the deck.
 func (m Model) mouse(e tea.MouseMsg) (tea.Model, tea.Cmd) {
-	if m.help || m.editFor != "" {
+	if m.help || m.editFor != "" || m.setOpen {
 		return m, nil
 	}
 	if m.confirm != "" {
