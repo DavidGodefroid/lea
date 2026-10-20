@@ -168,7 +168,9 @@ closing the deck, or the terminal, does not stop it: the next `lea` reattaches.
 The mouse works too: click a row to select it, scroll to move, right-click a row for its menu
 (Split horizontally / Split vertically open a shell beside the agent, as Terminator does; the
 shell shows with its agent and steps aside while another agent is shown). A right-click anywhere
-else in the column opens the deck's own menu: new agent, new shell, sounds, keys, detach.
+else in the column opens the deck's own menu: new agent, new shell, sounds, keys, detach. The
+pointer over a row shows its whole name (cut in the row when long) with the agent's name, role,
+profile and state in the bottom border.
 
 - **States.** A red `●` needs you, an orange spinner is working, a green `●` has finished its
   turn, an empty `○` has been quiet for 30 minutes, a grey `‖` is paused (`p`: lea freezes the

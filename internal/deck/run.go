@@ -8,10 +8,10 @@ import (
 )
 
 // Run draws the deck until its pane is closed. st is its settings screen's store (nil: none, off
-// says why).
+// says why). All motion: the pointer over a row, no button held, shows its whole name (hover.go).
 func Run(api API, container string, ascii bool, notice func() string, st SettingsStore, off string) error {
 	m := New(api, container, ascii, time.Now).WithIntro().WithNotice(notice).WithSettings(st, off)
-	_, err := tea.NewProgram(m, tea.WithAltScreen(), tea.WithReportFocus(), tea.WithMouseCellMotion()).Run()
+	_, err := tea.NewProgram(m, tea.WithAltScreen(), tea.WithReportFocus(), tea.WithMouseAllMotion()).Run()
 	return err
 }
 

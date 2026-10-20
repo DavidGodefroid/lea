@@ -90,3 +90,18 @@ func TestBoardShowsLeases(t *testing.T) {
 		t.Fatalf("a board with leases is not empty:\n%s", s)
 	}
 }
+
+func TestBoardStateCellCountsSubagents(t *testing.T) {
+	var out bytes.Buffer
+	renderBoard(&out, board{Items: []boardItem{
+		{Task: 1, Container: "lea-a", Agent: "a", State: "idle", Subagents: 2},
+		{Task: 2, Container: "lea-a", Agent: "b", State: "idle", Subagents: 1},
+		{Task: 3, Container: "lea-a", Agent: "c", State: "idle"},
+	}})
+	s := out.String()
+	for _, want := range []string{`| a | - | idle\, 2 subagents |`, `| b | - | idle\, 1 subagent |`, "| c | - | idle |"} {
+		if !strings.Contains(s, want) {
+			t.Fatalf("missing %q in:\n%s", want, s)
+		}
+	}
+}
