@@ -77,6 +77,8 @@ lea_doctor() {
     if docker volume inspect locksql-run >/dev/null 2>&1; then lea__ok "locksql-run volume"
     else lea__warn "locksql-run volume" "absent: start the locksql console once (see the hint printed by lea)"; fi
   fi
+  lea__doctor_lockhost lockmq
+  lea__doctor_lockhost lockfile
 
   if [ -f "$_dds/kube/config" ]; then
     if [ -n "$(find "$_dds/kube/config" -mmin -480 2>/dev/null)" ]; then lea__ok "kubernetes token"

@@ -77,7 +77,7 @@ flowchart LR
 ```
 
 **Contents:** [Quick start](#quick-start) · [The deck](#the-deck) · [Git and forges](#git-and-forges) ·
-[Databases](#databases-with-locksql) · [Teams of agents](#teams-of-agents) · [Commands](#commands) ·
+[Databases](#databases-with-locksql) · [Queues and files](#queues-and-files-with-lockmq-and-lockfile) · [Teams of agents](#teams-of-agents) · [Commands](#commands) ·
 [Configure](#configure) · [Safety](#how-lea-keeps-your-machine-safe) · [FAQ](#faq) ·
 [Troubleshooting](#troubleshooting) · [Development](#development)
 
@@ -241,6 +241,33 @@ host keeps its name; `lea locksql` then opens lea's console.
 The two projects are independent: lea runs without locksql, and locksql works with any agent.
 `lea init --no-locksql` (or `LEA_LOCKSQL=0`) leaves no trace of locksql in lea.
 
+## Queues and files, with lockmq and lockfile
+
+[lockmq](https://github.com/DavidGodefroid/lockmq) (RabbitMQ) and
+[lockfile](https://github.com/DavidGodefroid/lockfile) (files on S3, SFTP or a local directory)
+keep a human between the agents and production the same way: the agents ask, a console that alone
+holds the credentials shows each request and waits for your approval. Both are pre-releases, so
+they are **off** by default; `lea init` asks (no by default), or `lea init --lockmq` /
+`lea init --lockfile`.
+
+Unlike locksql, their console runs **on this host**, not in a container (their isolation checks
+refuse a console in a container): in the tool's own account and login session, set up once by
+`sudo lockmq install` / `sudo lockfile install`. When you turn one on, `lea init` offers to install
+the release lea pins (`LEA_LOCKMQ_REF`, `LEA_LOCKFILE_REF`) into `/usr/local/bin`, root-owned,
+after checking its Sigstore signature with cosign (nothing is installed without cosign), then the
+separated setup, then lockmq's profile wizard (`lockmq setup`, never a password). lockfile below
+v0.1.1 is refused (a plugin sandbox escape).
+
+lea never starts, sees or drives these consoles. It mounts into its containers only the tool's
+root-owned `/etc/<tool>/system.toml` and its socket directory `/run/<tool>`, both read-only, and
+adds the `<tool>-clients` group: the agents reach the socket and nothing else (no credential, no
+profile, no audit log of the console account). A setup lea cannot vouch for (a file not owned by
+root, a socket directory open to others, a console account that is yours) is left out with a
+warning at start. `lea lockmq` / `lea lockfile` tell you whether the agents reach it and how to
+open the console: switch to the tool's account (prefer Wayland), then
+`lockmq console --project <projects dir> --profile <profile>`. Restart lea (`lea stop --all`,
+then `lea`) after turning one on.
+
 ## Teams of agents
 
 Every agent has a role: `lead`, `dev` (the default) or `reviewer`. The first agent is a lead.
@@ -335,6 +362,8 @@ projects directory cannot be `/`, your home directory or one of its parents, nor
 | `LEA_GIT_KNOWN_HOSTS` | `~/.config/lea/git_known_hosts` | their pinned host keys |
 | `LEA_LOCKSQL` | `1` | wire lea for a locksql console (`0`: no locksql) |
 | `LEA_LOCKSQL_VAULT_ADDR` | asked by `lea init` | Vault address of the locksql console, for a Vault profile |
+| `LEA_LOCKMQ`, `LEA_LOCKFILE` | `0`, asked by `lea init` | let the agents reach a lockmq / lockfile console on this host |
+| `LEA_LOCKMQ_REF`, `LEA_LOCKFILE_REF` | the pinned releases | the release `lea init` installs on the host (lockfile v0.1.1 or later) |
 | `LEA_INTERNAL_HOSTS` | none | private hosts the proxy may reach (format in `config/internal-hosts`) |
 | `LEA_NESTED_NETWORKS` | empty | networks your compose files expect, created at start |
 | `LEA_APPROVALS`, `LEA_APPROVAL_TIMEOUT` | `deck`, `60` | who answers permission requests |
@@ -347,7 +376,8 @@ projects directory cannot be `/`, your home directory or one of its parents, nor
 
 - The container sees the projects directory, a read-only allow-list of `~/.claude`
   (`settings.json`, `keybindings.json`, `hooks`, `skills`, `plugins`, `agents`, `commands`,
-  `output-styles`, the top-level `*.md` files) and, with locksql, its socket volume. Nothing else.
+  `output-styles`, the top-level `*.md` files) and, with locksql, its socket volume (with lockmq or
+  lockfile, their socket directory and system file, read-only). Nothing else.
 - Egress goes through a proxy: HTTPS to public hosts (plus `LEA_INTERNAL_HOSTS`), SSH only to
   `LEA_GIT_SSH`. Private and link-local addresses are refused.
 - An internal host name grants that name only, not every vhost of the ingress behind it: the proxy

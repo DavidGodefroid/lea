@@ -1,4 +1,4 @@
-.PHONY: test build test-proxy test-isolation go-test go-build go-test-tmux go-get tmux-build
+.PHONY: test build test-proxy test-isolation test-lockhost go-test go-build go-test-tmux go-get tmux-build
 test:
 	tests/run.sh
 build:
@@ -6,6 +6,8 @@ build:
 	docker build -t lea:dev --build-arg LEA_VERSION=dev -f image/Containerfile .
 test-proxy:
 	tests/proxy/run.sh
+test-lockhost:
+	tests/integration/lockhost.sh
 test-isolation:
 	tests/integration/isolation.sh
 GO_IMAGE ?= golang:1.26
