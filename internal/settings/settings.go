@@ -159,6 +159,11 @@ func (s Store) Set(key, value string) error {
 	if err != nil {
 		return err
 	}
+	if key == "LEA_PROJECTS_DIR" {
+		if value, err = launcher.CheckProjectsDir(c, s.Root, value); err != nil {
+			return err
+		}
+	}
 	path := c.UserConfigFile(s.Cwd)
 	old, rerr := os.ReadFile(path)
 	if err := launcher.WriteUserConfig(path, key, value); err != nil {

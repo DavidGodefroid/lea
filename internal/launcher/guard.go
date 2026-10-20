@@ -58,6 +58,16 @@ func (l *Launcher) guardProjects(p string) error {
 	return nil
 }
 
+// CheckProjectsDir is lea init's check of a projects directory p: it is an existing directory
+// whose physical path passes guardProjects for the lea installed at root. It returns that path.
+func CheckProjectsDir(cfg *Config, root, p string) (string, error) {
+	if !isDir(p) {
+		return "", die("%s is not a directory", p)
+	}
+	p = physDir(p)
+	return p, (&Launcher{Root: root, Cfg: cfg}).guardProjects(p)
+}
+
 // checkPaths is lea__check_paths: before any docker call, a symlink on any path the launcher
 // later mounts, creates, writes or removes for this projects dir is refused.
 func (l *Launcher) checkPaths(p string) error {

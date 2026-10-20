@@ -163,6 +163,33 @@ func TestSetValidatesAndWrites(t *testing.T) {
 	}
 }
 
+// The projects directory goes through lea init's checks: an existing directory, never /, the
+// home directory or one of its ancestors, never overlapping ~/.claude, saved as its physical path.
+func TestProjectsDirPassesTheInitGuards(t *testing.T) {
+	w := newWorld(t, "")
+	st := w.store()
+	os.MkdirAll(w.cwd+"/.claude/projects", 0o700)
+	for _, v := range []string{"relative", "/", w.cwd, filepath.Dir(w.cwd), w.cwd + "/.claude/projects", w.cwd + "/nope"} {
+		if err := st.Set("LEA_PROJECTS_DIR", v); err == nil {
+			t.Errorf("LEA_PROJECTS_DIR=%q accepted", v)
+		}
+	}
+	if _, err := os.Stat(w.user); err == nil {
+		t.Fatal("a refused projects directory wrote the file")
+	}
+	real, _ := filepath.EvalSymlinks(t.TempDir())
+	link := t.TempDir() + "/projects"
+	if err := os.Symlink(real, link); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.Set("LEA_PROJECTS_DIR", link); err != nil {
+		t.Fatal(err)
+	}
+	if s := find(t, list(t, w), "LEA_PROJECTS_DIR"); s.Value != real {
+		t.Errorf("LEA_PROJECTS_DIR = %q, want the physical %q", s.Value, real)
+	}
+}
+
 // A user file the launcher would refuse is reported, never overwritten blindly.
 func TestABrokenUserFileIsReported(t *testing.T) {
 	w := newWorld(t, "")
