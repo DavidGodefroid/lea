@@ -217,11 +217,12 @@ func (c *Config) resolve(root string) error {
 			return fmt.Errorf("%s must be 1 (reach a %s console on this host) or 0, not '%s'", t.env, t.name, on)
 		}
 		c.final[t.env] = on
+		// Empty: no pinned release (config/lea.conf pins one), and lea init installs nothing.
 		ref := c.Get(t.env + "_REF")
-		if !releaseVersion.MatchString(ref) {
+		if ref != "" && !releaseVersion.MatchString(ref) {
 			return fmt.Errorf("%s_REF must be a %s release (vX.Y.Z), not '%s'", t.env, t.name, ref)
 		}
-		if t.name == "lockfile" && !lockfileSafe(ref) {
+		if t.name == "lockfile" && ref != "" && !lockfileSafe(ref) {
 			return fmt.Errorf("LEA_LOCKFILE_REF %s is refused: lockfile v0.1.0 lets a plugin escape its sandbox (v0.1.1 or later)", ref)
 		}
 	}

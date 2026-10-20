@@ -52,9 +52,11 @@ lea_load_config() {
   case $LEA_LOCKMQ in 0|1) ;; *) lea_die "LEA_LOCKMQ must be 1 (reach a lockmq console on this host) or 0, not '$LEA_LOCKMQ'" ;; esac
   LEA_LOCKFILE=${LEA_LOCKFILE:-0}
   case $LEA_LOCKFILE in 0|1) ;; *) lea_die "LEA_LOCKFILE must be 1 (reach a lockfile console on this host) or 0, not '$LEA_LOCKFILE'" ;; esac
-  lea__semver "${LEA_LOCKMQ_REF:-}" >/dev/null || lea_die "LEA_LOCKMQ_REF must be a lockmq release (vX.Y.Z), not '${LEA_LOCKMQ_REF:-}'"
-  lea__semver "${LEA_LOCKFILE_REF:-}" >/dev/null || lea_die "LEA_LOCKFILE_REF must be a lockfile release (vX.Y.Z), not '${LEA_LOCKFILE_REF:-}'"
-  lea__lockfile_safe "$LEA_LOCKFILE_REF" || lea_die "LEA_LOCKFILE_REF $LEA_LOCKFILE_REF is refused: lockfile v0.1.0 lets a plugin escape its sandbox (v0.1.1 or later)"
+  # Empty: no pinned release (config/lea.conf pins one), and lea init installs nothing.
+  LEA_LOCKMQ_REF=${LEA_LOCKMQ_REF:-} LEA_LOCKFILE_REF=${LEA_LOCKFILE_REF:-}
+  [ -z "$LEA_LOCKMQ_REF" ] || lea__semver "$LEA_LOCKMQ_REF" >/dev/null || lea_die "LEA_LOCKMQ_REF must be a lockmq release (vX.Y.Z), not '$LEA_LOCKMQ_REF'"
+  [ -z "$LEA_LOCKFILE_REF" ] || lea__semver "$LEA_LOCKFILE_REF" >/dev/null || lea_die "LEA_LOCKFILE_REF must be a lockfile release (vX.Y.Z), not '$LEA_LOCKFILE_REF'"
+  [ -z "$LEA_LOCKFILE_REF" ] || lea__lockfile_safe "$LEA_LOCKFILE_REF" || lea_die "LEA_LOCKFILE_REF $LEA_LOCKFILE_REF is refused: lockfile v0.1.0 lets a plugin escape its sandbox (v0.1.1 or later)"
   LEA_AUTOUPDATE=${LEA_AUTOUPDATE:-1}
   case $LEA_AUTOUPDATE in 0|1) ;; *) lea_die "LEA_AUTOUPDATE must be 1 (check for a new release every day) or 0, not '$LEA_AUTOUPDATE'" ;; esac
   LEA_AUTOUPDATE_SKIP=${LEA_AUTOUPDATE_SKIP:-}

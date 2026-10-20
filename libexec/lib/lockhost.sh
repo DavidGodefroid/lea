@@ -162,7 +162,9 @@ lea__init_lockhost() {
   _ih_b=$(lea__lockhost_bin "$_ih_t") || _ih_b=
   _ih_have=
   if [ -n "$_ih_b" ]; then _ih_have=$(lea__lockhost_version "$_ih_b") || _ih_have=; fi
-  if [ "$_ih_have" != "$_ih_r" ]; then
+  if [ -z "$_ih_r" ]; then
+    lea_log "$_ih_t: no pinned release ($(lea__lockhost_var "$_ih_t")_REF is empty): lea installs nothing"
+  elif [ "$_ih_have" != "$_ih_r" ]; then
     lea_log "$_ih_t: lea pins $_ih_r; this host has ${_ih_have:-none} in $(lea__lockhost_root)/usr/local/bin"
     if [ -z "${LEA_INIT_NONINTERACTIVE:-}" ] && lea__init_tty && lea__ask "Install $_ih_t $_ih_r there (cosign checks its signature; sudo)?"; then
       lea__lockhost_install "$_ih_t" "$_ih_r" || true
@@ -198,14 +200,18 @@ lea__init_lockhost() {
   case $_ih_t in
     lockmq)
       # lockmq setup asks for a broker profile, never its password, and writes it to the project,
-      # a tree the agents can write: a symlink there could send what it writes elsewhere.
+      # a tree the agents can write: a symlink there (even one planted after any check) could send
+      # what it writes elsewhere. So it runs as you in lea's image (its pinned lockmq client) with
+      # only the projects directory mounted, where no symlink can reach anything else.
       if [ -L "${LEA_PROJECTS_DIR:-}/.lockmq" ] || [ -L "${LEA_PROJECTS_DIR:-}/.lockmq/config.toml" ]; then
         lea_log "warning: $LEA_PROJECTS_DIR/.lockmq or its config.toml is a symbolic link: lockmq setup not offered (remove it, then lea init)"
       elif [ -n "${LEA_PROJECTS_DIR:-}" ] && [ ! -f "$LEA_PROJECTS_DIR/.lockmq/config.toml" ] &&
         [ -z "${LEA_INIT_NONINTERACTIVE:-}" ] && lea__init_tty; then
         lea_log "lockmq has no broker profile for $LEA_PROJECTS_DIR yet"
         if lea__ask "Add one now (URLs, vhosts, user, where the password comes from; never the password)?"; then
-          "$_ih_b" setup --project "$LEA_PROJECTS_DIR" || lea_log "warning: no profile added (lea init again to retry)"
+          docker run -it --rm --network none --user "$(id -u):$(id -g)" -e HOME=/tmp -v "$LEA_PROJECTS_DIR:$LEA_PROJECTS_DIR" \
+            -w "$LEA_PROJECTS_DIR" --entrypoint lockmq "$LEA_IMAGE" setup --project "$LEA_PROJECTS_DIR" ||
+            lea_log "warning: no profile added (lea init again to retry)"
         else
           lea_log "later: lockmq setup --project $LEA_PROJECTS_DIR"
         fi

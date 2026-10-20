@@ -114,7 +114,7 @@ host_setup() { mkdir -p "$R/etc/$1" "$R/run/$1"; : >"$R/etc/$1/system.toml"; }
   [[ "$output" == *"lockfile v0.1.0 lets a plugin escape its sandbox: lea does not wire it"* ]]
 }
 
-@test "lea init with lockmq set up offers the profile wizard as you, then the console hint" {
+@test "lea init with lockmq set up offers the profile wizard as you, in lea's image with only the projects dir, then the console hint" {
   lea__init_tty() { true; }
   lea__lockhost_set lockmq 1
   host_bin lockmq "lockmq 0.1.0"; host_setup lockmq
@@ -122,7 +122,7 @@ host_setup() { mkdir -p "$R/etc/$1" "$R/run/$1"; : >"$R/etc/$1/system.toml"; }
   [[ "$output" == *"lockmq has no broker profile for $P yet"* ]]
   [[ "$output" == *"lockmq console --project $P --profile PROFILE"* ]]
   run calls
-  [ "$output" = "lockmq [setup] [--project] [$P]" ]
+  [ "$output" = "docker [run] [-it] [--rm] [--network] [none] [--user] [$(id -u):$(id -g)] [-e] [HOME=/tmp] [-v] [$P:$P] [-w] [$P] [--entrypoint] [lockmq] [$LEA_IMAGE] [setup] [--project] [$P]" ]
 }
 
 @test "no environment variable relaxes the checks of the binary lea runs with sudo" {
@@ -229,4 +229,13 @@ release() {
   host_bin lockfile "lockfile v0.2.0"; host_setup lockfile
   run lea__doctor_lockhost lockfile
   [[ "$output" == *"ok    lockfile binary v0.2.0"*"ok    lockfile separated setup"*"ok    lockfile socket directory /run/lockfile"* ]]
+}
+
+@test "without a pinned release lea init installs nothing" {
+  lea__init_tty() { true; }
+  lea__lockhost_set lockmq 1
+  LEA_LOCKMQ_REF= run lea__init_lockhost lockmq <<<"y"
+  [[ "$output" == *"no pinned release (LEA_LOCKMQ_REF is empty): lea installs nothing"* ]]
+  [[ "$output" != *"Install lockmq"* ]]
+  [ -z "$(calls)" ]
 }
