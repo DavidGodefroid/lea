@@ -34,6 +34,8 @@ type Agents interface {
 	// SetLabel renames an agent for display (the deck's e); OpenShell opens a shell in the
 	// container (the deck's s). Both are the user's only.
 	SetLabel(ctx context.Context, key, label string) error
+	// SetPaused freezes an agent (the deck's p) or lets it continue; the user's only.
+	SetPaused(ctx context.Context, key string, paused bool) error
 	OpenShell(ctx context.Context, container string) (agents.Row, error)
 	// SplitShell opens a shell beside an agent (the deck's split), below it or at its right.
 	SplitShell(ctx context.Context, key string, below bool) (agents.Row, error)
@@ -47,7 +49,7 @@ var deckMethods = map[string]bool{
 	"agent_stop": true, "deck_detach": true, "agents_watch": true, "agents_mark_stopped": true,
 	"agents_resume_stopped": true,
 	"deck_attached":         true, "deck_popup": true, "agent_label": true, "shell_open": true,
-	"shell_split": true,
+	"shell_split": true, "agent_pause": true,
 }
 
 func (d *Daemon) SetAgents(a Agents) {
@@ -184,6 +186,15 @@ func (d *Daemon) dispatchDeck(ctx context.Context, o Origin, req wire.Request) (
 			return nil, err
 		}
 		return ok, a.SetLabel(ctx, p.Key, p.Label)
+	case "agent_pause":
+		var p struct {
+			Key    string
+			Paused bool
+		}
+		if err := json.Unmarshal(req.Params, &p); err != nil {
+			return nil, err
+		}
+		return ok, a.SetPaused(ctx, p.Key, p.Paused)
 	case "shell_open":
 		var p struct{ Container string }
 		if err := json.Unmarshal(req.Params, &p); err != nil {

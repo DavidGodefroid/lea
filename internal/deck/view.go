@@ -116,6 +116,7 @@ var helpLines = []string{
 	"t           its thread",
 	"e           rename",
 	"r           its role",
+	"p           pause or resume",
 	"a d A       allow deny always",
 	"x           stop or remove",
 	"S           sounds on or off",
@@ -321,6 +322,11 @@ func (m Model) row(a Agent, inner int) []string {
 	g, gc := stateMark(a.State, a.Updated, m.now().Unix(), m.frame, m.ascii)
 	if isShell(a) {
 		g, gc = "$", theme.Unknown
+	} else if a.Paused {
+		g, gc = "‖", theme.Muted
+		if m.ascii {
+			g = "="
+		}
 	}
 	line1 := bg(lipgloss.NewStyle().Foreground(theme.Accent)).Render(mark) +
 		bg(plain).Render(" ") +
@@ -409,9 +415,10 @@ func (m Model) detail(a Agent, width int) string {
 }
 
 // shortStatus is the row's label, or the agent's own task status (task_update) while it works or
-// idles and nothing needs the user. The text is the agent's: fit cleans it with the whole line.
+// idles, unpaused, and nothing needs the user. The text is the agent's: fit cleans it with the
+// whole line.
 func (m Model) shortStatus(a Agent) string {
-	if a.Status != "" && (a.State == "working" || a.State == "idle") && rank(a, m.seen) >= 3 {
+	if a.Status != "" && !a.Paused && (a.State == "working" || a.State == "idle") && rank(a, m.seen) >= 3 {
 		if st := strings.TrimLeft(a.Status, leaGlyphs); st != "" {
 			return st
 		}

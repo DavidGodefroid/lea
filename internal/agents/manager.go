@@ -101,6 +101,8 @@ type Containers interface {
 	// Shells lists the shells running in the container; StopShell ends one.
 	Shells(ctx context.Context, container string) ([]string, error)
 	StopShell(ctx context.Context, container, name string) error
+	// Pause freezes an agent's processes (paused) or lets them continue where they stopped.
+	Pause(ctx context.Context, container, name string, paused bool) error
 }
 
 type Config struct {
@@ -146,6 +148,8 @@ type Row struct {
 	CtxPct   int       `json:"ctx_pct"`
 	CostUSD  float64   `json:"cost_usd"`
 	Approval *Approval `json:"approval,omitempty"`
+	// Paused: the user froze the agent (the deck's p); State is what it was doing.
+	Paused bool `json:"paused,omitempty"`
 }
 
 type Snapshot struct {
@@ -289,7 +293,7 @@ func (m *Manager) snapshot(container string, v int64) (Snapshot, error) {
 
 func rowOf(a store.Agent) Row {
 	return Row{Key: a.Key, Name: a.Name, Label: a.Label, Profile: a.Profile, State: a.State, Workdir: a.Workdir, Updated: a.Updated,
-		Created: a.Created, Role: a.Role, Parent: a.Parent, Repo: a.Repo, Branch: a.Branch, CtxPct: -1, CostUSD: -1}
+		Created: a.Created, Role: a.Role, Parent: a.Parent, Repo: a.Repo, Branch: a.Branch, CtxPct: -1, CostUSD: -1, Paused: a.Paused}
 }
 
 func shellRow(container, name string) Row {
@@ -1410,6 +1414,32 @@ func (m *Manager) SetLabel(ctx context.Context, key, label string) error {
 		return err
 	}
 	if err := m.cfg.Store.SetLabel(key, l); err != nil {
+		return err
+	}
+	m.feed.bump()
+	return nil
+}
+
+// SetPaused freezes an agent lea spawned (the deck's p), or lets a frozen one continue where it
+// stopped: its processes get SIGSTOP or SIGCONT in the container, its conversation stays. The
+// user's only, from the deck. The row says paused only once the container froze the agent.
+func (m *Manager) SetPaused(ctx context.Context, key string, paused bool) error {
+	if _, _, ok := parseShellKey(key); ok {
+		return errors.New("a shell cannot be paused")
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	a, err := m.spawned(key)
+	if err != nil {
+		return err
+	}
+	if a.State == "done" || a.State == stateStopped {
+		return fmt.Errorf("%s is not running", a.Name)
+	}
+	if err := m.cfg.Containers.Pause(ctx, a.Container, a.Name, paused); err != nil {
+		return err
+	}
+	if err := m.cfg.Store.SetPaused(key, paused); err != nil {
 		return err
 	}
 	m.feed.bump()

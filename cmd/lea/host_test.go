@@ -184,6 +184,10 @@ func (c *cliAgents) SetLabel(ctx context.Context, k, label string) error {
 	c.rec("label " + k)
 	return nil
 }
+func (c *cliAgents) SetPaused(ctx context.Context, k string, paused bool) error {
+	c.rec("paused " + k)
+	return nil
+}
 func (c *cliAgents) OpenShell(ctx context.Context, ctr string) (agents.Row, error) {
 	c.rec("shell " + ctr)
 	return agents.Row{}, nil

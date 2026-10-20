@@ -157,6 +157,7 @@ closing the deck, or the terminal, does not stop it: the next `lea` reattaches.
 | `s` | open a shell in the container (`exit` or `x` closes it) |
 | `-` / `\|` | split: a shell below the selected agent, or at its right, in its directory |
 | `S` | sounds on or off (the top border says `muted` while they are off) |
+| `p` | pause the selected agent, or resume it where it stopped (its conversation stays) |
 | `x`, then `y` | stop the selected agent |
 | `q` | leave the deck; agents keep running |
 | `?` | list the keys |
@@ -166,7 +167,8 @@ The mouse works too: click a row to select it, scroll to move, right-click a row
 shell shows with its agent and steps aside while another agent is shown).
 
 - **States.** A red `●` needs you, an orange spinner is working, a green `●` has finished its
-  turn, an empty `○` has been quiet for 30 minutes. Agents stay in the order you started them.
+  turn, an empty `○` has been quiet for 30 minutes, a grey `‖` is paused (`p`: lea freezes the
+  agent's processes, tool calls included, until you resume it). Agents stay in the order you started them.
   Each row shows the agent's context use, its directory and branch, and its own report on its
   task. The pane that has the keyboard is the bright one: the deck's frame turns blue when it
   has it; otherwise the terminal on the right shows a blue `▶ <agent> · typing here` bar on its

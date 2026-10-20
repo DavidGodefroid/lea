@@ -106,6 +106,66 @@ agent() {
   [ "$status" -eq 0 ]
 }
 
+# pstate PID: the process state letter (T when stopped).
+pstate() { sed 's/.*) //' "/proc/$1/stat" | cut -d' ' -f1; }
+# kid PID: the first child of PID.
+kid() {
+  i=0
+  until c=$(cat /proc/"$1"/task/*/children 2>/dev/null | tr ' ' '\n' | grep -m1 .); do
+    i=$((i + 1)); [ "$i" -lt 50 ] || return 1
+    sleep 0.05
+  done
+  printf '%s\n' "$c"
+}
+# family NAME: an agent with a child, as Claude with a tool call in flight.
+family() {
+  env LEA_AGENT="$1" sh -c 'sleep 60 & wait' &
+  _fp=$!; PIDS="$PIDS $_fp"
+  wait_env "$_fp" "$1"
+  _fk=$(kid "$_fp"); PIDS="$PIDS $_fk"
+  mkdir -p "$LEA_AGENT_RUN_DIR"; echo "$_fp" >"$LEA_AGENT_RUN_DIR/$1.pid"
+}
+
+@test "pause freezes the agent and its children; resume lets them continue" {
+  family claude-1
+  run "$A" pause claude-1
+  [ "$status" -eq 0 ]
+  [ "$(pstate "$_fp")" = T ]
+  [ "$(pstate "$_fk")" = T ]
+  run "$A" ls
+  [ "$output" = claude-1 ]   # a paused agent still runs
+  run "$A" resume claude-1
+  [ "$status" -eq 0 ]
+  [ "$(pstate "$_fp")" != T ]
+  [ "$(pstate "$_fk")" != T ]
+}
+
+@test "stop ends a paused agent at once and leaves no frozen child" {
+  family claude-1
+  "$A" pause claude-1
+  t0=$(date +%s%N)
+  LEA_AGENT_STOP_WAIT=5 run "$A" stop claude-1
+  t1=$(date +%s%N)
+  [ "$status" -eq 0 ]
+  ! kill -0 "$_fp" 2>/dev/null
+  [ $(((t1 - t0) / 1000000)) -lt 2000 ]
+  [ "$(pstate "$_fk")" != T ]
+}
+
+@test "pause and resume fail for an agent that is not running and spare a reused pid" {
+  agent claude-1 someone-else
+  pid=$(cat "$LEA_AGENT_RUN_DIR/claude-1.pid")
+  for v in pause resume; do
+    run "$A" $v claude-1
+    [ "$status" -eq 1 ]
+    run "$A" $v claude-9
+    [ "$status" -eq 1 ]
+    run "$A" $v "../x"
+    [ "$status" -eq 2 ]
+  done
+  [ "$(pstate "$pid")" != T ]
+}
+
 # shell_proc NAME [ENV_NAME]: a background process whose environment says LEA_SHELL=ENV_NAME.
 shell_proc() {
   env LEA_SHELL="${2:-$1}" sleep 60 &

@@ -43,6 +43,8 @@ type Agent struct {
 	CtxPct   int       `json:"ctx_pct"`
 	CostUSD  float64   `json:"cost_usd"`
 	Approval *Approval `json:"approval,omitempty"`
+	// Paused: the user froze the agent (p); it continues where it stopped on resume.
+	Paused bool `json:"paused,omitempty"`
 }
 
 // Approval is the permission request an agent waits on (agents.Approval).
@@ -74,6 +76,8 @@ type API interface {
 	Detach(ctx context.Context, container string) error
 	Popup(ctx context.Context, key string, compose bool) error
 	SetLabel(ctx context.Context, key, label string) error
+	// SetPaused freezes an agent (the deck's p) or lets a frozen one continue.
+	SetPaused(ctx context.Context, key string, paused bool) error
 	OpenShell(ctx context.Context, container string) (Agent, error)
 	// SplitShell opens a shell beside an agent, below it or at its right.
 	SplitShell(ctx context.Context, key string, below bool) (Agent, error)
@@ -83,6 +87,10 @@ type API interface {
 
 // isShell reports whether a row is a shell.
 func isShell(a Agent) bool { return a.Kind == KindShell }
+
+// pausable reports whether p applies to a row: an agent whose process runs (a shell is no agent;
+// an ended or stopped agent has no process to freeze).
+func pausable(a Agent) bool { return !isShell(a) && a.State != "done" && a.State != "stopped" }
 
 // display is the name a row shows: the label when the user gave one.
 func display(a Agent) string {
@@ -182,7 +190,7 @@ func (m Model) Init() tea.Cmd {
 // working reports whether an agent works: the spinner and the logo's wave then move.
 func (m Model) working() bool {
 	for _, a := range m.agents {
-		if a.State == "working" && !isShell(a) {
+		if a.State == "working" && !isShell(a) && !a.Paused {
 			return true
 		}
 	}
@@ -518,6 +526,13 @@ func (m Model) key(k string) (tea.Model, tea.Cmd) {
 		}
 		m.confirm, m.confirmYes, m.status = key, false, ""
 		return m, nil
+	case "p":
+		a := m.selectedAgent()
+		if a == nil || !pausable(*a) {
+			return m, nil
+		}
+		key, pause := a.Key, !a.Paused
+		return m, m.call(func(ctx context.Context) error { return api.SetPaused(ctx, key, pause) })
 	case "r":
 		if a := m.selectedAgent(); a != nil && !isShell(*a) {
 			m.roleFor = a.Key
@@ -583,6 +598,8 @@ func rank(a Agent, seen map[string]int64) int {
 	switch {
 	case isShell(a):
 		return 6
+	case a.Paused: // frozen by the user: it neither needs them nor works
+		return 4
 	case a.State == "blocked":
 		return 0
 	case a.State == "done" && seen[a.Key] != a.Updated:
@@ -616,6 +633,8 @@ func (m Model) label(a Agent) string {
 	switch r := rank(a, m.seen); {
 	case isShell(a):
 		return "shell"
+	case a.Paused:
+		return "paused"
 	case a.State == "blocked" && a.Approval == nil:
 		return "see terminal" // the agent's own dialog asks: the deck has no card for it
 	case a.State == "blocked":

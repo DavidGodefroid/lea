@@ -422,6 +422,22 @@ type fakeContainers struct {
 	err      error // Live fails with it (docker unreachable)
 	stopErr  error // Stop fails with it
 	projects map[string]string
+	paused   []string // container/name:pause|resume, in call order
+	pauseErr error    // Pause fails with it
+}
+
+func (c *fakeContainers) Pause(ctx context.Context, container, name string, paused bool) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.pauseErr != nil {
+		return c.pauseErr
+	}
+	what := ":resume"
+	if paused {
+		what = ":pause"
+	}
+	c.paused = append(c.paused, container+"/"+name+what)
+	return nil
 }
 
 func (c *fakeContainers) Projects(ctx context.Context, container string) (string, error) {
