@@ -73,6 +73,10 @@ func (f *fakeAgents) SetLabel(ctx context.Context, k, label string) error {
 	f.rec(fmt.Sprintf("label %s %q", k, label))
 	return nil
 }
+func (f *fakeAgents) SetPaused(ctx context.Context, k string, paused bool) error {
+	f.rec(fmt.Sprintf("paused %s %v", k, paused))
+	return nil
+}
 func (f *fakeAgents) OpenShell(ctx context.Context, c string) (agents.Row, error) {
 	f.rec("shell " + c)
 	return agents.Row{Key: agents.ShellKey(c, "sh-1"), Name: "sh-1", Kind: agents.KindShell}, nil
@@ -137,13 +141,14 @@ func TestDeckMethodsReachTheManager(t *testing.T) {
 		t.Fatal("deck_attached: not attached")
 	}
 	must("agent_label", map[string]any{"key": "lea-a/x", "label": "auth work"}, nil)
+	must("agent_pause", map[string]any{"key": "lea-a/x", "paused": true}, nil)
 	var sh agents.Row
 	must("shell_open", map[string]any{"container": "lea-a"}, &sh)
 	if sh.Kind != agents.KindShell || sh.Key != "shell:lea-a/sh-1" {
 		t.Fatalf("shell=%+v", sh)
 	}
 	wantCalls := []string{"mark-stopped lea-a true", "resume-stopped lea-a", "ensure lea-a /p", "new", "focus lea-a/x true", "stop lea-a/x", "remove-ended lea-a/y", "detach lea-a",
-		"popup lea-a/x true", "watch lea-a 3 5s", "attached lea-a", `label lea-a/x "auth work"`, "shell lea-a"}
+		"popup lea-a/x true", "watch lea-a 3 5s", "attached lea-a", `label lea-a/x "auth work"`, "paused lea-a/x true", "shell lea-a"}
 	if !reflect.DeepEqual(fa.calls, wantCalls) {
 		t.Fatalf("calls=%q", fa.calls)
 	}
@@ -154,13 +159,13 @@ func TestDeckMethodsReachTheManager(t *testing.T) {
 	}
 }
 
-// An agent never renames an agent or opens a shell: not through its bus socket (its MCP tools
+// An agent never renames, pauses or resumes an agent, nor opens a shell: not through its bus socket (its MCP tools
 // and lea inside the container use it), whatever its role.
 func TestRenameAndShellsAreRefusedToAgents(t *testing.T) {
 	e := start(t)
 	fa := &fakeAgents{}
 	e.d.SetAgents(fa)
-	for _, m := range []string{"agent_label", "shell_open"} {
+	for _, m := range []string{"agent_label", "shell_open", "agent_pause"} {
 		if !deckMethods[m] {
 			t.Fatalf("%s is not a deck (host-only) method", m)
 		}

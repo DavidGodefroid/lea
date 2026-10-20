@@ -556,6 +556,10 @@ func TestCommandsMatchTheGoldenFiles(t *testing.T) {
 				"installer [--version] [v9.9.9] [--no-init]", "docker [image] [inspect] [locksql:",
 				"lea: updating this release install to lea v9.9.9 with its installer", "lea: updated; running lea containers keep their image until they stop"},
 			absent: []string{"go-build", "raw.githubusercontent.com"}},
+		// The world's root is no release's directory: rollback is for a release install.
+		{name: "rollback outside a release install", args: []string{"rollback"}, exit: 1,
+			want: []string{"lea: error: lea rollback is for a release install"}, absent: []string{"ln", "curl"}},
+		{name: "rollback takes no argument", args: []string{"rollback", "now"}, exit: 2, absent: []string{"lea:"}},
 		{name: "doctor", args: []string{"doctor"}, exit: 1,
 			want: []string{"ok    docker reachable", "FAIL  user config"}, absent: []string{"launcher"}},
 		{name: "kube refresh", args: []string{"kube", "refresh"}, exit: 1, env: map[string]string{"LEA_K8S_USER": "dev"},

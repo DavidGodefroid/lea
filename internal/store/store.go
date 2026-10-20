@@ -88,7 +88,8 @@ func (s *Store) Close() error { return s.db.Close() }
 // Repo and Branch are what it was started on; TaskID is its row on the board (0: none).
 // Label is the display name the user gave it ("" when none): Name, its identity, never changes.
 // Args are the Claude arguments it was started with and Prompt its first prompt ("" when none):
-// what a new container starts it again with (SetLaunch).
+// what a new container starts it again with (SetLaunch). Paused: the user froze its process
+// (SetPaused).
 type Agent struct {
 	Key, Container, Name, SessionID, State string
 	Updated                                int64
@@ -99,6 +100,7 @@ type Agent struct {
 	Label                                  string
 	Args                                   []string
 	Prompt                                 string
+	Paused                                 bool
 }
 
 // agentColumns are the agents columns added after phase 0; migrate adds the missing ones to a
@@ -118,6 +120,7 @@ var agentColumns = [][2]string{
 	{"label", "TEXT NOT NULL DEFAULT ''"},
 	{"args", "TEXT NOT NULL DEFAULT ''"},
 	{"prompt", "TEXT NOT NULL DEFAULT ''"},
+	{"paused", "INTEGER NOT NULL DEFAULT 0"},
 }
 
 // approvalColumns are the approvals columns added after phase 0.
@@ -168,20 +171,23 @@ func (s *Store) UpsertAgent(container, name string, now int64) (string, error) {
 	return key, err
 }
 
+// SetState records an agent's state. A process that ended (done), stopped with its container
+// (stopped) or starts again (unknown) is no longer paused.
 func (s *Store) SetState(key, state, sessionID string, now int64) error {
 	_, err := s.db.Exec(`UPDATE agents SET state=?,
-		session_id=CASE WHEN ?='' THEN session_id ELSE ? END, updated=? WHERE key=?`,
-		state, sessionID, sessionID, now, key)
+		session_id=CASE WHEN ?='' THEN session_id ELSE ? END, updated=?,
+		paused=CASE WHEN ? IN ('done','stopped','unknown') THEN 0 ELSE paused END WHERE key=?`,
+		state, sessionID, sessionID, now, state, key)
 	return err
 }
 
-const agentCols = `key, container, name, session_id, state, updated, profile, workdir, created, role, parent, repo, branch, task_id, label, args, prompt`
+const agentCols = `key, container, name, session_id, state, updated, profile, workdir, created, role, parent, repo, branch, task_id, label, args, prompt, paused`
 
 func scanAgent(sc interface{ Scan(...any) error }) (Agent, error) {
 	var a Agent
 	var args string
 	err := sc.Scan(&a.Key, &a.Container, &a.Name, &a.SessionID, &a.State, &a.Updated, &a.Profile, &a.Workdir, &a.Created,
-		&a.Role, &a.Parent, &a.Repo, &a.Branch, &a.TaskID, &a.Label, &args, &a.Prompt)
+		&a.Role, &a.Parent, &a.Repo, &a.Branch, &a.TaskID, &a.Label, &args, &a.Prompt, &a.Paused)
 	if err == nil && args != "" {
 		err = json.Unmarshal([]byte(args), &a.Args)
 	}
@@ -316,7 +322,7 @@ func (s *Store) Register(n NewAgent, c Caps, now int64) (Agent, error) {
 			return Agent{}, err
 		}
 		_, err = tx.Exec(`UPDATE agents SET profile=?, workdir=?, created=?, updated=?, state='unknown', session_id='',
-			ctx_pct=-1, cost_usd=-1, role=?, parent=?, repo=?, branch=?, task_id=0, label='', args='', prompt='' WHERE key=?`,
+			ctx_pct=-1, cost_usd=-1, role=?, parent=?, repo=?, branch=?, task_id=0, label='', args='', prompt='', paused=0 WHERE key=?`,
 			n.Profile, n.Workdir, now, now, n.Role, n.Parent, n.Repo, n.Branch, key)
 	} else {
 		_, err = tx.Exec(`INSERT INTO agents(key, container, name, profile, workdir, created, updated, role, parent, repo, branch)
@@ -380,6 +386,20 @@ func (s *Store) SetRole(key, role string, canSpawn bool) error {
 // it; the caller checks the text (agents.CheckLabel).
 func (s *Store) SetLabel(key, label string) error {
 	res, err := s.db.Exec(`UPDATE agents SET label=? WHERE key=? AND profile<>''`, label, key)
+	if err != nil {
+		return err
+	}
+	if n, err := res.RowsAffected(); err != nil {
+		return err
+	} else if n == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+// SetPaused records that the user froze an agent lea spawned (the deck's p), or let it continue.
+func (s *Store) SetPaused(key string, paused bool) error {
+	res, err := s.db.Exec(`UPDATE agents SET paused=? WHERE key=? AND profile<>''`, paused, key)
 	if err != nil {
 		return err
 	}

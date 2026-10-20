@@ -139,3 +139,19 @@ func (d Docker) StopShell(ctx context.Context, container, name string) error {
 	}
 	return nil
 }
+
+// Pause freezes an agent (paused) or lets it continue. Unlike Stop, it fails in a container that
+// is not running: nothing was frozen there.
+func (d Docker) Pause(ctx context.Context, container, name string, paused bool) error {
+	verb := "resume"
+	if paused {
+		verb = "pause"
+	}
+	if _, err := d.agent(ctx, container, verb, name); err != nil {
+		if ferr := d.failed(ctx, container, err, "lea-agent "+verb+" "+name); ferr != nil {
+			return ferr
+		}
+		return fmt.Errorf("lea-agent %s %s: container %s is not running", verb, name, container)
+	}
+	return nil
+}

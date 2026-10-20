@@ -66,6 +66,11 @@ func (c Client) SetLabel(ctx context.Context, key, label string) error {
 	return c.call(ctx, "agent_label", map[string]any{"key": key, "label": label}, nil)
 }
 
+// SetPaused freezes an agent (the deck's p), or lets a frozen one continue where it stopped.
+func (c Client) SetPaused(ctx context.Context, key string, paused bool) error {
+	return c.call(ctx, "agent_pause", map[string]any{"key": key, "paused": paused}, nil)
+}
+
 // OpenShell opens a shell in the container (the deck's s).
 func (c Client) OpenShell(ctx context.Context, container string) (Agent, error) {
 	var a Agent

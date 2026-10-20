@@ -63,6 +63,38 @@ linked() { [ "$(readlink "$LEA_BIN_DIR/lea")" = "$1/bin/lea" ]; }
   linked "$INST/v1.2.4"
 }
 
+# at_v0: the installed release is v0.4.2 instead (a 0.x major: its minor releases may break).
+at_v0() {
+  R0="$INST/v0.4.2"; mkdir -p "$INST"; mv "$R" "$R0"; R=$R0
+  printf '#!/bin/sh\n[ "$1" = version ] && echo v0.4.2\n' >"$R/build/lea"
+  ln -sfn "$R/bin/lea" "$LEA_BIN_DIR/lea"; ln -sfn "$R/bin/locksql" "$LEA_BIN_DIR/locksql"
+  LEA_ROOT=$R
+}
+
+@test "in 0.x a newer patch release is installed" {
+  with_cosign
+  at_v0
+  bg_release v0.4.3
+  run lea_update --background </dev/null
+  [ "$status" -eq 0 ]
+  linked "$INST/v0.4.3"
+  [ "$(cat "$NOTICE")" = "v0.4.3 installed" ]
+}
+
+@test "in 0.x a newer minor release is only announced, nothing is downloaded nor installed" {
+  with_cosign
+  at_v0
+  bg_release v0.5.0
+  run lea_update --background </dev/null
+  [ "$status" -eq 0 ]
+  linked "$R"
+  [ "$(cat "$NOTICE")" = "v0.5.0 available" ]
+  [[ "$output" == *"lea v0.5.0 is a new minor version of lea 0.x: run lea update"* ]]
+  run calls
+  [[ "$output" != *installer* ]]
+  [[ "$output" != *install.sh* ]]
+}
+
 @test "a newer major release is only announced, nothing is downloaded nor installed" {
   with_cosign
   bg_release v2.0.0
@@ -202,4 +234,57 @@ linked() { [ "$(readlink "$LEA_BIN_DIR/lea")" = "$1/bin/lea" ]; }
 @test "lea-sh accepts update --background and nothing else after update" {
   run "$BATS_TEST_DIRNAME/../../libexec/lea-sh" update --now
   [ "$status" -eq 2 ]
+}
+
+# older VERSION...: releases installed beside the current one, before it.
+older() { for v in "$@"; do mkdir -p "$INST/$v/bin"; : >"$INST/$v/bin/lea"; done; }
+
+@test "after an update only the new and the previous versions are kept" {
+  with_cosign
+  older v1.2.1 v1.2.2
+  mkdir -p "$INST/notes" "$INST/v1.2.0-rc1"
+  bg_release v1.3.0
+  run lea_update --background </dev/null
+  [ "$status" -eq 0 ]
+  linked "$INST/v1.3.0"
+  [ "$(cd "$INST" && echo *)" = "notes v1.2.0-rc1 v1.2.3 v1.3.0" ]
+  [[ "$output" == *"removed lea v1.2.1"* ]]
+}
+
+@test "the version the running daemon uses is never removed" {
+  with_cosign
+  older v1.2.1 v1.2.2
+  mkdir -p "$XDG_DATA_HOME/lea/host"; printf v1.2.1 >"$XDG_DATA_HOME/lea/host/daemon.version"
+  bg_release v1.3.0
+  run lea_update --background </dev/null
+  [ "$status" -eq 0 ]
+  [ "$(cd "$INST" && echo *)" = "v1.2.1 v1.2.3 v1.3.0" ]
+}
+
+@test "a failed update removes nothing" {
+  with_cosign
+  older v1.2.1
+  bg_release v1.3.0
+  export FAKE_COSIGN_RC=1
+  run lea_update --background </dev/null
+  [ "$status" -eq 1 ]
+  [ -d "$INST/v1.2.1" ]
+}
+
+@test "the version LEA_AUTOUPDATE_SKIP names is neither installed nor announced" {
+  with_cosign
+  mkdir -p "$HOME/.config/lea"; printf "LEA_AUTOUPDATE_SKIP='v1.3.0'\n" >"$HOME/.config/lea/lea.conf"
+  lea_load_config
+  bg_release v1.3.0
+  run lea_update --background </dev/null
+  [ "$status" -eq 0 ]
+  linked "$R"
+  [ ! -e "$NOTICE" ]
+  [[ "$output" == *"lea v1.3.0 is skipped (LEA_AUTOUPDATE_SKIP, set by lea rollback)"* ]]
+  run calls
+  [[ "$output" != *install.sh* ]]
+  bg_release v1.3.1
+  run lea_update --background </dev/null
+  [ "$status" -eq 0 ]
+  linked "$INST/v1.3.1"
 }
