@@ -1,11 +1,11 @@
 #!/bin/sh
 # End-to-end test of lea update's dependencies (#32), and of lea init's locksql build, against the real releases on GitHub and the
 # real cosign (the one on PATH, else lea's pinned v3.0.6):
-#   - locksql: the latest release is found, its source cloned at the tag, the clone's commit proven
+#   - locksql: the latest release is found, its source fetched at the tag, that commit proven
 #     by the release's Sigstore signature, then built (a stand-in docker records the build context)
 #     and recorded;
 #   - a tag moved to another commit, or a genuine commit with another release's signature, is
-#     never built nor recorded;
+#     never built nor recorded; a branch named like the tag is never what is built;
 #   - lockfile: the host binary goes from v0.1.1 to the latest release with the strict signed
 #     installer (into a stand-in /usr/local/bin) and is recorded;
 #   - asked and declined, nothing is fetched.
@@ -111,6 +111,16 @@ if ! grep -q "^docker build" "$w/docker.log" 2>/dev/null && [ ! -s "$LEA_CONFIG"
   ok "locksql: $tag served with the signature of $prev, refused (lea update and lea init)"
 else
   ko "locksql: other release's signature: $out $initout"
+fi
+
+mirror "$tag"
+git -C "$w/t" -c user.email=x@x -c user.name=x commit -q --allow-empty -m "a branch named like the tag"
+git -C "$w/t" branch -q "$tag"
+mirrored
+if [ "$(cat "$w/built.sha" 2>/dev/null)" = "$want" ] && grep -qx "LEA_LOCKSQL_REF='$tag'" "$LEA_CONFIG"; then
+  ok "locksql: a branch named $tag is ignored; the tag's signed commit is built"
+else
+  ko "locksql: branch named like the tag: $out $initout"
 fi
 
 # lockfile: a host v0.1.1 (a stand-in: that release ships no binary) replaced by the latest

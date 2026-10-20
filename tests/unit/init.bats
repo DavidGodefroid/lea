@@ -145,7 +145,8 @@ git_ssh() { export LEA_GIT_SSH="$1"; lea_load_config; }
   run lea_init </dev/null
   [[ "$output" == *"locksql v0.8.0: signature verified (commit $FAKE_GIT_SHA); building locksql:0.8.0"* ]]
   run calls
-  [[ "$output" == *"git [-c] [advice.detachedHead=false] [clone] [-q] [--depth] [1] [--branch] [v0.8.0] [https://github.com/DavidGodefroid/locksql.git] ["*"/src]"* ]]
+  [[ "$output" == *"git [-C] ["*"/src] [fetch] [-q] [--depth] [1] [--no-tags] [https://github.com/DavidGodefroid/locksql.git] [+refs/tags/v0.8.0:refs/tags/v0.8.0]"*"git [-C] ["*"/src] [-c] [advice.detachedHead=false] [checkout] [-q] [refs/tags/v0.8.0^{commit}]"* ]]
+  [[ "$output" != *"[--branch]"* ]]
   [[ "$output" == *"cosign [verify-blob] [--bundle] ["*"/checksums.txt.sigstore.json] [--certificate-identity-regexp] [^https://github\\.com/DavidGodefroid/locksql/\\.github/workflows/release\\.yml@refs/tags/v0\\.8\\.0\$] [--certificate-oidc-issuer] [https://token.actions.githubusercontent.com] [--certificate-github-workflow-repository] [DavidGodefroid/locksql] [--certificate-github-workflow-sha] [$FAKE_GIT_SHA] ["*"/checksums.txt]"* ]]
   [ "$(calls | grep -n '^cosign' | cut -d: -f1)" -lt "$(calls | grep -n '^docker \[build\]' | cut -d: -f1)" ]
 }

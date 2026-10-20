@@ -38,8 +38,8 @@ EOT
 # no_tmux: skips the test when the test image ships a tmux (these tests need it absent).
 no_tmux() { if command -v tmux >/dev/null 2>&1; then skip "tmux is installed in the test image"; fi; }
 
-# fake_git: a git that logs its calls, first on PATH: clone creates its destination, rev-parse
-# HEAD prints $FAKE_GIT_SHA (FAKE_GIT_CLONE_RC: a failing clone).
+# fake_git: a git that logs its calls, first on PATH: init and clone create their destination,
+# rev-parse HEAD prints $FAKE_GIT_SHA (FAKE_GIT_FETCH_RC: a failing fetch).
 fake_git() {
   mkdir -p "$BATS_TEST_TMPDIR/gbin"
   cat >"$BATS_TEST_TMPDIR/gbin/git" <<'EOT'
@@ -47,7 +47,8 @@ fake_git() {
 { printf git; for a in "$@"; do printf ' [%s]' "$a"; done; printf '\n'; } >>"$FAKE_LOG"
 for last in "$@"; do :; done
 case " $* " in
-  *" clone "*) [ "${FAKE_GIT_CLONE_RC:-0}" -eq 0 ] || exit "$FAKE_GIT_CLONE_RC"; mkdir -p "$last" ;;
+  *" init "*|*" clone "*) mkdir -p "$last" ;;
+  *" fetch "*) exit "${FAKE_GIT_FETCH_RC:-0}" ;;
   *" rev-parse HEAD "*) printf '%s\n' "$FAKE_GIT_SHA" ;;
 esac
 EOT

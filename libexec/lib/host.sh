@@ -188,10 +188,18 @@ lea__update_release() {
   "$_ur_new/libexec/lea-sh" update-deps "${1:-ask}" || lea_log "warning: the dependencies were not checked (rerun lea update)"
 }
 
-# lea__semver V: "MAJOR MINOR PATCH" of a release version vMAJOR.MINOR.PATCH; fails on anything
-# else (dev, a git describe, a pre-release).
+# lea__semver V: "MAJOR MINOR PATCH" of a release version vMAJOR.MINOR.PATCH, one line of it;
+# fails on anything else (dev, a git describe, a pre-release, a leading zero, several lines).
 lea__semver() {
-  printf '%s\n' "$1" | sed -n 's/^v\([0-9][0-9]*\)\.\([0-9][0-9]*\)\.\([0-9][0-9]*\)$/\1 \2 \3/p' | grep .
+  case $1 in *'
+'*) return 1 ;; esac
+  _sv=$(printf '%s\n' "$1" | sed -n 's/^v\([0-9][0-9]*\)\.\([0-9][0-9]*\)\.\([0-9][0-9]*\)$/\1 \2 \3/p')
+  [ -n "$_sv" ] || return 1
+  # No leading zero (v01.2.3 is not v1.2.3), at most 9 digits (the shell compares them).
+  for _sv_n in $_sv; do
+    case $_sv_n in 0?*|??????????*) return 1 ;; esac
+  done
+  printf '%s\n' "$_sv"
 }
 
 # lea__notice TEXT: the deck's update notice (<host>/update-notice), "vX.Y.Z installed",

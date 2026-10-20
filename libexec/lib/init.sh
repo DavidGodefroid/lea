@@ -137,7 +137,7 @@ EOT
 
 # lea__locksql_build REF IMAGE [vault]: builds the locksql console image IMAGE (with the vault CLI:
 # locksql's vault target) from REF: the absolute path of a locksql checkout, built as it is (to try a locksql
-# not released yet), or a release vX.Y.Z, whose source lea clones with git at that tag and builds
+# not released yet), or a release vX.Y.Z, whose source lea fetches with git at that tag (refs/tags/, never a branch) and builds
 # only once cosign proves that locksql's release workflow, run at that very tag on that very commit,
 # signed the release's checksums.txt (a moved tag or another release's signature is refused). Any
 # other ref (a branch) is refused: lea builds no source it cannot verify. Fails, saying why.
@@ -168,8 +168,11 @@ lea__locksql_build() {
       return 1
     fi
   done
-  if ! git -c advice.detachedHead=false clone -q --depth 1 --branch "$_lsb_r" "$_lsb_u.git" "$_lsb_tmp/src" >&2; then
-    lea_log "locksql: could not clone $_lsb_u at $_lsb_r; nothing built"
+  # The tag itself (refs/tags/vX.Y.Z), never a branch of that name.
+  if ! git -c init.defaultBranch=lea init -q "$_lsb_tmp/src" >&2 ||
+    ! git -C "$_lsb_tmp/src" fetch -q --depth 1 --no-tags "$_lsb_u.git" "+refs/tags/$_lsb_r:refs/tags/$_lsb_r" >&2 ||
+    ! git -C "$_lsb_tmp/src" -c advice.detachedHead=false checkout -q "refs/tags/$_lsb_r^{commit}" >&2; then
+    lea_log "locksql: could not fetch the tag $_lsb_r of $_lsb_u; nothing built"
     rm -rf "$_lsb_tmp"
     return 1
   fi

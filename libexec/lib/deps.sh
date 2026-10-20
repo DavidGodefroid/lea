@@ -141,7 +141,11 @@ lea__dep_update() {
     locksql) lea__locksql_update "$2" ;;
     lockmq|lockfile)
       lea__lockhost_install "$1" "$2" || return 1
-      lea_user_config_set "$(lea__lockhost_var "$1")_REF" "$2"
+      # In a subshell: a refused write (lea_die) only fails this step.
+      if ! (lea_user_config_set "$(lea__lockhost_var "$1")_REF" "$2"); then
+        lea_log "$1 $2 is installed on the host but could not be recorded in $(lea_user_config_path)"
+        return 1
+      fi
       # shellcheck disable=SC2034 # read by lea__lockhost_get
       case $1 in lockmq) LEA_LOCKMQ_REF=$2 ;; lockfile) LEA_LOCKFILE_REF=$2 ;; esac
       lea_log "$1 $2 installed and recorded; restart the $1 console in the $1 account to run it" ;;
@@ -159,8 +163,12 @@ lea__locksql_update() {
     lea_log "locksql: could not build $_lu_img"
     return 1
   fi
-  lea_user_config_set LEA_LOCKSQL_REF "$_lu_v"
-  lea_user_config_set LEA_LOCKSQL_IMAGE "$_lu_img"
+  # Both keys in one write: never a REF without its IMAGE. In a subshell: a refused write
+  # (lea_die) only fails this step.
+  if ! (lea_user_config_set LEA_LOCKSQL_REF "$_lu_v" LEA_LOCKSQL_IMAGE "$_lu_img"); then
+    lea_log "locksql: $_lu_img is built but $_lu_v could not be recorded in $(lea_user_config_path); lea keeps $_lu_old"
+    return 1
+  fi
   LEA_LOCKSQL_REF=$_lu_v LEA_LOCKSQL_IMAGE=$_lu_img
   lea_log "locksql $_lu_v recorded (profiles and the locksql-home volume kept); a running console keeps $_lu_old until you restart it (lea locksql)"
 }

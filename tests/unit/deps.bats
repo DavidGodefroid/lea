@@ -42,7 +42,8 @@ release() {
   [[ "$output" == *"curl [-fsSLI] [-o] [/dev/null] [-w] [%{url_effective}] [https://github.com/DavidGodefroid/locksql/releases/latest]"* ]]
   [[ "$output" == *"[https://github.com/DavidGodefroid/locksql/releases/download/v0.9.0/checksums.txt]"* ]]
   [[ "$output" == *"[https://github.com/DavidGodefroid/locksql/releases/download/v0.9.0/checksums.txt.sigstore.json]"* ]]
-  [[ "$output" == *"git [-c] [advice.detachedHead=false] [clone] [-q] [--depth] [1] [--branch] [v0.9.0] [https://github.com/DavidGodefroid/locksql.git] ["*"/src]"* ]]
+  [[ "$output" == *"git [-C] ["*"/src] [fetch] [-q] [--depth] [1] [--no-tags] [https://github.com/DavidGodefroid/locksql.git] [+refs/tags/v0.9.0:refs/tags/v0.9.0]"*"git [-C] ["*"/src] [-c] [advice.detachedHead=false] [checkout] [-q] [refs/tags/v0.9.0^{commit}]"* ]]
+  [[ "$output" != *"[--branch]"* ]]
   [[ "$output" == *"cosign [verify-blob] [--bundle] ["*"/checksums.txt.sigstore.json] [--certificate-identity-regexp] [^https://github\\.com/DavidGodefroid/locksql/\\.github/workflows/release\\.yml@refs/tags/v0\\.9\\.0\$] [--certificate-oidc-issuer] [https://token.actions.githubusercontent.com] [--certificate-github-workflow-repository] [DavidGodefroid/locksql] [--certificate-github-workflow-sha] [$SHA] ["*"/checksums.txt]"* ]]
   [[ "$output" == *"docker [build] [-t] [locksql:0.9.0] [--build-arg] [ALLOWED_UIDS=$(id -u)] ["*"/src]"* ]]
   # The signature is checked before anything is built.
@@ -121,14 +122,14 @@ release() {
   [ ! -e "$LEA_CONFIG" ]
 }
 
-@test "no signature bundle, no clone or no commit id: nothing is built" {
+@test "no signature bundle, no tag or no commit id: nothing is built" {
   on_tty; latest locksql v0.9.0
   rm "$D/checksums.txt.sigstore.json"
   run lea_update_deps all
   [[ "$output" == *"could not download https://github.com/DavidGodefroid/locksql/releases/download/v0.9.0/checksums.txt.sigstore.json; nothing built"* ]]
   echo '{}' >"$D/checksums.txt.sigstore.json"
-  FAKE_GIT_CLONE_RC=128 run lea_update_deps all
-  [[ "$output" == *"could not clone https://github.com/DavidGodefroid/locksql at v0.9.0; nothing built"* ]]
+  FAKE_GIT_FETCH_RC=128 run lea_update_deps all
+  [[ "$output" == *"could not fetch the tag v0.9.0 of https://github.com/DavidGodefroid/locksql; nothing built"* ]]
   FAKE_GIT_SHA=main run lea_update_deps all
   [[ "$output" == *"cannot check the signature of v0.9.0; nothing built"* ]]
   if calls | grep -q '^docker\|^cosign'; then false; fi
@@ -253,4 +254,36 @@ release() {
 @test "the background update never touches a dependency" {
   ! grep -q 'update-deps\|lea_update_deps' <(sed -n '/^lea_update_background()/,/^}/p;/^lea__update_background()/,/^}/p' "$LEA_ROOT/libexec/lib/host.sh")
   ! grep -q 'update-deps\|lea_update_deps' "$LEA_ROOT/internal/launcher/autoupdate.go"
+}
+
+@test "an update whose choice cannot be recorded says so and records nothing half-way" {
+  latest locksql v0.9.0
+  : >"$BATS_TEST_TMPDIR/elsewhere"; ln -s "$BATS_TEST_TMPDIR/elsewhere" "$LEA_CONFIG"
+  run lea_update_deps all
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"locksql: locksql:0.9.0 is built but v0.9.0 could not be recorded in $LEA_CONFIG; lea keeps locksql:0.8.0"*"warning: locksql stays at v0.8.0"* ]]
+  [[ "$output" != *"v0.9.0 recorded"* ]]
+  [ ! -s "$BATS_TEST_TMPDIR/elsewhere" ]
+  LEA_LOCKSQL=0 LEA_LOCKFILE=1; latest lockfile v0.3.0
+  host_bin lockfile "lockfile v0.2.0"; release lockfile v0.3.0
+  run lea_update_deps all
+  [[ "$output" == *"lockfile v0.3.0 is installed on the host but could not be recorded in $LEA_CONFIG"*"warning: lockfile stays at v0.2.0"* ]]
+  [[ "$output" != *"installed and recorded"* ]]
+  [ ! -s "$BATS_TEST_TMPDIR/elsewhere" ]
+}
+
+@test "the user config takes several keys in one write, and keeps the other lines" {
+  printf "LEA_SOUND='1'\nLEA_LOCKSQL_REF='v0.1.0'\n" >"$LEA_CONFIG"
+  lea_user_config_set LEA_LOCKSQL_REF v0.9.0 LEA_LOCKSQL_IMAGE "locksql:0.9.0"
+  [ "$(cat "$LEA_CONFIG")" = "$(printf "LEA_SOUND='1'\nLEA_LOCKSQL_REF='v0.9.0'\nLEA_LOCKSQL_IMAGE='locksql:0.9.0'")" ]
+  [ "$(stat -c %a "$LEA_CONFIG")" = 600 ]
+  [ -z "$(ls "$BATS_TEST_TMPDIR" | grep 'user.conf.')" ]
+}
+
+@test "a release version is one line of vX.Y.Z without leading zeros" {
+  for v in v0.1.0 v1.20.3 v10.0.0; do lea__semver "$v" >/dev/null; done
+  [ "$(lea__semver v1.20.3)" = "1 20 3" ]
+  for v in v01.2.3 v1.02.3 v1.2.03 v00.1.1 "$(printf 'v1.2.3\nv9.9.9')" "$(printf 'x\nv1.2.3')" v1.2 1.2.3 v1.2.3-rc.1 v1234567890.0.0 ""; do
+    if lea__semver "$v" >/dev/null; then echo "accepted: $v"; false; fi
+  done
 }

@@ -137,18 +137,23 @@ lea__check_git_ssh() {
   [ "$_cg_n" -le 16 ] || lea_die "LEA_GIT_SSH lists $_cg_n endpoints, at most 16"
 }
 
-# lea_user_config_set KEY VALUE: sets KEY='VALUE' in the user config and keeps every other line.
-# The file is private; a symlinked file is refused.
+# lea_user_config_set KEY VALUE [KEY VALUE ...]: sets each KEY='VALUE' in the user config and keeps
+# every other line, all of them in one write (never some of them). The file is private; a
+# symlinked file is refused.
 lea_user_config_set() {
   _cs_f=$(lea_user_config_path)
   if [ -L "$_cs_f" ]; then lea_die "refusing to write $_cs_f: it is a symbolic link"; fi
   mkdir -p "${_cs_f%/*}"
-  _cs_v=$(printf '%s' "$2" | sed "s/'/'\\\\''/g")
   _cs_t=$(mktemp "$_cs_f.XXXXXX") || lea_die "cannot create a temporary file next to $_cs_f"
-  if {
-    if [ -f "$_cs_f" ]; then grep -v "^$1=" "$_cs_f" || true; fi
-    printf "%s='%s'\n" "$1" "$_cs_v"
-  } >"$_cs_t" && chmod 600 "$_cs_t" && mv -f "$_cs_t" "$_cs_f"; then return 0; fi
-  rm -f "$_cs_t"
+  if { if [ -f "$_cs_f" ]; then cat "$_cs_f"; fi; } >"$_cs_t"; then
+    while [ $# -ge 2 ]; do
+      _cs_v=$(printf '%s' "$2" | sed "s/'/'\\\\''/g")
+      if ! { grep -v "^$1=" "$_cs_t" || true; printf "%s='%s'\n" "$1" "$_cs_v"; } >"$_cs_t.n" ||
+        ! mv -f "$_cs_t.n" "$_cs_t"; then break; fi
+      shift 2
+    done
+    if [ $# -eq 0 ] && chmod 600 "$_cs_t" && mv -f "$_cs_t" "$_cs_f"; then return 0; fi
+  fi
+  rm -f "$_cs_t" "$_cs_t.n"
   return 1
 }
