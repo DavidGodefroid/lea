@@ -153,7 +153,7 @@ closing the deck, or the terminal, does not stop it: the next `lea` reattaches.
 | `space` | the next agent that needs you (a permission, a message for you) |
 | `n` | start a new agent |
 | `e` | rename the selected agent (enter saves, esc cancels, empty clears) |
-| `m` / `t` | write to the selected agent / read its messages |
+| `m` / `t` | send the selected agent a message / read its messages (see below) |
 | `a` / `d` / `A` | allow / deny / always allow the selected agent's permission request |
 | `r`, then `l` / `d` / `r` | make the selected agent a lead, a dev or a reviewer |
 | `s` | open a shell in the container (`exit` or `x` closes it) |
@@ -180,6 +180,13 @@ profile and state in the bottom border.
 - **States.** A red `●` needs you, an orange spinner is working, a green `●` has finished its
   turn, an empty `○` has been quiet for 30 minutes, a grey `‖` is paused (`p`: lea freezes the
   agent's processes, tool calls included, until you resume it). Agents stay in the order you started them.
+- **Messages.** Typing into an agent's pane (`enter`) talks to it now, in its conversation.
+  `m` (Send message) instead leaves it a note in its inbox, as another agent would: it reads it
+  on its next turn, or is woken for it once its turn is over. `t` (Messages) shows everything
+  the agent sent and received: your notes, its reports to you, and its messages with other
+  agents, questions (`ask`) included; an answer names the message it answers (`result to #12`).
+  Highlighted in a row's menu, each says what it does. No agent ever asks you a question: it
+  writes to you with `msg_send`, and you answer with `m`.
 - **Folders.** Folders come first, in your order, then the agents in no folder. A folded
   folder's dot sums up its agents: red when one needs you, the spinner while one works, green
   once none works any more. The layout is yours: the deck keeps it on the host

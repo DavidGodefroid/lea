@@ -121,8 +121,8 @@ var helpLines = []string{
 	"n           new agent",
 	"s           new shell",
 	"- |         split with a shell",
-	"m           message the agent",
-	"t           its thread",
+	"m           note to its inbox",
+	"t           its messages",
 	"e           rename",
 	"f o         new folder, move in",
 	"J K h l     reorder, fold",
@@ -298,9 +298,10 @@ func (m Model) rowLines(inner int) ([]string, []lineOwner) {
 			owners[i] = append(owners[i], lineOwner{e.key, -1})
 		}
 		if e.key == m.menuFor {
-			for j, l := range m.menuLines(m.openItems(), inner) {
+			items := m.openItems()
+			for j, l := range m.menuLines(items, inner) {
 				rendered[i] = append(rendered[i], l)
-				owners[i] = append(owners[i], lineOwner{e.key, j})
+				owners[i] = append(owners[i], lineOwner{e.key, menuOwner(j, len(items))})
 			}
 		}
 	}
@@ -309,8 +310,9 @@ func (m Model) rowLines(inner int) ([]string, []lineOwner) {
 	if m.menuFor == deckMenu {
 		var r []string
 		var o []lineOwner
-		for j, l := range m.menuLines(deckMenuItems(m.sound), inner) {
-			r, o = append(r, l), append(o, lineOwner{deckMenu, j})
+		items := deckMenuItems(m.sound)
+		for j, l := range m.menuLines(items, inner) {
+			r, o = append(r, l), append(o, lineOwner{deckMenu, menuOwner(j, len(items))})
 		}
 		rendered, owners = append(rendered, r), append(owners, o)
 		focus = len(rendered) - 1

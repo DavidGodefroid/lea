@@ -252,12 +252,40 @@ func TestThreadTitleShowsTheLabelAndTheName(t *testing.T) {
 	v := newThread(api, false)
 	v, _ = tstep(t, v, tea.WindowSizeMsg{Width: 60, Height: 10})
 	v, _ = tstep(t, v, v.Init()())
-	if title := strings.Split(sgr.ReplaceAllString(v.View(), ""), "\n")[0]; title != "thread · auth work (claude-1)" {
+	if title := strings.Split(sgr.ReplaceAllString(v.View(), ""), "\n")[0]; title != "messages · auth work (claude-1)" {
 		t.Fatalf("title %q", title)
 	}
 	api.label = ""
 	v, _ = tstep(t, v, v.load()())
-	if title := strings.Split(sgr.ReplaceAllString(v.View(), ""), "\n")[0]; title != "thread · claude-1" {
+	if title := strings.Split(sgr.ReplaceAllString(v.View(), ""), "\n")[0]; title != "messages · claude-1" {
 		t.Fatalf("title %q", title)
+	}
+}
+
+// m opens the popup to write one message: its title says so, its footer says where it goes.
+func TestTheOneShotPopupSaysItWritesToTheInbox(t *testing.T) {
+	v := newThread(&fakeThread{}, true)
+	v, _ = tstep(t, v, tea.WindowSizeMsg{Width: 80, Height: 10})
+	ls := strings.Split(sgr.ReplaceAllString(v.View(), ""), "\n")
+	if ls[0] != "message to · claude-1" || !strings.Contains(ls[len(ls)-1], "enter send to its inbox") {
+		t.Fatalf("view:\n%s", strings.Join(ls, "\n"))
+	}
+}
+
+// An answer names the message it answers: an ask's question and its answer read as a pair (#28).
+func TestAnAnswerNamesTheMessageItAnswers(t *testing.T) {
+	q := msgFrom(12, "lea-a/dev", "lea-a/ops", "port?")
+	q.Kind = "question"
+	a := msgFrom(13, "lea-a/ops", "lea-a/dev", "[status: ok] 8080")
+	a.Kind, a.ReplyTo = "result", 12
+	api := &fakeThread{msgs: []Message{q, a}}
+	v := newThread(api, false)
+	v, _ = tstep(t, v, tea.WindowSizeMsg{Width: 80, Height: 12})
+	v, _ = tstep(t, v, v.Init()())
+	s := sgr.ReplaceAllString(v.View(), "")
+	for _, w := range []string{"#12 dev › ops · question ·", "#13 ops › dev · result to #12 ·"} {
+		if !strings.Contains(s, w) {
+			t.Fatalf("view lacks %q:\n%s", w, s)
+		}
 	}
 }
