@@ -3,4 +3,6 @@
 # Point LEA_INTERNAL_HOSTS at your own file in the user config. Examples:
 #   git.example.internal      443
 #   10.0.0.10                 443
+# A name grants that name only: TLS to it passes when its SNI is that name, so other vhosts of the
+# same ingress stay closed. An IPv4 literal grants the address, every vhost on it included.
 # git SSH endpoints (LEA_GIT_SSH) are reached through the proxy's SSH forwarders, not listed here.

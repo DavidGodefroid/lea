@@ -333,6 +333,11 @@ projects directory cannot be `/`, your home directory or one of its parents, nor
   `output-styles`, the top-level `*.md` files) and, with locksql, its socket volume. Nothing else.
 - Egress goes through a proxy: HTTPS to public hosts (plus `LEA_INTERNAL_HOSTS`), SSH only to
   `LEA_GIT_SSH`. Private and link-local addresses are refused.
+- An internal host name grants that name only, not every vhost of the ingress behind it: the proxy
+  peeks at the TLS handshake (no decryption) and passes a tunnel only when its SNI is the allowed
+  name, so a tunnel to an internal name must be TLS with SNI. The proxy cannot see the `Host` header
+  inside: if your ingress serves a `Host` other than the SNI, require SNI = Host on it. An IPv4
+  literal grants the whole address, every vhost on it included.
 - lea never gets the Docker socket; the agents' own containers run in a rootless Podman inside
   lea, under seccomp and, on Linux, AppArmor.
 - Work in lea, not on the host, inside the projects directory: an agent can write files your host
