@@ -3,6 +3,7 @@ package launcher
 import (
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"syscall"
@@ -80,19 +81,39 @@ func (l *Launcher) ensureDaemon() error {
 }
 
 // stopDaemon is lea_daemon_stop: kill only the lea daemon (after a crash or reboot the pid may
-// belong to an unrelated process), then drop the pid file.
+// belong to an unrelated process), then drop the pid file once the daemon is gone; a daemon that
+// outlives the wait keeps its pid file, so a retry can still stop it.
 func (l *Launcher) stopDaemon() {
 	pf := l.daemonPidfile()
 	if !exists(pf) {
 		return
 	}
 	s := readTrim(pf)
-	if pid, err := strconv.Atoi(s); err == nil && pid > 0 && strings.Trim(s, "0123456789") == "" {
-		b, _ := os.ReadFile("/proc/" + s + "/cmdline")
-		cmd := strings.ReplaceAll(string(b), "\x00", " ")
-		if cmd == l.Core+" daemon" || strings.HasPrefix(cmd, l.Core+" daemon ") {
-			syscall.Kill(pid, syscall.SIGTERM)
+	if pid, err := strconv.Atoi(s); err == nil && pid > 0 && strings.Trim(s, "0123456789") == "" && l.isDaemon(pid) {
+		syscall.Kill(pid, syscall.SIGTERM)
+		for i := 0; l.isDaemon(pid); i++ {
+			if i >= 50 {
+				return
+			}
+			l.Sleep(100 * time.Millisecond)
 		}
 	}
 	os.Remove(pf)
+}
+
+// isDaemon tells whether pid runs "<core> daemon": this core, or the core of another install
+// next to it (<install dir>/<version>/build/lea, #34: an update leaves the previous version's
+// daemon running). A gone process, or a zombie (empty command line), is no daemon.
+func (l *Launcher) isDaemon(pid int) bool {
+	b, _ := os.ReadFile("/proc/" + strconv.Itoa(pid) + "/cmdline")
+	argv := strings.Split(string(b), "\x00")
+	if len(argv) < 2 || argv[1] != "daemon" {
+		return false
+	}
+	if argv[0] == l.Core {
+		return true
+	}
+	bin := filepath.Dir(argv[0])
+	return filepath.Base(argv[0]) == "lea" && filepath.Base(bin) == "build" &&
+		filepath.Dir(filepath.Dir(bin)) == filepath.Dir(l.Root)
 }
