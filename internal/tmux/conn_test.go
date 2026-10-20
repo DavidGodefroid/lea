@@ -209,10 +209,15 @@ func TestWriteConf(t *testing.T) {
 	}
 	for _, want := range []string{"set -g prefix None", "set -g remain-on-exit on", "set -g set-clipboard off",
 		"bind-key -n C-Space", "if-shell -F '#{@lea_deck}' 'resize-pane -t :.0 -x " + strconv.Itoa(DeckWidth) + "'",
-		"set -gqu remain-on-exit-format", "'#{!=:#{@lea_role},deck}' 'copy-mode -e'"} {
+		"set -gqu remain-on-exit-format", "'#{!=:#{@lea_role},deck}' 'copy-mode -H -e'"} {
 		if !strings.Contains(Conf(), want) {
 			t.Fatalf("config lacks %q", want)
 		}
+	}
+	// Every way into the history hides tmux's own position (it counted up from the bottom): the
+	// slot's bar shows it instead.
+	if n := strings.Count(Conf(), "'copy-mode "); n == 0 || n != strings.Count(Conf(), "'copy-mode -H ") {
+		t.Fatalf("%d copy-mode commands, not all with -H", n)
 	}
 	if strings.Contains(Conf(), "@DECK") {
 		t.Fatal("an unexpanded placeholder is left in the config")

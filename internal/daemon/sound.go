@@ -2,6 +2,7 @@ package daemon
 
 import (
 	"context"
+	"encoding/json"
 	"os"
 	"os/exec"
 	"sync"
@@ -34,11 +35,47 @@ func (d *Daemon) SetSounder(s Sounder) {
 	d.mu.Unlock()
 }
 
+// SetSoundOn is the user's switch (on at start): off, the sounder stays aside and nothing rings.
+func (d *Daemon) SetSoundOn(on bool) {
+	d.mu.Lock()
+	d.soundOff = !on
+	d.mu.Unlock()
+}
+
+// soundState is what the user's switch shows: "on", "off", or "" when no sounder plays at all.
+func (d *Daemon) soundState() string {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	switch {
+	case d.sounder == nil:
+		return ""
+	case d.soundOff:
+		return "off"
+	}
+	return "on"
+}
+
+// switchSound is the sound method (host only): with on, it flips the switch and tells the decks;
+// either way it answers the state.
+func (d *Daemon) switchSound(params json.RawMessage) (any, error) {
+	var p struct{ On *bool }
+	if len(params) > 0 && string(params) != "null" {
+		if err := json.Unmarshal(params, &p); err != nil {
+			return nil, err
+		}
+	}
+	if p.On != nil {
+		d.SetSoundOn(*p.On)
+		d.changed()
+	}
+	return map[string]string{"sound": d.soundState()}, nil
+}
+
 // sound plays a sound of a kind for an agent of the container, only while a deck shows the
 // container: the daemon and the agents outlive the deck, and nobody listens then.
 func (d *Daemon) sound(ctx context.Context, container, kind string) {
 	d.mu.Lock()
-	on := d.sounder != nil
+	on := d.sounder != nil && !d.soundOff
 	d.mu.Unlock()
 	if !on || !d.deckAttached(ctx, container) {
 		return
@@ -46,7 +83,7 @@ func (d *Daemon) sound(ctx context.Context, container, kind string) {
 	d.mu.Lock()
 	s := d.sounder
 	now := time.Now()
-	if s == nil || now.Sub(d.rang[kind]) < soundGap {
+	if s == nil || d.soundOff || now.Sub(d.rang[kind]) < soundGap {
 		d.mu.Unlock()
 		return
 	}

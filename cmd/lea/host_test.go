@@ -508,3 +508,62 @@ func TestRequestCommands(t *testing.T) {
 		t.Fatalf("rc=%d out=%q", rc, out)
 	}
 }
+
+func TestSoundFilesFromTheEnvironment(t *testing.T) {
+	const att, done = "/usr/share/sounds/freedesktop/stereo/message-new-instant.oga", "/usr/share/sounds/freedesktop/stereo/complete.oga"
+	for _, c := range []struct {
+		env  map[string]string
+		want map[string]string
+		on   bool
+	}{
+		{nil, map[string]string{daemon.SoundAttention: att, daemon.SoundDone: done}, true},
+		{map[string]string{"LEA_SOUND_DONE": "0"}, map[string]string{daemon.SoundAttention: att}, true},
+		{map[string]string{"LEA_SOUND_ATTENTION": "0"}, map[string]string{daemon.SoundDone: done}, true},
+		{map[string]string{"LEA_SOUND_ATTENTION": "/a.oga", "LEA_SOUND_DONE": "/d.oga"}, map[string]string{daemon.SoundAttention: "/a.oga", daemon.SoundDone: "/d.oga"}, true},
+		{map[string]string{"LEA_SOUND": "0"}, map[string]string{daemon.SoundAttention: att, daemon.SoundDone: done}, false},
+		{map[string]string{"LEA_SOUND": "1"}, map[string]string{daemon.SoundAttention: att, daemon.SoundDone: done}, true},
+	} {
+		files, on := soundFiles(func(k string) string { return c.env[k] })
+		if !reflect.DeepEqual(files, c.want) || on != c.on {
+			t.Errorf("%v: files %v on %v, want %v %v", c.env, files, on, c.want, c.on)
+		}
+	}
+}
+
+func TestSoundCommand(t *testing.T) {
+	dir, _ := os.MkdirTemp("", "lea")
+	t.Cleanup(func() { os.RemoveAll(dir) })
+	st, err := store.Open(filepath.Join(dir, "lea.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { st.Close() })
+	d := daemon.New(st, filepath.Join(dir, "run"), func() int64 { return time.Now().Unix() })
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	api := filepath.Join(dir, "d.sock")
+	l, err := daemon.Listen(api)
+	if err != nil {
+		t.Fatal(err)
+	}
+	go d.Serve(ctx, l, daemon.Origin{})
+	env := map[string]string{"LEA_DAEMON_SOCK": api}
+	if rc, out, _ := runEnv(t, env, "sound"); rc != 0 || !strings.Contains(out, "no sound player") {
+		t.Fatalf("rc=%d out=%q", rc, out)
+	}
+	d.SetSounder(func(string) {})
+	for _, c := range [][2]string{{"", "sounds on"}, {"off", "sounds off"}, {"", "sounds off"}, {"on", "sounds on"}} {
+		args := []string{"sound"}
+		if c[0] != "" {
+			args = append(args, c[0])
+		}
+		if rc, out, e := runEnv(t, env, args...); rc != 0 || strings.TrimSpace(out) != c[1] {
+			t.Fatalf("%q: rc=%d out=%q err=%q", args, rc, out, e)
+		}
+	}
+	for _, bad := range [][]string{{"sound", "loud"}, {"sound", "on", "off"}} {
+		if rc, _, _ := runEnv(t, env, bad...); rc != 2 {
+			t.Fatalf("%q: rc=%d", bad, rc)
+		}
+	}
+}

@@ -241,3 +241,79 @@ func TestSoundsRingWithAnAttachedDeck(t *testing.T) {
 		t.Fatalf("rang %q", got)
 	}
 }
+
+// The user turns sounds off at runtime: nothing rings until they turn them on again.
+func TestSoundsCanBeTurnedOffAndOnAtRuntime(t *testing.T) {
+	e, rang := soundEnv(t)
+	var r struct{ Sound string }
+	if err := call(t, e.api, "", "sound", map[string]any{"on": false}, &r); err != nil || r.Sound != "off" {
+		t.Fatalf("off: %+v %v", r, err)
+	}
+	call(t, e.bus, "dev", "hook_event", map[string]any{"event": "PermissionRequest"}, nil)
+	e.d.sound(context.Background(), "lea-a", SoundDone)
+	if got := rang(); len(got) != 0 {
+		t.Fatalf("rang %q while off", got)
+	}
+	if err := call(t, e.api, "", "sound", nil, &r); err != nil || r.Sound != "off" {
+		t.Fatalf("read: %+v %v", r, err)
+	}
+	if err := call(t, e.api, "", "sound", map[string]any{"on": true}, &r); err != nil || r.Sound != "on" {
+		t.Fatalf("on: %+v %v", r, err)
+	}
+	e.d.sound(context.Background(), "lea-a", SoundDone)
+	if got := rang(); len(got) != 1 || got[0] != SoundDone {
+		t.Fatalf("rang %q once on", got)
+	}
+}
+
+// Sounds start off when the daemon is told so (LEA_SOUND=0), and the user can still turn them on.
+func TestSoundsCanStartOff(t *testing.T) {
+	e, rang := soundEnv(t)
+	e.d.SetSoundOn(false)
+	e.d.sound(context.Background(), "lea-a", SoundAttention)
+	var r struct{ Sound string }
+	if call(t, e.api, "", "sound", nil, &r); r.Sound != "off" || len(rang()) != 0 {
+		t.Fatalf("sound %q rang %q", r.Sound, rang())
+	}
+}
+
+// Without a player there is nothing to turn on: the state reads "".
+func TestSoundWithoutAPlayer(t *testing.T) {
+	e := start(t)
+	var r struct{ Sound string }
+	if err := call(t, e.api, "", "sound", map[string]any{"on": true}, &r); err != nil || r.Sound != "" {
+		t.Fatalf("%+v %v", r, err)
+	}
+}
+
+// Only the user switches sounds: an agent's bus refuses the method.
+func TestAnAgentCannotSwitchSounds(t *testing.T) {
+	e, _ := soundEnv(t)
+	if err := call(t, e.bus, "dev", "sound", map[string]any{"on": false}, nil); err == nil || !strings.Contains(err.Error(), "host only") {
+		t.Fatalf("err=%v", err)
+	}
+}
+
+// A deck watching the agents sees the sound state, and a switch wakes it.
+func TestTheDeckSeesTheSoundState(t *testing.T) {
+	e, _ := soundEnv(t)
+	fa := &fakeAgents{}
+	e.d.SetAgents(fa)
+	var s struct{ Sound string }
+	if err := call(t, e.api, "", "agents_watch", map[string]any{"container": "lea-a", "since": 0, "timeout_s": 1}, &s); err != nil || s.Sound != "on" {
+		t.Fatalf("watch %+v %v", s, err)
+	}
+	fa.mu.Lock()
+	before := fa.changed
+	fa.mu.Unlock()
+	call(t, e.api, "", "sound", map[string]any{"on": false}, nil)
+	fa.mu.Lock()
+	after := fa.changed
+	fa.mu.Unlock()
+	if after <= before {
+		t.Fatal("the switch did not tell the decks")
+	}
+	if call(t, e.api, "", "agents_watch", map[string]any{"container": "lea-a", "since": 0, "timeout_s": 1}, &s); s.Sound != "off" {
+		t.Fatalf("watch %+v", s)
+	}
+}

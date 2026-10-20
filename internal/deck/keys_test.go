@@ -207,3 +207,60 @@ func TestQuestionMarkShowsTheKeysAndAnyKeyClosesThem(t *testing.T) {
 		t.Fatalf("help %v confirm %q calls %q", m.help, m.confirm, api.got())
 	}
 }
+
+func (f *fakeAPI) SetSound(ctx context.Context, on bool) (string, error) {
+	f.rec(fmt.Sprintf("sound %v", on))
+	if f.err != nil {
+		return "", f.err
+	}
+	if on {
+		return "on", nil
+	}
+	return "off", nil
+}
+
+// S flips the daemon's sounds; the top border says muted while they are off.
+func TestSSwitchesTheSounds(t *testing.T) {
+	api := &fakeAPI{}
+	m, _ := step(t, newModel(api), snapshotMsg{snap: Snapshot{Version: 7, Shown: "lea-a/a", Agents: []Agent{ag("a", "idle", 1)}, Sound: "on"}})
+	m = sized(m, 34, 10)
+	if top := viewLines(m)[0]; strings.Contains(top, "muted") {
+		t.Fatalf("top %q", top)
+	}
+	m, cmd := step(t, m, key("S"))
+	if cmd == nil {
+		t.Fatal("S did nothing")
+	}
+	m, _ = step(t, m, cmd())
+	if got := api.got(); len(got) != 1 || got[0] != "sound false" {
+		t.Fatalf("calls %q", got)
+	}
+	ls := viewLines(m)
+	if !strings.Contains(ls[0], "muted") || !strings.Contains(strings.Join(ls, "\n"), "sounds off") {
+		t.Fatalf("view:\n%s", strings.Join(ls, "\n"))
+	}
+	m, cmd = step(t, m, key("S"))
+	m, _ = step(t, m, cmd())
+	if got := api.got(); len(got) != 2 || got[1] != "sound true" || strings.Contains(viewLines(m)[0], "muted") {
+		t.Fatalf("calls %q top %q", got, viewLines(m)[0])
+	}
+}
+
+// The switch made elsewhere (lea sound off) shows at the next snapshot.
+func TestTheDeckFollowsTheSoundSwitch(t *testing.T) {
+	m := sized(loaded(t, &fakeAPI{}, "lea-a/a", ag("a", "idle", 1)), 34, 10)
+	m, _ = step(t, m, snapshotMsg{snap: Snapshot{Version: 8, Shown: "lea-a/a", Agents: []Agent{ag("a", "idle", 1)}, Sound: "off"}})
+	if top := viewLines(m)[0]; !strings.Contains(top, "muted") {
+		t.Fatalf("top %q", top)
+	}
+}
+
+// Without a sound player, S says so and calls nothing.
+func TestSWithoutASoundPlayer(t *testing.T) {
+	api := &fakeAPI{}
+	m := loaded(t, api, "lea-a/a", ag("a", "idle", 1))
+	m, cmd := step(t, m, key("S"))
+	if cmd != nil || len(api.got()) != 0 || !strings.Contains(m.status, "no sound player") {
+		t.Fatalf("cmd %v calls %q status %q", cmd != nil, api.got(), m.status)
+	}
+}
