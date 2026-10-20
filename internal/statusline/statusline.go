@@ -1,5 +1,7 @@
 // Package statusline is `lea statusline`: Claude Code's status line inside lea. It prints a
-// short line and, as a side effect, reports the agent's context use and cost to the daemon.
+// short line (model, context bar, 5-hour and 7-day usage bars) and, as a side effect, reports the
+// agent's context use and cost to the daemon. Everything comes from the JSON Claude writes on
+// stdin: no token, credential or API call is involved.
 package statusline
 
 import (
@@ -9,10 +11,10 @@ import (
 	"io"
 	"math"
 	"os"
-	"path/filepath"
 	"regexp"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/DavidGodefroid/lea/internal/client"
 	"github.com/DavidGodefroid/lea/internal/textsafe"
@@ -55,7 +57,7 @@ func Run(stdin io.Reader, stdout io.Writer, dump string, post func(Report)) erro
 		return dumpErr
 	}
 	r := parse(doc)
-	fmt.Fprintln(stdout, line(doc, r))
+	fmt.Fprintln(stdout, line(doc, r, windows(doc), os.Getenv("NO_COLOR") == "", time.Now()))
 	if post != nil {
 		post(r)
 	}
@@ -164,17 +166,105 @@ func paths(doc map[string]any) []string {
 	return out
 }
 
-// line is "<model> · <dir> · 42%": the context share only when known, "lea" without a model and
-// a directory. The cost is reported to the daemon but not shown: it is a client-side estimate, not
-// what the user is billed.
-func line(doc map[string]any, r Report) string {
+// window is one rate-limit window of the account: its used share (0 to 100) and, when known, when
+// it resets (zero time otherwise).
+type window struct {
+	label  string
+	pct    float64
+	resets time.Time
+}
+
+// windows reads the 5-hour and 7-day rate-limit windows Claude Code passes to the status line
+// (subscription accounts only, after the first API response). A window that is missing or whose
+// share is not a number from 0 to 100 is left out.
+func windows(doc map[string]any) []window {
+	var out []window
+	for _, w := range []struct{ key, label string }{{"five_hour", "5h"}, {"seven_day", "7d"}} {
+		p, ok := num(doc, "rate_limits", w.key, "used_percentage")
+		if !ok || p < 0 || p > 100 {
+			continue
+		}
+		out = append(out, window{label: w.label, pct: p, resets: resetsAt(doc, "rate_limits", w.key, "resets_at")})
+	}
+	return out
+}
+
+// resetsAt is a reset time given in Unix seconds or as an RFC 3339 string; zero when absent or
+// unreadable.
+func resetsAt(doc map[string]any, path ...string) time.Time {
+	if n, ok := num(doc, path...); ok && n > 0 && n < 1e11 {
+		return time.Unix(int64(n), 0)
+	}
+	v, _ := get(doc, path...)
+	if s, ok := v.(string); ok {
+		if t, err := time.Parse(time.RFC3339, s); err == nil {
+			return t
+		}
+	}
+	return time.Time{}
+}
+
+const (
+	ctxWidth    = 8
+	windowWidth = 6
+	// warnPct and alertPct colour a bar yellow, then red. A window at alertPct or more also shows
+	// the time left before it resets.
+	warnPct  = 70
+	alertPct = 90
+)
+
+// bar is a gauge of width cells for pct (0 to 100): round(pct*width/100) cells full, so 0 is all
+// empty and 100 all full. With colour on, the full cells are green, yellow from warnPct, red from
+// alertPct.
+func bar(pct float64, width int, color bool) string {
+	n := int(math.Round(math.Max(0, math.Min(100, pct)) * float64(width) / 100))
+	full, empty := strings.Repeat("▓", n), strings.Repeat("░", width-n)
+	if !color {
+		return full + empty
+	}
+	code := "32"
+	switch {
+	case pct >= alertPct:
+		code = "31"
+	case pct >= warnPct:
+		code = "33"
+	}
+	return "\x1b[" + code + "m" + full + "\x1b[2m" + empty + "\x1b[0m"
+}
+
+// left is the time until t as "2h15" or "45m"; empty when t is unknown or past.
+func left(t, now time.Time) string {
+	if t.IsZero() || !t.After(now) {
+		return ""
+	}
+	d := t.Sub(now).Round(time.Minute)
+	if d < time.Hour {
+		return fmt.Sprintf("%dm", int(d.Minutes()))
+	}
+	if d >= 24*time.Hour {
+		return fmt.Sprintf("%dd%02dh", int(d.Hours())/24, int(d.Hours())%24)
+	}
+	return fmt.Sprintf("%dh%02d", int(d.Hours()), int(d.Minutes())%60)
+}
+
+// line is "<model> · ctx ▓░░░░░░░ 9% · 5h ▓▓░░░░ 31% · 7d ▓░░░░░ 12%": each segment only when its
+// figure is known, "lea" without a model. A window at alertPct or more adds the time before it
+// resets ("↻1h05"), relative so the container's time zone does not matter. The cost is reported
+// to the daemon but not shown: it is a client-side estimate, not what the user is billed.
+func line(doc map[string]any, r Report, ws []window, color bool, now time.Time) string {
 	parts := []string{"lea"}
-	model, dir := text(doc, "model", "display_name"), text(doc, "workspace", "current_dir")
-	if model != "" && dir != "" {
-		parts = []string{model, filepath.Base(dir)}
+	if model := text(doc, "model", "display_name"); model != "" {
+		parts = []string{model}
 	}
 	if r.CtxPct >= 0 {
-		parts = append(parts, fmt.Sprintf("%d%%", r.CtxPct))
+		parts = append(parts, fmt.Sprintf("ctx %s %d%%", bar(float64(r.CtxPct), ctxWidth, color), r.CtxPct))
+	}
+	for _, w := range ws {
+		seg := fmt.Sprintf("%s %s %d%%", w.label, bar(w.pct, windowWidth, color), int(math.Round(w.pct)))
+		if l := left(w.resets, now); l != "" && w.pct >= alertPct {
+			seg += " ↻" + l
+		}
+		parts = append(parts, seg)
 	}
 	return strings.Join(parts, " · ")
 }

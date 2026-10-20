@@ -47,6 +47,16 @@ type Agent struct {
 	Approval *Approval `json:"approval,omitempty"`
 	// Paused: the user froze the agent (p); it continues where it stopped on resume.
 	Paused bool `json:"paused,omitempty"`
+	// Subagents counts the subagents the agent still runs (agents.Row.Subagents).
+	Subagents int `json:"subagents,omitempty"`
+}
+
+// shownState is the state a row shows: an idle agent whose subagents still run is working.
+func shownState(a Agent) string {
+	if a.State == "idle" && a.Subagents > 0 {
+		return "working"
+	}
+	return a.State
 }
 
 // Approval is the permission request an agent waits on (agents.Approval).
@@ -165,6 +175,8 @@ type Model struct {
 	focused       bool          // the deck's pane has the keyboard (focus events)
 	menuFor       string        // key whose menu (right click) is open
 	menuSel       int           // the menu's highlighted item
+	hoverFor      string        // key of the row under the pointer, "" when none
+	hoverSeq      int           // the latest pointer move; older fades are dropped
 	ticking       bool          // a frame tick is pending
 	width, height int
 }
@@ -197,7 +209,7 @@ func (m Model) Init() tea.Cmd {
 // working reports whether an agent works: the spinner and the logo's wave then move.
 func (m Model) working() bool {
 	for _, a := range m.agents {
-		if a.State == "working" && !isShell(a) && !a.Paused {
+		if shownState(a) == "working" && !isShell(a) && !a.Paused {
 			return true
 		}
 	}
@@ -327,6 +339,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.key(msg.String())
 	case tea.MouseMsg:
 		return m.mouse(msg)
+	case hoverEndMsg:
+		if msg.seq == m.hoverSeq {
+			m.hoverFor = ""
+		}
+		return m, nil
 	}
 	return m, nil
 }
@@ -408,7 +425,7 @@ func (m *Model) apply(s Snapshot) bool {
 	if m.roleFor != "" && m.index(m.roleFor) < 0 {
 		m.roleFor, m.status = "", ""
 	}
-	if m.menuFor != "" && m.index(m.menuFor) < 0 {
+	if m.menuFor != "" && m.menuFor != deckMenu && m.index(m.menuFor) < 0 {
 		m.menuFor = ""
 	}
 	if m.editFor != "" && m.index(m.editFor) < 0 {
@@ -647,7 +664,7 @@ func rank(a Agent, seen map[string]int64) int {
 		return 1
 	case a.ForUser > 0:
 		return 2
-	case a.State == "working":
+	case shownState(a) == "working":
 		return 3
 	case a.State == "idle" || a.State == "done":
 		return 4
@@ -689,7 +706,7 @@ func (m Model) label(a Agent) string {
 	case a.State == "stopped": // its container stopped; the next one resumes it
 		return "stopped"
 	case a.State == "working" || a.State == "idle":
-		return a.State
+		return shownState(a)
 	}
 	return "unknown"
 }

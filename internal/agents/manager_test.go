@@ -1622,7 +1622,7 @@ func TestCodexAgentRunsCodexAndResumesItsThread(t *testing.T) {
 	got := codexArgs(t, s, "cx")
 	j := strings.Join(got, " ")
 	for _, w := range []string{"--sandbox workspace-write --ask-for-approval on-request", `mcp_servers.lea.env.LEA_AGENT="cx"`,
-		`notify=["/usr/local/bin/lea","hook","codex","notify"]`, `projects."/p".trust_level="trusted"`, "--model gpt-5.1-codex"} {
+		`notify=["/usr/local/bin/lea","hook","codex","notify"]`, `projects."/p".trust_level="untrusted"`, "--model gpt-5.1-codex"} {
 		if !strings.Contains(j, w) {
 			t.Fatalf("missing %s in %q", w, got)
 		}

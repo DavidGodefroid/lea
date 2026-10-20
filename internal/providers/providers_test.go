@@ -242,7 +242,7 @@ func TestArgvCodex(t *testing.T) {
 		"-c", "check_for_update_on_startup=false",
 		"-c", `mcp_servers.lea.command="/usr/local/bin/lea"`, "-c", `mcp_servers.lea.args=["mcp"]`,
 		"-c", `mcp_servers.lea.env.LEA_AGENT="dev-1"`, "-c", `notify=["/usr/local/bin/lea","hook","codex","notify"]`,
-		"-c", `projects."/home/u/projects".trust_level="trusted"`,
+		"-c", `projects."/home/u/projects".trust_level="untrusted"`,
 		"--model", "gpt-5.1-codex", "read your brief"}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("got  %q\nwant %q", got, want)

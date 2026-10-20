@@ -118,15 +118,20 @@ type Config struct {
 	Log *log.Logger
 	// RootCAs overrides the system roots (tests); nil uses the system's.
 	RootCAs *x509.CertPool
+	// Refused reports whether a connection that arrived on the forwarder's local address must be
+	// refused: one on the proxy's egress network (the host and that network's other containers),
+	// never an agents' internal network (EgressAddrs). nil refuses none (tests).
+	Refused func(local net.IP) bool
 }
 
 type keyCtx struct{}
 
 // Forwarder is the http.Handler of lea-keyproxy.
 type Forwarder struct {
-	eps   map[string]Endpoint
-	proxy *httputil.ReverseProxy
-	log   *log.Logger
+	refused func(net.IP) bool
+	eps     map[string]Endpoint
+	proxy   *httputil.ReverseProxy
+	log     *log.Logger
 }
 
 // New builds the forwarder. Its transport only ever dials cfg.Via: the environment's proxy
@@ -158,7 +163,7 @@ func New(cfg Config) (*Forwarder, error) {
 		ExpectContinueTimeout:  1 * time.Second,
 		MaxResponseHeaderBytes: MaxHeaderBytes,
 	}
-	f := &Forwarder{eps: map[string]Endpoint{}, log: cfg.Log}
+	f := &Forwarder{eps: map[string]Endpoint{}, log: cfg.Log, refused: cfg.Refused}
 	if f.log == nil {
 		f.log = log.New(os.Stderr, "lea-keyproxy: ", log.LstdFlags)
 	}
@@ -231,6 +236,15 @@ func (f *Forwarder) ServeHTTP(rw http.ResponseWriter, r *http.Request) {
 		}
 		f.log.Printf("%s %s %s %d %s", name, safeLog(r.Method, 10), logPath, st, time.Since(start).Round(time.Millisecond))
 	}()
+	if f.refused != nil {
+		la, _ := r.Context().Value(http.LocalAddrContextKey).(net.Addr)
+		ta, ok := la.(*net.TCPAddr)
+		if !ok || f.refused(ta.IP) {
+			// Only the agents' internal networks reach the endpoints.
+			http.Error(w, "forbidden", http.StatusForbidden)
+			return
+		}
+	}
 	raw, _, _ := strings.Cut(r.RequestURI, "?")
 	if r.Method != http.MethodGet && r.Method != http.MethodPost {
 		w.Header().Set("Allow", "GET, POST")

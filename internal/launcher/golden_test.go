@@ -553,6 +553,7 @@ func TestCommandsMatchTheGoldenFiles(t *testing.T) {
 		{name: "update", args: []string{"update"}, setup: fakeRelease,
 			env: map[string]string{"FAKE_CURL_DIR": "$W/release", "FAKE_CURL_EFFECTIVE": "https://github.com/DavidGodefroid/lea/releases/tag/v9.9.9"},
 			want: []string{"curl [-fsSL] [-o] [$W/data/lea/host/update/install.sh] [https://github.com/DavidGodefroid/lea/releases/download/v9.9.9/install.sh]",
+				"cosign [verify-blob] [--bundle] [$W/data/lea/host/update/checksums.txt.sigstore.json]",
 				"installer [--version] [v9.9.9] [--no-init]", "docker [image] [inspect] [locksql:",
 				"lea: updating this release install to lea v9.9.9 with its installer", "lea: updated; running lea containers keep their image until they stop"},
 			absent: []string{"go-build", "raw.githubusercontent.com"}},
@@ -605,7 +606,8 @@ func TestCommandsMatchTheGoldenFiles(t *testing.T) {
 
 // fakeRelease is the release lea update downloads, served by the fake curl from $W/release: an
 // install.sh (listed in its checksums.txt) that logs its arguments and links ~/.local/bin/lea to
-// this world's installation, whose lea-sh then refreshes the images.
+// this world's installation, whose lea-sh then refreshes the images, and a stand-in Sigstore
+// bundle the fake cosign accepts.
 func fakeRelease(w *world) {
 	dir := w.dir + "/release"
 	inst := "{ printf installer; for a in \"$@\"; do printf ' [%s]' \"$a\"; done; printf '\\n'; } >>\"$FAKE_LOG\"\n" +
@@ -614,7 +616,8 @@ func fakeRelease(w *world) {
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		w.t.Fatal(err)
 	}
-	for name, body := range map[string]string{"install.sh": inst, "checksums.txt": hex.EncodeToString(sum[:]) + "  install.sh\n"} {
+	for name, body := range map[string]string{"install.sh": inst, "checksums.txt": hex.EncodeToString(sum[:]) + "  install.sh\n",
+		"checksums.txt.sigstore.json": "{}\n"} {
 		if err := os.WriteFile(dir+"/"+name, []byte(body), 0o644); err != nil {
 			w.t.Fatal(err)
 		}

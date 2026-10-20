@@ -3,6 +3,8 @@ status 0
 curl [-fsSLI] [-o] [/dev/null] [-w] [%{url_effective}] [https://github.com/DavidGodefroid/lea/releases/latest]
 curl [-fsSL] [-o] [$W/data/lea/host/update/install.sh] [https://github.com/DavidGodefroid/lea/releases/download/v9.9.9/install.sh]
 curl [-fsSL] [-o] [$W/data/lea/host/update/checksums.txt] [https://github.com/DavidGodefroid/lea/releases/download/v9.9.9/checksums.txt]
+curl [-fsSL] [-o] [$W/data/lea/host/update/checksums.txt.sigstore.json] [https://github.com/DavidGodefroid/lea/releases/download/v9.9.9/checksums.txt.sigstore.json]
+cosign [verify-blob] [--bundle] [$W/data/lea/host/update/checksums.txt.sigstore.json] [--certificate-identity-regexp] [^https://github\.com/DavidGodefroid/lea/\.github/workflows/release\.yml@refs/tags/v[0-9]] [--certificate-oidc-issuer] [https://token.actions.githubusercontent.com] [$W/data/lea/host/update/checksums.txt]
 installer [--version] [v9.9.9] [--no-init]
 docker [build] [-t] [lea:dev] [--build-arg] [LEA_VERSION=dev] [-f] [$R/image/Containerfile] [$R]
 docker [build] [-t] [lea-proxy:dev] [-f] [$R/proxy/Containerfile] [$R]

@@ -11,9 +11,11 @@ trap cleanup EXIT
 dc up -d --build --wait >/dev/null
 fail=0
 # check NAME EXPECTED -- curl args...  EXPECTED is "<CONNECT status>/<HTTP status>" as curl reports them.
+# PROXY: the proxy under test (the one with LEA_EGRESS_ALLOW is 198.51.100.3).
+PROXY=198.51.100.2
 check() {
   name=$1 expected=$2; shift 3
-  got=$(dc exec -T client curl -s -o /dev/null --max-time 15 -x http://198.51.100.2:3128 \
+  got=$(dc exec -T client curl -s -o /dev/null --max-time 15 -x "http://$PROXY:3128" \
         -w '%{http_connect}/%{http_code}' "$@" || true)
   if [ "$got" = "$expected" ]; then echo "ok   $name ($got)"; else echo "FAIL $name: expected $expected, got $got"; fail=1; fi
 }
@@ -33,6 +35,18 @@ check "internal name: plain bytes in the tunnel refused" "200/000" -- -p http://
 check "internal host refused on 22"       "403/000" -- -p http://gitlab.com:22/
 check "internal literal allowed on 443"   "200/200" -- -p http://10.99.0.82:443/
 check "internal literal refused on 80"    "000/403" -- http://10.99.0.82/
+PROXY=198.51.100.3
+check "allowlist: listed domain allowed"            "200/200" -- -p http://public.test:443/
+check "allowlist: listed domain over HTTP allowed"  "000/200" -- http://public.test/
+check "allowlist: subdomain allowed"                "200/200" -- -p http://sub.public.test:443/
+check "allowlist: other domain refused"             "403/000" -- -p http://other.test:443/
+check "allowlist: other domain over HTTP refused"   "000/403" -- http://other.test/
+check "allowlist: public literal refused"           "403/000" -- -p http://198.51.100.80:443/
+check "allowlist: internal host still allowed"      "200/200" -- -p http://10.99.0.82:443/
+check "allowlist: private still refused"            "403/000" -- -p http://rebind.test:443/
+page=$(dc exec -T client curl -s --max-time 15 -x http://198.51.100.3:3128 http://other.test/ || true)
+case $page in *LEA_EGRESS_ALLOW*) echo "ok   allowlist: the refusal page names LEA_EGRESS_ALLOW" ;;
+  *) echo "FAIL allowlist: refusal page: $page"; fail=1 ;; esac
 got=$(dc exec -T client curl -s --max-time 10 --noproxy '*' http://198.51.100.2:2222/ || true)
 if [ "$got" = "ok" ]; then echo "ok   SSH forwarder 2222 reaches gitlab.com:22"; else echo "FAIL SSH forwarder 2222: got '$got'"; fail=1; fi
 # The second LEA_GIT_SSH endpoint gets the next port.
@@ -69,6 +83,8 @@ fwd "forwarder: '..' path refused"       400 "" -- --path-as-is "$kp/llm/../rebi
 fwd "forwarder: encoded '..' refused"    400 "" -- --path-as-is "$kp/llm/%2e%2e/x"
 fwd "forwarder: PUT refused"             405 "" -- -X PUT "$kp/llm/models"
 fwd "forwarder: private upstream not in internal-hosts refused by squid" 403 "" -- "$kp/rebind/models"
+got=$(dc exec -T outsider curl -s -o /dev/null --max-time 15 --noproxy '*' -w '%{http_code}' http://203.0.113.2:4400/llm/models || true)
+if [ "$got" = "403" ]; then echo "ok   forwarder refuses the egress network (403)"; else echo "FAIL forwarder on the egress network: expected 403, got $got"; fail=1; fi
 # Nothing secret in the logs (the forwarder logs name, method, path and status only).
 if dc logs proxy 2>&1 | grep -q -e test-key-123 -e agent-token -e stream=true; then
   echo "FAIL the proxy logs hold a key, a client credential or a query"; fail=1

@@ -2,6 +2,8 @@ name: lea-proxy-test
 networks:
   pub:  { internal: true, ipam: { config: [ { subnet: 198.51.100.0/24 } ] } }
   priv: { internal: true, ipam: { config: [ { subnet: 10.99.0.0/24 } ] } }
+  # The proxy's egress network, as in lea (not internal: the proxy's default route goes there).
+  egress: { ipam: { config: [ { subnet: 203.0.113.0/24 } ] } }
 x-web: &web
   image: busybox:1.37
   command: sh -c 'mkdir -p /www && echo ok >/www/index.html && httpd -p 22 -h /www && httpd -p 443 -h /www && httpd -f -p 80 -h /www'
@@ -35,9 +37,24 @@ services:
       - ./endpoints:/etc/lea/endpoints:ro
       - ./llm.key:/etc/lea/keys/llm:ro
     networks:
-      pub:  { ipv4_address: 198.51.100.2 }
-      priv: { ipv4_address: 10.99.0.2 }
+      pub:    { ipv4_address: 198.51.100.2 }
+      priv:   { ipv4_address: 10.99.0.2 }
+      egress: { ipv4_address: 203.0.113.2 }
+  # The same proxy with an egress allowlist.
+  proxy-allow:
+    image: lea-proxy:dev
+    dns: [ 198.51.100.53 ]
+    environment: { LEA_EGRESS_ALLOW: "public.test" }
+    volumes: [ "./internal-hosts:/etc/lea/internal-hosts:ro" ]
+    networks:
+      pub:  { ipv4_address: 198.51.100.3 }
+      priv: { ipv4_address: 10.99.0.3 }
   client:
     image: curlimages/curl:8.11.1
     entrypoint: [ "sleep", "3600" ]
     networks: { pub: { ipv4_address: 198.51.100.10 } }
+  # A container of the egress network (as the host is): the key forwarder refuses it.
+  outsider:
+    image: curlimages/curl:8.11.1
+    entrypoint: [ "sleep", "3600" ]
+    networks: { egress: { ipv4_address: 203.0.113.10 } }

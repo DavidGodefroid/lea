@@ -89,8 +89,7 @@ lea
 ```
 
 The installer checks the requirements, downloads the release for your platform and verifies its
-checksum (and, when `cosign` is installed, the release's signature: see
-[Verify a release](#verify-a-release)), links `~/.local/bin/lea`, then runs `lea init`, which asks for your projects directory
+checksum and the release's signature (see [Verify a release](#verify-a-release)), links `~/.local/bin/lea`, then runs `lea init`, which asks for your projects directory
 and pulls the images. In the first agent, run `/login` once (Claude Code's own login, kept per
 projects directory). Press `n` for another agent.
 
@@ -110,12 +109,15 @@ AppArmor: it installs lea's AppArmor profile, and only when that profile changed
 Each release is signed keyless with [cosign](https://docs.sigstore.dev) (Sigstore, GitHub
 OIDC) by the release workflow, on its `v*` tag: `checksums.txt` (bundle
 `checksums.txt.sigstore.json`, a release asset) and the `lea` and `lea-proxy` images, by digest.
-With `cosign` installed, the installer verifies `checksums.txt` before trusting it. It stops on a
-bad signature. It stops on a missing signature, except for v0.1.0 and v0.1.1, which predate
-signing: their `checksums.txt` must then be the genuine one, whose SHA-256 the installer pins
-(it stops otherwise), and the install goes on by checksum, with a warning. Without `cosign`, it warns and relies
-on the checksum alone. `LEA_REQUIRE_COSIGN=1` makes the signature mandatory with no exception: it
-refuses to install without `cosign` or without a signature:
+The installer verifies `checksums.txt` with cosign before trusting it: the `cosign` on your
+`PATH`, else cosign v3.0.6, which it downloads from Sigstore's GitHub release and checks against
+the SHA-256 pinned in `install.sh` (it never fetches a "latest" cosign). It stops on a bad
+signature, on a missing signature, and when no cosign can be had: it never installs on the
+checksum alone. The only exception is v0.1.0 and v0.1.1, which predate signing: their
+`checksums.txt` must then be the genuine one, whose SHA-256 the installer pins (it stops
+otherwise), and the install goes on by checksum, with a warning. `LEA_REQUIRE_COSIGN=1` removes
+that exception too. `lea update` and the background update verify the signature the same way
+before they run the new release's installer.
 
 ```sh
 curl -fsSL https://leadeck.dev/install.sh | LEA_REQUIRE_COSIGN=1 sh
@@ -164,7 +166,10 @@ closing the deck, or the terminal, does not stop it: the next `lea` reattaches.
 
 The mouse works too: click a row to select it, scroll to move, right-click a row for its menu
 (Split horizontally / Split vertically open a shell beside the agent, as Terminator does; the
-shell shows with its agent and steps aside while another agent is shown).
+shell shows with its agent and steps aside while another agent is shown). A right-click anywhere
+else in the column opens the deck's own menu: new agent, new shell, sounds, keys, detach. The
+pointer over a row shows its whole name (cut in the row when long) with the agent's name, role,
+profile and state in the bottom border.
 
 - **States.** A red `●` needs you, an orange spinner is working, a green `●` has finished its
   turn, an empty `○` has been quiet for 30 minutes, a grey `‖` is paused (`p`: lea freezes the
@@ -299,7 +304,9 @@ vllm      https://vllm.example.com/v1         key=/home/me/.config/lea/keys/vllm
   network (an Ollama on your LAN, or on this machine at its Docker bridge address) must be listed
   in `LEA_INTERNAL_HOSTS` with its port, as any internal host; nothing is open by default, and
   loopback, `localhost` and link-local addresses are refused. A key goes over HTTPS only, except
-  to a host you listed there.
+  to a host you listed there. With `LEA_EGRESS_ALLOW` set, a public endpoint's domain must be in it
+  too. The forwarder answers the agents' networks only, never the proxy's egress network (your
+  host, other containers there).
 - Codex needs the endpoint to serve the Responses API (`/v1/responses`): Ollama 0.13.3 or later,
   a recent vLLM.
 - A change of the providers file restarts the proxy at the next `lea`.
@@ -348,7 +355,7 @@ LEA_PROJECTS_DIR=~/other lea # another projects directory, for this call only
 
 A release install updates itself: at most once a day, `lea` looks for a new release in the
 background. A newer minor or patch release is installed beside the current one (its signature
-checked with cosign, which this needs) and becomes active at the next `lea`; a newer major
+checked with cosign) and becomes active at the next `lea`; a newer major
 release is only announced in the deck, and so is a newer minor release while lea is 0.x (only
 its patch releases install themselves). Running containers keep their image until they stop.
 `LEA_AUTOUPDATE=0` in `~/.config/lea/lea.conf` turns it off; the log is
@@ -377,6 +384,7 @@ projects directory cannot be `/`, your home directory or one of its parents, nor
 | `LEA_LOCKSQL` | `1` | wire lea for a locksql console (`0`: no locksql) |
 | `LEA_LOCKSQL_VAULT_ADDR` | asked by `lea init` | Vault address of the locksql console, for a Vault profile |
 | `LEA_INTERNAL_HOSTS` | none | private hosts the proxy may reach (format in `config/internal-hosts`) |
+| `LEA_EGRESS_ALLOW` | empty (off) | the only web domains agents may reach, comma separated (subdomains included) |
 | `LEA_NESTED_NETWORKS` | empty | networks your compose files expect, created at start |
 | `LEA_APPROVALS`, `LEA_APPROVAL_TIMEOUT` | `deck`, `60` | who answers permission requests |
 | `LEA_PROVIDER`, `LEA_MODEL` | `claude`, empty | the default provider and model of a new agent ([providers](#other-providers-codex-ollama-vllm)) |
@@ -393,6 +401,11 @@ projects directory cannot be `/`, your home directory or one of its parents, nor
   `output-styles`, the top-level `*.md` files) and, with locksql, its socket volume. Nothing else.
 - Egress goes through a proxy: HTTPS to public hosts (plus `LEA_INTERNAL_HOSTS`), SSH only to
   `LEA_GIT_SSH`. Private and link-local addresses are refused.
+- To restrict the web to known domains, set `LEA_EGRESS_ALLOW`, for example
+  `github.com,registry.npmjs.org,proxy.golang.org`: each domain covers its subdomains, and
+  `anthropic.com`, `claude.ai` and `claude.com` (the model API and its login) are always allowed.
+  Internal hosts are not affected. The proxy reads it at start: `lea stop --all`, then `lea`.
+  `lea doctor` shows the active list.
 - An internal host name grants that name only, not every vhost of the ingress behind it: the proxy
   peeks at the TLS handshake (no decryption) and passes a tunnel only when its SNI is the allowed
   name, so a tunnel to an internal name must be TLS with SNI. The proxy cannot see the `Host` header
@@ -433,7 +446,8 @@ nowhere unless you set `LEA_OTEL_UPSTREAM`.
 - **Start with `lea doctor`.** It checks Docker, the images, the proxy and the internal networks, tmux,
   the AppArmor profile, the projects directory and the configuration.
 - **An agent cannot reach a host.** Private and link-local addresses are refused on purpose; add
-  the host to `LEA_INTERNAL_HOSTS`. The proxy's refusal page says which host it refused and why.
+  the host to `LEA_INTERNAL_HOSTS`. With `LEA_EGRESS_ALLOW` set, add its domain there. The proxy's
+  refusal page says which host it refused and why.
 - **A change to `~/.claude` does not show.** Single files are mounted as they were at start:
   `lea stop`, then `lea`.
 - **`docker compose` fails with a network error.** Known limitation, below; `docker run` works.

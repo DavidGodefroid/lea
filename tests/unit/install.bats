@@ -2,9 +2,12 @@ load helpers
 # The installer (install.sh) against a fake release: curl serves files from $REL, uname answers
 # FAKE_UNAME_S / FAKE_UNAME_M, docker and tmux are the fakes. PATH holds only the fakes and the
 # system directories, so a tool left out of $B is missing (cosign too, unless with_cosign).
+# Without cosign the installer downloads cosign-linux-amd64 from the release of cosign it pins:
+# $REL serves the fake cosign under that name, and $INSTALL is a copy of install.sh pinning the
+# fake's SHA-256 instead (REAL_INSTALL is install.sh itself).
 setup() {
   setup_fakes
-  INSTALL="$LEA_ROOT/install.sh"
+  REAL_INSTALL="$LEA_ROOT/install.sh"
   B="$BATS_TEST_TMPDIR/b"; REL="$BATS_TEST_TMPDIR/release"; mkdir -p "$B" "$REL"
   export REL
   cat >"$B/curl" <<'EOT'
@@ -29,7 +32,13 @@ EOT
   export PATH="$BATS_TEST_TMPDIR/tbin:$B:/usr/local/bin:/usr/bin:/bin"
   export LEA_INSTALL_DIR="$BATS_TEST_TMPDIR/inst" LEA_BIN_DIR="$BATS_TEST_TMPDIR/bin"
   release v1.2.3
+  cp "$LEA_ROOT/tests/fakes/cosign" "$REL/cosign-linux-amd64"
+  COSIGN_PIN=$(sha256sum "$REL/cosign-linux-amd64" | cut -d' ' -f1)
+  INSTALL="$BATS_TEST_TMPDIR/install-test.sh"
+  sed "s/^\(      linux-amd64) cosign_pin=\)[0-9a-f]*/\1$COSIGN_PIN/" "$REAL_INSTALL" >"$INSTALL"
+  grep -qx "      linux-amd64) cosign_pin=$COSIGN_PIN ;;" "$INSTALL"
 }
+COSIGN_URL=https://github.com/sigstore/cosign/releases/download/v3.0.6/cosign-linux-amd64
 
 # release VERSION: lea_<version>_linux_amd64.tar.gz (a bin/lea that logs its arguments), its
 # checksums.txt and checksums.txt.sigstore.json (a stand-in bundle the fake cosign accepts).
@@ -216,8 +225,8 @@ EOT
 legacy_warning="warning: no Sigstore bundle for this release (pre-signing version), genuine checksums.txt (pinned SHA-256), checksum only"
 
 @test "install.sh pins the SHA-256 of the genuine checksums.txt of v0.1.0 and v0.1.1" {
-  grep -qx '    v0\.1\.0) pin=f1fb4cce4cdc570bd59b433b4f6b5e0f1044e48d659138013097aa3490fca2da ;;' "$INSTALL"
-  grep -qx '    v0\.1\.1) pin=e7fd06c427e20cd43f30b09f98cd5ac2dd23b1048256d81b73516c1b3e01398f ;;' "$INSTALL"
+  grep -qx '    v0\.1\.0) pin=f1fb4cce4cdc570bd59b433b4f6b5e0f1044e48d659138013097aa3490fca2da ;;' "$REAL_INSTALL"
+  grep -qx '    v0\.1\.1) pin=e7fd06c427e20cd43f30b09f98cd5ac2dd23b1048256d81b73516c1b3e01398f ;;' "$REAL_INSTALL"
 }
 
 @test "with cosign, v0.1.1 without a bundle accepts its genuine checksums.txt, with a warning" {
@@ -305,26 +314,93 @@ legacy_warning="warning: no Sigstore bundle for this release (pre-signing versio
   ! grep -q '^cosign ' "$FAKE_LOG"
 }
 
-@test "without cosign, the installer warns and installs on the checksum alone" {
+@test "without cosign, the installer downloads the pinned cosign v3.0.6, verifies the signature, then installs" {
   if command -v cosign >/dev/null; then skip "cosign is installed in the test image"; fi
-  run sh "$INSTALL" --version v1.2.3
+  run sh "$INSTALL" --version v1.2.3 --no-init
   [ "$status" -eq 0 ]
-  [[ "$output" == *"warning: cosign is missing, checksums.txt signature not verified (checksum only)"* ]]
+  [[ "$output" == *"cosign is not installed: downloading cosign v3.0.6 to verify the release"* ]]
+  [[ "$output" == *"checksums.txt signature verified (cosign)"* ]]
+  [[ "$output" != *"checksum only"* ]]
   [ -x "$LEA_INSTALL_DIR/v1.2.3/bin/lea" ]
   [ -L "$LEA_BIN_DIR/lea" ]
   run calls
-  [[ "$output" != *".sigstore.json"* ]]
+  [[ "$output" == *"[$COSIGN_URL]"*"cosign [verify-blob] [--bundle] ["*"/checksums.txt.sigstore.json] [--certificate-identity-regexp] [^https://github\.com/DavidGodefroid/lea/\.github/workflows/release\.yml@refs/tags/v[0-9]] [--certificate-oidc-issuer] [https://token.actions.githubusercontent.com] ["*"/checksums.txt]"* ]]
 }
 
-@test "without cosign, LEA_REQUIRE_COSIGN=1 is refused before anything is downloaded or installed" {
+@test "without cosign, a downloaded cosign that does not match its pin is never run and nothing is installed" {
   if command -v cosign >/dev/null; then skip "cosign is installed in the test image"; fi
-  LEA_REQUIRE_COSIGN=1 run sh "$INSTALL" --version v1.2.3
+  printf '#!/bin/sh\necho evil >>"$FAKE_LOG"\n' >"$REL/cosign-linux-amd64"
+  run sh "$INSTALL" --version v1.2.3
   [ "$status" -eq 1 ]
-  [[ "$output" == *"cosign is missing and LEA_REQUIRE_COSIGN=1"* ]]
+  [[ "$output" == *"the cosign downloaded from $COSIGN_URL does not match its pinned SHA-256"* ]]
   nothing_installed
-  [ ! -e "$LEA_INSTALL_DIR" ]
+  ! grep -q '^evil' "$FAKE_LOG"
+  ! grep -q '^cosign ' "$FAKE_LOG"
+}
+
+@test "without cosign, a cosign that cannot be downloaded stops the install" {
+  if command -v cosign >/dev/null; then skip "cosign is installed in the test image"; fi
+  rm "$REL/cosign-linux-amd64"
+  run sh "$INSTALL" --version v1.2.3
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"cannot download cosign from $COSIGN_URL: install cosign"* ]]
+  nothing_installed
+}
+
+@test "without cosign, a bad signature is refused with the downloaded cosign and nothing is installed" {
+  if command -v cosign >/dev/null; then skip "cosign is installed in the test image"; fi
+  FAKE_COSIGN_RC=1 run sh "$INSTALL" --version v1.2.3
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"checksums.txt does not match its Sigstore signature"* ]]
+  nothing_installed
+}
+
+@test "without cosign, a signed release without its bundle is refused, never installed on the checksum alone" {
+  if command -v cosign >/dev/null; then skip "cosign is installed in the test image"; fi
+  rm "$REL/checksums.txt.sigstore.json"
+  run sh "$INSTALL" --version v1.2.3
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"cannot download the Sigstore bundle "*"/v1.2.3/checksums.txt.sigstore.json"* ]]
+  [[ "$output" != *"checksum only"* ]]
+  nothing_installed
+}
+
+@test "without cosign, v0.1.1 without a bundle still needs its genuine checksums.txt" {
+  if command -v cosign >/dev/null; then skip "cosign is installed in the test image"; fi
+  release v0.1.1
+  rm "$REL/checksums.txt.sigstore.json"
+  run sh "$INSTALL" --version v0.1.1
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"checksums.txt of v0.1.1 (released before signing, no Sigstore bundle) is not the genuine one"* ]]
+  [ ! -e "$LEA_INSTALL_DIR/v0.1.1" ]
+}
+
+@test "without cosign, LEA_REQUIRE_COSIGN=1 installs after verifying with the pinned cosign" {
+  if command -v cosign >/dev/null; then skip "cosign is installed in the test image"; fi
+  LEA_REQUIRE_COSIGN=1 run sh "$INSTALL" --version v1.2.3 --no-init
+  [ "$status" -eq 0 ]
+  [ -L "$LEA_BIN_DIR/lea" ]
   run calls
-  [[ "$output" != *"curl "* ]]
+  [[ "$output" == *"[$COSIGN_URL]"*"cosign [verify-blob]"* ]]
+}
+
+@test "install.sh pins cosign v3.0.6 by SHA-256 for each platform, never latest" {
+  grep -qx '    cosign_version=v3\.0\.6' "$REAL_INSTALL"
+  grep -qx '      linux-amd64) cosign_pin=c956e5dfcac53d52bcf058360d579472f0c1d2d9b69f55209e256fe7783f4c74 ;;' "$REAL_INSTALL"
+  grep -qx '      linux-arm64) cosign_pin=bedac92e8c3729864e13d4a17048007cfafa79d5deca993a43a90ffe018ef2b8 ;;' "$REAL_INSTALL"
+  grep -qx '      darwin-amd64) cosign_pin=4c3e7af8372d3ca3296e62fa56f23fcbb5721cc6ac1827900d398f110d7cd280 ;;' "$REAL_INSTALL"
+  grep -qx '      darwin-arm64) cosign_pin=5fadd012ae6381a6a29ff86a7d39aa873878852f1073fc90b15995961ecfb084 ;;' "$REAL_INSTALL"
+  grep -qx '    cosign_url=https://github.com/sigstore/cosign/releases/download/$cosign_version/cosign-$os-$arch' "$REAL_INSTALL"
+  ! grep -q 'sigstore/cosign/releases/latest' "$REAL_INSTALL"
+}
+
+@test "lea update pins the same cosign as install.sh" {
+  . "$LEA_ROOT/libexec/lib/host.sh"
+  for p in linux-amd64 linux-arm64 darwin-amd64 darwin-arm64; do
+    grep -qx "      $p) cosign_pin=$(lea__cosign_pin "$p") ;;" "$REAL_INSTALL"
+  done
+  ! lea__cosign_pin windows-amd64
+  grep -q 'releases/download/v3\.0\.6/cosign-' "$LEA_ROOT/libexec/lib/host.sh"
 }
 
 @test "LEA_REQUIRE_COSIGN=1 with cosign installs after verifying the signature" {

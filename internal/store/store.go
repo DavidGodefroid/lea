@@ -123,6 +123,7 @@ var agentColumns = [][2]string{
 	{"args", "TEXT NOT NULL DEFAULT ''"},
 	{"prompt", "TEXT NOT NULL DEFAULT ''"},
 	{"paused", "INTEGER NOT NULL DEFAULT 0"},
+	{"subagents", "INTEGER NOT NULL DEFAULT 0"},
 	{"model", "TEXT NOT NULL DEFAULT ''"},
 }
 
@@ -334,7 +335,7 @@ func (s *Store) Register(n NewAgent, c Caps, now int64) (Agent, error) {
 			return Agent{}, err
 		}
 		_, err = tx.Exec(`UPDATE agents SET profile=?, workdir=?, created=?, updated=?, state='unknown', session_id='',
-			ctx_pct=-1, cost_usd=-1, role=?, parent=?, repo=?, branch=?, task_id=0, label='', args='', prompt='', paused=0, model=? WHERE key=?`,
+			ctx_pct=-1, cost_usd=-1, role=?, parent=?, repo=?, branch=?, task_id=0, label='', args='', prompt='', paused=0, subagents=0, model=? WHERE key=?`,
 			n.Profile, n.Workdir, now, now, n.Role, n.Parent, n.Repo, n.Branch, n.Model, key)
 	} else {
 		_, err = tx.Exec(`INSERT INTO agents(key, container, name, profile, workdir, created, updated, role, parent, repo, branch, model)
@@ -530,6 +531,44 @@ func (s *Store) Usages(container string) (map[string]Usage, error) {
 			return nil, err
 		}
 		out[k] = u
+	}
+	return out, rows.Err()
+}
+
+// SetSubagents records how many subagents an agent runs and reports whether it changed (an
+// unknown key changes nothing). Only the daemon writes it, from the Subagent hooks.
+func (s *Store) SetSubagents(key string, n int) (bool, error) {
+	res, err := s.db.Exec(`UPDATE agents SET subagents=? WHERE key=? AND subagents<>?`, n, key, n)
+	if err != nil {
+		return false, err
+	}
+	c, err := res.RowsAffected()
+	return c > 0, err
+}
+
+// ClearSubagents sets every agent's subagent count to 0: the daemon keeps the running subagents
+// in memory, so a count it did not write since it started is stale.
+func (s *Store) ClearSubagents() error {
+	_, err := s.db.Exec(`UPDATE agents SET subagents=0 WHERE subagents<>0`)
+	return err
+}
+
+// Subagents returns the agents of a container ("" for every container) that run subagents, by
+// key.
+func (s *Store) Subagents(container string) (map[string]int, error) {
+	rows, err := s.db.Query(`SELECT key, subagents FROM agents WHERE (?='' OR container=?) AND subagents>0`, container, container)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := map[string]int{}
+	for rows.Next() {
+		var k string
+		var n int
+		if err := rows.Scan(&k, &n); err != nil {
+			return nil, err
+		}
+		out[k] = n
 	}
 	return out, rows.Err()
 }

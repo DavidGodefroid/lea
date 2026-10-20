@@ -7,9 +7,10 @@ import (
 	"github.com/charmbracelet/lipgloss"
 )
 
-// Run draws the deck until its pane is closed.
+// Run draws the deck until its pane is closed. All motion: the pointer over a row, no button
+// held, shows its whole name (hover.go).
 func Run(api API, container string, ascii bool, notice func() string) error {
-	_, err := tea.NewProgram(New(api, container, ascii, time.Now).WithIntro().WithNotice(notice), tea.WithAltScreen(), tea.WithReportFocus(), tea.WithMouseCellMotion()).Run()
+	_, err := tea.NewProgram(New(api, container, ascii, time.Now).WithIntro().WithNotice(notice), tea.WithAltScreen(), tea.WithReportFocus(), tea.WithMouseAllMotion()).Run()
 	return err
 }
 

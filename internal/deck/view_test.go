@@ -1,6 +1,7 @@
 package deck
 
 import (
+	"encoding/json"
 	"fmt"
 	"github.com/DavidGodefroid/lea/internal/textsafe"
 	"regexp"
@@ -513,5 +514,66 @@ func TestViewLogoMoves(t *testing.T) {
 	}
 	if ls := viewLines(nm.(Model)); !strings.HasPrefix(ls[0], "╭─ ●●● lea ") {
 		t.Fatalf("intro end %q", ls[0])
+	}
+}
+
+func withSubagents(a Agent, n int) Agent { a.Subagents = n; return a }
+
+// rowOf is the rendered line of the agent named name.
+func rowOf(t *testing.T, m Model, name string) string {
+	t.Helper()
+	for _, l := range viewLines(m) {
+		if strings.Contains(l, " "+name+" ") {
+			return l
+		}
+	}
+	t.Fatalf("no row for %s in:\n%s", name, strings.Join(viewLines(m), "\n"))
+	return ""
+}
+
+// An idle agent whose subagents still run shows the spinner, ranks and animates as working; with
+// none it rests on the green bullet. blocked, a message for the user and paused keep precedence.
+func TestSubagentsShowAnIdleAgentWorking(t *testing.T) {
+	busy := withSubagents(ag("busy", "idle", clock.Unix()), 2)
+	rest := ag("rest", "idle", clock.Unix())
+	m := loaded(t, &fakeAPI{}, "", busy, rest)
+	if !m.ticking || !m.working() {
+		t.Fatal("no animation while subagents run")
+	}
+	if r := rowOf(t, m, "busy"); !strings.Contains(r, "⠋") || strings.Contains(r, "●") {
+		t.Fatalf("busy row %q", r)
+	}
+	if r := rowOf(t, m, "rest"); !strings.Contains(r, "●") {
+		t.Fatalf("idle row %q", r)
+	}
+	if rank(busy, nil) != 3 || rank(rest, nil) != 4 || m.label(busy) != "working" || m.label(rest) != "idle" {
+		t.Fatalf("rank %d %d label %q %q", rank(busy, nil), rank(rest, nil), m.label(busy), m.label(rest))
+	}
+	blocked := withSubagents(ag("b", "blocked", 1), 1)
+	msg := withSubagents(ag("m", "idle", 1), 1)
+	msg.ForUser = 1
+	paused := withSubagents(ag("p", "idle", 1), 1)
+	paused.Paused = true
+	done := withSubagents(ag("d", "done", 1), 1)
+	if rank(blocked, nil) != 0 || rank(msg, nil) != 2 || rank(paused, nil) != 4 || shownState(done) != "done" {
+		t.Fatalf("precedence: %d %d %d %s", rank(blocked, nil), rank(msg, nil), rank(paused, nil), shownState(done))
+	}
+	m = loaded(t, &fakeAPI{}, "", paused)
+	if m.working() {
+		t.Fatal("a paused agent animates")
+	}
+	m = loaded(t, &fakeAPI{}, "", withSubagents(ag("x", "idle", 1), 0))
+	if m.working() {
+		t.Fatal("no subagents, still animating")
+	}
+}
+
+func TestSnapshotWithoutSubagentsDecodes(t *testing.T) {
+	var a Agent
+	if err := json.Unmarshal([]byte(`{"key":"lea-a/x","state":"idle"}`), &a); err != nil || a.Subagents != 0 || shownState(a) != "idle" {
+		t.Fatalf("agent=%+v err=%v", a, err)
+	}
+	if err := json.Unmarshal([]byte(`{"key":"lea-a/x","state":"idle","subagents":3}`), &a); err != nil || shownState(a) != "working" {
+		t.Fatalf("agent=%+v err=%v", a, err)
 	}
 }

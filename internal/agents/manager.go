@@ -159,6 +159,9 @@ type Row struct {
 	Approval *Approval `json:"approval,omitempty"`
 	// Paused: the user froze the agent (the deck's p); State is what it was doing.
 	Paused bool `json:"paused,omitempty"`
+	// Subagents counts the subagents the agent still runs (its Subagent hooks): an idle agent
+	// with some is still at work.
+	Subagents int `json:"subagents,omitempty"`
 }
 
 type Snapshot struct {

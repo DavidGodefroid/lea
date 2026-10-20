@@ -59,9 +59,11 @@ func (r *Registry) Resolve(provider, model, defProvider, defModel string) (Provi
 // its own (the agent's checked name, the provider's checked name, fixed strings): the model goes
 // in as a separate argument, never into TOML.
 //
-// workdir is the agent's working directory (the projects directory, which the user trusts): Codex
-// is told it is trusted, or its trust dialog would wait, unseen, in a parked pane. A directory
-// whose name holds a quote or a backslash is left out (Codex asks).
+// workdir is the agent's working directory (the projects directory, which every agent can write):
+// Codex is told it is untrusted. That answers its trust dialog, which would otherwise wait, unseen,
+// in a parked pane, and it never loads a project configuration (.codex/) an agent could have
+// written there: with one present, Codex asks again, in the pane. A directory whose name holds a
+// quote or a backslash is left out (Codex asks).
 func (p Provider) Argv(agent, workdir, model, session string, user []string, prompt string) ([]string, error) {
 	if !agentRe.MatchString(agent) {
 		return nil, errors.New("invalid agent name")
@@ -94,7 +96,7 @@ func (p Provider) Argv(agent, workdir, model, session string, user []string, pro
 			"-c", `mcp_servers.lea.env.LEA_AGENT="`+agent+`"`,
 			"-c", `notify=["`+LeaBin+`","hook","codex","notify"]`)
 		if trustable(workdir) {
-			a = append(a, "-c", `projects."`+workdir+`".trust_level="trusted"`)
+			a = append(a, "-c", `projects."`+workdir+`".trust_level="untrusted"`)
 		}
 		if p.Endpoint != nil {
 			if !nameRe.MatchString(p.Name) || reserved[p.Name] {

@@ -446,14 +446,14 @@ func TestProxyFollowsTheGitSSHEndpoints(t *testing.T) {
 	w := newWorld(t, repoRoot(t))
 	writeUserConf(t, w, "LEA_GIT_SSH='github.com:22 gitlab.com:22'\n")
 	w.env["FAKE_DOCKER_OUT_INSPECT__F"] = "true"
-	w.env["FAKE_DOCKER_OUT_INSPECT___FORMAT"] = "github.com:22 gitlab.com:22/"
+	w.env["FAKE_DOCKER_OUT_INSPECT___FORMAT"] = "github.com:22 gitlab.com:22"
 	if err := w.launcher().ensureProxy(w.proj); err != nil {
 		t.Fatal(err)
 	}
 	if w.hasCall("docker [run]") {
 		t.Fatalf("a proxy for the same endpoints was replaced:\n%s", strings.Join(w.calls(), "\n"))
 	}
-	w.env["FAKE_DOCKER_OUT_INSPECT___FORMAT"] = "gitlab.com:22/"
+	w.env["FAKE_DOCKER_OUT_INSPECT___FORMAT"] = "gitlab.com:22"
 	if err := w.launcher().ensureProxy(w.proj); err != nil {
 		t.Fatal(err)
 	}
@@ -527,7 +527,7 @@ func TestProxyFollowsTheProviders(t *testing.T) {
 	w := newWorld(t, repoRoot(t))
 	writeProviders(t, w, "lan http://10.0.0.5:11434/v1\n", "10.0.0.5 11434\n")
 	w.env["FAKE_DOCKER_OUT_INSPECT__F"] = "true"
-	w.env["FAKE_DOCKER_OUT_INSPECT___FORMAT"] = "/"
+	w.env["FAKE_DOCKER_OUT_INSPECT___FORMAT"] = ""
 	if err := w.launcher().ensureProxy(w.proj); err != nil {
 		t.Fatal(err)
 	}
@@ -558,5 +558,27 @@ func TestProvidersFileIsChecked(t *testing.T) {
 				t.Fatal("the proxy started")
 			}
 		})
+	}
+}
+
+// The proxy is started with the egress allowlist and its label; one started for another list is
+// replaced.
+func TestProxyFollowsTheEgressAllowlist(t *testing.T) {
+	w := newWorld(t, repoRoot(t))
+	writeUserConf(t, w, "LEA_EGRESS_ALLOW=github.com,proxy.golang.org\n")
+	w.env["FAKE_DOCKER_OUT_INSPECT__F"] = "true"
+	w.env["FAKE_DOCKER_OUT_INSPECT___FORMAT"] = "|github.com,proxy.golang.org"
+	if err := w.launcher().ensureProxy(w.proj); err != nil {
+		t.Fatal(err)
+	}
+	if w.hasCall("docker [run]") {
+		t.Fatalf("a proxy for the same allowlist was replaced:\n%s", strings.Join(w.calls(), "\n"))
+	}
+	w.env["FAKE_DOCKER_OUT_INSPECT___FORMAT"] = ""
+	if err := w.launcher().ensureProxy(w.proj); err != nil {
+		t.Fatal(err)
+	}
+	if !w.hasCall("[--label] [lea.egress-allow=github.com,proxy.golang.org]") || !w.hasCall("[LEA_EGRESS_ALLOW=github.com,proxy.golang.org]") {
+		t.Fatalf("the proxy was not restarted for the new allowlist:\n%s", strings.Join(w.calls(), "\n"))
 	}
 }

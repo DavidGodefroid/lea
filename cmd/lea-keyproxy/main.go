@@ -29,6 +29,7 @@ func run(args []string, stderr io.Writer) error {
 	internal := fs.String("internal-hosts", "/etc/lea/internal-hosts", "the internal-hosts file")
 	listen := fs.String("listen", fmt.Sprintf(":%d", providers.ForwarderPort), "the listen address")
 	viaFlag := fs.String("via", "http://127.0.0.1:3128", "the forward proxy every upstream request goes through")
+	routes := fs.String("routes", "/proc/net/route", "the routing table: connections on the default route's interface (the egress network) are refused; empty refuses none")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -58,7 +59,11 @@ func run(args []string, stderr io.Writer) error {
 	if err != nil {
 		return errors.New("invalid -via URL")
 	}
-	f, err := keyproxy.New(keyproxy.Config{Endpoints: eps, Via: via})
+	cfg := keyproxy.Config{Endpoints: eps, Via: via}
+	if *routes != "" {
+		cfg.Refused = keyproxy.EgressAddrs(*routes)
+	}
+	f, err := keyproxy.New(cfg)
 	if err != nil {
 		return err
 	}
