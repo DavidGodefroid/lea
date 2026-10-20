@@ -17,12 +17,13 @@ type Approval struct {
 }
 
 // facts are what a row shows besides the agent's own record: its unread messages, the unread
-// messages it sent the user, its usage and its oldest pending approval.
+// messages it sent the user, its usage, its running subagents and its oldest pending approval.
 type facts struct {
 	unread, forUser map[string]int
 	usage           map[string]store.Usage
 	approval        map[string]*Approval
 	status          map[string]string
+	subagents       map[string]int
 }
 
 func loadFacts(st *store.Store, container string) (facts, error) {
@@ -38,6 +39,9 @@ func loadFacts(st *store.Store, container string) (facts, error) {
 		return f, err
 	}
 	if f.usage, err = st.Usages(container); err != nil {
+		return f, err
+	}
+	if f.subagents, err = st.Subagents(container); err != nil {
 		return f, err
 	}
 	pend, err := st.PendingApprovals()
@@ -60,6 +64,7 @@ func (f facts) row(r Row) Row {
 	}
 	r.Approval = f.approval[r.Key]
 	r.Status = f.status[r.Key]
+	r.Subagents = f.subagents[r.Key]
 	return r
 }
 

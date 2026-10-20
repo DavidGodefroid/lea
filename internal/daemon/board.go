@@ -78,6 +78,7 @@ type boardItem struct {
 	Role      string `json:"role"`
 	Parent    string `json:"parent"`
 	State     string `json:"state"`
+	Subagents int    `json:"subagents,omitempty"`
 	Repo      string `json:"repo"`
 	Branch    string `json:"branch"`
 	Title     string `json:"title"`
@@ -115,6 +116,10 @@ func (d *Daemon) boardList(raw json.RawMessage) (boardView, error) {
 	if err != nil {
 		return boardView{}, err
 	}
+	subs, err := d.st.Subagents(p.Container)
+	if err != nil {
+		return boardView{}, err
+	}
 	by := map[string]store.Agent{}
 	for _, a := range as {
 		by[a.Key] = a
@@ -127,7 +132,7 @@ func (d *Daemon) boardList(raw json.RawMessage) (boardView, error) {
 		it := boardItem{Task: t.ID, Container: t.Container, Agent: shortName(t.Agent), State: "gone", Title: t.Title,
 			Status: t.StatusText, Next: t.Next, BlockedOn: t.BlockedOn, Updated: t.Updated, Ended: t.Ended}
 		if a, ok := by[t.Agent]; ok && t.Ended == 0 {
-			it.Role, it.State, it.Repo, it.Branch = a.Role, a.State, a.Repo, a.Branch
+			it.Role, it.State, it.Repo, it.Branch, it.Subagents = a.Role, a.State, a.Repo, a.Branch, subs[t.Agent]
 			if a.Parent != "" {
 				it.Parent = shortName(a.Parent)
 			}

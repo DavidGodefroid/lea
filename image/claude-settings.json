@@ -82,6 +82,26 @@
         ]
       }
     ],
+    "SubagentStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "[ -x /usr/local/bin/lea ] && exec /usr/local/bin/lea hook claude SubagentStart; exit 0"
+          }
+        ]
+      }
+    ],
+    "SubagentStop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "[ -x /usr/local/bin/lea ] && exec /usr/local/bin/lea hook claude SubagentStop; exit 0"
+          }
+        ]
+      }
+    ],
     "Stop": [
       {
         "hooks": [
