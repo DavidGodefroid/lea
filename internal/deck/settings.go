@@ -48,7 +48,7 @@ func (m Model) openSettings() (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	m.setOpen, m.setList, m.setSel, m.setEditing, m.status = true, list, 0, false, ""
-	m.menuFor, m.confirm, m.roleFor, m.editFor = "", "", "", ""
+	m.menuFor, m.confirm, m.roleFor, m.editFor, m.hoverFor = "", "", "", "", ""
 	return m, nil
 }
 

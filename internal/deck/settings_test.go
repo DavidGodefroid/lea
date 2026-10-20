@@ -268,3 +268,13 @@ func TestTheStatusShowsTheValueReadBack(t *testing.T) {
 		t.Fatalf("status %q", m.status)
 	}
 }
+
+// Opening the settings drops a hover: its name would stay in the border over the screen.
+func TestTheSettingsDropTheHover(t *testing.T) {
+	m := withSettings(t, &fakeAPI{}, someSettings())
+	m.hoverFor = "lea-a/a"
+	m, _ = step(t, m, key(","))
+	if !m.setOpen || m.hoverFor != "" {
+		t.Fatalf("open %v hover %q", m.setOpen, m.hoverFor)
+	}
+}
