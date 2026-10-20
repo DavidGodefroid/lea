@@ -1,7 +1,7 @@
 package launcher
 
 import (
-	"bufio"
+	"fmt"
 	"os"
 	"regexp"
 	"strconv"
@@ -53,11 +53,15 @@ func lockfileSafe(v string) bool {
 // a warning: lea works without it.
 func (l *Launcher) lockHostArgs() []string {
 	var a []string
+	var img *imageIDs
 	for _, t := range lockHostTools {
 		if !l.Cfg.LockHost(t.env) {
 			continue
 		}
-		args, why := l.lockHostTool(t)
+		if img == nil {
+			img = l.imageIDs()
+		}
+		args, why := l.lockHostTool(t, img)
 		if why != "" {
 			l.logf("warning: %s: %s; lea's agents cannot reach a %s console (lea doctor, lea %s)", t.name, why, t.name, t.name)
 			continue
@@ -68,7 +72,7 @@ func (l *Launcher) lockHostArgs() []string {
 }
 
 // lockHostTool checks the host setup of t and returns its arguments, or why it is left out.
-func (l *Launcher) lockHostTool(t lockHostTool) ([]string, string) {
+func (l *Launcher) lockHostTool(t lockHostTool, img *imageIDs) ([]string, string) {
 	root := lockHostRoot
 	etc, sys, run := root+"/etc/"+t.name, root+"/etc/"+t.name+"/system.toml", root+"/run/"+t.name
 	if why := rootOwned(etc, true); why != "" {
@@ -99,13 +103,27 @@ func (l *Launcher) lockHostTool(t lockHostTool) ([]string, string) {
 	if uid == 0 || uid == lockHostSelf() || gid == 0 || gid == lockHostSelfGID() {
 		return nil, "the " + t.name + " account or group is root or yours: no separation"
 	}
+	// The entrypoint names the account and the group in lea's image with these ids: an id the
+	// image already uses would give the agents that account's group (--group-add) for nothing.
+	if lockReservedIDs[uid] || lockReservedIDs[gid] {
+		return nil, "uid " + strconv.Itoa(uid) + " or gid " + strconv.Itoa(gid) + " is locksql's in lea's image (10000, 10001)"
+	}
+	if img.err != "" {
+		return nil, img.err
+	}
+	if img.uids[uid] {
+		return nil, "uid " + strconv.Itoa(uid) + " of the " + t.name + " account is already used in lea's image (give it a free one on the host: sudo usermod -u ID " + t.name + ")"
+	}
+	if img.gids[gid] {
+		return nil, "gid " + strconv.Itoa(gid) + " of the " + t.name + "-clients group is already used in lea's image (give it a free one on the host: sudo groupmod -g ID " + t.name + "-clients)"
+	}
 	fi, err := os.Lstat(run)
 	if err != nil {
 		return nil, run + " is absent (the console's socket directory: " + t.name + " doctor, in the " + t.name + " account)"
 	}
 	st, _ := fi.Sys().(*syscall.Stat_t)
-	if !fi.IsDir() || st == nil || int(st.Uid) != uid || int(st.Gid) != gid || fi.Mode().Perm()&0o007 != 0 {
-		return nil, run + " is not a directory of the " + t.name + " account and group, closed to others"
+	if !fi.IsDir() || st == nil || int(st.Uid) != uid || int(st.Gid) != gid || fi.Mode().Perm()&0o027 != 0 {
+		return nil, run + " is not a directory of the " + t.name + " account and group, closed to others and not writable by the group"
 	}
 	if t.name == "lockfile" {
 		bin := root + "/usr/local/bin/lockfile"
@@ -148,32 +166,82 @@ func rootOwned(path string, dir bool) string {
 	return ""
 }
 
-// readLockSys reads the key = "value" lines of a lock tool's system.toml (the keys lea checks).
+// lockSysLine is the only line shape lea reads in a system.toml: a bare key, then a basic string
+// without escapes or a one-line array of integers, then an optional comment.
+var lockSysLine = regexp.MustCompile(`^([a-z_][a-z0-9_]*)[ \t]*=[ \t]*("([^"\\]*)"|\[[0-9, \t]*\])[ \t]*(#.*)?$`)
+
+// readLockSys reads the keys of a lock tool's system.toml. Any other line (a table, a quoted key, a
+// multi-line string, an escape) is an error: lea does not guess how the tool would read it.
 func readLockSys(path string) (map[string]string, error) {
-	f, err := os.Open(path)
+	b, err := os.ReadFile(path)
 	if err != nil {
 		return nil, err
 	}
-	defer f.Close()
 	m := map[string]string{}
-	sc := bufio.NewScanner(f)
-	for sc.Scan() {
-		k, v, ok := strings.Cut(sc.Text(), "=")
-		if !ok || strings.HasPrefix(strings.TrimSpace(k), "#") {
+	for n, line := range strings.Split(string(b), "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" || strings.HasPrefix(line, "#") {
 			continue
 		}
-		v = strings.TrimSpace(v)
-		if i := strings.Index(v, "#"); i >= 0 && !strings.HasPrefix(v, `"`) {
-			v = strings.TrimSpace(v[:i])
+		f := lockSysLine.FindStringSubmatch(line)
+		if f == nil {
+			return nil, fmt.Errorf("line %d: not a key = \"value\" line lea can read", n+1)
 		}
-		if len(v) >= 2 && v[0] == '"' {
-			if j := strings.Index(v[1:], `"`); j >= 0 {
-				v = v[1 : j+1]
-			}
+		if _, dup := m[f[1]]; dup {
+			return nil, fmt.Errorf("line %d: %s set twice", n+1, f[1])
 		}
-		m[strings.TrimSpace(k)] = v
+		m[f[1]] = f[3]
 	}
-	return m, sc.Err()
+	return m, nil
+}
+
+// imageIDs are the uids and gids of lea's image (LEA_IMAGE), from its /etc/passwd and
+// /etc/group, read once per image id (host dir image-ids/<id>); err says why they are unknown.
+type imageIDs struct {
+	uids, gids map[int]bool
+	err        string
+}
+
+// lockReservedIDs are the ids of locksql's account and clients group in lea's image.
+var lockReservedIDs = map[int]bool{10000: true, 10001: true}
+
+var imageID = regexp.MustCompile(`^sha256:[0-9a-f]{64}$`)
+
+func (l *Launcher) imageIDs() *imageIDs {
+	img := l.Cfg.Get("LEA_IMAGE")
+	cache := ""
+	if id, err := l.output(false, "docker", "image", "inspect", "-f", "{{.Id}}", img); err == nil && imageID.MatchString(id) {
+		cache = l.Cfg.HostDir() + "/image-ids/" + strings.TrimPrefix(id, "sha256:")
+	}
+	var out string
+	if b, err := os.ReadFile(cache); cache != "" && err == nil {
+		out = string(b)
+	} else {
+		o, err := l.output(false, "docker", "run", "--rm", "--network", "none", "--entrypoint", "cat", img, "/etc/passwd", "/etc/group")
+		if err != nil || !strings.Contains(o, "root:x:0:") {
+			return &imageIDs{err: "cannot read the accounts of lea's image " + img}
+		}
+		out = o
+		if cache != "" && Mkdirs(l.Cfg.DataDir(), l.Cfg.HostDir()+"/image-ids") == nil {
+			_ = WriteFile(l.Cfg.DataDir(), cache, []byte(out))
+		}
+	}
+	r := &imageIDs{uids: map[int]bool{}, gids: map[int]bool{}}
+	for _, line := range strings.Split(out, "\n") {
+		f := strings.Split(line, ":")
+		n, err := 0, error(nil)
+		if len(f) >= 3 {
+			n, err = strconv.Atoi(f[2])
+		}
+		switch {
+		case err != nil || len(f) < 3:
+		case len(f) == 7: // passwd: its primary group is the group file's business
+			r.uids[n] = true
+		case len(f) == 4:
+			r.gids[n] = true
+		}
+	}
+	return r
 }
 
 // lookupID is the numeric field col (2: the id) of the line of name in a passwd or group file.

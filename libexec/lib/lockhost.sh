@@ -44,8 +44,10 @@ lea__lockfile_safe() {
   [ "$1" -gt 0 ] || [ "$2" -gt 1 ] || { [ "$2" -eq 1 ] && [ "$3" -ge 1 ]; }
 }
 
-# The host's root, /etc and /run (tests point it elsewhere).
-lea__lockhost_root() { printf '%s' "${LEA_LOCKHOST_ROOT:-}"; }
+# The host's root and the owner of its system files: / and root. No environment variable changes
+# them (lea runs the binary they vouch for with sudo); the unit tests redefine these functions.
+lea__lockhost_root() { :; }
+lea__lockhost_owner() { printf 0; }
 
 # lea__lockhost_bin TOOL: the root-owned TOOL binary in /usr/local/bin, the one TOOL install
 # accepts for the console account (a binary another account could replace would hand it the
@@ -57,7 +59,7 @@ lea__lockhost_bin() {
   [ -f "$_lb_b" ] && [ ! -L "$_lb_b" ] && [ -x "$_lb_b" ] && [ -d "$_lb_d" ] && [ ! -L "$_lb_d" ] || return 1
   # The binary and its directory: owned by root, writable by root only (lea runs it with sudo).
   for _lb_f in "$_lb_b" "$_lb_d"; do
-    [ "$(stat -c %u "$_lb_f" 2>/dev/null)" = "${LEA_LOCKHOST_OWNER:-0}" ] || return 1
+    [ "$(stat -c %u "$_lb_f" 2>/dev/null)" = "$(lea__lockhost_owner)" ] || return 1
     case $(stat -c %A "$_lb_f" 2>/dev/null) in ?????w????|????????w?|'') return 1 ;; esac
   done
   printf '%s' "$_lb_b"
@@ -195,8 +197,11 @@ lea__init_lockhost() {
   fi
   case $_ih_t in
     lockmq)
-      # lockmq setup asks for a broker profile, never its password, and writes it to the project.
-      if [ -n "${LEA_PROJECTS_DIR:-}" ] && [ ! -f "$LEA_PROJECTS_DIR/.lockmq/config.toml" ] &&
+      # lockmq setup asks for a broker profile, never its password, and writes it to the project,
+      # a tree the agents can write: a symlink there could send what it writes elsewhere.
+      if [ -L "${LEA_PROJECTS_DIR:-}/.lockmq" ] || [ -L "${LEA_PROJECTS_DIR:-}/.lockmq/config.toml" ]; then
+        lea_log "warning: $LEA_PROJECTS_DIR/.lockmq or its config.toml is a symbolic link: lockmq setup not offered (remove it, then lea init)"
+      elif [ -n "${LEA_PROJECTS_DIR:-}" ] && [ ! -f "$LEA_PROJECTS_DIR/.lockmq/config.toml" ] &&
         [ -z "${LEA_INIT_NONINTERACTIVE:-}" ] && lea__init_tty; then
         lea_log "lockmq has no broker profile for $LEA_PROJECTS_DIR yet"
         if lea__ask "Add one now (URLs, vhosts, user, where the password comes from; never the password)?"; then

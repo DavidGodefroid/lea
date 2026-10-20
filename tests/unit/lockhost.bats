@@ -5,8 +5,9 @@ setup() {
   export LEA_PROJECTS_DIR="$P"
   export LEA_CONFIG="$BATS_TEST_TMPDIR/user.conf"
   R="$BATS_TEST_TMPDIR/host"; mkdir -p "$R/usr/local/bin" "$R/etc" "$R/run"
-  export LEA_LOCKHOST_ROOT="$R" LEA_LOCKHOST_OWNER
-  LEA_LOCKHOST_OWNER=$(id -u)
+  OWNER=$(id -u)
+  lea__lockhost_root() { printf '%s' "$R"; }
+  lea__lockhost_owner() { printf '%s' "$OWNER"; }
 }
 
 # host_bin TOOL VERSION-LINE: a TOOL in the host's /usr/local/bin that prints VERSION-LINE and logs
@@ -124,6 +125,29 @@ host_setup() { mkdir -p "$R/etc/$1" "$R/run/$1"; : >"$R/etc/$1/system.toml"; }
   [ "$output" = "lockmq [setup] [--project] [$P]" ]
 }
 
+@test "no environment variable relaxes the checks of the binary lea runs with sudo" {
+  host_bin lockmq "lockmq 0.1.0"
+  . "$LEA_ROOT/libexec/lib/lockhost.sh"
+  [ -z "$(lea__lockhost_root)" ] && [ "$(lea__lockhost_owner)" = 0 ]
+  LEA_LOCKHOST_ROOT="$R" LEA_LOCKHOST_OWNER=$OWNER run lea__lockhost_bin lockmq
+  [[ "$output" != "$R"* ]]
+  if grep -q 'LEA_LOCKHOST' "$LEA_ROOT/libexec/lib/lockhost.sh"; then false; fi
+}
+
+@test "lea init never runs lockmq setup through a symlink the agents planted" {
+  lea__init_tty() { true; }
+  lea__lockhost_set lockmq 1
+  host_bin lockmq "lockmq 0.1.0"; host_setup lockmq
+  ln -s "$BATS_TEST_TMPDIR/elsewhere" "$P/.lockmq"
+  run lea__init_lockhost lockmq <<<"y"
+  [[ "$output" == *".lockmq or its config.toml is a symbolic link: lockmq setup not offered"* ]]
+  [ -z "$(calls)" ]
+  rm "$P/.lockmq"; mkdir "$P/.lockmq"; ln -s "$BATS_TEST_TMPDIR/elsewhere.toml" "$P/.lockmq/config.toml"
+  run lea__init_lockhost lockmq <<<"y"
+  [[ "$output" == *"symbolic link: lockmq setup not offered"* ]]
+  [ -z "$(calls)" ]
+}
+
 @test "lea init offers the separated setup, with the tool's own root script" {
   lea__init_tty() { true; }
   lea__lockhost_set lockfile 1
@@ -176,7 +200,7 @@ release() {
 @test "a binary that is a symlink, not root's, or writable by others (or in such a dir) is not the host's tool" {
   host_bin lockmq "lockmq 0.1.0"
   lea__lockhost_bin lockmq
-  LEA_LOCKHOST_OWNER=12345 run lea__lockhost_bin lockmq
+  OWNER=12345 run lea__lockhost_bin lockmq
   [ "$status" -ne 0 ]
   chmod 0775 "$R/usr/local/bin/lockmq"
   run lea__lockhost_bin lockmq

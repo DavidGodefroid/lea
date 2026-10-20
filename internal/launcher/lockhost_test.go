@@ -42,7 +42,7 @@ func lockHostWorld(t *testing.T) string {
 	var passwd, group string
 	for _, n := range []string{"lockmq", "lockfile"} {
 		mk("/etc/"+n, 0o755)
-		wr("/etc/"+n+"/system.toml", "# "+n+": the console runs as service_user\nservice_user = \""+n+"\"\nclient_group = \""+n+"-clients\" # members reach it\nsocket_dir   = \"/run/"+n+"\"\nx11 = \"refuse\"\n", 0o644)
+		wr("/etc/"+n+"/system.toml", "# "+n+": the console runs as service_user\nservice_user = \""+n+"\"\nclient_group = \""+n+"-clients\" # members reach it\nsocket_dir   = \"/run/"+n+"\"\nx11 = \"refuse\"\nallowed_uids = [10002, 10003]\n", 0o644)
 		mk("/run/"+n, 0o2710)
 		passwd += n + ":x:" + uid + ":" + uid + "::/nonexistent:/usr/sbin/nologin\n"
 		group += n + "-clients:x:" + gid + ":" + user + "\n"
@@ -59,8 +59,14 @@ func lockHostWorld(t *testing.T) string {
 	return root
 }
 
+// imageAccounts answers lea's `docker run --rm … cat IMAGE /etc/passwd /etc/group`.
+const imageAccounts = "FAKE_DOCKER_OUT_RUN___RM_AT__ETC_GROUP"
+
 func lockArgs(t *testing.T, w *world) []string {
 	t.Helper()
+	if _, ok := w.env[imageAccounts]; !ok {
+		w.env[imageAccounts] = "root:x:0:0:root:/root:/bin/bash\nlocksql:x:10001:10001::/:/sbin/nologin\nroot:x:0:\nlocksql-clients:x:10000:"
+	}
 	args, err := w.launcher().runArgs(w.proj, "172.18.0.5")
 	if err != nil {
 		t.Fatal(err)
@@ -147,6 +153,22 @@ func TestLockHostRefusals(t *testing.T) {
 		"the clients group is the session's":   {func(t *testing.T, r string) { lockHostSelfGID = os.Getgid }, "root or yours"},
 		"no socket dir":                        {func(t *testing.T, r string) { must(t, os.Remove(r+"/run/lockmq")) }, "/run/lockmq is absent"},
 		"socket dir open to others":            {func(t *testing.T, r string) { must(t, os.Chmod(r+"/run/lockmq", 0o2711)) }, "closed to others"},
+		"socket dir writable by the group":     {func(t *testing.T, r string) { must(t, os.Chmod(r+"/run/lockmq", 0o2770)) }, "not writable by the group"},
+		"a table in system.toml": {func(t *testing.T, r string) {
+			must(t, os.WriteFile(r+"/etc/lockmq/system.toml", []byte("[x]\nsocket_dir = \"/run/lockmq\"\n"), 0o644))
+		}, "line 1: not a key"},
+		"a quoted key in system.toml": {func(t *testing.T, r string) {
+			must(t, os.WriteFile(r+"/etc/lockmq/system.toml", []byte("\"socket_dir\" = \"/tmp/x\"\n"), 0o644))
+		}, "line 1: not a key"},
+		"an escape in system.toml": {func(t *testing.T, r string) {
+			must(t, os.WriteFile(r+"/etc/lockmq/system.toml", []byte("service_user = \"lock\\u006dmq\"\n"), 0o644))
+		}, "line 1: not a key"},
+		"a multi-line string in system.toml": {func(t *testing.T, r string) {
+			must(t, os.WriteFile(r+"/etc/lockmq/system.toml", []byte("socket_dir = \"\"\"\n/tmp/x\"\"\"\n"), 0o644))
+		}, "line 1: not a key"},
+		"a key set twice": {func(t *testing.T, r string) {
+			must(t, os.WriteFile(r+"/etc/lockmq/system.toml", []byte("socket_dir = \"/run/lockmq\"\nsocket_dir = \"/tmp/x\"\n"), 0o644))
+		}, "set twice"},
 		"socket dir a symlink": {func(t *testing.T, r string) {
 			must(t, os.Rename(r+"/run/lockmq", r+"/run/real"))
 			must(t, os.Symlink("real", r+"/run/lockmq"))
@@ -247,6 +269,72 @@ func TestLockHostConfig(t *testing.T) {
 func must(t *testing.T, err error) {
 	t.Helper()
 	if err != nil {
+		t.Fatal(err)
+	}
+}
+
+// The console account and the clients group are named in lea's image with the host ids: an id
+// the image already uses (or locksql's) leaves the tool out, never half-wired; so does an image
+// whose accounts cannot be read.
+func TestLockHostImageIDs(t *testing.T) {
+	uid, gid := strconv.Itoa(os.Getuid()), strconv.Itoa(os.Getgid())
+	for name, c := range map[string]struct{ accounts, want string }{
+		"uid taken":  {"root:x:0:0:root:/root:/bin/bash\nsvc:x:" + uid + ":1::/:/bin/sh\nroot:x:0:", "uid " + uid + " of the lockmq account is already used in lea's image"},
+		"gid taken":  {"root:x:0:0:root:/root:/bin/bash\nroot:x:0:\nsystemd-journal:x:" + gid + ":", "gid " + gid + " of the lockmq-clients group is already used in lea's image"},
+		"unreadable": {"", "cannot read the accounts of lea's image"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			lockHostWorld(t)
+			w := newWorld(t, repoRoot(t))
+			w.env[imageAccounts] = c.accounts
+			writeUserConf(t, w, "LEA_LOCKMQ=1\n")
+			args := lockArgs(t, w)
+			for i, a := range args {
+				if a == "LEA_LOCKMQ=1" || a == "--group-add" && args[i+1] == gid {
+					t.Fatalf("lockmq wired: %v", args)
+				}
+			}
+			if !strings.Contains(w.errb.String(), c.want) {
+				t.Fatalf("stderr %q, want %q", w.errb.String(), c.want)
+			}
+		})
+	}
+	t.Run("locksql's ids", func(t *testing.T) {
+		root := lockHostWorld(t)
+		must(t, os.WriteFile(root+"/etc/group", []byte("lockmq-clients:x:10000:\n"), 0o644))
+		w := newWorld(t, repoRoot(t))
+		writeUserConf(t, w, "LEA_LOCKMQ=1\n")
+		if contains(lockArgs(t, w), "LEA_LOCKMQ=1") {
+			t.Fatal("lockmq wired on gid 10000")
+		}
+		if !strings.Contains(w.errb.String(), "is locksql's in lea's image") {
+			t.Fatalf("stderr %q", w.errb.String())
+		}
+	})
+}
+
+// The image's accounts are read once per image id, then from the host dir.
+func TestLockHostImageIDsCached(t *testing.T) {
+	lockHostWorld(t)
+	w := newWorld(t, repoRoot(t))
+	id := strings.Repeat("ab", 32)
+	w.env["FAKE_DOCKER_OUT_IMAGE_INSPECT"] = "sha256:" + id
+	writeUserConf(t, w, "LEA_LOCKMQ=1\n")
+	for i := 0; i < 2; i++ {
+		if !contains(lockArgs(t, w), "LEA_LOCKMQ=1") {
+			t.Fatalf("run %d: lockmq not wired: %s", i, w.errb.String())
+		}
+	}
+	n := 0
+	for _, c := range w.calls() {
+		if strings.Contains(c, "[--entrypoint] [cat]") {
+			n++
+		}
+	}
+	if n != 1 {
+		t.Fatalf("the image's accounts read %d times, want 1", n)
+	}
+	if _, err := os.Stat(w.data + "/lea/host/image-ids/" + id); err != nil {
 		t.Fatal(err)
 	}
 }
