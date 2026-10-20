@@ -401,3 +401,80 @@ func TestRacingAsksNeverCloseALoop(t *testing.T) {
 		}
 	}
 }
+
+// TestAskTakesOnlyTheAnswerAddressedToTheAsker: the target's message to someone else that
+// replies to the question (a crafted reply_to) is not the asker's answer, and stays in its
+// addressee's inbox; two askers of one target each get their own answer.
+func TestAskTakesOnlyTheAnswerAddressedToTheAsker(t *testing.T) {
+	e := start(t)
+	register(t, e, "a", "b", "c", "d")
+	cha := askAsync(t, e, "a", map[string]any{"to": "b", "question": "a's question"})
+	qa := waitAsking(t, e, "lea-a/a")
+	chd := askAsync(t, e, "d", map[string]any{"to": "b", "question": "d's question"})
+	qd := waitAsking(t, e, "lea-a/d")
+	// b answers d and c on a's question: neither is a's answer.
+	for _, to := range []string{"d", "c"} {
+		if err := call(t, e.bus, "b", "msg_send", map[string]any{"to": to, "body": "for " + to, "kind": "note", "reply_to": qa.id}, nil); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := call(t, e.bus, "b", "msg_reply", map[string]any{"id": qd.id, "status": "ok", "body": "to d"}, nil); err != nil {
+		t.Fatal(err)
+	}
+	if err := call(t, e.bus, "b", "msg_reply", map[string]any{"id": qa.id, "status": "ok", "body": "to a"}, nil); err != nil {
+		t.Fatal(err)
+	}
+	if a := result(t, cha); !a.Answered || a.Question != qa.id || !strings.Contains(a.Text, "to a") {
+		t.Fatalf("a's answer=%+v", a)
+	}
+	if a := result(t, chd); !a.Answered || a.Question != qd.id || !strings.Contains(a.Text, "to d") {
+		t.Fatalf("d's answer=%+v", a)
+	}
+	for _, to := range []string{"d", "c"} {
+		var in []delivered
+		if err := call(t, e.bus, to, "msg_inbox", nil, &in); err != nil || len(in) != 1 || !strings.Contains(in[0].Text, "for "+to) {
+			t.Fatalf("%s's inbox=%v err=%v", to, in, err)
+		}
+	}
+}
+
+// TestConcurrentAsksOfOneTargetNeverCrossAnswers: many agents ask b at once; b answers each
+// through a reply_to on another asker's question; every asker gets exactly its own answer.
+func TestConcurrentAsksOfOneTargetNeverCrossAnswers(t *testing.T) {
+	e := start(t)
+	askers := []string{"a1", "a2", "a3", "a4"} // askQueue
+	register(t, e, append([]string{"b"}, askers...)...)
+	chs := map[string]<-chan error{}
+	qs := map[string]int64{}
+	for _, n := range askers {
+		chs[n] = askAsync(t, e, n, map[string]any{"to": "b", "question": "q of " + n})
+	}
+	for _, n := range askers {
+		qs[n] = waitAsking(t, e, "lea-a/"+n).id
+	}
+	go1 := make(chan struct{})
+	errs := make(chan error, len(askers))
+	for i, n := range askers {
+		other := askers[(i+1)%len(askers)]
+		go func(n, other string) {
+			<-go1
+			errs <- call(t, e.bus, "b", "msg_send", map[string]any{"to": n, "body": "answer for " + n, "kind": "result", "reply_to": qs[other]}, nil)
+		}(n, other)
+	}
+	close(go1)
+	for range askers {
+		if err := <-errs; err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, n := range askers {
+		if err := call(t, e.bus, "b", "msg_send", map[string]any{"to": n, "body": "own answer for " + n, "kind": "result", "reply_to": qs[n]}, nil); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, n := range askers {
+		if a := result(t, chs[n]); !a.Answered || a.Question != qs[n] || !strings.Contains(a.Text, "own answer for "+n) {
+			t.Fatalf("%s's answer=%+v", n, a)
+		}
+	}
+}

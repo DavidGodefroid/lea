@@ -790,11 +790,12 @@ func (s *Store) Thread(key string, limit int) ([]Message, error) {
 	return out, rows.Err()
 }
 
-// ReplyFrom returns the first message from sent in reply to message id, read or not; ErrNotFound
-// while there is none.
-func (s *Store) ReplyFrom(id int64, from string) (Message, error) {
+// ReplyFrom returns the first message from sent to to in reply to message id, read or not;
+// ErrNotFound while there is none. A reply from sent to anyone else is never to's: reply_to is
+// whatever the sender chose.
+func (s *Store) ReplyFrom(id int64, from, to string) (Message, error) {
 	m, err := scanMsg(s.db.QueryRow(`SELECT `+msgCols+` FROM messages WHERE reply_to=? AND sender=?
-		ORDER BY id LIMIT 1`, id, from))
+		AND recipient=? ORDER BY id LIMIT 1`, id, from, to))
 	if errors.Is(err, sql.ErrNoRows) {
 		return Message{}, ErrNotFound
 	}
