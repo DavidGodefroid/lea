@@ -174,8 +174,14 @@ func (c *Config) resolve(root string) error {
 		return fmt.Errorf("LEA_AUTOUPDATE must be 1 (check for a new release every day) or 0, not '%s'", au)
 	}
 	c.final["LEA_AUTOUPDATE"] = au
+	if sk := c.Get("LEA_AUTOUPDATE_SKIP"); sk != "" && !releaseVersion.MatchString(sk) {
+		return fmt.Errorf("LEA_AUTOUPDATE_SKIP must be empty or a release version (vX.Y.Z, set by lea rollback), not '%s'", sk)
+	}
 	return nil
 }
+
+// releaseVersion is a release's version, vMAJOR.MINOR.PATCH (libexec/lib/host.sh lea__semver).
+var releaseVersion = regexp.MustCompile(`^v[0-9]+\.[0-9]+\.[0-9]+$`)
 
 // maxGitEndpoints caps LEA_GIT_SSH: one proxy forwarder (port 2222 + index) per endpoint.
 const maxGitEndpoints = 16

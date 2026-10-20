@@ -53,6 +53,10 @@ func (r *recAgents) SetLabel(ctx context.Context, k, label string) error {
 	r.calls = append(r.calls, "label "+k+" "+label)
 	return nil
 }
+func (r *recAgents) SetPaused(ctx context.Context, k string, paused bool) error {
+	r.calls = append(r.calls, fmt.Sprintf("paused %s %v", k, paused))
+	return nil
+}
 func (r *recAgents) OpenShell(ctx context.Context, c string) (agents.Row, error) {
 	r.calls = append(r.calls, "shell "+c)
 	return agents.Row{Key: agents.ShellKey(c, "sh-1"), Name: "sh-1", Kind: agents.KindShell, State: "running"}, nil
@@ -107,12 +111,15 @@ func TestClientSpeaksTheDaemonAPI(t *testing.T) {
 	if err := c.SetLabel(ctx, "lea-a/claude-1", "auth work"); err != nil {
 		t.Fatal(err)
 	}
+	if err := c.SetPaused(ctx, "lea-a/claude-1", true); err != nil {
+		t.Fatal(err)
+	}
 	sh, err := c.OpenShell(ctx, "lea-a")
 	if err != nil || sh.Key != "shell:lea-a/sh-1" || sh.Kind != KindShell {
 		t.Fatalf("shell=%+v err=%v", sh, err)
 	}
 	if !reflect.DeepEqual(ra.calls, []string{"focus lea-a/claude-1", "stop lea-a/claude-1", "remove-ended lea-a/claude-2", "detach lea-a", "popup lea-a/claude-1",
-		"label lea-a/claude-1 auth work", "shell lea-a"}) {
+		"label lea-a/claude-1 auth work", "paused lea-a/claude-1 true", "shell lea-a"}) {
 		t.Fatalf("calls=%q", ra.calls)
 	}
 }

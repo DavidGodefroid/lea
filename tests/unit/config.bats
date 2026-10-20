@@ -217,6 +217,18 @@ setup() { setup_fakes; load_lea; U="$HOME/.config/lea/lea.conf"; }
   [[ "$output" == *"LEA_AUTOUPDATE must be 1 (check for a new release every day) or 0, not 'yes'"* ]]
 }
 
+@test "LEA_AUTOUPDATE_SKIP is empty or a release version" {
+  lea_load_config
+  [ -z "${LEA_AUTOUPDATE_SKIP:-}" ]
+  mkdir -p "${U%/*}"; printf "LEA_AUTOUPDATE_SKIP='v1.2.3'\n" >"$U"
+  lea_load_config
+  [ "$LEA_AUTOUPDATE_SKIP" = v1.2.3 ]
+  printf 'LEA_AUTOUPDATE_SKIP=latest\n' >"$U"
+  run lea_load_config
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"LEA_AUTOUPDATE_SKIP must be empty or a release version (vX.Y.Z, set by lea rollback), not 'latest'"* ]]
+}
+
 @test "LEA_EGRESS_ALLOW: off by default, normalized to lower-case comma-separated names" {
   lea_load_config
   [ -z "$LEA_EGRESS_ALLOW" ]

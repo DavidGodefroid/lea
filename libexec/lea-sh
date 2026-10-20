@@ -1,12 +1,12 @@
 #!/bin/sh
 # The parts of lea still written in shell (libexec/lib/*.sh), run by the Go launcher (build/lea):
-# the start and exit scans, init, locksql, update, doctor and kube refresh (spec 3.3: "called by the binary
+# the start and exit scans, init, locksql, update, rollback, doctor and kube refresh (spec 3.3: "called by the binary
 # until ported"). One command per call, from the fixed list below; arguments are passed as they
 # are, and a scan DIR must be absolute. Anything else exits 2 without running a lea function.
 set -eu
 LEA_ROOT=$(cd "$(dirname "$0")/.." && pwd -P)
 export LEA_ROOT
-usage() { echo "usage: lea-sh scan-begin DIR | scan-finish DIR | init [ARGS] | locksql [ARGS] | update [--background] | refresh-images | doctor | kube-refresh" >&2; exit 2; }
+usage() { echo "usage: lea-sh scan-begin DIR | scan-finish DIR | init [ARGS] | locksql [ARGS] | update [--background] | rollback | refresh-images | doctor | kube-refresh" >&2; exit 2; }
 [ $# -gt 0 ] || usage
 cmd=$1; shift
 case $cmd in
@@ -16,7 +16,7 @@ case $cmd in
     case $1 in /*) ;; *) usage ;; esac ;;
   init|locksql) ;;
   update) [ $# -eq 0 ] || { [ $# -eq 1 ] && [ "$1" = --background ]; } || usage ;;
-  refresh-images|doctor|kube-refresh) [ $# -eq 0 ] || usage ;;
+  rollback|refresh-images|doctor|kube-refresh) [ $# -eq 0 ] || usage ;;
   *) usage ;;
 esac
 for lib in "$LEA_ROOT"/libexec/lib/*.sh; do
@@ -37,6 +37,7 @@ case $cmd in
   init) lea_init "$@" ;;
   locksql) lea_locksql "$@" ;;
   update) lea_update "$@" ;;
+  rollback) lea_rollback ;;
   refresh-images) lea_refresh_images ;;
   doctor) lea_doctor ;;
   kube-refresh) lea_kube_refresh ;;

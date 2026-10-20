@@ -17,5 +17,6 @@ const Usage = `Usage:
   lea stop [--all] [--forget]
                               stop lea; its agents resume at the next lea (--forget drops them)
   lea update
+  lea rollback                back to the previous version; the background update skips this one
   lea doctor
 `

@@ -49,6 +49,10 @@ lea_load_config() {
   case $LEA_LOCKSQL in 0|1) ;; *) lea_die "LEA_LOCKSQL must be 1 (wire lea for a locksql console) or 0, not '$LEA_LOCKSQL'" ;; esac
   LEA_AUTOUPDATE=${LEA_AUTOUPDATE:-1}
   case $LEA_AUTOUPDATE in 0|1) ;; *) lea_die "LEA_AUTOUPDATE must be 1 (check for a new release every day) or 0, not '$LEA_AUTOUPDATE'" ;; esac
+  LEA_AUTOUPDATE_SKIP=${LEA_AUTOUPDATE_SKIP:-}
+  if [ -n "$LEA_AUTOUPDATE_SKIP" ] && ! lea__semver "$LEA_AUTOUPDATE_SKIP" >/dev/null; then
+    lea_die "LEA_AUTOUPDATE_SKIP must be empty or a release version (vX.Y.Z, set by lea rollback), not '$LEA_AUTOUPDATE_SKIP'"
+  fi
   unset LEA_GITLAB_SSH LEA_GITLAB_KNOWN_HOSTS LEA_REGISTRY
   export LEA_PREFIX LEA_IMAGE LEA_PROXY_IMAGE LEA_GIT_SSH LEA_GIT_KNOWN_HOSTS LEA_LOCKSQL LEA_LOCKSQL_IMAGE LEA_LOCKSQL_REF LEA_LOCKSQL_VAULT_ADDR \
     LEA_OTEL_UPSTREAM LEA_NESTED_NETWORKS LEA_K8S_NAMESPACE LEA_INTERNAL_HOSTS LEA_EGRESS_ALLOW LEA_PROJECTS_DIR \
