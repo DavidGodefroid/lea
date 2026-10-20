@@ -22,6 +22,8 @@ type Message struct {
 	Body   string `json:"body"`
 	At     int64  `json:"at"`
 	ReadAt int64  `json:"read_at"`
+	// ReplyTo is the message this one answers, 0 when none.
+	ReplyTo int64 `json:"reply_to"`
 }
 
 // ThreadAPI is what the thread popup asks of the daemon.
@@ -266,8 +268,12 @@ func (v ThreadView) rows() int {
 func (v ThreadView) View() string {
 	w, _ := v.size()
 	c := charsetFor(v.ascii)
+	what := "messages" // every message the agent sent or received
+	if v.oneShot {
+		what = "message to" // opened by m, to write one
+	}
 	title := lipgloss.NewStyle().Foreground(AgentColor(v.key)).Bold(true).
-		Render(fit("thread "+c.dot+" "+v.title(), w, c))
+		Render(fit(what+" "+c.dot+" "+v.title(), w, c))
 	lines := v.lines(w, c)
 	rows := v.rows()
 	off := min(v.offset, max(0, len(lines)-rows))
@@ -322,7 +328,7 @@ func (v ThreadView) render(w int, c charset) []string {
 			out = append(out, "")
 		}
 		head := fmt.Sprintf("#%d %s %s %s %s %s %s %s", m.ID, nameOf(m.From), c.mark, nameOf(m.To),
-			c.dot, m.Kind, c.dot, age(v.now().Unix()-m.At))
+			c.dot, kindOf(m), c.dot, age(v.now().Unix()-m.At))
 		color := AgentColor(m.From)
 		if m.From == "user" {
 			color = theme.Accent
@@ -333,6 +339,15 @@ func (v ThreadView) render(w int, c charset) []string {
 		}
 	}
 	return out
+}
+
+// kindOf is how a message's kind is shown: an answer names the message it answers ("result to
+// #12"), so an ask's question and its answer read as a pair.
+func kindOf(m Message) string {
+	if m.ReplyTo > 0 {
+		return fmt.Sprintf("%s to #%d", m.Kind, m.ReplyTo)
+	}
+	return m.Kind
 }
 
 // wrap cleans each line of s and cuts it into pieces of at most w cells.
@@ -389,5 +404,5 @@ func (v ThreadView) footer(c charset) []string {
 		}
 		out = append(out, prefix+tail(l, w-2))
 	}
-	return append(out, muted.Render(fit("enter send "+c.dot+" ctrl+j new line "+c.dot+" esc cancel", w, c)))
+	return append(out, muted.Render(fit("enter send to its inbox "+c.dot+" ctrl+j new line "+c.dot+" esc cancel", w, c)))
 }
