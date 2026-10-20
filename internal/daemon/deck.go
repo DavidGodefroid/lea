@@ -24,7 +24,11 @@ type Agents interface {
 	RemoveEnded(ctx context.Context, key string) error
 	Detach(ctx context.Context, container string) error
 	Watch(ctx context.Context, container string, since int64, timeout time.Duration) (agents.Snapshot, error)
-	ForgetEnded(ctx context.Context, container string) error
+	// MarkStopped records that the container is about to stop (lea stop): its agents become
+	// stopped, or are forgotten with forget. ResumeStopped starts them again in the container the
+	// launcher has just started.
+	MarkStopped(ctx context.Context, container string, forget bool) error
+	ResumeStopped(ctx context.Context, container string) error
 	Attached(ctx context.Context, container string) (bool, error)
 	Popup(ctx context.Context, key string, compose bool) error
 	// SetLabel renames an agent for display (the deck's e); OpenShell opens a shell in the
@@ -40,8 +44,9 @@ type Agents interface {
 // all an agent (its MCP tools, lea inside the container) can reach.
 var deckMethods = map[string]bool{
 	"deck_ensure": true, "agent_new": true, "agent_focus": true,
-	"agent_stop": true, "deck_detach": true, "agents_watch": true, "agents_forget_ended": true,
-	"deck_attached": true, "deck_popup": true, "agent_label": true, "shell_open": true,
+	"agent_stop": true, "deck_detach": true, "agents_watch": true, "agents_mark_stopped": true,
+	"agents_resume_stopped": true,
+	"deck_attached":         true, "deck_popup": true, "agent_label": true, "shell_open": true,
 	"shell_split": true,
 }
 
@@ -132,12 +137,23 @@ func (d *Daemon) dispatchDeck(ctx context.Context, o Origin, req wire.Request) (
 		d.cancelDone(p.Key)
 		d.pruneForgotten()
 		return ok, err
-	case "agents_forget_ended":
+	case "agents_mark_stopped":
+		var p struct {
+			Container string
+			Forget    bool
+		}
+		if err := json.Unmarshal(req.Params, &p); err != nil {
+			return nil, err
+		}
+		err := a.MarkStopped(ctx, p.Container, p.Forget)
+		d.pruneForgotten()
+		return ok, err
+	case "agents_resume_stopped":
 		var p struct{ Container string }
 		if err := json.Unmarshal(req.Params, &p); err != nil {
 			return nil, err
 		}
-		err := a.ForgetEnded(ctx, p.Container)
+		err := a.ResumeStopped(ctx, p.Container)
 		d.pruneForgotten()
 		return ok, err
 	case "deck_attached":

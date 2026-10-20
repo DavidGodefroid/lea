@@ -14,7 +14,8 @@ const Usage = `Usage:
   lea kube refresh            mint a read-only Kubernetes token (8 h)
   lea board --md              the board: every agent's task, as markdown
   lea agents                  list agents (lea msg <agent> <text>, lea inbox, lea approvals, lea requests)
-  lea stop [--all]
+  lea stop [--all] [--forget]
+                              stop lea; its agents resume at the next lea (--forget drops them)
   lea update
   lea doctor
 `

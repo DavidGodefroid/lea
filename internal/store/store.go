@@ -5,6 +5,7 @@ package store
 
 import (
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -86,6 +87,8 @@ func (s *Store) Close() error { return s.db.Close() }
 // roles are "dev"); Parent is the key of the lead that started it ("" when the user did);
 // Repo and Branch are what it was started on; TaskID is its row on the board (0: none).
 // Label is the display name the user gave it ("" when none): Name, its identity, never changes.
+// Args are the Claude arguments it was started with and Prompt its first prompt ("" when none):
+// what a new container starts it again with (SetLaunch).
 type Agent struct {
 	Key, Container, Name, SessionID, State string
 	Updated                                int64
@@ -94,6 +97,8 @@ type Agent struct {
 	Role, Parent, Repo, Branch             string
 	TaskID                                 int64
 	Label                                  string
+	Args                                   []string
+	Prompt                                 string
 }
 
 // agentColumns are the agents columns added after phase 0; migrate adds the missing ones to a
@@ -111,6 +116,8 @@ var agentColumns = [][2]string{
 	{"branch", "TEXT NOT NULL DEFAULT ''"},
 	{"task_id", "INTEGER NOT NULL DEFAULT 0"},
 	{"label", "TEXT NOT NULL DEFAULT ''"},
+	{"args", "TEXT NOT NULL DEFAULT ''"},
+	{"prompt", "TEXT NOT NULL DEFAULT ''"},
 }
 
 // approvalColumns are the approvals columns added after phase 0.
@@ -168,13 +175,39 @@ func (s *Store) SetState(key, state, sessionID string, now int64) error {
 	return err
 }
 
-const agentCols = `key, container, name, session_id, state, updated, profile, workdir, created, role, parent, repo, branch, task_id, label`
+const agentCols = `key, container, name, session_id, state, updated, profile, workdir, created, role, parent, repo, branch, task_id, label, args, prompt`
 
 func scanAgent(sc interface{ Scan(...any) error }) (Agent, error) {
 	var a Agent
+	var args string
 	err := sc.Scan(&a.Key, &a.Container, &a.Name, &a.SessionID, &a.State, &a.Updated, &a.Profile, &a.Workdir, &a.Created,
-		&a.Role, &a.Parent, &a.Repo, &a.Branch, &a.TaskID, &a.Label)
+		&a.Role, &a.Parent, &a.Repo, &a.Branch, &a.TaskID, &a.Label, &args, &a.Prompt)
+	if err == nil && args != "" {
+		err = json.Unmarshal([]byte(args), &a.Args)
+	}
 	return a, err
+}
+
+// SetLaunch records what an agent lea spawns is started with: its Claude arguments and its
+// first prompt ("" when none).
+func (s *Store) SetLaunch(key string, args []string, prompt string) error {
+	b := []byte{}
+	if len(args) > 0 {
+		var err error
+		if b, err = json.Marshal(args); err != nil {
+			return err
+		}
+	}
+	res, err := s.db.Exec(`UPDATE agents SET args=?, prompt=? WHERE key=? AND profile<>''`, string(b), prompt, key)
+	if err != nil {
+		return err
+	}
+	if n, err := res.RowsAffected(); err != nil {
+		return err
+	} else if n == 0 {
+		return ErrNotFound
+	}
+	return nil
 }
 
 func (s *Store) queryAgents(q string, args ...any) ([]Agent, error) {
@@ -283,7 +316,7 @@ func (s *Store) Register(n NewAgent, c Caps, now int64) (Agent, error) {
 			return Agent{}, err
 		}
 		_, err = tx.Exec(`UPDATE agents SET profile=?, workdir=?, created=?, updated=?, state='unknown', session_id='',
-			ctx_pct=-1, cost_usd=-1, role=?, parent=?, repo=?, branch=?, task_id=0, label='' WHERE key=?`,
+			ctx_pct=-1, cost_usd=-1, role=?, parent=?, repo=?, branch=?, task_id=0, label='', args='', prompt='' WHERE key=?`,
 			n.Profile, n.Workdir, now, now, n.Role, n.Parent, n.Repo, n.Branch, key)
 	} else {
 		_, err = tx.Exec(`INSERT INTO agents(key, container, name, profile, workdir, created, updated, role, parent, repo, branch)

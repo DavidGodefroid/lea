@@ -429,6 +429,14 @@ func TestAMessageForTheUserRanksAfterDoneUnseen(t *testing.T) {
 	}
 }
 
+// An agent whose container lea stop ended says so: the next lea resumes it.
+func TestAStoppedAgentIsLabelledStopped(t *testing.T) {
+	m := loaded(t, &fakeAPI{}, "", ag("a", "stopped", 1))
+	if got := m.label(m.agents[0]); got != "stopped" {
+		t.Fatalf("label %q", got)
+	}
+}
+
 func TestSpaceJumpsToTheNextAgentThatNeedsYou(t *testing.T) {
 	msg := ag("m", "idle", 1)
 	msg.ForUser = 2

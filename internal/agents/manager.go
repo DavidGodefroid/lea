@@ -886,7 +886,8 @@ func (m *Manager) reconcile(ctx context.Context, container string, s Session) er
 			}
 			id := p.ID
 			m.later(redrawDelay, func() { m.redrawAfterReattach(container, id) })
-		case !isLive[a.Name] && (!has || p.Dead) && a.State != "done":
+		case !isLive[a.Name] && (!has || p.Dead) && a.State != "done" && a.State != stateStopped:
+			// A stopped agent is not done: its container is gone, and the next one starts it again.
 			if err := m.cfg.Store.SetState(a.Key, "done", "", m.cfg.Now()); err != nil {
 				return err
 			}
@@ -1622,13 +1623,19 @@ func (m *Manager) New(ctx context.Context, r NewRequest) (Row, error) {
 		_, err = m.cfg.Store.Send(store.Message{From: r.BriefFrom, To: a.Key, Kind: "request", Body: r.Brief,
 			ReplyTo: r.BriefReplyTo, Hops: briefHops, At: m.cfg.Now()})
 	}
+	prompt := ""
 	if err == nil && (r.Brief != "" || a.Branch != "" || repo != "") {
 		wt := ""
 		if a.Branch != "" {
 			wt = worktreePath(projects, r.Workdir, a)
 		}
-		args = append(append([]string{}, r.Args...), firstPrompt(a, repo, wt, r.Brief != ""))
+		prompt = firstPrompt(a, repo, wt, r.Brief != "")
+		args = append(append([]string{}, r.Args...), prompt)
 		err = checkArgs(args)
+	}
+	if err == nil {
+		// What a new container starts the agent again with (ResumeStopped).
+		err = m.cfg.Store.SetLaunch(a.Key, r.Args, prompt)
 	}
 	id := ""
 	if err == nil {
@@ -1849,12 +1856,45 @@ func (m *Manager) stop(ctx context.Context, key string, endedOnly bool) error {
 	return nil
 }
 
-// ForgetEnded forgets the container's spawned agents that do not run (the launcher calls it
-// when it has just started the container: a new container runs none of the previous one's
-// agents, whose rows would otherwise stay as "done" for ever). The panes left of them, when the
-// session survived, are removed by the reconcile that follows. A container whose live agents
-// cannot be listed keeps every row.
-func (m *Manager) ForgetEnded(ctx context.Context, container string) error {
+// stateStopped is the state of an agent whose container lea stop ended: the next container of
+// its projects directory starts it again (ResumeStopped).
+const stateStopped = "stopped"
+
+// MarkStopped records that the container is about to stop (lea stop): its spawned agents that
+// have not ended become stopped, so the next container starts them again; with forget, they are
+// forgotten for good instead (lea stop --forget). Agents a hook registered only are left alone.
+func (m *Manager) MarkStopped(ctx context.Context, container string, forget bool) error {
+	if !containerRe.MatchString(container) {
+		return fmt.Errorf("invalid container name %q", container)
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	as, err := m.cfg.Store.SpawnedAgents(container)
+	if err != nil {
+		return err
+	}
+	for _, a := range as {
+		switch {
+		case forget:
+			err = m.cfg.Store.ForgetAgent(a.Key)
+		case a.State != "done" && a.State != stateStopped:
+			err = m.cfg.Store.SetState(a.Key, stateStopped, "", m.cfg.Now())
+		}
+		if err != nil {
+			return err
+		}
+	}
+	m.feed.bump()
+	return nil
+}
+
+// ResumeStopped starts again, in the container the launcher has just started, the spawned agents
+// of the previous one: each in its parking window, under its name, role and workdir, with `claude
+// --resume <session>` and its first arguments when Claude reported its session, else as it was
+// first started (its first prompt included). An agent that had ended (done) is forgotten, as a
+// new container runs none of it; a live one is left alone. The panes left of them, when the
+// session survived, are replaced. A container whose live agents cannot be listed keeps every row.
+func (m *Manager) ResumeStopped(ctx context.Context, container string) error {
 	if !containerRe.MatchString(container) {
 		return fmt.Errorf("invalid container name %q", container)
 	}
@@ -1864,28 +1904,77 @@ func (m *Manager) ForgetEnded(ctx context.Context, container string) error {
 	if err != nil {
 		return err
 	}
-	isLive := map[string]bool{}
-	for _, n := range live {
-		isLive[n] = true
-	}
 	as, err := m.cfg.Store.SpawnedAgents(container)
 	if err != nil {
 		return err
 	}
+	var resume []store.Agent
 	for _, a := range as {
-		if !isLive[a.Name] {
+		switch {
+		case slices.Contains(live, a.Name):
+		case a.State == "done":
 			if err := m.cfg.Store.ForgetAgent(a.Key); err != nil {
 				return err
 			}
+		default:
+			resume = append(resume, a)
 		}
 	}
-	if s, ok := m.conns[container]; ok {
-		if err := m.reconcile(ctx, container, s); err != nil {
+	defer m.feed.bump()
+	if len(resume) == 0 {
+		if s, ok := m.conns[container]; ok {
+			return m.reconcile(ctx, container, s)
+		}
+		return nil
+	}
+	s, err := m.session(ctx, container)
+	if err != nil {
+		return err
+	}
+	var errs []error
+	for _, a := range resume {
+		if err := m.restart(ctx, s, container, a); err != nil {
+			// Its row stays, shown as done: x removes it.
+			errs = append(errs, fmt.Errorf("resume %s: %w", a.Name, err))
+			if serr := m.cfg.Store.SetState(a.Key, "done", "", m.cfg.Now()); serr != nil {
+				errs = append(errs, serr)
+			}
+		}
+	}
+	if err := m.reconcile(ctx, container, s); err != nil {
+		errs = append(errs, err)
+	}
+	return errors.Join(errs...)
+}
+
+// restart starts a stopped agent's pane again (ResumeStopped), parked. Callers hold m.mu.
+func (m *Manager) restart(ctx context.Context, s Session, container string, a store.Agent) error {
+	args := append([]string{}, a.Args...)
+	if a.SessionID != "" {
+		args = append([]string{"--resume", a.SessionID}, args...)
+	} else if a.Prompt != "" {
+		args = append(args, a.Prompt)
+	}
+	if err := checkArgs(args); err != nil {
+		return err
+	}
+	if err := checkWorkdir(a.Workdir); err != nil {
+		return err
+	}
+	ps, err := listPanes(ctx, s, container)
+	if err != nil {
+		return err
+	}
+	if old, ok := byAgent(ps, a.Name); ok {
+		if err := m.removePane(ctx, s, ps, old); err != nil {
 			return err
 		}
 	}
-	m.feed.bump()
-	return nil
+	if err := m.cfg.Store.SetState(a.Key, "unknown", "", m.cfg.Now()); err != nil {
+		return err
+	}
+	_, err = m.newPane(ctx, s, container, a, args, false)
+	return err
 }
 
 // userClients lists the user's terminals attached to the session (control clients, the

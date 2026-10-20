@@ -1,5 +1,6 @@
 status 0
 -- calls
+core [deck-stop] [--container] [lea-$ID]
 docker [inspect] [-f] [{{.State.Running}}] [lea-$ID]
 docker [stop] [lea-$ID]
 docker [network] [disconnect] [-f] [lea-internal-$ID] [lea-proxy]
