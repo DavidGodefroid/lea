@@ -251,8 +251,9 @@ func (d *Daemon) limitWait(ctx context.Context, o Origin, me string, raw json.Ra
 		d.wake(limitKey(me)) // the older job sees it is superseded
 	}
 	deadline := time.Now().Add(time.Duration(p.TimeoutS) * time.Second)
-	// A new job finding no limit yet waits a while for turnFailed (which wakes it) before it is
-	// done: answered done too early, it would leave a limit recorded later without a waiter.
+	// A new job finding no limit to wait for (none, or a stale -1 of an earlier limit) waits a
+	// while for turnFailed (which wakes it) before it is done: answered done too early, it would
+	// leave a limit recorded later without a waiter.
 	var settle time.Time
 	if p.First {
 		settle = time.Now().Add(limitSettle)
@@ -268,10 +269,10 @@ func (d *Daemon) limitWait(ctx context.Context, o Origin, me string, raw json.Ra
 		if cur != p.Job {
 			return map[string]any{"superseded": true}, nil
 		}
-		res, wait, none, err := d.limitDue(me)
+		res, wait, idle, err := d.limitDue(me)
 		switch {
-		case !none:
-			settle = time.Time{} // a limit was seen: from now on, no limit means it is over
+		case !idle:
+			settle = time.Time{} // a resume time was seen: from now on, none means it is over
 		case time.Now().Before(settle):
 			res, wait = nil, time.Until(settle)
 		}
@@ -295,16 +296,16 @@ func (d *Daemon) limitWait(ctx context.Context, o Origin, me string, raw json.Ra
 }
 
 // limitDue checks an agent's limit: resume (claimed: the time is cleared and the try counted)
-// when it is due, done when there is no resume to wait for (none: no limit is recorded at all),
+// when it is due, done when there is no resume to wait for (idle: no resume time is recorded),
 // or how long to wait.
-func (d *Daemon) limitDue(me string) (res map[string]any, wait time.Duration, none bool, err error) {
+func (d *Daemon) limitDue(me string) (res map[string]any, wait time.Duration, idle bool, err error) {
 	defer d.lockKey(limitKey(me))()
 	a, err := d.st.AgentByKey(me)
 	if err != nil {
 		return nil, 0, false, err
 	}
 	if a.LimitUntil <= 0 {
-		return map[string]any{"done": true}, 0, a.LimitUntil == 0, nil
+		return map[string]any{"done": true}, 0, true, nil
 	}
 	now := d.now()
 	if a.Paused {

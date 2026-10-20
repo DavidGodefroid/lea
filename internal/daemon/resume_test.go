@@ -10,6 +10,14 @@ import (
 
 const job1, job2 = "0123456789abcdef", "fedcba9876543210"
 
+// quickSettle shortens the settle window of a new job.
+func quickSettle(t *testing.T) {
+	t.Helper()
+	s := limitSettle
+	limitSettle = 100 * time.Millisecond
+	t.Cleanup(func() { limitSettle = s })
+}
+
 // noJitter makes resume times exact for the test.
 func noJitter(t *testing.T) {
 	t.Helper()
@@ -118,6 +126,7 @@ func TestLimitWaitWakesAtTheResumeTime(t *testing.T) {
 // Without a known reset, lea backs off: 5 minutes, doubling per try, at most an hour; past
 // maxResumeTries it gives up and the agent waits for the user.
 func TestUsageLimitBacksOffThenGivesUp(t *testing.T) {
+	quickSettle(t)
 	noJitter(t)
 	e := start(t)
 	call(t, e.bus, "dev", "agents_list", nil, nil)
@@ -162,6 +171,7 @@ func TestUsageLimitResetIsBounded(t *testing.T) {
 
 // Auto-resume off: the agent shows limited and waits for the user; its job ends at once.
 func TestUsageLimitWithAutoResumeOff(t *testing.T) {
+	quickSettle(t)
 	e := start(t)
 	e.d.SetResume(false, 60)
 	limitHit(t, e, "dev", "rate_limit")
@@ -345,5 +355,30 @@ func TestAJobWithoutALimitEndsAfterTheSettleWindow(t *testing.T) {
 	start = time.Now()
 	if r := limitWait(t, e, "dev", job1, false, 4); !r.Done || time.Since(start) > 200*time.Millisecond {
 		t.Fatalf("answer %+v after %v", r, time.Since(start))
+	}
+}
+
+// A stale -1 (an earlier limit lea gave up on, or auto-resume off) does not end a new job: the
+// new limit, recorded after the job's first call, is still resumed.
+func TestAStaleGiveUpDoesNotLoseANewLimit(t *testing.T) {
+	noJitter(t)
+	e := start(t)
+	if err := e.d.st.SetLimit("lea-a/dev", -1, 0); err != nil {
+		call(t, e.bus, "dev", "agents_list", nil, nil)
+		e.d.st.SetLimit("lea-a/dev", -1, 0)
+	}
+	done := make(chan waitAnswer, 1)
+	go func() { done <- limitWait(t, e, "dev", job1, true, 4) }()
+	time.Sleep(300 * time.Millisecond)
+	limitHit(t, e, "dev", "rate_limit")
+	*e.clock += 10_000
+	e.d.wake(limitKey("lea-a/dev"))
+	select {
+	case r := <-done:
+		if !r.Resume {
+			t.Fatalf("a new limit after a stale -1 was lost: %+v", r)
+		}
+	case <-time.After(6 * time.Second):
+		t.Fatal("the job never answered")
 	}
 }
