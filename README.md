@@ -170,8 +170,9 @@ shell shows with its agent and steps aside while another agent is shown).
   task. The pane that has the keyboard is the bright one: the deck's frame turns blue when it
   has it; otherwise the terminal on the right shows a blue `▶ <agent> · typing here` bar on its
   top border (grey, with the keys that give it the keyboard, while the deck has it).
-- **Scrolling.** The wheel scrolls an agent's history; the bar then reads `history: type or q to
-  go back`. Any typed key (`q`, `Escape`, `Enter`, a letter…) goes back to the prompt; that key is
+- **Scrolling.** The wheel scrolls an agent's history; the bar then reads `history 251/256: type
+  or q to go back`, the line at the top of the view out of the history's lines, counting down as
+  you scroll up. Any typed key (`q`, `Escape`, `Enter`, a letter…) goes back to the prompt; that key is
   not typed, the next ones are.
 - **Sounds.** lea plays a sound when an agent starts waiting for you, and another when a turn
   ends, while a deck shows the agent (`LEA_SOUND=0` turns them off; `LEA_SOUND_ATTENTION` and
