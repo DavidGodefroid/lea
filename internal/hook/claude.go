@@ -32,6 +32,9 @@ var subagentID = regexp.MustCompile(`^[A-Za-z0-9_-]{1,64}$`)
 // overloaded...), a plain identifier.
 var errorClass = regexp.MustCompile(`^[a-z_]{1,40}$`)
 
+// sessionSources are SessionStart's sources as lea forwards them.
+var sessionSources = map[string]bool{"startup": true, "resume": true, "clear": true, "compact": true}
+
 type caller struct {
 	sock, agent string
 }
@@ -76,6 +79,7 @@ func Claude(ctx context.Context, event string, stdin io.Reader, stdout io.Writer
 		Prompt         string          `json:"prompt"`
 		AgentID        string          `json:"agent_id"`
 		Error          string          `json:"error"`
+		Source         string          `json:"source"`
 	}
 	_ = json.Unmarshal(in, &p)
 	// Forward only what phase 0 needs: never tool_input or tool_response (file contents,
@@ -100,6 +104,11 @@ func Claude(ctx context.Context, event string, stdin io.Reader, stdout io.Writer
 	// last_assistant_message, which hold the provider's and the model's text.
 	if event == "StopFailure" && errorClass.MatchString(p.Error) {
 		payload["error"] = p.Error
+	}
+	// A session start is known by its source, one of Claude Code's four: a resumed session keeps
+	// a usage limit a previous container recorded (daemon.limitProgress).
+	if event == "SessionStart" && sessionSources[p.Source] {
+		payload["source"] = p.Source
 	}
 	// A subagent is known by its id only: never its prompt, type or transcript.
 	if (event == "SubagentStart" || event == "SubagentStop") && subagentID.MatchString(p.AgentID) {

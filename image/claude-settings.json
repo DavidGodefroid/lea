@@ -27,6 +27,12 @@
           {
             "type": "command",
             "command": "[ -x /usr/local/bin/lea ] && exec /usr/local/bin/lea hook claude SessionStart; exit 0"
+          },
+          {
+            "type": "command",
+            "command": "[ -x /usr/local/bin/lea ] && exec /usr/local/bin/lea hook claude LimitResume; exit 0",
+            "asyncRewake": true,
+            "timeout": 691200
           }
         ]
       }

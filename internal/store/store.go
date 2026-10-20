@@ -192,14 +192,15 @@ func (s *Store) UpsertAgent(container, name string, now int64) (string, error) {
 }
 
 // SetState records an agent's state. A process that ended (done), stopped with its container
-// (stopped) or starts again (unknown) is no longer paused, nor waiting on a usage limit: the
-// hook that would have resumed it ended with it.
+// (stopped) or starts again (unknown) is no longer paused. Only an ended one stops waiting on a
+// usage limit: a stopped or restarted agent keeps its resume time and tries, which its resumed
+// session takes over (daemon.limitWait, restart).
 func (s *Store) SetState(key, state, sessionID string, now int64) error {
 	_, err := s.db.Exec(`UPDATE agents SET state=?,
 		session_id=CASE WHEN ?='' THEN session_id ELSE ? END, updated=?,
 		paused=CASE WHEN ? IN ('done','stopped','unknown') THEN 0 ELSE paused END,
-		limit_until=CASE WHEN ? IN ('done','stopped','unknown') THEN 0 ELSE limit_until END,
-		limit_tries=CASE WHEN ? IN ('done','stopped','unknown') THEN 0 ELSE limit_tries END WHERE key=?`,
+		limit_until=CASE WHEN ?='done' THEN 0 ELSE limit_until END,
+		limit_tries=CASE WHEN ?='done' THEN 0 ELSE limit_tries END WHERE key=?`,
 		state, sessionID, sessionID, now, state, state, state, key)
 	return err
 }

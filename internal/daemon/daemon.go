@@ -804,6 +804,13 @@ func (d *Daemon) dispatchHooks(ctx context.Context, o Origin, me string, req wir
 			return nil, err
 		}
 		d.trackSubagents(me, p.Event, p.Payload)
+		if p.Event == "SessionEnd" {
+			// An agent lea stop marked stopped ends with its container: it is not done, and the
+			// next container resumes it, a pending usage-limit resume included (#83).
+			if a, err := d.st.AgentByKey(me); err == nil && a.State == "stopped" {
+				return struct{}{}, nil
+			}
+		}
 		if p.Event == "SubagentStart" || p.Event == "SubagentStop" {
 			// Display only: a subagent neither starts nor ends the agent's turn, nor its done sound.
 			return struct{}{}, nil
@@ -844,7 +851,7 @@ func (d *Daemon) dispatchHooks(ctx context.Context, o Origin, me string, req wir
 		if p.Event == "StopFailure" {
 			d.turnFailed(me, p.Payload)
 		} else {
-			d.limitProgress(me, p.Event)
+			d.limitProgress(me, p.Event, p.Payload)
 		}
 		if !stopped && d.stoppedNow(me) {
 			// The turn is over: a rewake watch looks again at the messages that came during it.
