@@ -202,6 +202,9 @@ func (c *Config) resolve(root string) error {
 		}
 	}
 	c.final["LEA_GIT_KNOWN_HOSTS"] = kh
+	if err := CheckOtelUpstream(c.Get("LEA_OTEL_UPSTREAM")); err != nil {
+		return err
+	}
 	ls := nonEmpty(c.Get("LEA_LOCKSQL"), "1")
 	if ls != "0" && ls != "1" {
 		return fmt.Errorf("LEA_LOCKSQL must be 1 (wire lea for a locksql console) or 0, not '%s'", ls)
@@ -245,6 +248,22 @@ func gitEndpoints(v string) ([]string, error) {
 		seen[h] = true
 	}
 	return eps, nil
+}
+
+// CheckOtelUpstream validates LEA_OTEL_UPSTREAM as lea__check_otel_upstream does: empty, or
+// host:port with a plain host name and a port from 1 to 65535. The proxy hands it to socat as
+// TCP:<value>, where a comma or a second colon would add address options.
+func CheckOtelUpstream(v string) error {
+	if v == "" {
+		return nil
+	}
+	h, port, _ := strings.Cut(v, ":")
+	n, ok := plainNumber(port, 5)
+	if h == "" || strings.Trim(h, "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789.-") != "" ||
+		!ok || n > 65535 {
+		return fmt.Errorf("LEA_OTEL_UPSTREAM must be host:port with a plain host name, not '%s'", v)
+	}
+	return nil
 }
 
 // maxEgressDomains caps LEA_EGRESS_ALLOW.

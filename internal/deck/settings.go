@@ -130,10 +130,16 @@ func (m Model) saveSetting(s settings.Setting, value string) (tea.Model, tea.Cmd
 		return m, nil
 	}
 	m.setEditing, m.setDraft = false, nil
+	s.Value = value
 	if list, err := m.settings.List(); err == nil {
 		m.setList = list
+		// The status shows the value read back: what lea now uses, not what was typed.
+		for _, r := range list {
+			if r.Key == s.Key {
+				s.Value = r.Value
+			}
+		}
 	}
-	s.Value = value
 	m.status = s.Name + ": " + settingValue(s) + ", " + s.Apply
 	if s.Live && s.Key == "LEA_SOUND" && m.sound != "" {
 		api, on := m.api, value == "1"

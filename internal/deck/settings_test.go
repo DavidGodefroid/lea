@@ -16,6 +16,8 @@ type fakeSettings struct {
 	list []settings.Setting
 	sets []string
 	bad  map[string]bool
+	// normalize maps a value set to the one read back.
+	normalize map[string]string
 }
 
 func (f *fakeSettings) List() ([]settings.Setting, error) {
@@ -30,6 +32,9 @@ func (f *fakeSettings) Set(key, value string) error {
 	for i := range f.list {
 		if f.list[i].Key == key {
 			f.list[i].Value, f.list[i].Source = value, settings.SourceFile
+			if n, ok := f.normalize[value]; ok {
+				f.list[i].Value = n
+			}
 		}
 	}
 	return nil
@@ -244,5 +249,22 @@ func TestTheMenuAndTheKeyListOfferTheSettings(t *testing.T) {
 				t.Fatal("the menu's Settings did not open the screen")
 			}
 		}
+	}
+}
+
+// The status after a save shows the value read back, not the one typed.
+func TestTheStatusShowsTheValueReadBack(t *testing.T) {
+	st := someSettings()
+	st.normalize = map[string]string{"/ok.oga": "/read-back.oga"}
+	m := withSettings(t, &fakeAPI{}, st)
+	m, _ = step(t, m, key(","))
+	for i := 0; i < 3; i++ {
+		m, _ = step(t, m, key("down"))
+	}
+	m, _ = step(t, m, key("enter"))
+	m = typeIn(t, m, "/ok.oga")
+	m, _ = step(t, m, key("enter"))
+	if !strings.Contains(m.status, "/read-back.oga") {
+		t.Fatalf("status %q", m.status)
 	}
 }

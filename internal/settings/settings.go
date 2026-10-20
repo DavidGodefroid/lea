@@ -64,13 +64,13 @@ var catalog = []Setting{
 	{Key: "LEA_SOUND", Group: "Sounds", Name: "Sounds", Kind: Toggle, Default: "1", Apply: ApplyNow, Live: true,
 		Help: "a sound when an agent waits for you and when its turn ends"},
 	{Key: "LEA_SOUND_ATTENTION", Group: "Sounds", Name: "Attention sound", Kind: Text, Apply: ApplyAfterStop,
-		Help: "sound file when an agent waits for you; 0 mutes it, empty: freedesktop"},
+		Help: "sound file when an agent waits for you; 0 mutes it, empty: freedesktop", check: soundFile},
 	{Key: "LEA_SOUND_DONE", Group: "Sounds", Name: "Done sound", Kind: Text, Apply: ApplyAfterStop,
-		Help: "sound file when a turn ends; 0 mutes it, empty: freedesktop"},
+		Help: "sound file when a turn ends; 0 mutes it, empty: freedesktop", check: soundFile},
 	{Key: "LEA_GIT_SSH", Group: "Egress", Name: "Git SSH endpoints", Kind: Text, Apply: ApplyAfterStop,
 		Help: "host:port endpoints git reaches over SSH; empty: HTTPS only", check: launcher.CheckGitSSH},
 	{Key: "LEA_OTEL_UPSTREAM", Group: "Egress", Name: "OTel collector", Kind: Text, Apply: ApplyAfterStop,
-		Help: "host:port of an OTLP collector for usage telemetry; empty: off", check: hostPort},
+		Help: "host:port of an OTLP collector for usage telemetry; empty: off", check: launcher.CheckOtelUpstream},
 	{Key: "LEA_CLIPBOARD", Group: "Container", Name: "Clipboard", Kind: Toggle, Default: "1", Apply: ApplyAfterStop,
 		Help: "agents can copy to your host clipboard"},
 	{Key: "LEA_AUTOUPDATE", Group: "Updates", Name: "Auto-update", Kind: Toggle, Default: "1", Apply: ApplyNextStart,
@@ -160,24 +160,62 @@ func (s Store) Set(key, value string) error {
 		return err
 	}
 	if key == "LEA_PROJECTS_DIR" {
-		if value, err = launcher.CheckProjectsDir(c, s.Root, value); err != nil {
+		if value, err = launcher.CheckProjectsDir(c, s.Root, s.Cwd, value); err != nil {
 			return err
 		}
 	}
 	path := c.UserConfigFile(s.Cwd)
 	old, rerr := os.ReadFile(path)
+	if rerr != nil && !os.IsNotExist(rerr) {
+		return rerr
+	}
 	if err := launcher.WriteUserConfig(path, key, value); err != nil {
 		return err
 	}
-	if _, _, err := s.load(); err != nil {
-		if rerr == nil {
-			os.WriteFile(path, old, 0o600)
-		} else {
-			os.Remove(path)
+	if key == "LEA_GIT_SSH" {
+		// The legacy key sets the endpoints when LEA_GIT_SSH is empty: it goes with it.
+		if err := dropKey(path, "LEA_GITLAB_SSH"); err != nil {
+			return errors.Join(err, restore(path, old, rerr == nil))
 		}
-		return err
+	}
+	c, _, err = s.load()
+	if err == nil && key == "LEA_GIT_SSH" && c.GitSSH() != strings.Join(strings.Fields(value), " ") {
+		err = fmt.Errorf("LEA_GITLAB_SSH (the key of older lea) still sets the git SSH endpoints to '%s': remove it where it is set", c.GitSSH())
+	}
+	if err != nil {
+		return errors.Join(err, restore(path, old, rerr == nil))
 	}
 	return nil
+}
+
+// dropKey removes every line that sets key from the user configuration at path.
+func dropKey(path, key string) error {
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return err
+	}
+	var out strings.Builder
+	for _, l := range strings.SplitAfter(string(b), "\n") {
+		if !launcher.SetsKey(l, key) {
+			out.WriteString(l)
+		}
+	}
+	if out.Len() == len(b) {
+		return nil
+	}
+	return launcher.ReplaceUserConfig(path, []byte(out.String()))
+}
+
+// restore puts the user configuration back as it was before a refused write: its old content, or
+// no file when there was none.
+func restore(path string, old []byte, existed bool) error {
+	if !existed {
+		if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+			return err
+		}
+		return nil
+	}
+	return launcher.ReplaceUserConfig(path, old)
 }
 
 func (d Setting) validate(v string) error {
@@ -218,13 +256,11 @@ func projectsDir(v string) error {
 	return nil
 }
 
-func hostPort(v string) error {
-	if v == "" {
-		return nil
-	}
-	h, p, ok := strings.Cut(v, ":")
-	if n, err := strconv.Atoi(p); !ok || h == "" || strings.ContainsAny(h, " \t/") || err != nil || n < 1 || n > 65535 {
-		return fmt.Errorf("the collector is host:port, not %q", v)
+// soundFile is a sound setting: empty (the freedesktop sound), 0 (muted) or an absolute path,
+// which the sound player can never read as one of its options.
+func soundFile(v string) error {
+	if v != "" && v != "0" && !strings.HasPrefix(v, "/") {
+		return fmt.Errorf("a sound is an absolute file path, 0 (muted) or empty (the freedesktop sound), not %q", v)
 	}
 	return nil
 }

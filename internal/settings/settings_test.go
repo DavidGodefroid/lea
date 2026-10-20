@@ -171,8 +171,9 @@ func TestProjectsDirPassesTheInitGuards(t *testing.T) {
 	st := w.store()
 	os.MkdirAll(w.cwd+"/.claude/projects", 0o700)
 	os.MkdirAll(w.cwd+"/.ssh/keys", 0o700)
+	os.MkdirAll(w.cwd+"/config/lea/x", 0o700)
 	for _, v := range []string{"relative", "/", w.cwd, filepath.Dir(w.cwd), w.cwd + "/.claude/projects", w.cwd + "/.ssh",
-		w.cwd + "/.ssh/keys", w.cwd + "/nope"} {
+		w.cwd + "/.ssh/keys", w.cwd + "/config", w.cwd + "/config/lea", w.cwd + "/config/lea/x", w.cwd + "/nope"} {
 		if err := st.Set("LEA_PROJECTS_DIR", v); err == nil {
 			t.Errorf("LEA_PROJECTS_DIR=%q accepted", v)
 		}
@@ -199,5 +200,69 @@ func TestABrokenUserFileIsReported(t *testing.T) {
 	w.userConf(t, "LEA_APPROVALS=$(boom)\n")
 	if _, err := w.store().List(); err == nil {
 		t.Error("List accepted a broken file")
+	}
+}
+
+// Clearing the git SSH endpoints turns SSH egress off: the legacy LEA_GITLAB_SSH of the user file
+// goes with it; one the user file cannot drop (the environment's) is refused, the file untouched.
+func TestClearingGitSSHDropsTheLegacyKey(t *testing.T) {
+	w := newWorld(t, "")
+	w.userConf(t, "LEA_GITLAB_SSH='gitlab.com:22'\nLEA_SOUND=0\n")
+	st := w.store()
+	if s := find(t, list(t, w), "LEA_GIT_SSH"); s.Value != "gitlab.com:22" {
+		t.Fatalf("before: %q", s.Value)
+	}
+	if err := st.Set("LEA_GIT_SSH", ""); err != nil {
+		t.Fatal(err)
+	}
+	if s := find(t, list(t, w), "LEA_GIT_SSH"); s.Value != "" {
+		t.Errorf("after clearing: %q", s.Value)
+	}
+	if b, _ := os.ReadFile(w.user); strings.Contains(string(b), "LEA_GITLAB_SSH") || !strings.Contains(string(b), "LEA_SOUND=0") {
+		t.Errorf("file %q", b)
+	}
+	w.env["LEA_GITLAB_SSH"] = "gitlab.com:22"
+	before, _ := os.ReadFile(w.user)
+	if err := st.Set("LEA_GIT_SSH", ""); err == nil || !strings.Contains(err.Error(), "LEA_GITLAB_SSH") {
+		t.Fatalf("legacy key in the environment: %v", err)
+	}
+	if after, _ := os.ReadFile(w.user); string(after) != string(before) {
+		t.Errorf("file changed: %q -> %q", before, after)
+	}
+}
+
+// A refused write with no file before leaves no file.
+func TestARefusedWriteLeavesNoFile(t *testing.T) {
+	w := newWorld(t, "")
+	w.env["LEA_GITLAB_SSH"] = "gitlab.com:22"
+	if err := w.store().Set("LEA_GIT_SSH", ""); err == nil {
+		t.Fatal("accepted")
+	}
+	if _, err := os.Stat(w.user); err == nil {
+		t.Fatal("a refused write left a file")
+	}
+}
+
+func TestOtelAndSoundValues(t *testing.T) {
+	w := newWorld(t, "")
+	st := w.store()
+	for key, bad := range map[string][]string{
+		"LEA_OTEL_UPSTREAM":   {"1.2.3.4,fork:80", "h;x:80", "h:080", "h"},
+		"LEA_SOUND_ATTENTION": {"--help", "-f", "relative.oga", "~/x.oga"},
+		"LEA_SOUND_DONE":      {"--help", "x"},
+	} {
+		for _, v := range bad {
+			if err := st.Set(key, v); err == nil {
+				t.Errorf("%s=%q accepted", key, v)
+			}
+		}
+	}
+	for key, v := range map[string]string{"LEA_OTEL_UPSTREAM": "otel.corp:4317", "LEA_SOUND_ATTENTION": "0", "LEA_SOUND_DONE": "/usr/share/x.oga"} {
+		if err := st.Set(key, v); err != nil {
+			t.Errorf("%s=%q: %v", key, v, err)
+		}
+	}
+	if err := st.Set("LEA_SOUND_DONE", ""); err != nil {
+		t.Error(err)
 	}
 }

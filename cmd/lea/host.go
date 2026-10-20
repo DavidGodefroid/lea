@@ -753,7 +753,8 @@ func runInboxWait(args []string, stdout, stderr io.Writer) int {
 }
 
 // soundFiles maps each sound kind to its file: the freedesktop sounds unless LEA_SOUND_ATTENTION
-// or LEA_SOUND_DONE names another, and none for a kind set to 0. on is false when LEA_SOUND=0.
+// or LEA_SOUND_DONE names another (an absolute path: anything else, which the player could read
+// as an option, plays nothing), and none for a kind set to 0. on is false when LEA_SOUND=0.
 func soundFiles(getenv func(string) string) (files map[string]string, on bool) {
 	files = map[string]string{}
 	for kind, def := range map[string]string{
@@ -765,7 +766,9 @@ func soundFiles(getenv func(string) string) (files map[string]string, on bool) {
 		case "":
 			files[kind] = def
 		default:
-			files[kind] = f
+			if strings.HasPrefix(f, "/") {
+				files[kind] = f
+			}
 		}
 	}
 	return files, getenv("LEA_SOUND") != "0"

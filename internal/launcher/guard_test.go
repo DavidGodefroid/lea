@@ -135,3 +135,33 @@ func TestPlantedSymlinksStopTheSessionBeforeDocker(t *testing.T) {
 		})
 	}
 }
+
+// The user configuration's directory is sourced as shell on the host: a projects dir that is,
+// lies inside or contains it would let agents rewrite it.
+func TestGuardRefusesTheUserConfigDirectory(t *testing.T) {
+	w := newWorld(t, repoRoot(t))
+	conf := w.env["XDG_CONFIG_HOME"]
+	os.MkdirAll(conf+"/lea/sub", 0o700)
+	l := w.launcher()
+	for _, p := range []string{conf, conf + "/lea", conf + "/lea/sub"} {
+		if err := l.guardProjects(physDir(p)); err == nil || !strings.Contains(err.Error(), "cannot be a projects directory") {
+			t.Errorf("%s: err = %v", p, err)
+		}
+	}
+	os.MkdirAll(w.dir+"/etc/team", 0o700)
+	os.WriteFile(w.dir+"/etc/team/lea.conf", nil, 0o600)
+	w.env["LEA_CONFIG"] = w.dir + "/etc/team/lea.conf"
+	l = w.launcher()
+	for _, p := range []string{w.dir + "/etc", w.dir + "/etc/team"} {
+		if err := l.guardProjects(physDir(p)); err == nil || !strings.Contains(err.Error(), "it contains the user configuration") {
+			t.Errorf("LEA_CONFIG %s: err = %v", p, err)
+		}
+	}
+	os.MkdirAll(w.dir+"/etc/team/below", 0o700) // below the file's directory: the file is out of reach
+	if err := l.guardProjects(physDir(w.dir + "/etc/team/below")); err != nil {
+		t.Errorf("below LEA_CONFIG's directory: %v", err)
+	}
+	if err := l.guardProjects(w.proj); err != nil {
+		t.Fatalf("projects refused: %v", err)
+	}
+}

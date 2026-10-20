@@ -136,6 +136,21 @@ guarded() {
   [ "$status" -eq 0 ]
 }
 
+@test "guard: the user config directory (and LEA_CONFIG's), inside or around, is refused" {
+  export XDG_CONFIG_HOME="$BATS_TEST_TMPDIR/xdg"
+  mkdir -p "$XDG_CONFIG_HOME/lea/sub"
+  guarded "$XDG_CONFIG_HOME"
+  guarded "$XDG_CONFIG_HOME/lea"
+  guarded "$XDG_CONFIG_HOME/lea/sub"
+  mkdir -p "$BATS_TEST_TMPDIR/etc/team"
+  export LEA_CONFIG="$BATS_TEST_TMPDIR/etc/team/lea.conf"
+  guarded "$BATS_TEST_TMPDIR/etc"
+  guarded "$BATS_TEST_TMPDIR/etc/team"
+  mkdir -p "$BATS_TEST_TMPDIR/etc/team/below"
+  run lea__guard_projects "$(lea__phys "$BATS_TEST_TMPDIR/etc/team/below")"
+  [ "$status" -eq 0 ]
+}
+
 @test "guard: a sibling of \$HOME with a common prefix is accepted" {
   mkdir -p "${HOME}x"
   run lea__guard_projects "$(lea__phys "${HOME}x")"
