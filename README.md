@@ -344,7 +344,9 @@ vllm      https://vllm.example.com/v1         key=/home/me/.config/lea/keys/vllm
 - An endpoint's API key never reaches the agents. The file names a key file, not a key: it must
   be yours, mode `600` (or `400`), a regular file with a single hard link, and outside every
   directory lea mounts into the agents' container (the projects directory, lea's data, `~/.claude`,
-  `~/.codex`; real paths are compared). lea
+  `~/.codex`; real paths are compared). Nor may it sit in a Docker volume lea mounts there, such
+  as the nested engine's storage (`<prefix>-podman-<id>`, under Docker's own data directory):
+  every agent reads it. lea
   mounts it into the proxy container only, where `lea-keyproxy` adds it to the agents' requests;
   an agent reaches the endpoint at `http://lea-proxy:4400/<name>` and sees neither the key nor the
   upstream. The key is read at each request: to rotate it, rewrite the file in place
