@@ -135,3 +135,16 @@ func trustable(dir string) bool {
 	}
 	return true
 }
+
+// UsageLimit says whether a CLI's turn-failure class means the provider's usage or rate limit
+// stopped the agent: the adapter seam of auto-resume (issue #20). kind is the CLI's own
+// structured error class, never text the model or the provider wrote. Claude Code reports
+// rate_limit in its StopFailure hook. Codex has no structured signal for it yet (its limit is
+// only a line of its terminal), so it never reports one.
+func UsageLimit(cli, kind string) bool {
+	switch cli {
+	case Claude:
+		return kind == "rate_limit"
+	}
+	return false
+}

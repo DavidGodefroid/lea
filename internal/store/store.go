@@ -104,6 +104,11 @@ type Agent struct {
 	Args                       []string
 	Prompt                     string
 	Paused                     bool
+	// LimitUntil says the agent stopped on its provider's usage limit: 0 it did not, > 0 lea
+	// resumes it at that time (unix seconds), -1 it waits for the user (auto-resume off, or lea
+	// gave up). LimitTries counts the resumes since the agent last made progress.
+	LimitUntil int64
+	LimitTries int
 }
 
 // agentColumns are the agents columns added after phase 0; migrate adds the missing ones to a
@@ -126,6 +131,8 @@ var agentColumns = [][2]string{
 	{"paused", "INTEGER NOT NULL DEFAULT 0"},
 	{"subagents", "INTEGER NOT NULL DEFAULT 0"},
 	{"model", "TEXT NOT NULL DEFAULT ''"},
+	{"limit_until", "INTEGER NOT NULL DEFAULT 0"},
+	{"limit_tries", "INTEGER NOT NULL DEFAULT 0"},
 }
 
 // requestColumns are the spawn_requests columns added after it was created.
@@ -185,22 +192,25 @@ func (s *Store) UpsertAgent(container, name string, now int64) (string, error) {
 }
 
 // SetState records an agent's state. A process that ended (done), stopped with its container
-// (stopped) or starts again (unknown) is no longer paused.
+// (stopped) or starts again (unknown) is no longer paused, nor waiting on a usage limit: the
+// hook that would have resumed it ended with it.
 func (s *Store) SetState(key, state, sessionID string, now int64) error {
 	_, err := s.db.Exec(`UPDATE agents SET state=?,
 		session_id=CASE WHEN ?='' THEN session_id ELSE ? END, updated=?,
-		paused=CASE WHEN ? IN ('done','stopped','unknown') THEN 0 ELSE paused END WHERE key=?`,
-		state, sessionID, sessionID, now, state, key)
+		paused=CASE WHEN ? IN ('done','stopped','unknown') THEN 0 ELSE paused END,
+		limit_until=CASE WHEN ? IN ('done','stopped','unknown') THEN 0 ELSE limit_until END,
+		limit_tries=CASE WHEN ? IN ('done','stopped','unknown') THEN 0 ELSE limit_tries END WHERE key=?`,
+		state, sessionID, sessionID, now, state, state, state, key)
 	return err
 }
 
-const agentCols = `key, container, name, session_id, state, updated, profile, workdir, created, role, parent, repo, branch, task_id, label, args, prompt, paused, model`
+const agentCols = `key, container, name, session_id, state, updated, profile, workdir, created, role, parent, repo, branch, task_id, label, args, prompt, paused, model, limit_until, limit_tries`
 
 func scanAgent(sc interface{ Scan(...any) error }) (Agent, error) {
 	var a Agent
 	var args string
 	err := sc.Scan(&a.Key, &a.Container, &a.Name, &a.SessionID, &a.State, &a.Updated, &a.Profile, &a.Workdir, &a.Created,
-		&a.Role, &a.Parent, &a.Repo, &a.Branch, &a.TaskID, &a.Label, &args, &a.Prompt, &a.Paused, &a.Model)
+		&a.Role, &a.Parent, &a.Repo, &a.Branch, &a.TaskID, &a.Label, &args, &a.Prompt, &a.Paused, &a.Model, &a.LimitUntil, &a.LimitTries)
 	if err == nil && args != "" {
 		err = json.Unmarshal([]byte(args), &a.Args)
 	}
@@ -336,7 +346,7 @@ func (s *Store) Register(n NewAgent, c Caps, now int64) (Agent, error) {
 			return Agent{}, err
 		}
 		_, err = tx.Exec(`UPDATE agents SET profile=?, workdir=?, created=?, updated=?, state='unknown', session_id='',
-			ctx_pct=-1, cost_usd=-1, role=?, parent=?, repo=?, branch=?, task_id=0, label='', args='', prompt='', paused=0, subagents=0, model=? WHERE key=?`,
+			ctx_pct=-1, cost_usd=-1, role=?, parent=?, repo=?, branch=?, task_id=0, label='', args='', prompt='', paused=0, subagents=0, limit_until=0, limit_tries=0, model=? WHERE key=?`,
 			n.Profile, n.Workdir, now, now, n.Role, n.Parent, n.Repo, n.Branch, n.Model, key)
 	} else {
 		_, err = tx.Exec(`INSERT INTO agents(key, container, name, profile, workdir, created, updated, role, parent, repo, branch, model)
@@ -414,6 +424,20 @@ func (s *Store) SetLabel(key, label string) error {
 // SetPaused records that the user froze an agent lea spawned (the deck's p), or let it continue.
 func (s *Store) SetPaused(key string, paused bool) error {
 	res, err := s.db.Exec(`UPDATE agents SET paused=? WHERE key=? AND profile<>''`, paused, key)
+	if err != nil {
+		return err
+	}
+	if n, err := res.RowsAffected(); err != nil {
+		return err
+	} else if n == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+// SetLimit records an agent's usage-limit state (Agent.LimitUntil, Agent.LimitTries).
+func (s *Store) SetLimit(key string, until int64, tries int) error {
+	res, err := s.db.Exec(`UPDATE agents SET limit_until=?, limit_tries=? WHERE key=?`, until, tries, key)
 	if err != nil {
 		return err
 	}

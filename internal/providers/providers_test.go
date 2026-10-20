@@ -327,3 +327,22 @@ func TestParseKeepsTheKeysRealPath(t *testing.T) {
 		t.Fatalf("%+v %v", ps, err)
 	}
 }
+
+func TestUsageLimit(t *testing.T) {
+	for _, c := range []struct {
+		cli, kind string
+		want      bool
+	}{
+		{Claude, "rate_limit", true},
+		{Claude, "overloaded", false},
+		{Claude, "authentication_failed", false},
+		{Claude, "", false},
+		{Claude, "Rate_limit", false},
+		{Codex, "rate_limit", false},
+		{"", "rate_limit", false},
+	} {
+		if got := UsageLimit(c.cli, c.kind); got != c.want {
+			t.Errorf("UsageLimit(%q, %q) = %v, want %v", c.cli, c.kind, got, c.want)
+		}
+	}
+}

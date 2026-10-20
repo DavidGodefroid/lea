@@ -31,9 +31,30 @@ func (d *Daemon) statusReport(o Origin, me string, raw json.RawMessage) (any, er
 		CtxPct  int      `json:"ctx_pct"`
 		CostUSD float64  `json:"cost_usd"`
 		Paths   []string `json:"paths"`
+		Limits  []struct {
+			Window   string `json:"window"`
+			Pct      int    `json:"pct"`
+			ResetsAt int64  `json:"resets_at"`
+		} `json:"limits"`
 	}
 	if err := json.Unmarshal(raw, &p); err != nil {
 		return nil, err
+	}
+	if len(p.Limits) > 2 {
+		return nil, errors.New("at most 2 limits")
+	}
+	var ws []limitWindow
+	for _, l := range p.Limits {
+		if l.Window != "5h" && l.Window != "7d" {
+			return nil, errors.New(`limit window must be "5h" or "7d"`)
+		}
+		if l.Pct < 0 || l.Pct > 100 {
+			return nil, errors.New("limit pct must be 0 to 100")
+		}
+		if l.ResetsAt < 0 || l.ResetsAt > 1e11 {
+			return nil, errors.New("limit resets_at must be unix seconds")
+		}
+		ws = append(ws, limitWindow{pct: l.Pct, resetsAt: l.ResetsAt})
 	}
 	if p.CtxPct < -1 || p.CtxPct > 100 {
 		return nil, errors.New("ctx_pct must be -1 (unknown) or 0 to 100")
@@ -49,6 +70,7 @@ func (d *Daemon) statusReport(o Origin, me string, raw json.RawMessage) (any, er
 			return nil, fmt.Errorf("invalid path %q", s)
 		}
 	}
+	d.recordLimits(me, ws)
 	changed, err := d.st.SetUsage(me, store.Usage{CtxPct: p.CtxPct, CostUSD: math.Round(p.CostUSD*100) / 100})
 	if err != nil {
 		return nil, err

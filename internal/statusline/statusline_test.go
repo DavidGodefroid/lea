@@ -198,10 +198,15 @@ func TestRunRichLine(t *testing.T) {
 	}
 }
 
-func TestRateLimitsAreNotReportedAsValues(t *testing.T) {
+// The windows reach the daemon as numbers only (Report.Limits, for auto-resume): no other value
+// of the JSON does.
+func TestRateLimitsAreReportedAsNumbersOnly(t *testing.T) {
 	_, got := run(t, full)
-	if len(got) != 1 || strings.Contains(fmt.Sprint(got[0]), "1790000000") || strings.Contains(fmt.Sprint(got[0]), "Opus") {
+	if len(got) != 1 || len(got[0].Limits) != 2 || got[0].Limits[0].ResetsAt != 1790000000 {
 		t.Fatalf("reports=%+v", got)
+	}
+	if strings.Contains(fmt.Sprint(got[0]), "Opus") {
+		t.Fatalf("a value left the container: %+v", got)
 	}
 }
 
@@ -263,5 +268,20 @@ func TestLineResetTimeNearTheLimit(t *testing.T) {
 		if got := line(c.doc, parse(c.doc), windows(c.doc), false, now); got != c.want {
 			t.Errorf("line=%q want %q", got, c.want)
 		}
+	}
+}
+
+// The rate-limit windows reach the daemon as numbers: auto-resume waits for their reset (#20).
+func TestRunReportsRateLimitWindows(t *testing.T) {
+	_, got := run(t, `{"rate_limits":{"five_hour":{"used_percentage":100,"resets_at":1790000000},
+	  "seven_day":{"used_percentage":12.6,"resets_at":"2026-10-27T10:00:00Z"},"other":{"used_percentage":5}}}`)
+	want := []Limit{{Window: "5h", Pct: 100, ResetsAt: 1790000000},
+		{Window: "7d", Pct: 13, ResetsAt: time.Date(2026, 10, 27, 10, 0, 0, 0, time.UTC).Unix()}}
+	if len(got) != 1 || !reflect.DeepEqual(got[0].Limits, want) {
+		t.Fatalf("reports=%+v", got)
+	}
+	_, got = run(t, `{"rate_limits":{"five_hour":{"used_percentage":101,"resets_at":1},"seven_day":{"used_percentage":3}}}`)
+	if len(got) != 1 || !reflect.DeepEqual(got[0].Limits, []Limit{{Window: "7d", Pct: 3}}) {
+		t.Fatalf("reports=%+v", got)
 	}
 }
