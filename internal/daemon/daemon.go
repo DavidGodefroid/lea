@@ -73,9 +73,11 @@ type Daemon struct {
 	namer     Namer
 	named     map[string]bool
 	afterName func()
-	// sounder plays the attention and done sounds (nil: off); rang is when each kind last rang.
-	sounder Sounder
-	rang    map[string]time.Time
+	// sounder plays the attention and done sounds (nil: off); rang is when each kind last rang;
+	// soundOff is the user's switch (lea sound, the deck's S), which keeps the sounder aside.
+	sounder  Sounder
+	soundOff bool
+	rang     map[string]time.Time
 	// doneDelay holds back the done sound (a test seam): another Stop hook can still block the
 	// stop. doneTimers: the pending done sound of each agent, cancelled by its next hook.
 	doneDelay  time.Duration
@@ -234,7 +236,8 @@ func (d *Daemon) dispatch(ctx context.Context, o Origin, req wire.Request) (any,
 		return d.dispatchDeck(ctx, o, req)
 	}
 	if req.Method == "container_attach" || req.Method == "approval_decide" || req.Method == "approval_list" ||
-		req.Method == "thread_list" || req.Method == "agent_role" || req.Method == "request_list" || req.Method == "request_decide" || req.Method == "board_list" {
+		req.Method == "thread_list" || req.Method == "agent_role" || req.Method == "request_list" || req.Method == "request_decide" || req.Method == "board_list" ||
+		req.Method == "sound" {
 		if o.Container != "" {
 			return nil, fmt.Errorf("%s: host only", req.Method)
 		}
@@ -244,6 +247,8 @@ func (d *Daemon) dispatch(ctx context.Context, o Origin, req wire.Request) (any,
 		return nil, err
 	}
 	switch req.Method {
+	case "sound":
+		return d.switchSound(req.Params)
 	case "agent_role":
 		return d.setRole(req.Params)
 	case "agents_list":

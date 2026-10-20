@@ -57,6 +57,8 @@ type Snapshot struct {
 	Version int64   `json:"version"`
 	Shown   string  `json:"shown"`
 	Agents  []Agent `json:"agents"`
+	// Sound is the daemon's sound switch: "on", "off", or "" when no sound plays on the host.
+	Sound string `json:"sound,omitempty"`
 }
 
 // API is what the deck asks of the daemon.
@@ -75,6 +77,8 @@ type API interface {
 	OpenShell(ctx context.Context, container string) (Agent, error)
 	// SplitShell opens a shell beside an agent, below it or at its right.
 	SplitShell(ctx context.Context, key string, below bool) (Agent, error)
+	// SetSound switches the daemon's sounds and answers the new state.
+	SetSound(ctx context.Context, on bool) (string, error)
 }
 
 // isShell reports whether a row is a shell.
@@ -110,7 +114,11 @@ type (
 		agent Agent
 		err   error
 	}
-	doneMsg struct{ err error }
+	doneMsg  struct{ err error }
+	soundMsg struct {
+		sound string
+		err   error
+	}
 )
 
 type Model struct {
@@ -132,6 +140,7 @@ type Model struct {
 	asked         map[string]bool  // agents this deck asked the daemon to show, not yet seen shown
 	lastAsked     string           // the latest of them
 	status        string
+	sound         string // the daemon's sound switch (Snapshot.Sound)
 	seq           int    // the latest selection; older delayed shows are dropped
 	frame         int    // the working spinner's frame
 	intro         int    // frames left of the logo's start animation (WithIntro)
@@ -265,6 +274,13 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.status = oneLine(msg.err.Error())
 		}
 		return m, nil
+	case soundMsg:
+		if msg.err != nil {
+			m.status = oneLine(msg.err.Error())
+			return m, nil
+		}
+		m.sound, m.status = msg.sound, "sounds "+msg.sound
+		return m, nil
 	case tea.KeyMsg:
 		if m.help { // any key closes the key list, and does nothing else
 			m.help = false
@@ -329,7 +345,7 @@ func (m *Model) ask(key string) {
 // the slot, so that the row selected in its place is to be shown.
 func (m *Model) apply(s Snapshot) bool {
 	before, was := m.shown, m.selected
-	m.version, m.shown = s.Version, s.Shown
+	m.version, m.shown, m.sound = s.Version, s.Shown, s.Sound
 	for _, a := range s.Agents {
 		if a.Key == s.Shown && a.State == "done" {
 			m.seen[a.Key] = a.Updated
@@ -458,6 +474,18 @@ func (m Model) key(k string) (tea.Model, tea.Cmd) {
 			defer cancel()
 			sh, err := api.SplitShell(ctx, key, below)
 			return newMsg{sh, err}
+		}
+	case "S":
+		if m.sound == "" {
+			m.status = "no sound player on this host"
+			return m, nil
+		}
+		on := m.sound == "off"
+		return m, func() tea.Msg {
+			ctx, cancel := context.WithTimeout(context.Background(), callTimeout)
+			defer cancel()
+			s, err := api.SetSound(ctx, on)
+			return soundMsg{s, err}
 		}
 	case "?":
 		m.help = true

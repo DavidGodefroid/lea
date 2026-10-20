@@ -108,6 +108,7 @@ var helpLines = []string{
 	"r           its role",
 	"a d A       allow deny always",
 	"x           stop or remove",
+	"S           sounds on or off",
 	"ctrl+space  deck or terminal",
 	"q           detach",
 	"?           these keys",
@@ -183,6 +184,9 @@ func (m Model) top(w int) string {
 	count := fmt.Sprintf("%d agents", n)
 	if n == 1 {
 		count = "1 agent"
+	}
+	if m.sound == "off" {
+		count = "muted " + c.dot + " " + count
 	}
 	// c.tl+c.h+" " (3) + title + " " + fill + " " + count + " "+c.h+c.tr (3)
 	fill := w - 8 - tw - lipgloss.Width(count)

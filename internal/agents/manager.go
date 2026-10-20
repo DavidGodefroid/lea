@@ -150,6 +150,8 @@ type Snapshot struct {
 	Version int64  `json:"version"`
 	Shown   string `json:"shown"`
 	Agents  []Row  `json:"agents"`
+	// Sound is the daemon's sound switch ("on", "off", "" when nothing plays), set by the daemon.
+	Sound string `json:"sound,omitempty"`
 }
 
 type NewRequest struct {
