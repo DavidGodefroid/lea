@@ -401,7 +401,7 @@ func (m *Model) apply(s Snapshot) bool {
 	if m.roleFor != "" && m.index(m.roleFor) < 0 {
 		m.roleFor, m.status = "", ""
 	}
-	if m.menuFor != "" && m.index(m.menuFor) < 0 {
+	if m.menuFor != "" && m.menuFor != deckMenu && m.index(m.menuFor) < 0 {
 		m.menuFor = ""
 	}
 	if m.editFor != "" && m.index(m.editFor) < 0 {

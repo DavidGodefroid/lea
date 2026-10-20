@@ -89,8 +89,7 @@ lea
 ```
 
 The installer checks the requirements, downloads the release for your platform and verifies its
-checksum (and, when `cosign` is installed, the release's signature: see
-[Verify a release](#verify-a-release)), links `~/.local/bin/lea`, then runs `lea init`, which asks for your projects directory
+checksum and the release's signature (see [Verify a release](#verify-a-release)), links `~/.local/bin/lea`, then runs `lea init`, which asks for your projects directory
 and pulls the images. In the first agent, run `/login` once (Claude Code's own login, kept per
 projects directory). Press `n` for another agent.
 
@@ -110,12 +109,15 @@ AppArmor: it installs lea's AppArmor profile, and only when that profile changed
 Each release is signed keyless with [cosign](https://docs.sigstore.dev) (Sigstore, GitHub
 OIDC) by the release workflow, on its `v*` tag: `checksums.txt` (bundle
 `checksums.txt.sigstore.json`, a release asset) and the `lea` and `lea-proxy` images, by digest.
-With `cosign` installed, the installer verifies `checksums.txt` before trusting it. It stops on a
-bad signature. It stops on a missing signature, except for v0.1.0 and v0.1.1, which predate
-signing: their `checksums.txt` must then be the genuine one, whose SHA-256 the installer pins
-(it stops otherwise), and the install goes on by checksum, with a warning. Without `cosign`, it warns and relies
-on the checksum alone. `LEA_REQUIRE_COSIGN=1` makes the signature mandatory with no exception: it
-refuses to install without `cosign` or without a signature:
+The installer verifies `checksums.txt` with cosign before trusting it: the `cosign` on your
+`PATH`, else cosign v3.0.6, which it downloads from Sigstore's GitHub release and checks against
+the SHA-256 pinned in `install.sh` (it never fetches a "latest" cosign). It stops on a bad
+signature, on a missing signature, and when no cosign can be had: it never installs on the
+checksum alone. The only exception is v0.1.0 and v0.1.1, which predate signing: their
+`checksums.txt` must then be the genuine one, whose SHA-256 the installer pins (it stops
+otherwise), and the install goes on by checksum, with a warning. `LEA_REQUIRE_COSIGN=1` removes
+that exception too. `lea update` and the background update verify the signature the same way
+before they run the new release's installer.
 
 ```sh
 curl -fsSL https://leadeck.dev/install.sh | LEA_REQUIRE_COSIGN=1 sh
@@ -165,7 +167,8 @@ closing the deck, or the terminal, does not stop it: the next `lea` reattaches.
 
 The mouse works too: click a row to select it, scroll to move, right-click a row for its menu
 (Split horizontally / Split vertically open a shell beside the agent, as Terminator does; the
-shell shows with its agent and steps aside while another agent is shown).
+shell shows with its agent and steps aside while another agent is shown). A right-click anywhere
+else in the column opens the deck's own menu: new agent, new shell, sounds, keys, detach.
 
 - **States.** A red `●` needs you, an orange spinner is working, a green `●` has finished its
   turn, an empty `○` has been quiet for 30 minutes, a grey `‖` is paused (`p`: lea freezes the
@@ -308,7 +311,7 @@ LEA_PROJECTS_DIR=~/other lea # another projects directory, for this call only
 
 A release install updates itself: at most once a day, `lea` looks for a new release in the
 background. A newer minor or patch release is installed beside the current one (its signature
-checked with cosign, which this needs) and becomes active at the next `lea`; a newer major
+checked with cosign) and becomes active at the next `lea`; a newer major
 release is only announced in the deck, and so is a newer minor release while lea is 0.x (only
 its patch releases install themselves). Running containers keep their image until they stop.
 `LEA_AUTOUPDATE=0` in `~/.config/lea/lea.conf` turns it off; the log is

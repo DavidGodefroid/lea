@@ -131,13 +131,45 @@ at_v0() {
   [ ! -e "$NOTICE" ]
 }
 
-@test "without cosign nothing is installed: the release is announced for lea update" {
+# pinned_cosign: the release of cosign lea pins serves the fake cosign, whose SHA-256 lea pins.
+pinned_cosign() {
+  cp "$BATS_TEST_DIRNAME/../fakes/cosign" "$REL/cosign-linux-amd64"
+  pin=$(sha256sum "$REL/cosign-linux-amd64" | cut -d' ' -f1)
+  eval "lea__cosign_pin() { [ \"\$1\" = linux-amd64 ] && echo $pin; }"
+  uname() { case $1 in -s) echo Linux ;; -m) echo x86_64 ;; esac; }
+}
+
+@test "without cosign the pinned cosign v3.0.6 is downloaded, checked, and verifies the release" {
   bg_release v1.3.0
+  pinned_cosign
   run lea_update --background </dev/null
   [ "$status" -eq 0 ]
+  linked "$INST/v1.3.0"
+  run calls
+  [[ "$output" == *"[https://github.com/sigstore/cosign/releases/download/v3.0.6/cosign-linux-amd64]"*"cosign [verify-blob]"*"installer --version v1.3.0 --no-init --no-link"* ]]
+}
+
+@test "without cosign, a downloaded cosign that does not match its pin is never run, nothing is installed" {
+  bg_release v1.3.0
+  pinned_cosign
+  printf '#!/bin/sh\necho evil >>"$FAKE_LOG"\n' >"$REL/cosign-linux-amd64"
+  run lea_update --background </dev/null
+  [ "$status" -eq 1 ]
   linked "$R"
-  [ "$(cat "$NOTICE")" = "v1.3.0 available" ]
-  [[ "$output" == *"cosign is missing"* ]]
+  [[ "$output" == *"does not match its pinned SHA-256"* ]]
+  run calls
+  [[ "$output" != *evil* ]]
+  [[ "$output" != *installer* ]]
+}
+
+@test "without cosign and no cosign to download, nothing is installed and the current link stays" {
+  bg_release v1.3.0
+  pinned_cosign
+  rm "$REL/cosign-linux-amd64"
+  run lea_update --background </dev/null
+  [ "$status" -eq 1 ]
+  linked "$R"
+  [[ "$output" == *"cannot download cosign from"* ]]
   run calls
   [[ "$output" != *installer* ]]
 }
