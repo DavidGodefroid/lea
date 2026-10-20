@@ -25,7 +25,7 @@ const deckHelperEnv = "LEA_DECK_E2E_HELPER"
 func TestMain(m *testing.M) {
 	if os.Getenv(deckHelperEnv) == "1" {
 		if err := Run(e2eAPI{&fakeAPI{snap: Snapshot{Version: 1, Shown: "lea-a/a",
-			Agents: []Agent{ag("a", "idle", 1), ag("b", "idle", 1), ag("c", "idle", 1)}}}}, "lea-a", false, nil); err != nil {
+			Agents: []Agent{ag("a", "idle", 1), ag("b", "idle", 1), ag("c", "idle", 1)}}}}, "lea-a", false, nil, nil, "e2e"); err != nil {
 			fmt.Fprintln(os.Stderr, err)
 			os.Exit(1)
 		}
