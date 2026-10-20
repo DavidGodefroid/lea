@@ -78,6 +78,15 @@ func (m Model) body(inner int) []string {
 	c := m.cs()
 	var body []string
 	switch {
+	case m.setOpen:
+		room := 0
+		if m.height > 2 {
+			room = m.height - 2
+			if m.statusLine(inner) != "" {
+				room--
+			}
+		}
+		body = m.settingsLines(inner, room)
 	case m.help:
 		for _, l := range helpLines {
 			body = append(body, padRight(" "+fit(l, inner-1, c), inner))
@@ -85,7 +94,7 @@ func (m Model) body(inner int) []string {
 	case len(m.agents) == 0:
 		body = append(body, padRight(" "+muted.Render(fit("No agents yet: press n.", inner-1, c)), inner))
 	}
-	if !m.help {
+	if !m.help && !m.setOpen {
 		body = append(body, m.rows(inner)...)
 	}
 	if m.height > 2 {
@@ -120,6 +129,7 @@ var helpLines = []string{
 	"a d A       allow deny always",
 	"x           stop or remove",
 	"S           sounds on or off",
+	",           settings",
 	"ctrl+space  deck or terminal",
 	"q           detach",
 	"?           these keys",
@@ -129,6 +139,12 @@ var helpLines = []string{
 // status, else the update notice ("" when none).
 func (m Model) statusLine(inner int) string {
 	c := m.cs()
+	if m.setEditing {
+		const prompt = "value: "
+		field := tail(safe(string(m.setDraft), c), inner-1-len(prompt)-1)
+		return padRight(" "+lipgloss.NewStyle().Foreground(theme.Text).Render(prompt+field)+
+			lipgloss.NewStyle().Foreground(theme.Accent).Render(c.bar), inner)
+	}
 	if m.editFor != "" {
 		const prompt = "name: "
 		field := tail(safe(string(m.draft), c), inner-1-len(prompt)-1)

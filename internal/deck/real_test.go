@@ -30,7 +30,7 @@ func TestMain(m *testing.M) {
 		c := ag("c", "idle", 1)
 		c.Label = e2eLabel
 		if err := Run(e2eAPI{&fakeAPI{snap: Snapshot{Version: 1, Shown: "lea-a/a",
-			Agents: []Agent{ag("a", "idle", 1), ag("b", "idle", 1), c}}}}, "lea-a", false, nil); err != nil {
+			Agents: []Agent{ag("a", "idle", 1), ag("b", "idle", 1), c}}}}, "lea-a", false, nil, nil, "e2e"); err != nil {
 			fmt.Fprintln(os.Stderr, err)
 			os.Exit(1)
 		}

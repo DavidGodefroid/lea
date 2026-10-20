@@ -160,6 +160,7 @@ closing the deck, or the terminal, does not stop it: the next `lea` reattaches.
 | `-` / `\|` | split: a shell below the selected agent, or at its right, in its directory |
 | `S` | sounds on or off (the top border says `muted` while they are off) |
 | `p` | pause the selected agent, or resume it where it stopped (its conversation stays) |
+| `,` | settings (also in a row's right-click menu) |
 | `x`, then `y` | stop the selected agent |
 | `q` | leave the deck; agents keep running |
 | `?` | list the keys |
@@ -332,6 +333,14 @@ projects directory cannot be `/`, your home directory or one of its parents, nor
 
 `~/.config/lea/lea.conf` holds your settings as `KEY=value` lines (`lea init` writes it);
 `config/lea.conf` in the installation documents every key and its default.
+
+The deck's `,` opens a settings screen over the same file: the keys that matter, grouped, each
+with its value, where it comes from (default, your file, the environment) and a one-line help.
+`enter` or `space` flips a toggle, takes the next choice or opens a field (enter saves, esc
+cancels); a value is checked before it is written. Sounds apply at once; the screen says when the
+others apply (after `lea stop --all`, or at the next `lea`). A key the environment sets
+(`LEA_PROJECTS_DIR`, `LEA_APPROVALS`, `LEA_APPROVAL_TIMEOUT`) wins over the files, so it is shown
+read-only. The screen runs in the deck on the host: agents cannot open or drive it.
 
 | Key | Default | What it does |
 |---|---|---|
