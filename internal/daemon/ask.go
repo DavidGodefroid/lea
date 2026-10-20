@@ -205,7 +205,7 @@ func (d *Daemon) ask(ctx context.Context, o Origin, me string, raw json.RawMessa
 // delivers it.
 func (d *Daemon) answer(me, target string, id int64) (answerView, bool, error) {
 	defer d.lockKey("take:" + me)()
-	m, err := d.st.ReplyFrom(id, target)
+	m, err := d.st.ReplyFrom(id, target, me)
 	if errors.Is(err, store.ErrNotFound) {
 		return answerView{}, false, nil
 	}
