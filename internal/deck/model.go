@@ -168,6 +168,8 @@ type Model struct {
 	focused       bool          // the deck's pane has the keyboard (focus events)
 	menuFor       string        // key whose menu (right click) is open
 	menuSel       int           // the menu's highlighted item
+	hoverFor      string        // key of the row under the pointer, "" when none
+	hoverSeq      int           // the latest pointer move; older fades are dropped
 	ticking       bool          // a frame tick is pending
 	width, height int
 }
@@ -319,6 +321,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.key(msg.String())
 	case tea.MouseMsg:
 		return m.mouse(msg)
+	case hoverEndMsg:
+		if msg.seq == m.hoverSeq {
+			m.hoverFor = ""
+		}
+		return m, nil
 	}
 	return m, nil
 }
