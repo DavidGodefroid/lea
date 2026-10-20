@@ -163,7 +163,9 @@ lea__init_locksql() {
   set --
   if lea__locksql_wants_vault; then set -- --target vault; fi
   lea_log "building the locksql console image $LEA_LOCKSQL_IMAGE from locksql $LEA_LOCKSQL_REF${1:+ with the vault CLI} (LEA_LOCKSQL=0 skips it)"
-  if docker build "$@" -t "$LEA_LOCKSQL_IMAGE" "$(lea__locksql_context)" >&2; then
+  # The console checks each client's uid against its own container's accounts: the agents run as
+  # this uid and have none there.
+  if docker build "$@" -t "$LEA_LOCKSQL_IMAGE" --build-arg "ALLOWED_UIDS=$(id -u)" "$(lea__locksql_context)" >&2; then
     return 0
   fi
   lea_log "warning: could not build $LEA_LOCKSQL_IMAGE; lea works without it (rerun lea init or lea update, or set LEA_LOCKSQL=0)"
@@ -212,7 +214,7 @@ lea__init_locksql_profile() {
 lea__init_locksql_vault() {
   if ! docker run --rm --entrypoint sh "$LEA_LOCKSQL_IMAGE" -c 'command -v vault' >/dev/null 2>&1; then
     lea_log "a profile reads its login from Vault: rebuilding $LEA_LOCKSQL_IMAGE with the vault CLI"
-    if ! docker build --target vault -t "$LEA_LOCKSQL_IMAGE" "$(lea__locksql_context)" >&2; then
+    if ! docker build --target vault -t "$LEA_LOCKSQL_IMAGE" --build-arg "ALLOWED_UIDS=$(id -u)" "$(lea__locksql_context)" >&2; then
       lea_log "warning: could not build $LEA_LOCKSQL_IMAGE with the vault CLI (lea init again to retry)"
       return 0
     fi

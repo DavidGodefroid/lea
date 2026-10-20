@@ -121,7 +121,7 @@ git_ssh() { export LEA_GIT_SSH="$1"; lea_load_config; }
   [ "$status" -eq 0 ]
   run calls
   [[ "$output" == *"docker [image] [inspect] [locksql:0.8.0]"* ]]
-  [[ "$output" == *"docker [build] [-t] [locksql:0.8.0] [https://github.com/DavidGodefroid/locksql.git#v0.8.0]"* ]]
+  [[ "$output" == *"docker [build] [-t] [locksql:0.8.0] [--build-arg] [ALLOWED_UIDS=$(id -u)] [https://github.com/DavidGodefroid/locksql.git#v0.8.0]"* ]]
 }
 
 @test "a present locksql image is not rebuilt" {
@@ -450,7 +450,7 @@ EOT
   [[ "$output" == *"installer --version v9.9.9 --no-init"*"docker [pull] [ghcr.io/davidgodefroid/lea:9.9.9]"* ]]
   [[ "$output" == *"docker [pull] [ghcr.io/davidgodefroid/lea-proxy:9.9.9]"* ]]
   [[ "$output" == *"docker [image] [inspect] [locksql:9.0.0]"* ]]
-  [[ "$output" == *"docker [build] [-t] [locksql:9.0.0] [https://github.com/DavidGodefroid/locksql.git#v9.0.0]"* ]]
+  [[ "$output" == *"docker [build] [-t] [locksql:9.0.0] [--build-arg] [ALLOWED_UIDS=$(id -u)] [https://github.com/DavidGodefroid/locksql.git#v9.0.0]"* ]]
   [[ "$output" != *"locksql:0.8.0"* ]]
 }
 
@@ -553,7 +553,7 @@ EOT
   run lea_update
   [ "$status" -eq 0 ]
   run calls
-  [[ "$output" == *"docker [build] [-t] [locksql:0.8.0] [https://github.com/DavidGodefroid/locksql.git#v0.8.0]"* ]]
+  [[ "$output" == *"docker [build] [-t] [locksql:0.8.0] [--build-arg] [ALLOWED_UIDS=$(id -u)] [https://github.com/DavidGodefroid/locksql.git#v0.8.0]"* ]]
 }
 
 @test "update of a checkout with LEA_LOCKSQL=0 builds no locksql image" {
@@ -653,7 +653,7 @@ y
   [ "$status" -eq 0 ]
   grep -qx "LEA_LOCKSQL_VAULT_ADDR='https://vault.example.com'" "$U"
   run calls
-  [[ "$output" == *"docker [build] [--target] [vault] [-t] [locksql:0.8.0] [https://github.com/DavidGodefroid/locksql.git#v0.8.0]"* ]]
+  [[ "$output" == *"docker [build] [--target] [vault] [-t] [locksql:0.8.0] [--build-arg] [ALLOWED_UIDS=$(id -u)] [https://github.com/DavidGodefroid/locksql.git#v0.8.0]"* ]]
   [[ "$output" == *"[-e] [VAULT_ADDR=https://vault.example.com] [--entrypoint] [vault] [locksql:0.8.0] [token] [lookup]"* ]]
   [[ "$output" == *"docker [run] [-i] [--rm] [--user] [locksql] [-v] [locksql-home:/home/locksql] [-e] [VAULT_ADDR=https://vault.example.com] [--entrypoint] [vault] [locksql:0.8.0] [login] [-method=oidc]"* ]]
 }
@@ -679,7 +679,7 @@ y
   mkdir -p "$LEA_LOCKSQL_REF"
   lea_init </dev/null 2>/dev/null
   run calls
-  [[ "$output" == *"docker [build] [-t] [locksql:0.8.0] [$LEA_LOCKSQL_REF]"* ]]
+  [[ "$output" == *"docker [build] [-t] [locksql:0.8.0] [--build-arg] [ALLOWED_UIDS=$(id -u)] [$LEA_LOCKSQL_REF]"* ]]
 }
 
 @test "init links locksql next to lea, takes over an older lea's, keeps a host locksql" {
