@@ -349,7 +349,7 @@ lea new [name] [-- args]     # one more agent (Claude Code arguments after --)
 lea shell [-- cmd...]        # a shell, or one command, in the same lea
 lea stop [--all] [--forget] # stop this lea (--all: every lea); the next lea resumes its agents
                              # in their Claude conversations (--forget: drop them for good)
-lea update                   # the latest release, and its images
+lea update [--deps ask|all|none]  # the latest release, its images, then newer dependencies
 lea rollback                 # back to the previous version; the background update skips this one
 lea doctor                   # check the setup
 lea init                     # set up again (idempotent)
@@ -363,6 +363,20 @@ release is only announced in the deck, and so is a newer minor release while lea
 its patch releases install themselves). Running containers keep their image until they stop.
 `LEA_AUTOUPDATE=0` in `~/.config/lea/lea.conf` turns it off; the log is
 `~/.local/share/lea/host/update.log`.
+
+`lea update` then looks for a newer release of each dependency lea installs and that you turned
+on: locksql (its console image), lockmq and lockfile (their binary on this host). It shows the
+current and the available version with a link to the release notes, and asks for each one (no by
+default). `--deps all` takes them all, `--deps none` (and no terminal) none; the background update
+never touches them. An accepted release is checked before anything is built or installed: cosign
+must prove that the tool's release workflow signed it **at that tag** (for locksql, also on the
+very commit that was cloned, whose source is then built); then it is recorded in
+`~/.config/lea/lea.conf` (`LEA_LOCKSQL_REF` and `LEA_LOCKSQL_IMAGE`, `LEA_LOCKMQ_REF`,
+`LEA_LOCKFILE_REF`), and the profiles and volumes stay. Only a plain `vX.Y.Z` newer than the
+current one is offered, never one below a security floor (lockfile v0.1.1); an empty ref or a
+locksql checkout is left alone. A recorded release older than the one a newer lea pins gives way
+to lea's pin. A running console keeps its version until you restart it. lea's image ships the
+lockmq and lockfile clients of the releases lea pins: a newer console may need a newer lea.
 
 After an update only the current and the previous versions stay in
 `~/.local/share/lea-install` (never the one a running daemon still uses). `lea rollback` links the
@@ -395,7 +409,7 @@ read-only. The screen runs in the deck on the host: agents cannot open or drive 
 | `LEA_LOCKSQL` | `1` | wire lea for a locksql console (`0`: no locksql) |
 | `LEA_LOCKSQL_VAULT_ADDR` | asked by `lea init` | Vault address of the locksql console, for a Vault profile |
 | `LEA_LOCKMQ`, `LEA_LOCKFILE` | `0`, asked by `lea init` | let the agents reach a lockmq / lockfile console on this host |
-| `LEA_LOCKMQ_REF`, `LEA_LOCKFILE_REF` | the pinned releases | the release `lea init` installs on the host (lockfile v0.1.1 or later) |
+| `LEA_LOCKMQ_REF`, `LEA_LOCKFILE_REF` | the pinned releases | the release `lea init` installs on the host (lockfile v0.1.1 or later); `lea update` records a newer one you accept |
 | `LEA_INTERNAL_HOSTS` | none | private hosts the proxy may reach (format in `config/internal-hosts`) |
 | `LEA_EGRESS_ALLOW` | empty (off) | the only web domains agents may reach, comma separated (subdomains included) |
 | `LEA_NESTED_NETWORKS` | empty | networks your compose files expect, created at start |

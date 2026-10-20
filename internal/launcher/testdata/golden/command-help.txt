@@ -21,6 +21,8 @@ Usage:
   lea agents                  list agents (lea msg <agent> <text>, lea inbox, lea approvals, lea requests)
   lea stop [--all] [--forget]
                               stop lea; its agents resume at the next lea (--forget drops them)
-  lea update
+  lea update [--deps ask|all|none]
+                              the latest lea, then each newer locksql, lockmq, lockfile release
+                              (asked one by one; all or none without asking; signatures checked)
   lea rollback                back to the previous version; the background update skips this one
   lea doctor

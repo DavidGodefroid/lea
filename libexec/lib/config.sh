@@ -13,6 +13,7 @@ lea_load_config() {
   _lc_appt=${LEA_APPROVAL_TIMEOUT:-}
   # shellcheck source=/dev/null
   . "$LEA_ROOT/config/lea.conf"
+  _lc_psql=${LEA_LOCKSQL_REF:-} _lc_pimg=${LEA_LOCKSQL_IMAGE:-} _lc_pmq=${LEA_LOCKMQ_REF:-} _lc_plf=${LEA_LOCKFILE_REF:-}
   _lc_user=$(lea_user_config_path)
   case $_lc_user in /*) ;; *) _lc_user=./$_lc_user ;; esac
   if [ -n "${LEA_CONFIG:-}" ] || [ -f "$_lc_user" ]; then
@@ -57,6 +58,12 @@ lea_load_config() {
   [ -z "$LEA_LOCKMQ_REF" ] || lea__semver "$LEA_LOCKMQ_REF" >/dev/null || lea_die "LEA_LOCKMQ_REF must be a lockmq release (vX.Y.Z), not '$LEA_LOCKMQ_REF'"
   [ -z "$LEA_LOCKFILE_REF" ] || lea__semver "$LEA_LOCKFILE_REF" >/dev/null || lea_die "LEA_LOCKFILE_REF must be a lockfile release (vX.Y.Z), not '$LEA_LOCKFILE_REF'"
   [ -z "$LEA_LOCKFILE_REF" ] || lea__lockfile_safe "$LEA_LOCKFILE_REF" || lea_die "LEA_LOCKFILE_REF $LEA_LOCKFILE_REF is refused: lockfile v0.1.0 lets a plugin escape its sandbox (v0.1.1 or later)"
+  # A release lea update recorded in the user config never holds lea below its own, newer pin
+  # (a later lea may need it); an empty ref or a locksql checkout stays as it is. After the
+  # checks: a refused ref (lockfile v0.1.0) is still refused, never quietly raised.
+  if lea__older "${LEA_LOCKSQL_REF:-}" "$_lc_psql"; then LEA_LOCKSQL_REF=$_lc_psql LEA_LOCKSQL_IMAGE=$_lc_pimg; fi
+  if lea__older "${LEA_LOCKMQ_REF:-}" "$_lc_pmq"; then LEA_LOCKMQ_REF=$_lc_pmq; fi
+  if lea__older "${LEA_LOCKFILE_REF:-}" "$_lc_plf"; then LEA_LOCKFILE_REF=$_lc_plf; fi
   LEA_AUTOUPDATE=${LEA_AUTOUPDATE:-1}
   case $LEA_AUTOUPDATE in 0|1) ;; *) lea_die "LEA_AUTOUPDATE must be 1 (check for a new release every day) or 0, not '$LEA_AUTOUPDATE'" ;; esac
   LEA_AUTOUPDATE_SKIP=${LEA_AUTOUPDATE_SKIP:-}

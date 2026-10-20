@@ -487,6 +487,18 @@ EOT
   [[ "$output" != *"locksql:0.8.0"* ]]
 }
 
+@test "release update ends with the new installation checking the dependencies, with its own pins" {
+  update_root
+  fake_release v9.9.9
+  export FAKE_CURL_EFFECTIVE_locksql=https://github.com/DavidGodefroid/locksql/releases/tag/v9.1.0
+  run lea_update --deps none
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"updated; running lea containers keep their image"*"locksql: v9.0.0 -> v9.1.0 (release notes: https://github.com/DavidGodefroid/locksql/releases/tag/v9.1.0)"*"locksql: not updated (--deps none)"* ]]
+  run calls
+  [[ "$output" == *"curl [-fsSLI] [-o] [/dev/null] [-w] [%{url_effective}] [https://github.com/DavidGodefroid/locksql/releases/latest]"* ]]
+  [[ "$output" != *"locksql/releases/download"* ]]
+}
+
 @test "release update does not rebuild a present locksql image" {
   update_root
   fake_release v9.9.9
@@ -587,6 +599,16 @@ EOT
   [ "$status" -eq 0 ]
   run calls
   [[ "$output" == *"docker [build] [-t] [locksql:0.8.0] [--build-arg] [ALLOWED_UIDS=$(id -u)] [https://github.com/DavidGodefroid/locksql.git#v0.8.0]"* ]]
+}
+
+@test "update of a checkout checks the dependencies with the pulled code" {
+  src=$LEA_ROOT
+  update_root checkout
+  cp -R "$src/libexec" "$R/"
+  export FAKE_CURL_EFFECTIVE_locksql=https://github.com/DavidGodefroid/locksql/releases/tag/v0.9.0
+  run lea_update
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"locksql: v0.8.0 -> v0.9.0"*"locksql: not updated (no terminal to ask)"* ]]
 }
 
 @test "update of a checkout with LEA_LOCKSQL=0 builds no locksql image" {
