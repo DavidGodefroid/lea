@@ -4,23 +4,29 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"os"
+	"strconv"
 	"strings"
+	"syscall"
 
 	"github.com/DavidGodefroid/lea/internal/providers"
 )
 
 // LoadProviders reads the providers file (LEA_PROVIDERS) against the internal-hosts file
-// (LEA_INTERNAL_HOSTS): a private upstream must be listed there. No key file may sit in the
-// projects directory (LEA_PROJECTS_DIR), which the agents read and write, and each must be the
-// user's own, readable by them only.
+// (LEA_INTERNAL_HOSTS): a private upstream must be listed there. No key file may sit in a host
+// directory the agents' container mounts (the projects directory, lea's data, ~/.claude,
+// ~/.codex), real paths compared, and each must be the user's own, readable by them only.
 func LoadProviders(get func(string) string) (*providers.Registry, error) {
 	o := providers.Options{Internal: providers.Hosts{}, UID: os.Getuid()}
 	if f, err := os.Open(get("LEA_INTERNAL_HOSTS")); err == nil {
 		o.Internal = providers.ParseHosts(f)
 		f.Close()
 	}
-	for _, d := range []string{get("LEA_PROJECTS_DIR"), get("LEA_PROJECTS")} {
-		if d != "" {
+	// Every host directory the agents' container mounts: the projects directory, lea's data
+	// (its state dirs: git, gh, go, ~/.codex ...) and ~/.claude (shared entries, the private one).
+	home := get("HOME")
+	data := nonEmpty(get("XDG_DATA_HOME"), home+"/.local/share") + "/lea"
+	for _, d := range []string{get("LEA_PROJECTS_DIR"), get("LEA_PROJECTS"), data, home + "/.claude", home + "/.codex"} {
+		if d != "" && d != "/.claude" && d != "/.codex" {
 			o.Forbidden = append(o.Forbidden, d)
 		}
 	}
@@ -30,8 +36,10 @@ func LoadProviders(get func(string) string) (*providers.Registry, error) {
 // forwarderSetup is what the proxy needs for the endpoints of the providers file: the mounts of
 // the rendered endpoints file and of each key file (read-only, into the proxy only: no agent
 // container ever mounts one), and a stamp of them for the proxy's lea.providers label ("" when
-// there is no endpoint). The stamp is a hash of the rendered file: it changes with an endpoint or
-// a key file's path, never with a key (the forwarder reads the key file at each request).
+// there is no endpoint). The stamp is a hash of the rendered file and of each key file's identity
+// (device and inode, never its content): a key rewritten in place is read at the next request,
+// and a key file replaced by a new one (mv, most editors), which a single-file bind mount would
+// not show, restarts the proxy at the next lea.
 type forwarderSetup struct {
 	mounts []string
 	stamp  string
@@ -81,9 +89,27 @@ func (l *Launcher) forwarder(proj string) (forwarderSetup, error) {
 	if err := noComma(f); err != nil {
 		return forwarderSetup{}, err
 	}
-	sum := sha256.Sum256([]byte(b.String()))
+	id := b.String()
+	for _, p := range eps {
+		if kf := p.Endpoint.KeyFile; kf != "" {
+			id += "\x00" + fileIdentity(kf)
+		}
+	}
+	sum := sha256.Sum256([]byte(id))
 	return forwarderSetup{
 		mounts: append([]string{"--mount", "type=bind,src=" + f + ",dst=/etc/lea/endpoints,readonly"}, mounts...),
 		stamp:  hex.EncodeToString(sum[:8]),
 	}, nil
+}
+
+// fileIdentity is a file's device and inode, "" when it cannot be read.
+func fileIdentity(p string) string {
+	fi, err := os.Stat(p)
+	if err != nil {
+		return ""
+	}
+	if st, ok := fi.Sys().(*syscall.Stat_t); ok {
+		return strconv.FormatUint(uint64(st.Dev), 10) + ":" + strconv.FormatUint(uint64(st.Ino), 10)
+	}
+	return ""
 }

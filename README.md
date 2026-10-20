@@ -297,10 +297,16 @@ vllm      https://vllm.example.com/v1         key=/home/me/.config/lea/keys/vllm
 ```
 
 - An endpoint's API key never reaches the agents. The file names a key file, not a key: it must
-  be yours, mode `600` (or `400`), not a symbolic link, and outside the projects directory. lea
+  be yours, mode `600` (or `400`), a regular file with a single hard link, and outside every
+  directory lea mounts into the agents' container (the projects directory, lea's data, `~/.claude`,
+  `~/.codex`; real paths are compared). lea
   mounts it into the proxy container only, where `lea-keyproxy` adds it to the agents' requests;
   an agent reaches the endpoint at `http://lea-proxy:4400/<name>` and sees neither the key nor the
-  upstream. The key is read at each request: replace the file to rotate it.
+  upstream. The key is read at each request: to rotate it, rewrite the file in place
+  (`cat new-key > file`); a file replaced by a new one (`mv`, most editors) is seen once the
+  proxy restarts, which the next `lea` does. Every agent of every lea container can use a
+  configured endpoint (none can read its key); the proxy's egress network (your host, other
+  containers there) cannot.
 - `lea-keyproxy` sends every request through the proxy's own egress rules: an endpoint on your
   network (an Ollama on your LAN, or on this machine at its Docker bridge address) must be listed
   in `LEA_INTERNAL_HOSTS` with its port, as any internal host; nothing is open by default, and

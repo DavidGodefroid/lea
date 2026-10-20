@@ -64,3 +64,17 @@ func TestForwarderRefusesTheEgressNetwork(t *testing.T) {
 		t.Error("the upstream was reached")
 	}
 }
+
+// Matrix parameters (';') never pass: some gateways read "..;" as "..".
+func TestCleanRawPathRefusesSemicolons(t *testing.T) {
+	for _, p := range []string{"/n/..;/admin", "/n/a;b", "/n/v1;x=1/models", "/n/%3b", "/n/%3B/x", "/n/.%3b/x", "/n/a,b", "/n/a=b"} {
+		if cleanRawPath(p) {
+			t.Errorf("%q accepted", p)
+		}
+	}
+	for _, p := range []string{"/n/responses", "/n/models/qwen3:32b", "/n/models/meta-llama%2BLlama", "/n/chat/completions", "/n/v1/"} {
+		if !cleanRawPath(p) {
+			t.Errorf("%q refused", p)
+		}
+	}
+}

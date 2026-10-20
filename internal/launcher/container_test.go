@@ -522,6 +522,33 @@ func TestProvidersGoToTheProxyOnly(t *testing.T) {
 	}
 }
 
+// A key file replaced by a new file (another inode) changes the proxy's stamp: its single-file
+// mount would keep the old key. A key rewritten in place does not.
+func TestKeyReplacementChangesTheProxyStamp(t *testing.T) {
+	w := newWorld(t, repoRoot(t))
+	key := filepath.Join(w.dir, "keys", "vllm")
+	os.MkdirAll(filepath.Dir(key), 0o700)
+	os.WriteFile(key, []byte("sk-1\n"), 0o600)
+	writeProviders(t, w, "vllm https://vllm.example.com/v1 key="+key+"\n", "")
+	stamp := func() string {
+		fw, err := w.launcher().forwarder(w.proj)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return fw.stamp
+	}
+	s1 := stamp()
+	os.WriteFile(key, []byte("sk-2\n"), 0o600) // in place
+	if s2 := stamp(); s2 != s1 {
+		t.Fatal("a key rewritten in place changed the stamp")
+	}
+	os.WriteFile(key+".new", []byte("sk-3\n"), 0o600)
+	os.Rename(key+".new", key)
+	if s3 := stamp(); s3 == s1 {
+		t.Fatal("a replaced key file kept the stamp")
+	}
+}
+
 // A proxy started for other providers is replaced; one for the same is kept.
 func TestProxyFollowsTheProviders(t *testing.T) {
 	w := newWorld(t, repoRoot(t))
@@ -542,6 +569,9 @@ func TestProvidersFileIsChecked(t *testing.T) {
 	for name, tc := range map[string]struct{ line, hosts string }{
 		"key in projects": {"vllm https://vllm.example.com/v1 key=%P/key\n", ""},
 		"key readable":    {"vllm https://vllm.example.com/v1 key=%D/open-key\n", ""},
+		"key via a link":  {"vllm https://vllm.example.com/v1 key=%D/to-projects/key\n", ""},
+		"key in lea data": {"vllm https://vllm.example.com/v1 key=%A/lea/key\n", ""},
+		"key in .claude":  {"vllm https://vllm.example.com/v1 key=%H/.claude/key\n", ""},
 		"private":         {"lan http://192.168.1.10:11434/v1\n", ""},
 		"loopback":        {"lan http://127.0.0.1:11434/v1\n", "127.0.0.1 8000\n"},
 	} {
@@ -549,7 +579,11 @@ func TestProvidersFileIsChecked(t *testing.T) {
 			w := newWorld(t, repoRoot(t))
 			os.WriteFile(w.proj+"/key", []byte("k\n"), 0o600)
 			os.WriteFile(w.dir+"/open-key", []byte("k\n"), 0o644)
-			line := strings.NewReplacer("%P", w.proj, "%D", w.dir).Replace(tc.line)
+			os.Symlink(w.proj, w.dir+"/to-projects")
+			os.WriteFile(w.data+"/lea/key", []byte("k\n"), 0o600)
+			os.MkdirAll(w.home+"/.claude", 0o700)
+			os.WriteFile(w.home+"/.claude/key", []byte("k\n"), 0o600)
+			line := strings.NewReplacer("%P", w.proj, "%D", w.dir, "%A", w.data, "%H", w.home).Replace(tc.line)
 			writeProviders(t, w, line, tc.hosts)
 			if err := w.launcher().ensureProxy(w.proj); err == nil || !strings.Contains(err.Error(), "providers file") {
 				t.Fatalf("err=%v", err)

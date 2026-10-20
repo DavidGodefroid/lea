@@ -18,6 +18,7 @@ import (
 	"net"
 	"net/url"
 	"os"
+	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
@@ -256,6 +257,10 @@ func Parse(rd io.Reader, o Options) ([]Provider, error) {
 			if err := CheckKeyFile(ep.KeyFile, o.UID, o.Forbidden); err != nil {
 				return nil, fmt.Errorf("line %d: %s: %w", n, p.Name, err)
 			}
+			// The real path is what gets mounted: a link swapped after the check changes nothing.
+			if real, err := filepath.EvalSymlinks(ep.KeyFile); err == nil {
+				ep.KeyFile = real
+			}
 		}
 		p.Endpoint = ep
 		out = append(out, p)
@@ -358,10 +363,22 @@ func CheckKeyFile(path string, uid int, forbidden []string) error {
 	if !strings.HasPrefix(path, "/") || strings.ContainsAny(path, ",\n") || cleanPath(path) != path {
 		return errors.New("the key file must be a clean absolute path without a comma")
 	}
+	// Compared lexically and by real paths: a link on the way (to the key or to a forbidden
+	// directory) never hides that the key sits in one.
+	real, rerr := filepath.EvalSymlinks(path)
 	for _, d := range forbidden {
-		if d != "" && (path == d || strings.HasPrefix(path, strings.TrimSuffix(d, "/")+"/")) {
+		if d == "" {
+			continue
+		}
+		if within(path, d) || (rerr == nil && within(real, d)) {
 			return fmt.Errorf("the key file must not be in %s: the agents can read it", d)
 		}
+		if rd, err := filepath.EvalSymlinks(d); err == nil && (within(path, rd) || (rerr == nil && within(real, rd))) {
+			return fmt.Errorf("the key file must not be in %s: the agents can read it", d)
+		}
+	}
+	if rerr != nil {
+		return errors.New("the key file cannot be read")
 	}
 	fi, err := os.Lstat(path)
 	if err != nil {
@@ -379,7 +396,16 @@ func CheckKeyFile(path string, uid int, forbidden []string) error {
 	if uid >= 0 && fileOwner(fi) != uid {
 		return errors.New("the key file must belong to you")
 	}
+	if fileLinks(fi) > 1 {
+		return errors.New("the key file has another hard link, which may sit where the agents read: give it a single one")
+	}
 	return nil
+}
+
+// within reports whether p is dir or under it.
+func within(p, dir string) bool {
+	dir = strings.TrimSuffix(dir, "/")
+	return p == dir || strings.HasPrefix(p, dir+"/")
 }
 
 func cleanPath(p string) string {

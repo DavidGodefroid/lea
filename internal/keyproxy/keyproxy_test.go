@@ -317,9 +317,12 @@ func TestRefusals(t *testing.T) {
 	if got := r.proxy.carried(); len(got) != 0 {
 		t.Errorf("refused requests reached the proxy: %q", got)
 	}
-	// An encoded ordinary character is forwarded as sent.
-	if _, _, body := raw(t, r.fw.URL, "GET", "/ollama/a%20b", nil); body != "path=/v1/a%20b query=" {
-		t.Errorf("encoded space: %q", body)
+	// An encoded path character is forwarded as sent; an encoded space is not a path character.
+	if _, _, body := raw(t, r.fw.URL, "GET", "/ollama/a%2Bb", nil); body != "path=/v1/a%2Bb query=" {
+		t.Errorf("encoded plus: %q", body)
+	}
+	if code, _, _ := raw(t, r.fw.URL, "GET", "/ollama/a%20b", nil); code != 400 {
+		t.Errorf("encoded space: %d", code)
 	}
 }
 
@@ -462,7 +465,7 @@ func TestParseEndpoints(t *testing.T) {
 }
 
 func TestCleanRawPath(t *testing.T) {
-	for _, p := range []string{"/a", "/a/", "/a/b/c", "/a/b%20c", "/a/v1:generate", "/a/~x"} {
+	for _, p := range []string{"/a", "/a/", "/a/b/c", "/a/b%2Bc", "/a/v1:generate", "/a/~x"} {
 		if !cleanRawPath(p) {
 			t.Errorf("%q refused", p)
 		}

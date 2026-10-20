@@ -8,7 +8,8 @@
 // URL joined with <rest>, always through the proxy's squid (-via): the egress rules of the agents
 // (private ranges refused unless the internal-hosts file grants them) apply to every upstream.
 //
-// The key is read from its file on every request, so a rotated key needs no restart; it is never
+// The key is read from its file on every request, so a key rewritten in place needs no restart (a
+// replaced file is not seen through its single-file mount: the launcher restarts the proxy); it is never
 // logged, never echoed in an error, and nothing of the request but its endpoint name, method and
 // path is logged.
 package keyproxy
@@ -369,9 +370,10 @@ func isTLS(err error) bool {
 	return errors.As(err, &ce) || errors.As(err, &re) || errors.As(err, &ae)
 }
 
-// cleanRawPath accepts an origin-form path /<segment>/... without empty, '.' or '..' segments,
-// backslashes, control characters, or percent-encodings of '.', '/', '\', '%' or control
-// characters (so no upstream decoding can turn it into another path).
+// cleanRawPath accepts an origin-form path /<segment>/... made of letters, digits and
+// - . _ ~ : @ + only (percent-encoded or not; '.' and '/' never encoded), without empty, '.' or
+// '..' segments. No ';' (some gateways read "..;" as ".."), backslash, control or other
+// character an upstream could decode or normalise into another path.
 func cleanRawPath(p string) bool {
 	if !strings.HasPrefix(p, "/") || len(p) < 2 {
 		return false
@@ -379,17 +381,18 @@ func cleanRawPath(p string) bool {
 	for i := 0; i < len(p); i++ {
 		c := p[i]
 		switch {
-		case c <= ' ' || c >= 0x7f || c == '\\':
-			return false
+		case c == '/' || pathByte(c):
 		case c == '%':
 			if i+2 >= len(p) || !isHex(p[i+1]) || !isHex(p[i+2]) {
 				return false
 			}
 			b := unhex(p[i+1])<<4 | unhex(p[i+2])
-			if b == '.' || b == '/' || b == '\\' || b == '%' || b < ' ' || b >= 0x7f {
+			if b == '.' || !pathByte(b) {
 				return false
 			}
 			i += 2
+		default:
+			return false
 		}
 	}
 	for i, s := range strings.Split(p[1:], "/") {
@@ -402,6 +405,11 @@ func cleanRawPath(p string) bool {
 		}
 	}
 	return !strings.Contains(p, "//")
+}
+
+// pathByte is a byte a path segment may hold.
+func pathByte(c byte) bool {
+	return 'a' <= c && c <= 'z' || 'A' <= c && c <= 'Z' || '0' <= c && c <= '9' || strings.IndexByte("-._~:@+", c) >= 0
 }
 
 func isHex(c byte) bool {

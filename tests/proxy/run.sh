@@ -81,6 +81,7 @@ if [ "$got" = "0" ]; then echo "ok   forwarder drops Set-Cookie"; else echo "FAI
 fwd "forwarder: unknown name 404"        404 "" -- "$kp/nope/models"
 fwd "forwarder: '..' path refused"       400 "" -- --path-as-is "$kp/llm/../rebind/x"
 fwd "forwarder: encoded '..' refused"    400 "" -- --path-as-is "$kp/llm/%2e%2e/x"
+fwd "forwarder: '..;' segment refused"    400 "" -- --path-as-is "$kp/llm/..;/x"
 fwd "forwarder: PUT refused"             405 "" -- -X PUT "$kp/llm/models"
 fwd "forwarder: private upstream not in internal-hosts refused by squid" 403 "" -- "$kp/rebind/models"
 got=$(dc exec -T outsider curl -s -o /dev/null --max-time 15 --noproxy '*' -w '%{http_code}' http://203.0.113.2:4400/llm/models || true)

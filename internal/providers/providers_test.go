@@ -287,3 +287,43 @@ func TestArgvEndpoint(t *testing.T) {
 		t.Errorf("a key reference in %s", j)
 	}
 }
+
+// The forbidden directories are compared by their real paths: a key reached through a symbolic
+// link to the projects directory, or a projects directory that is itself a link, is refused; so is
+// a key with another hard link (it may sit in the projects directory).
+func TestCheckKeyFileResolvesLinks(t *testing.T) {
+	proj := t.TempDir()
+	key := filepath.Join(proj, "k")
+	os.WriteFile(key, []byte("sk\n"), 0o600)
+	other := t.TempDir()
+	viaLink := filepath.Join(other, "link")
+	os.Symlink(proj, viaLink)
+	if err := CheckKeyFile(filepath.Join(viaLink, "k"), os.Getuid(), []string{proj}); err == nil {
+		t.Error("a key under a link to the projects directory was accepted")
+	}
+	projLink := filepath.Join(other, "proj-link")
+	os.Symlink(proj, projLink)
+	if err := CheckKeyFile(key, os.Getuid(), []string{projLink}); err == nil {
+		t.Error("a key in a projects directory named through a link was accepted")
+	}
+	solo := filepath.Join(t.TempDir(), "solo")
+	os.WriteFile(solo, []byte("sk\n"), 0o600)
+	if err := CheckKeyFile(solo, os.Getuid(), []string{proj}); err != nil {
+		t.Fatal(err)
+	}
+	os.Link(solo, filepath.Join(proj, "hard"))
+	if err := CheckKeyFile(solo, os.Getuid(), []string{proj}); err == nil {
+		t.Error("a key with a second hard link was accepted")
+	}
+}
+
+// Parse keeps a key file's real path: the launcher mounts that one.
+func TestParseKeepsTheKeysRealPath(t *testing.T) {
+	k := keyFile(t, 0o600)
+	link := filepath.Join(t.TempDir(), "dir")
+	os.Symlink(filepath.Dir(k), link)
+	ps, err := parse(t, "v https://v.example.com/v1 key="+filepath.Join(link, "key")+"\n", Options{UID: os.Getuid()})
+	if err != nil || ps[0].Endpoint.KeyFile != k {
+		t.Fatalf("%+v %v", ps, err)
+	}
+}
