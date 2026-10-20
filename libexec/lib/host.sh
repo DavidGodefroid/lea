@@ -25,16 +25,26 @@ lea__under() {
 }
 
 # lea__guard_projects PROJECTS (physical): refuses /, $HOME and its ancestors, and any directory
-# that is, contains or lies inside ~/.claude, the lea data dir or the lea installation.
+# that is, contains or lies inside ~/.claude, a credential directory (LEA_GUARD_CREDENTIALS, from
+# $HOME), the lea data dir or the lea installation.
+LEA_GUARD_CREDENTIALS=".ssh .gnupg .aws .config/gh .kube .docker"
 lea__guard_projects() {
   if [ "$1" = / ] || lea__under "$1" "$(lea__phys "$HOME")"; then
     lea_die "$1 cannot be a projects directory: it is / or contains your home directory"
   fi
-  for _gp_x in "$(lea__phys "$HOME/.claude")" "$(lea__phys "$(lea_data_dir)")" "$LEA_ROOT"; do
-    if lea__under "$1" "$_gp_x" || lea__under "$_gp_x" "$1"; then
-      lea_die "$1 cannot be a projects directory: it overlaps $_gp_x"
-    fi
+  lea__guard_overlap "$1" "$(lea__phys "$HOME/.claude")"
+  for _gp_c in $LEA_GUARD_CREDENTIALS; do
+    lea__guard_overlap "$1" "$(lea__phys "$HOME/$_gp_c")"
   done
+  lea__guard_overlap "$1" "$(lea__phys "$(lea_data_dir)")"
+  lea__guard_overlap "$1" "$LEA_ROOT"
+}
+
+# lea__guard_overlap PROJECTS X: dies when PROJECTS is, contains or lies inside X.
+lea__guard_overlap() {
+  if lea__under "$1" "$2" || lea__under "$2" "$1"; then
+    lea_die "$1 cannot be a projects directory: it overlaps $2"
+  fi
 }
 
 # lea_update [--background]: a git checkout pulls and rebuilds; a release install (no .git) is
