@@ -1070,6 +1070,8 @@ func (d *Daemon) dispatchHooks(ctx context.Context, o Origin, me string, req wir
 		return struct{}{}, nil
 	case "status_report":
 		return d.statusReport(o, me, req.Params)
+	case "lock_request":
+		return d.lockRequest(ctx, o, me, req.Params)
 	default:
 		return nil, fmt.Errorf("unknown method %q", req.Method)
 	}

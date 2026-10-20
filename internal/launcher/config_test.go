@@ -224,3 +224,37 @@ func TestEgressAllow(t *testing.T) {
 		t.Errorf("err = %v", err)
 	}
 }
+
+func TestLocksqlAgentProfiles(t *testing.T) {
+	w := newWorld(t, repoRoot(t))
+	for conf, want := range map[string]string{
+		"":                                  "[]",
+		"LEA_LOCKSQL_AGENT_PROFILES=prod\n": "[prod]",
+		"LEA_LOCKSQL_AGENT_PROFILES=\"a b,c_1\"\n": "[a b c_1]",
+	} {
+		writeUserConf(t, w, conf)
+		c, err := LoadConfig(w.getenv, w.root, w.proj)
+		if err != nil {
+			t.Fatal(err)
+		}
+		ps, err := c.LocksqlAgentProfiles()
+		if err != nil || fmt.Sprint(ps) != want {
+			t.Errorf("%q: %v %v, want %s", conf, ps, err, want)
+		}
+	}
+	// An invalid list allows nothing, and lea still starts.
+	for _, v := range []string{"Prod", "--auto", "a;b", strings.Repeat("p ", 33)} {
+		writeUserConf(t, w, "LEA_LOCKSQL_AGENT_PROFILES=\""+v+"\"\n")
+		c, err := LoadConfig(w.getenv, w.root, w.proj)
+		if err != nil {
+			t.Fatalf("%q: lea does not start: %v", v, err)
+		}
+		if ps, err := c.LocksqlAgentProfiles(); err == nil || ps != nil {
+			t.Errorf("%q: %v %v", v, ps, err)
+		}
+	}
+	// Never in a share file: an import cannot widen what agents may ask for.
+	if _, ok := shareKeys["LEA_LOCKSQL_AGENT_PROFILES"]; ok || !machineKeys["LEA_LOCKSQL_AGENT_PROFILES"] {
+		t.Fatal("LEA_LOCKSQL_AGENT_PROFILES is shareable")
+	}
+}

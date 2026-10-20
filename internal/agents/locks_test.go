@@ -8,6 +8,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 )
 
 type fakeConsoles struct {
@@ -382,5 +383,99 @@ func TestLockOpenWithoutConsolesIsRefused(t *testing.T) {
 	e.ensure(t, "/p")
 	if _, err := e.m.LockOpen(bg, C, "locksql", ""); err == nil {
 		t.Fatal("opened without a configuration")
+	}
+}
+
+// An agent's lock request is checked against the user's allow-list and needs a deck to show it;
+// the check opens, lists and stops nothing, and makes no pane.
+func TestLockCheckRequest(t *testing.T) {
+	allowed := sqlSpec
+	allowed.AgentProfiles = []string{"staging", "prod"}
+	e, fc := lockEnv(t, allowed)
+	s := e.ensure(t, "/p")
+	n := len(s.log)
+	if err := e.m.LockCheckRequest(bg, C, "locksql", "prod"); err != nil {
+		t.Fatal(err)
+	}
+	for name, c := range map[string]struct{ tool, profile, want string }{
+		"no profile":      {"locksql", "", "a profile is required"},
+		"not allowed":     {"locksql", "dev", `profile "dev" is not one agents may ask for`},
+		"bad profile":     {"locksql", "Prod;x", "invalid profile name"},
+		"option profile":  {"locksql", "--auto", "invalid profile name"},
+		"host tool":       {"lockmq", "prod", "no lock console"},
+		"unknown tool":    {"docker", "prod", "no lock console"},
+		"control in tool": {"locksql\x1b", "prod", "no lock console"},
+	} {
+		if err := e.m.LockCheckRequest(bg, C, c.tool, c.profile); err == nil || !strings.Contains(err.Error(), c.want) {
+			t.Errorf("%s: %v", name, err)
+		}
+	}
+	if err := e.m.LockCheckRequest(bg, "bad name", "locksql", "prod"); err == nil {
+		t.Error("bad container accepted")
+	}
+	if len(s.log) != n || len(fc.calls) != 0 || lockPane(s, "locksql/prod") != nil {
+		t.Fatalf("a check touched tmux (%q) or a console (%q)", s.log[n:], fc.calls)
+	}
+	// Empty allow-list (the default): agents may ask for nothing.
+	e2, _ := lockEnv(t, sqlSpec)
+	e2.ensure(t, "/p")
+	if err := e2.m.LockCheckRequest(bg, C, "locksql", "prod"); err == nil || !strings.Contains(err.Error(), "LEA_LOCKSQL_AGENT_PROFILES") {
+		t.Fatalf("empty allow-list: %v", err)
+	}
+	off := allowed
+	off.Enabled = false
+	e3, _ := lockEnv(t, off)
+	e3.ensure(t, "/p")
+	if err := e3.m.LockCheckRequest(bg, C, "locksql", "prod"); err == nil || !strings.Contains(err.Error(), "locksql is off") {
+		t.Fatalf("off: %v", err)
+	}
+	// No deck runs: nobody would see the request, and no session is made for it.
+	e4, _ := lockEnv(t, allowed)
+	if err := e4.m.LockCheckRequest(bg, C, "locksql", "prod"); !errors.Is(err, errNoDeck) {
+		t.Fatalf("no deck: %v", err)
+	}
+	if e4.term.get(C) != nil {
+		t.Fatal("a session was made for a request")
+	}
+}
+
+// The deck's row carries the agent's oldest pending lock request: only its id, tool and profile.
+func TestSnapshotCarriesTheOldestLockRequest(t *testing.T) {
+	e := newEnv(t)
+	e.ensure(t, "/p")
+	e.spawn(t, "a1")
+	k1 := C + "/a1"
+	r, err := e.st.AddLockRequest(C, k1, "locksql", "prod", LockRequestTTL, 60, 900)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Another container's request is not this deck's.
+	if _, err := e.st.AddLockRequest("lea-other", k1, "locksql", "staging", LockRequestTTL, 60, 900); err != nil {
+		t.Fatal(err)
+	}
+	snap, err := e.m.Watch(bg, C, 0, time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var row Row
+	for _, a := range snap.Agents {
+		if a.Key == k1 {
+			row = a
+		}
+	}
+	if row.LockAsk == nil || *row.LockAsk != (LockAsk{ID: r.ID, Tool: "locksql", Profile: "prod"}) {
+		t.Fatalf("lock ask=%+v", row.LockAsk)
+	}
+	// Past its time it is no longer shown (Now is 1000 in tests).
+	e.m.cfg.Now = func() int64 { return 900 + LockRequestTTL }
+	e.m.Changed()
+	snap, err = e.m.Watch(bg, C, snap.Version, time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, a := range snap.Agents {
+		if a.Key == k1 && a.LockAsk != nil {
+			t.Fatalf("expired request shown: %+v", a.LockAsk)
+		}
 	}
 }

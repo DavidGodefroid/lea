@@ -46,6 +46,8 @@ type Agent struct {
 	CtxPct   int       `json:"ctx_pct"`
 	CostUSD  float64   `json:"cost_usd"`
 	Approval *Approval `json:"approval,omitempty"`
+	// LockAsk: the agent asks the user to open a lock console (agents.LockAsk).
+	LockAsk *LockAsk `json:"lock_ask,omitempty"`
 	// Paused: the user froze the agent (p); it continues where it stopped on resume.
 	Paused bool `json:"paused,omitempty"`
 	// Subagents counts the subagents the agent still runs (agents.Row.Subagents).
@@ -92,6 +94,14 @@ type Approval struct {
 	Always  bool   `json:"always"`
 }
 
+// LockAsk is an agent's request that the user open a lock tool's console (agents.LockAsk): a
+// card the user answers with a (open) or d (decline). Only the tool and the profile, checked.
+type LockAsk struct {
+	ID      int64  `json:"id"`
+	Tool    string `json:"tool"`
+	Profile string `json:"profile"`
+}
+
 type Snapshot struct {
 	Version int64   `json:"version"`
 	Shown   string  `json:"shown"`
@@ -125,6 +135,8 @@ type API interface {
 	SetSound(ctx context.Context, on bool) (string, error)
 	// LockOpen opens a lock tool's console under the agent (the deck's L), without the keyboard.
 	LockOpen(ctx context.Context, container, tool string) (string, error)
+	// LockDecide answers an agent's lock request: open opens the console it names, as L would.
+	LockDecide(ctx context.Context, container string, id int64, open bool) (string, error)
 }
 
 // isShell reports whether a row is a shell.
@@ -190,35 +202,38 @@ type Model struct {
 	confirmYes bool             // the modal's focus is on Confirm, not Cancel
 	roleFor    string           // key waiting for a role key (l, d, r)
 	// providers is the list N picks from, while it waits for a digit (nil otherwise).
-	providers     []string
-	editFor       string          // key whose label the rename field (e) edits
-	draft         []rune          // the rename field's text
-	help          bool            // the key list (?) is shown
-	asked         map[string]bool // agents this deck asked the daemon to show, not yet seen shown
-	lastAsked     string          // the latest of them
-	status        string
-	notice        func() string // the update notice (WithNotice)
-	noticeText    string        // its latest text, shown while there is no status
-	sound         string        // the daemon's sound switch (Snapshot.Sound)
-	seq           int           // the latest selection; older delayed shows are dropped
-	frame         int           // the working spinner's frame
-	intro         int           // frames left of the logo's start animation (WithIntro)
-	focused       bool          // the deck's pane has the keyboard (focus events)
-	menuFor       string        // key whose menu (right click) is open
-	menuSel       int           // the menu's highlighted item
-	settings      SettingsStore // the settings screen's store (WithSettings), nil when none
-	settingsOff   string        // why there is none
-	setOpen       bool          // the settings screen (,) is shown
-	setList       []settings.Setting
-	setSel        int         // its selected setting
-	setEditing    bool        // the selected text setting's field is open
-	setDraft      []rune      // the field's text
-	hoverFor      string      // key of the row under the pointer, "" when none
-	hoverSeq      int         // the latest pointer move; older fades are dropped
-	menuPicker    bool        // the open menu picks the folder of menuFor (Move to folder)
-	layout        Layout      // the folders (folders.go)
-	store         LayoutStore // where the layout persists, nil when nowhere
-	ticking       bool        // a frame tick is pending
+	providers   []string
+	editFor     string          // key whose label the rename field (e) edits
+	draft       []rune          // the rename field's text
+	help        bool            // the key list (?) is shown
+	asked       map[string]bool // agents this deck asked the daemon to show, not yet seen shown
+	lastAsked   string          // the latest of them
+	status      string
+	notice      func() string // the update notice (WithNotice)
+	noticeText  string        // its latest text, shown while there is no status
+	sound       string        // the daemon's sound switch (Snapshot.Sound)
+	seq         int           // the latest selection; older delayed shows are dropped
+	frame       int           // the working spinner's frame
+	intro       int           // frames left of the logo's start animation (WithIntro)
+	focused     bool          // the deck's pane has the keyboard (focus events)
+	menuFor     string        // key whose menu (right click) is open
+	menuSel     int           // the menu's highlighted item
+	settings    SettingsStore // the settings screen's store (WithSettings), nil when none
+	settingsOff string        // why there is none
+	setOpen     bool          // the settings screen (,) is shown
+	setList     []settings.Setting
+	setSel      int         // its selected setting
+	setEditing  bool        // the selected text setting's field is open
+	setDraft    []rune      // the field's text
+	hoverFor    string      // key of the row under the pointer, "" when none
+	hoverSeq    int         // the latest pointer move; older fades are dropped
+	menuPicker  bool        // the open menu picks the folder of menuFor (Move to folder)
+	layout      Layout      // the folders (folders.go)
+	store       LayoutStore // where the layout persists, nil when nowhere
+	ticking     bool        // a frame tick is pending
+	// lockSince is when each lock request's card came into view (by request id): O answers it
+	// only lockAskDelay later, so a key meant for something else never opens a console.
+	lockSince     map[int64]time.Time
 	width, height int
 }
 
@@ -380,6 +395,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		switch {
 		case msg.err != nil:
 			m.status = oneLine(msg.err.Error())
+		case msg.status == "declined":
+			m.status = "lock request declined"
 		case msg.status == "opened":
 			m.status = "locksql console opened below: click it to answer"
 		default:
@@ -476,6 +493,23 @@ func (m *Model) apply(s Snapshot) bool {
 	}
 	prev, at := m.entryKeys(), m.pos(m.selected)
 	m.agents = sortAgents(s.Agents)
+	// A card hidden (behind an approval, or gone) and shown again starts its delay again.
+	since := map[int64]time.Time{}
+	for _, a := range m.agents {
+		if l := a.LockAsk; l != nil && a.Approval == nil {
+			if t, ok := m.lockSince[l.ID]; ok {
+				since[l.ID] = t
+			} else {
+				since[l.ID] = m.now()
+				// The row's menu changes under the highlight (Open console comes first): it closes,
+				// so an enter meant for another item never opens a console.
+				if m.menuFor == a.Key {
+					m.menuFor, m.menuSel, m.menuPicker = "", 0, false
+				}
+			}
+		}
+	}
+	m.lockSince = since
 	// An agent shown from elsewhere (lea new in another terminal, another deck client) takes
 	// the selection, so the row under the cursor is the one in the slot. A show this deck asked
 	// for does not: the cursor may already have moved on.
@@ -713,8 +747,19 @@ func (m Model) key(k string) (tea.Model, tea.Cmd) {
 			m.status = "role of " + display(*a) + ": l lead, d dev, r reviewer"
 		}
 		return m, nil
+	case "O":
+		return m.answerLock(true)
 	case "a", "d", "A":
 		a := m.selectedAgent()
+		if a != nil && a.Approval == nil && a.LockAsk != nil {
+			if k == "d" {
+				return m.answerLock(false)
+			}
+			// a and A answer approvals: never a lock request (a key pressed twice, or held, after
+			// an approval would otherwise open the console the card behind it asks for).
+			m.status = "O opens the " + lockAskName(*a.LockAsk) + " console, d declines"
+			return m, nil
+		}
 		if a == nil || a.Approval == nil {
 			return m, nil
 		}
@@ -804,7 +849,7 @@ func rank(a Agent, seen map[string]int64) int {
 		return 6
 	case a.Paused: // frozen by the user: it neither needs them nor works
 		return 4
-	case shownState(a) == "blocked":
+	case shownState(a) == "blocked" || a.LockAsk != nil:
 		return 0
 	case a.State == "done" && seen[a.Key] != a.Updated:
 		return 1
@@ -839,6 +884,8 @@ func (m Model) label(a Agent) string {
 		return "shell"
 	case a.Paused:
 		return "paused"
+	case a.LockAsk != nil && a.Approval == nil:
+		return "asks for a console"
 	case a.State == "blocked" && a.Approval == nil:
 		return "see terminal" // the agent's own dialog asks: the deck has no card for it
 	case a.State == "blocked":
@@ -874,6 +921,38 @@ func (m Model) limitLabel(until int64) string {
 	}
 	return "usage limit, resumes " + t.Format("15:04")
 }
+
+// lockAskDelay is how long a lock request's card is in view before O opens it: a key pressed
+// for what was there before (held, or typed twice) never opens a console unread.
+const lockAskDelay = time.Second
+
+// answerLock answers the selected agent's lock request: open opens the console it names (O, as L
+// would, without the keyboard), else it is declined (d). The agent learns which, never what the
+// console shows. Within lockAskDelay of the card coming into view, the key does nothing.
+func (m Model) answerLock(open bool) (tea.Model, tea.Cmd) {
+	a := m.selectedAgent()
+	if a == nil || a.Approval != nil || a.LockAsk == nil {
+		return m, nil
+	}
+	id, what := a.LockAsk.ID, lockAskName(*a.LockAsk)
+	if t, ok := m.lockSince[id]; !ok || m.now().Sub(t) < lockAskDelay {
+		m.status = "read the " + what + " request first"
+		return m, nil
+	}
+	if open {
+		m.status = "opening the " + what + " console…"
+	}
+	api, c := m.api, m.container
+	return m, func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), callTimeout)
+		defer cancel()
+		st, err := api.LockDecide(ctx, c, id, open)
+		return lockMsg{st, err}
+	}
+}
+
+// lockAskName is what a lock request names: <tool>/<profile>, cleaned for the screen.
+func lockAskName(l LockAsk) string { return clean(l.Tool) + "/" + clean(l.Profile) }
 
 // nextNeedingYou is the first agent after the selection (wrapping, in display order, folded
 // folders included) that needs the user: blocked, done and not yet seen, or holding a message for

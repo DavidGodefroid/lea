@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"io"
+	"log"
 	"os"
 	"path/filepath"
 	"strings"
@@ -72,8 +73,14 @@ func lockSpec(exe string) func(tool string) (agents.LockSpec, error) {
 		}
 		switch tool {
 		case "locksql":
+			// An invalid allow-list leaves agents nothing to ask for; the user's own opens go on.
+			ps, err := cfg.LocksqlAgentProfiles()
+			if err != nil {
+				log.Printf("lea daemon: %v", err)
+			}
 			return agents.LockSpec{Enabled: cfg.Locksql(), Image: cfg.Get("LEA_LOCKSQL_IMAGE"),
-				VaultAddr: cfg.Get("LEA_LOCKSQL_VAULT_ADDR"), ContainerName: lockContainerName(cfg)}, nil
+				VaultAddr: cfg.Get("LEA_LOCKSQL_VAULT_ADDR"), ContainerName: lockContainerName(cfg),
+				AgentProfiles: ps}, nil
 		}
 		return agents.LockSpec{}, fmt.Errorf("no lock console for %q", tool)
 	}

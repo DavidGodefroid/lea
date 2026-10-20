@@ -20,6 +20,8 @@ type fakeAgents struct {
 	// unattached: no user terminal shows the deck (Attached reports false).
 	unattached bool
 	newErr     error // New fails with it
+	// lockCheckErr: LockCheckRequest refuses with it; lockOpenErr: LockOpen fails with it.
+	lockCheckErr, lockOpenErr error
 }
 
 func (f *fakeAgents) rec(s string) { f.mu.Lock(); f.calls = append(f.calls, s); f.mu.Unlock() }
@@ -87,7 +89,19 @@ func (f *fakeAgents) SplitShell(ctx context.Context, k string, below bool) (agen
 }
 func (f *fakeAgents) LockOpen(ctx context.Context, c, tool, profile string) (string, error) {
 	f.rec(fmt.Sprintf("lock-open %s %s %q", c, tool, profile))
+	f.mu.Lock()
+	err := f.lockOpenErr
+	f.mu.Unlock()
+	if err != nil {
+		return "", err
+	}
 	return "opened", nil
+}
+func (f *fakeAgents) LockCheckRequest(ctx context.Context, c, tool, profile string) error {
+	f.rec(fmt.Sprintf("lock-check %s %s %q", c, tool, profile))
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.lockCheckErr
 }
 func (f *fakeAgents) LockClose(ctx context.Context, c, tool, profile string) (string, error) {
 	f.rec(fmt.Sprintf("lock-close %s %s %q", c, tool, profile))
