@@ -104,3 +104,10 @@ func (c Client) Thread(ctx context.Context, key string) ([]Message, error) {
 func (c Client) Send(ctx context.Context, key, body string) error {
 	return c.call(ctx, "msg_send", map[string]any{"to": key, "body": body, "kind": "note"}, nil)
 }
+
+// SetSound switches the daemon's sounds (the deck's S) and answers the new state.
+func (c Client) SetSound(ctx context.Context, on bool) (string, error) {
+	var r struct{ Sound string }
+	err := c.call(ctx, "sound", map[string]any{"on": on}, &r)
+	return r.Sound, err
+}
