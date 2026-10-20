@@ -83,4 +83,7 @@ ENV SSH_AUTH_SOCK=/run/lea/ssh-agent.sock \
     GH_CONFIG_DIR=/lea/state/gh \
     GLAB_CONFIG_DIR=/lea/state/glab-cli \
     REGISTRY_AUTH_FILE=/lea/state/containers/auth.json
+# The base image builds with chroot isolation, which remounts /dev read-only: lea's container may
+# not, so every RUN step of a docker build failed. Rootless isolation runs it in its own namespaces.
+ENV BUILDAH_ISOLATION=rootless
 ENTRYPOINT ["/usr/local/libexec/lea/entrypoint"]
