@@ -1,8 +1,9 @@
 #!/bin/sh
 # Deck agents inside lea. `run` is what abduco starts for an agent: it records the agent's pid,
 # then becomes Claude Code through lea-session (exec keeps the pid). `ls` prints the live agents;
-# `stop` ends one. The deck's shells (s) work the same way: `shell` is what abduco starts for one
-# (the user's login shell, never an agent: no LEA_AGENT), `shells` prints the live ones and
+# `stop` ends one; `pause` freezes one with its children (SIGSTOP), `resume` lets them continue
+# (SIGCONT). The deck's shells (s) work the same way: `shell` is what abduco starts for one (the
+# user's login shell, never an agent: no LEA_AGENT), `shells` prints the live ones and
 # `stop-shell` ends one. The host reaches this script only through `docker exec`.
 set -eu
 dir=${LEA_AGENT_RUN_DIR:-/run/lea/agents}
@@ -33,8 +34,27 @@ alive() {
   printf '%s\n' "$p"
 }
 
-# end PID: TERM, the wait, then KILL.
+# tree PID: PID and its descendants, parents first.
+tree() {
+  todo=$1
+  while [ -n "$todo" ]; do
+    # shellcheck disable=SC2086 # pids, split on purpose
+    set -- $todo
+    p=$1; shift; todo=$*
+    printf '%s\n' "$p"
+    todo="$todo $(cat /proc/"$p"/task/*/children 2>/dev/null || true)"
+  done
+}
+
+# freeze PID SIG: SIG to PID's tree, the parent first, so that it starts no new child meanwhile.
+freeze() {
+  for p in $(tree "$1"); do kill -"$2" "$p" 2>/dev/null || true; done
+}
+
+# end PID: TERM, the wait, then KILL. A paused agent and its children continue first: a frozen
+# process handles no TERM, and a frozen child would outlive its parent.
 end() {
+  freeze "$1" CONT
   kill -TERM "$1" 2>/dev/null || true
   i=0
   while kill -0 "$1" 2>/dev/null && [ "$i" -lt $((wait_s * 10)) ]; do sleep 0.1; i=$((i + 1)); done
@@ -67,6 +87,12 @@ case ${1:-} in
     if p=$(alive "$name"); then end "$p"; fi
     rm -f "$dir/$name.pid"
     ;;
+  pause | resume)
+    name=${2:-}
+    valid "$name" || { echo "lea-agent: invalid agent name '$name'" >&2; exit 2; }
+    p=$(alive "$name") || { echo "lea-agent: $name is not running" >&2; exit 1; }
+    if [ "$1" = pause ]; then freeze "$p" STOP; else freeze "$p" CONT; fi
+    ;;
   shell)
     name=${2:-}
     valid_shell "$name" || { echo "lea-agent: invalid shell name '$name'" >&2; exit 2; }
@@ -95,7 +121,7 @@ case ${1:-} in
     rm -f "$shell_dir/$name.pid"
     ;;
   *)
-    echo "usage: lea-agent run NAME [-- ARGS...] | ls | stop NAME | shell NAME | shells | stop-shell NAME" >&2
+    echo "usage: lea-agent run NAME [-- ARGS...] | ls | stop NAME | pause NAME | resume NAME | shell NAME | shells | stop-shell NAME" >&2
     exit 2
     ;;
 esac

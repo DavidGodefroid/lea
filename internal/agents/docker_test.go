@@ -145,3 +145,23 @@ func TestDockerShellsOfAnOlderImageIsAnError(t *testing.T) {
 		t.Fatalf("err=%v", err)
 	}
 }
+
+func TestDockerPauseAndResume(t *testing.T) {
+	bin, log := fakeDocker(t, `:`)
+	d := Docker{Bin: bin, UID: 1000, GID: 1000}
+	if err := d.Pause(context.Background(), "lea-a", "claude-1", true); err != nil {
+		t.Fatal(err)
+	}
+	if err := d.Pause(context.Background(), "lea-a", "claude-1", false); err != nil {
+		t.Fatal(err)
+	}
+	if l := logged(t, log); !strings.Contains(l, "exec -u 1000:1000 lea-a lea-agent pause claude-1\n") ||
+		!strings.Contains(l, "exec -u 1000:1000 lea-a lea-agent resume claude-1\n") {
+		t.Fatalf("log=%q", l)
+	}
+	// Nothing is frozen in a container that is not running: the deck must not say paused.
+	bin, _ = fakeDocker(t, `case $1 in exec) exit 1 ;; inspect) echo false ;; esac`)
+	if err := (Docker{Bin: bin}).Pause(context.Background(), "lea-a", "claude-1", true); err == nil {
+		t.Fatal("pause in a stopped container: no error")
+	}
+}

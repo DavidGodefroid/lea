@@ -1022,3 +1022,51 @@ func TestLaunchIsRecordedAndResetOnReuse(t *testing.T) {
 		t.Fatalf("unknown agent: err=%v", err)
 	}
 }
+
+func TestPausedIsSetAndClearedWhenTheProcessGoes(t *testing.T) {
+	s := open(t)
+	if _, err := s.RegisterAgent("lea-a", "claude-1", "claude", "/p", 1); err != nil {
+		t.Fatal(err)
+	}
+	s.SetState("lea-a/claude-1", "working", "", 2)
+	if err := s.SetPaused("lea-a/claude-1", true); err != nil {
+		t.Fatal(err)
+	}
+	if a, _ := s.AgentByKey("lea-a/claude-1"); !a.Paused || a.State != "working" {
+		t.Fatalf("agent=%+v", a)
+	}
+	if as, _ := s.SpawnedAgents("lea-a"); len(as) != 1 || !as[0].Paused {
+		t.Fatalf("spawned=%+v", as)
+	}
+	// Its own hooks keep reporting: the pause stays.
+	s.SetState("lea-a/claude-1", "idle", "", 3)
+	if a, _ := s.AgentByKey("lea-a/claude-1"); !a.Paused {
+		t.Fatalf("a hook cleared the pause: %+v", a)
+	}
+	if err := s.SetPaused("lea-a/claude-1", false); err != nil {
+		t.Fatal(err)
+	}
+	if a, _ := s.AgentByKey("lea-a/claude-1"); a.Paused {
+		t.Fatalf("not resumed: %+v", a)
+	}
+	if err := s.SetPaused("lea-a/nobody", true); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("unknown agent: %v", err)
+	}
+	// A process that ends, stops with its container or starts again runs unpaused.
+	for _, st := range []string{"done", "stopped", "unknown"} {
+		s.SetPaused("lea-a/claude-1", true)
+		s.SetState("lea-a/claude-1", st, "", 4)
+		if a, _ := s.AgentByKey("lea-a/claude-1"); a.Paused {
+			t.Fatalf("still paused once %s: %+v", st, a)
+		}
+	}
+	// A new agent reusing the name of an ended one is never paused.
+	s.SetState("lea-a/claude-1", "done", "", 4)
+	s.SetPaused("lea-a/claude-1", true)
+	if _, err := s.RegisterAgent("lea-a", "claude-1", "claude", "/p", 5); err != nil {
+		t.Fatal(err)
+	}
+	if a, _ := s.AgentByKey("lea-a/claude-1"); a.Paused {
+		t.Fatalf("pause inherited: %+v", a)
+	}
+}
