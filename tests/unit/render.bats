@@ -54,3 +54,63 @@ hosts() { printf '%s\n' "$@" >"$BATS_TEST_TMPDIR/hosts"; }
   [[ "$output" == *"forwarded_for delete"* ]]
   [[ "$output" == *"via off"* ]]
 }
+
+@test "CONNECT to an internal name goes through the peek squid" {
+  hosts "issues.example.internal 443"
+  run sh "$R" "$BATS_TEST_TMPDIR/hosts"
+  [ "$status" -eq 0 ]
+  [ "$(printf '%s\n' "$output" | grep '^http_port')" = "http_port 3128" ]
+  [[ "$output" != *"ssl"* ]]
+  [[ "$output" == *"acl ih_names dstdomain -n issues.example.internal"* ]]
+  [[ "$output" == *"cache_peer 127.0.0.1 parent 3129 0 no-query"*"name=lea_peek"* ]]
+  [[ "$output" == *"cache_peer_access lea_peek allow CONNECT ih_names"* ]]
+  [[ "$output" == *"never_direct allow CONNECT ih_names"* ]]
+}
+
+@test "the peek squid splices a tunnel only when its SNI is the CONNECT host" {
+  hosts "issues.example.internal 443"
+  run sh "$R" --peek "$BATS_TEST_TMPDIR/hosts"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"http_port 127.0.0.1:3129 ssl-bump tls-cert=/etc/squid/lea-peek.pem generate-host-certificates=off"* ]]
+  [[ "$output" == *"http_access allow ih_1_dst ih_1_port"* ]]
+  [ "$(printf '%s\n' "$output" | grep '^http_access' | tail -n1)" = "http_access deny all" ]
+  [[ "$output" == *"external_acl_type lea_sni "*" %ssl::>sni %DST /usr/local/bin/sni-matches.sh"* ]]
+  rules=$(printf '%s\n' "$output" | grep -E '^ssl_bump ')
+  [ "$rules" = "ssl_bump peek ih_step1
+ssl_bump splice ih_names ih_sni
+ssl_bump terminate all" ]
+  [[ "$output" == *"on_unsupported_protocol respond all"* ]]
+}
+
+@test "IP literals are not sent to the peek squid" {
+  hosts "10.0.0.10 443" "issues.example.internal 443"
+  run sh "$R" "$BATS_TEST_TMPDIR/hosts"
+  [[ "$output" != *"ih_names dst 10.0.0.10"* ]]
+  [[ "$output" == *"acl ih_names dstdomain -n issues.example.internal"* ]]
+}
+
+@test "no internal names: no peek squid" {
+  hosts "10.0.0.10 443"
+  run sh "$R" "$BATS_TEST_TMPDIR/hosts"
+  [[ "$output" != *"cache_peer"* ]]
+  [[ "$output" != *"never_direct"* ]]
+  run sh "$R" --peek "$BATS_TEST_TMPDIR/hosts"
+  [ "$status" -eq 0 ]
+  [ -z "$output" ]
+}
+
+@test "sni-matches: OK only when the SNI is the CONNECT host" {
+  run sh "$LEA_ROOT/proxy/sni-matches.sh" <<'IN'
+issues.example.internal issues.example.internal
+admin.example.internal issues.example.internal
+- issues.example.internal
+Issues.Example.Internal. issues.example.internal -
+ issues.example.internal
+IN
+  [ "$status" -eq 0 ]
+  [ "$output" = "OK
+ERR
+ERR
+OK
+ERR" ]
+}

@@ -15,6 +15,11 @@ services:
   internal-web: { <<: *web, networks: { priv: { ipv4_address: 10.99.0.80 } } }
   private-web:  { <<: *web, networks: { priv: { ipv4_address: 10.99.0.81 } } }
   literal-web:  { <<: *web, networks: { priv: { ipv4_address: 10.99.0.82 } } }
+  # A shared ingress: one TLS port for every vhost (openssl serves any SNI).
+  ingress:
+    build: { context: ., dockerfile_inline: "FROM alpine:3.22\nRUN apk add --no-cache openssl\n" }
+    command: [ "sh", "-c", "openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:P-256 -nodes -subj /CN=ingress -keyout /tmp/k -out /tmp/c 2>/dev/null && exec openssl s_server -quiet -accept 443 -cert /tmp/c -key /tmp/k -www" ]
+    networks: { priv: { ipv4_address: 10.99.0.83 } }
   proxy:
     image: lea-proxy:dev
     dns: [ 198.51.100.53 ]
