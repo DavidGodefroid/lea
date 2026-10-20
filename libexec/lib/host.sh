@@ -24,15 +24,23 @@ lea__under() {
   return 1
 }
 
-# lea__guard_projects PROJECTS (physical): refuses /, $HOME and its ancestors, and any directory
-# that is, contains or lies inside ~/.claude, a credential directory (LEA_GUARD_CREDENTIALS, from
-# $HOME), the lea data dir or the lea installation.
+# lea__guard_projects PROJECTS (physical): refuses /, $HOME and its ancestors, a directory that
+# contains the user configuration, and any directory that is, contains or lies inside ~/.claude, a
+# credential directory (LEA_GUARD_CREDENTIALS, from $HOME), ~/.config/lea, the lea data dir or the
+# lea installation.
 LEA_GUARD_CREDENTIALS=".ssh .gnupg .aws .config/gh .kube .docker"
 lea__guard_projects() {
   if [ "$1" = / ] || lea__under "$1" "$(lea__phys "$HOME")"; then
     lea_die "$1 cannot be a projects directory: it is / or contains your home directory"
   fi
   lea__guard_overlap "$1" "$(lea__phys "$HOME/.claude")"
+  # The user configuration is sourced as shell on the host: agents must not reach it.
+  _gp_u=$(lea_user_config_path)
+  case $_gp_u in */*) _gp_d=${_gp_u%/*} ;; *) _gp_d=. ;; esac
+  if lea__under "$1" "$(lea__phys "${_gp_d:-/}")"; then
+    lea_die "$1 cannot be a projects directory: it contains the user configuration $_gp_u"
+  fi
+  lea__guard_overlap "$1" "$(lea__phys "${XDG_CONFIG_HOME:-$HOME/.config}/lea")"
   for _gp_c in $LEA_GUARD_CREDENTIALS; do
     lea__guard_overlap "$1" "$(lea__phys "$HOME/$_gp_c")"
   done

@@ -78,6 +78,15 @@ func (m Model) body(inner int) []string {
 	c := m.cs()
 	var body []string
 	switch {
+	case m.setOpen:
+		room := 0
+		if m.height > 2 {
+			room = m.height - 2
+			if m.statusLine(inner) != "" {
+				room--
+			}
+		}
+		body = m.settingsLines(inner, room)
 	case m.help:
 		for _, l := range helpLines {
 			body = append(body, padRight(" "+fit(l, inner-1, c), inner))
@@ -85,7 +94,7 @@ func (m Model) body(inner int) []string {
 	case len(m.agents) == 0:
 		body = append(body, padRight(" "+muted.Render(fit("No agents yet: press n.", inner-1, c)), inner))
 	}
-	if !m.help {
+	if !m.help && !m.setOpen {
 		body = append(body, m.rows(inner)...)
 	}
 	if m.height > 2 {
@@ -120,6 +129,7 @@ var helpLines = []string{
 	"a d A       allow deny always",
 	"x           stop or remove",
 	"S           sounds on or off",
+	",           settings",
 	"ctrl+space  deck or terminal",
 	"q           detach",
 	"?           these keys",
@@ -129,6 +139,12 @@ var helpLines = []string{
 // status, else the update notice ("" when none).
 func (m Model) statusLine(inner int) string {
 	c := m.cs()
+	if m.setEditing {
+		const prompt = "value: "
+		field := tail(safe(string(m.setDraft), c), inner-1-len(prompt)-1)
+		return padRight(" "+lipgloss.NewStyle().Foreground(theme.Text).Render(prompt+field)+
+			lipgloss.NewStyle().Foreground(theme.Accent).Render(c.bar), inner)
+	}
 	if m.editFor != "" {
 		const prompt = "name: "
 		field := tail(safe(string(m.draft), c), inner-1-len(prompt)-1)
@@ -235,12 +251,17 @@ func (m Model) bottom(w int) string {
 	if m.help {
 		hint = "any key closes"
 	}
+	text := muted.Render(hint)
+	if a := m.hovered(); a != nil {
+		hint = fit(hoverText(*a), w-5, c)
+		text = lipgloss.NewStyle().Foreground(theme.Text).Render(hint)
+	}
 	// c.bl+c.h+" " (3) + hint + " " + fill + c.br (1)
 	fill := w - 5 - lipgloss.Width(hint)
-	if fill < 1 {
+	if fill < 1 && m.hovered() == nil {
 		return m.frameStyle().Render(c.bl + strings.Repeat(c.h, w-2) + c.br)
 	}
-	return m.frameStyle().Render(c.bl+c.h+" ") + muted.Render(hint) + m.frameStyle().Render(" "+strings.Repeat(c.h, fill)+c.br)
+	return m.frameStyle().Render(c.bl+c.h+" ") + text + m.frameStyle().Render(" "+strings.Repeat(c.h, max(0, fill))+c.br)
 }
 
 // rows renders the agents that fit, scrolled by whole rows so that the selected row (with its
@@ -266,22 +287,36 @@ func (m Model) rowLines(inner int) ([]string, []lineOwner) {
 			owners[i] = append(owners[i], lineOwner{a.Key, -1})
 		}
 		if a.Key == m.menuFor {
-			for j, l := range m.menuLines(a, inner) {
+			for j, l := range m.menuLines(menuItems(a), inner) {
 				rendered[i] = append(rendered[i], l)
 				owners[i] = append(owners[i], lineOwner{a.Key, j})
 			}
 		}
 	}
+	// The deck's menu comes after the last row, as one more block that scrolls into view.
+	focus := m.index(m.selected) // the block kept on screen
+	if m.menuFor == deckMenu {
+		var r []string
+		var o []lineOwner
+		for j, l := range m.menuLines(deckMenuItems(m.sound), inner) {
+			r, o = append(r, l), append(o, lineOwner{deckMenu, j})
+		}
+		rendered, owners = append(rendered, r), append(owners, o)
+		focus = len(rendered) - 1
+	}
 	room := -1 // no height yet: everything
 	if m.height > 0 {
 		room = m.height - 2
-		if m.status != "" || m.editFor != "" {
+		if m.statusLine(inner) != "" { // the status, the rename field or the update notice
+			room--
+		}
+		if len(m.agents) == 0 { // the body's line saying there is no agent yet
 			room--
 		}
 		room = max(1, room)
 	}
 	start := 0
-	if sel := m.index(m.selected); sel >= 0 && room > 0 {
+	if sel := focus; sel >= 0 && room > 0 {
 		used := 0
 		for j := sel; j >= 0; j-- {
 			if j < sel && used+len(rendered[j]) > room {
@@ -319,7 +354,7 @@ func (m Model) row(a Agent, inner int) []string {
 	}
 	const profW, ctxW = 6, 4
 	nameW := inner - 4 - (1 + profW) - (1 + ctxW) // mark, space, glyph, space
-	g, gc := stateMark(a.State, a.Updated, m.now().Unix(), m.frame, m.ascii)
+	g, gc := stateMark(shownState(a), a.Updated, m.now().Unix(), m.frame, m.ascii)
 	if isShell(a) {
 		g, gc = "$", theme.Unknown
 	} else if a.Paused {

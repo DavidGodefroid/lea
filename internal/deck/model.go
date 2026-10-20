@@ -12,6 +12,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 
+	"github.com/DavidGodefroid/lea/internal/settings"
 	"github.com/DavidGodefroid/lea/internal/textsafe"
 )
 
@@ -45,6 +46,16 @@ type Agent struct {
 	Approval *Approval `json:"approval,omitempty"`
 	// Paused: the user froze the agent (p); it continues where it stopped on resume.
 	Paused bool `json:"paused,omitempty"`
+	// Subagents counts the subagents the agent still runs (agents.Row.Subagents).
+	Subagents int `json:"subagents,omitempty"`
+}
+
+// shownState is the state a row shows: an idle agent whose subagents still run is working.
+func shownState(a Agent) string {
+	if a.State == "idle" && a.Subagents > 0 {
+		return "working"
+	}
+	return a.State
 }
 
 // Approval is the permission request an agent waits on (agents.Approval).
@@ -158,7 +169,16 @@ type Model struct {
 	focused       bool          // the deck's pane has the keyboard (focus events)
 	menuFor       string        // key whose menu (right click) is open
 	menuSel       int           // the menu's highlighted item
-	ticking       bool          // a frame tick is pending
+	settings      SettingsStore // the settings screen's store (WithSettings), nil when none
+	settingsOff   string        // why there is none
+	setOpen       bool          // the settings screen (,) is shown
+	setList       []settings.Setting
+	setSel        int    // its selected setting
+	setEditing    bool   // the selected text setting's field is open
+	setDraft      []rune // the field's text
+	hoverFor      string // key of the row under the pointer, "" when none
+	hoverSeq      int    // the latest pointer move; older fades are dropped
+	ticking       bool   // a frame tick is pending
 	width, height int
 }
 
@@ -190,7 +210,7 @@ func (m Model) Init() tea.Cmd {
 // working reports whether an agent works: the spinner and the logo's wave then move.
 func (m Model) working() bool {
 	for _, a := range m.agents {
-		if a.State == "working" && !isShell(a) && !a.Paused {
+		if shownState(a) == "working" && !isShell(a) && !a.Paused {
 			return true
 		}
 	}
@@ -300,6 +320,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.help = false
 			return m, nil
 		}
+		if m.setOpen {
+			return m.settingsKey(msg)
+		}
 		if m.editFor != "" {
 			return m.editKey(msg)
 		}
@@ -309,6 +332,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.key(msg.String())
 	case tea.MouseMsg:
 		return m.mouse(msg)
+	case hoverEndMsg:
+		if msg.seq == m.hoverSeq {
+			m.hoverFor = ""
+		}
+		return m, nil
 	}
 	return m, nil
 }
@@ -390,7 +418,7 @@ func (m *Model) apply(s Snapshot) bool {
 	if m.roleFor != "" && m.index(m.roleFor) < 0 {
 		m.roleFor, m.status = "", ""
 	}
-	if m.menuFor != "" && m.index(m.menuFor) < 0 {
+	if m.menuFor != "" && m.menuFor != deckMenu && m.index(m.menuFor) < 0 {
 		m.menuFor = ""
 	}
 	if m.editFor != "" && m.index(m.editFor) < 0 {
@@ -499,6 +527,8 @@ func (m Model) key(k string) (tea.Model, tea.Cmd) {
 	case "?":
 		m.help = true
 		return m, nil
+	case ",":
+		return m.openSettings()
 	case "e":
 		if a := m.selectedAgent(); a != nil && !isShell(*a) {
 			m.editFor, m.draft, m.status = a.Key, []rune(a.Label), ""
@@ -606,7 +636,7 @@ func rank(a Agent, seen map[string]int64) int {
 		return 1
 	case a.ForUser > 0:
 		return 2
-	case a.State == "working":
+	case shownState(a) == "working":
 		return 3
 	case a.State == "idle" || a.State == "done":
 		return 4
@@ -648,7 +678,7 @@ func (m Model) label(a Agent) string {
 	case a.State == "stopped": // its container stopped; the next one resumes it
 		return "stopped"
 	case a.State == "working" || a.State == "idle":
-		return a.State
+		return shownState(a)
 	}
 	return "unknown"
 }

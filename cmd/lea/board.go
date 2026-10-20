@@ -16,6 +16,19 @@ type boardItem struct {
 	Repo, Branch, Title, Status, Next     string
 	BlockedOn                             string `json:"blocked_on"`
 	Updated, Ended                        int64
+	// Subagents counts the subagents the agent still runs: its state cell says so.
+	Subagents int
+}
+
+// stateCell is an item's state, with the subagents it still runs ("idle, 2 subagents").
+func stateCell(it boardItem) string {
+	switch {
+	case it.Subagents == 1:
+		return it.State + ", 1 subagent"
+	case it.Subagents > 1:
+		return fmt.Sprintf("%s, %d subagents", it.State, it.Subagents)
+	}
+	return it.State
 }
 
 type board struct {
@@ -130,7 +143,7 @@ func renderBoard(w io.Writer, b board) {
 				if it.Parent != "" && hasAgent(open, it.Parent) {
 					name = "↳ " + name
 				}
-				fmt.Fprintf(w, "| %s | %s | %s | %s | %s | %s | %s | %s | %s |\n", name, mdCell(it.Role), mdCell(it.State),
+				fmt.Fprintf(w, "| %s | %s | %s | %s | %s | %s | %s | %s | %s |\n", name, mdCell(it.Role), mdCell(stateCell(it)),
 					mdCell(it.Branch), mdCell(it.Title), mdCell(it.Status), mdCell(it.Next), mdCell(it.BlockedOn), stamp(it.Updated))
 			}
 		}

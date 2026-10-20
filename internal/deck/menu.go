@@ -7,14 +7,16 @@ import (
 
 // The mouse in the column: a left click selects a row, the wheel moves the selection, a right
 // click opens the row's menu under it. The menu lists what the keys do for that row; j/k or the
-// wheel move in it, enter or a click picks, esc, q or a click elsewhere closes it.
+// wheel move in it, enter or a click picks, esc, q or a click elsewhere closes it. A right click
+// anywhere else in the column (below the rows, on the frame) opens the deck's own menu under the
+// last row: every right click opens a menu.
 
 type menuItem struct{ label, key string }
 
 // menuItems are the actions of a row, in the order the menu shows them.
 func menuItems(a Agent) []menuItem {
 	if isShell(a) {
-		return []menuItem{{"Show", "enter"}, {"Close", "x"}}
+		return []menuItem{{"Show", "enter"}, {"Close", "x"}, {"Settings", ","}}
 	}
 	var items []menuItem
 	if ap := a.Approval; ap != nil {
@@ -32,7 +34,33 @@ func menuItems(a Agent) []menuItem {
 	case pausable(a):
 		items = append(items, menuItem{"Pause", "p"})
 	}
-	return append(items, menuItem{"Stop", "x"})
+	return append(items, menuItem{"Stop", "x"}, menuItem{"Settings", ","})
+}
+
+// deckMenu is menuFor while the deck's own menu is open. No agent key is empty or holds a NUL.
+const deckMenu = "\x00deck"
+
+// deckMenuItems are the deck's own actions, those of no row; S only when the host plays sounds.
+func deckMenuItems(sound string) []menuItem {
+	items := []menuItem{{"New agent", "n"}, {"New shell", "s"}}
+	switch sound {
+	case "on":
+		items = append(items, menuItem{"Mute sounds", "S"})
+	case "off":
+		items = append(items, menuItem{"Sounds on", "S"})
+	}
+	return append(items, menuItem{"Keys", "?"}, menuItem{"Detach", "q"})
+}
+
+// openItems are the open menu's items, nil when none is open.
+func (m Model) openItems() []menuItem {
+	if m.menuFor == deckMenu {
+		return deckMenuItems(m.sound)
+	}
+	if a := m.menuAgent(); a != nil {
+		return menuItems(*a)
+	}
+	return nil
 }
 
 // menuAgent is the agent whose menu is open, nil when none.
@@ -49,18 +77,17 @@ func (m *Model) openMenu(key string) {
 	m.confirm, m.confirmYes, m.roleFor = "", false, ""
 }
 
-// pick runs item i of the open menu as its key on the menu's row.
+// pick runs item i of the open menu as its key on the menu's row (the deck's menu: as a key typed
+// in the deck).
 func (m Model) pick(i int) (tea.Model, tea.Cmd) {
-	a := m.menuAgent()
+	items, a := m.openItems(), m.menuAgent()
 	m.menuFor = ""
-	if a == nil {
-		return m, nil
-	}
-	items := menuItems(*a)
 	if i < 0 || i >= len(items) {
 		return m, nil
 	}
-	m.selected = a.Key
+	if a != nil {
+		m.selected = a.Key
+	}
 	if items[i].key == "enter" {
 		return m.key("enter")
 	}
@@ -69,12 +96,11 @@ func (m Model) pick(i int) (tea.Model, tea.Cmd) {
 
 // menuKey is a key typed while the menu is open.
 func (m Model) menuKey(k string) (tea.Model, tea.Cmd) {
-	a := m.menuAgent()
-	if a == nil {
+	items := m.openItems()
+	if items == nil {
 		m.menuFor = ""
 		return m, nil
 	}
-	items := menuItems(*a)
 	switch k {
 	case "j", "down":
 		m.menuSel = min(m.menuSel+1, len(items)-1)
@@ -98,11 +124,17 @@ func (m Model) menuKey(k string) (tea.Model, tea.Cmd) {
 
 // mouse handles a mouse event over the deck.
 func (m Model) mouse(e tea.MouseMsg) (tea.Model, tea.Cmd) {
-	if m.help || m.editFor != "" {
+	if m.help || m.editFor != "" || m.setOpen {
 		return m, nil
 	}
 	if m.confirm != "" {
 		return m.confirmMouse(e)
+	}
+	if e.Action == tea.MouseActionMotion {
+		if e.Button != tea.MouseButtonNone { // a drag
+			return m, nil
+		}
+		return m.hoverMove(e.Y)
 	}
 	switch e.Button {
 	case tea.MouseButtonWheelUp, tea.MouseButtonWheelDown:
@@ -125,21 +157,29 @@ func (m Model) mouse(e tea.MouseMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	key, item := m.hit(e.Y)
+	right := e.Button == tea.MouseButtonRight
 	if m.menuFor != "" {
-		if key == m.menuFor && item >= 0 && e.Button == tea.MouseButtonLeft {
+		if key == m.menuFor && item >= 0 {
+			if right { // on its own menu: the item under the pointer is highlighted
+				m.menuSel = item
+				return m, nil
+			}
 			return m.pick(item)
 		}
 		m.menuFor = ""
-		if key == "" || item >= 0 {
+		if !right && (key == "" || item >= 0) {
 			return m, nil
 		}
 	}
 	i := m.index(key)
 	if i < 0 {
+		if right {
+			m.openMenu(deckMenu)
+		}
 		return m, nil
 	}
 	nm, cmd := m.move(i)
-	if e.Button == tea.MouseButtonRight {
+	if right {
 		mm := nm.(Model)
 		mm.openMenu(key)
 		return mm, cmd
@@ -147,13 +187,16 @@ func (m Model) mouse(e tea.MouseMsg) (tea.Model, tea.Cmd) {
 	return nm, cmd
 }
 
-// hit is what screen line y shows: the row's agent key and, on a menu line, the item's index
-// (-1 on the row's own lines); "" outside the rows.
+// hit is what screen line y shows: the row's agent key (deckMenu on the deck's menu) and, on a
+// menu line, the item's index (-1 on the row's own lines); "" outside the rows.
 func (m Model) hit(y int) (string, int) {
-	if m.help || len(m.agents) == 0 {
+	if m.help {
 		return "", -1
 	}
 	_, owners := m.rowLines(m.innerWidth())
+	if len(m.agents) == 0 {
+		y-- // the body's first line says there is no agent yet
+	}
 	if y < 1 || y > len(owners) {
 		return "", -1
 	}
@@ -161,10 +204,9 @@ func (m Model) hit(y int) (string, int) {
 	return o.key, o.item
 }
 
-// menuLines are the open menu's lines for row a, inner cells wide.
-func (m Model) menuLines(a Agent, inner int) []string {
+// menuLines are the lines of a menu of items, inner cells wide.
+func (m Model) menuLines(items []menuItem, inner int) []string {
 	c := m.cs()
-	items := menuItems(a)
 	w := inner - 4
 	var out []string
 	for i, it := range items {
