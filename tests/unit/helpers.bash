@@ -9,7 +9,7 @@ setup_fakes() {
   mkdir -p "$HOME" "$XDG_DATA_HOME"
   export LEA_TMUX_BUILT="$BATS_TEST_TMPDIR/no-built-tmux"
   unset LEA_CONFIG LEA_PROJECTS_DIR XDG_CONFIG_HOME LEA_UI LEA_LAUNCHER LEA_TMUX_BIN \
-    LEA_GIT_SSH LEA_GIT_KNOWN_HOSTS LEA_GITLAB_SSH LEA_GITLAB_KNOWN_HOSTS LEA_LOCKSQL
+    LEA_GIT_SSH LEA_GIT_KNOWN_HOSTS LEA_GITLAB_SSH LEA_GITLAB_KNOWN_HOSTS LEA_LOCKSQL LEA_LOCKMQ LEA_LOCKFILE
 }
 calls() { cat "$FAKE_LOG"; }
 # load_lea: the shell parts of lea (libexec/lib/*.sh) and the configuration, as libexec/lea-sh

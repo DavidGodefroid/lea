@@ -20,6 +20,10 @@ if ! getent passwd "$LEA_UID" >/dev/null; then
 fi
 user=$(getent passwd "$LEA_UID" | cut -d: -f1)
 if [ "${LEA_LOCKSQL:-0}" = 1 ]; then usermod -aG locksql-clients "$user"; fi
+# shellcheck source=image/lock-host
+. /usr/local/libexec/lea/lock-host
+if [ "${LEA_LOCKMQ:-0}" = 1 ]; then lock_host lockmq "${LEA_LOCKMQ_UID:-}" "${LEA_LOCKMQ_GID:-}"; fi
+if [ "${LEA_LOCKFILE:-0}" = 1 ]; then lock_host lockfile "${LEA_LOCKFILE_UID:-}" "${LEA_LOCKFILE_GID:-}"; fi
 grep -q "^$user:" /etc/subuid || echo "$user:200000:65536" >>/etc/subuid
 grep -q "^$user:" /etc/subgid || echo "$user:200000:65536" >>/etc/subgid
 
