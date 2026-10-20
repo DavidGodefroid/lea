@@ -204,6 +204,8 @@ func runDaemon(stderr io.Writer) int {
 
 		Approvals:       approvalsMode(os.Getenv("LEA_APPROVALS")),
 		ApprovalTimeout: approvalTimeout(os.Getenv("LEA_APPROVAL_TIMEOUT")),
+		LockSpec:        lockSpec(exe),
+		Consoles:        agents.DockerConsoles{},
 
 		Providers:       reg,
 		DefaultProvider: os.Getenv("LEA_PROVIDER"),

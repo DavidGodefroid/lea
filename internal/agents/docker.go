@@ -155,3 +155,65 @@ func (d Docker) Pause(ctx context.Context, container, name string, paused bool) 
 	}
 	return nil
 }
+
+// DockerConsoles reaches the lock console containers through the docker CLI.
+type DockerConsoles struct {
+	Bin string // "docker" when empty
+}
+
+func (d DockerConsoles) bin() string {
+	if d.Bin == "" {
+		return "docker"
+	}
+	return d.Bin
+}
+
+// ConsoleState inspects a console container: one docker does not know does not exist.
+func (d DockerConsoles) ConsoleState(ctx context.Context, name string) (ConsoleState, error) {
+	out, err := exec.CommandContext(ctx, d.bin(), "inspect", "-f",
+		`{{.State.Running}}|{{index .Config.Labels "`+lockOwnerLabel+`"}}`, name).Output()
+	if err != nil {
+		var ee *exec.ExitError
+		if errors.As(err, &ee) && noSuchContainer(string(ee.Stderr)) {
+			return ConsoleState{}, nil
+		}
+		return ConsoleState{}, fmt.Errorf("docker inspect %s: %w%s", name, err, stderrOf(err))
+	}
+	run, owner, ok := strings.Cut(strings.TrimSpace(string(out)), "|")
+	if !ok || run != "true" && run != "false" {
+		return ConsoleState{}, fmt.Errorf("docker inspect %s: unexpected state %q", name, out)
+	}
+	if owner == "<no value>" {
+		owner = ""
+	}
+	return ConsoleState{Exists: true, Running: run == "true", Owner: owner}, nil
+}
+
+func (d DockerConsoles) RemoveConsole(ctx context.Context, name string) error {
+	if out, err := exec.CommandContext(ctx, d.bin(), "rm", name).CombinedOutput(); err != nil && !noSuchContainer(string(out)) {
+		return fmt.Errorf("docker rm %s: %w: %s", name, err, strings.TrimSpace(string(out)))
+	}
+	return nil
+}
+
+func (d DockerConsoles) StopConsole(ctx context.Context, name string) error {
+	if out, err := exec.CommandContext(ctx, d.bin(), "stop", "-t", "5", name).CombinedOutput(); err != nil && !noSuchContainer(string(out)) {
+		return fmt.Errorf("docker stop %s: %w: %s", name, err, strings.TrimSpace(string(out)))
+	}
+	return nil
+}
+
+func (d DockerConsoles) StopConsolesOf(ctx context.Context, owner string) error {
+	out, err := exec.CommandContext(ctx, d.bin(), "ps", "-q", "--filter", "label="+lockOwnerLabel+"="+owner).Output()
+	if err != nil {
+		return fmt.Errorf("docker ps: %w%s", err, stderrOf(err))
+	}
+	ids := strings.Fields(string(out))
+	if len(ids) == 0 {
+		return nil
+	}
+	if out, err := exec.CommandContext(ctx, d.bin(), append([]string{"stop", "-t", "5"}, ids...)...).CombinedOutput(); err != nil {
+		return fmt.Errorf("docker stop: %w: %s", err, strings.TrimSpace(string(out)))
+	}
+	return nil
+}

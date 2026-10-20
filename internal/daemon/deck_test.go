@@ -85,6 +85,18 @@ func (f *fakeAgents) SplitShell(ctx context.Context, k string, below bool) (agen
 	f.rec(fmt.Sprintf("split %s below=%v", k, below))
 	return agents.Row{Key: agents.ShellKey("lea-a", "sh-1"), Name: "sh-1", Kind: agents.KindShell}, nil
 }
+func (f *fakeAgents) LockOpen(ctx context.Context, c, tool, profile string) (string, error) {
+	f.rec(fmt.Sprintf("lock-open %s %s %q", c, tool, profile))
+	return "opened", nil
+}
+func (f *fakeAgents) LockClose(ctx context.Context, c, tool, profile string) (string, error) {
+	f.rec(fmt.Sprintf("lock-close %s %s %q", c, tool, profile))
+	return "closed", nil
+}
+func (f *fakeAgents) LockList(ctx context.Context, c string) ([]agents.LockRow, error) {
+	f.rec("lock-list " + c)
+	return []agents.LockRow{{ID: "locksql/prod", Shown: true}}, nil
+}
 func (f *fakeAgents) Changed() { f.mu.Lock(); f.changed++; f.mu.Unlock() }
 
 func TestDeckMethodsAreHostOnly(t *testing.T) {
@@ -239,6 +251,34 @@ func TestAgentsListShowsTheLabelToTheHostOnly(t *testing.T) {
 	for _, a := range bus {
 		if a.Label != "" {
 			t.Fatalf("an agent sees the label: %+v", bus)
+		}
+	}
+}
+
+// The lock console methods reach the manager from the host API, with what the user typed; an
+// agent reaches none of them (TestDeckMethodsAreHostOnly covers every deck method).
+func TestLockMethodsOnTheHostAPI(t *testing.T) {
+	e := start(t)
+	fa := &fakeAgents{}
+	e.d.SetAgents(fa)
+	var r struct{ Status string }
+	if err := call(t, e.api, "", "lock_open", map[string]any{"container": "lea-a", "tool": "locksql", "profile": "prod"}, &r); err != nil || r.Status != "opened" {
+		t.Fatalf("lock_open: %+v %v", r, err)
+	}
+	if err := call(t, e.api, "", "lock_close", map[string]any{"container": "lea-a", "tool": "locksql"}, &r); err != nil || r.Status != "closed" {
+		t.Fatalf("lock_close: %+v %v", r, err)
+	}
+	var rows []agents.LockRow
+	if err := call(t, e.api, "", "lock_list", map[string]any{"container": "lea-a"}, &rows); err != nil || len(rows) != 1 || rows[0].ID != "locksql/prod" {
+		t.Fatalf("lock_list: %+v %v", rows, err)
+	}
+	want := []string{`lock-open lea-a locksql "prod"`, `lock-close lea-a locksql ""`, "lock-list lea-a"}
+	if !reflect.DeepEqual(fa.calls, want) {
+		t.Fatalf("calls=%q", fa.calls)
+	}
+	for _, m := range []string{"lock_open", "lock_close", "lock_list"} {
+		if err := call(t, e.bus, "lead", m, map[string]any{"container": "lea-a", "tool": "locksql"}, nil); err == nil || !strings.Contains(err.Error(), "host only") {
+			t.Fatalf("%s from an agent: %v", m, err)
 		}
 	}
 }

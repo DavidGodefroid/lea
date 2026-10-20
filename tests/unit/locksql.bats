@@ -9,7 +9,7 @@ setup() {
   run lea_locksql --profile uat </dev/null
   [ "$status" -eq 0 ]
   run calls
-  [[ "$output" == *"docker [run] [-i] [--rm] [--user] [locksql] [-v] [locksql-home:/home/locksql] [--name] [locksql-console] [--add-host=host.docker.internal:host-gateway] [-v] [$P:$P] [-v] [locksql-run:/run/locksql] [locksql:0.8.0] [console] [--project] [$P] [--profile] [uat]"* ]]
+  [[ "$output" == *"docker [run] [-i] [--rm] [--log-driver] [none] [--user] [locksql] [-v] [locksql-home:/home/locksql] [--name] [locksql-console] [--add-host=host.docker.internal:host-gateway] [-v] [$P:$P] [-v] [locksql-run:/run/locksql] [locksql:0.8.0] [console] [--project] [$P] [--profile] [uat]"* ]]
   [[ "$output" != *"docker [rm]"* ]]
 }
 
@@ -23,7 +23,7 @@ setup() {
 @test "lea locksql vault runs the vault CLI as the console account" {
   lea_locksql vault login -method=oidc </dev/null
   run calls
-  [[ "$output" == *"docker [run] [-i] [--rm] [--user] [locksql] [-v] [locksql-home:/home/locksql] [--entrypoint] [vault] [locksql:0.8.0] [login] [-method=oidc]"* ]]
+  [[ "$output" == *"docker [run] [-i] [--rm] [--log-driver] [none] [--user] [locksql] [-v] [locksql-home:/home/locksql] [--entrypoint] [vault] [locksql:0.8.0] [login] [-method=oidc]"* ]]
 }
 
 @test "lea locksql refuses without locksql, a projects directory or the image" {
