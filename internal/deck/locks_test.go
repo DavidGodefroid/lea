@@ -152,3 +152,38 @@ func TestSpaceFindsALockAsk(t *testing.T) {
 		t.Fatalf("selected %q", m.selected)
 	}
 }
+
+// A lock card that comes into view while the row's menu is open closes the menu: its items move
+// (Open console comes first), and an enter meant for another item must not open a console.
+func TestALockCardClosesTheRowsMenu(t *testing.T) {
+	api := &fakeAPI{}
+	m := readable(loaded(t, api, "lea-a/b", ag("b", "idle", 1), ag("c", "idle", 1)))
+	m.openMenu("lea-a/b")
+	m.menuSel = 0 // Show
+	m, _ = step(t, m, snapshotMsg{snap: Snapshot{Version: 8, Shown: "lea-a/b", Agents: []Agent{asking("b", 5), ag("c", "idle", 1)}}})
+	if m.menuFor != "" {
+		t.Fatalf("menu still open for %q", m.menuFor)
+	}
+	later := clock.Add(10 * lockAskDelay)
+	m.now = func() time.Time { return later }
+	if _, cmd := step(t, m, key("enter")); cmd != nil {
+		cmd()
+	}
+	for _, c := range api.got() {
+		if strings.HasPrefix(c, "lock-decide") {
+			t.Fatalf("enter answered the lock request: %q", api.got())
+		}
+	}
+	// A menu opened on a row whose card is already in view stays open across snapshots.
+	m.openMenu("lea-a/b")
+	m, _ = step(t, m, snapshotMsg{snap: Snapshot{Version: 9, Shown: "lea-a/b", Agents: []Agent{asking("b", 5), ag("c", "idle", 1)}}})
+	if m.menuFor != "lea-a/b" {
+		t.Fatal("the menu closed without a new card")
+	}
+	// Another row's card leaves this menu alone.
+	m.openMenu("lea-a/c")
+	m, _ = step(t, m, snapshotMsg{snap: Snapshot{Version: 10, Shown: "lea-a/b", Agents: []Agent{asking("b", 5), ag("c", "idle", 1), asking("d", 6)}}})
+	if m.menuFor != "lea-a/c" {
+		t.Fatal("another row's card closed the menu")
+	}
+}

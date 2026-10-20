@@ -501,6 +501,11 @@ func (m *Model) apply(s Snapshot) bool {
 				since[l.ID] = t
 			} else {
 				since[l.ID] = m.now()
+				// The row's menu changes under the highlight (Open console comes first): it closes,
+				// so an enter meant for another item never opens a console.
+				if m.menuFor == a.Key {
+					m.menuFor, m.menuSel, m.menuPicker = "", 0, false
+				}
 			}
 		}
 	}
