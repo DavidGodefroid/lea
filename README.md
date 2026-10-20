@@ -264,6 +264,19 @@ keep in view to open the console, then ask an agent about your data. `locksql va
 console account in to Vault again when its token expires. A `locksql` already installed on the
 host keeps its name; `lea locksql` then opens lea's console.
 
+The console can also live **in the deck**: `L` in the deck (or `lea lock open locksql [profile]`)
+opens it in a pane under the agent, with a red `LOCK` border, without taking the keyboard: click
+it to answer (ctrl+space from the deck always goes to the agent, never to the console). It serves
+the deck's own projects directory. The last console opened takes that slot; another one waits in a window of its own
+and comes back with `lea lock open` again. `lea lock list` lists the deck's consoles,
+`lea lock close locksql [profile]` stops one, and `lea stop` stops them all. Only you open them:
+no agent tool reaches a console, lea never types into it nor reads it, ctrl+v pastes nothing into
+it (agents can write your clipboard) and its screen cannot be copied (a copy goes through the
+clipboard bridge the agents' containers share). The pane keeps a short history, and both the pane
+and its history go when the console exits; the console container keeps no log (`docker logs`).
+Console flags (`--auto` and the like) stay for `lea locksql` in a terminal of your own. lockmq and
+lockfile consoles cannot live in the deck: they run in their own account's session (below).
+
 The two projects are independent: lea runs without locksql, and locksql works with any agent.
 `lea init --no-locksql` (or `LEA_LOCKSQL=0`) leaves no trace of locksql in lea.
 

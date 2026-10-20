@@ -23,5 +23,7 @@ lea_locksql() {
   if [ -n "${LEA_LOCKSQL_VAULT_ADDR:-}" ]; then set -- -e "VAULT_ADDR=$LEA_LOCKSQL_VAULT_ADDR" "$@"; fi
   _lk_t=-i
   if [ -t 0 ] && [ -t 1 ]; then _lk_t=-it; fi
-  docker run "$_lk_t" --rm --user locksql -v locksql-home:/home/locksql "$@"
+  # No log driver: with a tty, docker's json-file log would keep every screen of the console
+  # (results the user chose to show) for anyone who runs docker logs.
+  docker run "$_lk_t" --rm --log-driver none --user locksql -v locksql-home:/home/locksql "$@"
 }

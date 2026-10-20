@@ -92,7 +92,7 @@ func TestCoreCommandsMatchTheSwitch(t *testing.T) {
 		t.Fatalf("found only %d case labels in run: %v", len(cases), cases)
 	}
 	for c := range cases {
-		if c == "new" {
+		if c == "new" || c == "lock" {
 			continue
 		}
 		if !coreCommands[c] {
@@ -109,6 +109,12 @@ func TestCoreCommandsMatchTheSwitch(t *testing.T) {
 	}
 	if !cases["new"] || coreCommands["new"] {
 		t.Error("new: a case of run, routed by launcherCommand, never in coreCommands")
+	}
+	if !cases["lock"] || coreCommands["lock"] {
+		t.Error("lock: a case of run, routed by launcherCommand, never in coreCommands")
+	}
+	if !launcherCommand([]string{"lock", "open", "locksql"}) || launcherCommand([]string{"lock", "--container", "lea-a", "list"}) {
+		t.Error("lock: the user's form goes to the launcher, the core form (--container) to the core")
 	}
 }
 

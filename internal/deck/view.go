@@ -120,7 +120,7 @@ var helpLines = []string{
 	"space       next needing you",
 	"n           new agent",
 	"N           new, other provider",
-	"s           new shell",
+	"s L         new shell, locksql",
 	"- |         split with a shell",
 	"m           note to its inbox",
 	"t           its messages",
