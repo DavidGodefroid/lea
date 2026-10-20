@@ -144,6 +144,12 @@ check_endpoints() {
   [ "$status" -ne 0 ]
 }
 
+# The base image's BUILDAH_ISOLATION=chroot remounts /dev read-only, which lea's container may not:
+# every RUN step of a docker build failed. Rootless isolation builds in a nested user namespace.
+@test "Containerfile builds images with rootless buildah isolation" {
+  grep -q '^ENV BUILDAH_ISOLATION=rootless$' "$I/Containerfile"
+}
+
 @test "Containerfile installs gh with its config in the state, and git credentials in the state" {
   c="$I/Containerfile"
   grep -q ' gh glab ' "$c"
