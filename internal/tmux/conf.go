@@ -15,7 +15,38 @@ var confTemplate string
 // DeckWidth is the deck pane's width, its border included (spec §4.1: 32 columns inside).
 const DeckWidth = 34
 
-var conf = strings.ReplaceAll(confTemplate, "@DECK_WIDTH@", strconv.Itoa(DeckWidth))
+var conf = perKey(strings.ReplaceAll(confTemplate, "@DECK_WIDTH@", strconv.Itoa(DeckWidth)))
+
+// typedKeys are the keys typed into a prompt, quoted for the configuration: printable ASCII but q
+// (bound on its own), and Space, Enter, BSpace, Tab.
+func typedKeys() []string {
+	keys := []string{"Space", "Enter", "BSpace", "Tab"}
+	for c := byte('!'); c <= '~'; c++ {
+		switch c {
+		case 'q':
+		case '\'':
+			keys = append(keys, `"'"`)
+		default:
+			keys = append(keys, "'"+string(c)+"'")
+		}
+	}
+	return keys
+}
+
+// perKey repeats each line of c that holds @KEY@ once for each typed key.
+func perKey(c string) string {
+	var b strings.Builder
+	for _, line := range strings.SplitAfter(c, "\n") {
+		if !strings.Contains(line, "@KEY@") {
+			b.WriteString(line)
+			continue
+		}
+		for _, k := range typedKeys() {
+			b.WriteString(strings.ReplaceAll(line, "@KEY@", k))
+		}
+	}
+	return b.String()
+}
 
 // Conf is lea's tmux configuration.
 func Conf() string { return conf }

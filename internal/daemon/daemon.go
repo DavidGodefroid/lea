@@ -331,19 +331,36 @@ type agentView struct {
 	Repo    string `json:"repo,omitempty"`
 	Branch  string `json:"branch,omitempty"`
 	Task    string `json:"task,omitempty"`
-	You     bool   `json:"you,omitempty"`
+	// CtxPct is the percent of its context window the agent's status line last reported; absent
+	// while unknown.
+	CtxPct *int `json:"ctx_pct,omitempty"`
+	You    bool `json:"you,omitempty"`
 }
 
 // agentsList lists the agents (spec §6.1: name, role, profile, state, branch; never screen
-// content). Parent is the name of the lead that started one; You marks the caller.
+// content). Parent is the name of the lead that started one; You marks the caller. A lead reads
+// its children's context use here, from the caller's own container (the host API sees all).
 func (d *Daemon) agentsList(o Origin, me string) ([]agentView, error) {
 	as, err := d.st.Agents()
 	if err != nil {
 		return nil, err
 	}
+	usages := map[string]map[string]store.Usage{}
 	out := []agentView{}
 	for _, a := range as {
 		v := agentView{Key: a.Key, Name: a.Name, State: a.State, Updated: a.Updated, You: a.Key == me}
+		if o.Container == "" || a.Container == o.Container {
+			u, ok := usages[a.Container]
+			if !ok {
+				if u, err = d.st.Usages(a.Container); err != nil {
+					return nil, err
+				}
+				usages[a.Container] = u
+			}
+			if p := u[a.Key].CtxPct; p >= 0 {
+				v.CtxPct = &p
+			}
+		}
 		if a.Profile != "" {
 			v.Role, v.Profile, v.Repo, v.Branch = a.Role, a.Profile, a.Repo, a.Branch
 			if o.Container == "" {
