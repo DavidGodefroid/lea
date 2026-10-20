@@ -36,15 +36,21 @@ func (l *Launcher) ensureNetworks(id string) error {
 }
 
 // ensureProxy is lea_ensure_proxy. A running proxy started for other git SSH endpoints (its
-// lea.git-ssh label) is replaced: its forwarders are set at start.
+// lea.git-ssh label) or another egress allowlist (lea.egress-allow) is replaced: its forwarders
+// and its squid.conf are set at start.
 func (l *Launcher) ensureProxy() error {
-	name := l.prefix() + "-proxy"
+	name, allow := l.prefix()+"-proxy", l.Cfg.Get("LEA_EGRESS_ALLOW")
 	if l.containerRunning(name) {
-		got, _ := l.output(false, "docker", "inspect", "--format", `{{index .Config.Labels "lea.git-ssh"}}`, name)
-		if got == l.Cfg.GitSSH() {
+		got, _ := l.output(false, "docker", "inspect", "--format",
+			`{{index .Config.Labels "lea.git-ssh"}}{{with index .Config.Labels "lea.egress-allow"}}|{{.}}{{end}}`, name)
+		want := l.Cfg.GitSSH()
+		if allow != "" {
+			want += "|" + allow
+		}
+		if got == want {
 			return nil
 		}
-		l.logf("restarting %s for the git SSH endpoints '%s'", name, l.Cfg.GitSSH())
+		l.logf("restarting %s for the git SSH endpoints '%s' and the egress allowlist '%s'", name, l.Cfg.GitSSH(), allow)
 	}
 	hosts := l.Cfg.Get("LEA_INTERNAL_HOSTS")
 	if err := noComma(hosts); err != nil {
@@ -53,8 +59,10 @@ func (l *Launcher) ensureProxy() error {
 	_ = l.quiet("docker", "rm", "-f", name)
 	return l.run("docker", "run", "-d", "--name", name, "--restart", "unless-stopped", "--network", l.prefix()+"-egress",
 		"--label", "lea.prefix="+l.prefix(), "--label", "lea.role=proxy", "--label", "lea.git-ssh="+l.Cfg.GitSSH(),
+		"--label", "lea.egress-allow="+allow,
 		"--mount", "type=bind,src="+hosts+",dst=/etc/lea/internal-hosts,readonly",
 		"-e", "LEA_GIT_SSH="+l.Cfg.GitSSH(), "-e", "LEA_OTEL_UPSTREAM="+l.Cfg.Get("LEA_OTEL_UPSTREAM"),
+		"-e", "LEA_EGRESS_ALLOW="+allow,
 		l.Cfg.Get("LEA_PROXY_IMAGE"))
 }
 

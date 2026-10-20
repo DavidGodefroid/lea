@@ -28,7 +28,7 @@ var protectedKeys = map[string]bool{
 // core subcommands and libexec/lea-sh.
 var ExportedKeys = []string{
 	"LEA_PREFIX", "LEA_IMAGE", "LEA_PROXY_IMAGE", "LEA_GIT_SSH", "LEA_GIT_KNOWN_HOSTS", "LEA_LOCKSQL", "LEA_LOCKSQL_IMAGE", "LEA_LOCKSQL_REF", "LEA_LOCKSQL_VAULT_ADDR",
-	"LEA_OTEL_UPSTREAM", "LEA_NESTED_NETWORKS", "LEA_K8S_NAMESPACE", "LEA_INTERNAL_HOSTS", "LEA_PROJECTS_DIR",
+	"LEA_OTEL_UPSTREAM", "LEA_NESTED_NETWORKS", "LEA_K8S_NAMESPACE", "LEA_INTERNAL_HOSTS", "LEA_EGRESS_ALLOW", "LEA_PROJECTS_DIR",
 	"LEA_APPROVALS", "LEA_APPROVAL_TIMEOUT", "LEA_SOUND", "LEA_SOUND_ATTENTION", "LEA_SOUND_DONE",
 }
 
@@ -179,6 +179,11 @@ func (c *Config) resolve(root string) error {
 		return fmt.Errorf("LEA_APPROVAL_TIMEOUT must be a number of seconds from 1 to 600 without leading zeros, not '%s'", at)
 	}
 	c.final["LEA_INTERNAL_HOSTS"] = nonEmpty(c.Get("LEA_INTERNAL_HOSTS"), root+"/config/internal-hosts")
+	ea, err := egressAllow(c.Get("LEA_EGRESS_ALLOW"))
+	if err != nil {
+		return err
+	}
+	c.final["LEA_EGRESS_ALLOW"] = ea
 	// The git SSH endpoints (none by default: git over HTTPS needs none). LEA_GITLAB_SSH and
 	// LEA_GITLAB_KNOWN_HOSTS are the keys of lea before any forge could be used: read when the
 	// new ones are unset.
@@ -240,6 +245,27 @@ func gitEndpoints(v string) ([]string, error) {
 		seen[h] = true
 	}
 	return eps, nil
+}
+
+// maxEgressDomains caps LEA_EGRESS_ALLOW.
+const maxEgressDomains = 64
+
+// egressAllow is LEA_EGRESS_ALLOW normalized as lea__check_egress_allow does: domain names
+// separated by commas or blanks, lower-cased, joined by commas. Each one also stands for its
+// subdomains; an IP literal or a wildcard is refused.
+func egressAllow(v string) (string, error) {
+	names := strings.FieldsFunc(v, func(r rune) bool { return r == ',' || r == ' ' || r == '\t' || r == '\n' })
+	if len(names) > maxEgressDomains {
+		return "", fmt.Errorf("LEA_EGRESS_ALLOW lists %d domains, at most %d", len(names), maxEgressDomains)
+	}
+	for i, n := range names {
+		if strings.Trim(n, "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789.-") != "" || n[0] == '.' ||
+			n[len(n)-1] == '.' || strings.Contains(n, "..") || strings.Trim(n, "0123456789.") == "" {
+			return "", fmt.Errorf("LEA_EGRESS_ALLOW must list domain names separated by commas, got '%s'", n)
+		}
+		names[i] = strings.ToLower(n)
+	}
+	return strings.Join(names, ","), nil
 }
 
 // plainNumber accepts what the shell's case patterns accept: digits only, no leading zero, at

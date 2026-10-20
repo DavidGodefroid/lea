@@ -228,3 +228,30 @@ setup() { setup_fakes; load_lea; U="$HOME/.config/lea/lea.conf"; }
   [ "$status" -eq 1 ]
   [[ "$output" == *"LEA_AUTOUPDATE_SKIP must be empty or a release version (vX.Y.Z, set by lea rollback), not 'latest'"* ]]
 }
+
+@test "LEA_EGRESS_ALLOW: off by default, normalized to lower-case comma-separated names" {
+  lea_load_config
+  [ -z "$LEA_EGRESS_ALLOW" ]
+  export LEA_EGRESS_ALLOW='GitHub.com, api.anthropic.com  proxy.golang.org,'
+  lea_load_config
+  [ "$LEA_EGRESS_ALLOW" = 'github.com,api.anthropic.com,proxy.golang.org' ]
+  [ "$(sh -c 'printenv LEA_EGRESS_ALLOW')" = 'github.com,api.anthropic.com,proxy.golang.org' ]
+}
+
+@test "LEA_EGRESS_ALLOW refuses entries that are not domain names" {
+  for v in 'git/hub.com' '.github.com' 'github.com.' 'a..b' '10.0.0.1' '*.github.com' 'evil$(id)' 'h_x.com'; do
+    LEA_EGRESS_ALLOW=$v run lea_load_config
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"LEA_EGRESS_ALLOW must list domain names separated by commas, got '$v'"* ]]
+  done
+}
+
+@test "LEA_EGRESS_ALLOW lists at most 64 domains" {
+  v=; for n in $(seq 1 64); do v="$v,d$n.example"; done
+  export LEA_EGRESS_ALLOW="$v"
+  lea_load_config
+  export LEA_EGRESS_ALLOW="$v,d65.example"
+  run lea_load_config
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"LEA_EGRESS_ALLOW lists 65 domains, at most 64"* ]]
+}

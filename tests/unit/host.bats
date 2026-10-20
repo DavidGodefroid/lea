@@ -118,6 +118,24 @@ guarded() {
   guarded "$(dirname "$LEA_ROOT")"
 }
 
+@test "guard: credential directories, inside or around, are refused" {
+  for d in .ssh .gnupg .aws .config/gh .kube .docker; do
+    mkdir -p "$HOME/$d/sub"
+    guarded "$HOME/$d"
+    guarded "$HOME/$d/sub"
+  done
+  rm -rf "$HOME/.ssh"
+  mkdir -p "$BATS_TEST_TMPDIR/elsewhere/ssh"
+  ln -s "$BATS_TEST_TMPDIR/elsewhere/ssh" "$HOME/.ssh"
+  guarded "$BATS_TEST_TMPDIR/elsewhere"
+  guarded "$BATS_TEST_TMPDIR/elsewhere/ssh"
+  mkdir -p "$HOME/.sshx" "$HOME/projects"
+  run lea__guard_projects "$(lea__phys "$HOME/.sshx")"
+  [ "$status" -eq 0 ]
+  run lea__guard_projects "$(lea__phys "$HOME/projects")"
+  [ "$status" -eq 0 ]
+}
+
 @test "guard: a sibling of \$HOME with a common prefix is accepted" {
   mkdir -p "${HOME}x"
   run lea__guard_projects "$(lea__phys "${HOME}x")"
