@@ -457,7 +457,12 @@ func runDeck(args []string, stderr io.Writer) int {
 		}
 		cwd, _ := os.Getwd()
 		st, off := deckSettings(os.Getenv, fileExists, exe, cwd)
-		err = deck.Run(deck.Client{Sock: identity.DaemonSock(os.Getenv)}, args[1], ascii, notice, st, off)
+		// The folders are the user's: kept in the host's data dir, which no container mounts.
+		var layout deck.LayoutStore
+		if p, ok := deck.LayoutPath(identity.HostDir(os.Getenv), args[1]); ok {
+			layout = deck.FileStore{Path: p}
+		}
+		err = deck.Run(deck.Client{Sock: identity.DaemonSock(os.Getenv)}, args[1], ascii, notice, st, off, layout)
 	case len(args) >= 2 && args[0] == "--thread" && (len(args) == 2 || (len(args) == 3 && args[2] == "--compose")):
 		err = deck.RunThread(deck.Client{Sock: identity.DaemonSock(os.Getenv)}, args[1], len(args) == 3, ascii)
 	default:

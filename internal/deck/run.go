@@ -8,9 +8,9 @@ import (
 )
 
 // Run draws the deck until its pane is closed. st is its settings screen's store (nil: none, off
-// says why). All motion: the pointer over a row, no button held, shows its whole name (hover.go).
-func Run(api API, container string, ascii bool, notice func() string, st SettingsStore, off string) error {
-	m := New(api, container, ascii, time.Now).WithIntro().WithNotice(notice).WithSettings(st, off)
+// says why); the folders persist in layout (nil: not at all). All motion: the pointer over a row, no button held, shows its whole name (hover.go).
+func Run(api API, container string, ascii bool, notice func() string, st SettingsStore, off string, layout LayoutStore) error {
+	m := New(api, container, ascii, time.Now).WithIntro().WithNotice(notice).WithSettings(st, off).WithLayout(layout)
 	_, err := tea.NewProgram(m, tea.WithAltScreen(), tea.WithReportFocus(), tea.WithMouseAllMotion()).Run()
 	return err
 }

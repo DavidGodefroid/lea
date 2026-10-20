@@ -230,7 +230,7 @@ func TestNoSettingsWithoutAStore(t *testing.T) {
 // The row menu and the key list offer the settings.
 func TestTheMenuAndTheKeyListOfferTheSettings(t *testing.T) {
 	found := false
-	for _, it := range menuItems(ag("a", "idle", 1)) {
+	for _, it := range menuItems(ag("a", "idle", 1), false) {
 		found = found || (it.label == "Settings" && it.key == ",")
 	}
 	if !found {
@@ -241,7 +241,7 @@ func TestTheMenuAndTheKeyListOfferTheSettings(t *testing.T) {
 	}
 	m := withSettings(t, &fakeAPI{}, someSettings())
 	m.openMenu("lea-a/a")
-	items := menuItems(m.agents[0])
+	items := menuItems(m.agents[0], false)
 	for i, it := range items {
 		if it.key == "," {
 			nm, _ := m.pick(i)
