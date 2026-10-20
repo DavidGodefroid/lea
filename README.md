@@ -160,20 +160,30 @@ closing the deck, or the terminal, does not stop it: the next `lea` reattaches.
 | `-` / `\|` | split: a shell below the selected agent, or at its right, in its directory |
 | `S` | sounds on or off (the top border says `muted` while they are off) |
 | `p` | pause the selected agent, or resume it where it stopped (its conversation stays) |
+| `,` | settings (also in a row's right-click menu) |
 | `x`, then `y` | stop the selected agent |
+| `f` | new folder (enter names it) |
+| `o` | move the selected agent into a folder, or out of it |
+| `J` / `K` | move the selected folder, or an agent within its folder, down / up |
+| `enter`, `h` / `l` on a folder | fold / unfold it (`e` renames it, `x` deletes it: its agents go back, never stopped) |
 | `q` | leave the deck; agents keep running |
 | `?` | list the keys |
 
 The mouse works too: click a row to select it, scroll to move, right-click a row for its menu
 (Split horizontally / Split vertically open a shell beside the agent, as Terminator does; the
 shell shows with its agent and steps aside while another agent is shown). A right-click anywhere
-else in the column opens the deck's own menu: new agent, new shell, sounds, keys, detach. The
+else in the column opens the deck's own menu: new agent, new shell, new folder, sounds, keys,
+detach; ctrl + right-click makes a folder, holding the agent under the pointer. The
 pointer over a row shows its whole name (cut in the row when long) with the agent's name, role,
 profile and state in the bottom border.
 
 - **States.** A red `●` needs you, an orange spinner is working, a green `●` has finished its
   turn, an empty `○` has been quiet for 30 minutes, a grey `‖` is paused (`p`: lea freezes the
   agent's processes, tool calls included, until you resume it). Agents stay in the order you started them.
+- **Folders.** Folders come first, in your order, then the agents in no folder. A folded
+  folder's dot sums up its agents: red when one needs you, the spinner while one works, green
+  once none works any more. The layout is yours: the deck keeps it on the host
+  (`~/.local/share/lea/host/deck/<container>.json`), out of every container's reach.
   Each row shows the agent's context use, its directory and branch, and its own report on its
   task. The pane that has the keyboard is the bright one: the deck's frame turns blue when it
   has it; otherwise the terminal on the right shows a blue `▶ <agent> · typing here` bar on its
@@ -359,6 +369,14 @@ projects directory cannot be `/`, your home directory or one of its parents, nor
 
 `~/.config/lea/lea.conf` holds your settings as `KEY=value` lines (`lea init` writes it);
 `config/lea.conf` in the installation documents every key and its default.
+
+The deck's `,` opens a settings screen over the same file: the keys that matter, grouped, each
+with its value, where it comes from (default, your file, the environment) and a one-line help.
+`enter` or `space` flips a toggle, takes the next choice or opens a field (enter saves, esc
+cancels); a value is checked before it is written. Sounds apply at once; the screen says when the
+others apply (after `lea stop --all`, or at the next `lea`). A key the environment sets
+(`LEA_PROJECTS_DIR`, `LEA_APPROVALS`, `LEA_APPROVAL_TIMEOUT`) wins over the files, so it is shown
+read-only. The screen runs in the deck on the host: agents cannot open or drive it.
 
 | Key | Default | What it does |
 |---|---|---|

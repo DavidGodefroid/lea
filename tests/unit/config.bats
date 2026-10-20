@@ -255,3 +255,15 @@ setup() { setup_fakes; load_lea; U="$HOME/.config/lea/lea.conf"; }
   [ "$status" -eq 1 ]
   [[ "$output" == *"LEA_EGRESS_ALLOW lists 65 domains, at most 64"* ]]
 }
+
+@test "LEA_OTEL_UPSTREAM is empty or host:port with a plain host name" {
+  mkdir -p "${U%/*}"; printf "LEA_OTEL_UPSTREAM='otel.corp.example:4317'\n" >"$U"
+  lea_load_config
+  [ "$LEA_OTEL_UPSTREAM" = otel.corp.example:4317 ]
+  for v in '1.2.3.4,fork:80' 'h:80,fork' 'h;x:80' 'h:080' 'h:0' 'h:65536' 'h' ':80'; do
+    printf "LEA_OTEL_UPSTREAM='%s'\n" "$v" >"$U"
+    run lea_load_config
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"LEA_OTEL_UPSTREAM must be host:port with a plain host name, not '$v'"* ]]
+  done
+}

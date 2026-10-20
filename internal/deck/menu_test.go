@@ -102,11 +102,11 @@ func TestAClickElsewhereClosesTheMenu(t *testing.T) {
 	}
 }
 
-// A row waiting for an approval offers it first; a shell offers show and close only.
+// A row waiting for an approval offers it first; a shell offers show, close and the settings.
 func TestMenuItemsFollowTheRow(t *testing.T) {
 	got := func(a Agent) string {
 		var l []string
-		for _, it := range menuItems(a) {
+		for _, it := range menuItems(a, false) {
 			l = append(l, it.label)
 		}
 		return strings.Join(l, ",")
@@ -117,7 +117,7 @@ func TestMenuItemsFollowTheRow(t *testing.T) {
 	if g := got(carded("b", 7, false)); strings.Contains(g, "Always") {
 		t.Fatalf("no always rule offered: %s", g)
 	}
-	if g := got(shell("sh-1")); g != "Show,Close" {
+	if g := got(shell("sh-1")); g != "Show,Close,Settings" {
 		t.Fatalf("shell: %s", g)
 	}
 }
@@ -228,7 +228,7 @@ func TestDeckMenuItems(t *testing.T) {
 		}
 		return strings.Join(l, ",")
 	}
-	if g := got(""); g != "New agent=n,New shell=s,Keys=?,Detach=q" {
+	if g := got(""); g != "New agent=n,New shell=s,New folder=f,Keys=?,Detach=q" {
 		t.Fatalf("no player: %s", g)
 	}
 	if g := got("on"); !strings.Contains(g, "Mute sounds=S") {

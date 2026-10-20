@@ -45,6 +45,7 @@ lea_load_config() {
       LEA_GIT_KNOWN_HOSTS=$_lc_conf/gitlab_known_hosts
     fi
   fi
+  lea__check_otel_upstream
   LEA_LOCKSQL=${LEA_LOCKSQL:-1}
   case $LEA_LOCKSQL in 0|1) ;; *) lea_die "LEA_LOCKSQL must be 1 (wire lea for a locksql console) or 0, not '$LEA_LOCKSQL'" ;; esac
   LEA_LOCKMQ=${LEA_LOCKMQ:-0}
@@ -88,6 +89,21 @@ lea__check_egress_allow() {
   set +f
   [ "$_ce_n" -le 64 ] || lea_die "LEA_EGRESS_ALLOW lists $_ce_n domains, at most 64"
   LEA_EGRESS_ALLOW=${_ce_out#,}
+}
+
+# lea__check_otel_upstream: LEA_OTEL_UPSTREAM is empty or host:port, a plain host name and a port
+# from 1 to 65535 (the proxy hands it to socat as TCP:<value>: no address options).
+lea__check_otel_upstream() {
+  _co_v=${LEA_OTEL_UPSTREAM:-}
+  [ -n "$_co_v" ] || return 0
+  _co_h=${_co_v%%:*} _co_p=${_co_v#*:}
+  case $_co_v in *:*) ;; *) _co_p= ;; esac
+  case $_co_h in ''|*[!ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789.-]*) _co_p= ;; esac
+  case $_co_p in
+    ''|0*|*[!0-9]*|??????*) _co_bad=1 ;;
+    *) if [ "$_co_p" -gt 65535 ]; then _co_bad=1; else _co_bad=; fi ;;
+  esac
+  [ -z "$_co_bad" ] || lea_die "LEA_OTEL_UPSTREAM must be host:port with a plain host name, not '$_co_v'"
 }
 
 # lea__check_git_ssh: LEA_GIT_SSH lists at most 16 host:port endpoints, each a plain host name

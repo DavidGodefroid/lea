@@ -70,10 +70,11 @@ tool() {
   [ "$(tool Edit)" = allow ]
 }
 
-@test "the skill states the hard rule and its anti-pattern" {
+@test "the skill states the hard rule, one task per agent and its anti-pattern" {
   k="$P/skills/tower-control/SKILL.md"
   grep -q '^## The hard rule: you never act, you delegate$' "$k"
   grep -q '^| Allowed | Forbidden |$' "$k"
   grep -q '^Anti-pattern, never do this:$' "$k"
+  grep -q '^## One agent, one task$' "$k"
   grep -q '/lea:tower-control off' "$k"
 }
