@@ -1,6 +1,7 @@
 package launcher
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -186,5 +187,40 @@ func TestSoundKeysReachTheDaemon(t *testing.T) {
 		if !strings.Contains(env+"\n", want+"\n") {
 			t.Errorf("Environ lacks %s:\n%s", want, env)
 		}
+	}
+}
+
+// LEA_EGRESS_ALLOW is off by default; set, it is normalized to lower-case comma-separated domain
+// names, validated as lea_load_config does.
+func TestEgressAllow(t *testing.T) {
+	w := newWorld(t, repoRoot(t))
+	for file, want := range map[string]string{
+		"": "",
+		"LEA_EGRESS_ALLOW='GitHub.com, api.anthropic.com  proxy.golang.org,'\n": "github.com,api.anthropic.com,proxy.golang.org",
+	} {
+		writeUserConf(t, w, file)
+		c, err := LoadConfig(w.getenv, w.root, w.proj)
+		if err != nil || c.Get("LEA_EGRESS_ALLOW") != want {
+			t.Errorf("%q: %v, got %q, want %q", file, err, c.Get("LEA_EGRESS_ALLOW"), want)
+			continue
+		}
+		if env := strings.Join(c.Environ(nil), "\n") + "\n"; !strings.Contains(env, "\nLEA_EGRESS_ALLOW="+want+"\n") {
+			t.Errorf("Environ lacks LEA_EGRESS_ALLOW=%s", want)
+		}
+	}
+	for _, bad := range []string{"git/hub.com", ".github.com", "github.com.", "a..b", "10.0.0.1", "*.github.com", "h_x.com"} {
+		writeUserConf(t, w, "LEA_EGRESS_ALLOW='"+bad+"'\n")
+		want := "LEA_EGRESS_ALLOW must list domain names separated by commas, got '" + bad + "'"
+		if _, err := LoadConfig(w.getenv, w.root, w.proj); err == nil || !strings.Contains(err.Error(), want) {
+			t.Errorf("%q: err = %v", bad, err)
+		}
+	}
+	v := ""
+	for n := 1; n <= 65; n++ {
+		v += fmt.Sprintf(",d%d.example", n)
+	}
+	writeUserConf(t, w, "LEA_EGRESS_ALLOW='"+v+"'\n")
+	if _, err := LoadConfig(w.getenv, w.root, w.proj); err == nil || !strings.Contains(err.Error(), "LEA_EGRESS_ALLOW lists 65 domains, at most 64") {
+		t.Errorf("err = %v", err)
 	}
 }
