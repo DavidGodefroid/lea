@@ -28,7 +28,9 @@ type Limits struct{ MaxBody, PerMinute, MaxHops int }
 
 var Default = Limits{MaxBody: 64 << 10, PerMinute: 10, MaxHops: 8}
 
-var kinds = map[string]bool{"note": true, "request": true, "review": true, "result": true}
+// kinds are the message kinds. A question is sent only by the ask tool, never by msg_send: its
+// asker waits for the answer to it.
+var kinds = map[string]bool{"note": true, "request": true, "review": true, "result": true, "question": true}
 
 func (l Limits) Check(body, kind string, sentLastMinute, hops int) error {
 	if !kinds[kind] {
@@ -90,6 +92,9 @@ func Wrap(m store.Message) string {
 		m.ID, m.From, m.Kind, m.Thread)
 	if m.From == "user" {
 		header = fmt.Sprintf("[lea message #%d from the user (kind: %s, thread %d)]", m.ID, m.Kind, m.Thread)
+	}
+	if m.Kind == "question" {
+		header += fmt.Sprintf("\n[the asker waits for your answer: msg_reply with id %d; answer only what you choose to share]", m.ID)
 	}
 	return fmt.Sprintf("%s\n%s\n[end of lea message #%d]", header, strings.Join(lines, "\n"), m.ID)
 }

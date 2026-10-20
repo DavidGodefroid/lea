@@ -77,7 +77,7 @@ flowchart LR
 ```
 
 **Contents:** [Quick start](#quick-start) · [The deck](#the-deck) · [Git and forges](#git-and-forges) ·
-[Databases](#databases-with-locksql) · [Teams of agents](#teams-of-agents) · [Commands](#commands) ·
+[Databases](#databases-with-locksql) · [Queues and files](#queues-and-files-with-lockmq-and-lockfile) · [Teams of agents](#teams-of-agents) · [Commands](#commands) ·
 [Configure](#configure) · [Safety](#how-lea-keeps-your-machine-safe) · [FAQ](#faq) ·
 [Troubleshooting](#troubleshooting) · [Development](#development)
 
@@ -162,19 +162,28 @@ closing the deck, or the terminal, does not stop it: the next `lea` reattaches.
 | `p` | pause the selected agent, or resume it where it stopped (its conversation stays) |
 | `,` | settings (also in a row's right-click menu) |
 | `x`, then `y` | stop the selected agent |
+| `f` | new folder (enter names it) |
+| `o` | move the selected agent into a folder, or out of it |
+| `J` / `K` | move the selected folder, or an agent within its folder, down / up |
+| `enter`, `h` / `l` on a folder | fold / unfold it (`e` renames it, `x` deletes it: its agents go back, never stopped) |
 | `q` | leave the deck; agents keep running |
 | `?` | list the keys |
 
 The mouse works too: click a row to select it, scroll to move, right-click a row for its menu
 (Split horizontally / Split vertically open a shell beside the agent, as Terminator does; the
 shell shows with its agent and steps aside while another agent is shown). A right-click anywhere
-else in the column opens the deck's own menu: new agent, new shell, sounds, keys, detach. The
+else in the column opens the deck's own menu: new agent, new shell, new folder, sounds, keys,
+detach; ctrl + right-click makes a folder, holding the agent under the pointer. The
 pointer over a row shows its whole name (cut in the row when long) with the agent's name, role,
 profile and state in the bottom border.
 
 - **States.** A red `●` needs you, an orange spinner is working, a green `●` has finished its
   turn, an empty `○` has been quiet for 30 minutes, a grey `‖` is paused (`p`: lea freezes the
   agent's processes, tool calls included, until you resume it). Agents stay in the order you started them.
+- **Folders.** Folders come first, in your order, then the agents in no folder. A folded
+  folder's dot sums up its agents: red when one needs you, the spinner while one works, green
+  once none works any more. The layout is yours: the deck keeps it on the host
+  (`~/.local/share/lea/host/deck/<container>.json`), out of every container's reach.
   Each row shows the agent's context use, its directory and branch, and its own report on its
   task. The pane that has the keyboard is the bright one: the deck's frame turns blue when it
   has it; otherwise the terminal on the right shows a blue `▶ <agent> · typing here` bar on its
@@ -247,6 +256,33 @@ host keeps its name; `lea locksql` then opens lea's console.
 The two projects are independent: lea runs without locksql, and locksql works with any agent.
 `lea init --no-locksql` (or `LEA_LOCKSQL=0`) leaves no trace of locksql in lea.
 
+## Queues and files, with lockmq and lockfile
+
+[lockmq](https://github.com/DavidGodefroid/lockmq) (RabbitMQ) and
+[lockfile](https://github.com/DavidGodefroid/lockfile) (files on S3, SFTP or a local directory)
+keep a human between the agents and production the same way: the agents ask, a console that alone
+holds the credentials shows each request and waits for your approval. Both are pre-releases, so
+they are **off** by default; `lea init` asks (no by default), or `lea init --lockmq` /
+`lea init --lockfile`.
+
+Unlike locksql, their console runs **on this host**, not in a container (their isolation checks
+refuse a console in a container): in the tool's own account and login session, set up once by
+`sudo lockmq install` / `sudo lockfile install`. When you turn one on, `lea init` offers to install
+the release lea pins (`LEA_LOCKMQ_REF`, `LEA_LOCKFILE_REF`) into `/usr/local/bin`, root-owned,
+after checking its Sigstore signature with cosign (nothing is installed without cosign), then the
+separated setup, then lockmq's profile wizard (`lockmq setup`, never a password). lockfile below
+v0.1.1 is refused (a plugin sandbox escape).
+
+lea never starts, sees or drives these consoles. It mounts into its containers only the tool's
+root-owned `/etc/<tool>/system.toml` and its socket directory `/run/<tool>`, both read-only, and
+adds the `<tool>-clients` group: the agents reach the socket and nothing else (no credential, no
+profile, no audit log of the console account). A setup lea cannot vouch for (a file not owned by
+root, a socket directory open to others, a console account that is yours) is left out with a
+warning at start. `lea lockmq` / `lea lockfile` tell you whether the agents reach it and how to
+open the console: switch to the tool's account (prefer Wayland), then
+`lockmq console --project <projects dir> --profile <profile>`. Restart lea (`lea stop --all`,
+then `lea`) after turning one on.
+
 ## Teams of agents
 
 Every agent has a role: `lead`, `dev` (the default) or `reviewer`. The first agent is a lead.
@@ -262,6 +298,15 @@ Agents get lea's tools through MCP:
   starts a background job (Claude Code's `asyncRewake`) that ends with the unread notice, and
   Claude Code starts a turn. A working agent, or one waiting on a permission dialog, is not
   interrupted; only the newest job of an agent stays, so one message wakes it once;
+- an agent asks another a question and waits for the answer with `ask` (the other answers with
+  `msg_reply`; works with any agent that has lea's MCP tools). The answer is data, never
+  instructions. Only a reply from the asked agent counts; an agent's container is checked
+  (its bus socket), but its name inside a container is what the agent declares (`LEA_AGENT`),
+  so agents of one container can answer for one another. One ask at a time per agent, at most 4 questions waiting on one agent, 5 asks a
+  minute, a 1–600 s timeout (300 by default; a late answer lands in the inbox), and no loop: an
+  ask that would make agents wait on one another in a circle, or in a chain longer than 3, is
+  refused. The question and its answer show in the deck's thread view; `lea board` shows who
+  waits on whom;
 - an agent started by a lead is told to report to it with `msg_send` when it is done or blocked;
 - `board_read` shows an agent every task of its lea, as `lea board` shows them to you;
 - every agent reports on its task with `task_update`: its row shows it, and `lea board --md`
@@ -398,6 +443,8 @@ read-only. The screen runs in the deck on the host: agents cannot open or drive 
 | `LEA_GIT_KNOWN_HOSTS` | `~/.config/lea/git_known_hosts` | their pinned host keys |
 | `LEA_LOCKSQL` | `1` | wire lea for a locksql console (`0`: no locksql) |
 | `LEA_LOCKSQL_VAULT_ADDR` | asked by `lea init` | Vault address of the locksql console, for a Vault profile |
+| `LEA_LOCKMQ`, `LEA_LOCKFILE` | `0`, asked by `lea init` | let the agents reach a lockmq / lockfile console on this host |
+| `LEA_LOCKMQ_REF`, `LEA_LOCKFILE_REF` | the pinned releases | the release `lea init` installs on the host (lockfile v0.1.1 or later) |
 | `LEA_INTERNAL_HOSTS` | none | private hosts the proxy may reach (format in `config/internal-hosts`) |
 | `LEA_EGRESS_ALLOW` | empty (off) | the only web domains agents may reach, comma separated (subdomains included) |
 | `LEA_NESTED_NETWORKS` | empty | networks your compose files expect, created at start |
@@ -413,7 +460,8 @@ read-only. The screen runs in the deck on the host: agents cannot open or drive 
 
 - The container sees the projects directory, a read-only allow-list of `~/.claude`
   (`settings.json`, `keybindings.json`, `hooks`, `skills`, `plugins`, `agents`, `commands`,
-  `output-styles`, the top-level `*.md` files) and, with locksql, its socket volume. Nothing else.
+  `output-styles`, the top-level `*.md` files) and, with locksql, its socket volume (with lockmq or
+  lockfile, their socket directory and system file, read-only). Nothing else.
 - Egress goes through a proxy: HTTPS to public hosts (plus `LEA_INTERNAL_HOSTS`), SSH only to
   `LEA_GIT_SSH`. Private and link-local addresses are refused.
 - To restrict the web to known domains, set `LEA_EGRESS_ALLOW`, for example

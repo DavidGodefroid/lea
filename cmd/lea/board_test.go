@@ -12,7 +12,7 @@ func TestBoardMarkdownEscapesCellsAndKeepsTheTree(t *testing.T) {
 	var out bytes.Buffer
 	renderBoard(&out, board{Items: []boardItem{
 		{Task: 1, Container: "lea-a", Agent: "boss", Role: "lead", State: "working", Title: "plan", Status: "a|b <script> \x1b[2J `x`"},
-		{Task: 2, Container: "lea-a", Agent: "other", Role: "dev", State: "idle", Title: "solo"},
+		{Task: 2, Container: "lea-a", Agent: "other", Role: "dev", State: "idle", Title: "solo", WaitsOn: "lea-a/kid", Question: 7},
 		{Task: 3, Container: "lea-a", Agent: "kid", Role: "dev", Parent: "boss", State: "idle", Branch: "feat/x", Next: "line\nbreak"},
 		{Task: 4, Container: "lea-a", Agent: "gone", State: "gone", Title: "old", Status: "done", Ended: 1},
 		{Task: 5, Container: "lea-b", Agent: "b1", Role: "dev", State: "idle"},
@@ -26,7 +26,7 @@ func TestBoardMarkdownEscapesCellsAndKeepsTheTree(t *testing.T) {
 		}
 	}
 	for _, want := range []string{"# lea board", "## lea\\-a", "## lea\\-b", "a\\|b \\<script\\> \\\\x1b\\[2J \\`x\\`", "| ↳ kid |",
-		`line\\x0abreak`, "### Ended", "- gone: old, done (ended ", "| - |"} {
+		`line\\x0abreak`, "### Ended", "| answer from lea\\-a\\/kid to question \\#7 |", "- gone: old, done (ended ", "| - |"} {
 		if !strings.Contains(s, want) {
 			t.Fatalf("missing %q in:\n%s", want, s)
 		}

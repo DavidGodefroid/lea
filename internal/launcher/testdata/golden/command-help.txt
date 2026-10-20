@@ -4,9 +4,12 @@ status 0
 -- lea
 -- stdout
 Usage:
-  lea init [--no-locksql]     set up lea on this workstation (once; rerun at will)
+  lea init [--no-locksql] [--lockmq] [--lockfile]
+                              set up lea on this workstation (once; rerun at will)
   lea locksql [vault ARGS]    the locksql console of your projects, on this terminal (also
                               locksql; vault: the vault CLI as the console account)
+  lea lockmq | lea lockfile   whether agents reach that tool's console on this host, and how to
+                              open it (in the tool's own account; lea never starts it)
   lea                         open the deck: your agents on the left, the selected one on the right
                               (keys: j/k select, enter focus, ctrl+space back, n new, x stop, q quit)
   lea new [-r role] [-p provider] [-m model] [--repo R] [--branch B] [--brief file] [name] [-- args]

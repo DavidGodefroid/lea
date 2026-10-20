@@ -1,0 +1,21 @@
+# shellcheck shell=sh
+# Sourced by the entrypoint (root, before it drops privileges); $user is the session's account.
+# lockmq and lockfile consoles run on the host: the launcher checked their setup and passes the
+# host ids of the console account and of its clients group (fixed names). The client checks that
+# the socket is served by the console account, so the account is named here with the host's uid.
+# Never fatal: on any doubt the tool is left out.
+lock_host() {
+  case $2 in ''|*[!0-9]*) echo "lea: $1: invalid uid, left out" >&2; return 0 ;; esac
+  case $3 in ''|*[!0-9]*) echo "lea: $1: invalid gid, left out" >&2; return 0 ;; esac
+  if [ "$2" -eq 0 ] || [ "$2" -eq "$LEA_UID" ] || [ "$3" -eq 0 ] || [ "$3" -eq "$LEA_GID" ]; then
+    echo "lea: $1: the console account or group is root or the session's: left out" >&2; return 0
+  fi
+  lh_g=$(getent group "$3" | cut -d: -f1)
+  if [ -z "$lh_g" ] && ! getent group "$1-clients" >/dev/null; then groupadd -g "$3" "$1-clients" || return 0
+  elif [ "$lh_g" != "$1-clients" ]; then echo "lea: $1: gid $3 is taken in the image: left out" >&2; return 0; fi
+  lh_u=$(getent passwd "$2" | cut -d: -f1)
+  if [ -z "$lh_u" ] && ! getent passwd "$1" >/dev/null; then useradd -r -M -U -s /sbin/nologin -u "$2" "$1" || return 0
+  elif [ "$lh_u" != "$1" ]; then echo "lea: $1: uid $2 is taken in the image: left out" >&2; return 0; fi
+  # shellcheck disable=SC2154 # user: the session account, set by the entrypoint
+  usermod -aG "$1-clients" "$user" || true
+}

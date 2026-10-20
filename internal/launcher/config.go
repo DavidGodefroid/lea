@@ -30,6 +30,7 @@ var protectedKeys = map[string]bool{
 // core subcommands and libexec/lea-sh.
 var ExportedKeys = []string{
 	"LEA_PREFIX", "LEA_IMAGE", "LEA_PROXY_IMAGE", "LEA_GIT_SSH", "LEA_GIT_KNOWN_HOSTS", "LEA_LOCKSQL", "LEA_LOCKSQL_IMAGE", "LEA_LOCKSQL_REF", "LEA_LOCKSQL_VAULT_ADDR",
+	"LEA_LOCKMQ", "LEA_LOCKFILE", "LEA_LOCKMQ_REF", "LEA_LOCKFILE_REF",
 	"LEA_OTEL_UPSTREAM", "LEA_NESTED_NETWORKS", "LEA_K8S_NAMESPACE", "LEA_INTERNAL_HOSTS", "LEA_EGRESS_ALLOW", "LEA_PROJECTS_DIR",
 	"LEA_APPROVALS", "LEA_APPROVAL_TIMEOUT", "LEA_SOUND", "LEA_SOUND_ATTENTION", "LEA_SOUND_DONE",
 	"LEA_PROVIDER", "LEA_MODEL", "LEA_PROVIDERS",
@@ -225,6 +226,21 @@ func (c *Config) resolve(root string) error {
 		return fmt.Errorf("LEA_LOCKSQL must be 1 (wire lea for a locksql console) or 0, not '%s'", ls)
 	}
 	c.final["LEA_LOCKSQL"] = ls
+	for _, t := range lockHostTools {
+		on := nonEmpty(c.Get(t.env), "0")
+		if on != "0" && on != "1" {
+			return fmt.Errorf("%s must be 1 (reach a %s console on this host) or 0, not '%s'", t.env, t.name, on)
+		}
+		c.final[t.env] = on
+		// Empty: no pinned release (config/lea.conf pins one), and lea init installs nothing.
+		ref := c.Get(t.env + "_REF")
+		if ref != "" && !releaseVersion.MatchString(ref) {
+			return fmt.Errorf("%s_REF must be a %s release (vX.Y.Z), not '%s'", t.env, t.name, ref)
+		}
+		if t.name == "lockfile" && ref != "" && !lockfileSafe(ref) {
+			return fmt.Errorf("LEA_LOCKFILE_REF %s is refused: lockfile v0.1.0 lets a plugin escape its sandbox (v0.1.1 or later)", ref)
+		}
+	}
 	au := nonEmpty(c.Get("LEA_AUTOUPDATE"), "1")
 	if au != "0" && au != "1" {
 		return fmt.Errorf("LEA_AUTOUPDATE must be 1 (check for a new release every day) or 0, not '%s'", au)
@@ -463,6 +479,10 @@ func (c *Config) GitSSH() string { return c.Get("LEA_GIT_SSH") }
 
 // Locksql reports whether lea is wired for a locksql console (LEA_LOCKSQL=1, the default).
 func (c *Config) Locksql() bool { return c.Get("LEA_LOCKSQL") != "0" }
+
+// LockHost reports whether lea's agents may reach the host console of the lock tool whose switch
+// is env (LEA_LOCKMQ, LEA_LOCKFILE; off by default).
+func (c *Config) LockHost(env string) bool { return c.Get(env) == "1" }
 
 // gitStateDirs are the state sub-directories (relative to the state dir) where the forge tools
 // inside lea keep their credentials: git's credential store, gh and glab.

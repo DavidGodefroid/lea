@@ -49,7 +49,7 @@ func TestPIgnoresShellsAndEndedAgents(t *testing.T) {
 
 func TestTheMenuOffersPauseOrResume(t *testing.T) {
 	has := func(a Agent, label string) bool {
-		for _, it := range menuItems(a) {
+		for _, it := range menuItems(a, false) {
 			if it.label == label && it.key == "p" {
 				return true
 			}
@@ -57,14 +57,14 @@ func TestTheMenuOffersPauseOrResume(t *testing.T) {
 		return false
 	}
 	if a := ag("a", "working", 1); !has(a, "Pause") || has(a, "Resume") {
-		t.Fatalf("running agent menu: %+v", menuItems(a))
+		t.Fatalf("running agent menu: %+v", menuItems(a, false))
 	}
 	if a := paused(ag("a", "working", 1)); !has(a, "Resume") || has(a, "Pause") {
-		t.Fatalf("paused agent menu: %+v", menuItems(a))
+		t.Fatalf("paused agent menu: %+v", menuItems(a, false))
 	}
 	for _, a := range []Agent{shell("sh-1"), ag("a", "done", 1), ag("a", "stopped", 1)} {
 		if has(a, "Pause") || has(a, "Resume") {
-			t.Fatalf("%s %s menu: %+v", a.Name, a.State, menuItems(a))
+			t.Fatalf("%s %s menu: %+v", a.Name, a.State, menuItems(a, false))
 		}
 	}
 }
