@@ -27,6 +27,27 @@ func DaemonProvidersStamp(get func(string) string) string {
 	return strings.Join([]string{get("LEA_PROVIDER"), get("LEA_MODEL"), get("LEA_PROVIDERS"), get("LEA_INTERNAL_HOSTS")}, " ")
 }
 
+// ResumeSettings is the auto-resume setting (issue #20): on unless LEA_AUTO_RESUME is 0, and the
+// wait after the reset time, LEA_RESUME_DELAY seconds (0 to 3600, 60 when unset or invalid).
+func ResumeSettings(get func(string) string) (on bool, delay int64) {
+	delay = 60
+	if n, err := strconv.ParseInt(get("LEA_RESUME_DELAY"), 10, 64); err == nil && n >= 0 && n <= 3600 {
+		delay = n
+	}
+	return get("LEA_AUTO_RESUME") != "0", delay
+}
+
+// DaemonResumeStamp is the auto-resume setting as one line ("on 60"): a daemon started with
+// another is restarted.
+func DaemonResumeStamp(get func(string) string) string {
+	on, delay := ResumeSettings(get)
+	mode := "off"
+	if on {
+		mode = "on"
+	}
+	return mode + " " + strconv.FormatInt(delay, 10)
+}
+
 func readTrim(p string) string {
 	b, _ := os.ReadFile(p)
 	return strings.TrimRight(string(b), "\n")
@@ -45,7 +66,8 @@ func (l *Launcher) ensureDaemon() error {
 		// `$(core version 2>/dev/null || true)`: a core that fails or prints nothing counts as "".
 		ver, _ := l.output(false, l.Core, "version")
 		if (tb == "" || readTrim(host+"/daemon.tmux") == tb) && readTrim(host+"/daemon.version") == ver &&
-			readTrim(host+"/daemon.approvals") == appr && readTrim(host+"/daemon.providers") == l.providersStamp() {
+			readTrim(host+"/daemon.approvals") == appr && readTrim(host+"/daemon.providers") == l.providersStamp() &&
+			readTrim(host+"/daemon.resume") == DaemonResumeStamp(l.Cfg.Get) {
 			return nil
 		}
 		l.stopDaemon()

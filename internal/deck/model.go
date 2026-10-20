@@ -54,6 +54,9 @@ type Agent struct {
 	// (agents.Row). Display only.
 	Waiting   bool `json:"waiting,omitempty"`
 	BlockedOn bool `json:"blocked_on,omitempty"`
+	// LimitUntil: the agent stopped on its usage limit; lea resumes it then (unix seconds), or -1:
+	// it waits for the user (agents.Row).
+	LimitUntil int64 `json:"limit_until,omitempty"`
 }
 
 // shownState is the state a row shows (issue #72): green only when nothing is pending. A live
@@ -65,6 +68,8 @@ func shownState(a Agent) string {
 	switch {
 	case live && a.BlockedOn:
 		return "blocked"
+	case a.State == "idle" && a.LimitUntil != 0:
+		return "limited"
 	case a.State == "idle" && a.Subagents > 0:
 		return "working"
 	case a.State == "idle" && a.Waiting:
@@ -823,10 +828,26 @@ func (m Model) label(a Agent) string {
 		return "done"
 	case a.State == "stopped": // its container stopped; the next one resumes it
 		return "stopped"
+	case shownState(a) == "limited":
+		return m.limitLabel(a.LimitUntil)
 	case a.State == "working" || a.State == "idle":
 		return shownState(a)
 	}
 	return "unknown"
+}
+
+// limitLabel is a limited agent's label: when lea resumes it ("limit, resumes 15:02", the day
+// too beyond a day), or that it waits for the user.
+func (m Model) limitLabel(until int64) string {
+	if until <= 0 {
+		return "usage limit, resume it"
+	}
+	now := m.now()
+	t := time.Unix(until, 0).In(now.Location())
+	if t.Sub(now) >= 24*time.Hour {
+		return "usage limit, resumes " + t.Format("Mon 15:04")
+	}
+	return "usage limit, resumes " + t.Format("15:04")
 }
 
 // nextNeedingYou is the first agent after the selection (wrapping, in display order, folded

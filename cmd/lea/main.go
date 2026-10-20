@@ -95,6 +95,9 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		if args[2] == "Rewake" {
 			return hook.Rewake(context.Background(), stdin, stderr, os.Getenv)
 		}
+		if args[2] == "LimitWait" {
+			return hook.LimitWait(context.Background(), stdin, stderr, os.Getenv)
+		}
 		hook.Claude(context.Background(), args[2], stdin, stdout, os.Getenv)
 		return 0
 	case "mcp":

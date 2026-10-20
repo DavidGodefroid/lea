@@ -233,10 +233,12 @@ lea_sha256_file() { sha256sum "$1" | cut -d' ' -f1; }
 
 @test "lea's Claude hooks live in a --settings file, not in managed settings" {
   s="$I/claude-settings.json"
-  for e in SessionStart UserPromptSubmit PreToolUse PostToolUse PermissionRequest Notification SubagentStart SubagentStop Stop SessionEnd; do
+  for e in SessionStart UserPromptSubmit PreToolUse PostToolUse PermissionRequest Notification SubagentStart SubagentStop Stop StopFailure SessionEnd; do
     jq -e --arg e "$e" '.hooks[$e][0].hooks[0].command | contains("/usr/local/bin/lea hook claude " + $e)' "$s" >/dev/null
   done
   [ "$(jq -r '.hooks.PermissionRequest[0].hooks[0].timeout' "$s")" = 620 ]
+  # The usage-limit resume job (#20) runs in the background and wakes the model on exit 2.
+  jq -e '.hooks.StopFailure[0].hooks[1] | (.command | contains("/usr/local/bin/lea hook claude LimitWait")) and .asyncRewake == true and .timeout == 691200' "$s" >/dev/null
   [ "$(jq -r '.hooks // "none"' "$I/managed-settings.json")" = none ]
   grep -q '^COPY image/claude-settings.json /usr/local/share/lea/claude-settings.json$' "$I/Containerfile"
   grep -q 'settings=${LEA_CLAUDE_SETTINGS:-/usr/local/share/lea/claude-settings.json}' "$I/lea-session"

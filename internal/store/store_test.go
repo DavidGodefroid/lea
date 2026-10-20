@@ -1157,3 +1157,43 @@ func TestSubagentCounts(t *testing.T) {
 		t.Fatalf("reused: %v", n)
 	}
 }
+
+// A usage limit is recorded, survives the agent's own state changes, and goes with the process
+// (done, stopped, unknown) or a new agent reusing the name.
+func TestLimitIsSetAndClearedWhenTheProcessGoes(t *testing.T) {
+	s := open(t)
+	if _, err := s.RegisterAgent("lea-a", "claude-1", "claude", "/p", 1); err != nil {
+		t.Fatal(err)
+	}
+	if a, _ := s.AgentByKey("lea-a/claude-1"); a.LimitUntil != 0 || a.LimitTries != 0 {
+		t.Fatalf("new agent limited: %+v", a)
+	}
+	if err := s.SetLimit("lea-a/claude-1", 900, 2); err != nil {
+		t.Fatal(err)
+	}
+	s.SetState("lea-a/claude-1", "idle", "", 3)
+	if a, _ := s.AgentByKey("lea-a/claude-1"); a.LimitUntil != 900 || a.LimitTries != 2 {
+		t.Fatalf("limit=%+v", a)
+	}
+	if as, _ := s.SpawnedAgents("lea-a"); len(as) != 1 || as[0].LimitUntil != 900 {
+		t.Fatalf("spawned=%+v", as)
+	}
+	if err := s.SetLimit("lea-a/nobody", 1, 0); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("unknown agent: %v", err)
+	}
+	for _, st := range []string{"done", "stopped", "unknown"} {
+		s.SetLimit("lea-a/claude-1", -1, 6)
+		s.SetState("lea-a/claude-1", st, "", 4)
+		if a, _ := s.AgentByKey("lea-a/claude-1"); a.LimitUntil != 0 || a.LimitTries != 0 {
+			t.Fatalf("still limited once %s: %+v", st, a)
+		}
+	}
+	s.SetState("lea-a/claude-1", "done", "", 4)
+	s.SetLimit("lea-a/claude-1", 900, 3)
+	if _, err := s.RegisterAgent("lea-a", "claude-1", "claude", "/p", 5); err != nil {
+		t.Fatal(err)
+	}
+	if a, _ := s.AgentByKey("lea-a/claude-1"); a.LimitUntil != 0 || a.LimitTries != 0 {
+		t.Fatalf("limit inherited: %+v", a)
+	}
+}

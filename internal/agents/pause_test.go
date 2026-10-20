@@ -66,3 +66,19 @@ func TestSetPausedRefusesShellsAndEndedAgents(t *testing.T) {
 		t.Fatalf("paused=%q", e.ctr.paused)
 	}
 }
+
+// The deck's row carries the agent's usage limit (#20): when lea resumes it.
+func TestTheRowCarriesTheUsageLimit(t *testing.T) {
+	e := newEnv(t)
+	e.ensure(t, "/p")
+	r := e.spawn(t, "claude-1")
+	e.st.SetState(r.Key, "idle", "", 1001)
+	if err := e.st.SetLimit(r.Key, 5000, 1); err != nil {
+		t.Fatal(err)
+	}
+	e.m.Changed()
+	snap, _ := e.m.Watch(bg, C, 0, time.Second)
+	if len(snap.Agents) != 1 || snap.Agents[0].LimitUntil != 5000 {
+		t.Fatalf("snapshot=%+v", snap.Agents)
+	}
+}

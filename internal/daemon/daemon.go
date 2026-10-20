@@ -91,6 +91,12 @@ type Daemon struct {
 	// subs: the subagents each agent runs (trackSubagents); subTTL forgets them (a test seam).
 	subs   map[string]*subagents
 	subTTL time.Duration
+	// Auto-resume after a usage limit (resume.go): the user's switch and delay, each agent's last
+	// rate-limit windows and its newest LimitWait job.
+	resumeOff   bool
+	resumeDelay int64
+	windows     map[string][]limitWindow
+	limitJobs   map[string]string
 }
 
 func New(st *store.Store, runDir string, now func() int64) *Daemon {
@@ -101,7 +107,8 @@ func New(st *store.Store, runDir string, now func() int64) *Daemon {
 	return &Daemon{subs: map[string]*subagents{}, subTTL: subagentTTL, st: st, lim: bus.Default, now: now, runDir: runDir,
 		attached: map[string]string{}, notify: map[string]chan struct{}{},
 		verdicts: map[int64]chan string{}, asks: map[string]pendingAsk{}, blocks: map[string]int{}, stopped: map[string]bool{}, rewakes: map[string]int{}, keyMu: map[string]*sync.Mutex{}, statusPaths: map[string]string{}, named: map[string]bool{}, rang: map[string]time.Time{},
-		doneDelay: doneDelay, doneTimers: map[string]*time.Timer{}}
+		doneDelay: doneDelay, doneTimers: map[string]*time.Timer{},
+		resumeDelay: DefaultResumeDelay, windows: map[string][]limitWindow{}, limitJobs: map[string]string{}}
 }
 
 func (d *Daemon) Serve(ctx context.Context, l net.Listener, o Origin) {
@@ -334,6 +341,8 @@ func (d *Daemon) dispatch(ctx context.Context, o Origin, req wire.Request) (any,
 			}
 		}
 		return d.watch(ctx, me, p.TimeoutS, p.Rewake)
+	case "limit_wait":
+		return d.limitWait(ctx, o, me, req.Params)
 	case "thread_list":
 		return d.threadList(req.Params)
 	case "container_attach":
@@ -726,6 +735,8 @@ func (d *Daemon) watch(ctx context.Context, me string, timeoutS int, rewake bool
 var hookState = map[string]string{
 	"SessionStart": "idle", "UserPromptSubmit": "working", "PreToolUse": "working",
 	"PostToolUse": "working", "PermissionRequest": "blocked", "Stop": "idle", "SessionEnd": "done",
+	// StopFailure fires instead of Stop when an API error ended the turn: the turn is over.
+	"StopFailure": "idle",
 }
 
 const maxStopBlocks = 3
@@ -753,6 +764,12 @@ func (d *Daemon) pruneForgotten() {
 	for k := range d.subs {
 		keys = append(keys, k)
 	}
+	for k := range d.windows {
+		keys = append(keys, k)
+	}
+	for k := range d.limitJobs {
+		keys = append(keys, k)
+	}
 	d.mu.Unlock()
 	for _, k := range keys {
 		if _, err := d.st.AgentByKey(k); errors.Is(err, store.ErrNotFound) {
@@ -762,6 +779,8 @@ func (d *Daemon) pruneForgotten() {
 			delete(d.named, k)
 			d.cancelDoneLocked(k)
 			d.forgetSubagentsLocked(k)
+			delete(d.windows, k)
+			delete(d.limitJobs, k)
 			d.mu.Unlock()
 		}
 	}
@@ -818,10 +837,15 @@ func (d *Daemon) dispatchHooks(ctx context.Context, o Origin, me string, req wir
 		case p.Event == "UserPromptSubmit" || p.Event == "SessionStart":
 			delete(d.blocks, me)
 			delete(d.stopped, me)
-		case p.Event == "Stop" || (p.Event == "Notification" && ok):
+		case p.Event == "Stop" || p.Event == "StopFailure" || (p.Event == "Notification" && ok):
 			d.stopped[me] = true
 		}
 		d.mu.Unlock()
+		if p.Event == "StopFailure" {
+			d.turnFailed(me, p.Payload)
+		} else {
+			d.limitProgress(me, p.Event)
+		}
 		if !stopped && d.stoppedNow(me) {
 			// The turn is over: a rewake watch looks again at the messages that came during it.
 			d.wake(me)

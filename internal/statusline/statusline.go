@@ -21,12 +21,22 @@ import (
 	"github.com/DavidGodefroid/lea/internal/wire"
 )
 
-// Report is what the status line tells the daemon: context use and cost (-1 when unknown), and
+// Report is what the status line tells the daemon: context use and cost (-1 when unknown), the
+// account's rate-limit windows (numbers only: auto-resume waits for their reset, issue #20), and
 // the key paths of the JSON Claude sent, never their values.
 type Report struct {
 	CtxPct  int      `json:"ctx_pct"`
 	CostUSD float64  `json:"cost_usd"`
+	Limits  []Limit  `json:"limits,omitempty"`
 	Paths   []string `json:"paths"`
+}
+
+// Limit is one rate-limit window: "5h" or "7d", its used share (0 to 100) and when it resets
+// (Unix seconds, 0 when unknown).
+type Limit struct {
+	Window   string `json:"window"`
+	Pct      int    `json:"pct"`
+	ResetsAt int64  `json:"resets_at"`
 }
 
 const (
@@ -57,7 +67,9 @@ func Run(stdin io.Reader, stdout io.Writer, dump string, post func(Report)) erro
 		return dumpErr
 	}
 	r := parse(doc)
-	fmt.Fprintln(stdout, line(doc, r, windows(doc), os.Getenv("NO_COLOR") == "", time.Now()))
+	ws := windows(doc)
+	r.Limits = limits(ws)
+	fmt.Fprintln(stdout, line(doc, r, ws, os.Getenv("NO_COLOR") == "", time.Now()))
 	if post != nil {
 		post(r)
 	}
@@ -185,6 +197,19 @@ func windows(doc map[string]any) []window {
 			continue
 		}
 		out = append(out, window{label: w.label, pct: p, resets: resetsAt(doc, "rate_limits", w.key, "resets_at")})
+	}
+	return out
+}
+
+// limits is what the daemon is told of the windows.
+func limits(ws []window) []Limit {
+	var out []Limit
+	for _, w := range ws {
+		l := Limit{Window: w.label, Pct: int(math.Round(w.pct))}
+		if !w.resets.IsZero() {
+			l.ResetsAt = w.resets.Unix()
+		}
+		out = append(out, l)
 	}
 	return out
 }

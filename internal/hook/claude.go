@@ -28,6 +28,10 @@ const (
 // subagentID is a subagent's agent_id as lea forwards it (daemon.subagentID).
 var subagentID = regexp.MustCompile(`^[A-Za-z0-9_-]{1,64}$`)
 
+// errorClass is StopFailure's error as lea forwards it: Claude Code's error class (rate_limit,
+// overloaded...), a plain identifier.
+var errorClass = regexp.MustCompile(`^[a-z_]{1,40}$`)
+
 type caller struct {
 	sock, agent string
 }
@@ -71,6 +75,7 @@ func Claude(ctx context.Context, event string, stdin io.Reader, stdout io.Writer
 		NotifType      string          `json:"notification_type"`
 		Prompt         string          `json:"prompt"`
 		AgentID        string          `json:"agent_id"`
+		Error          string          `json:"error"`
 	}
 	_ = json.Unmarshal(in, &p)
 	// Forward only what phase 0 needs: never tool_input or tool_response (file contents,
@@ -90,6 +95,11 @@ func Claude(ctx context.Context, event string, stdin io.Reader, stdout io.Writer
 	}
 	if event == "Notification" && p.NotifType != "" {
 		payload["notification_type"] = truncate(p.NotifType, 64)
+	}
+	// A failed turn is known by its error class only: never error_details or
+	// last_assistant_message, which hold the provider's and the model's text.
+	if event == "StopFailure" && errorClass.MatchString(p.Error) {
+		payload["error"] = p.Error
 	}
 	// A subagent is known by its id only: never its prompt, type or transcript.
 	if (event == "SubagentStart" || event == "SubagentStop") && subagentID.MatchString(p.AgentID) {

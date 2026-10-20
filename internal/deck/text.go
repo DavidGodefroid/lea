@@ -37,6 +37,9 @@ func stateMark(state string, updated, now int64, frame int, ascii bool) (string,
 			s = asciiSpinner
 		}
 		return s[frame%len(s)], theme.Working
+	case "limited":
+		// Stopped on its usage limit: lea resumes it, or it waits for the user.
+		return pick("◷", "~"), theme.Idle
 	case "idle", "done":
 		if now-updated >= restAfter {
 			return pick("○", "o"), theme.Muted

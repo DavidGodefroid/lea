@@ -22,6 +22,7 @@ import (
 	"github.com/DavidGodefroid/lea/internal/daemon"
 	"github.com/DavidGodefroid/lea/internal/deck"
 	"github.com/DavidGodefroid/lea/internal/identity"
+	"github.com/DavidGodefroid/lea/internal/launcher"
 	"github.com/DavidGodefroid/lea/internal/roles"
 	"github.com/DavidGodefroid/lea/internal/settings"
 	"github.com/DavidGodefroid/lea/internal/store"
@@ -186,6 +187,13 @@ func runDaemon(stderr io.Writer) int {
 		fmt.Fprintln(stderr, "lea:", clean(err.Error(), false))
 		return 1
 	}
+	// Same pattern for the auto-resume setting.
+	_ = os.Remove(filepath.Join(host, "daemon.resume"))
+	if err := os.WriteFile(filepath.Join(host, "daemon.resume"), []byte(launcher.DaemonResumeStamp(os.Getenv)), 0o600); err != nil {
+		fmt.Fprintln(stderr, "lea:", clean(err.Error(), false))
+		return 1
+	}
+	d.SetResume(launcher.ResumeSettings(os.Getenv))
 	exe, err := os.Executable()
 	if err != nil {
 		fmt.Fprintln(stderr, "lea:", clean(err.Error(), false))

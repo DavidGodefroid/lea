@@ -181,7 +181,16 @@ profile and state in the bottom border.
   `task_update`), an orange spinner is working or waiting (its subagents, or a next step it
   named: CI, a review, a reply), a green `●` has finished with nothing pending, an empty `○` has
   been quiet for 30 minutes, a grey `‖` is paused (`p`: lea freezes the
-  agent's processes, tool calls included, until you resume it). Agents stay in the order you started them.
+  agent's processes, tool calls included, until you resume it), a lavender `◷` stopped on its
+  usage limit (see below). Agents stay in the order you started them.
+- **Usage limits.** When Claude Code stops on its provider's usage limit, the row shows `◷` and
+  `usage limit, resumes 15:02`: lea resumes the agent at that time, the limit's reset (from the
+  status line's 5-hour and 7-day windows) plus `LEA_RESUME_DELAY` seconds (60) and a few seconds
+  of jitter, or after a backoff (5 minutes, doubling, at most an hour) when no reset time is
+  known. Resuming wakes the agent with one fixed line of lea's ("the usage limit … should have
+  reset. Continue your task"); lea never types into its terminal. After 6 resumes without
+  progress, or with `LEA_AUTO_RESUME=0`, the row says `usage limit, resume it` and the agent
+  waits for you. Codex agents are not detected yet: Codex gives no structured signal for its limit.
 - **Messages.** Typing into an agent's pane (`enter`) talks to it now, in its conversation.
   `m` (Send message) instead leaves it a note in its inbox, as another agent would: it reads it
   on its next turn, or is woken for it once its turn is over. `t` (Messages) shows everything
@@ -464,6 +473,7 @@ read-only. The screen runs in the deck on the host: agents cannot open or drive 
 | `LEA_APPROVALS`, `LEA_APPROVAL_TIMEOUT` | `deck`, `60` | who answers permission requests |
 | `LEA_PROVIDER`, `LEA_MODEL` | `claude`, empty | the default provider and model of a new agent ([providers](#other-providers-codex-ollama-vllm)) |
 | `LEA_PROVIDERS` | `~/.config/lea/providers` | your OpenAI-compatible endpoints and their key files |
+| `LEA_AUTO_RESUME`, `LEA_RESUME_DELAY` | on, `60` | resume agents stopped on a usage limit, so many seconds after its reset (`0`: off) |
 | `LEA_SOUND`, `LEA_AUTONAME` | on | the deck's sounds, automatic names (`0`: off) |
 | `LEA_SOUND_ATTENTION`, `LEA_SOUND_DONE` | freedesktop sounds | the file of each sound (`0`: that one off) |
 | `LEA_OTEL_UPSTREAM` | empty | send Claude Code usage telemetry to this OTLP collector |

@@ -299,6 +299,11 @@ func (m Model) folderState(fi int) (string, int64) {
 			return "blocked", a.Updated
 		case busy(a): // working or waiting (#72)
 			state = "working"
+		case s == "limited":
+			if state == "" || state == "idle" {
+				state = "limited"
+			}
+			updated = max(updated, a.Updated)
 		case s == "idle" || s == "done":
 			if state == "" {
 				state = "idle"

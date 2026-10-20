@@ -520,7 +520,7 @@ func (m Model) detail(a Agent, width int) string {
 // idles, unpaused, and nothing needs the user. The text is the agent's: fit cleans it with the
 // whole line.
 func (m Model) shortStatus(a Agent) string {
-	if a.Status != "" && !a.Paused && (a.State == "working" || a.State == "idle") && rank(a, m.seen) >= 3 {
+	if a.Status != "" && !a.Paused && (a.State == "working" || a.State == "idle") && shownState(a) != "limited" && rank(a, m.seen) >= 3 {
 		if st := strings.TrimLeft(a.Status, leaGlyphs); st != "" {
 			return st
 		}
