@@ -42,9 +42,10 @@ const (
 	classEgress   = "egress"
 	classHostKeys = "host key"
 	classCode     = "code"
+	classLock     = "lock tool"
 )
 
-var classFlags = map[string]string{classEgress: "--allow-egress", classHostKeys: "--allow-host-keys", classCode: "--allow-code"}
+var classFlags = map[string]string{classEgress: "--allow-egress", classHostKeys: "--allow-host-keys", classCode: "--allow-code", classLock: "--allow-lock"}
 
 // When a change applies.
 const (
@@ -94,7 +95,7 @@ var machineKeys = map[string]bool{"LEA_PROJECTS_DIR": true, "LEA_CONFIG": true, 
 const configUsage = `Usage:
   lea config export [--output FILE] [--include-personal]
   lea config import FILE|- [--replace] [--dry-run] [--yes]
-                    [--allow-egress] [--allow-host-keys] [--allow-code]
+                    [--allow-egress] [--allow-host-keys] [--allow-code] [--allow-lock]
 `
 
 // maxShareSize bounds a share file and each file it carries.
@@ -141,6 +142,8 @@ func (l *Launcher) config(args []string) error {
 				o.allow = append(o.allow, classHostKeys)
 			case "--allow-code":
 				o.allow = append(o.allow, classCode)
+			case "--allow-lock":
+				o.allow = append(o.allow, classLock)
 			default:
 				if o.file != "" || strings.HasPrefix(a, "-") && a != "-" {
 					return usage()
@@ -299,7 +302,7 @@ func (l *Launcher) configImport(o importOpts) error {
 		}
 	}
 	var flags, missing []string
-	for _, c := range []string{classEgress, classHostKeys, classCode} {
+	for _, c := range []string{classEgress, classHostKeys, classCode, classLock} {
 		if need[c] {
 			flags = append(flags, classFlags[c])
 			if !hasString(o.allow, c) {
@@ -314,7 +317,7 @@ func (l *Launcher) configImport(o importOpts) error {
 		return nil
 	}
 	if len(missing) > 0 {
-		return die("this import changes what the agents reach, the host keys they trust or the code lea runs: "+
+		return die("this import changes what the agents reach, the host keys they trust, the code lea runs or the lock tools it wires: "+
 			"check the changes above, then rerun with %s", strings.Join(missing, " "))
 	}
 	if !o.yes {
@@ -708,7 +711,12 @@ func (l *Launcher) importPlan(f *shareFile, replace bool) ([]keyChange, []fileCh
 			return
 		}
 		d := shareKeys[k]
-		keys = append(keys, keyChange{key: k, old: old, had: had, new: v, set: set, class: d.class, note: d.note})
+		ch := keyChange{key: k, old: old, had: had, new: v, set: set, class: d.class, note: d.note}
+		if k == "LEA_LOCKSQL" && nonEmpty(v, "1") == "1" && c.Get(k) != "1" {
+			// Wiring a locksql console opens a lock tool's socket to the agents.
+			ch.class = classLock
+		}
+		keys = append(keys, ch)
 	}
 	for _, k := range sharedKeyNames() {
 		if v, ok := f.Keys[k]; ok {
@@ -748,6 +756,11 @@ func (l *Launcher) importPlan(f *shareFile, replace bool) ([]keyChange, []fileCh
 		old, err := os.ReadFile(target)
 		if err != nil && !os.IsNotExist(err) {
 			return nil, nil, die("cannot read %s: %v", target, err)
+		}
+		if len(fc.added) == 0 && len(fc.removed) == 0 {
+			// Nothing to add: the file in use stays, at its own path (an organisation's shared
+			// file is not copied).
+			continue
 		}
 		if fc.content != string(old) || err != nil {
 			fc.name, fc.path, fc.class, fc.note = x.name, target, x.class, x.note

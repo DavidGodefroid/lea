@@ -359,7 +359,11 @@ func TestConfigImportReplace(t *testing.T) {
 	w := newWorld(t, repoRoot(t))
 	w.writeConf("lea.conf", "LEA_PROJECTS_DIR='"+w.proj+"'\nLEA_LOCKSQL=0\nexport LEA_APPROVALS=pane\nLEA_SOUND=0\n")
 	in := w.shareFile(`{"lea_config_format":1,"keys":{"LEA_APPROVAL_TIMEOUT":"90"}}`)
-	if code, _, errs := w.config("", "import", in, "--replace", "--yes"); code != 0 {
+	// Removing LEA_LOCKSQL=0 wires locksql again (the default): that needs --allow-lock.
+	if code, _, errs := w.config("", "import", in, "--replace", "--yes"); code == 0 || !strings.Contains(errs, "--allow-lock") {
+		t.Fatalf("without --allow-lock: %d %s", code, errs)
+	}
+	if code, _, errs := w.config("", "import", in, "--replace", "--yes", "--allow-lock"); code != 0 {
 		t.Fatalf("%d %s", code, errs)
 	}
 	got := w.read(w.userConf())
@@ -568,5 +572,70 @@ func TestConfigImportHashedHosts(t *testing.T) {
 	_, out, errs := w.config("", "export")
 	if _, ok := decodeShare(t, out).Files["git_known_hosts"]; ok || !strings.Contains(errs, "hashed host names") {
 		t.Errorf("export of a hashed line: %s %q", out, errs)
+	}
+}
+
+// Turning a locksql console on opens a lock tool to the agents: --yes is not enough. Turning it
+// off needs nothing more.
+func TestConfigImportLocksqlNeedsAllowLock(t *testing.T) {
+	w := newWorld(t, repoRoot(t))
+	w.writeConf("lea.conf", "LEA_LOCKSQL=0\n")
+	in := w.shareFile(`{"lea_config_format":1,"keys":{"LEA_LOCKSQL":"1"}}`)
+	before := w.snapshot()
+	if code, out, _ := w.config("", "import", in, "--dry-run"); code != 0 || !strings.Contains(out, "LEA_LOCKSQL: 0 -> 1  [lock tool]") || !strings.Contains(out, "--allow-lock") {
+		t.Fatalf("dry run: %d %q", code, out)
+	}
+	if code, _, errs := w.config("", "import", in, "--yes", "--allow-egress", "--allow-code", "--allow-host-keys"); code == 0 || !strings.Contains(errs, "--allow-lock") {
+		t.Fatalf("without --allow-lock: %d %q", code, errs)
+	}
+	if !sameSnapshot(before, w.snapshot()) {
+		t.Fatal("a refused import wrote a file")
+	}
+	if code, _, errs := w.config("", "import", in, "--yes", "--allow-lock"); code != 0 {
+		t.Fatalf("%d %s", code, errs)
+	}
+	in = w.shareFile(`{"lea_config_format":1,"keys":{"LEA_LOCKSQL":"0"}}`)
+	if code, _, errs := w.config("", "import", in, "--yes"); code != 0 {
+		t.Fatalf("turning it off: %d %s", code, errs)
+	}
+	// The lock tools of later lea (LEA_LOCKMQ, LEA_LOCKFILE) are not shared at all.
+	in = w.shareFile(`{"lea_config_format":1,"keys":{"LEA_LOCKMQ":"1"}}`)
+	if code, _, errs := w.config("", "import", in, "--yes", "--allow-lock"); code == 0 || !strings.Contains(errs, "LEA_LOCKMQ is not a shared key") {
+		t.Fatalf("LEA_LOCKMQ: %d %q", code, errs)
+	}
+}
+
+// An organisation's files, in use at their own paths, stay there when the import adds nothing to
+// them; an import that adds lines copies them under ~/.config/lea with the additions.
+func TestConfigImportKeepsTheOrganisationPaths(t *testing.T) {
+	w := newWorld(t, repoRoot(t))
+	key := sshKey(t)
+	org := w.dir + "/org"
+	os.MkdirAll(org, 0o755)
+	os.WriteFile(org+"/hosts", []byte("a.example 443\n"), 0o644)
+	os.WriteFile(org+"/known_hosts", []byte("git.corp.example "+key+"\n"), 0o644)
+	w.writeConf("lea.conf", "LEA_INTERNAL_HOSTS='"+org+"/hosts'\nLEA_GIT_KNOWN_HOSTS='"+org+"/known_hosts'\n")
+	all := []string{"--yes", "--allow-egress", "--allow-host-keys"}
+	in := w.shareFile(`{"lea_config_format":1,"keys":{},"files":{"internal-hosts":"a.example 443\n","git_known_hosts":"git.corp.example ` + key + `\n"}}`)
+	before := w.snapshot()
+	if code, out, errs := w.config("", append([]string{"import", in}, all...)...); code != 0 || !strings.Contains(out, "nothing to change") {
+		t.Fatalf("nothing added: %d %q %q", code, out, errs)
+	}
+	if !sameSnapshot(before, w.snapshot()) {
+		t.Fatal("an import that adds nothing wrote a file")
+	}
+	in = w.shareFile(`{"lea_config_format":1,"keys":{},"files":{"internal-hosts":"b.example 443\n","git_known_hosts":"git.corp.example ` + key + `\n"}}`)
+	if code, _, errs := w.config("", append([]string{"import", in}, all...)...); code != 0 {
+		t.Fatalf("%d %s", code, errs)
+	}
+	cfg, err := LoadConfig(w.getenv, w.root, w.proj)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Get("LEA_INTERNAL_HOSTS") != w.confDir()+"/internal-hosts" || w.read(cfg.Get("LEA_INTERNAL_HOSTS")) != "a.example 443\nb.example 443\n" {
+		t.Errorf("internal hosts %q", cfg.Get("LEA_INTERNAL_HOSTS"))
+	}
+	if cfg.Get("LEA_GIT_KNOWN_HOSTS") != org+"/known_hosts" {
+		t.Errorf("known hosts moved to %q although nothing was added", cfg.Get("LEA_GIT_KNOWN_HOSTS"))
 	}
 }

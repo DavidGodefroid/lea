@@ -433,16 +433,18 @@ It prints what changes (`KEY: old -> new`, `+` and `-` lines of the files), then
 - a change that widens what the agents reach (`[egress]`: `LEA_GIT_SSH`, `LEA_EGRESS_ALLOW`,
   `LEA_OTEL_UPSTREAM`, `internal-hosts` lines), pins SSH host keys (`[host key]`) or chooses the
   code lea runs (`[code]`: images, `LEA_LOCKSQL_REF`, `LEA_LOCKSQL_VAULT_ADDR`,
-  `LEA_RELEASES_URL`) needs its own flag, `--allow-egress`, `--allow-host-keys` or `--allow-code`,
-  on top of `--yes`; `--dry-run` shows which and writes nothing;
+  `LEA_RELEASES_URL`) or wires a lock tool (`[lock tool]`: `LEA_LOCKSQL` turned on) needs its own
+  flag, `--allow-egress`, `--allow-host-keys`, `--allow-code` or `--allow-lock`, on top of `--yes`;
+  `--dry-run` shows which and writes nothing (`LEA_LOCKMQ` and `LEA_LOCKFILE` are not shared);
 - without `--yes` it asks on the terminal (and refuses without one).
 
 By default the import merges: the keys it carries replace yours, the others (`LEA_PROJECTS_DIR`,
 your sounds…) stay; its files' lines are added to yours, and a host you already pinned to another
 key is refused (`--replace` replaces your pins). `--replace` replaces the shared part: shared keys
 the file does not set are removed, and the files it carries replace yours. The files are written to
-`~/.config/lea/git_known_hosts` and `~/.config/lea/internal-hosts` (`LEA_INTERNAL_HOSTS` then
-points there); every file it replaces is kept as `*.bak`; every write is private (0600), at once,
+`~/.config/lea/git_known_hosts` and `~/.config/lea/internal-hosts` (`LEA_GIT_KNOWN_HOSTS` or
+`LEA_INTERNAL_HOSTS` then points there), only when the import adds lines: a file you use at its
+own path (an organisation's shared file) stays in use, untouched, when the import adds nothing to it; every file it replaces is kept as `*.bak`; every write is private (0600), at once,
 and refused through a symbolic link. A key the environment sets beats the file: the import says
 so. Changes apply after `lea init` (endpoints, keys, images, locksql) or `lea stop --all`
 (approvals, egress), as it reminds you.
