@@ -1529,6 +1529,20 @@ func TestSnapshotCarriesTheTaskStatus(t *testing.T) {
 	if err != nil || len(snap.Agents) != 1 || snap.Agents[0].Status != "writing tests" {
 		t.Fatalf("snapshot=%+v err=%v", snap, err)
 	}
+	if a := snap.Agents[0]; a.Waiting || a.BlockedOn {
+		t.Fatalf("nothing next nor blocking: %+v", a)
+	}
+	// A next step and a blocker reach the row as flags, never as text.
+	if _, err := e.st.UpdateTask(r.Key, "waiting", "CI", "a token", 3); err != nil {
+		t.Fatal(err)
+	}
+	snap, err = e.m.Watch(bg, C, 0, time.Second)
+	if err != nil || !snap.Agents[0].Waiting || !snap.Agents[0].BlockedOn {
+		t.Fatalf("snapshot=%+v err=%v", snap, err)
+	}
+	if b, _ := json.Marshal(snap.Agents[0]); strings.Contains(string(b), "a token") || strings.Contains(string(b), "CI") {
+		t.Fatalf("the row carries the task text: %s", b)
+	}
 }
 
 // The "agent ended" line is an agent pane's own: a dead deck, placeholder or shell pane keeps

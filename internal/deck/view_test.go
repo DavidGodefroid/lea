@@ -567,3 +567,89 @@ func TestSnapshotWithoutSubagentsDecodes(t *testing.T) {
 		t.Fatalf("agent=%+v err=%v", a, err)
 	}
 }
+
+func withTask(a Agent, waiting, blocked bool) Agent {
+	a.Waiting, a.BlockedOn = waiting, blocked
+	return a
+}
+
+// Issue #72: one meaning per colour. Green only when nothing is pending, red when a human is
+// needed (the agent's dialog or its task's blocked_on), the spinner while it works or waits
+// (subagents, or a next step on its task). Each row of the issue's table, in order.
+func TestStateColoursMeanOneThing(t *testing.T) {
+	now := clock.Unix()
+	paused := withTask(ag("p", "idle", now), true, true)
+	paused.Paused = true
+	for _, c := range []struct {
+		name  string
+		a     Agent
+		shown string
+		label string
+		rank  int
+	}{
+		{"paused", paused, "idle", "paused", 4},
+		{"done ignores the task", withTask(ag("d", "done", now), true, true), "done", "done, unseen", 1},
+		{"stopped ignores the task", withTask(ag("s", "stopped", now), true, true), "stopped", "stopped", 5},
+		{"own dialog", withTask(ag("b", "blocked", now), true, false), "blocked", "see terminal", 0},
+		{"blocked_on while idle", withTask(ag("bi", "idle", now), true, true), "blocked", "blocked", 0},
+		{"blocked_on beats working", withTask(ag("bw", "working", now), false, true), "blocked", "blocked", 0},
+		{"blocked_on beats subagents", withSubagents(withTask(ag("bs", "idle", now), false, true), 2), "blocked", "blocked", 0},
+		{"working", withTask(ag("w", "working", now), true, false), "working", "working", 3},
+		{"subagents", withSubagents(ag("sa", "idle", now), 1), "working", "working", 3},
+		{"next step", withTask(ag("n", "idle", now), true, false), "waiting", "waiting", 3},
+		{"nothing pending", ag("g", "idle", now), "idle", "idle", 4},
+	} {
+		m := loaded(t, &fakeAPI{}, "", c.a)
+		if got := shownState(c.a); !c.a.Paused && got != c.shown {
+			t.Errorf("%s: shown %q, want %q", c.name, got, c.shown)
+		}
+		if got := m.label(c.a); got != c.label {
+			t.Errorf("%s: label %q, want %q", c.name, got, c.label)
+		}
+		if got := rank(c.a, m.seen); got != c.rank {
+			t.Errorf("%s: rank %d, want %d", c.name, got, c.rank)
+		}
+	}
+}
+
+func TestWaitingSpinsBlockedOnIsRedIdleIsGreen(t *testing.T) {
+	now := clock.Unix()
+	wait := withTask(ag("wait", "idle", now), true, false)
+	red := withTask(ag("red", "idle", now), true, true)
+	green := ag("green", "idle", now)
+	m := loaded(t, &fakeAPI{}, "", wait, red, green)
+	if !m.ticking || !m.working() {
+		t.Fatal("a waiting agent does not animate")
+	}
+	if r := rowOf(t, m, "wait"); !strings.Contains(r, "⠋") || strings.Contains(r, "●") {
+		t.Fatalf("waiting row %q", r)
+	}
+	for _, c := range []struct {
+		state  string
+		colour lipgloss.AdaptiveColor
+	}{{"waiting", theme.Working}, {"blocked", theme.Blocked}, {"idle", theme.Done}} {
+		if _, col := stateMark(c.state, now, now, 0, false); col != c.colour {
+			t.Errorf("%s: colour %v, want %v", c.state, col, c.colour)
+		}
+	}
+	if g, _ := stateMark("waiting", now-restAfter-1, now, 0, true); g != "." {
+		t.Errorf("waiting rests: %q", g)
+	}
+	if g, _ := stateMark(shownState(red), now, now, 0, false); g != "●" {
+		t.Errorf("blocked_on glyph %q", g)
+	}
+	if m.nextNeedingYou() != red.Key {
+		t.Fatal("space does not find the blocked agent")
+	}
+	m = loaded(t, &fakeAPI{}, "", green)
+	if m.working() {
+		t.Fatal("an idle agent with nothing pending animates")
+	}
+}
+
+func TestSnapshotTaskFlagsDecode(t *testing.T) {
+	var a Agent
+	if err := json.Unmarshal([]byte(`{"key":"lea-a/x","state":"idle","waiting":true,"blocked_on":true}`), &a); err != nil || !a.Waiting || !a.BlockedOn {
+		t.Fatalf("agent=%+v err=%v", a, err)
+	}
+}

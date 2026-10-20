@@ -34,7 +34,8 @@ func firstPrompt(a store.Agent, repo, worktree string, brief bool) string {
 	} else {
 		b.WriteString(" When you need another agent, ask a lead with agents_request_spawn.")
 	}
-	b.WriteString(" Report progress with task_update.")
+	b.WriteString(" Report progress with task_update: set next while something is still to happen (CI, a review, a reply)," +
+		" blocked_on when a human must act, and clear both once your work is done.")
 	if a.Parent != "" {
 		// The lead that started the agent waits for its answer: task_update alone reaches the
 		// board, never the lead's inbox.

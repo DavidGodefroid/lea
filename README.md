@@ -177,8 +177,10 @@ detach; ctrl + right-click makes a folder, holding the agent under the pointer. 
 pointer over a row shows its whole name (cut in the row when long) with the agent's name, role,
 profile and state in the bottom border.
 
-- **States.** A red `●` needs you, an orange spinner is working, a green `●` has finished its
-  turn, an empty `○` has been quiet for 30 minutes, a grey `‖` is paused (`p`: lea freezes the
+- **States.** A red `●` needs you (a permission, or a blocker the agent named with
+  `task_update`), an orange spinner is working or waiting (its subagents, or a next step it
+  named: CI, a review, a reply), a green `●` has finished with nothing pending, an empty `○` has
+  been quiet for 30 minutes, a grey `‖` is paused (`p`: lea freezes the
   agent's processes, tool calls included, until you resume it). Agents stay in the order you started them.
 - **Messages.** Typing into an agent's pane (`enter`) talks to it now, in its conversation.
   `m` (Send message) instead leaves it a note in its inbox, as another agent would: it reads it

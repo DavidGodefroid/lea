@@ -31,7 +31,7 @@ func stateMark(state string, updated, now int64, frame int, ascii bool) (string,
 	switch state {
 	case "blocked":
 		return pick("●", "!"), theme.Blocked
-	case "working":
+	case "working", "waiting":
 		s := spinner
 		if ascii {
 			s = asciiSpinner

@@ -11,6 +11,7 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"github.com/DavidGodefroid/lea/internal/tmux"
 )
@@ -29,11 +30,17 @@ const deckLayoutEnv = "LEA_DECK_E2E_LAYOUT"
 const e2eLabel = "refactor-billing-export"
 
 func TestMain(m *testing.M) {
-	if os.Getenv(deckHelperEnv) == "1" {
+	if mode := os.Getenv(deckHelperEnv); mode != "" {
 		c := ag("c", "idle", 1)
 		c.Label = e2eLabel
-		if err := Run(e2eAPI{&fakeAPI{snap: Snapshot{Version: 1, Shown: "lea-a/a",
-			Agents: []Agent{ag("a", "idle", 1), ag("b", "idle", 1), c}}}}, "lea-a", false, nil, nil, "e2e", FileStore{Path: os.Getenv(deckLayoutEnv)}); err != nil {
+		agents := []Agent{ag("a", "idle", 1), ag("b", "idle", 1), c}
+		if mode == "colours" { // issue #72: done, waiting and blocked, all just idle
+			now := time.Now().Unix()
+			agents = []Agent{ag("green", "idle", now), withTask(ag("wait", "idle", now), true, false),
+				withTask(ag("red", "idle", now), true, true)}
+		}
+		if err := Run(e2eAPI{&fakeAPI{snap: Snapshot{Version: 1, Shown: agents[0].Key,
+			Agents: agents}}}, "lea-a", false, nil, nil, "e2e", FileStore{Path: os.Getenv(deckLayoutEnv)}); err != nil {
 			fmt.Fprintln(os.Stderr, err)
 			os.Exit(1)
 		}
@@ -67,7 +74,10 @@ type realDeck struct {
 	layout string
 }
 
-func startRealDeck(t *testing.T) *realDeck {
+func startRealDeck(t *testing.T) *realDeck { return startRealDeckMode(t, "1") }
+
+// startRealDeckMode draws the deck the helper's mode names (TestMain).
+func startRealDeckMode(t *testing.T, mode string) *realDeck {
 	t.Helper()
 	for _, bin := range []string{"tmux", "script"} {
 		if _, err := exec.LookPath(bin); err != nil {
@@ -95,7 +105,7 @@ func startRealDeck(t *testing.T) *realDeck {
 	}
 	t.Cleanup(func() { exec.Command("tmux", "-L", "lea-deck-e2e", "kill-server").Run() })
 	layout := filepath.Join(dir, "host", "deck", "lea-a.json")
-	cmd := []string{"env", deckHelperEnv + "=1", deckLayoutEnv + "=" + layout, self}
+	cmd := []string{"env", deckHelperEnv + "=" + mode, deckLayoutEnv + "=" + layout, self}
 	tm(append([]string{"new-session", "-d", "-s", "e2e", "-x", "80", "-y", "24"}, cmd...)...)
 	d := &realDeck{t: t, tm: tm, pane: tm("display-message", "-p", "-t", "e2e:0.0", "#{pane_id}"), cmd: cmd, layout: layout}
 	tm("set-option", "-p", "-t", d.pane, "@lea_role", "deck")
@@ -226,6 +236,41 @@ func TestRealHoverShowsTheFullName(t *testing.T) {
 	d.waitFor("the whole label in the bottom border", func(s string) bool { return strings.Contains(s, e2eLabel+" ·") })
 	d.mouse(35, 12, 'M') // below the rows
 	d.waitFor("the key hints back", func(s string) bool { return strings.Contains(s, "? keys") })
+}
+
+// The state marks in a real terminal (#72): an idle agent with nothing pending is a green bullet,
+// one whose task has a next step spins, one whose task names a blocker is a red bullet.
+func TestRealStateColours(t *testing.T) {
+	d := startRealDeckMode(t, "colours")
+	glyphs := "●" + strings.Join(spinner, "")
+	mark := func(s, name string) string { // a row's state glyph and the SGR that colours it
+		for _, l := range strings.Split(s, "\n") {
+			if !strings.Contains(l, name+" ") {
+				continue
+			}
+			if i := strings.IndexAny(l, glyphs); i >= 0 {
+				if j := strings.LastIndex(l[:i], "\x1b["); j >= 0 {
+					_, n := utf8.DecodeRuneInString(l[i:])
+					return l[j : i+n]
+				}
+			}
+		}
+		return ""
+	}
+	var green, wait, red string
+	d.waitFor("the three marks", func(string) bool {
+		s := d.tm("capture-pane", "-p", "-e", "-t", d.pane)
+		green, wait, red = mark(s, "green"), mark(s, "wait"), mark(s, "red")
+		return strings.Contains(green, "●") && strings.Contains(red, "●") && strings.ContainsAny(wait, strings.Join(spinner, ""))
+	})
+	sgr := func(m string) string { return m[:strings.IndexByte(m, 'm')+1] }
+	if sgr(green) == sgr(red) || sgr(wait) == sgr(green) {
+		t.Fatalf("one colour for two states: green %q wait %q red %q", green, wait, red)
+	}
+	time.Sleep(300 * time.Millisecond)
+	if next := mark(d.tm("capture-pane", "-p", "-e", "-t", d.pane), "wait"); next == wait {
+		t.Fatalf("the waiting spinner does not turn: %q", next)
+	}
 }
 
 // Folders (#30), typed and clicked as the user does: f makes one and names it, o moves an agent
