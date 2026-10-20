@@ -3,6 +3,8 @@ package launcher
 import (
 	"bufio"
 	"bytes"
+	"crypto/hmac"
+	"crypto/sha1"
 	"encoding/base64"
 	"encoding/binary"
 	"encoding/json"
@@ -565,6 +567,7 @@ func checkTimeout(_, v string) error {
 // line its normalized form.
 type shareEntry struct {
 	hosts    []string
+	hashed   []string // the hashed names of a local git_known_hosts line
 	typ, key string
 	line     string
 }
@@ -605,20 +608,17 @@ func parseKnownHost(line string) (shareEntry, bool, error) {
 	if len(fs) < 3 {
 		return shareEntry{}, false, errors.New("expected '<hosts> <key type> <key>'")
 	}
+	if strings.HasPrefix(fs[0], "|") {
+		// A hashed name cannot be compared with the pins here: a key for a host already pinned
+		// would pass as a new host.
+		return shareEntry{}, false, errors.New("hashed host names are not shared: write the host's name")
+	}
 	var hosts []string
-	if strings.HasPrefix(fs[0], "|1|") {
-		p := strings.Split(fs[0], "|")
-		if len(p) != 4 || !isBase64(p[2]) || !isBase64(p[3]) {
-			return shareEntry{}, false, errors.New("a hashed host name is |1|salt|hash")
+	for _, h := range strings.Split(fs[0], ",") {
+		if !knownHostRe.MatchString(h) {
+			return shareEntry{}, false, fmt.Errorf("'%s' is not a plain host name (wildcards and negations are not shared)", printable(h))
 		}
-		hosts = []string{fs[0]}
-	} else {
-		for _, h := range strings.Split(fs[0], ",") {
-			if !knownHostRe.MatchString(h) {
-				return shareEntry{}, false, fmt.Errorf("'%s' is not a plain host name (wildcards and negations are not shared)", printable(h))
-			}
-			hosts = append(hosts, strings.ToLower(h))
-		}
+		hosts = append(hosts, strings.ToLower(h))
 	}
 	if !keyTypes[fs[1]] {
 		return shareEntry{}, false, fmt.Errorf("'%s' is not an SSH host key type", printable(fs[1]))
@@ -630,9 +630,29 @@ func parseKnownHost(line string) (shareEntry, bool, error) {
 	return shareEntry{hosts: hosts, typ: fs[1], key: fs[2], line: fs[0] + " " + fs[1] + " " + fs[2]}, true, nil
 }
 
-func isBase64(s string) bool {
-	_, err := base64.StdEncoding.DecodeString(s)
-	return s != "" && err == nil
+// pinsHost reports whether a local line pins host h: one of its names, or a hashed name
+// (|1|salt|hash, HMAC-SHA1 of the name) that h hashes to.
+func pinsHost(x shareEntry, h string) bool {
+	if hasString(x.hosts, h) {
+		return true
+	}
+	for _, hh := range x.hashed {
+		p := strings.Split(hh, "|")
+		if len(p) != 4 || p[1] != "1" {
+			continue
+		}
+		salt, err1 := base64.StdEncoding.DecodeString(p[2])
+		sum, err2 := base64.StdEncoding.DecodeString(p[3])
+		if err1 != nil || err2 != nil {
+			continue
+		}
+		m := hmac.New(sha1.New, salt)
+		m.Write([]byte(h))
+		if hmac.Equal(m.Sum(nil), sum) {
+			return true
+		}
+	}
+	return false
 }
 
 var hostNameRe = regexp.MustCompile(`^[A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?(\.[A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?)*$`)
@@ -751,6 +771,8 @@ func mergeShared(name, base, in string, replace bool) (fileChange, error) {
 	for _, line := range strings.Split(base, "\n") {
 		if e, ok, err := parseShareLine(name, line); err == nil && ok {
 			local = append(local, e)
+		} else if fs := strings.Fields(line); name == fileKnownHosts && len(fs) >= 3 && strings.HasPrefix(fs[0], "|1|") {
+			local = append(local, shareEntry{hashed: strings.Split(fs[0], ","), typ: fs[1], key: fs[2], line: line})
 		}
 	}
 	for _, line := range strings.Split(in, "\n") {
@@ -833,7 +855,7 @@ func hasEntry(es []shareEntry, e shareEntry) bool {
 func pinnedElsewhere(es []shareEntry, h string, e shareEntry) bool {
 	pinned := false
 	for _, x := range es {
-		if hasString(x.hosts, h) {
+		if pinsHost(x, h) {
 			if x.typ == e.typ && x.key == e.key {
 				return false
 			}

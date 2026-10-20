@@ -2,7 +2,9 @@ package launcher
 
 import (
 	"crypto/ed25519"
+	"crypto/hmac"
 	"crypto/rand"
+	"crypto/sha1"
 	"encoding/base64"
 	"encoding/binary"
 	"encoding/json"
@@ -538,5 +540,33 @@ func TestConfigImportReplaceShowsRemovedLines(t *testing.T) {
 	}
 	if got := w.read(ih); got != "kept.example 443\nnew.example 8443\n" {
 		t.Errorf("internal-hosts = %q", got)
+	}
+}
+
+// A hashed host name cannot be checked against the local pins: it is not shared. A host pinned
+// here under a hashed name still conflicts with another key for it.
+func TestConfigImportHashedHosts(t *testing.T) {
+	w := newWorld(t, repoRoot(t))
+	k1, k2 := sshKey(t), sshKey(t)
+	salt := []byte("0123456789abcdefghij")
+	m := hmac.New(sha1.New, salt)
+	m.Write([]byte("github.com"))
+	hashed := "|1|" + base64.StdEncoding.EncodeToString(salt) + "|" + base64.StdEncoding.EncodeToString(m.Sum(nil))
+	w.writeConf("git_known_hosts", hashed+" "+k1+"\n")
+	before := w.snapshot()
+	in := w.shareFile(`{"lea_config_format":1,"keys":{},"files":{"git_known_hosts":"` + hashed + ` ` + k2 + `\n"}}`)
+	if code, _, errs := w.config("", "import", in, "--yes", "--allow-host-keys"); code == 0 || !strings.Contains(errs, "hashed host names") {
+		t.Fatalf("hashed import: %d %q", code, errs)
+	}
+	in = w.shareFile(`{"lea_config_format":1,"keys":{},"files":{"git_known_hosts":"GitHub.com ` + k2 + `\n"}}`)
+	if code, _, errs := w.config("", "import", in, "--yes", "--allow-host-keys"); code == 0 || !strings.Contains(errs, "github.com already pinned") {
+		t.Fatalf("plain import over a hashed pin: %d %q", code, errs)
+	}
+	if !sameSnapshot(before, w.snapshot()) {
+		t.Fatal("a refused import wrote a file")
+	}
+	_, out, errs := w.config("", "export")
+	if _, ok := decodeShare(t, out).Files["git_known_hosts"]; ok || !strings.Contains(errs, "hashed host names") {
+		t.Errorf("export of a hashed line: %s %q", out, errs)
 	}
 }
