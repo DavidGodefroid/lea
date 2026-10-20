@@ -3,6 +3,7 @@ package launcher
 import (
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"syscall"
@@ -231,5 +232,94 @@ func TestStopDaemonWithoutAPidFile(t *testing.T) {
 	w.launcher().stopDaemon()
 	if exists(w.hostDir() + "/daemon.pid") {
 		t.Fatal("a pid file appeared")
+	}
+}
+
+// daemonAt starts a process whose command line is "<core> daemon" for a core at any path: a copy
+// of sh named as the core, reading the script file "daemon" from a working directory of its own.
+func daemonAt(t *testing.T, core, script string) *exec.Cmd {
+	t.Helper()
+	os.MkdirAll(filepath.Dir(core), 0o755)
+	sh, _ := exec.LookPath("sh")
+	b, _ := os.ReadFile(sh)
+	os.WriteFile(core, b, 0o755)
+	wd := t.TempDir()
+	os.WriteFile(wd+"/daemon", []byte(script), 0o644)
+	cmd := exec.Command(core, "daemon")
+	cmd.Dir = wd
+	if err := cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { cmd.Process.Kill(); cmd.Wait() })
+	return cmd
+}
+
+func waitExit(t *testing.T, d *exec.Cmd, what string) {
+	t.Helper()
+	done := make(chan error, 1)
+	go func() { done <- d.Wait() }()
+	select {
+	case <-done:
+	case <-time.After(3 * time.Second):
+		t.Fatal(what)
+	}
+}
+
+// #34: after an update the running daemon is the previous install's
+// (<install dir>/<old version>/build/lea daemon), never the current core: it is still stopped.
+func TestStopDaemonStopsTheDaemonOfAPreviousInstall(t *testing.T) {
+	w := newWorld(t, repoRoot(t))
+	inst := w.dir + "/lea-install"
+	d := daemonAt(t, inst+"/v0.1.2/build/lea", "sleep 30\n")
+	l := w.launcher()
+	l.Root, l.Core = inst+"/v0.1.3", inst+"/v0.1.3/build/lea"
+	pf := w.hostDir() + "/daemon.pid"
+	os.WriteFile(pf, []byte(strconv.Itoa(d.Process.Pid)+"\n"), 0o600)
+	l.stopDaemon()
+	waitExit(t, d, "the daemon of the previous install was not stopped")
+}
+
+// A "<path>/lea daemon" outside the lea install directory is not lea's: never signalled.
+func TestStopDaemonLeavesALeaDaemonOutsideTheInstallDir(t *testing.T) {
+	w := newWorld(t, repoRoot(t))
+	d := daemonAt(t, w.dir+"/elsewhere/v1/build/lea", "sleep 30\n")
+	l := w.launcher()
+	l.Root, l.Core = w.dir+"/lea-install/v2", w.dir+"/lea-install/v2/build/lea"
+	pf := w.hostDir() + "/daemon.pid"
+	os.WriteFile(pf, []byte(strconv.Itoa(d.Process.Pid)+"\n"), 0o600)
+	l.stopDaemon()
+	time.Sleep(100 * time.Millisecond)
+	if d.Process.Signal(syscall.Signal(0)) != nil {
+		t.Fatal("a process outside the install dir was signalled")
+	}
+	if exists(pf) {
+		t.Fatal("a pid file naming no lea daemon is stale: it goes")
+	}
+}
+
+// The pid file stays until the daemon is gone: a daemon that outlives the stop can be stopped
+// on the next attempt (#34: the pid was lost and every retry failed).
+func TestStopDaemonKeepsThePidFileWhileTheDaemonRuns(t *testing.T) {
+	w := newWorld(t, repoRoot(t))
+	core := w.dir + "/lea-install/v1/build/lea"
+	d := daemonAt(t, core, "trap '' TERM\nsleep 30\n")
+	l := w.launcher()
+	l.Root, l.Core = w.dir+"/lea-install/v1", core
+	pf := w.hostDir() + "/daemon.pid"
+	os.WriteFile(pf, []byte(strconv.Itoa(d.Process.Pid)+"\n"), 0o600)
+	time.Sleep(100 * time.Millisecond) // the trap is set
+	l.stopDaemon()
+	if d.Process.Signal(syscall.Signal(0)) != nil {
+		t.Fatal("the daemon ignoring TERM is still running")
+	}
+	if !exists(pf) {
+		t.Fatal("the pid file of a running daemon was removed")
+	}
+	// it is gone: the next stop drops the file
+	d.Process.Kill()
+	waitExit(t, d, "kill")
+	l.stopDaemon()
+	if exists(pf) {
+		t.Fatal("the pid file of a gone daemon stays")
 	}
 }

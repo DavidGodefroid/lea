@@ -1,6 +1,8 @@
 package daemon
 
 import (
+	"context"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -172,17 +174,70 @@ func TestARemovedAgentDoesNotRing(t *testing.T) {
 // Agents ending together ring once.
 func TestSoundsOfOneKindAreSpaced(t *testing.T) {
 	e, rang := soundEnv(t)
-	e.d.sound(SoundDone)
-	e.d.sound(SoundDone)
-	e.d.sound(SoundAttention)
+	e.d.sound(context.Background(), "lea-a", SoundDone)
+	e.d.sound(context.Background(), "lea-a", SoundDone)
+	e.d.sound(context.Background(), "lea-a", SoundAttention)
 	if got := rang(); len(got) != 2 {
 		t.Fatalf("rang %q", got)
 	}
 	e.d.mu.Lock()
 	e.d.rang[SoundDone] = time.Now().Add(-soundGap)
 	e.d.mu.Unlock()
-	e.d.sound(SoundDone)
+	e.d.sound(context.Background(), "lea-a", SoundDone)
 	if got := rang(); len(got) != 3 {
+		t.Fatalf("rang %q", got)
+	}
+}
+
+// No deck shows the agent's container: neither a wait nor a turn end rings.
+func TestNoSoundWithoutAnAttachedDeck(t *testing.T) {
+	e, rang := soundEnv(t)
+	fa := &fakeAgents{unattached: true}
+	e.d.SetAgents(fa)
+	quickDone(e)
+	call(t, e.bus, "dev", "hook_event", map[string]any{"event": "UserPromptSubmit"}, nil)
+	call(t, e.bus, "dev", "hook_event", map[string]any{"event": "PermissionRequest"}, nil)
+	call(t, e.bus, "dev", "hook_event", map[string]any{"event": "PostToolUse"}, nil)
+	call(t, e.bus, "dev", "hook_event", map[string]any{"event": "Stop"}, nil)
+	call(t, e.bus, "dev", "stop_check", nil, nil)
+	time.Sleep(3 * testDoneDelay)
+	if got := rang(); len(got) != 0 {
+		t.Fatalf("rang %q without a deck", got)
+	}
+	fa.mu.Lock()
+	asked := strings.Join(fa.calls, ",")
+	fa.mu.Unlock()
+	if !strings.Contains(asked, "attached lea-a") {
+		t.Fatalf("calls %q: the deck of the agent's container was not asked", asked)
+	}
+}
+
+// The deck closes while a turn's done sound waits: it does not ring.
+func TestADeckClosedDuringTheDelaySilencesDone(t *testing.T) {
+	e, rang := soundEnv(t)
+	fa := &fakeAgents{}
+	e.d.SetAgents(fa)
+	quickDone(e)
+	call(t, e.bus, "dev", "hook_event", map[string]any{"event": "Stop"}, nil)
+	call(t, e.bus, "dev", "stop_check", nil, nil)
+	fa.mu.Lock()
+	fa.unattached = true
+	fa.mu.Unlock()
+	time.Sleep(3 * testDoneDelay)
+	if got := rang(); len(got) != 0 {
+		t.Fatalf("rang %q after the deck closed", got)
+	}
+}
+
+// With a deck attached, sounds ring as before.
+func TestSoundsRingWithAnAttachedDeck(t *testing.T) {
+	e, rang := soundEnv(t)
+	e.d.SetAgents(&fakeAgents{})
+	quickDone(e)
+	call(t, e.bus, "dev", "hook_event", map[string]any{"event": "PermissionRequest"}, nil)
+	call(t, e.bus, "dev", "hook_event", map[string]any{"event": "Stop"}, nil)
+	call(t, e.bus, "dev", "stop_check", nil, nil)
+	if got := waitRang(rang, 2); len(got) != 2 || got[0] != SoundAttention || got[1] != SoundDone {
 		t.Fatalf("rang %q", got)
 	}
 }

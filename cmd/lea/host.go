@@ -196,7 +196,8 @@ func runDaemon(stderr io.Writer) int {
 		ApprovalTimeout: approvalTimeout(os.Getenv("LEA_APPROVAL_TIMEOUT")),
 	})
 	d.SetAgents(m)
-	// A sound when an agent waits for the user and when a turn ends, unless LEA_SOUND=0.
+	// A sound when an agent waits for the user and when a turn ends, while a deck shows its
+	// container, unless LEA_SOUND=0.
 	if os.Getenv("LEA_SOUND") != "0" {
 		files := map[string]string{
 			daemon.SoundAttention: "/usr/share/sounds/freedesktop/stereo/message-new-instant.oga",

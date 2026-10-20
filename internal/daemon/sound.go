@@ -1,6 +1,7 @@
 package daemon
 
 import (
+	"context"
 	"os"
 	"os/exec"
 	"sync"
@@ -33,7 +34,15 @@ func (d *Daemon) SetSounder(s Sounder) {
 	d.mu.Unlock()
 }
 
-func (d *Daemon) sound(kind string) {
+// sound plays a sound of a kind for an agent of the container, only while a deck shows the
+// container: the daemon and the agents outlive the deck, and nobody listens then.
+func (d *Daemon) sound(ctx context.Context, container, kind string) {
+	d.mu.Lock()
+	on := d.sounder != nil
+	d.mu.Unlock()
+	if !on || !d.deckAttached(ctx, container) {
+		return
+	}
 	d.mu.Lock()
 	s := d.sounder
 	now := time.Now()
@@ -47,21 +56,21 @@ func (d *Daemon) sound(kind string) {
 }
 
 // armDone plays the done sound of an agent after doneDelay, unless cancelDone comes first;
-// arming again restarts the wait.
-func (d *Daemon) armDone(key string) {
+// arming again restarts the wait. container is the agent's: its deck must still show it then.
+func (d *Daemon) armDone(key, container string) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
-	d.armDoneLocked(key)
+	d.armDoneLocked(key, container)
 }
 
 // restartDoneLocked restarts the wait of a pending done sound; none pending, it does nothing.
-func (d *Daemon) restartDoneLocked(key string) {
+func (d *Daemon) restartDoneLocked(key, container string) {
 	if d.doneTimers[key] != nil {
-		d.armDoneLocked(key)
+		d.armDoneLocked(key, container)
 	}
 }
 
-func (d *Daemon) armDoneLocked(key string) {
+func (d *Daemon) armDoneLocked(key, container string) {
 	if t := d.doneTimers[key]; t != nil {
 		t.Stop()
 	}
@@ -75,7 +84,7 @@ func (d *Daemon) armDoneLocked(key string) {
 		}
 		d.mu.Unlock()
 		if mine {
-			d.sound(SoundDone)
+			d.sound(context.Background(), container, SoundDone)
 		}
 	})
 	d.doneTimers[key] = t
