@@ -24,6 +24,11 @@ func (f *fakeAPI) SplitShell(ctx context.Context, k string, below bool) (Agent, 
 	return f.newShell, f.err
 }
 
+func (f *fakeAPI) LockOpen(ctx context.Context, c, tool string) (string, error) {
+	f.rec("lock-open " + c + " " + tool)
+	return "opened", f.err
+}
+
 func shell(name string) Agent {
 	return Agent{Key: "shell:lea-a/" + name, Name: name, Kind: KindShell, State: "running", CtxPct: -1, CostUSD: -1}
 }
@@ -262,5 +267,22 @@ func TestSWithoutASoundPlayer(t *testing.T) {
 	m, cmd := step(t, m, key("S"))
 	if cmd != nil || len(api.got()) != 0 || !strings.Contains(m.status, "no sound player") {
 		t.Fatalf("cmd %v calls %q status %q", cmd != nil, api.got(), m.status)
+	}
+}
+
+// L opens the locksql console under the agent and leaves the keyboard on the deck.
+func TestLOpensTheLocksqlConsole(t *testing.T) {
+	api := &fakeAPI{}
+	m := loaded(t, api, "lea-a/a", ag("a", "idle", 1))
+	m, cmd := step(t, m, key("L"))
+	if cmd == nil {
+		t.Fatal("L made no call")
+	}
+	m, _ = step(t, m, cmd())
+	if got := api.got(); len(got) != 1 || got[0] != "lock-open lea-a locksql" {
+		t.Fatalf("calls=%q", got)
+	}
+	if m.selected != "lea-a/a" || !strings.Contains(m.status, "locksql console opened") {
+		t.Fatalf("selected %q status %q", m.selected, m.status)
 	}
 }

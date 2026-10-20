@@ -94,6 +94,8 @@ type API interface {
 	SplitShell(ctx context.Context, key string, below bool) (Agent, error)
 	// SetSound switches the daemon's sounds and answers the new state.
 	SetSound(ctx context.Context, on bool) (string, error)
+	// LockOpen opens a lock tool's console under the agent (the deck's L), without the keyboard.
+	LockOpen(ctx context.Context, container, tool string) (string, error)
 }
 
 // isShell reports whether a row is a shell.
@@ -133,7 +135,11 @@ type (
 		agent Agent
 		err   error
 	}
-	doneMsg  struct{ err error }
+	doneMsg struct{ err error }
+	lockMsg struct {
+		status string
+		err    error
+	}
 	soundMsg struct {
 		sound string
 		err   error
@@ -326,6 +332,16 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case doneMsg:
 		if msg.err != nil {
 			m.status = oneLine(msg.err.Error())
+		}
+		return m, nil
+	case lockMsg:
+		switch {
+		case msg.err != nil:
+			m.status = oneLine(msg.err.Error())
+		case msg.status == "opened":
+			m.status = "locksql console opened below: click it to answer"
+		default:
+			m.status = "locksql console shown below"
 		}
 		return m, nil
 	case soundMsg:
@@ -551,6 +567,15 @@ func (m Model) key(k string) (tea.Model, tea.Cmd) {
 			defer cancel()
 			a, err := api.OpenShell(ctx, c)
 			return newMsg{a, err}
+		}
+	case "L":
+		// The locksql console, in the lock slot under the agent; the keyboard stays here.
+		m.status = "opening the locksql console…"
+		return m, func() tea.Msg {
+			ctx, cancel := context.WithTimeout(context.Background(), callTimeout)
+			defer cancel()
+			st, err := api.LockOpen(ctx, c, "locksql")
+			return lockMsg{st, err}
 		}
 	case "-", "|":
 		// Split, as Terminator does: - puts a shell below the agent, | at its right.

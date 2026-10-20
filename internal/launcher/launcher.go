@@ -376,6 +376,8 @@ func (l *Launcher) dispatch(args []string) error {
 		return l.sh("locksql", rest...)
 	case "lockmq", "lockfile":
 		return l.sh(a0, rest...)
+	case "lock":
+		return l.lockConsole(rest)
 	case "shell":
 		if len(rest) > 0 {
 			if err := l.oldForm(rest[0]); err != nil {
@@ -417,6 +419,23 @@ func (l *Launcher) dispatch(args []string) error {
 		l.autoUpdate()
 		return l.session(proj, args)
 	}
+}
+
+// lockConsole is lea lock: a lock console in this projects dir's deck, through the core (the
+// daemon opens the pane), which the launcher tells the container's name.
+func (l *Launcher) lockConsole(args []string) error {
+	if len(args) == 0 || strings.HasPrefix(args[0], "-") {
+		l.logf("error: usage: lea lock open|close TOOL [PROFILE] | lea lock list")
+		return exitError{2}
+	}
+	proj, err := l.projectsDir()
+	if err != nil {
+		return err
+	}
+	if l.coreCall(append([]string{"lock", "--container", l.Cfg.ContainerName(proj)}, args...)...) != nil {
+		return exitError{1}
+	}
+	return nil
 }
 
 // shell is lea_shell: a shell, or a command, in the same lea.

@@ -48,8 +48,8 @@ const (
 	optDeck    = "@lea_deck"
 	roleDeck   = "deck"
 	rolePlace  = "placeholder"
-	paneFormat = "#{pane_id}|#{window_id}|#{pane_dead}|#{@lea_role}|#{@lea_agent}|#{pane_width}|#{pane_at_left}|#{@lea_shell}|#{@lea_deck}|#{@lea_split}"
-	paneFields = 10
+	paneFormat = "#{pane_id}|#{window_id}|#{pane_dead}|#{@lea_role}|#{@lea_agent}|#{pane_width}|#{pane_at_left}|#{@lea_shell}|#{@lea_deck}|#{@lea_split}|#{@lea_lock}"
+	paneFields = 11
 	// subscription reports pane deaths; panesSubscription reports a pane that closed without
 	// dying (a shell's: remain-on-exit is off for it), which no %window-close announces when
 	// the pane was in the slot.
@@ -118,6 +118,10 @@ type Config struct {
 	// how long the deck has before the agent's dialog takes over.
 	Approvals       string
 	ApprovalTimeout int
+	// LockSpec reads a lock tool's console configuration from the host's lea config, at each
+	// open; Consoles reaches the console containers. Without them no console opens.
+	LockSpec func(tool string) (LockSpec, error)
+	Consoles Consoles
 }
 
 type Row struct {
@@ -587,6 +591,7 @@ type pane struct {
 	Shell       string
 	DeckWin     bool   // its window carries the deck mark (@lea_deck)
 	Split       string // a split shell's agent and side (@lea_split), "" for any other pane
+	Lock        string // a lock console's id (@lea_lock), "" for any other pane
 }
 
 // splitAgent is the agent a split shell belongs to ("" for any other pane), and whether it
@@ -627,7 +632,7 @@ func listPanes(ctx context.Context, s Session, container string) ([]pane, error)
 			return nil, fmt.Errorf("unexpected list-panes line %q", l)
 		}
 		out = append(out, pane{ID: f[0], Window: f[1], Dead: f[2] == "1", Role: f[3], Agent: f[4], Width: width,
-			AtLeft: f[6] == "1", Shell: f[7], DeckWin: f[8] == "1", Split: f[9]})
+			AtLeft: f[6] == "1", Shell: f[7], DeckWin: f[8] == "1", Split: f[9], Lock: f[10]})
 	}
 	return out, nil
 }
@@ -654,9 +659,9 @@ func byShell(ps []pane, name string) (pane, bool) {
 }
 
 // slotOf is the pane next to deck in the deck window: never a split shell beside the agent shown
-// there, unless it is alone.
+// there, unless it is alone, and never the lock console under it.
 func slotOf(ps []pane, deck pane) (pane, bool) {
-	in := func(p pane) bool { return p.Window == deck.Window && p.ID != deck.ID }
+	in := func(p pane) bool { return p.Window == deck.Window && p.ID != deck.ID && p.Role != roleLock }
 	if p, ok := findPane(ps, func(p pane) bool { a, _ := p.splitAgent(); return in(p) && a == "" }); ok {
 		return p, true
 	}
@@ -715,7 +720,9 @@ func (m *Manager) ensureLayout(ctx context.Context, container string, s Session,
 	// session never loses its last pane.
 	moved := created // the user's terminal may have been on a window that is gone
 	for _, p := range ps {
-		if p.ID != deck.ID && (!p.tagged() || p.Role == roleDeck) {
+		// A lock console's pane closes when the console exits; one that died before remain-on-exit
+		// was off goes too, its last screen with it.
+		if p.ID != deck.ID && (!p.tagged() || p.Role == roleDeck || p.Role == roleLock && p.Dead) {
 			if _, err := run("kill-pane", "-t", p.ID); err != nil {
 				return false, false, err
 			}
@@ -748,13 +755,24 @@ func (m *Manager) ensureLayout(ctx context.Context, container string, s Session,
 	// The deck window keeps the deck and one slot; every other pane in it goes to a window of
 	// its own named after it.
 	slot, hasSlot := slotOf(ps, deck)
-	parked := false
+	parked, lockKept := false, false
 	for _, p := range ps {
 		if p.ID == deck.ID || p.Window != deck.Window || p.ID == slot.ID {
 			continue
 		}
 		if a, _ := p.splitAgent(); a != "" && slot.Agent == a && !p.Dead {
 			continue // the shown agent's split shell stays beside it
+		}
+		if p.Role == roleLock && hasSlot && !lockKept {
+			lockKept = true // the lock slot holds one console, under the slot
+			continue
+		}
+		if p.Role == roleLock {
+			if _, err := run("break-pane", "-d", "-s", p.ID, "-n", lockWindow(p.Lock)); err != nil {
+				return false, false, err
+			}
+			parked, moved = true, true
+			continue
 		}
 		name := p.Agent
 		if name == "" {
@@ -1906,6 +1924,8 @@ func (m *Manager) MarkStopped(ctx context.Context, container string, forget bool
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	// The lock consoles its deck opened stop with it: none outlives its pane.
+	m.stopConsoles(ctx, container)
 	as, err := m.cfg.Store.SpawnedAgents(container)
 	if err != nil {
 		return err

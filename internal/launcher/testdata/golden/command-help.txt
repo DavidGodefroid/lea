@@ -8,6 +8,9 @@ Usage:
                               set up lea on this workstation (once; rerun at will)
   lea locksql [vault ARGS]    the locksql console of your projects, on this terminal (also
                               locksql; vault: the vault CLI as the console account)
+  lea lock open|close locksql [profile] | lea lock list
+                              a locksql console in a pane of the deck, under the agent (the
+                              deck's L); approvals are typed there, by you only
   lea lockmq | lea lockfile   whether agents reach that tool's console on this host, and how to
                               open it (in the tool's own account; lea never starts it)
   lea                         open the deck: your agents on the left, the selected one on the right

@@ -85,6 +85,14 @@ func (c Client) SplitShell(ctx context.Context, key string, below bool) (Agent, 
 	return a, err
 }
 
+// LockOpen opens tool's console in the container's deck (the deck's L), or shows the open one,
+// under the agent; it answers "opened" or "already-open".
+func (c Client) LockOpen(ctx context.Context, container, tool string) (string, error) {
+	var r struct{ Status string }
+	err := c.call(ctx, "lock_open", map[string]any{"container": container, "tool": tool}, &r)
+	return r.Status, err
+}
+
 // Label is an agent's display label ("" when none), from the host's agents_list.
 func (c Client) Label(ctx context.Context, key string) (string, error) {
 	var as []struct{ Key, Label string }

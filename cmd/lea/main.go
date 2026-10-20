@@ -84,6 +84,8 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		return runDeckStop(args[1:], stderr)
 	case "new":
 		return runNew(args[1:], stdout, stderr)
+	case "lock":
+		return runLock(args[1:], stdout, stderr)
 	case "hook":
 		if len(args) != 3 || args[1] != "claude" {
 			return 0 // unknown vendor or arity: never fail an agent's hook

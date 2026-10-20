@@ -39,6 +39,11 @@ type Agents interface {
 	OpenShell(ctx context.Context, container string) (agents.Row, error)
 	// SplitShell opens a shell beside an agent (the deck's split), below it or at its right.
 	SplitShell(ctx context.Context, key string, below bool) (agents.Row, error)
+	// LockOpen, LockClose and LockList manage the lock consoles of a deck (lea lock, the deck's
+	// L): the user's only. No agent may open, show, close or list a console.
+	LockOpen(ctx context.Context, container, tool, profile string) (string, error)
+	LockClose(ctx context.Context, container, tool, profile string) (string, error)
+	LockList(ctx context.Context, container string) ([]agents.LockRow, error)
 	Changed()
 }
 
@@ -50,6 +55,7 @@ var deckMethods = map[string]bool{
 	"agents_resume_stopped": true,
 	"deck_attached":         true, "deck_popup": true, "agent_label": true, "shell_open": true,
 	"shell_split": true, "agent_pause": true,
+	"lock_open": true, "lock_close": true, "lock_list": true,
 }
 
 func (d *Daemon) SetAgents(a Agents) {
@@ -210,6 +216,23 @@ func (d *Daemon) dispatchDeck(ctx context.Context, o Origin, req wire.Request) (
 			return nil, err
 		}
 		return a.SplitShell(ctx, p.Key, p.Below)
+	case "lock_open", "lock_close":
+		var p struct{ Container, Tool, Profile string }
+		if err := json.Unmarshal(req.Params, &p); err != nil {
+			return nil, err
+		}
+		do := a.LockOpen
+		if req.Method == "lock_close" {
+			do = a.LockClose
+		}
+		st, err := do(ctx, p.Container, p.Tool, p.Profile)
+		return map[string]string{"status": st}, err
+	case "lock_list":
+		var p struct{ Container string }
+		if err := json.Unmarshal(req.Params, &p); err != nil {
+			return nil, err
+		}
+		return a.LockList(ctx, p.Container)
 	case "agents_watch":
 		var p struct {
 			Container string

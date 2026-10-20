@@ -860,3 +860,54 @@ func TestRealTheHistoryPositionCountsDownFromTheBottom(t *testing.T) {
 		t.Errorf("the bar out of the history: %q", b)
 	}
 }
+
+// ctrl+v typed on the user's terminal pastes into an agent but not into a lock console.
+func TestRealCtrlVPastesNothingIntoALockPane(t *testing.T) {
+	bin := t.TempDir()
+	if err := os.WriteFile(filepath.Join(bin, "pbpaste"), []byte("#!/bin/sh\nprintf 'yes'\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+	t.Setenv("WAYLAND_DISPLAY", "")
+	t.Setenv("DISPLAY", "")
+	s := realServer(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	dir := os.Getenv("TMUX_TMPDIR")
+	c, err := s.Open(ctx, "lea-k", []string{"sleep", "600"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c.Close()
+	client := attachTerminal(t, ctx, s, c, "lea-k", filepath.Join(dir, "terminal"))
+	tm := func(args ...string) string {
+		t.Helper()
+		out, err := exec.Command("tmux", append([]string{"-L", "lea-test"}, args...)...).CombinedOutput()
+		if err != nil {
+			t.Fatalf("%v: %v: %s", args, err, out)
+		}
+		return strings.TrimSpace(string(out))
+	}
+	sink := func(f string) []string { return []string{"sh", "-c", `stty raw -echo; exec cat > "$1"`, "sh", f} }
+	got := map[string]string{"agent": filepath.Join(dir, "agent"), "lock": filepath.Join(dir, "lock")}
+	agent := tm(append([]string{"new-window", "-t", "=lea-k:", "-P", "-F", "#{pane_id}"}, sink(got["agent"])...)...)
+	lock := tm(append([]string{"split-window", "-v", "-t", agent, "-P", "-F", "#{pane_id}"}, sink(got["lock"])...)...)
+	tm("set-option", "-p", "-t", agent, "@lea_agent", "dev-1")
+	tm("set-option", "-p", "-t", lock, "@lea_role", "lock")
+	tm("set-option", "-p", "-t", lock, "@lea_lock", "locksql")
+	waitFor(t, "both sinks", func() bool {
+		_, e1 := os.Stat(got["agent"])
+		_, e2 := os.Stat(got["lock"])
+		return e1 == nil && e2 == nil
+	})
+	// The lock pane first, then the agent's: once the agent's paste arrived, the lock pane's
+	// binding has run too (one client, keys in order).
+	for _, p := range []string{lock, agent} {
+		tm("select-pane", "-t", p)
+		tm("send-keys", "-K", "-c", client, "C-v")
+	}
+	waitFor(t, "the paste in the agent's pane", func() bool { b, _ := os.ReadFile(got["agent"]); return string(b) == "yes" })
+	if b, _ := os.ReadFile(got["lock"]); len(b) != 0 {
+		t.Fatalf("the lock pane got a paste: %q", b)
+	}
+}

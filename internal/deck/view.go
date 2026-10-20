@@ -121,6 +121,7 @@ var helpLines = []string{
 	"n           new agent",
 	"s           new shell",
 	"- |         split with a shell",
+	"L           locksql console",
 	"m           message the agent",
 	"t           its thread",
 	"e           rename",

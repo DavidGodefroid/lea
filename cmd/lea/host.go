@@ -195,6 +195,8 @@ func runDaemon(stderr io.Writer) int {
 
 		Approvals:       approvalsMode(os.Getenv("LEA_APPROVALS")),
 		ApprovalTimeout: approvalTimeout(os.Getenv("LEA_APPROVAL_TIMEOUT")),
+		LockSpec:        lockSpec(exe),
+		Consoles:        agents.DockerConsoles{},
 	})
 	d.SetAgents(m)
 	// A sound when an agent waits for the user and when a turn ends, while a deck shows its
