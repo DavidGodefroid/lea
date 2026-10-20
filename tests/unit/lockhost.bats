@@ -173,11 +173,22 @@ release() {
   if calls | grep -q '^sudo'; then false; fi
 }
 
-@test "a binary that is a symlink or not root's is not the host's tool" {
+@test "a binary that is a symlink, not root's, or writable by others (or in such a dir) is not the host's tool" {
   host_bin lockmq "lockmq 0.1.0"
   lea__lockhost_bin lockmq
   LEA_LOCKHOST_OWNER=12345 run lea__lockhost_bin lockmq
   [ "$status" -ne 0 ]
+  chmod 0775 "$R/usr/local/bin/lockmq"
+  run lea__lockhost_bin lockmq
+  [ "$status" -ne 0 ]
+  chmod 0757 "$R/usr/local/bin/lockmq"
+  run lea__lockhost_bin lockmq
+  [ "$status" -ne 0 ]
+  chmod 0755 "$R/usr/local/bin/lockmq"; chmod 0777 "$R/usr/local/bin"
+  run lea__lockhost_bin lockmq
+  [ "$status" -ne 0 ]
+  chmod 0755 "$R/usr/local/bin"
+  lea__lockhost_bin lockmq
   mv "$R/usr/local/bin/lockmq" "$R/usr/local/bin/real"; ln -s real "$R/usr/local/bin/lockmq"
   run lea__lockhost_bin lockmq
   [ "$status" -ne 0 ]

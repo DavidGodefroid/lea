@@ -109,6 +109,9 @@ func (l *Launcher) lockHostTool(t lockHostTool) ([]string, string) {
 	}
 	if t.name == "lockfile" {
 		bin := root + "/usr/local/bin/lockfile"
+		if why := rootOwned(root+"/usr/local/bin", true); why != "" {
+			return nil, why
+		}
 		if why := rootOwned(bin, false); why != "" {
 			return nil, why
 		}

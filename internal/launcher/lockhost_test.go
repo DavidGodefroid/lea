@@ -173,10 +173,12 @@ func TestLockHostRefusals(t *testing.T) {
 // /usr/local/bin is never wired.
 func TestLockHostLockfileVersion(t *testing.T) {
 	for name, bin := range map[string]string{
-		"v0.1.0":  "#!/bin/sh\necho lockfile v0.1.0\n",
-		"0.0.9":   "#!/bin/sh\necho lockfile 0.0.9\n",
-		"unknown": "#!/bin/sh\nexit 1\n",
-		"symlink": "",
+		"v0.1.0":         "#!/bin/sh\necho lockfile v0.1.0\n",
+		"0.0.9":          "#!/bin/sh\necho lockfile 0.0.9\n",
+		"unknown":        "#!/bin/sh\nexit 1\n",
+		"symlink":        "",
+		"group-writable": "#!/bin/sh\necho lockfile v0.2.0\n",
+		"dir writable":   "#!/bin/sh\necho lockfile v0.2.0\n",
 	} {
 		t.Run(name, func(t *testing.T) {
 			root := lockHostWorld(t)
@@ -186,6 +188,12 @@ func TestLockHostLockfileVersion(t *testing.T) {
 				must(t, os.Symlink(b+".real", b))
 			} else {
 				must(t, os.WriteFile(b, []byte(bin), 0o755))
+			}
+			switch name {
+			case "group-writable":
+				must(t, os.Chmod(b, 0o775))
+			case "dir writable":
+				must(t, os.Chmod(root+"/usr/local/bin", 0o777))
 			}
 			w := newWorld(t, repoRoot(t))
 			writeUserConf(t, w, "LEA_LOCKFILE=1\n")

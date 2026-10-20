@@ -49,11 +49,17 @@ lea__lockhost_root() { printf '%s' "${LEA_LOCKHOST_ROOT:-}"; }
 
 # lea__lockhost_bin TOOL: the root-owned TOOL binary in /usr/local/bin, the one TOOL install
 # accepts for the console account (a binary another account could replace would hand it the
-# console), or nothing.
+# console, and lea runs it with sudo), or nothing. Neither it nor the directory may be writable by
+# anyone but root.
 lea__lockhost_bin() {
-  _lb_b=$(lea__lockhost_root)/usr/local/bin/$1
-  [ -f "$_lb_b" ] && [ ! -L "$_lb_b" ] && [ -x "$_lb_b" ] || return 1
-  [ "$(stat -c %u "$_lb_b" 2>/dev/null)" = "${LEA_LOCKHOST_OWNER:-0}" ] || return 1
+  _lb_d=$(lea__lockhost_root)/usr/local/bin
+  _lb_b=$_lb_d/$1
+  [ -f "$_lb_b" ] && [ ! -L "$_lb_b" ] && [ -x "$_lb_b" ] && [ -d "$_lb_d" ] && [ ! -L "$_lb_d" ] || return 1
+  # The binary and its directory: owned by root, writable by root only (lea runs it with sudo).
+  for _lb_f in "$_lb_b" "$_lb_d"; do
+    [ "$(stat -c %u "$_lb_f" 2>/dev/null)" = "${LEA_LOCKHOST_OWNER:-0}" ] || return 1
+    case $(stat -c %A "$_lb_f" 2>/dev/null) in ?????w????|????????w?|'') return 1 ;; esac
+  done
   printf '%s' "$_lb_b"
 }
 
