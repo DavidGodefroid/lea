@@ -73,8 +73,23 @@ func lockSpec(exe string) func(tool string) (agents.LockSpec, error) {
 		switch tool {
 		case "locksql":
 			return agents.LockSpec{Enabled: cfg.Locksql(), Image: cfg.Get("LEA_LOCKSQL_IMAGE"),
-				Projects: cfg.Get("LEA_PROJECTS_DIR"), VaultAddr: cfg.Get("LEA_LOCKSQL_VAULT_ADDR")}, nil
+				VaultAddr: cfg.Get("LEA_LOCKSQL_VAULT_ADDR"), ContainerName: lockContainerName(cfg)}, nil
 		}
 		return agents.LockSpec{}, fmt.Errorf("no lock console for %q", tool)
+	}
+}
+
+// lockContainerName is the lea container of a projects directory, as the launcher names it: from
+// the directory's physical path.
+func lockContainerName(cfg *launcher.Config) func(string) string {
+	return func(projects string) string {
+		p, err := filepath.Abs(projects)
+		if err != nil {
+			return ""
+		}
+		if r, err := filepath.EvalSymlinks(p); err == nil {
+			p = r
+		}
+		return cfg.ContainerName(p)
 	}
 }

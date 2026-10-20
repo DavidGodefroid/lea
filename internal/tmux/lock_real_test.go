@@ -93,3 +93,55 @@ func TestRealLockPaneTakesNoPasteAndNoCopy(t *testing.T) {
 		t.Errorf("an agent's border: %q", b)
 	}
 }
+
+// ctrl+space from the deck goes to the agent, never into the lock console under it, even when the
+// console was the pane last used on the right (tmux's select-pane -R picks that one); from the
+// console it goes back to the deck. The binding's command runs as the key would run it.
+func TestRealCtrlSpaceNeverLandsInALockPane(t *testing.T) {
+	s := realServer(t)
+	tm := func(args ...string) string {
+		t.Helper()
+		out, err := exec.Command("tmux", append([]string{"-L", "lea-test", "-f", s.Conf}, args...)...).CombinedOutput()
+		if err != nil {
+			t.Fatalf("%v: %v: %s", args, err, out)
+		}
+		return strings.TrimSpace(string(out))
+	}
+	cmd := ""
+	for _, l := range strings.Split(Conf(), "\n") {
+		if c, ok := strings.CutPrefix(l, "bind-key -n C-Space "); ok {
+			cmd = c
+		}
+	}
+	if cmd == "" {
+		t.Fatal("no ctrl+space binding")
+	}
+	key := filepath.Join(os.Getenv("TMUX_TMPDIR"), "ctrl-space.conf")
+	if err := os.WriteFile(key, []byte(cmd+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	deck := tm("new-session", "-d", "-s", "lea-s", "-x", "120", "-y", "40", "-P", "-F", "#{pane_id}", "sleep", "600")
+	slot := tm("split-window", "-d", "-h", "-t", deck, "-P", "-F", "#{pane_id}", "sleep", "600")
+	lock := tm("split-window", "-d", "-v", "-t", slot, "-P", "-F", "#{pane_id}", "sleep", "600")
+	tm("set-option", "-p", "-t", deck, "@lea_role", "deck")
+	tm("set-option", "-p", "-t", slot, "@lea_agent", "dev-1")
+	tm("set-option", "-p", "-t", lock, "@lea_role", "lock")
+	press := func() string {
+		t.Helper()
+		tm("source-file", key)
+		return tm("display-message", "-p", "-t", "=lea-s:", "#{pane_id}")
+	}
+	// The user answered in the console, then came back to the deck.
+	tm("select-pane", "-t", lock)
+	tm("select-pane", "-t", deck)
+	if got := press(); got != slot {
+		t.Fatalf("ctrl+space from the deck went to %s, want the agent %s (lock %s)", got, slot, lock)
+	}
+	if got := press(); got != deck {
+		t.Fatalf("ctrl+space from the agent went to %s, want the deck %s", got, deck)
+	}
+	tm("select-pane", "-t", lock)
+	if got := press(); got != deck {
+		t.Fatalf("ctrl+space from the console went to %s, want the deck %s", got, deck)
+	}
+}

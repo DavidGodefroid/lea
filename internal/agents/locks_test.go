@@ -45,11 +45,21 @@ func (f *fakeConsoles) StopConsolesOf(ctx context.Context, owner string) error {
 	return f.stopErr
 }
 
-var sqlSpec = LockSpec{Enabled: true, Image: "locksql:0.8.0", Projects: "/home/u/p"}
+// The deck's projects directory (its container's lea.projects label) maps to the deck's
+// container C; any other directory to another container.
+func nameOf(projects string) string {
+	if projects == "/home/u/p" {
+		return C
+	}
+	return "lea-other"
+}
+
+var sqlSpec = LockSpec{Enabled: true, Image: "locksql:0.8.0", ContainerName: nameOf}
 
 func lockEnv(t *testing.T, spec LockSpec) (env, *fakeConsoles) {
 	t.Helper()
 	e := newEnv(t)
+	e.ctr.projects[C] = "/home/u/p"
 	fc := &fakeConsoles{state: map[string]ConsoleState{}}
 	e.m.cfg.Consoles = fc
 	e.m.cfg.LockSpec = func(tool string) (LockSpec, error) {
@@ -69,7 +79,7 @@ func lockPane(s *fakeSession, id string) *fpane {
 // deck's container; in the lock slot under the agent's slot, with a short history, closing when
 // the console exits, and without the keyboard.
 func TestLockOpenRunsTheTemplateUnderTheSlotWithoutFocus(t *testing.T) {
-	e, _ := lockEnv(t, LockSpec{Enabled: true, Image: "locksql:0.8.0", Projects: "/home/u/p", VaultAddr: "https://vault.example.com:8200"})
+	e, _ := lockEnv(t, LockSpec{Enabled: true, Image: "locksql:0.8.0", VaultAddr: "https://vault.example.com:8200", ContainerName: nameOf})
 	s := e.ensure(t, "/p")
 	slot := s.slot()
 	n := len(s.log)
@@ -101,6 +111,17 @@ func TestLockOpenRunsTheTemplateUnderTheSlotWithoutFocus(t *testing.T) {
 	unset := slices.Index(log, "set-option -u -t ="+C+": history-limit")
 	if hist < 0 || nw < hist || unset < nw {
 		t.Fatalf("history-limit is not set around the pane's creation: %q", log)
+	}
+	// The pane is made running the placeholder, tagged and set to close on exit, and only then
+	// respawned into the console: a console that exits at once leaves no dead pane.
+	if !strings.HasSuffix(log[nw], " -- "+strings.Join(e.m.placeholderCmd(), " ")) {
+		t.Fatalf("the pane is not made on the placeholder: %q", log[nw])
+	}
+	roe := slices.Index(log, "set-option -p -t "+p.id+" remain-on-exit off")
+	resp := slices.Index(log, "respawn-pane -k -t "+p.id+" -- "+strings.Join(want, " "))
+	tag := slices.Index(log, "set-option -p -t "+p.id+" "+optRole+" "+roleLock)
+	if roe < nw || tag < nw || resp < roe || resp < tag {
+		t.Fatalf("the console runs before its pane is tagged and set to close: %q", log)
 	}
 	if !slices.Contains(log, "join-pane -d -v -l "+lockSlotSize+" -s "+p.id+" -t "+slot.id) {
 		t.Fatalf("not joined under the slot: %q", log)
@@ -229,26 +250,34 @@ func TestLockPaneParksWhenTheSlotIsGone(t *testing.T) {
 }
 
 func TestLockOpenRefusals(t *testing.T) {
+	anyIsC := func(string) string { return C } // the projects directory is checked, not its mapping
 	cases := []struct {
 		name, tool, profile string
 		spec                LockSpec
 		want                string
+		projects            string // the deck container's lea.projects ("": /home/u/p)
 	}{
-		{"lockmq has no container console", "lockmq", "", sqlSpec, "no lock console"},
-		{"an unknown tool", "bash", "", sqlSpec, "no lock console"},
-		{"a flag as profile", "locksql", "--auto", sqlSpec, "invalid profile"},
-		{"a path as profile", "locksql", "../x", sqlSpec, "invalid profile"},
-		{"upper case", "locksql", "Prod", sqlSpec, "invalid profile"},
-		{"too long", "locksql", strings.Repeat("a", 33), sqlSpec, "invalid profile"},
-		{"a newline", "locksql", "a\nb", sqlSpec, "invalid profile"},
-		{"off", "locksql", "", LockSpec{Image: "locksql:0.8.0", Projects: "/p"}, "locksql is off"},
-		{"an option as image", "locksql", "", LockSpec{Enabled: true, Image: "--privileged", Projects: "/p"}, "invalid locksql console image"},
-		{"a relative projects dir", "locksql", "", LockSpec{Enabled: true, Image: "locksql:1", Projects: "p"}, "invalid projects directory"},
-		{"a mount spec in the projects dir", "locksql", "", LockSpec{Enabled: true, Image: "locksql:1", Projects: "/p:/etc"}, "invalid projects directory"},
-		{"a vault address with a space", "locksql", "", LockSpec{Enabled: true, Image: "locksql:1", Projects: "/p", VaultAddr: "https://v x"}, "invalid vault address"},
+		{"lockmq has no container console", "lockmq", "", sqlSpec, "no lock console", ""},
+		{"an unknown tool", "bash", "", sqlSpec, "no lock console", ""},
+		{"a flag as profile", "locksql", "--auto", sqlSpec, "invalid profile", ""},
+		{"a path as profile", "locksql", "../x", sqlSpec, "invalid profile", ""},
+		{"upper case", "locksql", "Prod", sqlSpec, "invalid profile", ""},
+		{"too long", "locksql", strings.Repeat("a", 33), sqlSpec, "invalid profile", ""},
+		{"a newline", "locksql", "a\nb", sqlSpec, "invalid profile", ""},
+		{"off", "locksql", "", LockSpec{Image: "locksql:0.8.0", ContainerName: nameOf}, "locksql is off", ""},
+		{"an option as image", "locksql", "", LockSpec{Enabled: true, Image: "--privileged", ContainerName: nameOf}, "invalid locksql console image", ""},
+		{"a relative projects dir", "locksql", "", LockSpec{Enabled: true, Image: "locksql:1", ContainerName: anyIsC}, "invalid projects directory", "p"},
+		{"a mount spec in the projects dir", "locksql", "", LockSpec{Enabled: true, Image: "locksql:1", ContainerName: anyIsC}, "invalid projects directory", "/p:/etc"},
+		{"a vault address with a space", "locksql", "", LockSpec{Enabled: true, Image: "locksql:1", VaultAddr: "https://v x", ContainerName: nameOf}, "invalid vault address", ""},
+		// One daemon, several decks: a deck's console serves its own projects directory only.
+		{"another deck's projects dir", "locksql", "", sqlSpec, "is not the one of " + C, "/home/u/other"},
+		{"no container mapping", "locksql", "", LockSpec{Enabled: true, Image: "locksql:1"}, "is not the one of " + C, ""},
 	}
 	for _, c := range cases {
 		e, fc := lockEnv(t, c.spec)
+		if c.projects != "" {
+			e.ctr.projects[C] = c.projects
+		}
 		s := e.ensure(t, "/p")
 		n := len(s.panes)
 		_, err := e.m.LockOpen(bg, C, c.tool, c.profile)

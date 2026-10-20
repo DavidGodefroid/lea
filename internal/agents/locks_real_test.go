@@ -38,10 +38,12 @@ func TestRealLockConsolePane(t *testing.T) {
 	if err := os.WriteFile(bin, []byte("#!/bin/sh\nexec sleep 600\n"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	// docker run …: records its argv, one per line, then runs as a console would.
+	// docker run …: records its argv, one per line, then runs as a console would; with the file
+	// fail present it exits at once, as a console whose image is missing.
 	docker := filepath.Join(dir, "docker")
 	argv := filepath.Join(dir, "argv")
-	if err := os.WriteFile(docker, []byte("#!/bin/sh\nprintf '%s\\n' \"$@\" > "+argv+"\nexec sleep 600\n"), 0o755); err != nil {
+	fail := filepath.Join(dir, "fail")
+	if err := os.WriteFile(docker, []byte("#!/bin/sh\nprintf '%s\\n' \"$@\" > "+argv+"\n[ -e "+fail+" ] && { echo 'Unable to find image'; exit 125; }\nexec sleep 600\n"), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	const sock = "lea-test-locks"
@@ -61,8 +63,8 @@ func TestRealLockConsolePane(t *testing.T) {
 	t.Cleanup(func() { st.Close() })
 	fc := &fakeConsoles{state: map[string]ConsoleState{}}
 	m := NewManager(Config{Store: st, Term: Tmux(tmux.Server{Socket: sock, Conf: conf}),
-		Containers: &fakeContainers{live: map[string][]string{}}, LeaBin: bin, Docker: docker, UID: 1000, GID: 1000,
-		Now: func() int64 { return 1000 }, Consoles: fc,
+		Containers: &fakeContainers{live: map[string][]string{}, projects: map[string]string{C: "/home/u/p"}}, LeaBin: bin,
+		Docker: docker, UID: 1000, GID: 1000, Now: func() int64 { return 1000 }, Consoles: fc,
 		LockSpec: func(string) (LockSpec, error) { return sqlSpec, nil }})
 	if err := m.Ensure(bg, C, "/"); err != nil {
 		t.Fatal(err)
@@ -143,5 +145,19 @@ func TestRealLockConsolePane(t *testing.T) {
 	waitPanes("after lea lock close", func(p string) bool { return !strings.Contains(p, roleLock) })
 	if len(fc.calls) != 1 || fc.calls[0] != "stop locksql-console-prod" {
 		t.Fatalf("consoles: %q", fc.calls)
+	}
+
+	// A console that exits at once: its pane closes with it, never left dead with its screen.
+	os.Remove(argv)
+	if err := os.WriteFile(fail, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if st, err := m.LockOpen(bg, C, "locksql", "prod"); err != nil || st != "opened" {
+		t.Fatalf("open of a failing console: %q %v", st, err)
+	}
+	waitArgv()
+	waitPanes("after a console that exited at once", func(p string) bool { return !strings.Contains(p, roleLock) })
+	if p := panes(); strings.Contains(p, "|1\n") || strings.HasSuffix(p, "|1") {
+		t.Fatalf("a dead pane is left: %s", p)
 	}
 }

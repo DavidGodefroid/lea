@@ -264,7 +264,8 @@ host keeps its name; `lea locksql` then opens lea's console.
 
 The console can also live **in the deck**: `L` in the deck (or `lea lock open locksql [profile]`)
 opens it in a pane under the agent, with a red `LOCK` border, without taking the keyboard: click
-it to answer. The last console opened takes that slot; another one waits in a window of its own
+it to answer (ctrl+space from the deck always goes to the agent, never to the console). It serves
+the deck's own projects directory. The last console opened takes that slot; another one waits in a window of its own
 and comes back with `lea lock open` again. `lea lock list` lists the deck's consoles,
 `lea lock close locksql [profile]` stops one, and `lea stop` stops them all. Only you open them:
 no agent tool reaches a console, lea never types into it nor reads it, ctrl+v pastes nothing into

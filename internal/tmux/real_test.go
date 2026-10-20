@@ -911,3 +911,33 @@ func TestRealCtrlVPastesNothingIntoALockPane(t *testing.T) {
 		t.Fatalf("the lock pane got a paste: %q", b)
 	}
 }
+
+// ctrl+space typed on the user's terminal, from the deck, goes to the agent and never into the
+// lock console under it, even when the console had the keyboard last.
+func TestRealCtrlSpaceKeySkipsTheLockPane(t *testing.T) {
+	s := realServer(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	c, err := s.Open(ctx, "lea-cs", []string{"sleep", "600"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c.Close()
+	client := attachTerminal(t, ctx, s, c, "lea-cs", filepath.Join(os.Getenv("TMUX_TMPDIR"), "terminal"))
+	tm := func(args ...string) string {
+		t.Helper()
+		out, err := exec.Command("tmux", append([]string{"-L", "lea-test"}, args...)...).CombinedOutput()
+		if err != nil {
+			t.Fatalf("%v: %v: %s", args, err, out)
+		}
+		return strings.TrimSpace(string(out))
+	}
+	deck := tm("display-message", "-p", "-t", "=lea-cs:", "#{pane_id}")
+	slot := tm("split-window", "-d", "-h", "-t", deck, "-P", "-F", "#{pane_id}", "sleep", "600")
+	lock := tm("split-window", "-d", "-v", "-t", slot, "-P", "-F", "#{pane_id}", "sleep", "600")
+	tm("set-option", "-p", "-t", lock, "@lea_role", "lock")
+	tm("select-pane", "-t", lock)
+	tm("select-pane", "-t", deck)
+	tm("send-keys", "-K", "-c", client, "C-Space")
+	waitFor(t, "the keyboard on the agent", func() bool { return tm("display-message", "-p", "-t", "=lea-cs:", "#{pane_id}") == slot })
+}

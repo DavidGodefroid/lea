@@ -46,8 +46,13 @@ var LockTools = []string{"locksql"}
 type LockSpec struct {
 	Enabled   bool
 	Image     string // the console image
-	Projects  string // the projects directory: the console's --project
 	VaultAddr string // VAULT_ADDR for the console, "" for none
+	// ContainerName is the lea container of a projects directory (launcher.Config.ContainerName
+	// of its physical path): a console opens on a deck's own projects directory only.
+	ContainerName func(projects string) string
+	// Projects is the console's --project: the deck's projects directory, which LockOpen takes
+	// from the deck's container (its lea.projects label), never from the daemon's environment.
+	Projects string
 }
 
 // ConsoleState is what the container runtime knows of a console container.
@@ -169,13 +174,21 @@ func (m *Manager) LockOpen(ctx context.Context, container, tool, profile string)
 	if err != nil {
 		return "", err
 	}
-	if err := checkSpec(tool, spec); err != nil {
-		return "", err
-	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	s, err := m.deckSession(ctx, container)
 	if err != nil {
+		return "", err
+	}
+	// One daemon serves every deck: the console mounts and serves the deck's own projects
+	// directory, and only one that maps back to this deck's container.
+	if spec.Projects, err = m.cfg.Containers.Projects(ctx, container); err != nil {
+		return "", err
+	}
+	if spec.ContainerName == nil || spec.ContainerName(spec.Projects) != container {
+		return "", fmt.Errorf("the projects directory %s is not the one of %s: no console opens for it", spec.Projects, container)
+	}
+	if err := checkSpec(tool, spec); err != nil {
 		return "", err
 	}
 	ps, err := listPanes(ctx, s, container)
@@ -184,7 +197,7 @@ func (m *Manager) LockOpen(ctx context.Context, container, tool, profile string)
 	}
 	status := "already-open"
 	p, ok := byLock(ps, id)
-	if ok && p.Dead { // remain-on-exit was not off yet when it exited
+	if ok && p.Dead { // defensive: a lock pane closes when its process exits
 		if _, err := s.Run(ctx, "kill-pane", "-t", p.ID); err != nil {
 			return "", err
 		}
@@ -228,15 +241,19 @@ func (m *Manager) LockOpen(ctx context.Context, container, tool, profile string)
 	return status, nil
 }
 
-// newLockPane starts a console's pane in its parking window: tagged, a short history (a session
-// option while the pane is made: tmux sizes a pane's history when it makes it), and closing when
-// the console exits (remain-on-exit off), its history with it.
+// newLockPane starts a console's pane in its parking window: a short history (a session option
+// while the pane is made: tmux sizes a pane's history when it makes it; lea's conf sets
+// history-limit globally only, so unsetting the session's leaves it as it was), tagged and
+// closing when its process exits (remain-on-exit off) before the console runs in it: the pane is
+// made running the placeholder, then respawned into the console. A console that exits at once
+// (a missing image, Vault down) leaves no dead pane, nor its screen.
 func (m *Manager) newLockPane(ctx context.Context, s Session, container, id string, argv []string) (pane, error) {
 	target := "=" + container + ":"
 	if _, err := s.Run(ctx, "set-option", "-t", target, "history-limit", lockHistory); err != nil {
 		return pane{}, err
 	}
-	out, err := s.Run(ctx, append([]string{"new-window", "-d", "-t", target, "-n", lockWindow(id), "-P", "-F", "#{pane_id}", "--"}, argv...)...)
+	out, err := s.Run(ctx, append([]string{"new-window", "-d", "-t", target, "-n", lockWindow(id), "-P", "-F", "#{pane_id}", "--"},
+		m.placeholderCmd()...)...)
 	if _, uerr := s.Run(ctx, "set-option", "-u", "-t", target, "history-limit"); err == nil {
 		err = uerr
 	}
@@ -249,6 +266,9 @@ func (m *Manager) newLockPane(ctx context.Context, s Session, container, id stri
 				break
 			}
 		}
+	}
+	if err == nil {
+		_, err = s.Run(ctx, append([]string{"respawn-pane", "-k", "-t", out[0], "--"}, argv...)...)
 	}
 	if err != nil {
 		if len(out) == 1 {
