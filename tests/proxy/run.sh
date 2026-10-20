@@ -26,7 +26,10 @@ check "loopback name refused"             "000/403" -- http://loop.test/
 check "rebinding with a mixed public/private answer refused" "403/000" -- -p http://mixed.test:443/
 check "IPv6-only private answer refused" "403/000" -- -p http://v6.test:443/
 check "private literal refused"           "000/403" -- http://10.99.0.81/
-check "internal host allowed on 443"      "200/200" -- -p http://gitlab.com:443/
+check "internal name allowed on 443 with its SNI" "200/200" -- -k https://issues.test/
+check "internal name: SNI of another vhost on its ingress refused" "200/000" -- -k --connect-to admin.test:443:issues.test:443 https://admin.test/
+check "internal name: TLS without SNI refused" "200/000" -- -k --connect-to 10.99.0.83:443:issues.test:443 https://10.99.0.83/
+check "internal name: plain bytes in the tunnel refused" "200/000" -- -p http://gitlab.com:443/
 check "internal host refused on 22"       "403/000" -- -p http://gitlab.com:22/
 check "internal literal allowed on 443"   "200/200" -- -p http://10.99.0.82:443/
 check "internal literal refused on 80"    "000/403" -- http://10.99.0.82/
