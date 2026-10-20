@@ -660,7 +660,7 @@ func TestRealTheSlotSaysWhetherItHasTheKeyboard(t *testing.T) {
 	}
 	// Scrolled back, the bar says the keys go to the history, not "typing here".
 	tm("copy-mode", "-t", "=lea-k:.1")
-	if b := border("=lea-k:.1"); !strings.Contains(b, "fix-login · history: type or q to go back") || strings.Contains(b, "typing here") {
+	if b := border("=lea-k:.1"); !strings.Contains(b, "fix-login · history 0/0: type or q to go back") || strings.Contains(b, "typing here") {
 		t.Errorf("the focused agent's border in the history: %q", b)
 	}
 	tm("send-keys", "-X", "-t", "=lea-k:.1", "cancel")
@@ -793,4 +793,70 @@ func TestRealTypingInTheHistoryLeavesIt(t *testing.T) {
 	waitFor(t, "ctrl+space to move the keyboard", func() bool {
 		return tm("display-message", "-p", "-t", pane, "#{pane_id}") != before
 	})
+}
+
+// Scrolled back into the history, the slot's bar says where the view is in the conversation,
+// counting down from its last line: the line at the top of the view out of the history's lines
+// (tmux's own indicator counted the lines scrolled, 5/281 just under the bottom, and is hidden).
+func TestRealTheHistoryPositionCountsDownFromTheBottom(t *testing.T) {
+	s := realServer(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	c, err := s.Open(ctx, "lea-p", []string{"sh", "-c", "seq 1 300; exec sleep 600"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c.Close()
+	log := filepath.Join(os.Getenv("TMUX_TMPDIR"), "terminal")
+	attachTerminal(t, ctx, s, c, "lea-p", log)
+	tm := func(args ...string) string {
+		t.Helper()
+		out, err := exec.Command("tmux", append([]string{"-u", "-L", "lea-test"}, args...)...).CombinedOutput()
+		if err != nil {
+			t.Fatalf("%v: %v: %s", args, err, out)
+		}
+		return strings.TrimSpace(string(out))
+	}
+	pane := "=lea-p:"
+	tm("set-option", "-p", "-t", pane, "@lea_agent", "fix-login")
+	waitFor(t, "the pane's history", func() bool {
+		h, _ := strconv.Atoi(tm("display-message", "-p", "-t", pane, "#{history_size}"))
+		return h > 200
+	})
+	// Into the history as the wheel goes there.
+	var enter string
+	for _, l := range strings.Split(Conf(), "\n") {
+		if strings.HasPrefix(l, "bind-key -n WheelUpPane ") {
+			if m := regexp.MustCompile(`'(copy-mode[^']*)'`).FindStringSubmatch(l); m != nil {
+				enter = m[1]
+			}
+		}
+	}
+	if enter == "" {
+		t.Fatal("WheelUpPane enters no copy mode")
+	}
+	tm(append(strings.Fields(enter), "-t", pane)...)
+	tm("send-keys", "-X", "-t", pane, "-N", "5", "scroll-up")
+	hs, _ := strconv.Atoi(tm("display-message", "-p", "-t", pane, "#{history_size}"))
+	if sp := tm("display-message", "-p", "-t", pane, "#{scroll_position}"); sp != "5" {
+		t.Fatalf("scroll_position = %s, want 5", sp)
+	}
+	want := fmt.Sprintf("history %d/%d", hs-5, hs)
+	if b := tm("display-message", "-p", "-t", pane, "#{T:pane-border-format}"); !strings.Contains(b, want) {
+		t.Errorf("the bar in the history: %q, want %q", b, want)
+	}
+	var drawn string
+	waitFor(t, "the position on the terminal", func() bool {
+		b, _ := os.ReadFile(log)
+		drawn = string(b)
+		return strings.Contains(drawn, want)
+	})
+	if old := fmt.Sprintf("[5/%d]", hs); strings.Contains(drawn, old) {
+		t.Errorf("tmux's own indicator %s is still drawn", old)
+	}
+	// Back at the bottom, then out of the history: the bar no longer counts.
+	tm("send-keys", "-X", "-t", pane, "cancel")
+	if b := tm("display-message", "-p", "-t", pane, "#{T:pane-border-format}"); strings.Contains(b, "history") {
+		t.Errorf("the bar out of the history: %q", b)
+	}
 }
