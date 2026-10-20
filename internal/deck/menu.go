@@ -25,7 +25,7 @@ const (
 // menuItems are the actions of a row, in the order the menu shows them.
 func menuItems(a Agent, inFolder bool) []menuItem {
 	if isShell(a) {
-		return []menuItem{{"Show", "enter", ""}, {"Close", "x", ""}}
+		return []menuItem{{"Show", "enter", ""}, {"Close", "x", ""}, {"Settings", ",", ""}}
 	}
 	var items []menuItem
 	if ap := a.Approval; ap != nil {
@@ -46,7 +46,7 @@ func menuItems(a Agent, inFolder bool) []menuItem {
 	case pausable(a):
 		items = append(items, menuItem{"Pause", "p", ""})
 	}
-	return append(items, menuItem{"Stop", "x", ""})
+	return append(items, menuItem{"Stop", "x", ""}, menuItem{"Settings", ",", ""})
 }
 
 // deckMenu is menuFor while the deck's own menu is open. No agent key is empty or holds a NUL.
@@ -184,7 +184,7 @@ func (m Model) menuKey(k string) (tea.Model, tea.Cmd) {
 
 // mouse handles a mouse event over the deck.
 func (m Model) mouse(e tea.MouseMsg) (tea.Model, tea.Cmd) {
-	if m.help || m.editFor != "" {
+	if m.help || m.editFor != "" || m.setOpen {
 		return m, nil
 	}
 	if m.confirm != "" {

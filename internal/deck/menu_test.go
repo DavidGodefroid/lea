@@ -102,7 +102,7 @@ func TestAClickElsewhereClosesTheMenu(t *testing.T) {
 	}
 }
 
-// A row waiting for an approval offers it first; a shell offers show and close only.
+// A row waiting for an approval offers it first; a shell offers show, close and the settings.
 func TestMenuItemsFollowTheRow(t *testing.T) {
 	got := func(a Agent) string {
 		var l []string
@@ -117,7 +117,7 @@ func TestMenuItemsFollowTheRow(t *testing.T) {
 	if g := got(carded("b", 7, false)); strings.Contains(g, "Always") {
 		t.Fatalf("no always rule offered: %s", g)
 	}
-	if g := got(shell("sh-1")); g != "Show,Close" {
+	if g := got(shell("sh-1")); g != "Show,Close,Settings" {
 		t.Fatalf("shell: %s", g)
 	}
 }
