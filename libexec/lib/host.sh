@@ -1,5 +1,5 @@
 # shellcheck shell=sh
-# Host helpers the remaining shell (init, update, doctor) still calls, kept from the retired shell
+# Host helpers the remaining shell (init, update, rollback, doctor) still calls, kept from the retired shell
 # launcher unchanged: the projects-dir guards, lea update, the container check, tmux resolution
 # (the doctor reports it) and the core binary build.
 
@@ -106,6 +106,7 @@ lea__update_release() {
   _ur_new=$(lea__link_root "$_ur_link") || lea_die "the installer left no $_ur_link"
   "$_ur_new/libexec/lea-sh" refresh-images ||
     lea_die "lea $_ur_v is installed but its images could not be refreshed: rerun lea update"
+  if [ "$_ur_new" != "$LEA_ROOT" ]; then lea__prune_installs "$_ur_new" "$LEA_ROOT"; fi
   lea_log "updated; running lea containers keep their image until they stop (lea stop --all)"
 }
 
@@ -163,6 +164,10 @@ lea__update_background() {
     return 0
   fi
   _ub_cur=v$1.$2.$3
+  if [ "$_ub_v" = "${LEA_AUTOUPDATE_SKIP:-}" ]; then
+    lea_log "background update: lea $_ub_v is skipped (LEA_AUTOUPDATE_SKIP, set by lea rollback): lea update installs it"
+    return 0
+  fi
   if [ "$4" -ne "$1" ]; then
     lea__notice "$_ub_v major"
     lea_log "background update: lea $_ub_v is a new major version: run lea update"
@@ -218,18 +223,78 @@ lea__update_background() {
     _ub_fail "its images could not be refreshed"
     return 1
   fi
-  # The links move by rename: the launcher link is never missing.
-  ln -sfn "$_ub_dir/bin/lea" "$_ub_bin/.lea.update.$$"
-  mv -f "$_ub_bin/.lea.update.$$" "$_ub_bin/lea"
-  case $(readlink "$_ub_bin/locksql" 2>/dev/null) in
-    "$_ub_inst/"*)
-      if [ -e "$_ub_dir/bin/locksql" ]; then
-        ln -sfn "$_ub_dir/bin/locksql" "$_ub_bin/.locksql.update.$$"
-        mv -f "$_ub_bin/.locksql.update.$$" "$_ub_bin/locksql"
+  lea__relink "$_ub_dir"
+  lea__notice "$_ub_v installed"
+  lea__prune_installs "$_ub_dir" "$LEA_ROOT"
+  lea_log "background update: lea $_ub_v installed, active at the next lea; running lea containers keep their image until they stop (lea stop --all)"
+}
+
+# lea__relink DIR: points the launcher link (and the locksql link, when it leads into the same
+# installation directory) at the installation DIR. The links move by rename: they are never missing.
+lea__relink() {
+  _rl_bin=${LEA_BIN_DIR:-$HOME/.local/bin}
+  ln -sfn "$1/bin/lea" "$_rl_bin/.lea.update.$$"
+  mv -f "$_rl_bin/.lea.update.$$" "$_rl_bin/lea"
+  case $(readlink "$_rl_bin/locksql" 2>/dev/null) in
+    "$(dirname "$1")/"*)
+      if [ -e "$1/bin/locksql" ]; then
+        ln -sfn "$1/bin/locksql" "$_rl_bin/.locksql.update.$$"
+        mv -f "$_rl_bin/.locksql.update.$$" "$_rl_bin/locksql"
       fi ;;
   esac
-  lea__notice "$_ub_v installed"
-  lea_log "background update: lea $_ub_v installed, active at the next lea; running lea containers keep their image until they stop (lea stop --all)"
+}
+
+# lea__older A B: release A (vX.Y.Z) is older than release B.
+lea__older() {
+  # shellcheck disable=SC2046
+  set -- $(lea__semver "$1") $(lea__semver "$2")
+  [ $# -eq 6 ] || return 1
+  [ "$1" -lt "$4" ] || { [ "$1" -eq "$4" ] && { [ "$2" -lt "$5" ] || { [ "$2" -eq "$5" ] && [ "$3" -lt "$6" ]; }; }; }
+}
+
+# lea__prune_installs NEW PREVIOUS: after an update from the installation PREVIOUS to NEW, removes
+# every other release (a vX.Y.Z directory) beside them, except the one the running daemon uses
+# (<host>/daemon.version). Anything else in that directory is left alone; so is an installation
+# whose directory is not a release's.
+lea__prune_installs() {
+  _pi_dir=$(dirname "$1")
+  [ "$(dirname "$2")" = "$_pi_dir" ] || return 0
+  if ! lea__semver "${1##*/}" >/dev/null || ! lea__semver "${2##*/}" >/dev/null; then return 0; fi
+  _pi_used=$(cat "$(lea_host_dir)/daemon.version" 2>/dev/null) || _pi_used=
+  for _pi_d in "$_pi_dir"/v*; do
+    _pi_n=${_pi_d##*/}
+    if [ ! -d "$_pi_d" ] || [ -L "$_pi_d" ] || ! lea__semver "$_pi_n" >/dev/null; then continue; fi
+    case $_pi_n in "${1##*/}"|"${2##*/}"|"$_pi_used") continue ;; esac
+    if rm -rf "${_pi_d:?}"; then lea_log "removed lea $_pi_n ($_pi_d): only the current and the previous versions are kept"
+    else lea_log "warning: could not remove $_pi_d"; fi
+  done
+}
+
+# lea_rollback: lea rollback. Links the newest release older than this one, installed beside it,
+# and sets LEA_AUTOUPDATE_SKIP to this version in the user config so the background update does
+# not reinstall it. This version stays installed (a running daemon may use it); the next update
+# removes it.
+lea_rollback() {
+  [ ! -e "$LEA_ROOT/.git" ] || lea_die "lea rollback is for a release install: in a git checkout, check out the version you want"
+  _rb_cur=${LEA_ROOT##*/}
+  lea__semver "$_rb_cur" >/dev/null || lea_die "lea rollback is for a release install: $LEA_ROOT is not one"
+  _rb_bin=${LEA_BIN_DIR:-$HOME/.local/bin}
+  if [ "$(lea__link_root "$_rb_bin/lea" 2>/dev/null)" != "$LEA_ROOT" ]; then
+    lea_die "$_rb_bin/lea does not lead to $LEA_ROOT: nothing rolled back"
+  fi
+  _rb_inst=$(dirname "$LEA_ROOT")
+  _rb_prev=
+  for _rb_d in "$_rb_inst"/v*; do
+    _rb_n=${_rb_d##*/}
+    if [ ! -d "$_rb_d" ] || [ ! -e "$_rb_d/bin/lea" ] || ! lea__older "$_rb_n" "$_rb_cur"; then continue; fi
+    if [ -z "$_rb_prev" ] || lea__older "$_rb_prev" "$_rb_n"; then _rb_prev=$_rb_n; fi
+  done
+  [ -n "$_rb_prev" ] || lea_die "no previous version of lea in $_rb_inst to roll back to"
+  lea_user_config_set LEA_AUTOUPDATE_SKIP "$_rb_cur" ||
+    lea_die "cannot write LEA_AUTOUPDATE_SKIP to $(lea_user_config_path): nothing rolled back"
+  lea__relink "$_rb_inst/$_rb_prev"
+  rm -f "$(lea_host_dir)/update-notice"
+  lea_log "rolled back to lea $_rb_prev, active at the next lea; the background update skips lea $_rb_cur (LEA_AUTOUPDATE_SKIP in $(lea_user_config_path)); running lea containers keep their image until they stop (lea stop --all)"
 }
 
 lea_container_running() { [ "$(docker inspect -f '{{.State.Running}}' "$1" 2>/dev/null)" = true ]; }

@@ -297,6 +297,7 @@ lea shell [-- cmd...]        # a shell, or one command, in the same lea
 lea stop [--all] [--forget] # stop this lea (--all: every lea); the next lea resumes its agents
                              # in their Claude conversations (--forget: drop them for good)
 lea update                   # the latest release, and its images
+lea rollback                 # back to the previous version; the background update skips this one
 lea doctor                   # check the setup
 lea init                     # set up again (idempotent)
 LEA_PROJECTS_DIR=~/other lea # another projects directory, for this call only
@@ -309,6 +310,12 @@ release is only announced in the deck, and so is a newer minor release while lea
 its patch releases install themselves). Running containers keep their image until they stop.
 `LEA_AUTOUPDATE=0` in `~/.config/lea/lea.conf` turns it off; the log is
 `~/.local/share/lea/host/update.log`.
+
+After an update only the current and the previous versions stay in
+`~/.local/share/lea-install` (never the one a running daemon still uses). `lea rollback` links the
+previous version again and sets `LEA_AUTOUPDATE_SKIP=<this version>` in `~/.config/lea/lea.conf`,
+so the background update does not reinstall it (`lea update` still does); it fails when there is
+no previous version.
 
 Each projects directory gets its own container, internal network, Claude history and login. The
 projects directory cannot be `/`, your home directory or one of its parents, nor overlap

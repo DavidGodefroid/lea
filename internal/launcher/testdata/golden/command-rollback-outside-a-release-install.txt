@@ -1,0 +1,6 @@
+status 1
+-- calls
+
+-- lea
+lea: error: lea rollback is for a release install: $R is not one
+-- stdout
