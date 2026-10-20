@@ -108,4 +108,6 @@ type=bind,src=$W/home/.claude/CLAUDE.md,dst=$W/home/.claude/CLAUDE.md,readonly
 type=bind,src=$W/home/.claude/projects/$SLUG,dst=$W/home/.claude/projects/$SLUG
 --mount
 type=bind,src=$W/data/lea/state/claude.json,dst=$W/home/.claude.json
+--mount
+type=bind,src=$W/data/lea/state/codex/$ID,dst=$W/home/.codex
 lea:dev

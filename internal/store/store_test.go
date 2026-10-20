@@ -840,7 +840,16 @@ func TestUpdateTaskCreatesReportsChangesAndStatuses(t *testing.T) {
 	if ch, _ := s.UpdateTask(a.Key, "blocked", "tests", "review", 4); !ch {
 		t.Fatal("a new report changed nothing")
 	}
-	if st, _ := s.TaskStatuses("lea-a"); st[a.Key] != "blocked" {
+	if st, _ := s.TaskStatuses("lea-a"); st[a.Key] != (TaskState{Status: "blocked", Next: true, Blocked: true}) {
+		t.Fatalf("statuses=%v", st)
+	}
+	// A task with only a next step still says the agent waits; an empty one says nothing.
+	b, _ := s.RegisterAgent("lea-a", "dev-2", "claude", "/p", 1)
+	s.UpdateTask(b.Key, "", "CI", "", 5)
+	c, _ := s.RegisterAgent("lea-a", "dev-3", "claude", "/p", 1)
+	s.UpdateTask(c.Key, "done", "", "", 5)
+	st, _ := s.TaskStatuses("lea-a")
+	if st[b.Key] != (TaskState{Next: true}) || st[c.Key] != (TaskState{Status: "done"}) {
 		t.Fatalf("statuses=%v", st)
 	}
 	if _, err := s.UpdateTask("lea-a/nobody", "x", "", "", 5); !errors.Is(err, ErrNotFound) {
@@ -1071,16 +1080,38 @@ func TestPausedIsSetAndClearedWhenTheProcessGoes(t *testing.T) {
 	}
 }
 
+// An agent's model and a spawn request's model are kept (the columns an older lea.db lacks are
+// added by migrate).
+func TestModelIsStored(t *testing.T) {
+	s := open(t)
+	a, err := s.Register(NewAgent{Container: "lea-a", Name: "cx", Profile: "codex", Model: "gpt-5.1-codex", Workdir: "/p", Role: "dev"}, Caps{}, 1)
+	if err != nil || a.Model != "gpt-5.1-codex" {
+		t.Fatalf("%+v %v", a, err)
+	}
+	if got, err := s.AgentByKey(a.Key); err != nil || got.Model != "gpt-5.1-codex" || got.Profile != "codex" {
+		t.Fatalf("%+v %v", got, err)
+	}
+	r, err := s.AddSpawnRequest(SpawnRequest{Container: "lea-a", Requester: "lea-a/kid", Lead: "user", Role: "dev", Profile: "lan",
+		Model: "qwen3", Brief: "b"}, func(int64) string { return "r" }, 2, 3600, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, err := s.SpawnRequestByID(r.ID); err != nil || got.Model != "qwen3" || got.Profile != "lan" {
+		t.Fatalf("%+v %v", got, err)
+	}
+}
+
 func TestReplyFromTakesTheAddresseesFirstReply(t *testing.T) {
 	s := open(t)
 	q, _ := s.Send(Message{From: "c/a", To: "c/b", Kind: "question", Body: "q", At: 1})
-	if _, err := s.ReplyFrom(q.ID, "c/b"); !errors.Is(err, ErrNotFound) {
+	if _, err := s.ReplyFrom(q.ID, "c/b", "c/a"); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("err=%v", err)
 	}
 	s.Send(Message{From: "c/x", To: "c/a", Kind: "note", Body: "not b", ReplyTo: q.ID, At: 2})
+	s.Send(Message{From: "c/b", To: "c/x", Kind: "result", Body: "not to a", ReplyTo: q.ID, At: 2})
 	r1, _ := s.Send(Message{From: "c/b", To: "c/a", Kind: "result", Body: "one", ReplyTo: q.ID, At: 3})
 	s.Send(Message{From: "c/b", To: "c/a", Kind: "result", Body: "two", ReplyTo: q.ID, At: 4})
-	if m, err := s.ReplyFrom(q.ID, "c/b"); err != nil || m.ID != r1.ID || m.Body != "one" {
+	if m, err := s.ReplyFrom(q.ID, "c/b", "c/a"); err != nil || m.ID != r1.ID || m.Body != "one" {
 		t.Fatalf("m=%+v err=%v", m, err)
 	}
 }

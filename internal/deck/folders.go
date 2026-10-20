@@ -297,7 +297,7 @@ func (m Model) folderState(fi int) (string, int64) {
 			continue
 		case s == "blocked":
 			return "blocked", a.Updated
-		case s == "working":
+		case busy(a): // working or waiting (#72)
 			state = "working"
 		case s == "idle" || s == "done":
 			if state == "" {

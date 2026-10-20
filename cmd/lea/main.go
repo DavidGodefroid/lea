@@ -22,7 +22,7 @@ var version = "dev"
 const statusBudget = 500 * time.Millisecond
 
 const usage = `usage: lea <command>
-  (no command), init, shell, stop, update, doctor, kube refresh, new
+  (no command), init, shell, stop, update, doctor, kube refresh, new, config
                              the launcher (see lea --help)
   launcher-check             print "go launcher"
   version                    print the version
@@ -87,6 +87,10 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	case "lock":
 		return runLock(args[1:], stdout, stderr)
 	case "hook":
+		if len(args) == 4 && args[1] == "codex" && args[2] == "notify" {
+			hook.CodexNotify(context.Background(), args[3], os.Getenv)
+			return 0
+		}
 		if len(args) != 3 || args[1] != "claude" {
 			return 0 // unknown vendor or arity: never fail an agent's hook
 		}

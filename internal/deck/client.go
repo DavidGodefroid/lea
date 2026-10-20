@@ -25,10 +25,22 @@ func (c Client) Watch(ctx context.Context, container string, since int64) (Snaps
 	return s, err
 }
 
-func (c Client) New(ctx context.Context, container string) (Agent, error) {
+func (c Client) New(ctx context.Context, container, provider string) (Agent, error) {
 	var a Agent
-	err := c.call(ctx, "agent_new", map[string]any{"container": container, "profile": "claude", "focus": true}, &a)
+	err := c.call(ctx, "agent_new", map[string]any{"container": container, "profile": provider, "focus": true}, &a)
 	return a, err
+}
+
+func (c Client) Providers(ctx context.Context) ([]string, error) {
+	var ps []struct{ Name string }
+	if err := c.call(ctx, "providers_list", nil, &ps); err != nil {
+		return nil, err
+	}
+	names := make([]string, 0, len(ps))
+	for _, p := range ps {
+		names = append(names, p.Name)
+	}
+	return names, nil
 }
 
 func (c Client) Show(ctx context.Context, key string, focus bool) error {

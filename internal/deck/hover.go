@@ -60,7 +60,7 @@ func hoverText(a Agent) string {
 	if a.Profile != "" {
 		parts = append(parts, a.Profile)
 	}
-	state := a.State
+	state := shownState(a)
 	if a.Paused {
 		state = "paused"
 	}

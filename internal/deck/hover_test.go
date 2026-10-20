@@ -32,6 +32,10 @@ func TestHoverShowsTheFullName(t *testing.T) {
 	if got := hoverText(long); got != "refactor-billing-export · dev-7 · lead · claude · working" {
 		t.Fatalf("hover text %q", got)
 	}
+	// The state is the one the mark shows (#72).
+	if got := hoverText(withTask(ag("w", "idle", 1), true, false)); !strings.HasSuffix(got, " · waiting") {
+		t.Fatalf("waiting hover text %q", got)
+	}
 	// Elsewhere (below the rows, the frame) the keys come back.
 	m, _ = step(t, m, hover(9))
 	if m.hoverFor != "" || !strings.Contains(bottomLine(m), "? keys") {

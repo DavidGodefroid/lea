@@ -155,18 +155,27 @@ func (s *Store) UpdateTask(agent, status, next, blocked string, now int64) (bool
 	return n > 0 || open == 0, nil
 }
 
-// TaskStatuses maps the agents of a container to the status text of their open task.
-func (s *Store) TaskStatuses(container string) (map[string]string, error) {
-	rows, err := s.db.Query(`SELECT a.key, t.status_text FROM agents a JOIN tasks t ON t.id=a.task_id
-		WHERE a.container=? AND t.ended=0 AND t.status_text<>''`, container)
+// TaskState is what a row shows of its agent's open task: its status text, and whether something
+// is still to happen (next) or blocks it (blocked_on). The deck shows the flags, never their text.
+type TaskState struct {
+	Status        string
+	Next, Blocked bool
+}
+
+// TaskStatuses maps the agents of a container to the state of their open task.
+func (s *Store) TaskStatuses(container string) (map[string]TaskState, error) {
+	rows, err := s.db.Query(`SELECT a.key, t.status_text, trim(t.next)<>'', trim(t.blocked_on)<>'' FROM agents a
+		JOIN tasks t ON t.id=a.task_id
+		WHERE a.container=? AND t.ended=0 AND (t.status_text<>'' OR trim(t.next)<>'' OR trim(t.blocked_on)<>'')`, container)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	out := map[string]string{}
+	out := map[string]TaskState{}
 	for rows.Next() {
-		var k, v string
-		if err := rows.Scan(&k, &v); err != nil {
+		var k string
+		var v TaskState
+		if err := rows.Scan(&k, &v.Status, &v.Next, &v.Blocked); err != nil {
 			return nil, err
 		}
 		out[k] = v

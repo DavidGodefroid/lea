@@ -140,8 +140,15 @@ func newWorld(t *testing.T, root string) *world {
 		"LEA_CLIPBOARD": "0", "LEA_LOCK_TIMEOUT": "2", "LC_ALL": "C",
 		"PATH": repoRoot(t) + "/tests/fakes:" + dir + "/bin:/usr/local/bin:/usr/bin:/bin",
 	}
+	// What a daemon started with the default provider settings records.
+	write(w.data+"/lea/host/daemon.providers", DaemonProvidersStamp(stampMap{"LEA_PROVIDER": "claude",
+		"LEA_PROVIDERS": dir + "/config/lea/providers", "LEA_INTERNAL_HOSTS": root + "/config/internal-hosts"}.get), 0o600)
 	return w
 }
+
+type stampMap map[string]string
+
+func (m stampMap) get(k string) string { return m[k] }
 
 func (w *world) getenv(k string) string { return w.env[k] }
 

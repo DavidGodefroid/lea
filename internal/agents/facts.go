@@ -22,7 +22,7 @@ type facts struct {
 	unread, forUser map[string]int
 	usage           map[string]store.Usage
 	approval        map[string]*Approval
-	status          map[string]string
+	status          map[string]store.TaskState
 	subagents       map[string]int
 }
 
@@ -63,7 +63,8 @@ func (f facts) row(r Row) Row {
 		r.CtxPct, r.CostUSD = u.CtxPct, u.CostUSD
 	}
 	r.Approval = f.approval[r.Key]
-	r.Status = f.status[r.Key]
+	ts := f.status[r.Key]
+	r.Status, r.Waiting, r.BlockedOn = ts.Status, ts.Next, ts.Blocked
 	r.Subagents = f.subagents[r.Key]
 	return r
 }

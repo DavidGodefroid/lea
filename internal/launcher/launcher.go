@@ -406,6 +406,8 @@ func (l *Launcher) dispatch(args []string) error {
 		return l.sh("rollback", rest...)
 	case "doctor":
 		return l.sh("doctor")
+	case "config":
+		return l.config(rest)
 	default:
 		if len(args) > 0 {
 			if err := l.oldForm(args[0]); err != nil {

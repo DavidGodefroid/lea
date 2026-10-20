@@ -6,6 +6,7 @@ package deck
 
 import (
 	"context"
+	"fmt"
 	"sort"
 	"strings"
 	"time"
@@ -30,6 +31,7 @@ type Agent struct {
 	Kind     string    `json:"kind,omitempty"`
 	Label    string    `json:"label,omitempty"`
 	Profile  string    `json:"profile"`
+	Model    string    `json:"model,omitempty"`
 	State    string    `json:"state"`
 	Workdir  string    `json:"workdir"`
 	Updated  int64     `json:"updated"`
@@ -48,14 +50,33 @@ type Agent struct {
 	Paused bool `json:"paused,omitempty"`
 	// Subagents counts the subagents the agent still runs (agents.Row.Subagents).
 	Subagents int `json:"subagents,omitempty"`
+	// Waiting and BlockedOn: the agent's open task has a next step, or something blocking it
+	// (agents.Row). Display only.
+	Waiting   bool `json:"waiting,omitempty"`
+	BlockedOn bool `json:"blocked_on,omitempty"`
 }
 
-// shownState is the state a row shows: an idle agent whose subagents still run is working.
+// shownState is the state a row shows (issue #72): green only when nothing is pending. A live
+// agent whose task names a blocker is blocked (it needs a human); an idle one whose subagents
+// still run is working; an idle one whose task has a next step is waiting. Ended agents keep
+// their state.
 func shownState(a Agent) string {
-	if a.State == "idle" && a.Subagents > 0 {
+	live := a.State == "working" || a.State == "idle"
+	switch {
+	case live && a.BlockedOn:
+		return "blocked"
+	case a.State == "idle" && a.Subagents > 0:
 		return "working"
+	case a.State == "idle" && a.Waiting:
+		return "waiting"
 	}
 	return a.State
+}
+
+// busy says the shown state spins: the agent works or waits.
+func busy(a Agent) bool {
+	s := shownState(a)
+	return s == "working" || s == "waiting"
 }
 
 // Approval is the permission request an agent waits on (agents.Approval).
@@ -77,7 +98,10 @@ type Snapshot struct {
 // API is what the deck asks of the daemon.
 type API interface {
 	Watch(ctx context.Context, container string, since int64) (Snapshot, error)
-	New(ctx context.Context, container string) (Agent, error)
+	// New starts an agent on provider ("" for the user's default one); Providers lists the
+	// providers it may name.
+	New(ctx context.Context, container, provider string) (Agent, error)
+	Providers(ctx context.Context) ([]string, error)
 	Show(ctx context.Context, key string, focus bool) error
 	Stop(ctx context.Context, key string) error
 	// RemoveEnded removes an agent only while it is ended (x on a done row: no y).
@@ -152,19 +176,21 @@ type Model struct {
 	ascii     bool
 	now       func() time.Time
 
-	agents        []Agent // in launch order, shells last
-	version       int64
-	shown         string
-	selected      string
-	seen          map[string]int64 // key → Updated of a done agent this deck has shown
-	confirm       string           // key the stop modal asks about (confirm.go)
-	confirmYes    bool             // the modal's focus is on Confirm, not Cancel
-	roleFor       string           // key waiting for a role key (l, d, r)
-	editFor       string           // key whose label the rename field (e) edits
-	draft         []rune           // the rename field's text
-	help          bool             // the key list (?) is shown
-	asked         map[string]bool  // agents this deck asked the daemon to show, not yet seen shown
-	lastAsked     string           // the latest of them
+	agents     []Agent // in launch order, shells last
+	version    int64
+	shown      string
+	selected   string
+	seen       map[string]int64 // key → Updated of a done agent this deck has shown
+	confirm    string           // key the stop modal asks about (confirm.go)
+	confirmYes bool             // the modal's focus is on Confirm, not Cancel
+	roleFor    string           // key waiting for a role key (l, d, r)
+	// providers is the list N picks from, while it waits for a digit (nil otherwise).
+	providers     []string
+	editFor       string          // key whose label the rename field (e) edits
+	draft         []rune          // the rename field's text
+	help          bool            // the key list (?) is shown
+	asked         map[string]bool // agents this deck asked the daemon to show, not yet seen shown
+	lastAsked     string          // the latest of them
 	status        string
 	notice        func() string // the update notice (WithNotice)
 	noticeText    string        // its latest text, shown while there is no status
@@ -236,7 +262,7 @@ func (m Model) Init() tea.Cmd {
 // working reports whether an agent works: the spinner and the logo's wave then move.
 func (m Model) working() bool {
 	for _, a := range m.agents {
-		if shownState(a) == "working" && !isShell(a) && !a.Paused {
+		if busy(a) && !isShell(a) && !a.Paused {
 			return true
 		}
 	}
@@ -321,6 +347,17 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		key, api := m.selected, m.api
 		m.ask(key)
 		return m, m.call(func(ctx context.Context) error { return api.Show(ctx, key, false) })
+	case providersMsg:
+		if msg.err != nil {
+			m.status = oneLine(msg.err.Error())
+			return m, nil
+		}
+		if len(msg.names) > 9 {
+			msg.names = msg.names[:9]
+		}
+		m.providers = msg.names
+		m.status = providersPrompt(msg.names)
+		return m, nil
 	case newMsg:
 		if msg.err != nil {
 			m.status = oneLine(msg.err.Error())
@@ -512,6 +549,21 @@ func (m Model) key(k string) (tea.Model, tea.Cmd) {
 	if m.confirm != "" {
 		return m.confirmKey(k)
 	}
+	if m.providers != nil {
+		names, api, c := m.providers, m.api, m.container
+		m.providers, m.status = nil, ""
+		if len(k) == 1 && k[0] >= '1' && int(k[0]-'0') <= len(names) {
+			prov := names[k[0]-'1']
+			m.status = "starting a new " + prov + " agent…"
+			return m, func() tea.Msg {
+				ctx, cancel := context.WithTimeout(context.Background(), callTimeout)
+				defer cancel()
+				a, err := api.New(ctx, c, prov)
+				return newMsg{a, err}
+			}
+		}
+		return m, nil
+	}
 	if m.roleFor != "" {
 		key, api := m.roleFor, m.api
 		m.roleFor, m.status = "", ""
@@ -557,8 +609,16 @@ func (m Model) key(k string) (tea.Model, tea.Cmd) {
 		return m, func() tea.Msg {
 			ctx, cancel := context.WithTimeout(context.Background(), callTimeout)
 			defer cancel()
-			a, err := api.New(ctx, c)
+			a, err := api.New(ctx, c, "")
 			return newMsg{a, err}
+		}
+	case "N":
+		m.status = "providers…"
+		return m, func() tea.Msg {
+			ctx, cancel := context.WithTimeout(context.Background(), callTimeout)
+			defer cancel()
+			names, err := api.Providers(ctx)
+			return providersMsg{names, err}
 		}
 	case "s":
 		m.status = "opening a shell…"
@@ -739,13 +799,13 @@ func rank(a Agent, seen map[string]int64) int {
 		return 6
 	case a.Paused: // frozen by the user: it neither needs them nor works
 		return 4
-	case a.State == "blocked":
+	case shownState(a) == "blocked":
 		return 0
 	case a.State == "done" && seen[a.Key] != a.Updated:
 		return 1
 	case a.ForUser > 0:
 		return 2
-	case shownState(a) == "working":
+	case busy(a):
 		return 3
 	case a.State == "idle" || a.State == "done":
 		return 4
@@ -778,6 +838,8 @@ func (m Model) label(a Agent) string {
 		return "see terminal" // the agent's own dialog asks: the deck has no card for it
 	case a.State == "blocked":
 		return "needs you"
+	case shownState(a) == "blocked": // its task names a blocker
+		return "blocked"
 	case r == 1:
 		return "done, unseen"
 	case r == 2:
@@ -810,4 +872,19 @@ func (m Model) nextNeedingYou() string {
 		}
 	}
 	return ""
+}
+
+type providersMsg struct {
+	names []string
+	err   error
+}
+
+// providersPrompt is the status line while N waits for a provider's digit.
+func providersPrompt(names []string) string {
+	var b strings.Builder
+	b.WriteString("new agent on:")
+	for i, n := range names {
+		fmt.Fprintf(&b, " %d %s", i+1, n)
+	}
+	return b.String()
 }

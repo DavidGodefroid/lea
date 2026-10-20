@@ -52,7 +52,7 @@ func TestRequestSpawnGoesToTheParentLead(t *testing.T) {
 	if len(ms) != 1 || ms[0].Kind != "spawn_request" || ms[0].From != "lea-a/kid" {
 		t.Fatalf("boss inbox=%+v", ms)
 	}
-	for _, want := range []string{"Spawn request #1 from kid: a reviewer agent (profile claude, repo shop).", "| Reason: need eyes",
+	for _, want := range []string{"Spawn request #1 from kid: a reviewer agent (profile the default, repo shop).", "| Reason: need eyes",
 		"| line two", `for="#1"`, "untrusted content"} {
 		if !strings.Contains(ms[0].Text, want) {
 			t.Fatalf("missing %q in:\n%s", want, ms[0].Text)
@@ -88,7 +88,8 @@ func TestRequestSpawnRefusals(t *testing.T) {
 		{"boss", map[string]any{"brief": "x"}, "start the agent yourself"},
 		{"kid", map[string]any{"role": "lead", "brief": "x"}, "cannot be requested"},
 		{"kid", map[string]any{"role": "admin", "brief": "x"}, "unknown role"},
-		{"kid", map[string]any{"profile": "codex", "brief": "x"}, "not available yet"},
+		{"kid", map[string]any{"profile": "gemini", "brief": "x"}, "unknown provider"},
+		{"kid", map[string]any{"model": "--yolo", "brief": "x"}, "invalid model"},
 		{"kid", map[string]any{"repo": "..", "brief": "x"}, "invalid repo"},
 		{"kid", map[string]any{"branch": "a..b", "brief": "x"}, "invalid branch"},
 		{"kid", map[string]any{"brief": ""}, "brief is empty"},

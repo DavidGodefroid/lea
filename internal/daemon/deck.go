@@ -95,6 +95,7 @@ func (d *Daemon) dispatchDeck(ctx context.Context, o Origin, req wire.Request) (
 	case "agent_new":
 		var p struct {
 			Container, Workdir, Profile, Name string
+			Model                             string
 			Args                              []string
 			Focus                             bool
 			Role, Repo, Branch, Brief         string
@@ -116,7 +117,7 @@ func (d *Daemon) dispatchDeck(ctx context.Context, o Origin, req wire.Request) (
 		if p.Brief != "" {
 			from = "user"
 		}
-		return a.New(ctx, agents.NewRequest{Container: p.Container, Workdir: p.Workdir, Profile: p.Profile,
+		return a.New(ctx, agents.NewRequest{Container: p.Container, Workdir: p.Workdir, Profile: p.Profile, Model: p.Model,
 			Name: p.Name, Args: p.Args, Focus: p.Focus, Role: p.Role, Repo: p.Repo, Branch: p.Branch,
 			Brief: p.Brief, BriefFrom: from})
 	case "agent_focus":

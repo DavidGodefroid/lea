@@ -180,11 +180,20 @@ func runDaemon(stderr io.Writer) int {
 		fmt.Fprintln(stderr, "lea:", clean(err.Error(), false))
 		return 1
 	}
+	// Same pattern for the provider settings.
+	_ = os.Remove(filepath.Join(host, "daemon.providers"))
+	if err := os.WriteFile(filepath.Join(host, "daemon.providers"), []byte(daemonProvidersStamp()), 0o600); err != nil {
+		fmt.Fprintln(stderr, "lea:", clean(err.Error(), false))
+		return 1
+	}
 	exe, err := os.Executable()
 	if err != nil {
 		fmt.Fprintln(stderr, "lea:", clean(err.Error(), false))
 		return 1
 	}
+	reg := hostProviders(os.Getenv)
+	d.SetProviders(reg)
+	d.SetDefaultProvider(os.Getenv("LEA_PROVIDER"))
 	m := agents.NewManager(agents.Config{
 		Store:      st,
 		Term:       agents.Tmux(tmux.Server{Socket: tmux.DefaultSocket, Conf: conf, Bin: os.Getenv("LEA_TMUX_BIN")}),
@@ -197,6 +206,10 @@ func runDaemon(stderr io.Writer) int {
 		ApprovalTimeout: approvalTimeout(os.Getenv("LEA_APPROVAL_TIMEOUT")),
 		LockSpec:        lockSpec(exe),
 		Consoles:        agents.DockerConsoles{},
+
+		Providers:       reg,
+		DefaultProvider: os.Getenv("LEA_PROVIDER"),
+		DefaultModel:    os.Getenv("LEA_MODEL"),
 	})
 	d.SetAgents(m)
 	// A sound when an agent waits for the user and when a turn ends, while a deck shows its
@@ -494,6 +507,7 @@ func deckSettings(getenv func(string) string, exists func(string) bool, exe, cwd
 
 type newOpts struct {
 	Container, Workdir, Profile, Name string
+	Model                             string
 	Role, Repo, Branch, BriefFile     string
 	Args                              []string
 	workdirs                          int // how many --workdir were given
@@ -511,7 +525,7 @@ func parseNew(args []string) (newOpts, error) {
 			return checkNewPlace(o)
 		case "--strict":
 			return o, errors.New("lea new: --strict is not available yet")
-		case "--container", "--workdir", "-p", "--profile", "-r", "--role", "--repo", "--branch", "--brief":
+		case "--container", "--workdir", "-p", "--profile", "-m", "--model", "-r", "--role", "--repo", "--branch", "--brief":
 			if i+1 >= len(args) {
 				return o, fmt.Errorf("lea new: %s needs a value", a)
 			}
@@ -524,6 +538,8 @@ func parseNew(args []string) (newOpts, error) {
 				o.workdirs++
 			case "-p", "--profile":
 				o.Profile = v
+			case "-m", "--model":
+				o.Model = v
 			case "-r", "--role":
 				o.Role = v
 			case "--repo":
@@ -599,7 +615,7 @@ func runNew(args []string, stdout, stderr io.Writer) int {
 	}
 	var r struct{ Name string }
 	if err := hostCallT("agent_new", map[string]any{"container": o.Container, "workdir": o.Workdir,
-		"profile": o.Profile, "name": o.Name, "args": o.Args, "focus": false, "role": o.Role, "repo": o.Repo,
+		"profile": o.Profile, "model": o.Model, "name": o.Name, "args": o.Args, "focus": false, "role": o.Role, "repo": o.Repo,
 		"branch": o.Branch, "brief": brief}, &r, agentTimeout); err != nil {
 		fmt.Fprintln(stderr, "lea:", clean(err.Error(), false))
 		return 1

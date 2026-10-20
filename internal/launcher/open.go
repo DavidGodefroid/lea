@@ -50,7 +50,7 @@ func (l *Launcher) up(proj string) (*upState, error) {
 		if err := l.ensureNetworks(u.sid); err != nil {
 			return "", err
 		}
-		if err := l.ensureProxy(); err != nil {
+		if err := l.ensureProxy(proj); err != nil {
 			return "", err
 		}
 		return l.proxyAttach(u.sid)

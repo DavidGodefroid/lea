@@ -105,3 +105,27 @@ func TestBoardStateCellCountsSubagents(t *testing.T) {
 		}
 	}
 }
+
+// The board says what the deck's mark says (#72): blocked, waiting, or the raw state.
+func TestBoardStateCellFollowsTheDeck(t *testing.T) {
+	for _, c := range []struct {
+		it   boardItem
+		want string
+	}{
+		{boardItem{State: "idle", BlockedOn: "a token", Next: "merge"}, "blocked"},
+		{boardItem{State: "working", BlockedOn: "a token"}, "blocked"},
+		{boardItem{State: "idle", BlockedOn: "x", Subagents: 2}, "blocked, 2 subagents"},
+		{boardItem{State: "idle", Next: "CI"}, "waiting"},
+		{boardItem{State: "idle", Next: "  "}, "idle"},
+		{boardItem{State: "idle", Next: "CI", Subagents: 1}, "idle, 1 subagent"},
+		{boardItem{State: "working", Next: "CI"}, "working"},
+		{boardItem{State: "done", Next: "CI", BlockedOn: "x"}, "done"},
+		{boardItem{State: "gone", BlockedOn: "x"}, "gone"},
+		{boardItem{State: "blocked"}, "blocked"},
+		{boardItem{State: "idle"}, "idle"},
+	} {
+		if got := stateCell(c.it); got != c.want {
+			t.Errorf("%+v: %q, want %q", c.it, got, c.want)
+		}
+	}
+}
