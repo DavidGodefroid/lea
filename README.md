@@ -360,6 +360,8 @@ lea update                   # the latest release, and its images
 lea rollback                 # back to the previous version; the background update skips this one
 lea doctor                   # check the setup
 lea init                     # set up again (idempotent)
+lea config export > team.json  # your team's shared settings, as one file
+lea config import team.json  # take them on another workstation (see Configure)
 LEA_PROJECTS_DIR=~/other lea # another projects directory, for this call only
 ```
 
@@ -411,6 +413,48 @@ read-only. The screen runs in the deck on the host: agents cannot open or drive 
 | `LEA_SOUND_ATTENTION`, `LEA_SOUND_DONE` | freedesktop sounds | the file of each sound (`0`: that one off) |
 | `LEA_OTEL_UPSTREAM` | empty | send Claude Code usage telemetry to this OTLP collector |
 | `LEA_ASCII` | off | ASCII marks in the deck (`1`) |
+
+### Share a configuration with your team
+
+`lea config export [--output FILE] [--include-personal]` writes the shared part of your
+configuration as one JSON file, fit to commit in a team repository: the keys your
+`~/.config/lea/lea.conf` sets among `LEA_GIT_SSH`, `LEA_EGRESS_ALLOW`, `LEA_OTEL_UPSTREAM`,
+`LEA_IMAGE`, `LEA_PROXY_IMAGE`, `LEA_LOCKSQL`, `LEA_LOCKSQL_IMAGE`, `LEA_LOCKSQL_REF`,
+`LEA_LOCKSQL_VAULT_ADDR`, `LEA_RELEASES_URL`, `LEA_NESTED_NETWORKS`, `LEA_K8S_NAMESPACE`,
+`LEA_APPROVALS` and `LEA_APPROVAL_TIMEOUT` (`LEA_SOUND` too with `--include-personal`), and the
+content of your pinned `git_known_hosts` and of your `internal-hosts` file. Never exported:
+`LEA_PROJECTS_DIR` and every path, any other key (skipped with a warning), lea's SSH key, forge
+tokens, locksql and Vault credentials, `~/.claude` and lea's state. A value or a line that does
+not pass the import's checks (a locksql checkout's path, a `@cert-authority` line…) is skipped
+with a warning.
+
+`lea config import FILE|- [--dry-run] [--replace] [--yes]` reads such a file as data, never as
+shell: only those keys and the two files are taken, and every value and line is checked with
+lea's own rules (an approval mode, a timeout of 1 to 600 s, `host:port` endpoints, plain host
+names and pinned keys without wildcards, `https://` URLs, image references…). Anything else, a
+value on more than one line or holding shell syntax, or a format newer than this lea reads, is
+refused and nothing is written. The configuration it gives is loaded once more before any write.
+
+It prints what changes (`KEY: old -> new`, `+` and `-` lines of the files), then:
+
+- a change that widens what the agents reach (`[egress]`: `LEA_GIT_SSH`, `LEA_EGRESS_ALLOW`,
+  `LEA_OTEL_UPSTREAM`, `internal-hosts` lines), pins SSH host keys (`[host key]`) or chooses the
+  code lea runs (`[code]`: images, `LEA_LOCKSQL_REF`, `LEA_LOCKSQL_VAULT_ADDR`,
+  `LEA_RELEASES_URL`) or wires a lock tool (`[lock tool]`: `LEA_LOCKSQL` turned on) needs its own
+  flag, `--allow-egress`, `--allow-host-keys`, `--allow-code` or `--allow-lock`, on top of `--yes`;
+  `--dry-run` shows which and writes nothing (`LEA_LOCKMQ` and `LEA_LOCKFILE` are not shared);
+- without `--yes` it asks on the terminal (and refuses without one).
+
+By default the import merges: the keys it carries replace yours, the others (`LEA_PROJECTS_DIR`,
+your sounds…) stay; its files' lines are added to yours, and a host you already pinned to another
+key is refused (`--replace` replaces your pins). `--replace` replaces the shared part: shared keys
+the file does not set are removed, and the files it carries replace yours. The files are written to
+`~/.config/lea/git_known_hosts` and `~/.config/lea/internal-hosts` (`LEA_GIT_KNOWN_HOSTS` or
+`LEA_INTERNAL_HOSTS` then points there), only when the import adds lines: a file you use at its
+own path (an organisation's shared file) stays in use, untouched, when the import adds nothing to it; every file it replaces is kept as `*.bak`; every write is private (0600), at once,
+and refused through a symbolic link. A key the environment sets beats the file: the import says
+so. Changes apply after `lea init` (endpoints, keys, images, locksql) or `lea stop --all`
+(approvals, egress), as it reminds you.
 
 ## How lea keeps your machine safe
 
