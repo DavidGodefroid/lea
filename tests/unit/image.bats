@@ -233,7 +233,7 @@ lea_sha256_file() { sha256sum "$1" | cut -d' ' -f1; }
 
 @test "lea's Claude hooks live in a --settings file, not in managed settings" {
   s="$I/claude-settings.json"
-  for e in SessionStart UserPromptSubmit PreToolUse PostToolUse PermissionRequest Notification Stop SessionEnd; do
+  for e in SessionStart UserPromptSubmit PreToolUse PostToolUse PermissionRequest Notification SubagentStart SubagentStop Stop SessionEnd; do
     jq -e --arg e "$e" '.hooks[$e][0].hooks[0].command | contains("/usr/local/bin/lea hook claude " + $e)' "$s" >/dev/null
   done
   [ "$(jq -r '.hooks.PermissionRequest[0].hooks[0].timeout' "$s")" = 620 ]
@@ -275,7 +275,7 @@ lea_sha256_file() { sha256sum "$1" | cut -d' ' -f1; }
 # Moved from the retired core.bats.
 @test "lea's Claude settings register every hook guarded on the core binary, permission timeout above the approval maximum" {
   f="$LEA_ROOT/image/claude-settings.json"
-  for e in SessionStart UserPromptSubmit PreToolUse PostToolUse PermissionRequest Notification Stop SessionEnd; do
+  for e in SessionStart UserPromptSubmit PreToolUse PostToolUse PermissionRequest Notification SubagentStart SubagentStop Stop SessionEnd; do
     jq -e --arg e "$e" '.hooks[$e][0].hooks[0].command | contains("lea hook claude " + $e) and startswith("[ -x /usr/local/bin/lea ]") and endswith("exit 0")' "$f" >/dev/null
   done
   jq -e '.hooks.PermissionRequest[0].hooks[0].timeout >= 610' "$f" >/dev/null

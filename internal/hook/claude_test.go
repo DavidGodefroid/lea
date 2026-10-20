@@ -492,3 +492,54 @@ func TestPromptSubmitSendsThePromptForNamingOnly(t *testing.T) {
 		}
 	}
 }
+
+func agentSubagents(t *testing.T, api string) (string, int) {
+	t.Helper()
+	var as []struct {
+		State     string
+		Subagents int
+	}
+	if err := client.Call(context.Background(), api, wire.Request{Method: "agents_list"}, &as); err != nil || len(as) != 1 {
+		t.Fatalf("agents=%v err=%v", as, err)
+	}
+	return as[0].State, as[0].Subagents
+}
+
+func TestSubagentHooksForwardOnlyTheID(t *testing.T) {
+	_, bus, db := startDB(t)
+	in, _ := json.Marshal(map[string]any{"hook_event_name": "SubagentStart", "session_id": "s1", "agent_id": "a-1_x",
+		"agent_type": "Explore", "prompt": "secret prompt", "agent_transcript_path": "/secret"})
+	if out := runHook(bus, "SubagentStart", string(in), nil); out != "" {
+		t.Fatalf("out=%q", out)
+	}
+	runHook(bus, "SubagentStop", `{"hook_event_name":"SubagentStop","session_id":"s1","agent_id":"bad id\u001b"}`, nil)
+	start, stop := storedPayloads(t, db, "SubagentStart"), storedPayloads(t, db, "SubagentStop")
+	if len(start) != 1 || len(stop) != 1 {
+		t.Fatalf("payloads=%q %q", start, stop)
+	}
+	var got map[string]any
+	json.Unmarshal([]byte(start[0]), &got)
+	if want := (map[string]any{"hook_event_name": "SubagentStart", "session_id": "s1", "agent_id": "a-1_x"}); !reflect.DeepEqual(got, want) {
+		t.Fatalf("stored %s", start[0])
+	}
+	if strings.Contains(stop[0], "agent_id") {
+		t.Fatalf("invalid id forwarded: %s", stop[0])
+	}
+}
+
+// TestSubagentsShowAnIdleAgentAtWork is the flow of a turn that ends while a background subagent
+// runs, through the hook and a real daemon: idle with one subagent, then idle with none.
+func TestSubagentsShowAnIdleAgentAtWork(t *testing.T) {
+	api, bus, _ := startDB(t)
+	runHook(bus, "UserPromptSubmit", `{"session_id":"s1"}`, nil)
+	runHook(bus, "SubagentStart", `{"session_id":"s1","agent_id":"bg1"}`, nil)
+	runHook(bus, "Stop", `{"session_id":"s1"}`, nil)
+	if st, n := agentSubagents(t, api); st != "idle" || n != 1 {
+		t.Fatalf("after Stop: state=%s subagents=%d, want idle 1", st, n)
+	}
+	runHook(bus, "PreToolUse", `{"session_id":"s1","tool_name":"Read","agent_id":"bg1"}`, nil)
+	runHook(bus, "SubagentStop", `{"session_id":"s1","agent_id":"bg1"}`, nil)
+	if st, n := agentSubagents(t, api); st != "idle" || n != 0 {
+		t.Fatalf("after SubagentStop: state=%s subagents=%d, want idle 0", st, n)
+	}
+}

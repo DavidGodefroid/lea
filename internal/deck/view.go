@@ -319,7 +319,7 @@ func (m Model) row(a Agent, inner int) []string {
 	}
 	const profW, ctxW = 6, 4
 	nameW := inner - 4 - (1 + profW) - (1 + ctxW) // mark, space, glyph, space
-	g, gc := stateMark(a.State, a.Updated, m.now().Unix(), m.frame, m.ascii)
+	g, gc := stateMark(shownState(a), a.Updated, m.now().Unix(), m.frame, m.ascii)
 	if isShell(a) {
 		g, gc = "$", theme.Unknown
 	} else if a.Paused {
