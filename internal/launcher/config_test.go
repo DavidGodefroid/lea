@@ -170,3 +170,20 @@ func TestGitSSHEndpoints(t *testing.T) {
 		}
 	}
 }
+
+// The sound keys of the user configuration reach the daemon, which reads them at start.
+func TestSoundKeysReachTheDaemon(t *testing.T) {
+	w := newWorld(t, repoRoot(t))
+	writeUserConf(t, w, "LEA_SOUND_DONE=0\nLEA_SOUND_ATTENTION=/a.oga\n")
+	w.env["LEA_SOUND"] = "0"
+	c, err := LoadConfig(w.getenv, w.root, w.proj)
+	if err != nil {
+		t.Fatal(err)
+	}
+	env := strings.Join(c.Environ(nil), "\n")
+	for _, want := range []string{"LEA_SOUND=0", "LEA_SOUND_DONE=0", "LEA_SOUND_ATTENTION=/a.oga"} {
+		if !strings.Contains(env+"\n", want+"\n") {
+			t.Errorf("Environ lacks %s:\n%s", want, env)
+		}
+	}
+}

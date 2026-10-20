@@ -57,6 +57,8 @@ type Snapshot struct {
 	Version int64   `json:"version"`
 	Shown   string  `json:"shown"`
 	Agents  []Agent `json:"agents"`
+	// Sound is the daemon's sound switch: "on", "off", or "" when no sound plays on the host.
+	Sound string `json:"sound,omitempty"`
 }
 
 // API is what the deck asks of the daemon.
@@ -75,6 +77,8 @@ type API interface {
 	OpenShell(ctx context.Context, container string) (Agent, error)
 	// SplitShell opens a shell beside an agent, below it or at its right.
 	SplitShell(ctx context.Context, key string, below bool) (Agent, error)
+	// SetSound switches the daemon's sounds and answers the new state.
+	SetSound(ctx context.Context, on bool) (string, error)
 }
 
 // isShell reports whether a row is a shell.
@@ -110,7 +114,11 @@ type (
 		agent Agent
 		err   error
 	}
-	doneMsg struct{ err error }
+	doneMsg  struct{ err error }
+	soundMsg struct {
+		sound string
+		err   error
+	}
 )
 
 type Model struct {
@@ -124,7 +132,8 @@ type Model struct {
 	shown         string
 	selected      string
 	seen          map[string]int64 // key → Updated of a done agent this deck has shown
-	confirm       string           // key waiting for y to be stopped
+	confirm       string           // key the stop modal asks about (confirm.go)
+	confirmYes    bool             // the modal's focus is on Confirm, not Cancel
 	roleFor       string           // key waiting for a role key (l, d, r)
 	editFor       string           // key whose label the rename field (e) edits
 	draft         []rune           // the rename field's text
@@ -134,6 +143,7 @@ type Model struct {
 	status        string
 	notice        func() string // the update notice (WithNotice)
 	noticeText    string        // its latest text, shown while there is no status
+	sound         string        // the daemon's sound switch (Snapshot.Sound)
 	seq           int           // the latest selection; older delayed shows are dropped
 	frame         int           // the working spinner's frame
 	intro         int           // frames left of the logo's start animation (WithIntro)
@@ -270,6 +280,13 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.status = oneLine(msg.err.Error())
 		}
 		return m, nil
+	case soundMsg:
+		if msg.err != nil {
+			m.status = oneLine(msg.err.Error())
+			return m, nil
+		}
+		m.sound, m.status = msg.sound, "sounds "+msg.sound
+		return m, nil
 	case tea.KeyMsg:
 		if m.help { // any key closes the key list, and does nothing else
 			m.help = false
@@ -334,7 +351,7 @@ func (m *Model) ask(key string) {
 // the slot, so that the row selected in its place is to be shown.
 func (m *Model) apply(s Snapshot) bool {
 	before, was := m.shown, m.selected
-	m.version, m.shown = s.Version, s.Shown
+	m.version, m.shown, m.sound = s.Version, s.Shown, s.Sound
 	for _, a := range s.Agents {
 		if a.Key == s.Shown && a.State == "done" {
 			m.seen[a.Key] = a.Updated
@@ -360,7 +377,7 @@ func (m *Model) apply(s Snapshot) bool {
 		}
 	}
 	if m.confirm != "" && m.index(m.confirm) < 0 {
-		m.confirm, m.status = "", ""
+		m.confirm, m.confirmYes = "", false
 	}
 	if m.roleFor != "" && m.index(m.roleFor) < 0 {
 		m.roleFor, m.status = "", ""
@@ -405,12 +422,7 @@ func (m Model) index(key string) int {
 
 func (m Model) key(k string) (tea.Model, tea.Cmd) {
 	if m.confirm != "" {
-		key, api := m.confirm, m.api
-		m.confirm, m.status = "", ""
-		if k == "y" {
-			return m, m.call(func(ctx context.Context) error { return api.Stop(ctx, key) })
-		}
-		return m, nil
+		return m.confirmKey(k)
 	}
 	if m.roleFor != "" {
 		key, api := m.roleFor, m.api
@@ -464,6 +476,18 @@ func (m Model) key(k string) (tea.Model, tea.Cmd) {
 			sh, err := api.SplitShell(ctx, key, below)
 			return newMsg{sh, err}
 		}
+	case "S":
+		if m.sound == "" {
+			m.status = "no sound player on this host"
+			return m, nil
+		}
+		on := m.sound == "off"
+		return m, func() tea.Msg {
+			ctx, cancel := context.WithTimeout(context.Background(), callTimeout)
+			defer cancel()
+			s, err := api.SetSound(ctx, on)
+			return soundMsg{s, err}
+		}
 	case "?":
 		m.help = true
 		return m, nil
@@ -492,8 +516,7 @@ func (m Model) key(k string) (tea.Model, tea.Cmd) {
 		if m.agents[i].State == "done" {
 			return m, m.call(func(ctx context.Context) error { return api.RemoveEnded(ctx, key) })
 		}
-		m.confirm = key
-		m.status = "stop " + display(m.agents[i]) + "? y to confirm"
+		m.confirm, m.confirmYes, m.status = key, false, ""
 		return m, nil
 	case "r":
 		if a := m.selectedAgent(); a != nil && !isShell(*a) {

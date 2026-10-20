@@ -197,20 +197,11 @@ func runDaemon(stderr io.Writer) int {
 	})
 	d.SetAgents(m)
 	// A sound when an agent waits for the user and when a turn ends, while a deck shows its
-	// container, unless LEA_SOUND=0.
-	if os.Getenv("LEA_SOUND") != "0" {
-		files := map[string]string{
-			daemon.SoundAttention: "/usr/share/sounds/freedesktop/stereo/message-new-instant.oga",
-			daemon.SoundDone:      "/usr/share/sounds/freedesktop/stereo/complete.oga",
-		}
-		if f := os.Getenv("LEA_SOUND_ATTENTION"); f != "" {
-			files[daemon.SoundAttention] = f
-		}
-		if f := os.Getenv("LEA_SOUND_DONE"); f != "" {
-			files[daemon.SoundDone] = f
-		}
+	// container; LEA_SOUND=0 starts with the sounds off (lea sound and the deck's S switch them).
+	if files, on := soundFiles(os.Getenv); len(files) > 0 {
 		if s := daemon.HostSounder(files); s != nil {
 			d.SetSounder(s)
+			d.SetSoundOn(on)
 		}
 	}
 	// Agents are named after their first prompt unless LEA_AUTONAME=0 or claude is missing.
@@ -276,6 +267,26 @@ func runHost(args []string, stdout, stderr io.Writer) int {
 		for _, m := range ms {
 			fmt.Fprintln(stdout, clean(m.Text, true))
 		}
+		return 0
+	case "sound":
+		var p map[string]any
+		switch {
+		case len(args) == 1:
+		case len(args) == 2 && (args[1] == "on" || args[1] == "off"):
+			p = map[string]any{"on": args[1] == "on"}
+		default:
+			fmt.Fprintln(stderr, "usage: lea sound [on|off]")
+			return 2
+		}
+		var r struct{ Sound string }
+		if err := hostCall("sound", p, &r); err != nil {
+			return fail(err)
+		}
+		if r.Sound == "" {
+			fmt.Fprintln(stdout, "no sound player: lea plays no sound on this host")
+			return 0
+		}
+		fmt.Fprintln(stdout, "sounds "+r.Sound)
 		return 0
 	case "role":
 		if len(args) != 3 {
@@ -688,4 +699,23 @@ func runInboxWait(args []string, stdout, stderr io.Writer) int {
 	}
 	fmt.Fprintln(stdout, clean(r.Text, false))
 	return 0
+}
+
+// soundFiles maps each sound kind to its file: the freedesktop sounds unless LEA_SOUND_ATTENTION
+// or LEA_SOUND_DONE names another, and none for a kind set to 0. on is false when LEA_SOUND=0.
+func soundFiles(getenv func(string) string) (files map[string]string, on bool) {
+	files = map[string]string{}
+	for kind, def := range map[string]string{
+		daemon.SoundAttention: "/usr/share/sounds/freedesktop/stereo/message-new-instant.oga",
+		daemon.SoundDone:      "/usr/share/sounds/freedesktop/stereo/complete.oga",
+	} {
+		switch f := getenv("LEA_SOUND_" + strings.ToUpper(kind)); f {
+		case "0":
+		case "":
+			files[kind] = def
+		default:
+			files[kind] = f
+		}
+	}
+	return files, getenv("LEA_SOUND") != "0"
 }
