@@ -16,6 +16,7 @@ RUN go install "honnef.co/go/tools/cmd/staticcheck@${STATICCHECK_VERSION}" \
 FROM quay.io/podman/stable:v5.8.7-immutable
 ARG TARGETARCH
 ARG CLAUDE_CODE_VERSION=2.1.296
+ARG CODEX_VERSION=0.163.0
 ARG RTK_VERSION=0.36.0
 ARG LEA_VERSION=dev
 # The base image's "podman" user would own uid 1000: lea creates the developer's user at start instead.
@@ -28,7 +29,7 @@ RUN userdel -r podman \
  && touch /etc/containers/nodocker \
  && git config --system credential.helper 'store --file=/lea/state/git/credentials' \
  && ln -s /usr/libexec/docker/cli-plugins/docker-compose /usr/local/bin/docker-compose
-RUN npm install -g "@anthropic-ai/claude-code@${CLAUDE_CODE_VERSION}" && npm cache clean --force
+RUN npm install -g "@anthropic-ai/claude-code@${CLAUDE_CODE_VERSION}" "@openai/codex@${CODEX_VERSION}" && npm cache clean --force
 RUN case "$TARGETARCH" in \
       amd64) asset=rtk-x86_64-unknown-linux-musl.tar.gz ;; \
       arm64) asset=rtk-aarch64-unknown-linux-gnu.tar.gz ;; \

@@ -110,6 +110,7 @@ var helpLines = []string{
 	"enter       show and focus",
 	"space       next needing you",
 	"n           new agent",
+	"N           new, other provider",
 	"s           new shell",
 	"- |         split with a shell",
 	"m           message the agent",
@@ -361,7 +362,7 @@ func (m Model) row(a Agent, inner int) []string {
 }
 
 // detail is the second line of a row, for width cells (0: unbounded): the role (dev, the default,
-// is not shown), the directory, the branch, the short status and the age. When it does not fit,
+// is not shown), the model (when one was asked for), the directory, the branch, the short status and the age. When it does not fit,
 // the directory and the branch go first so the status and the age stay.
 func (m Model) detail(a Agent, width int) string {
 	c := m.cs()
@@ -373,6 +374,9 @@ func (m Model) detail(a Agent, width int) string {
 		var before, after []string
 		if a.Role != "" && a.Role != "dev" {
 			before = append(before, a.Role)
+		}
+		if a.Model != "" { // the provider is on the first line
+			before = append(before, a.Model)
 		}
 		if path {
 			dir := a.Workdir

@@ -36,26 +36,45 @@ func (l *Launcher) ensureNetworks(id string) error {
 }
 
 // ensureProxy is lea_ensure_proxy. A running proxy started for other git SSH endpoints (its
-// lea.git-ssh label) is replaced: its forwarders are set at start.
-func (l *Launcher) ensureProxy() error {
+// lea.git-ssh label) or other providers' endpoints (lea.providers) is replaced: its forwarders
+// are set at start. proj is the projects directory being opened: no key file may sit in it.
+func (l *Launcher) ensureProxy(proj string) error {
 	name := l.prefix() + "-proxy"
+	fw, err := l.forwarder(proj)
+	if err != nil {
+		return err
+	}
 	if l.containerRunning(name) {
-		got, _ := l.output(false, "docker", "inspect", "--format", `{{index .Config.Labels "lea.git-ssh"}}`, name)
-		if got == l.Cfg.GitSSH() {
+		// Both labels in one answer: a git SSH endpoint never holds a '/'.
+		out, _ := l.output(false, "docker", "inspect", "--format", `{{index .Config.Labels "lea.git-ssh"}}/{{index .Config.Labels "lea.providers"}}`, name)
+		got, prov := out, ""
+		if i := strings.LastIndex(out, "/"); i >= 0 {
+			got, prov = out[:i], out[i+1:]
+		}
+		if got == l.Cfg.GitSSH() && prov == fw.stamp {
 			return nil
 		}
-		l.logf("restarting %s for the git SSH endpoints '%s'", name, l.Cfg.GitSSH())
+		if got != l.Cfg.GitSSH() {
+			l.logf("restarting %s for the git SSH endpoints '%s'", name, l.Cfg.GitSSH())
+		} else {
+			l.logf("restarting %s for the providers of %s", name, l.Cfg.Get("LEA_PROVIDERS"))
+		}
 	}
 	hosts := l.Cfg.Get("LEA_INTERNAL_HOSTS")
 	if err := noComma(hosts); err != nil {
 		return err
 	}
 	_ = l.quiet("docker", "rm", "-f", name)
-	return l.run("docker", "run", "-d", "--name", name, "--restart", "unless-stopped", "--network", l.prefix()+"-egress",
-		"--label", "lea.prefix="+l.prefix(), "--label", "lea.role=proxy", "--label", "lea.git-ssh="+l.Cfg.GitSSH(),
-		"--mount", "type=bind,src="+hosts+",dst=/etc/lea/internal-hosts,readonly",
-		"-e", "LEA_GIT_SSH="+l.Cfg.GitSSH(), "-e", "LEA_OTEL_UPSTREAM="+l.Cfg.Get("LEA_OTEL_UPSTREAM"),
+	a := []string{"run", "-d", "--name", name, "--restart", "unless-stopped", "--network", l.prefix() + "-egress",
+		"--label", "lea.prefix=" + l.prefix(), "--label", "lea.role=proxy", "--label", "lea.git-ssh=" + l.Cfg.GitSSH()}
+	if fw.stamp != "" {
+		a = append(a, "--label", "lea.providers="+fw.stamp)
+	}
+	a = append(a, "--mount", "type=bind,src="+hosts+",dst=/etc/lea/internal-hosts,readonly")
+	a = append(a, fw.mounts...)
+	a = append(a, "-e", "LEA_GIT_SSH="+l.Cfg.GitSSH(), "-e", "LEA_OTEL_UPSTREAM="+l.Cfg.Get("LEA_OTEL_UPSTREAM"),
 		l.Cfg.Get("LEA_PROXY_IMAGE"))
+	return l.run("docker", a...)
 }
 
 // proxyIP is lea__proxy_ip: the proxy's IPv4 address on network, "" when it is not attached.

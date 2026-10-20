@@ -446,18 +446,117 @@ func TestProxyFollowsTheGitSSHEndpoints(t *testing.T) {
 	w := newWorld(t, repoRoot(t))
 	writeUserConf(t, w, "LEA_GIT_SSH='github.com:22 gitlab.com:22'\n")
 	w.env["FAKE_DOCKER_OUT_INSPECT__F"] = "true"
-	w.env["FAKE_DOCKER_OUT_INSPECT___FORMAT"] = "github.com:22 gitlab.com:22"
-	if err := w.launcher().ensureProxy(); err != nil {
+	w.env["FAKE_DOCKER_OUT_INSPECT___FORMAT"] = "github.com:22 gitlab.com:22/"
+	if err := w.launcher().ensureProxy(w.proj); err != nil {
 		t.Fatal(err)
 	}
 	if w.hasCall("docker [run]") {
 		t.Fatalf("a proxy for the same endpoints was replaced:\n%s", strings.Join(w.calls(), "\n"))
 	}
-	w.env["FAKE_DOCKER_OUT_INSPECT___FORMAT"] = "gitlab.com:22"
-	if err := w.launcher().ensureProxy(); err != nil {
+	w.env["FAKE_DOCKER_OUT_INSPECT___FORMAT"] = "gitlab.com:22/"
+	if err := w.launcher().ensureProxy(w.proj); err != nil {
 		t.Fatal(err)
 	}
 	if !w.hasCall("[--label] [lea.git-ssh=github.com:22 gitlab.com:22]") || !w.hasCall("[LEA_GIT_SSH=github.com:22 gitlab.com:22]") {
 		t.Fatalf("the proxy was not restarted for the new endpoints:\n%s", strings.Join(w.calls(), "\n"))
+	}
+}
+
+// writeProviders writes the user's providers file and internal-hosts file.
+func writeProviders(t *testing.T, w *world, providers, hosts string) {
+	t.Helper()
+	conf := filepath.Join(w.env["XDG_CONFIG_HOME"], "lea")
+	if err := os.MkdirAll(conf, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(conf+"/providers", []byte(providers), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(conf+"/internal-hosts", []byte(hosts), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	writeUserConf(t, w, "LEA_INTERNAL_HOSTS="+conf+"/internal-hosts\n")
+}
+
+// An endpoint's key file is mounted read-only into the proxy only, at /etc/lea/keys/<name>; the
+// proxy gets the rendered endpoints file and a lea.providers label; the agents' container never
+// sees a key file, and gets its own ~/.codex.
+func TestProvidersGoToTheProxyOnly(t *testing.T) {
+	w := newWorld(t, repoRoot(t))
+	key := filepath.Join(w.dir, "keys", "vllm")
+	os.MkdirAll(filepath.Dir(key), 0o700)
+	if err := os.WriteFile(key, []byte("sk-secret-value\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	writeProviders(t, w, "lan http://10.0.0.5:11434/v1 model=qwen3\nvllm https://vllm.example.com/v1 key="+key+"\n", "10.0.0.5 11434\n")
+	if err := w.launcher().ensureProxy(w.proj); err != nil {
+		t.Fatal(err)
+	}
+	if !w.hasCall("[--mount] [type=bind,src="+key+",dst=/etc/lea/keys/vllm,readonly]") ||
+		!w.hasCall("[--mount] [type=bind,src="+w.data+"/lea/proxy/endpoints,dst=/etc/lea/endpoints,readonly]") ||
+		!w.hasCall("[--label] [lea.providers=") {
+		t.Fatalf("proxy run:\n%s", strings.Join(w.calls(), "\n"))
+	}
+	b, _ := os.ReadFile(w.data + "/lea/proxy/endpoints")
+	if !strings.Contains(string(b), "lan http://10.0.0.5:11434/v1\n") || !strings.Contains(string(b), "vllm https://vllm.example.com/v1 /etc/lea/keys/vllm\n") {
+		t.Fatalf("endpoints:\n%s", b)
+	}
+	for _, c := range append(w.calls(), string(b)) {
+		if strings.Contains(c, "sk-secret-value") {
+			t.Fatalf("the key leaked: %s", c)
+		}
+	}
+	args, err := w.launcher().runArgs(w.proj, "172.18.0.5")
+	if err != nil {
+		t.Fatal(err)
+	}
+	j := strings.Join(args, " ")
+	if strings.Contains(j, key) || strings.Contains(j, "/etc/lea/keys") || strings.Contains(j, "sk-secret") {
+		t.Fatalf("the agents' container sees a key: %s", j)
+	}
+	if !strings.Contains(j, "type=bind,src="+w.data+"/lea/state/codex/"+ID(w.proj)+",dst="+w.home+"/.codex") {
+		t.Fatalf("no private ~/.codex: %s", j)
+	}
+	if fi, err := os.Stat(w.data + "/lea/state/codex/" + ID(w.proj)); err != nil || fi.Mode().Perm() != 0o700 {
+		t.Fatalf("~/.codex state: %v %v", fi, err)
+	}
+}
+
+// A proxy started for other providers is replaced; one for the same is kept.
+func TestProxyFollowsTheProviders(t *testing.T) {
+	w := newWorld(t, repoRoot(t))
+	writeProviders(t, w, "lan http://10.0.0.5:11434/v1\n", "10.0.0.5 11434\n")
+	w.env["FAKE_DOCKER_OUT_INSPECT__F"] = "true"
+	w.env["FAKE_DOCKER_OUT_INSPECT___FORMAT"] = "/"
+	if err := w.launcher().ensureProxy(w.proj); err != nil {
+		t.Fatal(err)
+	}
+	if !w.hasCall("docker [run]") {
+		t.Fatalf("the proxy was not restarted for the providers:\n%s", strings.Join(w.calls(), "\n"))
+	}
+}
+
+// The providers file is checked before anything starts: a key file in the projects directory,
+// readable by others, or an upstream on the private network not listed in internal-hosts.
+func TestProvidersFileIsChecked(t *testing.T) {
+	for name, tc := range map[string]struct{ line, hosts string }{
+		"key in projects": {"vllm https://vllm.example.com/v1 key=%P/key\n", ""},
+		"key readable":    {"vllm https://vllm.example.com/v1 key=%D/open-key\n", ""},
+		"private":         {"lan http://192.168.1.10:11434/v1\n", ""},
+		"loopback":        {"lan http://127.0.0.1:11434/v1\n", "127.0.0.1 8000\n"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			w := newWorld(t, repoRoot(t))
+			os.WriteFile(w.proj+"/key", []byte("k\n"), 0o600)
+			os.WriteFile(w.dir+"/open-key", []byte("k\n"), 0o644)
+			line := strings.NewReplacer("%P", w.proj, "%D", w.dir).Replace(tc.line)
+			writeProviders(t, w, line, tc.hosts)
+			if err := w.launcher().ensureProxy(w.proj); err == nil || !strings.Contains(err.Error(), "providers file") {
+				t.Fatalf("err=%v", err)
+			}
+			if w.hasCall("docker [run]") {
+				t.Fatal("the proxy started")
+			}
+		})
 	}
 }

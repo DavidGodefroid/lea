@@ -23,6 +23,7 @@ import (
 	"time"
 
 	"github.com/DavidGodefroid/lea/internal/bus"
+	"github.com/DavidGodefroid/lea/internal/providers"
 	"github.com/DavidGodefroid/lea/internal/roles"
 	"github.com/DavidGodefroid/lea/internal/store"
 	"github.com/DavidGodefroid/lea/internal/tmux"
@@ -31,8 +32,8 @@ import (
 const (
 	// DeckWidth is the deck pane's width, its border included (spec §4.1: 32 columns inside).
 	DeckWidth = tmux.DeckWidth
-	// DefaultProfile is the only profile of this version.
-	DefaultProfile = "claude"
+	// DefaultProfile is the provider of an agent started without one (internal/providers).
+	DefaultProfile = providers.Default
 	MaxArgs        = 64
 	MaxArgBytes    = 8 << 10
 
@@ -118,6 +119,12 @@ type Config struct {
 	// how long the deck has before the agent's dialog takes over.
 	Approvals       string
 	ApprovalTimeout int
+	// Providers is the registry of the providers an agent may be started on, read at each spawn
+	// and restart (the user's providers file may change); nil: the built-in ones.
+	// DefaultProvider and DefaultModel (LEA_PROVIDER, LEA_MODEL) apply to an agent started
+	// without a provider.
+	Providers                     func() (*providers.Registry, error)
+	DefaultProvider, DefaultModel string
 }
 
 type Row struct {
@@ -128,6 +135,8 @@ type Row struct {
 	Kind    string `json:"kind,omitempty"`
 	Label   string `json:"label,omitempty"`
 	Profile string `json:"profile"`
+	// Model is the model the agent was started with, "" for its CLI's default.
+	Model   string `json:"model,omitempty"`
 	State   string `json:"state"`
 	Workdir string `json:"workdir"`
 	Updated int64  `json:"updated"`
@@ -162,8 +171,10 @@ type Snapshot struct {
 
 type NewRequest struct {
 	Container, Workdir, Profile, Name string
-	Args                              []string
-	Focus                             bool
+	// Model is the model to ask the provider for ("" for the default).
+	Model string
+	Args  []string
+	Focus bool
 	// Role (roles.Default when empty), Parent (the spawning lead's key), Repo (a directory of the
 	// projects directory: the agent starts there) and Branch are recorded on the agent.
 	Role, Parent, Repo, Branch string
@@ -292,7 +303,7 @@ func (m *Manager) snapshot(container string, v int64) (Snapshot, error) {
 }
 
 func rowOf(a store.Agent) Row {
-	return Row{Key: a.Key, Name: a.Name, Label: a.Label, Profile: a.Profile, State: a.State, Workdir: a.Workdir, Updated: a.Updated,
+	return Row{Key: a.Key, Name: a.Name, Label: a.Label, Profile: a.Profile, Model: a.Model, State: a.State, Workdir: a.Workdir, Updated: a.Updated,
 		Created: a.Created, Role: a.Role, Parent: a.Parent, Repo: a.Repo, Branch: a.Branch, CtxPct: -1, CostUSD: -1, Paused: a.Paused}
 }
 
@@ -354,7 +365,7 @@ func (m *Manager) paneCmd(container string, a store.Agent, args []string, attach
 	if attach {
 		return append(cmd, "-a", "ag-"+a.Name)
 	}
-	cmd = append(cmd, "-c", "ag-"+a.Name, "lea-agent", "run", a.Name, "--")
+	cmd = append(cmd, "-c", "ag-"+a.Name, "lea-agent", "run", a.Name)
 	return append(cmd, args...)
 }
 
@@ -1537,12 +1548,15 @@ func (m *Manager) freeName(container, prefix string) (string, error) {
 // the caps, open its task, post its brief, start its pane (abduco creates the session and runs
 // lea-agent) and show it unless it is Hidden. Any failure removes what was done.
 func (m *Manager) New(ctx context.Context, r NewRequest) (Row, error) {
-	if r.Profile == "" {
-		r.Profile = DefaultProfile
+	reg, err := m.registry()
+	if err != nil {
+		return Row{}, err
 	}
-	if r.Profile != DefaultProfile {
-		return Row{}, fmt.Errorf("profile %q is not available yet: this version runs %s only", r.Profile, DefaultProfile)
+	prov, model, err := reg.Resolve(r.Profile, r.Model, m.cfg.DefaultProvider, m.cfg.DefaultModel)
+	if err != nil {
+		return Row{}, err
 	}
+	r.Profile, r.Model = prov.Name, model
 	if r.Role == "" {
 		r.Role = roles.Default
 	}
@@ -1643,12 +1657,12 @@ func (m *Manager) New(ctx context.Context, r NewRequest) (Row, error) {
 	if r.Parent != "" {
 		caps.MaxChildren = roles.MaxChildren
 	}
-	a, err := m.cfg.Store.Register(store.NewAgent{Container: r.Container, Name: r.Name, Profile: r.Profile, Workdir: r.Workdir,
+	a, err := m.cfg.Store.Register(store.NewAgent{Container: r.Container, Name: r.Name, Profile: r.Profile, Model: r.Model, Workdir: r.Workdir,
 		Role: r.Role, Parent: r.Parent, Repo: r.Repo, Branch: r.Branch}, caps, m.cfg.Now())
 	if err != nil {
 		return Row{}, err
 	}
-	args := r.Args
+	var args []string
 	taskID, err := m.cfg.Store.CreateTask(r.Container, a.Key, taskTitle(r.Brief), m.cfg.Now())
 	if err == nil {
 		a.TaskID = taskID
@@ -1664,8 +1678,9 @@ func (m *Manager) New(ctx context.Context, r NewRequest) (Row, error) {
 			wt = worktreePath(projects, r.Workdir, a)
 		}
 		prompt = firstPrompt(a, repo, wt, r.Brief != "")
-		args = append(append([]string{}, r.Args...), prompt)
-		err = checkArgs(args)
+	}
+	if err == nil {
+		args, err = launchArgs(prov, a, "", r.Args, prompt)
 	}
 	if err == nil {
 		// What a new container starts the agent again with (ResumeStopped).
@@ -1983,15 +1998,22 @@ func (m *Manager) ResumeStopped(ctx context.Context, container string) error {
 
 // restart starts a stopped agent's pane again (ResumeStopped), parked. Callers hold m.mu.
 func (m *Manager) restart(ctx context.Context, s Session, container string, a store.Agent) error {
-	args := append([]string{}, a.Args...)
-	// The session id comes from the agent's own hooks: only Claude's UUID reaches the command
-	// line, never a value that could pass for a flag (--resume takes an optional one).
-	if sessionRe.MatchString(a.SessionID) {
-		args = append([]string{"--resume", a.SessionID}, args...)
-	} else if a.Prompt != "" {
-		args = append(args, a.Prompt)
+	reg, err := m.registry()
+	if err != nil {
+		return err
 	}
-	if err := checkArgs(args); err != nil {
+	prov, err := reg.Get(a.Profile)
+	if err != nil {
+		return err
+	}
+	// The session id comes from the agent's own hooks: only a UUID reaches the command line,
+	// never a value that could pass for a flag (--resume takes an optional one).
+	session := ""
+	if sessionRe.MatchString(a.SessionID) {
+		session = a.SessionID
+	}
+	args, err := launchArgs(prov, a, session, a.Args, a.Prompt)
+	if err != nil {
 		return err
 	}
 	if err := checkWorkdir(a.Workdir); err != nil {

@@ -1070,3 +1070,24 @@ func TestPausedIsSetAndClearedWhenTheProcessGoes(t *testing.T) {
 		t.Fatalf("pause inherited: %+v", a)
 	}
 }
+
+// An agent's model and a spawn request's model are kept (the columns an older lea.db lacks are
+// added by migrate).
+func TestModelIsStored(t *testing.T) {
+	s := open(t)
+	a, err := s.Register(NewAgent{Container: "lea-a", Name: "cx", Profile: "codex", Model: "gpt-5.1-codex", Workdir: "/p", Role: "dev"}, Caps{}, 1)
+	if err != nil || a.Model != "gpt-5.1-codex" {
+		t.Fatalf("%+v %v", a, err)
+	}
+	if got, err := s.AgentByKey(a.Key); err != nil || got.Model != "gpt-5.1-codex" || got.Profile != "codex" {
+		t.Fatalf("%+v %v", got, err)
+	}
+	r, err := s.AddSpawnRequest(SpawnRequest{Container: "lea-a", Requester: "lea-a/kid", Lead: "user", Role: "dev", Profile: "lan",
+		Model: "qwen3", Brief: "b"}, func(int64) string { return "r" }, 2, 3600, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, err := s.SpawnRequestByID(r.ID); err != nil || got.Model != "qwen3" || got.Profile != "lan" {
+		t.Fatalf("%+v %v", got, err)
+	}
+}

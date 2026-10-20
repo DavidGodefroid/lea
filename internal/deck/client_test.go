@@ -96,11 +96,11 @@ func TestClientSpeaksTheDaemonAPI(t *testing.T) {
 	if err != nil || !reflect.DeepEqual(snap, want) {
 		t.Fatalf("snapshot=%+v err=%v", snap, err)
 	}
-	a, err := c.New(ctx, "lea-a")
+	a, err := c.New(ctx, "lea-a", "codex")
 	if err != nil || a.Name != "claude-1" {
 		t.Fatalf("new=%+v err=%v", a, err)
 	}
-	if !reflect.DeepEqual(ra.req, agents.NewRequest{Container: "lea-a", Profile: "claude", Focus: true, Role: "dev"}) {
+	if !reflect.DeepEqual(ra.req, agents.NewRequest{Container: "lea-a", Profile: "codex", Focus: true, Role: "dev"}) {
 		t.Fatalf("request=%+v", ra.req)
 	}
 	c.Show(ctx, "lea-a/claude-1", true)

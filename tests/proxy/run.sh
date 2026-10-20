@@ -38,4 +38,41 @@ if [ "$got" = "ok" ]; then echo "ok   SSH forwarder 2222 reaches gitlab.com:22";
 # The second LEA_GIT_SSH endpoint gets the next port.
 got=$(dc exec -T client curl -s --max-time 10 --noproxy '*' http://198.51.100.2:2223/ || true)
 if [ "$got" = "ok" ]; then echo "ok   SSH forwarder 2223 reaches forge.test:443"; else echo "FAIL SSH forwarder 2223: got '$got'"; fail=1; fi
+# The key forwarder (port 4400): the agent never holds the key, the upstream gets it.
+# fwd NAME EXPECTED_STATUS PATTERN -- curl args...  PATTERN is a grep -x line of the body ("" for none).
+fwd() {
+  name=$1 expected=$2 pattern=$3; shift 4
+  out=$(dc exec -T client curl -s --max-time 15 --noproxy '*' -w '\n%{http_code}' "$@" || true)
+  code=$(printf '%s\n' "$out" | tail -n1)
+  body=$(printf '%s\n' "$out" | sed '$d')
+  if [ "$code" != "$expected" ]; then echo "FAIL $name: expected $expected, got $code"; fail=1; return; fi
+  if [ -n "$pattern" ] && ! printf '%s\n' "$body" | grep -qx -- "$pattern"; then
+    echo "FAIL $name: no line '$pattern' in the answer"; fail=1; return
+  fi
+  echo "ok   $name ($code)"
+}
+kp=http://198.51.100.2:4400
+agent="-H Authorization:Bearer-agent-token -H X-Api-Key:agent -H Cookie:c=1 -H X-Forwarded-For:1.2.3.4"
+# shellcheck disable=SC2086 # $agent is several curl arguments
+{
+  fwd "forwarder injects the key"          200 "authorization=Bearer test-key-123" -- $agent "$kp/llm/responses?stream=true"
+  fwd "forwarder strips X-Api-Key"         200 "x-api-key="      -- $agent "$kp/llm/responses"
+  fwd "forwarder strips Cookie"            200 "cookie="         -- $agent "$kp/llm/responses"
+  fwd "forwarder strips X-Forwarded-For"   200 "x-forwarded-for=" -- $agent "$kp/llm/responses"
+  fwd "forwarder joins the base path"      200 "path=/v1/responses?stream=true" -- -X POST -d '{}' "$kp/llm/responses?stream=true"
+  fwd "forwarder sets the upstream Host"   200 "host=10.99.0.84:8000" -- "$kp/llm/models"
+}
+got=$(dc exec -T client curl -s -o /dev/null -D - --max-time 15 --noproxy '*' "$kp/llm/models" | grep -ci '^set-cookie' || true)
+if [ "$got" = "0" ]; then echo "ok   forwarder drops Set-Cookie"; else echo "FAIL forwarder passed Set-Cookie"; fail=1; fi
+fwd "forwarder: unknown name 404"        404 "" -- "$kp/nope/models"
+fwd "forwarder: '..' path refused"       400 "" -- --path-as-is "$kp/llm/../rebind/x"
+fwd "forwarder: encoded '..' refused"    400 "" -- --path-as-is "$kp/llm/%2e%2e/x"
+fwd "forwarder: PUT refused"             405 "" -- -X PUT "$kp/llm/models"
+fwd "forwarder: private upstream not in internal-hosts refused by squid" 403 "" -- "$kp/rebind/models"
+# Nothing secret in the logs (the forwarder logs name, method, path and status only).
+if dc logs proxy 2>&1 | grep -q -e test-key-123 -e agent-token -e stream=true; then
+  echo "FAIL the proxy logs hold a key, a client credential or a query"; fail=1
+else
+  echo "ok   the proxy logs hold no key, credential or query"
+fi
 exit "$fail"

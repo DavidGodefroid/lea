@@ -170,6 +170,23 @@ func (l *Launcher) claudeMounts(home, proj, st string) ([]string, error) {
 	return a, nil
 }
 
+// codexMounts is Codex's state (~/.codex: its login, sessions and config), private to the projects
+// dir like ~/.claude, and never shared with the host's own ~/.codex.
+func (l *Launcher) codexMounts(home, proj, st string) ([]string, error) {
+	priv := st + "/codex/" + ID(proj)
+	if err := noComma(home, priv); err != nil {
+		return nil, err
+	}
+	if err := Mkdirs(l.Cfg.DataDir(), priv); err != nil {
+		return nil, die("%v", err)
+	}
+	// Its login (auth.json) is the user's only.
+	if err := os.Chmod(priv, 0o700); err != nil {
+		return nil, die("%v", err)
+	}
+	return []string{"--mount", "type=bind,src=" + priv + ",dst=" + home + "/.codex"}, nil
+}
+
 // runArgs is lea_run_args: the docker run arguments, image last. The state directories and mount
 // points are a user-facing contract (lea init creates them in shell).
 func (l *Launcher) runArgs(proj, pip string) ([]string, error) {
@@ -216,6 +233,7 @@ func (l *Launcher) runArgs(proj, pip string) ([]string, error) {
 		func() ([]string, error) { return l.busArgs(proj) },
 		l.clipboardArgs,
 		func() ([]string, error) { return l.claudeMounts(home, proj, st) },
+		func() ([]string, error) { return l.codexMounts(home, proj, st) },
 	} {
 		m, err := part()
 		if err != nil {

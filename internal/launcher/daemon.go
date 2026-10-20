@@ -15,6 +15,18 @@ func (l *Launcher) daemonPidfile() string { return l.Cfg.HostDir() + "/daemon.pi
 // daemonAnswers is `lea agents >/dev/null 2>&1`: the daemon's API answers.
 func (l *Launcher) daemonAnswers() bool { return l.quiet(l.Core, "agents") == nil }
 
+// providersStamp is what a daemon records of the provider settings: one started with others is
+// restarted (DaemonProvidersStamp, the same line).
+func (l *Launcher) providersStamp() string {
+	return DaemonProvidersStamp(l.Cfg.Get)
+}
+
+// DaemonProvidersStamp is the provider settings as one line: the default provider and model, the
+// providers file and the internal-hosts file it is checked against.
+func DaemonProvidersStamp(get func(string) string) string {
+	return strings.Join([]string{get("LEA_PROVIDER"), get("LEA_MODEL"), get("LEA_PROVIDERS"), get("LEA_INTERNAL_HOSTS")}, " ")
+}
+
 func readTrim(p string) string {
 	b, _ := os.ReadFile(p)
 	return strings.TrimRight(string(b), "\n")
@@ -33,7 +45,7 @@ func (l *Launcher) ensureDaemon() error {
 		// `$(core version 2>/dev/null || true)`: a core that fails or prints nothing counts as "".
 		ver, _ := l.output(false, l.Core, "version")
 		if (tb == "" || readTrim(host+"/daemon.tmux") == tb) && readTrim(host+"/daemon.version") == ver &&
-			readTrim(host+"/daemon.approvals") == appr {
+			readTrim(host+"/daemon.approvals") == appr && readTrim(host+"/daemon.providers") == l.providersStamp() {
 			return nil
 		}
 		l.stopDaemon()

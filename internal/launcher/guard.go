@@ -67,7 +67,7 @@ func (l *Launcher) checkPaths(p string) error {
 	for _, g := range gitStateDirs {
 		paths = append(paths, s+"/"+g)
 	}
-	paths = append(paths, s+"/containers", s+"/go", s+"/kube",
+	paths = append(paths, s+"/containers", s+"/go", s+"/kube", s+"/codex/"+id,
 		h+"/locks/"+id, h+"/locks/global", h+"/sessions/"+id, h+"/scan/"+id+".start")
 	for _, x := range paths {
 		if err := SafePath(d, x); err != nil {

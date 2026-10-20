@@ -1,6 +1,6 @@
 #!/bin/sh
 # Deck agents inside lea. `run` is what abduco starts for an agent: it records the agent's pid,
-# then becomes Claude Code through lea-session (exec keeps the pid). `ls` prints the live agents;
+# then becomes its CLI (Claude Code, or Codex with --cli codex) through lea-session (exec keeps the pid). `ls` prints the live agents;
 # `stop` ends one; `pause` freezes one with its children (SIGSTOP), `resume` lets them continue
 # (SIGCONT). The deck's shells (s) work the same way: `shell` is what abduco starts for one (the
 # user's login shell, never an agent: no LEA_AGENT), `shells` prints the live ones and
@@ -66,12 +66,18 @@ case ${1:-} in
     name=${2:-}
     valid "$name" || { echo "lea-agent: invalid agent name '$name'" >&2; exit 2; }
     shift 2
+    # --cli: the agent's program (claude by default, codex); lea-session knows them.
+    cli=claude
+    if [ "${1:-}" = --cli ]; then
+      case ${2:-} in claude | codex) cli=$2 ;; *) echo "lea-agent: unknown CLI '${2:-}'" >&2; exit 2 ;; esac
+      shift 2
+    fi
     if [ "${1:-}" = -- ]; then shift; fi
     mkdir -p "$dir"
     printf '%s\n' "$$" >"$dir/$name.pid"
     LEA_AGENT=$name
     export LEA_AGENT
-    exec lea-session --claude "$@"
+    exec lea-session "--$cli" "$@"
     ;;
   ls)
     [ -d "$dir" ] || exit 0
@@ -121,7 +127,7 @@ case ${1:-} in
     rm -f "$shell_dir/$name.pid"
     ;;
   *)
-    echo "usage: lea-agent run NAME [-- ARGS...] | ls | stop NAME | pause NAME | resume NAME | shell NAME | shells | stop-shell NAME" >&2
+    echo "usage: lea-agent run NAME [--cli claude|codex] [-- ARGS...] | ls | stop NAME | pause NAME | resume NAME | shell NAME | shells | stop-shell NAME" >&2
     exit 2
     ;;
 esac

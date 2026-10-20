@@ -15,6 +15,8 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+
+	"github.com/DavidGodefroid/lea/internal/providers"
 )
 
 // protectedKeys: a non-empty value in the environment beats both configuration files
@@ -30,6 +32,7 @@ var ExportedKeys = []string{
 	"LEA_PREFIX", "LEA_IMAGE", "LEA_PROXY_IMAGE", "LEA_GIT_SSH", "LEA_GIT_KNOWN_HOSTS", "LEA_LOCKSQL", "LEA_LOCKSQL_IMAGE", "LEA_LOCKSQL_REF", "LEA_LOCKSQL_VAULT_ADDR",
 	"LEA_OTEL_UPSTREAM", "LEA_NESTED_NETWORKS", "LEA_K8S_NAMESPACE", "LEA_INTERNAL_HOSTS", "LEA_PROJECTS_DIR",
 	"LEA_APPROVALS", "LEA_APPROVAL_TIMEOUT", "LEA_SOUND", "LEA_SOUND_ATTENTION", "LEA_SOUND_DONE",
+	"LEA_PROVIDER", "LEA_MODEL", "LEA_PROVIDERS",
 }
 
 // Config is what lea_load_config gives the shell: the environment, overlaid by the assignments of
@@ -159,6 +162,18 @@ func (c *Config) resolve(root string) error {
 		}
 	}
 	c.final["LEA_GIT_KNOWN_HOSTS"] = kh
+	// The providers (internal/providers): the default one and its model, and the user's
+	// providers file (its endpoints are checked when the proxy starts and at each spawn).
+	c.final["LEA_PROVIDERS"] = nonEmpty(c.Get("LEA_PROVIDERS"), conf+"/providers")
+	prov := nonEmpty(c.Get("LEA_PROVIDER"), providers.Default)
+	if !providerName.MatchString(prov) {
+		return fmt.Errorf("LEA_PROVIDER must be a provider name (claude, codex or a name of the providers file), not '%s'", prov)
+	}
+	c.final["LEA_PROVIDER"] = prov
+	if err := providers.CheckModel(c.Get("LEA_MODEL")); err != nil {
+		return fmt.Errorf("LEA_MODEL: %v", err)
+	}
+	c.final["LEA_MODEL"] = c.Get("LEA_MODEL")
 	ls := nonEmpty(c.Get("LEA_LOCKSQL"), "1")
 	if ls != "0" && ls != "1" {
 		return fmt.Errorf("LEA_LOCKSQL must be 1 (wire lea for a locksql console) or 0, not '%s'", ls)
@@ -174,6 +189,8 @@ func (c *Config) resolve(root string) error {
 	}
 	return nil
 }
+
+var providerName = regexp.MustCompile(`^[a-z][a-z0-9-]{0,15}$`)
 
 // releaseVersion is a release's version, vMAJOR.MINOR.PATCH (libexec/lib/host.sh lea__semver).
 var releaseVersion = regexp.MustCompile(`^v[0-9]+\.[0-9]+\.[0-9]+$`)
