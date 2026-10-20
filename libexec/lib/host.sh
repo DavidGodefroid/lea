@@ -145,7 +145,8 @@ lea_update_background() {
 }
 
 # lea__update_background CURRENT: the latest release, when newer than CURRENT. A newer major
-# release is only announced. A newer minor or patch release is installed beside this one with its
+# release is only announced, and so is a newer minor release of 0.x. A newer minor (from 1.0) or
+# patch release is installed beside this one with its
 # own installer, after the Sigstore signature of its checksums.txt (cosign is required here) and
 # the installer's checksum are verified; the launcher link moves to it only once its images are
 # in place. Any failure leaves this version linked.
@@ -165,6 +166,12 @@ lea__update_background() {
   if [ "$4" -ne "$1" ]; then
     lea__notice "$_ub_v major"
     lea_log "background update: lea $_ub_v is a new major version: run lea update"
+    return 0
+  fi
+  # In 0.x a minor release may break (semver): only its patch releases install themselves.
+  if [ "$1" -eq 0 ] && [ "$5" -ne "$2" ]; then
+    lea__notice "$_ub_v available"
+    lea_log "background update: lea $_ub_v is a new minor version of lea 0.x: run lea update"
     return 0
   fi
   if ! command -v cosign >/dev/null 2>&1; then

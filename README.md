@@ -305,7 +305,8 @@ LEA_PROJECTS_DIR=~/other lea # another projects directory, for this call only
 A release install updates itself: at most once a day, `lea` looks for a new release in the
 background. A newer minor or patch release is installed beside the current one (its signature
 checked with cosign, which this needs) and becomes active at the next `lea`; a newer major
-release is only announced in the deck. Running containers keep their image until they stop.
+release is only announced in the deck, and so is a newer minor release while lea is 0.x (only
+its patch releases install themselves). Running containers keep their image until they stop.
 `LEA_AUTOUPDATE=0` in `~/.config/lea/lea.conf` turns it off; the log is
 `~/.local/share/lea/host/update.log`.
 

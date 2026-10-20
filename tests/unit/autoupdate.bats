@@ -63,6 +63,38 @@ linked() { [ "$(readlink "$LEA_BIN_DIR/lea")" = "$1/bin/lea" ]; }
   linked "$INST/v1.2.4"
 }
 
+# at_v0: the installed release is v0.4.2 instead (a 0.x major: its minor releases may break).
+at_v0() {
+  R0="$INST/v0.4.2"; mkdir -p "$INST"; mv "$R" "$R0"; R=$R0
+  printf '#!/bin/sh\n[ "$1" = version ] && echo v0.4.2\n' >"$R/build/lea"
+  ln -sfn "$R/bin/lea" "$LEA_BIN_DIR/lea"; ln -sfn "$R/bin/locksql" "$LEA_BIN_DIR/locksql"
+  LEA_ROOT=$R
+}
+
+@test "in 0.x a newer patch release is installed" {
+  with_cosign
+  at_v0
+  bg_release v0.4.3
+  run lea_update --background </dev/null
+  [ "$status" -eq 0 ]
+  linked "$INST/v0.4.3"
+  [ "$(cat "$NOTICE")" = "v0.4.3 installed" ]
+}
+
+@test "in 0.x a newer minor release is only announced, nothing is downloaded nor installed" {
+  with_cosign
+  at_v0
+  bg_release v0.5.0
+  run lea_update --background </dev/null
+  [ "$status" -eq 0 ]
+  linked "$R"
+  [ "$(cat "$NOTICE")" = "v0.5.0 available" ]
+  [[ "$output" == *"lea v0.5.0 is a new minor version of lea 0.x: run lea update"* ]]
+  run calls
+  [[ "$output" != *installer* ]]
+  [[ "$output" != *install.sh* ]]
+}
+
 @test "a newer major release is only announced, nothing is downloaded nor installed" {
   with_cosign
   bg_release v2.0.0
