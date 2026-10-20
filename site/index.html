@@ -39,35 +39,39 @@ a { color:var(--blue); text-decoration:none; }
 a:hover { text-decoration:underline; }
 code, pre, kbd { font-family:var(--mono); font-size:.9em; }
 .wrap { max-width:1120px; margin:0 auto; padding:0 24px; }
-nav { display:flex; align-items:center; justify-content:space-between; padding:20px 0; }
-nav .brand { display:flex; align-items:center; gap:10px; font-weight:800; font-size:22px; color:var(--text); }
+nav { display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:4px 16px; padding:16px 0; }
+nav .brand { display:flex; align-items:center; min-height:44px; gap:10px; font-weight:800; font-size:22px; color:var(--text); }
 nav .brand img { width:34px; height:34px; }
-nav .links { display:flex; gap:22px; font-weight:500; font-size:15px; }
-nav .links a { color:var(--sub); }
+nav .links { display:flex; flex-wrap:wrap; gap:0 22px; font-weight:500; font-size:16px; }
+nav .links a { color:var(--sub); display:inline-flex; align-items:center; justify-content:center; min-height:44px; min-width:44px; }
 .hero { text-align:center; padding:56px 0 24px; }
 .eyebrow { display:inline-block; font:600 13px var(--mono); color:var(--green); border:1px solid var(--line);
   padding:4px 12px; border-radius:99px; margin-bottom:22px; }
 h1 { font-size:clamp(34px,5.6vw,62px); line-height:1.08; letter-spacing:-.025em; margin:0 auto 20px; max-width:22ch; font-weight:800; }
 h1 em { font-style:normal; color:var(--blue); }
 .lede { font-size:clamp(17px,2vw,20px); color:var(--sub); max-width:46rem; margin:0 auto 34px; }
-.install { display:flex; align-items:center; gap:12px; max-width:720px; margin:0 auto 14px; background:var(--card);
+.install { display:flex; min-width:0; align-items:center; gap:12px; max-width:720px; margin:0 auto 14px; background:var(--card);
   border:1px solid var(--line); border-radius:14px; padding:12px 12px 12px 20px; text-align:left; }
-.install code { flex:1; overflow-x:auto; white-space:nowrap; color:var(--text); }
+.install code { flex:1; min-width:0; overflow-x:auto; white-space:nowrap; color:var(--text); }
 .install code::before { content:"$ "; color:var(--ov); }
 button.copy { font:600 14px var(--sans); background:var(--blue); color:var(--crust); border:0; border-radius:9px;
-  padding:9px 16px; cursor:pointer; flex:none; }
-.ctas { font-size:15px; color:var(--ov); }
+  padding:9px 16px; min-height:44px; min-width:44px; cursor:pointer; flex:none; }
+.ctas { font-size:16px; color:var(--ov); }
 .demo { margin:44px auto 0; max-width:1100px; border-radius:22px; overflow:hidden; border:1px solid var(--line);
   box-shadow:0 30px 80px -30px rgba(0,0,0,.6); background:#11111b; }
+.demo a { display:block; }
 .demo img { display:block; width:100%; height:auto; }
+.demo-full { display:none; font-size:16px; margin:10px 0 0; }
+.demo-full a { display:inline-flex; align-items:center; min-height:44px; }
 section { padding:84px 0 0; }
 h2 { font-size:clamp(28px,3.6vw,40px); letter-spacing:-.02em; line-height:1.15; margin:0 0 14px; font-weight:800; }
 .sub { color:var(--sub); max-width:44rem; margin:0 0 36px; }
-.grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(300px,1fr)); gap:18px; }
+.grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(min(300px,100%),1fr)); gap:18px; }
 .card { background:var(--card); border:1px solid var(--line); border-radius:16px; padding:26px; }
 .card h3 { margin:0 0 8px; font-size:19px; display:flex; align-items:center; gap:10px; }
 .card p { margin:0; color:var(--sub); font-size:16px; }
 .dot { width:11px; height:11px; border-radius:50%; flex:none; }
+.grid > *, .split > *, ol.steps > li { min-width:0; overflow-wrap:anywhere; }
 .split { display:grid; grid-template-columns:1fr 1fr; gap:18px; }
 .split ul { margin:0; padding:0; list-style:none; }
 .split li { padding:9px 0; border-top:1px solid var(--line); font-size:16px; }
@@ -77,8 +81,8 @@ h2 { font-size:clamp(28px,3.6vw,40px); letter-spacing:-.02em; line-height:1.15; 
 .term { background:#11111b; color:#cdd6f4; border:1px solid var(--line); border-radius:16px; padding:22px 24px;
   font:14px/1.75 var(--mono); overflow-x:auto; }
 .term .c { color:#6c7086; } .term .k { color:#89b4fa; } .term .g { color:#a6e3a1; } .term .r { color:#f38ba8; } .term .o { color:#fab387; }
-.keys { display:grid; grid-template-columns:repeat(auto-fit,minmax(240px,1fr)); gap:4px 28px; }
-.keys div { display:flex; gap:12px; align-items:baseline; padding:7px 0; border-bottom:1px dashed var(--line); font-size:15px; }
+.keys { display:grid; grid-template-columns:repeat(auto-fit,minmax(min(240px,100%),1fr)); gap:4px 28px; }
+.keys div { display:flex; gap:12px; align-items:baseline; padding:7px 0; border-bottom:1px dashed var(--line); font-size:16px; }
 kbd { background:var(--card); border:1px solid var(--line); border-bottom-width:2px; border-radius:6px; padding:1px 7px;
   color:var(--text); min-width:2.2em; text-align:center; }
 ol.steps { counter-reset:s; list-style:none; padding:0; margin:0; display:grid; gap:14px; }
@@ -86,15 +90,23 @@ ol.steps li { counter-increment:s; background:var(--card); border:1px solid var(
 ol.steps li::before { content:counter(s); position:absolute; left:20px; top:16px; width:30px; height:30px; border-radius:50%;
   background:var(--blue); color:var(--crust); font-weight:800; display:grid; place-items:center; font-size:15px; }
 details { background:var(--card); border:1px solid var(--line); border-radius:14px; padding:16px 20px; margin-bottom:12px; }
-summary { cursor:pointer; font-weight:650; }
+summary { cursor:pointer; font-weight:650; padding:9px 0; margin:-9px 0; }
 details p { color:var(--sub); margin:12px 0 0; }
 footer { margin-top:96px; border-top:1px solid var(--line); padding:32px 0 48px; color:var(--ov); font-size:14px; }
 footer .row { display:flex; justify-content:space-between; gap:18px; flex-wrap:wrap; }
+footer a { display:inline-block; line-height:44px; }
 @media (max-width:760px) {
   .wrap { padding:0 16px; }
   nav .links a.hide-sm { display:none; }
   .split { grid-template-columns:1fr; }
   .install { flex-direction:column; align-items:stretch; padding:14px; }
+  .hero { padding-top:32px; }
+  .demo { border-radius:14px; }
+  .demo-full { display:block; }
+  ol.steps li { padding:16px 16px 16px 56px; }
+  ol.steps li::before { left:14px; }
+  .card { padding:20px; }
+  .term { padding:16px; }
   section { padding-top:64px; }
 }
 </style>
@@ -122,10 +134,11 @@ footer .row { display:flex; justify-content:space-between; gap:18px; flex-wrap:w
       <button class="copy" data-copy="cmd">Copy</button>
     </div>
     <p class="ctas">then run <code>lea</code> · <a href="https://github.com/DavidGodefroid/lea#readme">read the docs</a> · Apache 2.0</p>
-    <div class="demo">
+    <div class="demo"><a href="assets/demo.svg">
       <img src="assets/demo.svg" width="1200" height="640"
         alt="Three agents work in the lea container. One pushes to github.com through the proxy; its attempts to read ~/.ssh and to reach 192.168.1.10 are blocked. Another asks for a permission, answered from the deck.">
-    </div>
+    </a></div>
+    <p class="demo-full"><a href="assets/demo.svg">Open the demo full size</a></p>
   </header>
 
   <section id="why">

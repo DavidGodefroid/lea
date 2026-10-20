@@ -72,11 +72,11 @@ func (c *Config) Environ(base []string) []string {
 	for _, k := range append(append([]string{}, ExportedKeys...), c.extra...) {
 		exported[k] = true
 	}
-	out := make([]string, 0, len(base)+len(exported))
+	out := make([]string, 0, len(base)+len(exported)+1)
 	for _, kv := range base {
 		k, _, _ := strings.Cut(kv, "=")
 		switch {
-		case exported[k]:
+		case exported[k] || k == EnvKeysVar:
 		case hasKey(c.file, k):
 			out = append(out, k+"="+c.file[k])
 		default:
@@ -86,7 +86,32 @@ func (c *Config) Environ(base []string) []string {
 	for _, k := range append(append([]string{}, ExportedKeys...), c.extra...) {
 		out = append(out, k+"="+c.Get(k))
 	}
-	return out
+	return append(out, EnvKeysVar+"="+strings.Join(c.EnvKeys(), " "))
+}
+
+// EnvKeysVar names, in the launcher's children, the protected keys the environment set (a
+// child cannot tell them apart: it sees every exported key in its environment).
+const EnvKeysVar = "LEA_ENV_KEYS"
+
+// EnvKeys are the protected keys whose non-empty value in the environment beats both files.
+func (c *Config) EnvKeys() []string {
+	var ks []string
+	for _, k := range ExportedKeys {
+		if protectedKeys[k] && c.getenv(k) != "" {
+			ks = append(ks, k)
+		}
+	}
+	return ks
+}
+
+// Protected reports whether a non-empty value of key in the environment beats both files.
+func Protected(key string) bool { return protectedKeys[key] }
+
+// Assignment is the value a configuration file assigns to key and that file's path (the later
+// file winning); ok is false when neither assigns it.
+func (c *Config) Assignment(key string) (value, file string, ok bool) {
+	v, ok := c.file[key]
+	return v, c.from[key], ok
 }
 
 func hasKey(m map[string]string, k string) bool { _, ok := m[k]; return ok }
@@ -99,10 +124,7 @@ func LoadConfig(getenv func(string) string, root, cwd string) (*Config, error) {
 	if err := c.readFile(filepath.Join(root, "config", "lea.conf")); err != nil {
 		return nil, err
 	}
-	user := c.UserConfigPath()
-	if !strings.HasPrefix(user, "/") {
-		user = filepath.Join(cwd, user)
-	}
+	user := c.UserConfigFile(cwd)
 	if c.Get("LEA_CONFIG") != "" || isRegular(user) {
 		if err := c.readFile(user); err != nil {
 			return nil, err
@@ -120,6 +142,22 @@ func (c *Config) UserConfigPath() string {
 		return p
 	}
 	return nonEmpty(c.Get("XDG_CONFIG_HOME"), c.Get("HOME")+"/.config") + "/lea/lea.conf"
+}
+
+// UserConfigFile is the user configuration's path, a relative one taken from cwd (as LoadConfig
+// reads it).
+func (c *Config) UserConfigFile(cwd string) string {
+	p := c.UserConfigPath()
+	if !strings.HasPrefix(p, "/") {
+		p = filepath.Join(cwd, p)
+	}
+	return p
+}
+
+// CheckGitSSH validates a LEA_GIT_SSH value as LoadConfig does.
+func CheckGitSSH(v string) error {
+	_, err := gitEndpoints(v)
+	return err
 }
 
 func (c *Config) resolve(root string) error {
@@ -164,6 +202,9 @@ func (c *Config) resolve(root string) error {
 		}
 	}
 	c.final["LEA_GIT_KNOWN_HOSTS"] = kh
+	if err := CheckOtelUpstream(c.Get("LEA_OTEL_UPSTREAM")); err != nil {
+		return err
+	}
 	ls := nonEmpty(c.Get("LEA_LOCKSQL"), "1")
 	if ls != "0" && ls != "1" {
 		return fmt.Errorf("LEA_LOCKSQL must be 1 (wire lea for a locksql console) or 0, not '%s'", ls)
@@ -207,6 +248,22 @@ func gitEndpoints(v string) ([]string, error) {
 		seen[h] = true
 	}
 	return eps, nil
+}
+
+// CheckOtelUpstream validates LEA_OTEL_UPSTREAM as lea__check_otel_upstream does: empty, or
+// host:port with a plain host name and a port from 1 to 65535. The proxy hands it to socat as
+// TCP:<value>, where a comma or a second colon would add address options.
+func CheckOtelUpstream(v string) error {
+	if v == "" {
+		return nil
+	}
+	h, port, _ := strings.Cut(v, ":")
+	n, ok := plainNumber(port, 5)
+	if h == "" || strings.Trim(h, "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789.-") != "" ||
+		!ok || n > 65535 {
+		return fmt.Errorf("LEA_OTEL_UPSTREAM must be host:port with a plain host name, not '%s'", v)
+	}
+	return nil
 }
 
 // maxEgressDomains caps LEA_EGRESS_ALLOW.

@@ -313,7 +313,7 @@ func TestRealConfLocksTheLayoutAndIsIdempotent(t *testing.T) {
 	if out, err := tm("new-session", "-d", "-s", "lea-l", "-n", "deck", "sleep", "600"); err != nil {
 		t.Fatalf("new-session: %v: %s", err, out)
 	}
-	if got, want := keyNames(t, tm, "root"), []string{"C-Space", "C-v", "MouseDown1Pane", "MouseDown3Pane", "MouseDrag1Pane", "WheelDownPane", "WheelUpPane"}; !slices.Equal(got, want) {
+	if got, want := keyNames(t, tm, "root"), []string{"C-MouseDown3Pane", "C-Space", "C-v", "MouseDown1Pane", "MouseDown3Pane", "MouseDrag1Pane", "WheelDownPane", "WheelUpPane"}; !slices.Equal(got, want) {
 		t.Fatalf("root table %q, want %q", got, want)
 	}
 	for _, k := range []string{"MouseDown3Status", "MouseDrag1Border", "M-MouseDown3Pane"} {
