@@ -84,6 +84,8 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		return runDeckStop(args[1:], stderr)
 	case "new":
 		return runNew(args[1:], stdout, stderr)
+	case "lock":
+		return runLock(args[1:], stdout, stderr)
 	case "hook":
 		if len(args) == 4 && args[1] == "codex" && args[2] == "notify" {
 			hook.CodexNotify(context.Background(), args[3], os.Getenv)

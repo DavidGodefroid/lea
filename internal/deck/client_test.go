@@ -61,6 +61,18 @@ func (r *recAgents) OpenShell(ctx context.Context, c string) (agents.Row, error)
 	r.calls = append(r.calls, "shell "+c)
 	return agents.Row{Key: agents.ShellKey(c, "sh-1"), Name: "sh-1", Kind: agents.KindShell, State: "running"}, nil
 }
+func (r *recAgents) LockOpen(ctx context.Context, c, tool, profile string) (string, error) {
+	r.calls = append(r.calls, "lock-open "+c+" "+tool+" "+profile)
+	return "opened", nil
+}
+func (r *recAgents) LockClose(ctx context.Context, c, tool, profile string) (string, error) {
+	r.calls = append(r.calls, "lock-close "+c+" "+tool+" "+profile)
+	return "closed", nil
+}
+func (r *recAgents) LockList(ctx context.Context, c string) ([]agents.LockRow, error) {
+	r.calls = append(r.calls, "lock-list "+c)
+	return nil, nil
+}
 func (r *recAgents) SplitShell(ctx context.Context, k string, below bool) (agents.Row, error) {
 	r.calls = append(r.calls, fmt.Sprintf("split %s %v", k, below))
 	return agents.Row{Key: agents.ShellKey("lea-a", "sh-2"), Name: "sh-2", Kind: agents.KindShell, State: "running"}, nil
