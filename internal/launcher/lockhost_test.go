@@ -17,11 +17,11 @@ func lockHostWorld(t *testing.T) string {
 	t.Helper()
 	root := t.TempDir()
 	uid, gid := strconv.Itoa(os.Getuid()), strconv.Itoa(os.Getgid())
-	me, err := exec.Command("id", "-un").Output()
-	if err != nil {
-		t.Fatal(err)
+	// The name the launcher's userName gives this account: id -un, else u<uid>.
+	user := "u" + uid
+	if me, err := exec.Command("id", "-un").Output(); err == nil {
+		user = strings.TrimSpace(string(me))
 	}
-	user := strings.TrimSpace(string(me))
 	mk := func(p string, mode os.FileMode) {
 		if err := os.MkdirAll(root+p, 0o755); err != nil {
 			t.Fatal(err)
