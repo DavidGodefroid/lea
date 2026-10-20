@@ -398,6 +398,8 @@ func (l *Launcher) dispatch(args []string) error {
 		return l.stop(rest)
 	case "update":
 		return l.sh("update", rest...)
+	case "rollback":
+		return l.sh("rollback", rest...)
 	case "doctor":
 		return l.sh("doctor")
 	default:
