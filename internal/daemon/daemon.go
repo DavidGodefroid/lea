@@ -763,7 +763,7 @@ func (d *Daemon) dispatchHooks(ctx context.Context, o Origin, me string, req wir
 			// After Stop, a tool is an agent-type Stop hook at work, or the agent itself once
 			// another hook blocked the stop: the wait starts over. Cancelling would leave a stop
 			// the hook lets through without its sound, since no stop_check follows.
-			d.restartDoneLocked(me)
+			d.restartDoneLocked(me, o.Container)
 		default:
 			// A new turn began, or a new Stop comes with its own stop_check.
 			d.cancelDoneLocked(me)
@@ -801,7 +801,7 @@ func (d *Daemon) dispatchHooks(ctx context.Context, o Origin, me string, req wir
 			}
 			d.changed()
 			if waits {
-				d.sound(SoundAttention)
+				d.sound(ctx, o.Container, SoundAttention)
 			}
 		}
 		if ok && (s == "idle" || s == "done" || p.Event == "UserPromptSubmit") {
@@ -823,13 +823,13 @@ func (d *Daemon) dispatchHooks(ctx context.Context, o Origin, me string, req wir
 		// parallel and another one can still block the stop, so the sound waits for the agent to
 		// stay quiet (armDone).
 		if n >= maxStopBlocks {
-			d.armDone(me)
+			d.armDone(me, o.Container)
 			return stopVerdict{}, nil
 		}
 		ms, err := d.take(me)
 		if err != nil || len(ms.items) == 0 {
 			if err == nil {
-				d.armDone(me)
+				d.armDone(me, o.Container)
 			} else {
 				d.cancelDone(me)
 			}
