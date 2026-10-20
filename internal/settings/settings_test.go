@@ -266,3 +266,24 @@ func TestOtelAndSoundValues(t *testing.T) {
 		t.Error(err)
 	}
 }
+
+func TestProviderAndModelValues(t *testing.T) {
+	t.Setenv("LEA_PROVIDERS", filepath.Join(t.TempDir(), "none"))
+	w := newWorld(t, "")
+	st := w.store()
+	for key, bad := range map[string][]string{
+		"LEA_PROVIDER": {"gemini", "Claude", "a b", "--yolo"},
+		"LEA_MODEL":    {"--yolo", "a b", `x"y`},
+	} {
+		for _, v := range bad {
+			if err := st.Set(key, v); err == nil {
+				t.Errorf("%s=%q accepted", key, v)
+			}
+		}
+	}
+	for key, v := range map[string]string{"LEA_PROVIDER": "codex", "LEA_MODEL": "gpt-5.1-codex"} {
+		if err := st.Set(key, v); err != nil {
+			t.Errorf("%s=%q: %v", key, v, err)
+		}
+	}
+}

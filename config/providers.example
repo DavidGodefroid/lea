@@ -1,0 +1,16 @@
+# lea's providers file (~/.config/lea/providers, or LEA_PROVIDERS): OpenAI-compatible endpoints an
+# agent can be started on (lea new -p <name>, the deck's N, agents_spawn's profile). lea runs Codex
+# against them; the endpoint must serve the Responses API (/v1/responses).
+#
+# Format: <name> <base URL> [key=<key file>] [model=<default model>], one per line.
+#   name      lowercase letters, digits and '-', at most 16 (not claude, codex or kimi)
+#   base URL  http:// or https://, a host name or an IPv4 address, no wildcard, user or query
+#   key=      a file holding the API key: yours, mode 600, outside the projects directory. It is
+#             mounted into the proxy container only; the agents never see it.
+#   model=    the model of an agent started without one (an endpoint needs one or the other)
+#
+# A host of your network (or this machine's Docker bridge address) must also be listed, with its
+# port, in the internal-hosts file (LEA_INTERNAL_HOSTS); loopback and localhost are refused.
+#
+# ollama  http://192.168.1.10:11434/v1                                    model=qwen3-coder:30b
+# vllm    https://vllm.example.com/v1   key=/home/me/.config/lea/keys/vllm model=meta-llama/Llama-3.3-70B-Instruct

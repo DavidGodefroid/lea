@@ -26,6 +26,8 @@ type threadView struct {
 	Body   string `json:"body"`
 	At     int64  `json:"at"`
 	ReadAt int64  `json:"read_at"`
+	// ReplyTo is the message this one answers (0: none): the deck ties an answer to its question.
+	ReplyTo int64 `json:"reply_to,omitempty"`
 }
 
 // cutBody cuts s to at most n bytes without splitting a UTF-8 sequence, marking the cut.
@@ -72,7 +74,7 @@ func (d *Daemon) threadList(raw json.RawMessage) ([]threadView, error) {
 	size := 2
 	for i := len(ms) - 1; i >= 0; i-- {
 		m := ms[i]
-		v := threadView{m.ID, m.Thread, m.From, m.To, m.Kind, cutBody(m.Body, threadBody), m.At, m.ReadAt}
+		v := threadView{m.ID, m.Thread, m.From, m.To, m.Kind, cutBody(m.Body, threadBody), m.At, m.ReadAt, m.ReplyTo}
 		b, err := json.Marshal(v)
 		if err != nil {
 			return nil, err

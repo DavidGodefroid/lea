@@ -1,11 +1,13 @@
 package daemon
 
 import (
+	"encoding/json"
 	"reflect"
 	"strings"
 	"testing"
 
 	"github.com/DavidGodefroid/lea/internal/agents"
+	"github.com/DavidGodefroid/lea/internal/providers"
 )
 
 func TestAgentsSpawnIsForRunningLeadsOnly(t *testing.T) {
@@ -65,6 +67,11 @@ func TestAgentsSpawnRefusesWhatALeadMayNotGive(t *testing.T) {
 		{"brief": ""},
 		{"brief": "a\x00b"},
 		{"brief": strings.Repeat("a", agents.MaxBrief+1)},
+		{"profile": "gemini", "brief": "x"},
+		{"profile": strings.Repeat("p", 40), "brief": "x"},
+		{"model": "--dangerously-bypass-approvals-and-sandbox", "brief": "x"},
+		{"model": `x" -c y="z`, "brief": "x"},
+		{"model": strings.Repeat("m", 200), "brief": "x"},
 	} {
 		if err := call(t, e.bus, "boss", "agents_spawn", p, nil); err == nil {
 			t.Fatalf("params %d accepted", i)
@@ -140,5 +147,43 @@ func TestAgentsListShowsRolesTheTreeAndYou(t *testing.T) {
 	k, b := as[by["kid"]], as[by["boss"]]
 	if !k.You || b.You || k.Parent != "boss" || k.Role != "dev" || b.Role != "lead" || b.Parent != "" {
 		t.Fatalf("agents=%+v", as)
+	}
+}
+
+// A lead starts a child on another provider; the provider never changes what the role allows.
+func TestAgentsSpawnOnAnotherProvider(t *testing.T) {
+	e := start(t)
+	fa := &fakeAgents{}
+	e.d.SetAgents(fa)
+	spawned(t, e, "boss", "lead", "")
+	if err := call(t, e.bus, "boss", "agents_spawn", map[string]any{"profile": "codex", "model": "gpt-5.1-codex", "brief": "x"}, nil); err != nil {
+		t.Fatal(err)
+	}
+	if fa.req.Profile != "codex" || fa.req.Model != "gpt-5.1-codex" || fa.req.Role != "dev" || !fa.req.Hidden {
+		t.Fatalf("request=%+v", fa.req)
+	}
+	if err := call(t, e.bus, "boss", "agents_spawn", map[string]any{"profile": "codex", "role": "lead", "brief": "x"}, nil); err == nil {
+		t.Fatal("a lead was given through another provider")
+	}
+}
+
+// providers_list names the providers and their CLI, never an endpoint's address or key file.
+func TestProvidersList(t *testing.T) {
+	e := start(t)
+	spawned(t, e, "boss", "lead", "")
+	eps, err := providers.Parse(strings.NewReader("lan http://10.0.0.5:11434/v1 model=qwen3\n"),
+		providers.Options{Internal: providers.ParseHosts(strings.NewReader("10.0.0.5 11434\n")), UID: -1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	e.d.SetProviders(func() (*providers.Registry, error) { return providers.WithEndpoints(providers.Builtin(), eps), nil })
+	e.d.SetDefaultProvider("codex")
+	var raw json.RawMessage
+	if err := call(t, e.bus, "boss", "providers_list", nil, &raw); err != nil {
+		t.Fatal(err)
+	}
+	want := `[{"name":"claude","cli":"claude"},{"name":"codex","cli":"codex","default":true},{"name":"lan","cli":"codex","model":"qwen3"}]`
+	if string(raw) != want {
+		t.Fatalf("got %s", raw)
 	}
 }

@@ -43,7 +43,8 @@ type replyIn struct {
 
 type spawnIn struct {
 	Role    string `json:"role,omitempty" jsonschema:"dev (default) or reviewer"`
-	Profile string `json:"profile,omitempty" jsonschema:"claude (default, the only profile of this version)"`
+	Profile string `json:"profile,omitempty" jsonschema:"the provider the agent runs on: claude, codex or another of providers_list (default: the user's default provider)"`
+	Model   string `json:"model,omitempty" jsonschema:"the model to ask the provider for (default: the provider's default)"`
 	Repo    string `json:"repo,omitempty" jsonschema:"a directory directly under the projects directory: the agent starts there"`
 	Branch  string `json:"branch,omitempty" jsonschema:"the git branch the agent works on, in its own worktree"`
 	Brief   string `json:"brief" jsonschema:"what the new agent must do, at most 32 KiB; it is its first message"`
@@ -52,7 +53,8 @@ type spawnIn struct {
 
 type requestIn struct {
 	Role    string `json:"role,omitempty" jsonschema:"dev (default) or reviewer"`
-	Profile string `json:"profile,omitempty" jsonschema:"claude (default, the only profile of this version)"`
+	Profile string `json:"profile,omitempty" jsonschema:"the provider the agent runs on: claude, codex or another of providers_list (default: the user's default provider)"`
+	Model   string `json:"model,omitempty" jsonschema:"the model to ask the provider for (default: the provider's default)"`
 	Repo    string `json:"repo,omitempty" jsonschema:"a directory directly under the projects directory"`
 	Branch  string `json:"branch,omitempty" jsonschema:"the git branch the new agent works on"`
 	Brief   string `json:"brief" jsonschema:"what the new agent must do, at most 32 KiB"`
@@ -87,6 +89,10 @@ func New(sock, agent, version string) *mcp.Server {
 	mcp.AddTool(s, &mcp.Tool{Name: "agents_list", Description: "List the agents of this lea: name, role, profile, state, parent, branch, ctx_pct (percent of its context window used, when known; your container only); you=true is you. Never their screens."},
 		func(ctx context.Context, _ *mcp.CallToolRequest, in empty) (*mcp.CallToolResult, any, error) {
 			return proxy(ctx, sock, agent, "agents_list", short, in), nil, nil
+		})
+	mcp.AddTool(s, &mcp.Tool{Name: "providers_list", Description: "List the providers an agent can be started on (profile of agents_spawn and agents_request_spawn): name, cli (claude or codex), default model; default=true is the user's default."},
+		func(ctx context.Context, _ *mcp.CallToolRequest, in empty) (*mcp.CallToolResult, any, error) {
+			return proxy(ctx, sock, agent, "providers_list", short, in), nil, nil
 		})
 	mcp.AddTool(s, &mcp.Tool{Name: "msg_send", Description: "Send a message to another agent or to the user."},
 		func(ctx context.Context, _ *mcp.CallToolRequest, in sendIn) (*mcp.CallToolResult, any, error) {
@@ -164,6 +170,6 @@ type releaseIn struct {
 
 type taskIn struct {
 	StatusText string `json:"status_text" jsonschema:"what you are doing now: one line, at most 200 characters"`
-	Next       string `json:"next,omitempty" jsonschema:"what comes next: one line, at most 500 characters"`
-	BlockedOn  string `json:"blocked_on,omitempty" jsonschema:"what blocks you, if anything: one line, at most 200 characters"`
+	Next       string `json:"next,omitempty" jsonschema:"what comes next, while something is still to happen (CI, a review, a reply): one line, at most 500 characters; leave it empty once your work is done"`
+	BlockedOn  string `json:"blocked_on,omitempty" jsonschema:"what blocks you, if a human must act: one line, at most 200 characters; your row turns red until you clear it"`
 }

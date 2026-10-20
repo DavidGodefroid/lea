@@ -119,10 +119,11 @@ var helpLines = []string{
 	"enter       show and focus",
 	"space       next needing you",
 	"n           new agent",
+	"N           new, other provider",
 	"s           new shell",
 	"- |         split with a shell",
-	"m           message the agent",
-	"t           its thread",
+	"m           note to its inbox",
+	"t           its messages",
 	"e           rename",
 	"f o         new folder, move in",
 	"J K h l     reorder, fold",
@@ -298,9 +299,10 @@ func (m Model) rowLines(inner int) ([]string, []lineOwner) {
 			owners[i] = append(owners[i], lineOwner{e.key, -1})
 		}
 		if e.key == m.menuFor {
-			for j, l := range m.menuLines(m.openItems(), inner) {
+			items := m.openItems()
+			for j, l := range m.menuLines(items, inner) {
 				rendered[i] = append(rendered[i], l)
-				owners[i] = append(owners[i], lineOwner{e.key, j})
+				owners[i] = append(owners[i], lineOwner{e.key, menuOwner(j, len(items))})
 			}
 		}
 	}
@@ -309,8 +311,9 @@ func (m Model) rowLines(inner int) ([]string, []lineOwner) {
 	if m.menuFor == deckMenu {
 		var r []string
 		var o []lineOwner
-		for j, l := range m.menuLines(deckMenuItems(m.sound), inner) {
-			r, o = append(r, l), append(o, lineOwner{deckMenu, j})
+		items := deckMenuItems(m.sound)
+		for j, l := range m.menuLines(items, inner) {
+			r, o = append(r, l), append(o, lineOwner{deckMenu, menuOwner(j, len(items))})
 		}
 		rendered, owners = append(rendered, r), append(owners, o)
 		focus = len(rendered) - 1
@@ -457,7 +460,7 @@ func (m Model) row(a Agent, inner int, inFolder bool) []string {
 }
 
 // detail is the second line of a row, for width cells (0: unbounded): the role (dev, the default,
-// is not shown), the directory, the branch, the short status and the age. When it does not fit,
+// is not shown), the model (when one was asked for), the directory, the branch, the short status and the age. When it does not fit,
 // the directory and the branch go first so the status and the age stay.
 func (m Model) detail(a Agent, width int) string {
 	c := m.cs()
@@ -469,6 +472,9 @@ func (m Model) detail(a Agent, width int) string {
 		var before, after []string
 		if a.Role != "" && a.Role != "dev" {
 			before = append(before, a.Role)
+		}
+		if a.Model != "" { // the provider is on the first line
+			before = append(before, a.Model)
 		}
 		if path {
 			dir := a.Workdir

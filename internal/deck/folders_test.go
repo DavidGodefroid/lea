@@ -216,6 +216,15 @@ func TestAFoldedFoldersDotAggregatesItsAgents(t *testing.T) {
 	if got, _ := m.folderState(0); got != "idle" {
 		t.Errorf("paused: %q", got)
 	}
+	// #72: a waiting agent spins the folder, one whose task names a blocker turns it red.
+	m = withFolders(t, st, withTask(ag("a", "idle", 9_990), true, false), ag("b", "idle", 9_990))
+	if got, _ := m.folderState(0); got != "working" {
+		t.Errorf("waiting: %q", got)
+	}
+	m = withFolders(t, st, withTask(ag("a", "working", 9_990), false, true), ag("b", "idle", 9_990))
+	if got, _ := m.folderState(0); got != "blocked" {
+		t.Errorf("blocked_on: %q", got)
+	}
 }
 
 func TestJKReorderFoldersAndAgentsInAFolder(t *testing.T) {

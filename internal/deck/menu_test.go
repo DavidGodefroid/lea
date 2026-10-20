@@ -49,12 +49,12 @@ func TestARightClickOpensTheRowsMenu(t *testing.T) {
 		t.Fatalf("menu %q selected %q", m.menuFor, m.selected)
 	}
 	s := strings.Join(viewLines(m), "\n")
-	for _, w := range []string{"Show", "Message", "Thread", "Rename", "Role", "Stop", "enter pick · esc close"} {
+	for _, w := range []string{"Show", "Send message", "Messages", "Rename", "Role", "Stop", "enter pick · esc close"} {
 		if !strings.Contains(s, w) {
 			t.Fatalf("menu lacks %q:\n%s", w, s)
 		}
 	}
-	// b's lines are 3-4, its menu 5 (Show), 6 (Message) … c moves down below it.
+	// b's lines are 3-4, its menu 5 (Show), 6 (Send message) … c moves down below it.
 	if k, i := m.hit(6); k != "lea-a/b" || i != 1 {
 		t.Fatalf("line 6 is %q item %d", k, i)
 	}
@@ -73,7 +73,7 @@ func TestTheMenuWorksWithTheKeys(t *testing.T) {
 	m, _ = step(t, m, click(tea.MouseButtonRight, 5))
 	m, _ = step(t, m, key("j"))
 	m, _ = step(t, m, key("j"))
-	m, _ = step(t, m, key("j")) // Show, Message, Thread, Rename
+	m, _ = step(t, m, key("j")) // Show, Send message, Messages, Rename
 	m, _ = step(t, m, key("enter"))
 	if m.menuFor != "" || m.editFor != "lea-a/c" {
 		t.Fatalf("menu %q edit %q", m.menuFor, m.editFor)
@@ -251,5 +251,38 @@ func TestTheDecksMenuFitsAboveTheNotice(t *testing.T) {
 	ls := viewLines(m)
 	if len(ls) != 16 || !strings.Contains(strings.Join(ls, "\n"), "Detach") || !strings.Contains(ls[14], "9.9") {
 		t.Fatalf("%d lines:\n%s", len(ls), strings.Join(ls, "\n"))
+	}
+}
+
+// The message items say what they do (#28): highlighted, a line under the menu tells a message
+// from typing into the pane, and the thread from the pane's history; a click on it does nothing.
+func TestTheMessageItemsExplainThemselves(t *testing.T) {
+	m := threeRows(t, &fakeAPI{})
+	m, _ = step(t, m, click(tea.MouseButtonRight, 3))
+	text := func() string { return strings.Join(viewLines(m), "\n") }
+	if strings.Contains(text(), "inbox") {
+		t.Fatalf("a hint under Show:\n%s", text())
+	}
+	m, _ = step(t, m, key("j"))
+	s := text()
+	if !strings.Contains(s, "a note to its inbox") || !strings.Contains(s, "next turn") {
+		t.Fatalf("no hint under Send message:\n%s", s)
+	}
+	n := len(menuItems(m.agents[1], false))
+	y := 5 + n // b's menu starts on line 5: the hint follows its last item
+	if k, i := m.hit(y); k != "lea-a/b" || i != hintLine {
+		t.Fatalf("line %d is %q item %d:\n%s", y, k, i, s)
+	}
+	m, cmd := step(t, m, click(tea.MouseButtonLeft, y))
+	if m.menuFor != "lea-a/b" || cmd != nil {
+		t.Fatalf("a click on the hint: menu %q", m.menuFor)
+	}
+	m, _ = step(t, m, key("j"))
+	if s := text(); !strings.Contains(s, "its notes, questions and") || strings.Contains(s, "next turn") {
+		t.Fatalf("Messages' hint:\n%s", s)
+	}
+	m, _ = step(t, m, key("j"))
+	if s := text(); strings.Contains(s, "answers") {
+		t.Fatalf("a hint under Rename:\n%s", s)
 	}
 }
