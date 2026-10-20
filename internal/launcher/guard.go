@@ -48,14 +48,19 @@ func (l *Launcher) projectsDir() (string, error) {
 var credentialDirs = []string{".ssh", ".gnupg", ".aws", ".config/gh", ".kube", ".docker"}
 
 // guardProjects is lea__guard_projects: refuses /, $HOME and its ancestors, and any directory
-// that is, contains or lies inside ~/.claude, a credential directory, the lea data dir or the lea
-// installation.
+// that contains the user configuration, and any directory that is, contains or lies inside
+// ~/.claude, a credential directory, ~/.config/lea, the lea data dir or the lea installation.
 func (l *Launcher) guardProjects(p string) error {
 	home := l.Cfg.Get("HOME")
 	if p == "/" || under(p, phys(home)) {
 		return die("%s cannot be a projects directory: it is / or contains your home directory", p)
 	}
-	guarded := []string{phys(home + "/.claude")}
+	// The user configuration is sourced as shell on the host: agents must not reach its directory.
+	conf := nonEmpty(l.Cfg.Get("XDG_CONFIG_HOME"), home+"/.config") + "/lea"
+	if user := l.Cfg.UserConfigFile(l.Cwd); under(p, phys(filepath.Dir(user))) {
+		return die("%s cannot be a projects directory: it contains the user configuration %s", p, user)
+	}
+	guarded := []string{phys(home + "/.claude"), phys(conf)}
 	for _, c := range credentialDirs {
 		guarded = append(guarded, phys(home+"/"+c))
 	}
@@ -65,6 +70,17 @@ func (l *Launcher) guardProjects(p string) error {
 		}
 	}
 	return nil
+}
+
+// CheckProjectsDir is lea init's check of a projects directory p: it is an existing directory
+// whose physical path passes guardProjects for the lea installed at root, run from cwd. It
+// returns that path.
+func CheckProjectsDir(cfg *Config, root, cwd, p string) (string, error) {
+	if !isDir(p) {
+		return "", die("%s is not a directory", p)
+	}
+	p = physDir(p)
+	return p, (&Launcher{Root: root, Cwd: cwd, Cfg: cfg}).guardProjects(p)
 }
 
 // checkPaths is lea__check_paths: before any docker call, a symlink on any path the launcher
