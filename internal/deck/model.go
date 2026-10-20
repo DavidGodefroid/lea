@@ -170,12 +170,32 @@ type Model struct {
 	menuSel       int           // the menu's highlighted item
 	hoverFor      string        // key of the row under the pointer, "" when none
 	hoverSeq      int           // the latest pointer move; older fades are dropped
+	menuPicker    bool          // the open menu picks the folder of menuFor (Move to folder)
+	layout        Layout        // the folders (folders.go)
+	store         LayoutStore   // where the layout persists, nil when nowhere
 	ticking       bool          // a frame tick is pending
 	width, height int
 }
 
 func New(api API, container string, ascii bool, now func() time.Time) Model {
 	return Model{api: api, container: container, ascii: ascii, now: now, seen: map[string]int64{}}
+}
+
+// WithLayout keeps the folders in store and starts from the layout it holds. A layout that
+// cannot be read is set aside, said in the status, and not overwritten until the user changes
+// the folders.
+func (m Model) WithLayout(store LayoutStore) Model {
+	m.store = store
+	if store == nil {
+		return m
+	}
+	l, err := store.Load()
+	if err != nil {
+		m.status = "folders not loaded: " + oneLine(err.Error())
+		return m
+	}
+	m.layout = l
+	return m
 }
 
 // The logo's animation, in frames of frameDelay: the start lights a dot, then the name, every
@@ -281,7 +301,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case retryMsg:
 		return m, m.watch()
 	case showMsg:
-		if msg.seq != m.seq || m.selected == "" {
+		if msg.seq != m.seq || m.selected == "" || isFolderKey(m.selected) {
 			return m, nil
 		}
 		key, api := m.selected, m.api
@@ -340,6 +360,9 @@ func (m Model) editKey(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case s == "enter":
 		key, label, api := m.editFor, string(m.draft), m.api
 		m.editFor, m.draft = "", nil
+		if isFolderKey(key) {
+			return m.renameFolder(key, label), nil
+		}
 		return m, m.call(func(ctx context.Context) error { return api.SetLabel(ctx, key, label) })
 	case s == "backspace":
 		if len(m.draft) > 0 {
@@ -382,7 +405,7 @@ func (m *Model) apply(s Snapshot) bool {
 			m.seen[a.Key] = a.Updated
 		}
 	}
-	prev, at := m.agents, m.index(m.selected)
+	prev, at := m.entryKeys(), m.pos(m.selected)
 	m.agents = sortAgents(s.Agents)
 	// An agent shown from elsewhere (lea new in another terminal, another deck client) takes
 	// the selection, so the row under the cursor is the one in the slot. A show this deck asked
@@ -393,13 +416,17 @@ func (m *Model) apply(s Snapshot) bool {
 	if s.Shown == m.lastAsked {
 		m.asked, m.lastAsked = nil, ""
 	}
-	if m.index(m.selected) < 0 {
+	if !m.exists(m.selected) {
 		m.selected = m.neighbour(prev, at)
 		if m.selected == "" && m.index(s.Shown) >= 0 {
 			m.selected = s.Shown
-		} else if m.selected == "" && len(m.agents) > 0 {
-			m.selected = m.agents[0].Key
+		} else if es := m.entries(false); m.selected == "" && len(es) > 0 {
+			m.selected = es[0].key
 		}
+	}
+	// An agent in a folded folder has no row: its folder's row stands for it.
+	if fi := m.folderOf(m.selected); m.pos(m.selected) < 0 && fi >= 0 {
+		m.selected = folderKey(m.layout.Folders[fi].ID)
 	}
 	if m.confirm != "" && m.index(m.confirm) < 0 {
 		m.confirm, m.confirmYes = "", false
@@ -407,30 +434,39 @@ func (m *Model) apply(s Snapshot) bool {
 	if m.roleFor != "" && m.index(m.roleFor) < 0 {
 		m.roleFor, m.status = "", ""
 	}
-	if m.menuFor != "" && m.menuFor != deckMenu && m.index(m.menuFor) < 0 {
-		m.menuFor = ""
+	if m.menuFor != "" && m.menuFor != deckMenu && !m.exists(m.menuFor) {
+		m.menuFor, m.menuPicker = "", false
 	}
-	if m.editFor != "" && m.index(m.editFor) < 0 {
+	if m.editFor != "" && !m.exists(m.editFor) {
 		m.editFor, m.draft = "", nil
 	}
-	return was != "" && m.index(was) < 0 && m.selected != "" && s.Shown == ""
+	return was != "" && !m.exists(was) && m.selected != "" && !isFolderKey(m.selected) && s.Shown == ""
+}
+
+// entryKeys are the keys of the rows shown, in display order.
+func (m Model) entryKeys() []string {
+	var out []string
+	for _, e := range m.entries(false) {
+		out = append(out, e.key)
+	}
+	return out
 }
 
 // neighbour is the row that takes the place of prev[at] when it disappears: the next row of the
 // previous display order that is still listed, else the previous one ("" when none is left, or
 // when nothing was selected).
-func (m Model) neighbour(prev []Agent, at int) string {
+func (m Model) neighbour(prev []string, at int) string {
 	if at < 0 {
 		return ""
 	}
 	for i := at + 1; i < len(prev); i++ {
-		if m.index(prev[i].Key) >= 0 {
-			return prev[i].Key
+		if m.exists(prev[i]) {
+			return prev[i]
 		}
 	}
 	for i := at - 1; i >= 0; i-- {
-		if m.index(prev[i].Key) >= 0 {
-			return prev[i].Key
+		if m.exists(prev[i]) {
+			return prev[i]
 		}
 	}
 	return ""
@@ -458,11 +494,29 @@ func (m Model) key(k string) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	api, c := m.api, m.container
+	if isFolderKey(m.selected) {
+		if nm, cmd, ok := m.onFolder(k); ok {
+			return nm, cmd
+		}
+	}
 	switch k {
 	case "j", "down":
-		return m.move(m.index(m.selected) + 1)
+		return m.move(m.pos(m.selected) + 1)
 	case "k", "up":
-		return m.move(m.index(m.selected) - 1)
+		return m.move(m.pos(m.selected) - 1)
+	case "J":
+		return m.shift(1), nil
+	case "K":
+		return m.shift(-1), nil
+	case "f":
+		nm, _ := m.newFolder("")
+		return nm, nil
+	case "o":
+		if a := m.selectedAgent(); a != nil && !isShell(*a) {
+			m.openMenu(a.Key)
+			m.menuPicker = true
+		}
+		return m, nil
 	case "enter":
 		if m.selected == "" {
 			return m, nil
@@ -568,8 +622,9 @@ func (m Model) key(k string) (tea.Model, tea.Cmd) {
 		id, verdict := a.Approval.ID, verdicts[k]
 		return m, m.call(func(ctx context.Context) error { return api.Decide(ctx, id, verdict) })
 	case " ":
-		if i := m.nextNeedingYou(); i >= 0 {
-			return m.move(i)
+		if key := m.nextNeedingYou(); key != "" {
+			m.unfoldFor(key)
+			return m.move(m.pos(key))
 		}
 		m.status = nothingNeedsYou
 		return m, nil
@@ -582,7 +637,30 @@ func (m Model) key(k string) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-// selectedAgent is the selected row, nil when none.
+// onFolder is a key typed on a folder's row: enter (or h, l, the arrows) folds or unfolds it, e renames it, x deletes it
+// (its agents go back to the root). ok is false for a key that does what it does on any row.
+func (m Model) onFolder(k string) (tea.Model, tea.Cmd, bool) {
+	fi := m.folderAt(m.selected)
+	if fi < 0 {
+		return m, nil, false
+	}
+	switch k {
+	case "enter", "left", "right", "h", "l":
+		if f := m.layout.Folders[fi]; (k == "left" || k == "h") && f.Folded || (k == "right" || k == "l") && !f.Folded {
+			return m, nil, true
+		}
+		return m.toggleFold(m.selected), nil, true
+	case "e":
+		f := m.layout.Folders[fi]
+		m.editFor, m.draft, m.status = m.selected, []rune(f.Name), ""
+		return m, nil, true
+	case "x":
+		return m.deleteFolder(m.selected), nil, true
+	}
+	return m, nil, false
+}
+
+// selectedAgent is the selected row, nil when none or on a folder.
 func (m Model) selectedAgent() *Agent {
 	if i := m.index(m.selected); i >= 0 {
 		return &m.agents[i]
@@ -595,15 +673,21 @@ var roleKeys = map[string]string{"l": "lead", "d": "dev", "r": "reviewer"}
 
 var verdicts = map[string]string{"a": "allow", "d": "deny", "A": "always"}
 
-// move selects row i; the slot follows after showDelay without further movement.
+// move selects row i of the display order; the slot follows after showDelay without further
+// movement (a folder's row shows nothing).
 func (m Model) move(i int) (tea.Model, tea.Cmd) {
-	if i < 0 || i >= len(m.agents) {
+	es := m.entries(false)
+	if i < 0 || i >= len(es) {
 		return m, nil
 	}
 	if m.status == nothingNeedsYou {
 		m.status = ""
 	}
-	m.selected = m.agents[i].Key
+	m.selected = es[i].key
+	if isFolderKey(m.selected) {
+		m.seq++ // drops a pending delayed show
+		return m, nil
+	}
 	m.seq++
 	seq := m.seq
 	return m, tea.Tick(showDelay, func(time.Time) tea.Msg { return showMsg{seq} })
@@ -670,15 +754,22 @@ func (m Model) label(a Agent) string {
 	return "unknown"
 }
 
-// nextNeedingYou is the first row after the selection (wrapping) that needs the user: blocked,
-// done and not yet seen, or holding a message for the user (spec §4.2 space). -1 when none.
-func (m Model) nextNeedingYou() int {
-	n, at := len(m.agents), m.index(m.selected)
-	for i := 1; i <= n; i++ {
-		j := ((at+i)%n + n) % n
-		if rank(m.agents[j], m.seen) <= 2 {
-			return j
+// nextNeedingYou is the first agent after the selection (wrapping, in display order, folded
+// folders included) that needs the user: blocked, done and not yet seen, or holding a message for
+// the user (spec §4.2 space). "" when none.
+func (m Model) nextNeedingYou() string {
+	es := m.entries(true)
+	n, at := len(es), -1
+	for i, e := range es {
+		if e.key == m.selected {
+			at = i
 		}
 	}
-	return -1
+	for i := 1; i <= n; i++ {
+		e := es[((at+i)%n+n)%n]
+		if e.agent >= 0 && rank(m.agents[e.agent], m.seen) <= 2 {
+			return e.key
+		}
+	}
+	return ""
 }

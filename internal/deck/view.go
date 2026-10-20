@@ -115,6 +115,10 @@ var helpLines = []string{
 	"m           message the agent",
 	"t           its thread",
 	"e           rename",
+	"f           new folder",
+	"o           move to a folder",
+	"J K         move down, up",
+	"enter h l   fold a folder",
 	"r           its role",
 	"p           pause or resume",
 	"a d A       allow deny always",
@@ -130,7 +134,10 @@ var helpLines = []string{
 func (m Model) statusLine(inner int) string {
 	c := m.cs()
 	if m.editFor != "" {
-		const prompt = "name: "
+		prompt := "name: "
+		if isFolderKey(m.editFor) {
+			prompt = "folder: "
+		}
 		field := tail(safe(string(m.draft), c), inner-1-len(prompt)-1)
 		return padRight(" "+lipgloss.NewStyle().Foreground(theme.Text).Render(prompt+field)+
 			lipgloss.NewStyle().Foreground(theme.Accent).Render(c.bar), inner)
@@ -255,7 +262,8 @@ func (m Model) rows(inner int) []string {
 	return out
 }
 
-// lineOwner is what a line of the rows shows: an agent's row (item -1) or an item of its menu.
+// lineOwner is what a line of the rows shows: an agent's or a folder's row (item -1) or an item
+// of its menu.
 type lineOwner struct {
 	key  string
 	item int
@@ -263,22 +271,27 @@ type lineOwner struct {
 
 // rowLines are the lines rows renders and, line for line, what each shows.
 func (m Model) rowLines(inner int) ([]string, []lineOwner) {
-	rendered := make([][]string, len(m.agents))
-	owners := make([][]lineOwner, len(m.agents))
-	for i, a := range m.agents {
-		rendered[i] = m.row(a, inner)
-		for range rendered[i] {
-			owners[i] = append(owners[i], lineOwner{a.Key, -1})
+	es := m.entries(false)
+	rendered := make([][]string, len(es))
+	owners := make([][]lineOwner, len(es))
+	for i, e := range es {
+		if e.agent < 0 {
+			rendered[i] = m.folderRow(e.in, inner)
+		} else {
+			rendered[i] = m.row(m.agents[e.agent], inner, e.in >= 0)
 		}
-		if a.Key == m.menuFor {
-			for j, l := range m.menuLines(menuItems(a), inner) {
+		for range rendered[i] {
+			owners[i] = append(owners[i], lineOwner{e.key, -1})
+		}
+		if e.key == m.menuFor {
+			for j, l := range m.menuLines(m.openItems(), inner) {
 				rendered[i] = append(rendered[i], l)
-				owners[i] = append(owners[i], lineOwner{a.Key, j})
+				owners[i] = append(owners[i], lineOwner{e.key, j})
 			}
 		}
 	}
 	// The deck's menu comes after the last row, as one more block that scrolls into view.
-	focus := m.index(m.selected) // the block kept on screen
+	focus := m.pos(m.selected) // the block kept on screen
 	if m.menuFor == deckMenu {
 		var r []string
 		var o []lineOwner
@@ -322,10 +335,60 @@ func (m Model) rowLines(inner int) ([]string, []lineOwner) {
 	return out, own
 }
 
-// row is two lines of exactly inner cells: mark, bar, glyph, name, profile; then the detail.
-func (m Model) row(a Agent, inner int) []string {
+// folderRow is a folder's line, exactly inner cells: mark, the folder's dot (folderState), its
+// fold arrow, its name and how many agents it holds.
+func (m Model) folderRow(fi int, inner int) []string {
+	c := m.cs()
+	f := m.layout.Folders[fi]
+	sel := folderKey(f.ID) == m.selected
+	bg := func(s lipgloss.Style) lipgloss.Style {
+		if sel {
+			return s.Background(theme.Sel)
+		}
+		return s
+	}
+	mark := " "
+	if sel {
+		mark = c.mark
+	}
+	g, gc := " ", theme.Muted
+	if st, up := m.folderState(fi); st != "" {
+		g, gc = stateMark(st, up, m.now().Unix(), m.frame, m.ascii)
+	}
+	arrow := "▾"
+	if f.Folded {
+		arrow = "▸"
+	}
+	if m.ascii {
+		arrow = map[bool]string{true: ">", false: "v"}[f.Folded]
+	}
+	const countW = 4
+	nameW := inner - 6 - (1 + countW) // mark, space, glyph, space, arrow, space
+	count := fmt.Sprintf("%d", len(m.folderMembers(fi)))
+	return []string{bg(lipgloss.NewStyle().Foreground(theme.Accent)).Render(mark) +
+		bg(plain).Render(" ") +
+		bg(lipgloss.NewStyle().Foreground(gc)).Render(g) +
+		bg(plain).Render(" ") +
+		bg(lipgloss.NewStyle().Foreground(theme.Accent)).Render(arrow) +
+		bg(plain).Render(" ") +
+		bg(lipgloss.NewStyle().Foreground(theme.Text).Bold(true)).Render(padRight(fit(f.Name, nameW, c), nameW)) +
+		bg(plain).Render(" ") +
+		bg(muted).Render(padLeft(count, countW))}
+}
+
+// row is two lines of exactly inner cells: mark, bar, glyph, name, profile; then the detail. An
+// agent in a folder has the folder's guide in its second cell.
+func (m Model) row(a Agent, inner int, inFolder bool) []string {
 	c := m.cs()
 	sel := a.Key == m.selected
+	gap, pad := " ", "    "
+	if inFolder {
+		gap = "╎"
+		if m.ascii {
+			gap = ":"
+		}
+		pad = " " + gap + "  "
+	}
 	bg := func(s lipgloss.Style) lipgloss.Style {
 		if sel {
 			return s.Background(theme.Sel)
@@ -348,7 +411,7 @@ func (m Model) row(a Agent, inner int) []string {
 		}
 	}
 	line1 := bg(lipgloss.NewStyle().Foreground(theme.Accent)).Render(mark) +
-		bg(plain).Render(" ") +
+		bg(muted).Render(gap) +
 		bg(lipgloss.NewStyle().Foreground(gc)).Render(g) +
 		bg(plain).Render(" ") +
 		bg(lipgloss.NewStyle().Foreground(theme.Text).Bold(sel)).Render(padRight(fit(display(a), nameW, c), nameW)) +
@@ -357,7 +420,7 @@ func (m Model) row(a Agent, inner int) []string {
 		bg(plain).Render(" ") +
 		bg(muted).Render(padLeft(ctxText(a.CtxPct), ctxW))
 	detail := fit(m.detail(a, inner-4), inner-4, c)
-	line2 := bg(plain).Render("    ") + bg(muted).Render(padRight(detail, inner-4))
+	line2 := bg(muted).Render(pad) + bg(muted).Render(padRight(detail, inner-4))
 	lines := []string{line1, line2}
 	if ap := a.Approval; ap != nil {
 		warn := "⚠"
@@ -373,8 +436,8 @@ func (m Model) row(a Agent, inner int) []string {
 			keys += " [A]lways"
 		}
 		lines = append(lines,
-			bg(plain).Render("    ")+bg(alert).Render(padRight(fit(warn+" "+what, inner-4, c), inner-4)),
-			bg(plain).Render("    ")+bg(lipgloss.NewStyle().Foreground(theme.Text)).Render(padRight(fit(keys, inner-4, c), inner-4)))
+			bg(muted).Render(pad)+bg(alert).Render(padRight(fit(warn+" "+what, inner-4, c), inner-4)),
+			bg(muted).Render(pad)+bg(lipgloss.NewStyle().Foreground(theme.Text)).Render(padRight(fit(keys, inner-4, c), inner-4)))
 	}
 	return lines
 }

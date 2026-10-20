@@ -106,7 +106,7 @@ func TestAClickElsewhereClosesTheMenu(t *testing.T) {
 func TestMenuItemsFollowTheRow(t *testing.T) {
 	got := func(a Agent) string {
 		var l []string
-		for _, it := range menuItems(a) {
+		for _, it := range menuItems(a, false) {
 			l = append(l, it.label)
 		}
 		return strings.Join(l, ",")
@@ -228,7 +228,7 @@ func TestDeckMenuItems(t *testing.T) {
 		}
 		return strings.Join(l, ",")
 	}
-	if g := got(""); g != "New agent=n,New shell=s,Keys=?,Detach=q" {
+	if g := got(""); g != "New agent=n,New shell=s,New folder=f,Keys=?,Detach=q" {
 		t.Fatalf("no player: %s", g)
 	}
 	if g := got("on"); !strings.Contains(g, "Mute sounds=S") {

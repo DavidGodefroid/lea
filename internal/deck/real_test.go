@@ -22,6 +22,9 @@ import (
 
 const deckHelperEnv = "LEA_DECK_E2E_HELPER"
 
+// deckLayoutEnv is the file where the helper's deck keeps its folders.
+const deckLayoutEnv = "LEA_DECK_E2E_LAYOUT"
+
 // e2eLabel is c's label, longer than a row shows.
 const e2eLabel = "refactor-billing-export"
 
@@ -30,7 +33,7 @@ func TestMain(m *testing.M) {
 		c := ag("c", "idle", 1)
 		c.Label = e2eLabel
 		if err := Run(e2eAPI{&fakeAPI{snap: Snapshot{Version: 1, Shown: "lea-a/a",
-			Agents: []Agent{ag("a", "idle", 1), ag("b", "idle", 1), c}}}}, "lea-a", false, nil); err != nil {
+			Agents: []Agent{ag("a", "idle", 1), ag("b", "idle", 1), c}}}}, "lea-a", false, nil, FileStore{Path: os.Getenv(deckLayoutEnv)}); err != nil {
 			fmt.Fprintln(os.Stderr, err)
 			os.Exit(1)
 		}
@@ -59,6 +62,9 @@ type realDeck struct {
 	in   io.Writer // the client's terminal: what the user types and does with the mouse
 	pane string    // the deck's pane
 	top  int       // the deck pane's first line on the client's screen
+	cmd  []string  // the deck's command
+	// layout is the file of the deck's folders.
+	layout string
 }
 
 func startRealDeck(t *testing.T) *realDeck {
@@ -88,8 +94,10 @@ func startRealDeck(t *testing.T) *realDeck {
 		return strings.TrimSpace(string(out))
 	}
 	t.Cleanup(func() { exec.Command("tmux", "-L", "lea-deck-e2e", "kill-server").Run() })
-	tm("new-session", "-d", "-s", "e2e", "-x", "80", "-y", "24", "env", deckHelperEnv+"=1", self)
-	d := &realDeck{t: t, tm: tm, pane: tm("display-message", "-p", "-t", "e2e:0.0", "#{pane_id}")}
+	layout := filepath.Join(dir, "host", "deck", "lea-a.json")
+	cmd := []string{"env", deckHelperEnv + "=1", deckLayoutEnv + "=" + layout, self}
+	tm(append([]string{"new-session", "-d", "-s", "e2e", "-x", "80", "-y", "24"}, cmd...)...)
+	d := &realDeck{t: t, tm: tm, pane: tm("display-message", "-p", "-t", "e2e:0.0", "#{pane_id}"), cmd: cmd, layout: layout}
 	tm("set-option", "-p", "-t", d.pane, "@lea_role", "deck")
 	tm("split-window", "-h", "-t", d.pane, "sleep", "600")
 	tm("resize-pane", "-t", d.pane, "-x", strconv.Itoa(Width))
@@ -133,6 +141,15 @@ func (d *realDeck) typed(s string) {
 	d.t.Helper()
 	if _, err := io.WriteString(d.in, s); err != nil {
 		d.t.Fatal(err)
+	}
+}
+
+// keys types each key on its own, as a user does: keys sent at once reach the deck as one.
+func (d *realDeck) keys(ks ...string) {
+	d.t.Helper()
+	for _, k := range ks {
+		d.typed(k)
+		time.Sleep(100 * time.Millisecond)
 	}
 }
 
@@ -187,4 +204,42 @@ func TestRealHoverShowsTheFullName(t *testing.T) {
 	d.waitFor("the whole label in the bottom border", func(s string) bool { return strings.Contains(s, e2eLabel+" ·") })
 	d.mouse(35, 12, 'M') // below the rows
 	d.waitFor("the key hints back", func(s string) bool { return strings.Contains(s, "? keys") })
+}
+
+// Folders (#30), typed and clicked as the user does: f makes one and names it, o moves an agent
+// in, enter folds it, ctrl + right click (SGR 18) makes another around the agent under the
+// pointer; the layout is in its file and the deck, started again, shows it as it was.
+func TestRealFoldersPersistAcrossRestarts(t *testing.T) {
+	d := startRealDeck(t)
+	d.tm("select-pane", "-t", d.pane) // the deck has the keyboard
+	d.typed("f\x15web\r")             // f, ctrl+u, the name, enter
+	d.waitFor("the folder web", func(s string) bool { return strings.Contains(s, "▾ web") && !strings.Contains(s, "folder:") })
+	d.keys("j", "o", "1") // a, into the first folder
+	d.waitFor("a in web", func(s string) bool {
+		return strings.Contains(s, "╎") && strings.Contains(s, "web                      1")
+	})
+	d.keys("k", "\r") // the folder's row, folded
+	d.waitFor("web folded", func(s string) bool { return strings.Contains(s, "▸ web") })
+	// web is line 1, b's row lines 2-3: a ctrl + right click on b.
+	time.Sleep(400 * time.Millisecond)
+	d.mouse(18, 2, 'M')
+	time.Sleep(20 * time.Millisecond)
+	d.mouse(18, 2, 'm')
+	d.waitFor("the folder field", func(s string) bool { return strings.Contains(s, "folder: folder 2") })
+	d.typed("\r")
+	d.waitFor("folder 2", func(s string) bool { return strings.Contains(s, "▾ folder 2") })
+
+	b, err := os.ReadFile(d.layout)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, w := range []string{`"name": "web"`, `"folded": true`, `"lea-a/a"`, `"name": "folder 2"`, `"lea-a/b"`} {
+		if !strings.Contains(string(b), w) {
+			t.Fatalf("layout lacks %s:\n%s", w, b)
+		}
+	}
+	d.tm(append([]string{"respawn-pane", "-k", "-t", d.pane}, d.cmd...)...)
+	d.waitFor("the folders after a restart", func(s string) bool {
+		return strings.Contains(s, "▸ web") && strings.Contains(s, "▾ folder 2") && strings.Contains(s, "3 agents")
+	})
 }
