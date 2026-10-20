@@ -1071,6 +1071,20 @@ func TestPausedIsSetAndClearedWhenTheProcessGoes(t *testing.T) {
 	}
 }
 
+func TestReplyFromTakesTheAddresseesFirstReply(t *testing.T) {
+	s := open(t)
+	q, _ := s.Send(Message{From: "c/a", To: "c/b", Kind: "question", Body: "q", At: 1})
+	if _, err := s.ReplyFrom(q.ID, "c/b"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("err=%v", err)
+	}
+	s.Send(Message{From: "c/x", To: "c/a", Kind: "note", Body: "not b", ReplyTo: q.ID, At: 2})
+	r1, _ := s.Send(Message{From: "c/b", To: "c/a", Kind: "result", Body: "one", ReplyTo: q.ID, At: 3})
+	s.Send(Message{From: "c/b", To: "c/a", Kind: "result", Body: "two", ReplyTo: q.ID, At: 4})
+	if m, err := s.ReplyFrom(q.ID, "c/b"); err != nil || m.ID != r1.ID || m.Body != "one" {
+		t.Fatalf("m=%+v err=%v", m, err)
+	}
+}
+
 func TestSubagentCounts(t *testing.T) {
 	s := open(t)
 	a, err := s.RegisterAgent("lea-a", "claude-1", "claude", "/p", 1)

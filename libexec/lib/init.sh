@@ -1,7 +1,7 @@
 # shellcheck shell=sh
 # lea init: launcher link, projects dir, lea's git SSH key (only with LEA_GIT_SSH), Claude
-# configuration copy, images, the locksql console image (unless LEA_LOCKSQL=0), AppArmor profile
-# (last: the only sudo step).
+# configuration copy, images, the locksql console image (unless LEA_LOCKSQL=0), lockmq and lockfile
+# on the host (asked; libexec/lib/lockhost.sh), AppArmor profile.
 
 lea_init_apparmor() {
   docker info --format '{{json .SecurityOptions}}' 2>/dev/null | grep -q 'name=apparmor' || return 0
@@ -178,6 +178,13 @@ lea__ask() {
   case $_ak_a in ''|[yY]|[yY][eE][sS]) return 0 ;; *) return 1 ;; esac
 }
 
+# lea__ask_no QUESTION: a yes/no question, no by default.
+lea__ask_no() {
+  printf '%s [y/N] ' "$1" >&2
+  IFS= read -r _ak_a || return 1
+  case $_ak_a in [yY]|[yY][eE][sS]) return 0 ;; *) return 1 ;; esac
+}
+
 # lea__init_tty: whether lea init talks to a terminal (the wizard and vault login need one).
 lea__init_tty() { [ -t 0 ]; }
 
@@ -249,7 +256,11 @@ lea_init() {
     case $_in_a in
       --no-locksql) lea_user_config_set LEA_LOCKSQL 0; LEA_LOCKSQL=0 ;;
       --locksql) lea_user_config_set LEA_LOCKSQL 1; LEA_LOCKSQL=1 ;;
-      *) lea_die "usage: lea init [--no-locksql | --locksql]" ;;
+      --lockmq) lea__lockhost_set lockmq 1 ;;
+      --no-lockmq) lea__lockhost_set lockmq 0 ;;
+      --lockfile) lea__lockhost_set lockfile 1 ;;
+      --no-lockfile) lea__lockhost_set lockfile 0 ;;
+      *) lea_die "usage: lea init [--no-locksql | --locksql] [--lockmq | --no-lockmq] [--lockfile | --no-lockfile]" ;;
     esac
   done
   _in_s=$(lea_state_dir)
@@ -267,6 +278,8 @@ lea_init() {
   lea__init_claude_json "$_in_s"
   lea_ensure_images
   if [ "$LEA_LOCKSQL" = 1 ]; then lea__init_locksql; lea__init_locksql_profile; fi
+  lea__init_lockhost lockmq
+  lea__init_lockhost lockfile
   lea_init_apparmor
   lea_log "ready. Run: lea"
   umask "$_in_um"

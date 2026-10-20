@@ -211,6 +211,8 @@ func (l *Launcher) runArgs(proj, pip string) ([]string, error) {
 		// The locksql console's socket volume, and its client group (locksql-clients).
 		a = append(a, "-e", "LEA_LOCKSQL=1", "--group-add", "10000", "--mount", "type=volume,src=locksql-run,dst=/run/locksql")
 	}
+	// lockmq and lockfile: only the socket of a console on the host (lockhost.go).
+	a = append(a, l.lockHostArgs()...)
 	a = append(a, l.securityArgs()...)
 	for _, part := range []func() ([]string, error){
 		func() ([]string, error) { return l.busArgs(proj) },
