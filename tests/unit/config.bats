@@ -204,3 +204,15 @@ setup() { setup_fakes; load_lea; U="$HOME/.config/lea/lea.conf"; }
   [ "$status" -eq 1 ]
   [[ "$output" == *"LEA_LOCKSQL must be 1 (wire lea for a locksql console) or 0, not 'yes'"* ]]
 }
+
+@test "LEA_AUTOUPDATE is on by default, 0 turns it off, any other value is refused" {
+  lea_load_config
+  [ "$LEA_AUTOUPDATE" = 1 ]
+  mkdir -p "${U%/*}"; printf 'LEA_AUTOUPDATE=0\n' >"$U"
+  lea_load_config
+  [ "$LEA_AUTOUPDATE" = 0 ]
+  printf 'LEA_AUTOUPDATE=yes\n' >"$U"
+  run lea_load_config
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"LEA_AUTOUPDATE must be 1 (check for a new release every day) or 0, not 'yes'"* ]]
+}

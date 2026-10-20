@@ -123,7 +123,7 @@ func runLauncher(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		return 1
 	}
 	l := &launcher.Launcher{Root: root, Core: exe, Cwd: cwd, Cfg: cfg, Environ: os.Environ(),
-		Stdin: stdin, Stdout: stdout, Stderr: stderr, Exec: execProcess, Sleep: time.Sleep, Getpid: os.Getpid}
+		Stdin: stdin, Stdout: stdout, Stderr: stderr, Exec: execProcess, Sleep: time.Sleep, Getpid: os.Getpid, Version: version}
 	// INT/TERM run the exit traps (locks, an open session), then exit 130. Signals are caught,
 	// never ignored: an ignored signal would be inherited by every child across exec.
 	sigs := make(chan os.Signal, 1)

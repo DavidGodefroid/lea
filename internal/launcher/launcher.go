@@ -27,6 +27,10 @@ type Launcher struct {
 	Exec   func(argv0 string, argv, env []string) error
 	Sleep  func(time.Duration)
 	Getpid func() int
+	// Version is the launcher's build (main.version: vX.Y.Z for a release, dev otherwise); Now
+	// is the clock of the update check (time.Now when nil).
+	Version string
+	Now     func() time.Time
 
 	// drainOf is set on the view an exit function runs with: the launcher whose run state it
 	// shares. While its function runs (active), the view may start children and take locks even
@@ -393,7 +397,7 @@ func (l *Launcher) dispatch(args []string) error {
 		}
 		return l.stop(rest)
 	case "update":
-		return l.sh("update")
+		return l.sh("update", rest...)
 	case "doctor":
 		return l.sh("doctor")
 	default:
@@ -406,6 +410,7 @@ func (l *Launcher) dispatch(args []string) error {
 		if err != nil {
 			return err
 		}
+		l.autoUpdate()
 		return l.session(proj, args)
 	}
 }

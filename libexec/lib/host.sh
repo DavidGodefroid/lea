@@ -37,9 +37,14 @@ lea__guard_projects() {
   done
 }
 
-# lea_update: a git checkout pulls and rebuilds; a release install (no .git) is replaced by the
-# latest release, installed with that release's own installer.
+# lea_update [--background]: a git checkout pulls and rebuilds; a release install (no .git) is
+# replaced by the latest release, installed with that release's own installer. --background is
+# lea_update_background.
 lea_update() {
+  if [ "${1:-}" = --background ]; then
+    lea_update_background
+    return
+  fi
   if [ ! -e "$LEA_ROOT/.git" ]; then
     lea__update_release
     return 0
@@ -102,6 +107,122 @@ lea__update_release() {
   "$_ur_new/libexec/lea-sh" refresh-images ||
     lea_die "lea $_ur_v is installed but its images could not be refreshed: rerun lea update"
   lea_log "updated; running lea containers keep their image until they stop (lea stop --all)"
+}
+
+# lea__semver V: "MAJOR MINOR PATCH" of a release version vMAJOR.MINOR.PATCH; fails on anything
+# else (dev, a git describe, a pre-release).
+lea__semver() {
+  printf '%s\n' "$1" | sed -n 's/^v\([0-9][0-9]*\)\.\([0-9][0-9]*\)\.\([0-9][0-9]*\)$/\1 \2 \3/p' | grep .
+}
+
+# lea__notice TEXT: the deck's update notice (<host>/update-notice), "vX.Y.Z installed",
+# "vX.Y.Z major" or "vX.Y.Z available"; the deck hides it once it runs vX.Y.Z or later.
+lea__notice() {
+  printf '%s\n' "$1" | lea_write_file "$(lea_data_dir)" "$(lea_host_dir)/update-notice"
+}
+
+# lea_update_background: lea update --background, started detached by the launcher at most once a
+# day (internal/launcher/autoupdate.go), its output in <host>/update.log. A release install only,
+# never a dev build. One updater at a time (<host>/update.lock; a lock older than an hour is a
+# killed updater's). Failing to reach the releases is silent.
+lea_update_background() {
+  [ ! -e "$LEA_ROOT/.git" ] || return 0
+  _ub_cur=$("$LEA_ROOT/build/lea" version 2>/dev/null </dev/null) || _ub_cur=
+  lea__semver "$_ub_cur" >/dev/null || return 0
+  _ub_host=$(lea_host_dir)
+  lea_mkdirs "$(lea_data_dir)" "$_ub_host"
+  _ub_lock=$_ub_host/update.lock
+  if [ -n "$(find "$_ub_lock" -maxdepth 0 -mmin +60 2>/dev/null)" ]; then rmdir "$_ub_lock" 2>/dev/null || true; fi
+  if ! mkdir "$_ub_lock" 2>/dev/null; then
+    lea_log "background update: another update runs ($_ub_lock)"
+    return 0
+  fi
+  _ub_rc=0
+  lea__update_background "$_ub_cur" || _ub_rc=$?
+  rm -rf "$_ub_host/update-bg"
+  rmdir "$_ub_lock" 2>/dev/null || true
+  return "$_ub_rc"
+}
+
+# lea__update_background CURRENT: the latest release, when newer than CURRENT. A newer major
+# release is only announced. A newer minor or patch release is installed beside this one with its
+# own installer, after the Sigstore signature of its checksums.txt (cosign is required here) and
+# the installer's checksum are verified; the launcher link moves to it only once its images are
+# in place. Any failure leaves this version linked.
+lea__update_background() {
+  _ub_v=$(curl -fsSLI -o /dev/null -w '%{url_effective}' "$LEA_RELEASES_URL/latest" 2>/dev/null | sed 's|.*/tag/||') || _ub_v=
+  if ! _ub_new=$(lea__semver "$_ub_v"); then
+    lea_log "background update: no release found at $LEA_RELEASES_URL/latest"
+    return 0
+  fi
+  _ub_old=$(lea__semver "$1")
+  # shellcheck disable=SC2086
+  set -- $_ub_old $_ub_new
+  if [ "$4" -lt "$1" ] || { [ "$4" -eq "$1" ] && { [ "$5" -lt "$2" ] || { [ "$5" -eq "$2" ] && [ "$6" -le "$3" ]; }; }; }; then
+    return 0
+  fi
+  _ub_cur=v$1.$2.$3
+  if [ "$4" -ne "$1" ]; then
+    lea__notice "$_ub_v major"
+    lea_log "background update: lea $_ub_v is a new major version: run lea update"
+    return 0
+  fi
+  if ! command -v cosign >/dev/null 2>&1; then
+    lea__notice "$_ub_v available"
+    lea_log "background update: lea $_ub_v is available, but cosign is missing to verify it: run lea update"
+    return 0
+  fi
+  _ub_bin=${LEA_BIN_DIR:-$HOME/.local/bin}
+  if [ "$(lea__link_root "$_ub_bin/lea" 2>/dev/null)" != "$LEA_ROOT" ]; then
+    lea_log "background update: $_ub_bin/lea does not lead to $LEA_ROOT, left alone"
+    return 0
+  fi
+  _ub_fail() { lea_log "background update to lea $_ub_v failed: $1; lea $_ub_cur stays"; }
+  _ub_base=$LEA_RELEASES_URL/download/$_ub_v
+  _ub_tmp=$(lea_host_dir)/update-bg
+  lea_safe_path "$(lea_data_dir)" "$_ub_tmp"
+  rm -rf "$_ub_tmp"
+  lea_mkdirs "$(lea_data_dir)" "$_ub_tmp"
+  for _ub_f in install.sh checksums.txt checksums.txt.sigstore.json; do
+    if ! curl -fsSL -o "$_ub_tmp/$_ub_f" "$_ub_base/$_ub_f"; then
+      _ub_fail "cannot download $_ub_base/$_ub_f"
+      return 1
+    fi
+  done
+  if ! cosign verify-blob --bundle "$_ub_tmp/checksums.txt.sigstore.json" \
+    --certificate-identity-regexp '^https://github\.com/DavidGodefroid/lea/\.github/workflows/release\.yml@refs/tags/v[0-9]' \
+    --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+    "$_ub_tmp/checksums.txt" >&2; then
+    _ub_fail "the signature of checksums.txt does not verify"
+    return 1
+  fi
+  _ub_want=$(awk '$2 == "install.sh" { print $1 }' "$_ub_tmp/checksums.txt")
+  if [ -z "$_ub_want" ] || [ "$(lea__sha256 "$_ub_tmp/install.sh")" != "$_ub_want" ]; then
+    _ub_fail "its installer does not match checksums.txt"
+    return 1
+  fi
+  _ub_inst=$(dirname "$LEA_ROOT")
+  if ! LEA_REQUIRE_COSIGN=1 LEA_INSTALL_DIR=$_ub_inst sh "$_ub_tmp/install.sh" --version "$_ub_v" --no-init --no-link </dev/null >&2; then
+    _ub_fail "the installer failed"
+    return 1
+  fi
+  _ub_dir=$_ub_inst/$_ub_v
+  if [ ! -x "$_ub_dir/bin/lea" ] || ! "$_ub_dir/libexec/lea-sh" refresh-images </dev/null >&2; then
+    _ub_fail "its images could not be refreshed"
+    return 1
+  fi
+  # The links move by rename: the launcher link is never missing.
+  ln -sfn "$_ub_dir/bin/lea" "$_ub_bin/.lea.update.$$"
+  mv -f "$_ub_bin/.lea.update.$$" "$_ub_bin/lea"
+  case $(readlink "$_ub_bin/locksql" 2>/dev/null) in
+    "$_ub_inst/"*)
+      if [ -e "$_ub_dir/bin/locksql" ]; then
+        ln -sfn "$_ub_dir/bin/locksql" "$_ub_bin/.locksql.update.$$"
+        mv -f "$_ub_bin/.locksql.update.$$" "$_ub_bin/locksql"
+      fi ;;
+  esac
+  lea__notice "$_ub_v installed"
+  lea_log "background update: lea $_ub_v installed, active at the next lea; running lea containers keep their image until they stop (lea stop --all)"
 }
 
 lea_container_running() { [ "$(docker inspect -f '{{.State.Running}}' "$1" 2>/dev/null)" = true ]; }

@@ -7,8 +7,10 @@
 # (which pulls the images and, unless --no-locksql, builds the locksql console image). Never runs
 # sudo itself: lea init asks once, only for the AppArmor profile on hosts that need it.
 #
-#   sh install.sh [--version vX.Y.Z] [--no-locksql] [--no-init]
+#   sh install.sh [--version vX.Y.Z] [--no-locksql] [--no-init] [--no-link]
 #
+# --no-link unpacks the release and leaves ~/.local/bin/lea as it is (lea's background update
+# links it once the release's images are in place).
 # LEA_INSTALL_DIR (default ~/.local/share/lea-install) and LEA_BIN_DIR (default ~/.local/bin)
 # change where lea goes. LEA_REQUIRE_COSIGN=1 refuses to install without cosign, instead of
 # warning and trusting the checksum alone.
@@ -16,6 +18,7 @@ set -eu
 repo=DavidGodefroid/lea
 version=${LEA_VERSION:-}
 init=1
+link=1
 locksql=
 while [ $# -gt 0 ]; do
   case $1 in
@@ -24,7 +27,8 @@ while [ $# -gt 0 ]; do
     --no-locksql) locksql=--no-locksql ;;
     --locksql) locksql=--locksql ;;
     --no-init) init= ;;
-    -h|--help) sed -n '2,14p' "$0" 2>/dev/null | sed 's/^# \{0,1\}//'; exit 0 ;;
+    --no-link) link= ;;
+    -h|--help) sed -n '2,16p' "$0" 2>/dev/null | sed 's/^# \{0,1\}//'; exit 0 ;;
     *) echo "lea install: unknown option $1" >&2; exit 2 ;;
   esac
   shift
@@ -112,18 +116,22 @@ tar -xzf "$tmp/$asset" -C "$tmp"
 rm -rf "${dir:?}/${version:?}"
 mv "$tmp/lea-$version" "$dir/$version"
 bindir=${LEA_BIN_DIR:-$HOME/.local/bin}
-mkdir -p "$bindir"
-if [ -e "$bindir/lea" ] && [ ! -L "$bindir/lea" ]; then
-  die "$bindir/lea exists and is not a link: move it away, then rerun"
+if [ -z "$link" ]; then
+  say "installed lea $version in $dir/$version, not linked"
+else
+  mkdir -p "$bindir"
+  if [ -e "$bindir/lea" ] && [ ! -L "$bindir/lea" ]; then
+    die "$bindir/lea exists and is not a link: move it away, then rerun"
+  fi
+  ln -sfn "$dir/$version/bin/lea" "$bindir/lea"
+  # locksql starts lea's locksql console; a locksql installed on the host keeps the name.
+  if [ "$locksql" != --no-locksql ] && { [ -L "$bindir/locksql" ] || [ ! -e "$bindir/locksql" ]; }; then
+    case $(readlink "$bindir/locksql" 2>/dev/null || echo "$dir/") in
+      "$dir/"*) ln -sfn "$dir/$version/bin/locksql" "$bindir/locksql" ;;
+    esac
+  fi
+  say "installed lea $version in $dir/$version, linked as $bindir/lea"
 fi
-ln -sfn "$dir/$version/bin/lea" "$bindir/lea"
-# locksql starts lea's locksql console; a locksql installed on the host keeps the name.
-if [ "$locksql" != --no-locksql ] && { [ -L "$bindir/locksql" ] || [ ! -e "$bindir/locksql" ]; }; then
-  case $(readlink "$bindir/locksql" 2>/dev/null || echo "$dir/") in
-    "$dir/"*) ln -sfn "$dir/$version/bin/locksql" "$bindir/locksql" ;;
-  esac
-fi
-say "installed lea $version in $dir/$version, linked as $bindir/lea"
 case ":$PATH:" in *":$bindir:"*) ;; *) say "add $bindir to your PATH (in your shell profile) to run lea by name" ;; esac
 if [ -x "$dir/$version/build/tmux" ]; then tmux_ok=1; fi # the archive's own static tmux
 if [ -z "$tmux_ok" ]; then

@@ -446,7 +446,11 @@ func runDeck(args []string, stderr io.Writer) int {
 	case len(args) == 1 && args[0] == "--placeholder":
 		err = deck.RunPlaceholder()
 	case len(args) == 2 && args[0] == "--container":
-		err = deck.Run(deck.Client{Sock: identity.DaemonSock(os.Getenv)}, args[1], ascii)
+		notice := func() string {
+			b, _ := os.ReadFile(filepath.Join(identity.HostDir(os.Getenv), "update-notice"))
+			return deck.UpdateNotice(string(b), version)
+		}
+		err = deck.Run(deck.Client{Sock: identity.DaemonSock(os.Getenv)}, args[1], ascii, notice)
 	case len(args) >= 2 && args[0] == "--thread" && (len(args) == 2 || (len(args) == 3 && args[2] == "--compose")):
 		err = deck.RunThread(deck.Client{Sock: identity.DaemonSock(os.Getenv)}, args[1], len(args) == 3, ascii)
 	default:
