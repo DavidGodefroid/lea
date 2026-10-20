@@ -23,6 +23,24 @@ func soundEnv(t *testing.T) (env, func() []string) {
 	}
 }
 
+// testDoneDelay is the done-sound delay of the tests: short, yet longer than a few hook calls.
+const testDoneDelay = 100 * time.Millisecond
+
+func quickDone(e env) {
+	e.d.mu.Lock()
+	e.d.doneDelay = testDoneDelay
+	e.d.mu.Unlock()
+}
+
+// waitRang polls until n sounds rang or the deadline passes.
+func waitRang(rang func() []string, n int) []string {
+	deadline := time.Now().Add(5 * time.Second)
+	for len(rang()) < n && time.Now().Before(deadline) {
+		time.Sleep(5 * time.Millisecond)
+	}
+	return rang()
+}
+
 // A permission request rings once, when the agent starts waiting; a turn that ends rings done.
 func TestSoundsWhenAnAgentWaitsAndWhenATurnEnds(t *testing.T) {
 	e, rang := soundEnv(t)
@@ -32,9 +50,88 @@ func TestSoundsWhenAnAgentWaitsAndWhenATurnEnds(t *testing.T) {
 	if got := rang(); len(got) != 1 || got[0] != SoundAttention {
 		t.Fatalf("rang %q", got)
 	}
+	quickDone(e)
 	call(t, e.bus, "dev", "hook_event", map[string]any{"event": "Stop"}, nil)
 	call(t, e.bus, "dev", "stop_check", nil, nil)
-	if got := rang(); len(got) != 2 || got[1] != SoundDone {
+	if got := rang(); len(got) != 1 {
+		t.Fatalf("done rang before the delay: %q", got)
+	}
+	if got := waitRang(rang, 2); len(got) != 2 || got[1] != SoundDone {
+		t.Fatalf("rang %q", got)
+	}
+}
+
+// A quiet stop rings done once, after the delay.
+func TestAQuietStopRingsOnceAfterTheDelay(t *testing.T) {
+	e, rang := soundEnv(t)
+	quickDone(e)
+	call(t, e.bus, "dev", "hook_event", map[string]any{"event": "Stop"}, nil)
+	call(t, e.bus, "dev", "stop_check", nil, nil)
+	if got := rang(); len(got) != 0 {
+		t.Fatalf("done rang before the delay: %q", got)
+	}
+	if got := waitRang(rang, 1); len(got) != 1 || got[0] != SoundDone {
+		t.Fatalf("rang %q", got)
+	}
+	time.Sleep(3 * testDoneDelay)
+	if got := rang(); len(got) != 1 {
+		t.Fatalf("rang %q", got)
+	}
+}
+
+// Another Stop hook blocked the stop: the agent goes on with tools, each sooner than the delay
+// after the last, so the turn did not end.
+func TestAStopBlockedByAnotherHookDoesNotRing(t *testing.T) {
+	e, rang := soundEnv(t)
+	quickDone(e)
+	call(t, e.bus, "dev", "hook_event", map[string]any{"event": "Stop"}, nil)
+	call(t, e.bus, "dev", "stop_check", nil, nil)
+	for i := 0; i < 6; i++ {
+		call(t, e.bus, "dev", "hook_event", map[string]any{"event": "PreToolUse"}, nil)
+		call(t, e.bus, "dev", "hook_event", map[string]any{"event": "PostToolUse"}, nil)
+		time.Sleep(testDoneDelay / 2)
+	}
+	if got := rang(); len(got) != 0 {
+		t.Fatalf("rang %q", got)
+	}
+}
+
+// An agent-type Stop hook runs its tools, then lets the stop through: no stop_check follows, and
+// the turn still rings done once, after the delay from the hook's last tool.
+func TestAStopHookThatLetsTheStopThroughRings(t *testing.T) {
+	e, rang := soundEnv(t)
+	quickDone(e)
+	call(t, e.bus, "dev", "hook_event", map[string]any{"event": "Stop"}, nil)
+	call(t, e.bus, "dev", "stop_check", nil, nil)
+	call(t, e.bus, "dev", "hook_event", map[string]any{"event": "PreToolUse"}, nil)
+	call(t, e.bus, "dev", "hook_event", map[string]any{"event": "PostToolUse"}, nil)
+	if got := rang(); len(got) != 0 {
+		t.Fatalf("done rang before the delay: %q", got)
+	}
+	if got := waitRang(rang, 1); len(got) != 1 || got[0] != SoundDone {
+		t.Fatalf("rang %q", got)
+	}
+}
+
+// A stop blocked once by another hook, then a real end: one done sound, at the end.
+func TestTwoStopsOfOneTurnRingOnce(t *testing.T) {
+	e, rang := soundEnv(t)
+	quickDone(e)
+	call(t, e.bus, "dev", "hook_event", map[string]any{"event": "Stop"}, nil)
+	call(t, e.bus, "dev", "stop_check", nil, nil)
+	call(t, e.bus, "dev", "hook_event", map[string]any{"event": "PreToolUse"}, nil)
+	call(t, e.bus, "dev", "hook_event", map[string]any{"event": "PostToolUse"}, nil)
+	call(t, e.bus, "dev", "hook_event", map[string]any{"event": "Stop"}, nil)
+	call(t, e.bus, "dev", "stop_check", nil, nil)
+	if got := rang(); len(got) != 0 {
+		t.Fatalf("done rang before the delay: %q", got)
+	}
+	// The gap between two sounds of a kind is longer than the test: a second ring would show.
+	if got := waitRang(rang, 1); len(got) != 1 || got[0] != SoundDone {
+		t.Fatalf("rang %q", got)
+	}
+	time.Sleep(3 * testDoneDelay)
+	if got := rang(); len(got) != 1 {
 		t.Fatalf("rang %q", got)
 	}
 }
@@ -49,6 +146,26 @@ func TestABlockedStopDoesNotRing(t *testing.T) {
 	call(t, e.bus, "dev", "stop_check", nil, &r)
 	if !r.Block || len(rang()) != 0 {
 		t.Fatalf("block %v, rang %q", r.Block, rang())
+	}
+}
+
+// A removed agent does not ring for its last stop.
+func TestARemovedAgentDoesNotRing(t *testing.T) {
+	e, rang := soundEnv(t)
+	quickDone(e)
+	call(t, e.bus, "dev", "hook_event", map[string]any{"event": "Stop"}, nil)
+	call(t, e.bus, "dev", "stop_check", nil, nil)
+	as, err := e.d.st.Agents()
+	if err != nil || len(as) != 1 {
+		t.Fatalf("agents %v %v", as, err)
+	}
+	if err := e.d.st.ForgetAgent(as[0].Key); err != nil {
+		t.Fatal(err)
+	}
+	e.d.pruneForgotten()
+	time.Sleep(3 * testDoneDelay)
+	if got := rang(); len(got) != 0 {
+		t.Fatalf("rang %q", got)
 	}
 }
 

@@ -18,6 +18,11 @@ const (
 // once.
 const soundGap = time.Second
 
+// doneDelay is how long a turn must stay over before the done sound: Claude runs the Stop hooks
+// in parallel, and another one (an agent-type hook of a plugin, say) can work for a while, then
+// block the stop.
+const doneDelay = 10 * time.Second
+
 // Sounder plays a sound of a kind; it must not block.
 type Sounder func(kind string)
 
@@ -39,6 +44,55 @@ func (d *Daemon) sound(kind string) {
 	d.rang[kind] = now
 	d.mu.Unlock()
 	s(kind)
+}
+
+// armDone plays the done sound of an agent after doneDelay, unless cancelDone comes first;
+// arming again restarts the wait.
+func (d *Daemon) armDone(key string) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	d.armDoneLocked(key)
+}
+
+// restartDoneLocked restarts the wait of a pending done sound; none pending, it does nothing.
+func (d *Daemon) restartDoneLocked(key string) {
+	if d.doneTimers[key] != nil {
+		d.armDoneLocked(key)
+	}
+}
+
+func (d *Daemon) armDoneLocked(key string) {
+	if t := d.doneTimers[key]; t != nil {
+		t.Stop()
+	}
+	var t *time.Timer
+	t = time.AfterFunc(d.doneDelay, func() {
+		d.mu.Lock()
+		// A timer stopped too late still runs: only the agent's current one rings.
+		mine := d.doneTimers[key] == t
+		if mine {
+			delete(d.doneTimers, key)
+		}
+		d.mu.Unlock()
+		if mine {
+			d.sound(SoundDone)
+		}
+	})
+	d.doneTimers[key] = t
+}
+
+// cancelDone drops the pending done sound of an agent: its turn goes on, or it is gone.
+func (d *Daemon) cancelDone(key string) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	d.cancelDoneLocked(key)
+}
+
+func (d *Daemon) cancelDoneLocked(key string) {
+	if t := d.doneTimers[key]; t != nil {
+		t.Stop()
+		delete(d.doneTimers, key)
+	}
 }
 
 // HostSounder plays files on the host with the first player found (pw-play, paplay,
