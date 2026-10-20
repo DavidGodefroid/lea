@@ -16,7 +16,7 @@ type rate struct {
 // pace themselves (spec §6.3 caps messages the same way: 10 a minute).
 var methodRates = map[string]rate{
 	"agents_spawn": {3, 60}, "agents_request_spawn": {3, 60}, "agents_stop": {10, 60},
-	"task_update": {30, 60}, "lease_acquire": {30, 60}, "lease_release": {30, 60},
+	"task_update": {30, 60}, "ask": {5, 60}, "lease_acquire": {30, 60}, "lease_release": {30, 60},
 }
 
 // rates keeps each caller's recent calls per method, in memory: a daemon restart forgets them.

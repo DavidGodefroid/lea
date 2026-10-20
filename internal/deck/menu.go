@@ -9,32 +9,44 @@ import (
 // click opens the row's menu under it. The menu lists what the keys do for that row; j/k or the
 // wheel move in it, enter or a click picks, esc, q or a click elsewhere closes it. A right click
 // anywhere else in the column (below the rows, on the frame) opens the deck's own menu under the
-// last row: every right click opens a menu.
+// last row: every right click opens a menu. A ctrl + right click makes a folder, holding the agent
+// under the pointer when there is one.
 
-type menuItem struct{ label, key string }
+// menuItem is an action of a menu: the key it types, or, in the folder picker (o), the folder it
+// moves the agent to (target).
+type menuItem struct{ label, key, target string }
+
+// The picker's targets besides a folder's row key: the root, and a new folder.
+const (
+	rootTarget      = "\x00root"
+	newFolderTarget = "\x00new"
+)
 
 // menuItems are the actions of a row, in the order the menu shows them.
-func menuItems(a Agent) []menuItem {
+func menuItems(a Agent, inFolder bool) []menuItem {
 	if isShell(a) {
-		return []menuItem{{"Show", "enter"}, {"Close", "x"}, {"Settings", ","}}
+		return []menuItem{{"Show", "enter", ""}, {"Close", "x", ""}, {"Settings", ",", ""}}
 	}
 	var items []menuItem
 	if ap := a.Approval; ap != nil {
-		items = append(items, menuItem{"Allow", "a"}, menuItem{"Deny", "d"})
+		items = append(items, menuItem{"Allow", "a", ""}, menuItem{"Deny", "d", ""})
 		if ap.Always {
-			items = append(items, menuItem{"Always allow", "A"})
+			items = append(items, menuItem{"Always allow", "A", ""})
 		}
 	}
-	items = append(items, menuItem{"Show", "enter"}, menuItem{"Message", "m"}, menuItem{"Thread", "t"},
-		menuItem{"Rename", "e"}, menuItem{"Role", "r"}, menuItem{"Split horizontally", "-"},
-		menuItem{"Split vertically", "|"})
+	items = append(items, menuItem{"Show", "enter", ""}, menuItem{"Message", "m", ""}, menuItem{"Thread", "t", ""},
+		menuItem{"Rename", "e", ""}, menuItem{"Role", "r", ""}, menuItem{"Move to folder", "o", ""})
+	if inFolder {
+		items = append(items, menuItem{"Move up", "K", ""}, menuItem{"Move down", "J", ""})
+	}
+	items = append(items, menuItem{"Split horizontally", "-", ""}, menuItem{"Split vertically", "|", ""})
 	switch {
 	case a.Paused:
-		items = append(items, menuItem{"Resume", "p"})
+		items = append(items, menuItem{"Resume", "p", ""})
 	case pausable(a):
-		items = append(items, menuItem{"Pause", "p"})
+		items = append(items, menuItem{"Pause", "p", ""})
 	}
-	return append(items, menuItem{"Stop", "x"}, menuItem{"Settings", ","})
+	return append(items, menuItem{"Stop", "x", ""}, menuItem{"Settings", ",", ""})
 }
 
 // deckMenu is menuFor while the deck's own menu is open. No agent key is empty or holds a NUL.
@@ -42,14 +54,44 @@ const deckMenu = "\x00deck"
 
 // deckMenuItems are the deck's own actions, those of no row; S only when the host plays sounds.
 func deckMenuItems(sound string) []menuItem {
-	items := []menuItem{{"New agent", "n"}, {"New shell", "s"}}
+	items := []menuItem{{"New agent", "n", ""}, {"New shell", "s", ""}, {"New folder", "f", ""}}
 	switch sound {
 	case "on":
-		items = append(items, menuItem{"Mute sounds", "S"})
+		items = append(items, menuItem{"Mute sounds", "S", ""})
 	case "off":
-		items = append(items, menuItem{"Sounds on", "S"})
+		items = append(items, menuItem{"Sounds on", "S", ""})
 	}
-	return append(items, menuItem{"Keys", "?"}, menuItem{"Detach", "q"})
+	return append(items, menuItem{"Keys", "?", ""}, menuItem{"Detach", "q", ""})
+}
+
+// folderMenuItems are the actions of a folder's row.
+func folderMenuItems(f Folder) []menuItem {
+	fold := menuItem{"Fold", "enter", ""}
+	if f.Folded {
+		fold.label = "Unfold"
+	}
+	return []menuItem{fold, {"Rename", "e", ""}, {"Move up", "K", ""}, {"Move down", "J", ""}, {"Delete", "x", ""}}
+}
+
+// pickerItems are the places agent key can move to (o): every other folder, numbered, then the
+// root when it is in a folder, then a new folder.
+func (m Model) pickerItems(key string) []menuItem {
+	in := m.folderOf(key)
+	var items []menuItem
+	for i, f := range m.layout.Folders {
+		if i == in {
+			continue
+		}
+		k := ""
+		if n := len(items) + 1; n <= 9 {
+			k = string(rune('0' + n))
+		}
+		items = append(items, menuItem{f.Name, k, folderKey(f.ID)})
+	}
+	if in >= 0 {
+		items = append(items, menuItem{"No folder", "0", rootTarget})
+	}
+	return append(items, menuItem{"New folder", "f", newFolderTarget})
 }
 
 // openItems are the open menu's items, nil when none is open.
@@ -57,8 +99,14 @@ func (m Model) openItems() []menuItem {
 	if m.menuFor == deckMenu {
 		return deckMenuItems(m.sound)
 	}
+	if fi := m.folderAt(m.menuFor); fi >= 0 {
+		return folderMenuItems(m.layout.Folders[fi])
+	}
 	if a := m.menuAgent(); a != nil {
-		return menuItems(*a)
+		if m.menuPicker {
+			return m.pickerItems(a.Key)
+		}
+		return menuItems(*a, m.folderOf(a.Key) >= 0)
 	}
 	return nil
 }
@@ -73,20 +121,32 @@ func (m Model) menuAgent() *Agent {
 
 // openMenu opens key's menu on its first item.
 func (m *Model) openMenu(key string) {
-	m.menuFor, m.menuSel = key, 0
+	m.menuFor, m.menuSel, m.menuPicker = key, 0, false
 	m.confirm, m.confirmYes, m.roleFor = "", false, ""
 }
 
 // pick runs item i of the open menu as its key on the menu's row (the deck's menu: as a key typed
 // in the deck).
 func (m Model) pick(i int) (tea.Model, tea.Cmd) {
-	items, a := m.openItems(), m.menuAgent()
-	m.menuFor = ""
+	items, a, on := m.openItems(), m.menuAgent(), m.menuFor
+	m.menuFor, m.menuPicker = "", false
 	if i < 0 || i >= len(items) {
 		return m, nil
 	}
 	if a != nil {
 		m.selected = a.Key
+	} else if isFolderKey(on) {
+		m.selected = on
+	}
+	if t := items[i].target; t != "" && a != nil {
+		switch t {
+		case rootTarget:
+			return m.moveAgent(a.Key, -1), nil
+		case newFolderTarget:
+			nm, _ := m.newFolder(a.Key)
+			return nm, nil
+		}
+		return m.moveAgent(a.Key, m.folderAt(t)), nil
 	}
 	if items[i].key == "enter" {
 		return m.key("enter")
@@ -98,7 +158,7 @@ func (m Model) pick(i int) (tea.Model, tea.Cmd) {
 func (m Model) menuKey(k string) (tea.Model, tea.Cmd) {
 	items := m.openItems()
 	if items == nil {
-		m.menuFor = ""
+		m.menuFor, m.menuPicker = "", false
 		return m, nil
 	}
 	switch k {
@@ -111,11 +171,11 @@ func (m Model) menuKey(k string) (tea.Model, tea.Cmd) {
 	case "enter":
 		return m.pick(m.menuSel)
 	case "esc", "q", "ctrl+c":
-		m.menuFor = ""
+		m.menuFor, m.menuPicker = "", false
 		return m, nil
 	}
 	for i, it := range items {
-		if it.key == k {
+		if it.key != "" && it.key == k {
 			return m.pick(i)
 		}
 	}
@@ -148,7 +208,7 @@ func (m Model) mouse(e tea.MouseMsg) (tea.Model, tea.Cmd) {
 		if m.menuFor != "" {
 			return m.menuKey(map[int]string{1: "j", -1: "k"}[step])
 		}
-		return m.move(m.index(m.selected) + step)
+		return m.move(m.pos(m.selected) + step)
 	case tea.MouseButtonLeft, tea.MouseButtonRight:
 	default:
 		return m, nil
@@ -158,6 +218,13 @@ func (m Model) mouse(e tea.MouseMsg) (tea.Model, tea.Cmd) {
 	}
 	key, item := m.hit(e.Y)
 	right := e.Button == tea.MouseButtonRight
+	if right && e.Ctrl {
+		if item >= 0 || m.index(key) < 0 || isShell(m.agents[m.index(key)]) {
+			key = ""
+		}
+		nm, _ := m.newFolder(key)
+		return nm, nil
+	}
 	if m.menuFor != "" {
 		if key == m.menuFor && item >= 0 {
 			if right { // on its own menu: the item under the pointer is highlighted
@@ -166,12 +233,12 @@ func (m Model) mouse(e tea.MouseMsg) (tea.Model, tea.Cmd) {
 			}
 			return m.pick(item)
 		}
-		m.menuFor = ""
+		m.menuFor, m.menuPicker = "", false
 		if !right && (key == "" || item >= 0) {
 			return m, nil
 		}
 	}
-	i := m.index(key)
+	i := m.pos(key)
 	if i < 0 {
 		if right {
 			m.openMenu(deckMenu)

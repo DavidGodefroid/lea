@@ -162,13 +162,18 @@ closing the deck, or the terminal, does not stop it: the next `lea` reattaches.
 | `p` | pause the selected agent, or resume it where it stopped (its conversation stays) |
 | `,` | settings (also in a row's right-click menu) |
 | `x`, then `y` | stop the selected agent |
+| `f` | new folder (enter names it) |
+| `o` | move the selected agent into a folder, or out of it |
+| `J` / `K` | move the selected folder, or an agent within its folder, down / up |
+| `enter`, `h` / `l` on a folder | fold / unfold it (`e` renames it, `x` deletes it: its agents go back, never stopped) |
 | `q` | leave the deck; agents keep running |
 | `?` | list the keys |
 
 The mouse works too: click a row to select it, scroll to move, right-click a row for its menu
 (Split horizontally / Split vertically open a shell beside the agent, as Terminator does; the
 shell shows with its agent and steps aside while another agent is shown). A right-click anywhere
-else in the column opens the deck's own menu: new agent, new shell, sounds, keys, detach. The
+else in the column opens the deck's own menu: new agent, new shell, new folder, sounds, keys,
+detach; ctrl + right-click makes a folder, holding the agent under the pointer. The
 pointer over a row shows its whole name (cut in the row when long) with the agent's name, role,
 profile and state in the bottom border.
 
@@ -177,6 +182,10 @@ profile and state in the bottom border.
   named: CI, a review, a reply), a green `●` has finished with nothing pending, an empty `○` has
   been quiet for 30 minutes, a grey `‖` is paused (`p`: lea freezes the
   agent's processes, tool calls included, until you resume it). Agents stay in the order you started them.
+- **Folders.** Folders come first, in your order, then the agents in no folder. A folded
+  folder's dot sums up its agents: red when one needs you, the spinner while one works, green
+  once none works any more. The layout is yours: the deck keeps it on the host
+  (`~/.local/share/lea/host/deck/<container>.json`), out of every container's reach.
   Each row shows the agent's context use, its directory and branch, and its own report on its
   task. The pane that has the keyboard is the bright one: the deck's frame turns blue when it
   has it; otherwise the terminal on the right shows a blue `▶ <agent> · typing here` bar on its
@@ -264,6 +273,15 @@ Agents get lea's tools through MCP:
   starts a background job (Claude Code's `asyncRewake`) that ends with the unread notice, and
   Claude Code starts a turn. A working agent, or one waiting on a permission dialog, is not
   interrupted; only the newest job of an agent stays, so one message wakes it once;
+- an agent asks another a question and waits for the answer with `ask` (the other answers with
+  `msg_reply`; works with any agent that has lea's MCP tools). The answer is data, never
+  instructions. Only a reply from the asked agent counts; an agent's container is checked
+  (its bus socket), but its name inside a container is what the agent declares (`LEA_AGENT`),
+  so agents of one container can answer for one another. One ask at a time per agent, at most 4 questions waiting on one agent, 5 asks a
+  minute, a 1–600 s timeout (300 by default; a late answer lands in the inbox), and no loop: an
+  ask that would make agents wait on one another in a circle, or in a chain longer than 3, is
+  refused. The question and its answer show in the deck's thread view; `lea board` shows who
+  waits on whom;
 - an agent started by a lead is told to report to it with `msg_send` when it is done or blocked;
 - `board_read` shows an agent every task of its lea, as `lea board` shows them to you;
 - every agent reports on its task with `task_update`: its row shows it, and `lea board --md`

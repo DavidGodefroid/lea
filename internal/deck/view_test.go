@@ -638,7 +638,7 @@ func TestWaitingSpinsBlockedOnIsRedIdleIsGreen(t *testing.T) {
 	if g, _ := stateMark(shownState(red), now, now, 0, false); g != "●" {
 		t.Errorf("blocked_on glyph %q", g)
 	}
-	if m.nextNeedingYou() < 0 || m.agents[m.nextNeedingYou()].Name != "red" {
+	if m.nextNeedingYou() != red.Key {
 		t.Fatal("space does not find the blocked agent")
 	}
 	m = loaded(t, &fakeAPI{}, "", green)
