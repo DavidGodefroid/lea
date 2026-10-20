@@ -114,3 +114,46 @@ ERR
 OK
 ERR" ]
 }
+
+@test "no LEA_EGRESS_ALLOW: any web destination, no allowlist" {
+  hosts
+  LEA_EGRESS_ALLOW= run sh "$R" "$BATS_TEST_TMPDIR/hosts"
+  [ "$status" -eq 0 ]
+  [[ "$output" != *"egress_allow"* ]]
+}
+
+@test "LEA_EGRESS_ALLOW: only its domains, their subdomains and the provider's, checked before any DNS lookup" {
+  hosts "a.example 443"
+  LEA_EGRESS_ALLOW=github.com,registry.npmjs.org run sh "$R" "$BATS_TEST_TMPDIR/hosts"
+  [ "$status" -eq 0 ]
+  [ "$(printf '%s\n' "$output" | grep '^acl egress_allow ')" = "acl egress_allow dstdomain -n .github.com .registry.npmjs.org .anthropic.com .claude.ai .claude.com" ]
+  [[ "$output" == *"deny_info ERR_LEA_EGRESS egress_allow"* ]]
+  internal=$(printf '%s\n' "$output" | grep -n 'http_access allow ih_1_dst' | cut -d: -f1)
+  private=$(printf '%s\n' "$output" | grep -n 'http_access deny private_dst' | cut -d: -f1)
+  egress=$(printf '%s\n' "$output" | grep -n '^http_access deny !egress_allow$' | cut -d: -f1)
+  web=$(printf '%s\n' "$output" | grep -n 'http_access allow CONNECT web_tls' | cut -d: -f1)
+  [ "$internal" -lt "$egress" ]
+  [ "$egress" -lt "$private" ]
+  [ "$private" -lt "$web" ]
+}
+
+@test "LEA_EGRESS_ALLOW: a domain covered by another one is listed once (squid refuses overlaps)" {
+  hosts
+  LEA_EGRESS_ALLOW='api.github.com, github.com api.anthropic.com GitHub.com' run sh "$R" "$BATS_TEST_TMPDIR/hosts"
+  [ "$status" -eq 0 ]
+  [ "$(printf '%s\n' "$output" | grep '^acl egress_allow ')" = "acl egress_allow dstdomain -n .github.com .anthropic.com .claude.ai .claude.com" ]
+}
+
+@test "LEA_EGRESS_ALLOW: a malformed entry is refused" {
+  hosts
+  for v in 'git/hub.com' '.github.com' 'github.com.' 'a..b' '10.0.0.1' '*.github.com' 'evil$(id)'; do
+    LEA_EGRESS_ALLOW=$v run sh "$R" "$BATS_TEST_TMPDIR/hosts"
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"LEA_EGRESS_ALLOW"* ]]
+  done
+}
+
+@test "the egress refusal page says how to extend LEA_EGRESS_ALLOW" {
+  grep -q 'LEA_EGRESS_ALLOW' "$LEA_ROOT/proxy/errors/ERR_LEA_EGRESS"
+  grep -q '%H' "$LEA_ROOT/proxy/errors/ERR_LEA_EGRESS"
+}
