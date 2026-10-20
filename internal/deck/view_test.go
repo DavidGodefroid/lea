@@ -102,11 +102,11 @@ func TestViewScrollsToTheSelection(t *testing.T) {
 	}
 }
 
-func TestViewStatusConfirmationAndEmptyState(t *testing.T) {
+func TestViewConfirmationAndEmptyState(t *testing.T) {
 	m := sized(loaded(t, &fakeAPI{}, "lea-a/a", ag("a", "idle", 1)), 34, 8)
 	m, _ = step(t, m, key("x"))
 	ls := viewLines(m)
-	if !strings.Contains(ls[len(ls)-2], "stop a? y to confirm") || !strings.HasPrefix(ls[len(ls)-1], "╰─ y stop · other key: no ") {
+	if !strings.Contains(strings.Join(ls, "\n"), "Stop a?") || !strings.HasPrefix(ls[len(ls)-1], "╰─ y stop · esc cancel ") {
 		t.Fatalf("view:\n%s", strings.Join(ls, "\n"))
 	}
 	if s := strings.Join(viewLines(sized(newModel(&fakeAPI{}), 34, 6)), "\n"); !strings.Contains(s, "No agents yet: press n.") || !strings.Contains(s, " 0 agents ") {
@@ -205,7 +205,6 @@ func TestViewCleansEveryAgentControlledString(t *testing.T) {
 	a.Name, a.Profile, a.Workdir = "a\x1b[31mb", "cl\x07aude", "/home/u/p\x1b]0;x\x07/sh\x9bop"
 	m := sized(loaded(t, &fakeAPI{}, "", a), 34, 8)
 	m.confirm = a.Key
-	m.status = "stop " + a.Name + "? y to confirm"
 	raw := m.View()
 	if strings.Contains(raw, "\x07") || strings.Contains(raw, "\x9b") || strings.Contains(sgr.ReplaceAllString(raw, ""), "\x1b") {
 		t.Fatalf("control characters reach the terminal: %q", raw)
