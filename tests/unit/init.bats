@@ -403,13 +403,14 @@ update_root() {
 
 # fake_release VERSION: the release VERSION as lea update downloads it. $REL holds its install.sh
 # (logs "installer ARGS", unpacks a copy of this checkout at $NEW, versioned images in its lea.conf, and
-# links $LEA_BIN_DIR/lea to it) and its checksums.txt; the fake curl serves them and resolves the
-# latest release to VERSION.
+# links $LEA_BIN_DIR/lea to it), its checksums.txt and a stand-in Sigstore bundle (the fake cosign
+# on PATH accepts it unless FAKE_COSIGN_RC); the fake curl serves them and resolves the latest
+# release to VERSION.
 fake_release() {
   REL="$BATS_TEST_TMPDIR/release"; NEW="$BATS_TEST_TMPDIR/inst/$1"; mkdir -p "$REL"
   src=$(cd "$BATS_TEST_DIRNAME/../.." && pwd -P)
   cat >"$REL/install.sh" <<EOT
-echo "installer \$*" >>"\$FAKE_LOG"
+echo "installer \$* cosign=\${LEA_REQUIRE_COSIGN:-}" >>"\$FAKE_LOG"
 mkdir -p "$NEW"
 cp -R "$src/bin" "$src/libexec" "$src/config" "$NEW/"
 sed -i -e 's|^LEA_IMAGE=.*|LEA_IMAGE=ghcr.io/davidgodefroid/lea:${1#v}|' \\
@@ -419,7 +420,39 @@ mkdir -p "$LEA_BIN_DIR"
 ln -sfn "$NEW/bin/lea" "$LEA_BIN_DIR/lea"
 EOT
   (cd "$REL" && sha256sum install.sh >checksums.txt)
+  echo '{}' >"$REL/checksums.txt.sigstore.json"
   export FAKE_CURL_DIR="$REL" FAKE_CURL_EFFECTIVE="https://github.com/DavidGodefroid/lea/releases/tag/$1"
+}
+
+@test "release update verifies the signature of checksums.txt before running the installer, which must verify too" {
+  update_root
+  fake_release v9.9.9
+  run lea_update
+  [ "$status" -eq 0 ]
+  run calls
+  [[ "$output" == *"cosign [verify-blob] [--bundle] ["*"/checksums.txt.sigstore.json] [--certificate-identity-regexp] [^https://github\.com/DavidGodefroid/lea/\.github/workflows/release\.yml@refs/tags/v[0-9]] [--certificate-oidc-issuer] [https://token.actions.githubusercontent.com] ["*"/checksums.txt]"*"installer --version v9.9.9 --no-init cosign=1"* ]]
+}
+
+@test "a release whose checksums.txt signature does not verify is never installed" {
+  update_root
+  fake_release v9.9.9
+  FAKE_COSIGN_RC=1 run lea_update
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"the checksums.txt of lea v9.9.9 does not verify against its Sigstore signature"* ]]
+  run calls
+  [[ "$output" != *"installer "* ]]
+  [ ! -e "$XDG_DATA_HOME/lea/host/update" ]
+}
+
+@test "a release without its Sigstore bundle is never installed" {
+  update_root
+  fake_release v9.9.9
+  rm "$REL/checksums.txt.sigstore.json"
+  run lea_update
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"cannot download the installer of lea v9.9.9"* ]]
+  run calls
+  [[ "$output" != *"installer "* ]]
 }
 
 @test "update of a release install runs the installer of the latest release, never main's" {
@@ -433,7 +466,7 @@ EOT
   [[ "$output" == *"curl [-fsSLI] [-o] [/dev/null] [-w] [%{url_effective}] [https://github.com/DavidGodefroid/lea/releases/latest]"* ]]
   [[ "$output" == *"[https://github.com/DavidGodefroid/lea/releases/download/v9.9.9/install.sh]"* ]]
   [[ "$output" == *"[https://github.com/DavidGodefroid/lea/releases/download/v9.9.9/checksums.txt]"* ]]
-  [[ "$output" == *"installer --version v9.9.9 --no-init"* ]]
+  [[ "$output" == *"installer --version v9.9.9 --no-init cosign=1"* ]]
   [[ "$output" != *raw.githubusercontent.com* ]]
   [[ "$output" != *"/main/"* ]]
   [[ "$output" != *"make "* ]]
