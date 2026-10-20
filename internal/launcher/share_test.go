@@ -189,6 +189,7 @@ func TestConfigImportRefuses(t *testing.T) {
 		"new line":         {`{"lea_config_format":1,"keys":{"LEA_LOCKSQL":"1\nLEA_PREFIX=x"}}`, "one line"},
 		"image option":     {`{"lea_config_format":1,"keys":{"LEA_IMAGE":"-v/:/host"}}`, "LEA_IMAGE"},
 		"plain http":       {`{"lea_config_format":1,"keys":{"LEA_RELEASES_URL":"http://evil.example"}}`, "https"},
+		"no releases url":  {`{"lea_config_format":1,"keys":{"LEA_RELEASES_URL":""}}`, "LEA_RELEASES_URL"},
 		"locksql path":     {`{"lea_config_format":1,"keys":{"LEA_LOCKSQL_REF":"/home/x/locksql"}}`, "LEA_LOCKSQL_REF"},
 		"unknown file":     {`{"lea_config_format":1,"keys":{},"files":{"lea.conf":"x"}}`, "lea.conf is not a shared file"},
 		"ca marker":        {`{"lea_config_format":1,"keys":{},"files":{"git_known_hosts":"@cert-authority * ` + key + `\n"}}`, "git_known_hosts line 1"},
@@ -467,5 +468,75 @@ func TestConfigUsage(t *testing.T) {
 		if code, _, errs := w.config("", args...); code != 2 || !strings.Contains(errs, "lea config export") {
 			t.Errorf("%v: %d %q", args, code, errs)
 		}
+	}
+}
+
+// A new host may come with several key types; a host already pinned here gets no other key in a
+// merge, whatever its type.
+func TestConfigImportKnownHostsKeyTypes(t *testing.T) {
+	w := newWorld(t, repoRoot(t))
+	k1, k2, k3 := sshKey(t), sshKey(t), sshKey(t)
+	w.writeConf("git_known_hosts", "github.com "+k1+"\n")
+	rsa := "ssh-rsa " + base64.StdEncoding.EncodeToString(append([]byte{0, 0, 0, 7}, "ssh-rsa"...))
+	in := w.shareFile(`{"lea_config_format":1,"keys":{},"files":{"git_known_hosts":"gitlab.com ` + k2 + `\ngitlab.com ` + rsa + `\n"}}`)
+	if code, _, errs := w.config("", "import", in, "--yes", "--allow-host-keys"); code != 0 {
+		t.Fatalf("two key types of a new host: %d %s", code, errs)
+	}
+	before := w.snapshot()
+	in = w.shareFile(`{"lea_config_format":1,"keys":{},"files":{"git_known_hosts":"github.com,gitlab.com ` + k3 + `\n"}}`)
+	if code, _, errs := w.config("", "import", in, "--yes", "--allow-host-keys"); code == 0 || !strings.Contains(errs, "github.com, gitlab.com") {
+		t.Fatalf("another key for pinned hosts: %d %q", code, errs)
+	}
+	if !sameSnapshot(before, w.snapshot()) {
+		t.Fatal("a conflict wrote a file")
+	}
+}
+
+// The key of older lea (LEA_GITLAB_SSH) goes when LEA_GIT_SSH is imported: it would set the
+// endpoints otherwise. It is exported as LEA_GIT_SSH.
+func TestConfigShareLegacyGitSSH(t *testing.T) {
+	w := newWorld(t, repoRoot(t))
+	w.writeConf("lea.conf", "LEA_GITLAB_SSH='gitlab.com:22'\n")
+	_, out, _ := w.config("", "export")
+	if decodeShare(t, out).Keys["LEA_GIT_SSH"] != "gitlab.com:22" {
+		t.Errorf("export: %s", out)
+	}
+	in := w.shareFile(`{"lea_config_format":1,"keys":{"LEA_GIT_SSH":""}}`)
+	if code, _, errs := w.config("", "import", in, "--yes", "--allow-egress"); code != 0 {
+		t.Fatalf("%d %s", code, errs)
+	}
+	if got := w.read(w.userConf()); strings.Contains(got, "LEA_GITLAB_SSH") || !strings.Contains(got, "LEA_GIT_SSH=''") {
+		t.Errorf("lea.conf = %q", got)
+	}
+}
+
+// From stdin, there is no terminal left to confirm on: --yes is needed. A key name never reaches
+// the terminal as a control sequence.
+func TestConfigImportStdinAndNames(t *testing.T) {
+	w := newWorld(t, repoRoot(t))
+	if code, _, errs := w.config(`{"lea_config_format":1,"keys":{"LEA_LOCKSQL":"0"}}`, "import", "-"); code == 0 || !strings.Contains(errs, "--yes") {
+		t.Fatalf("stdin without --yes: %d %q", code, errs)
+	}
+	if code, _, errs := w.config(`{"lea_config_format":1,"keys":{"LEA_LOCKSQL":"0"}}`, "import", "-", "--yes"); code != 0 {
+		t.Fatalf("stdin: %d %q", code, errs)
+	}
+	code, _, errs := w.config(`{"lea_config_format":1,"keys":{"\u001b]0;x\u0007":"1"}}`, "import", "-", "--yes")
+	if code == 0 || strings.ContainsAny(errs, "\x1b\x07") || !strings.Contains(errs, "is not a shared key") {
+		t.Fatalf("escape in a key name: %d %q", code, errs)
+	}
+}
+
+// --replace on internal-hosts shows the lines it drops.
+func TestConfigImportReplaceShowsRemovedLines(t *testing.T) {
+	w := newWorld(t, repoRoot(t))
+	ih := w.writeConf("internal-hosts", "old.example 443\nkept.example 443\n")
+	w.writeConf("lea.conf", "LEA_INTERNAL_HOSTS='"+ih+"'\n")
+	in := w.shareFile(`{"lea_config_format":1,"keys":{},"files":{"internal-hosts":"kept.example 443\nnew.example 8443\n"}}`)
+	code, out, errs := w.config("", "import", in, "--replace", "--yes", "--allow-egress")
+	if code != 0 || !strings.Contains(out, "- old.example 443") || !strings.Contains(out, "+ new.example 8443  [egress]") || strings.Contains(out, "kept.example") {
+		t.Fatalf("%d %q %q", code, out, errs)
+	}
+	if got := w.read(ih); got != "kept.example 443\nnew.example 8443\n" {
+		t.Errorf("internal-hosts = %q", got)
 	}
 }

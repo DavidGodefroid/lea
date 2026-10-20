@@ -16,6 +16,10 @@ const Usage = `Usage:
   lea agents                  list agents (lea msg <agent> <text>, lea inbox, lea approvals, lea requests)
   lea stop [--all] [--forget]
                               stop lea; its agents resume at the next lea (--forget drops them)
+  lea config export [--output FILE] [--include-personal]
+                              the shared part of your configuration, as a file for your team
+  lea config import FILE [--dry-run] [--replace] [--yes]
+                              take a team's configuration (lea config --help: what needs a flag)
   lea update
   lea rollback                back to the previous version; the background update skips this one
   lea doctor

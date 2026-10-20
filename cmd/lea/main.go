@@ -22,7 +22,7 @@ var version = "dev"
 const statusBudget = 500 * time.Millisecond
 
 const usage = `usage: lea <command>
-  (no command), init, shell, stop, update, doctor, kube refresh, new
+  (no command), init, shell, stop, update, doctor, kube refresh, new, config
                              the launcher (see lea --help)
   launcher-check             print "go launcher"
   version                    print the version
