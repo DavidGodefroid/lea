@@ -124,7 +124,8 @@ type Model struct {
 	shown         string
 	selected      string
 	seen          map[string]int64 // key → Updated of a done agent this deck has shown
-	confirm       string           // key waiting for y to be stopped
+	confirm       string           // key the stop modal asks about (confirm.go)
+	confirmYes    bool             // the modal's focus is on Confirm, not Cancel
 	roleFor       string           // key waiting for a role key (l, d, r)
 	editFor       string           // key whose label the rename field (e) edits
 	draft         []rune           // the rename field's text
@@ -355,7 +356,7 @@ func (m *Model) apply(s Snapshot) bool {
 		}
 	}
 	if m.confirm != "" && m.index(m.confirm) < 0 {
-		m.confirm, m.status = "", ""
+		m.confirm, m.confirmYes = "", false
 	}
 	if m.roleFor != "" && m.index(m.roleFor) < 0 {
 		m.roleFor, m.status = "", ""
@@ -400,12 +401,7 @@ func (m Model) index(key string) int {
 
 func (m Model) key(k string) (tea.Model, tea.Cmd) {
 	if m.confirm != "" {
-		key, api := m.confirm, m.api
-		m.confirm, m.status = "", ""
-		if k == "y" {
-			return m, m.call(func(ctx context.Context) error { return api.Stop(ctx, key) })
-		}
-		return m, nil
+		return m.confirmKey(k)
 	}
 	if m.roleFor != "" {
 		key, api := m.roleFor, m.api
@@ -487,8 +483,7 @@ func (m Model) key(k string) (tea.Model, tea.Cmd) {
 		if m.agents[i].State == "done" {
 			return m, m.call(func(ctx context.Context) error { return api.RemoveEnded(ctx, key) })
 		}
-		m.confirm = key
-		m.status = "stop " + display(m.agents[i]) + "? y to confirm"
+		m.confirm, m.confirmYes, m.status = key, false, ""
 		return m, nil
 	case "r":
 		if a := m.selectedAgent(); a != nil && !isShell(*a) {

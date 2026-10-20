@@ -211,10 +211,10 @@ func TestStopNeedsConfirmation(t *testing.T) {
 	api := &fakeAPI{}
 	m := loaded(t, api, "lea-a/b", ag("a", "idle", 1), ag("b", "idle", 1))
 	m, cmd := step(t, m, key("x"))
-	if cmd != nil || !strings.Contains(m.status, "stop b?") {
-		t.Fatalf("status %q", m.status)
+	if cmd != nil || m.confirm != "lea-a/b" {
+		t.Fatalf("confirm %q", m.confirm)
 	}
-	m, cmd = step(t, m, key("n")) // anything but y cancels, and does nothing else
+	m, cmd = step(t, m, key("n")) // n cancels, and does nothing else
 	if cmd != nil || m.confirm != "" || len(api.got()) != 0 {
 		t.Fatalf("cancel: confirm %q calls %q", m.confirm, api.got())
 	}
