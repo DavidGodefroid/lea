@@ -479,6 +479,15 @@ func TestARestartedResumeIsBounded(t *testing.T) {
 		t.Fatalf("agent=%+v", a)
 	}
 
+	// A time beyond the horizon ahead (a clock set back between containers) is not believed.
+	e.d.st.SetLimit("lea-a/dev", *e.clock+maxResumeHorizon+1, 1)
+	if r := restartWait(t, e, "dev", job2, 1); !r.Done {
+		t.Fatalf("a resume beyond the horizon was kept: %+v", r)
+	}
+	if a := agentRow(t, e, "lea-a/dev"); a.LimitUntil != -1 {
+		t.Fatalf("agent=%+v", a)
+	}
+
 	e.d.SetResume(false, 0)
 	e.d.st.SetLimit("lea-a/dev", *e.clock+5000, 1)
 	if r := restartWait(t, e, "dev", job1, 1); !r.Done {
@@ -505,5 +514,52 @@ func TestTheSessionEndOfAStoppingContainerKeepsTheResume(t *testing.T) {
 	call(t, e.bus, "dev", "hook_event", map[string]any{"event": "SessionEnd", "payload": map[string]any{"hook_event_name": "SessionEnd"}}, nil)
 	if a := agentRow(t, e, "lea-a/dev"); a.State != "done" || a.LimitUntil != 0 {
 		t.Fatalf("agent=%+v", a)
+	}
+}
+
+// A resume falling due while the container stops (lea stop marked the agent stopped, its old job
+// still runs) is not claimed: the old job would wake a model about to die. The next container's
+// LimitResume job claims it.
+func TestAStoppedAgentsResumeIsLeftToTheNextContainer(t *testing.T) {
+	e := start(t)
+	limitHit(t, e, "dev", "rate_limit")
+	e.d.st.SetLimit("lea-a/dev", 1500, 1)
+	e.d.st.SetState("lea-a/dev", "stopped", "", 1000)
+	*e.clock = 2000
+	if r := limitWait(t, e, "dev", job1, false, 1); r != (waitAnswer{}) {
+		t.Fatalf("a stopped agent was resumed: %+v", r)
+	}
+	if a := agentRow(t, e, "lea-a/dev"); a.LimitUntil != 1500 || a.LimitTries != 1 {
+		t.Fatalf("agent=%+v", a)
+	}
+	restartContainer(t, e, "dev")
+	if r := restartWait(t, e, "dev", job2, 1); r != (waitAnswer{}) {
+		t.Fatalf("resumed at once after the restart: %+v", r)
+	}
+	*e.clock += minResumeWait
+	if r := limitWait(t, e, "dev", job2, false, 1); !r.Resume {
+		t.Fatalf("the next container did not resume it: %+v", r)
+	}
+}
+
+// A user's pause outlives the restart that clears it, for the resume: an agent paused while it
+// waited on its limit is not resumed by the next container, and waits for the user.
+func TestAPausedLimitedAgentIsNotResumedAfterARestart(t *testing.T) {
+	e := start(t)
+	if _, err := e.d.st.RegisterAgent("lea-a", "dev", "claude", "/p", 1000); err != nil {
+		t.Fatal(err)
+	}
+	limitHit(t, e, "dev", "rate_limit")
+	e.d.st.SetLimit("lea-a/dev", 1660, 1)
+	if err := e.d.st.SetPaused("lea-a/dev", true); err != nil {
+		t.Fatal(err)
+	}
+	restartContainer(t, e, "dev")
+	if a := agentRow(t, e, "lea-a/dev"); a.Paused || a.LimitUntil != -1 {
+		t.Fatalf("agent=%+v", a)
+	}
+	*e.clock = 5000
+	if r := restartWait(t, e, "dev", job1, 1); !r.Done {
+		t.Fatalf("a paused agent was resumed after the restart: %+v", r)
 	}
 }

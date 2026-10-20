@@ -322,8 +322,8 @@ func (d *Daemon) limitWait(ctx context.Context, o Origin, me string, raw json.Ra
 }
 
 // resumeAfterRestart bounds a resume time a previous container recorded before its restart's
-// job waits for it: with auto-resume off now, or past for more than maxResumeHorizon, it is given
-// up (-1: the agent waits for the user), and one due within minResumeWait is pushed to it, so a restart never resumes at once.
+// job waits for it: with auto-resume off now, or more than maxResumeHorizon past or ahead (a clock
+// set back between containers), it is given up (-1: the agent waits for the user), and one due within minResumeWait is pushed to it, so a restart never resumes at once.
 // The time and tries are the daemon's own (lea.db): the job only says the session resumed.
 func (d *Daemon) resumeAfterRestart(me string) error {
 	defer d.lockKey(limitKey(me))()
@@ -337,7 +337,7 @@ func (d *Daemon) resumeAfterRestart(me string) error {
 	now := d.now()
 	until := a.LimitUntil
 	switch {
-	case off || now-until > maxResumeHorizon:
+	case off || now-until > maxResumeHorizon || until-now > maxResumeHorizon:
 		until = -1
 	case until < now+minResumeWait:
 		until = now + minResumeWait
@@ -349,7 +349,7 @@ func (d *Daemon) resumeAfterRestart(me string) error {
 		return err
 	}
 	if until < 0 {
-		log.Printf("lea daemon: %s restarted with a resume time it no longer keeps (auto-resume off or long past); it waits for the user", me)
+		log.Printf("lea daemon: %s restarted with a resume time it no longer keeps (auto-resume off, or beyond the horizon); it waits for the user", me)
 	}
 	d.changed()
 	return nil
@@ -368,7 +368,9 @@ func (d *Daemon) limitDue(me string) (res map[string]any, wait time.Duration, id
 		return map[string]any{"done": true}, 0, true, nil
 	}
 	now := d.now()
-	if a.Paused {
+	if a.Paused || a.State == "stopped" {
+		// A paused agent waits for the user; a stopped one ends with its container, and the
+		// next container's LimitResume job claims the resume instead.
 		return nil, pausedRecheck, false, nil
 	}
 	if now < a.LimitUntil {

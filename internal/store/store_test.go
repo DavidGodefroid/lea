@@ -1190,6 +1190,19 @@ func TestLimitIsSetAndClearedWhenTheProcessGoes(t *testing.T) {
 			t.Fatalf("limit lost once %s: %+v", st, a)
 		}
 	}
+	// A paused agent's pending resume is given up when it stops or restarts: the pause it loses
+	// meant "do not resume me".
+	for _, st := range []string{"stopped", "unknown"} {
+		s.SetState("lea-a/claude-1", "idle", "", 4)
+		s.SetLimit("lea-a/claude-1", 900, 2)
+		if err := s.SetPaused("lea-a/claude-1", true); err != nil {
+			t.Fatal(err)
+		}
+		s.SetState("lea-a/claude-1", st, "", 4)
+		if a, _ := s.AgentByKey("lea-a/claude-1"); a.Paused || a.LimitUntil != -1 || a.LimitTries != 2 {
+			t.Fatalf("paused then %s: %+v", st, a)
+		}
+	}
 	s.SetLimit("lea-a/claude-1", -1, 6)
 	s.SetState("lea-a/claude-1", "done", "", 4)
 	if a, _ := s.AgentByKey("lea-a/claude-1"); a.LimitUntil != 0 || a.LimitTries != 0 {
