@@ -186,10 +186,10 @@ esac
 }
 
 // The daemon drives the tmux the launcher resolved: a daemon that recorded another tmux, or
-// another agent cap (LEA_MAX_AGENTS), is restarted, and the new one gets LEA_TMUX_BIN (daemon
-// tests of the retired deck.bats and core.bats).
-func TestEnsureDaemonPinsTheResolvedTmuxAndPolicy(t *testing.T) {
-	for name, record := range map[string][2]string{"tmux": {"daemon.tmux", "/old/tmux"}, "policy": {"daemon.policy", "4"}} {
+// other approval settings, is restarted, and the new one gets LEA_TMUX_BIN (daemon tests of the
+// retired deck.bats and core.bats).
+func TestEnsureDaemonPinsTheResolvedTmuxAndApprovals(t *testing.T) {
+	for name, record := range map[string][2]string{"tmux": {"daemon.tmux", "/old/tmux"}, "approvals": {"daemon.approvals", "pane 5"}} {
 		t.Run(name, func(t *testing.T) {
 			w := newWorld(t, repoRoot(t))
 			delete(w.env, "LEA_TMUX_BIN") // resolved from PATH: the world's tmux

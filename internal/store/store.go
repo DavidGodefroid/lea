@@ -17,7 +17,7 @@ var (
 	ErrNotFound = errors.New("not found")
 	ErrDecided  = errors.New("already decided")
 	ErrExists   = errors.New("already exists")
-	// ErrLimit: a cap (max_agents, max_children, pending requests, leases) is reached.
+	// ErrLimit: a cap (max_children, pending requests, leases) is reached.
 	ErrLimit = errors.New("limit reached")
 	// ErrTree: the change would break the agent tree (spec A17: a lead and its children).
 	ErrTree = errors.New("agent tree rule")
@@ -217,10 +217,9 @@ type NewAgent struct {
 	Role, Parent, Repo, Branch        string
 }
 
-// Caps bound a spawn: at most MaxAgents running agents lea spawned in the container, and at most
-// MaxChildren running children of the parent (0: no bound). An ended agent (done) counts for
-// neither, nor does a row a hook registered.
-type Caps struct{ MaxAgents, MaxChildren int }
+// Caps bound a spawn: at most MaxChildren running children of the parent (0: no bound). An ended
+// agent (done) does not count, nor does a row a hook registered.
+type Caps struct{ MaxChildren int }
 
 // Register records an agent lea spawns, checking the caps in the same transaction: two spawns at
 // the cap never both pass. A row of the same name whose agent ended (state done) is reused from
@@ -268,16 +267,6 @@ func (s *Store) Register(n NewAgent, c Caps, now int64) (Agent, error) {
 		}
 		if err := roles.CanGive(pr, n.Role); err != nil {
 			return Agent{}, err
-		}
-	}
-	if c.MaxAgents > 0 {
-		var running int
-		if err := tx.QueryRow(`SELECT COUNT(*) FROM agents WHERE container=? AND profile<>'' AND state<>'done'`,
-			n.Container).Scan(&running); err != nil {
-			return Agent{}, err
-		}
-		if running >= c.MaxAgents {
-			return Agent{}, fmt.Errorf("%w: this project already runs %d agents (max_agents %d)", ErrLimit, running, c.MaxAgents)
 		}
 	}
 	if n.Parent != "" && c.MaxChildren > 0 {

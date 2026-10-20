@@ -58,7 +58,7 @@ const (
 
 	// KindShell marks a snapshot row that is a shell, not an agent.
 	KindShell = "shell"
-	// MaxShells caps the shells of one container. Shells do not count toward max_agents.
+	// MaxShells caps the shells of one container.
 	MaxShells   = 4
 	shellPrefix = "shell:"
 )
@@ -114,8 +114,6 @@ type Config struct {
 	// how long the deck has before the agent's dialog takes over.
 	Approvals       string
 	ApprovalTimeout int
-	// MaxAgents caps the running agents of one container (spec §5.2 max_agents; 0: roles.MaxAgents).
-	MaxAgents int
 }
 
 type Row struct {
@@ -200,9 +198,6 @@ func NewManager(cfg Config) *Manager {
 	}
 	if cfg.Approvals != "pane" {
 		cfg.Approvals = "deck"
-	}
-	if cfg.MaxAgents <= 0 {
-		cfg.MaxAgents = roles.MaxAgents
 	}
 	if cfg.Now == nil {
 		cfg.Now = func() int64 { return time.Now().Unix() }
@@ -1131,7 +1126,7 @@ func (m *Manager) newShellPane(ctx context.Context, s Session, container, name, 
 
 // OpenShell opens a shell in the container (the deck's s), in the directory new agents start
 // in, and shows it with the keyboard. A container runs at most MaxShells shells, counting those
-// still running without a pane; shells never count toward max_agents.
+// still running without a pane.
 func (m *Manager) OpenShell(ctx context.Context, container string) (Row, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -1609,7 +1604,7 @@ func (m *Manager) New(ctx context.Context, r NewRequest) (Row, error) {
 			return Row{}, err
 		}
 	}
-	caps := store.Caps{MaxAgents: m.cfg.MaxAgents}
+	var caps store.Caps
 	if r.Parent != "" {
 		caps.MaxChildren = roles.MaxChildren
 	}

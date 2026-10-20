@@ -324,9 +324,17 @@ func TestRealConfLocksTheLayoutAndIsIdempotent(t *testing.T) {
 	if got := keyNames(t, tm, "prefix"); len(got) != 0 {
 		t.Errorf("prefix table %q, want none", got)
 	}
+	// The copy tables: lea's own keys, and the 97 typed keys that leave the history (93 printable
+	// ASCII but q, and Space, Enter, BSpace, Tab); never Any, which mouse events would reach.
 	for _, table := range []string{"copy-mode", "copy-mode-vi"} {
-		if got, want := keyNames(t, tm, table), []string{"C-c", "Escape", "MouseDrag1Pane", "MouseDragEnd1Pane", "WheelDownPane", "WheelUpPane", "q"}; !slices.Equal(got, want) {
-			t.Errorf("%s table %q, want %q", table, got, want)
+		got := keyNames(t, tm, table)
+		for _, k := range []string{"C-c", "Escape", "MouseDrag1Pane", "MouseDragEnd1Pane", "WheelDownPane", "WheelUpPane", "q", "Space", "Enter", "BSpace", "Tab", "a"} {
+			if !slices.Contains(got, k) {
+				t.Errorf("%s table %q lacks %s", table, got, k)
+			}
+		}
+		if len(got) != 7+97 || slices.Contains(got, "Any") {
+			t.Errorf("%s table has %d keys %q, want %d and no Any", table, len(got), got, 7+97)
 		}
 	}
 	// The agents' dead-pane line is set on their panes only: a dead deck or placeholder keeps
@@ -650,6 +658,12 @@ func TestRealTheSlotSaysWhetherItHasTheKeyboard(t *testing.T) {
 	if b := border("=lea-k:.0"); b != "" {
 		t.Errorf("the deck's border shows %q", b)
 	}
+	// Scrolled back, the bar says the keys go to the history, not "typing here".
+	tm("copy-mode", "-t", "=lea-k:.1")
+	if b := border("=lea-k:.1"); !strings.Contains(b, "fix-login · history: type or q to go back") || strings.Contains(b, "typing here") {
+		t.Errorf("the focused agent's border in the history: %q", b)
+	}
+	tm("send-keys", "-X", "-t", "=lea-k:.1", "cancel")
 	tm("select-pane", "-t", "=lea-k:.0")
 	if b := border("=lea-k:.1"); !strings.Contains(b, "fix-login · enter or ctrl+space: type here") || strings.Contains(b, "typing here") {
 		t.Errorf("the agent's border while the deck has the keyboard: %q", b)
@@ -722,5 +736,61 @@ func TestRealAPaneKeepsItsHistoryUnderAbduco(t *testing.T) {
 		alt, n, _ := strings.Cut(out[0], "|")
 		h, _ := strconv.Atoi(n)
 		return alt == "0" && h > 100
+	})
+}
+
+// The wheel puts an agent's pane into copy mode, where tmux drops every key the copy table does
+// not bind: the pane still showed Claude Code's prompt and typing did nothing. A key typed in the
+// history now leaves it (lea types nothing: that key is dropped) and the next keys reach the
+// program; ctrl+space still moves the keyboard to the deck.
+func TestRealTypingInTheHistoryLeavesIt(t *testing.T) {
+	s := realServer(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	got := filepath.Join(os.Getenv("TMUX_TMPDIR"), "typed")
+	c, err := s.Open(ctx, "lea-y", []string{"sh", "-c", `stty raw -echo; exec cat > "$1"`, "sh", got})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c.Close()
+	client := attachTerminal(t, ctx, s, c, "lea-y", filepath.Join(os.Getenv("TMUX_TMPDIR"), "terminal"))
+	tm := func(args ...string) string {
+		t.Helper()
+		out, err := exec.Command("tmux", append([]string{"-L", "lea-test"}, args...)...).CombinedOutput()
+		if err != nil {
+			t.Fatalf("%v: %v: %s", args, err, out)
+		}
+		return strings.TrimSpace(string(out))
+	}
+	pane := "=lea-y:"
+	inMode := func() bool { return tm("display-message", "-p", "-t", pane, "#{pane_in_mode}") == "1" }
+	enter := func() {
+		t.Helper()
+		tm("copy-mode", "-t", pane)
+		waitFor(t, "copy mode", inMode)
+	}
+	// send-keys -K: each key as the user's terminal sends it, through the key bindings.
+	for _, k := range []string{"h", "'", "#", `"`, "Space", "Enter", "BSpace", "q", "Escape"} {
+		enter()
+		tm("send-keys", "-K", "-c", client, k)
+		waitFor(t, k+" to leave copy mode", func() bool { return !inMode() })
+	}
+	// None of those keys reached the program, which still reads its terminal: keys sent to the
+	// pane itself arrive alone (send-keys -K delivered no unbound key to the program in CI).
+	tm("send-keys", "-t", pane, "o", "k", "Enter")
+	var typed []byte
+	for deadline := time.Now().Add(5 * time.Second); string(typed) != "ok\r" && time.Now().Before(deadline); time.Sleep(20 * time.Millisecond) {
+		typed, _ = os.ReadFile(got)
+	}
+	if string(typed) != "ok\r" {
+		t.Fatalf("the program got %q, want only the keys sent after the history, %q", typed, "ok\r")
+	}
+	// ctrl+space in the history still moves the keyboard (its root binding is not shadowed).
+	tm("split-window", "-h", "-b", "-d", "-t", pane, "sleep", "600")
+	enter()
+	before := tm("display-message", "-p", "-t", pane, "#{pane_id}")
+	tm("send-keys", "-K", "-c", client, "C-Space")
+	waitFor(t, "ctrl+space to move the keyboard", func() bool {
+		return tm("display-message", "-p", "-t", pane, "#{pane_id}") != before
 	})
 }

@@ -11,7 +11,7 @@ func TestBuiltinRoles(t *testing.T) {
 		t.Fatalf("names=%q", got)
 	}
 	l, err := Get("lead")
-	if err != nil || !l.CanSpawn || l.MaxChildren != 6 || !reflect.DeepEqual(l.SpawnRoles, []string{"dev", "reviewer"}) {
+	if err != nil || !l.CanSpawn || l.MaxChildren != 20 || !reflect.DeepEqual(l.SpawnRoles, []string{"dev", "reviewer"}) {
 		t.Fatalf("lead=%+v err=%v", l, err)
 	}
 	for _, n := range []string{"dev", "reviewer"} {
@@ -22,8 +22,8 @@ func TestBuiltinRoles(t *testing.T) {
 	if _, err := Get("admin"); err == nil || !strings.Contains(err.Error(), "lead, dev, reviewer") {
 		t.Fatalf("unknown role: err=%v", err)
 	}
-	if Default != "dev" || MaxAgents != 12 {
-		t.Fatalf("default=%s max=%d", Default, MaxAgents)
+	if Default != "dev" {
+		t.Fatalf("default=%s", Default)
 	}
 }
 
@@ -33,7 +33,7 @@ func TestCheckRefusesACascadeAndOddRoleSets(t *testing.T) {
 		{{Name: "a", CanSpawn: true, SpawnRoles: []string{"b"}}, {Name: "b", CanSpawn: true, SpawnRoles: []string{"dev"}}, {Name: "dev"}},
 		{{Name: "a", CanSpawn: true, SpawnRoles: []string{"ghost"}}},
 		{{Name: "dev", SpawnRoles: []string{"dev"}}},
-		{{Name: "a", CanSpawn: true, MaxChildren: 7}},
+		{{Name: "a", CanSpawn: true, MaxChildren: 21}},
 		{{Name: "a", MaxChildren: -1}},
 		{{Name: "dev"}, {Name: "dev"}},
 		{{Name: ""}},

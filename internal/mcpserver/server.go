@@ -78,7 +78,7 @@ func proxy(parent context.Context, sock, agent, method string, timeout time.Dura
 func New(sock, agent, version string) *mcp.Server {
 	s := mcp.NewServer(&mcp.Implementation{Name: "lea", Version: version}, nil)
 	const short = 10 * time.Second
-	mcp.AddTool(s, &mcp.Tool{Name: "agents_list", Description: "List the agents of this lea: name, role, profile, state, parent, branch; you=true is you. Never their screens."},
+	mcp.AddTool(s, &mcp.Tool{Name: "agents_list", Description: "List the agents of this lea: name, role, profile, state, parent, branch, ctx_pct (percent of its context window used, when known; your container only); you=true is you. Never their screens."},
 		func(ctx context.Context, _ *mcp.CallToolRequest, in empty) (*mcp.CallToolResult, any, error) {
 			return proxy(ctx, sock, agent, "agents_list", short, in), nil, nil
 		})
@@ -105,7 +105,7 @@ func New(sock, agent, version string) *mcp.Server {
 			return proxy(ctx, sock, agent, "msg_reply", short, in), nil, nil
 		})
 	const long = 60 * time.Second // the daemon starts a terminal and the agent's container process
-	mcp.AddTool(s, &mcp.Tool{Name: "agents_spawn", Description: "Leads only: start a new agent as your child. Its brief is its first message. Refused beyond 6 children per lead and the project's agent cap; the reason comes back."},
+	mcp.AddTool(s, &mcp.Tool{Name: "agents_spawn", Description: "Leads only: start a new agent as your child. Its brief is its first message. Refused beyond 20 children per lead; the reason comes back."},
 		func(ctx context.Context, _ *mcp.CallToolRequest, in spawnIn) (*mcp.CallToolResult, any, error) {
 			return proxy(ctx, sock, agent, "agents_spawn", long, in), nil, nil
 		})

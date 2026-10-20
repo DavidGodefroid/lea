@@ -21,8 +21,8 @@ func readTrim(p string) string {
 
 // ensureDaemon is lea_daemon_ensure: one daemon per user, started on demand; restarted when it
 // drives another tmux, runs another build (daemon.version, written by the daemon, against
-// `<core> version`) or recorded other approval or agent-cap settings (its agents keep running
-// under abduco and are reattached at start).
+// `<core> version`) or recorded other approval settings (its agents keep running under abduco and
+// are reattached at start).
 func (l *Launcher) ensureDaemon() error {
 	l.tmuxPin()
 	host := l.Cfg.HostDir()
@@ -32,8 +32,7 @@ func (l *Launcher) ensureDaemon() error {
 		// `$(core version 2>/dev/null || true)`: a core that fails or prints nothing counts as "".
 		ver, _ := l.output(false, l.Core, "version")
 		if (tb == "" || readTrim(host+"/daemon.tmux") == tb) && readTrim(host+"/daemon.version") == ver &&
-			readTrim(host+"/daemon.approvals") == appr &&
-			readTrim(host+"/daemon.policy") == nonEmpty(l.Cfg.Get("LEA_MAX_AGENTS"), "12") {
+			readTrim(host+"/daemon.approvals") == appr {
 			return nil
 		}
 		l.stopDaemon()

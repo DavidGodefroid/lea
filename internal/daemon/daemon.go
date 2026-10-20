@@ -57,6 +57,8 @@ type Daemon struct {
 	blocks map[string]int
 	// stopped: agents whose turn ended (Stop) and no new one began (prompt or stop block).
 	stopped map[string]bool
+	// rewakes: the generation of each agent's rewake watch; a newer one supersedes the older.
+	rewakes map[string]int
 	keyMu   map[string]*sync.Mutex
 	agents  Agents
 	// statusPaths: the last status-line key paths recorded per agent.
@@ -83,7 +85,7 @@ type Daemon struct {
 func New(st *store.Store, runDir string, now func() int64) *Daemon {
 	return &Daemon{st: st, lim: bus.Default, now: now, runDir: runDir,
 		attached: map[string]string{}, notify: map[string]chan struct{}{},
-		verdicts: map[int64]chan string{}, blocks: map[string]int{}, stopped: map[string]bool{}, keyMu: map[string]*sync.Mutex{}, statusPaths: map[string]string{}, named: map[string]bool{}, rang: map[string]time.Time{},
+		verdicts: map[int64]chan string{}, blocks: map[string]int{}, stopped: map[string]bool{}, rewakes: map[string]int{}, keyMu: map[string]*sync.Mutex{}, statusPaths: map[string]string{}, named: map[string]bool{}, rang: map[string]time.Time{},
 		doneDelay: doneDelay, doneTimers: map[string]*time.Timer{}}
 }
 
@@ -298,14 +300,15 @@ func (d *Daemon) dispatch(ctx context.Context, o Origin, req wire.Request) (any,
 		return d.boardRead(o)
 	case "msg_watch":
 		var p struct {
-			TimeoutS int `json:"timeout_s"`
+			TimeoutS int  `json:"timeout_s"`
+			Rewake   bool `json:"rewake"`
 		}
 		if len(req.Params) > 0 {
 			if err := json.Unmarshal(req.Params, &p); err != nil {
 				return nil, err
 			}
 		}
-		return d.watch(ctx, me, p.TimeoutS)
+		return d.watch(ctx, me, p.TimeoutS, p.Rewake)
 	case "thread_list":
 		return d.threadList(req.Params)
 	case "container_attach":
@@ -333,19 +336,36 @@ type agentView struct {
 	Repo    string `json:"repo,omitempty"`
 	Branch  string `json:"branch,omitempty"`
 	Task    string `json:"task,omitempty"`
-	You     bool   `json:"you,omitempty"`
+	// CtxPct is the percent of its context window the agent's status line last reported; absent
+	// while unknown.
+	CtxPct *int `json:"ctx_pct,omitempty"`
+	You    bool `json:"you,omitempty"`
 }
 
 // agentsList lists the agents (spec §6.1: name, role, profile, state, branch; never screen
-// content). Parent is the name of the lead that started one; You marks the caller.
+// content). Parent is the name of the lead that started one; You marks the caller. A lead reads
+// its children's context use here, from the caller's own container (the host API sees all).
 func (d *Daemon) agentsList(o Origin, me string) ([]agentView, error) {
 	as, err := d.st.Agents()
 	if err != nil {
 		return nil, err
 	}
+	usages := map[string]map[string]store.Usage{}
 	out := []agentView{}
 	for _, a := range as {
 		v := agentView{Key: a.Key, Name: a.Name, State: a.State, Updated: a.Updated, You: a.Key == me}
+		if o.Container == "" || a.Container == o.Container {
+			u, ok := usages[a.Container]
+			if !ok {
+				if u, err = d.st.Usages(a.Container); err != nil {
+					return nil, err
+				}
+				usages[a.Container] = u
+			}
+			if p := u[a.Key].CtxPct; p >= 0 {
+				v.CtxPct = &p
+			}
+		}
 		if a.Profile != "" {
 			v.Role, v.Profile, v.Repo, v.Branch = a.Role, a.Profile, a.Repo, a.Branch
 			if o.Container == "" {
@@ -533,6 +553,12 @@ func (d *Daemon) take(me string) (batch, error) {
 	return out, nil
 }
 
+func (d *Daemon) stoppedNow(me string) bool {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	return d.stopped[me]
+}
+
 func (d *Daemon) inbox(me string) (batch, error) { return d.take(me) }
 
 func (d *Daemon) waitChan(me string) chan struct{} {
@@ -612,9 +638,22 @@ const maxWatch = 3600
 // unreadNotice, leaving the messages unread. An agent whose turn is over hears of no message
 // (Stop delivers them only while a turn ends): a background job running lea inbox --wait, which
 // calls this, ends when one arrives, and Claude Code then starts a turn to read it.
-func (d *Daemon) watch(ctx context.Context, me string, timeoutS int) (map[string]any, error) {
+//
+// A rewake watch is the one the Stop hook starts (lea hook claude Rewake, an asyncRewake hook):
+// it answers only while the agent's turn is over, so a working agent or one waiting on a
+// permission dialog is not woken, and only the newest one per agent stays: it supersedes the
+// older ones, which answer superseded and wake nobody.
+func (d *Daemon) watch(ctx context.Context, me string, timeoutS int, rewake bool) (map[string]any, error) {
 	if timeoutS < 1 || timeoutS > maxWatch {
 		return nil, fmt.Errorf("timeout_s must be between 1 and %d", maxWatch)
+	}
+	gen := 0
+	if rewake {
+		d.mu.Lock()
+		d.rewakes[me]++
+		gen = d.rewakes[me]
+		d.mu.Unlock()
+		d.wake(me) // the older watch sees it is superseded
 	}
 	deadline := time.After(time.Duration(timeoutS) * time.Second)
 	for {
@@ -622,13 +661,24 @@ func (d *Daemon) watch(ctx context.Context, me string, timeoutS int) (map[string
 			return nil, err
 		}
 		ch := d.waitChan(me)
+		idle := true
+		if rewake {
+			d.mu.Lock()
+			cur, stopped := d.rewakes[me], d.stopped[me]
+			d.mu.Unlock()
+			if cur != gen {
+				return map[string]any{"count": 0, "text": "", "superseded": true}, nil
+			}
+			idle = stopped
+		}
 		n, err := d.unreadNotice(me)
-		if err != nil || n["count"] != 0 {
+		if err != nil || (n["count"] != 0 && idle) {
 			return n, err
 		}
 		select {
 		case <-ch:
 		case <-deadline:
+			n["count"], n["text"] = 0, ""
 			return n, nil
 		case <-ctx.Done():
 			return nil, ctx.Err()
@@ -726,6 +776,10 @@ func (d *Daemon) dispatchHooks(ctx context.Context, o Origin, me string, req wir
 			d.stopped[me] = true
 		}
 		d.mu.Unlock()
+		if !stopped && d.stoppedNow(me) {
+			// The turn is over: a rewake watch looks again at the messages that came during it.
+			d.wake(me)
+		}
 		if ok && stopped && (p.Event == "PreToolUse" || p.Event == "PostToolUse") {
 			// A Stop hook of the agent or prompt type runs its own tools after Stop, under the
 			// agent's identity: they do not start a turn. An approval it asked for is answered.

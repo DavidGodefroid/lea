@@ -170,6 +170,9 @@ shell shows with its agent and steps aside while another agent is shown).
   task. The pane that has the keyboard is the bright one: the deck's frame turns blue when it
   has it; otherwise the terminal on the right shows a blue `▶ <agent> · typing here` bar on its
   top border (grey, with the keys that give it the keyboard, while the deck has it).
+- **Scrolling.** The wheel scrolls an agent's history; the bar then reads `history: type or q to
+  go back`. Any typed key (`q`, `Escape`, `Enter`, a letter…) goes back to the prompt; that key is
+  not typed, the next ones are.
 - **Sounds.** lea plays a sound when an agent starts waiting for you, and another when a turn
   ends (`LEA_SOUND=0` turns them off; `LEA_SOUND_ATTENTION` and `LEA_SOUND_DONE` pick the files).
 - **Names.** An agent you have not renamed is named after its first prompt, by a short
@@ -205,6 +208,15 @@ lea needs no forge account, and works with any of them.
 - **Container registries.** `podman login` (or `docker login`) in lea; the login is kept for the
   next sessions.
 
+## Go
+
+The image ships Go 1.26 with `staticcheck` and `govulncheck`, and agents run `go`, `staticcheck`
+and `govulncheck` without a permission prompt. Go never downloads another toolchain
+(`GOTOOLCHAIN=local`); its module and build caches, and what `go install` builds, live in lea's
+state (`/lea/state/go`) and are kept for the next sessions. A permission rule never matches a
+command that starts with `GOOS=… GOARCH=…`, so cross-compile with `go-cross <GOOS> <GOARCH> …`
+instead, for example `go-cross darwin arm64 vet ./...`.
+
 ## Databases, with locksql
 
 lea comes with [locksql](https://github.com/DavidGodefroid/locksql): a console that stands
@@ -230,12 +242,14 @@ Only you change a role (`r` in the deck, `lea role <agent> <role>`, `lea new -r 
 Agents get lea's tools through MCP:
 
 - a lead starts `dev` and `reviewer` agents with `agents_spawn` and stops its own with
-  `agents_stop` (at most 6 children; at most `LEA_MAX_AGENTS`, 12, per projects directory);
+  `agents_stop` (at most 20 children at a time);
 - any other agent asks a lead with `agents_request_spawn`; without a lead the request comes to
   you (`lea requests`, `lea request accept <id>`, `lea request decline <id> [reason]`);
 - agents message each other (`msg_send`, `msg_reply`); a message waits in the inbox until the
-  agent's next turn. An agent whose turn is over keeps a background job on
-  `lea inbox --agent --wait`: it ends when a message arrives, and Claude Code starts a turn;
+  agent's next turn. An agent whose turn is over is woken when a message arrives: its Stop hook
+  starts a background job (Claude Code's `asyncRewake`) that ends with the unread notice, and
+  Claude Code starts a turn. A working agent, or one waiting on a permission dialog, is not
+  interrupted; only the newest job of an agent stays, so one message wakes it once;
 - an agent started by a lead is told to report to it with `msg_send` when it is done or blocked;
 - `board_read` shows an agent every task of its lea, as `lea board` shows them to you;
 - every agent reports on its task with `task_update`: its row shows it, and `lea board --md`
@@ -249,8 +263,8 @@ lea brings its own Claude Code plugin, `lea`, loaded in every agent (from the im
 session only: nothing is installed in your `~/.claude`). Its skill `/lea:tower-control` turns a
 lead into your control tower: you talk to it only, it splits your requests into tasks, starts
 `dev` and `reviewer` agents with self-contained briefs, answers their questions when it can, and
-follows them with `board_read`, and briefs you in one line per agent. Between your requests it
-waits on a background `lea inbox --agent --wait`, so an agent's report wakes it:
+follows them with `board_read`, and briefs you in one line per agent. Between your requests an
+agent's report wakes it, as it wakes every agent whose turn is over:
 
 ```
 fix-login · done · PR #42, 18 tests pass
@@ -302,7 +316,6 @@ projects directory cannot be `/`, your home directory or one of its parents, nor
 | `LEA_INTERNAL_HOSTS` | none | private hosts the proxy may reach (format in `config/internal-hosts`) |
 | `LEA_NESTED_NETWORKS` | empty | networks your compose files expect, created at start |
 | `LEA_APPROVALS`, `LEA_APPROVAL_TIMEOUT` | `deck`, `60` | who answers permission requests |
-| `LEA_MAX_AGENTS` | `12` | running agents per projects directory |
 | `LEA_SOUND`, `LEA_AUTONAME` | on | the deck's sounds, automatic names (`0`: off) |
 | `LEA_OTEL_UPSTREAM` | empty | send Claude Code usage telemetry to this OTLP collector |
 | `LEA_ASCII` | off | ASCII marks in the deck (`1`) |

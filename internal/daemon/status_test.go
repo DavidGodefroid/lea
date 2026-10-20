@@ -82,6 +82,53 @@ func TestStatusReportRefusesOddValues(t *testing.T) {
 	}
 }
 
+// A lead watches its children's context use in agents_list: the percent their status line last
+// reported, left out while unknown and for another container's agents.
+func TestAgentsListShowsContextUse(t *testing.T) {
+	e := start(t)
+	type view struct {
+		Name   string
+		CtxPct *int `json:"ctx_pct"`
+	}
+	list := func(o string, sock string) map[string]*int {
+		t.Helper()
+		var as []view
+		if err := call(t, sock, o, "agents_list", nil, &as); err != nil {
+			t.Fatal(err)
+		}
+		out := map[string]*int{}
+		for _, a := range as {
+			out[a.Name] = a.CtxPct
+		}
+		return out
+	}
+	spawned(t, e, "boss", "lead", "")
+	if got := list("boss", e.bus)["boss"]; got != nil {
+		t.Fatalf("ctx_pct=%d before any report, want none", *got)
+	}
+	if err := report(t, e, 57, 2); err != nil {
+		t.Fatal(err)
+	}
+	if got := list("boss", e.bus)["dev"]; got == nil || *got != 57 {
+		t.Fatalf("the lead sees dev at %v, want 57", got)
+	}
+	if got := list("", e.api)["dev"]; got == nil || *got != 57 {
+		t.Fatalf("the host sees dev at %v, want 57", got)
+	}
+	if _, err := e.d.st.RegisterAgent("lea-b", "x", "claude", "/p", 1); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := e.d.st.SetUsage("lea-b/x", store.Usage{CtxPct: 80, CostUSD: 1}); err != nil {
+		t.Fatal(err)
+	}
+	if got := list("boss", e.bus)["x"]; got != nil {
+		t.Fatalf("another container's context use leaked: %d", *got)
+	}
+	if got := list("", e.api)["x"]; got == nil || *got != 80 {
+		t.Fatalf("the host sees x at %v, want 80", got)
+	}
+}
+
 func TestStatusReportCapsRecordedPathEvents(t *testing.T) {
 	e := start(t)
 	for i := 0; i < maxPathEvents+10; i++ {
