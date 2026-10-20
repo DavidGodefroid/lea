@@ -204,6 +204,10 @@ func (c *cliAgents) LockClose(ctx context.Context, ctr, tool, profile string) (s
 	c.rec("lock-close " + ctr + " " + tool + " " + profile)
 	return "closed", nil
 }
+func (c *cliAgents) LockCheckRequest(ctx context.Context, ctr, tool, profile string) error {
+	c.rec("lock-check " + ctr + " " + tool + " " + profile)
+	return nil
+}
 func (c *cliAgents) LockList(ctx context.Context, ctr string) ([]agents.LockRow, error) {
 	c.rec("lock-list " + ctr)
 	return []agents.LockRow{{ID: "locksql/prod", Shown: true}, {ID: "locksql"}}, nil

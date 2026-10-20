@@ -90,7 +90,9 @@ const (
 // machineKeys are user configuration keys export skips without a warning: they belong to the
 // workstation (the two files go by content).
 var machineKeys = map[string]bool{"LEA_PROJECTS_DIR": true, "LEA_CONFIG": true, "LEA_PREFIX": true,
-	"LEA_GIT_KNOWN_HOSTS": true, "LEA_GITLAB_KNOWN_HOSTS": true, "LEA_INTERNAL_HOSTS": true}
+	"LEA_GIT_KNOWN_HOSTS": true, "LEA_GITLAB_KNOWN_HOSTS": true, "LEA_INTERNAL_HOSTS": true,
+	// What agents may ask of this workstation's lock consoles is its user's choice alone.
+	"LEA_LOCKSQL_AGENT_PROFILES": true}
 
 const configUsage = `Usage:
   lea config export [--output FILE] [--include-personal]

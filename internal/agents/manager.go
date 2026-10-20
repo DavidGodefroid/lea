@@ -161,6 +161,8 @@ type Row struct {
 	CtxPct   int       `json:"ctx_pct"`
 	CostUSD  float64   `json:"cost_usd"`
 	Approval *Approval `json:"approval,omitempty"`
+	// LockAsk: the agent asks the user to open a lock tool's console (lock_request).
+	LockAsk *LockAsk `json:"lock_ask,omitempty"`
 	// Paused: the user froze the agent (the deck's p); State is what it was doing.
 	Paused bool `json:"paused,omitempty"`
 	// Subagents counts the subagents the agent still runs (its Subagent hooks): an idle agent
@@ -298,7 +300,7 @@ func (m *Manager) snapshot(container string, v int64) (Snapshot, error) {
 	if err != nil {
 		return Snapshot{}, err
 	}
-	f, err := loadFacts(m.cfg.Store, container)
+	f, err := loadFacts(m.cfg.Store, container, m.cfg.Now())
 	if err != nil {
 		return Snapshot{}, err
 	}

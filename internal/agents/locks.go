@@ -50,6 +50,10 @@ type LockSpec struct {
 	// ContainerName is the lea container of a projects directory (launcher.Config.ContainerName
 	// of its physical path): a console opens on a deck's own projects directory only.
 	ContainerName func(projects string) string
+	// AgentProfiles are the profiles an agent may ask the user to open (lock_request): the
+	// user's allow-list in lea's own config (LEA_<TOOL>_AGENT_PROFILES), empty by default. An
+	// agent only asks; the user opens the console in the deck, or not.
+	AgentProfiles []string
 	// Projects is the console's --project: the deck's projects directory, which LockOpen takes
 	// from the deck's container (its lea.projects label), never from the daemon's environment.
 	Projects string
@@ -381,6 +385,44 @@ func (m *Manager) LockList(ctx context.Context, container string) ([]LockRow, er
 		}
 	}
 	return out, nil
+}
+
+// LockCheckRequest checks an agent's request that the user open tool's console for profile in
+// the container's deck (lock_request): a lock tool lea opens, a profile on the user's allow-list
+// for agents, and a deck that runs to show the request. It never touches a console nor a pane,
+// and says nothing of the consoles that run.
+func (m *Manager) LockCheckRequest(ctx context.Context, container, tool, profile string) error {
+	if !containerRe.MatchString(container) {
+		return fmt.Errorf("invalid container name %q", container)
+	}
+	if profile == "" {
+		return errors.New("a profile is required: an agent asks for one of the profiles the user allowed")
+	}
+	if _, _, err := lockID(tool, profile); err != nil {
+		return err
+	}
+	if m.cfg.LockSpec == nil {
+		return errors.New("lock consoles are not available in this daemon")
+	}
+	spec, err := m.cfg.LockSpec(tool)
+	if err != nil {
+		return err
+	}
+	if !spec.Enabled {
+		return fmt.Errorf("%s is off", tool)
+	}
+	allowed := false
+	for _, p := range spec.AgentProfiles {
+		allowed = allowed || p == profile
+	}
+	if !allowed {
+		return fmt.Errorf("profile %q is not one agents may ask for (the user lists them in LEA_%s_AGENT_PROFILES)",
+			profile, strings.ToUpper(tool))
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	_, err = m.deckSession(ctx, container)
+	return err
 }
 
 // errNoDeck: lock consoles open in a deck that runs, never in a session made for them.

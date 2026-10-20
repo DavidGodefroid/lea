@@ -69,6 +69,10 @@ func (r *recAgents) LockClose(ctx context.Context, c, tool, profile string) (str
 	r.calls = append(r.calls, "lock-close "+c+" "+tool+" "+profile)
 	return "closed", nil
 }
+func (r *recAgents) LockCheckRequest(ctx context.Context, c, tool, profile string) error {
+	r.calls = append(r.calls, "lock-check "+c+" "+tool+" "+profile)
+	return nil
+}
 func (r *recAgents) LockList(ctx context.Context, c string) ([]agents.LockRow, error) {
 	r.calls = append(r.calls, "lock-list "+c)
 	return nil, nil

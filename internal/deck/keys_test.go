@@ -24,6 +24,14 @@ func (f *fakeAPI) SplitShell(ctx context.Context, k string, below bool) (Agent, 
 	return f.newShell, f.err
 }
 
+func (f *fakeAPI) LockDecide(ctx context.Context, c string, id int64, open bool) (string, error) {
+	f.rec(fmt.Sprintf("lock-decide %s %d %v", c, id, open))
+	if !open {
+		return "declined", f.err
+	}
+	return "opened", f.err
+}
+
 func (f *fakeAPI) LockOpen(ctx context.Context, c, tool string) (string, error) {
 	f.rec("lock-open " + c + " " + tool)
 	return "opened", f.err
