@@ -3,6 +3,9 @@ package deck
 import (
 	"strings"
 	"testing"
+	"time"
+
+	tea "github.com/charmbracelet/bubbletea"
 
 	"github.com/charmbracelet/lipgloss"
 )
@@ -13,12 +16,19 @@ func asking(name string, id int64) Agent {
 	return a
 }
 
-// a opens the console the agent asked for (through the daemon, as L would), d declines; A does
-// nothing. The answer goes to the request's id taken when the key was pressed.
+// readable is m a lockAskDelay after the snapshot that showed its cards.
+func readable(m Model) Model {
+	later := clock.Add(lockAskDelay)
+	m.now = func() time.Time { return later }
+	return m
+}
+
+// O opens the console the agent asked for (through the daemon, as L would), d declines. The
+// answer goes to the request's id taken when the key was pressed.
 func TestLockAskKeys(t *testing.T) {
-	for k, want := range map[string]string{"a": "lock-decide lea-a 5 true", "d": "lock-decide lea-a 5 false"} {
+	for k, want := range map[string]string{"O": "lock-decide lea-a 5 true", "d": "lock-decide lea-a 5 false"} {
 		api := &fakeAPI{}
-		m := loaded(t, api, "lea-a/b", asking("b", 5), ag("c", "idle", 1))
+		m := readable(loaded(t, api, "lea-a/b", asking("b", 5), ag("c", "idle", 1)))
 		m, cmd := step(t, m, key(k))
 		if cmd == nil {
 			t.Fatalf("%s: no call", k)
@@ -32,17 +42,68 @@ func TestLockAskKeys(t *testing.T) {
 			t.Fatalf("status %q", m.status)
 		}
 	}
+	// a and A answer approvals only: never a lock request.
 	api := &fakeAPI{}
-	m := loaded(t, api, "lea-a/b", asking("b", 5))
-	if _, cmd := step(t, m, key("A")); cmd != nil {
-		t.Fatal("A answered a lock request")
+	m := readable(loaded(t, api, "lea-a/b", asking("b", 5)))
+	for _, k := range []string{"a", "A"} {
+		var cmd tea.Cmd
+		if m, cmd = step(t, m, key(k)); cmd != nil {
+			t.Fatalf("%s answered a lock request", k)
+		}
 	}
-	// On a row without a request, a and d do nothing.
-	m = loaded(t, api, "lea-a/c", asking("b", 5), ag("c", "idle", 1))
-	for _, k := range []string{"a", "d"} {
+	if !strings.Contains(m.status, "O opens the locksql/prod console") {
+		t.Fatalf("status %q", m.status)
+	}
+	// On a row without a request, O and d do nothing.
+	m = readable(loaded(t, api, "lea-a/c", asking("b", 5), ag("c", "idle", 1)))
+	for _, k := range []string{"O", "d"} {
 		if _, cmd := step(t, m, key(k)); cmd != nil {
 			t.Fatalf("%s on a row without a card made a call", k)
 		}
+	}
+	if len(api.got()) != 0 {
+		t.Fatalf("calls=%q", api.got())
+	}
+}
+
+// The review's case: a lock request waits behind an approval; a pressed twice allows the
+// approval, then (the approval gone, the lock card in view) opens nothing. O right after the card
+// came into view does nothing either; a second later it opens.
+func TestALockCardIsReadBeforeItOpens(t *testing.T) {
+	api := &fakeAPI{}
+	both := carded("b", 7, false)
+	both.LockAsk = &LockAsk{ID: 5, Tool: "locksql", Profile: "prod"}
+	m := loaded(t, api, "lea-a/b", both)
+	m, cmd := step(t, m, key("a"))
+	cmd()
+	alone := asking("b", 5)
+	m, _ = step(t, m, snapshotMsg{snap: Snapshot{Version: 8, Shown: "lea-a/b", Agents: []Agent{alone}}})
+	if _, cmd = step(t, m, key("a")); cmd != nil {
+		t.Fatal("a second a opened the console")
+	}
+	m, cmd = step(t, m, key("O"))
+	if cmd != nil || !strings.Contains(m.status, "read the locksql/prod request first") {
+		t.Fatalf("O at once: call=%v status=%q", cmd != nil, m.status)
+	}
+	// The delay counts from when the card came into view, not from the request.
+	at := clock.Add(lockAskDelay - time.Millisecond)
+	m.now = func() time.Time { return at }
+	if _, cmd = step(t, m, key("O")); cmd != nil {
+		t.Fatal("O before the delay")
+	}
+	m = readable(m)
+	if _, cmd = step(t, m, key("O")); cmd == nil {
+		t.Fatal("O after the delay made no call")
+	}
+	cmd()
+	if got := api.got(); len(got) != 2 || got[0] != "decide 7 allow" || got[1] != "lock-decide lea-a 5 true" {
+		t.Fatalf("calls=%q", got)
+	}
+	// A card hidden again (an approval in front of it) starts its delay again when it shows.
+	m, _ = step(t, m, snapshotMsg{snap: Snapshot{Version: 9, Shown: "lea-a/b", Agents: []Agent{both}}})
+	m, _ = step(t, m, snapshotMsg{snap: Snapshot{Version: 10, Shown: "lea-a/b", Agents: []Agent{alone}}})
+	if _, cmd = step(t, m, key("O")); cmd != nil {
+		t.Fatal("O right after the card showed again")
 	}
 }
 
@@ -63,10 +124,10 @@ func TestViewShowsTheLockAskCard(t *testing.T) {
 	m := sized(loaded(t, &fakeAPI{}, "lea-a/b", asking("b", 5), ag("c", "idle", 1)), 40, 10)
 	ls := viewLines(m)
 	s := strings.Join(ls, "\n")
-	if !strings.Contains(s, "⚠ open the locksql/prod console?") || !strings.Contains(s, "[a] open [d]ecline") {
+	if !strings.Contains(s, "⚠ open the locksql/prod console?") || !strings.Contains(s, "[O]pen [d]ecline") {
 		t.Fatalf("card:\n%s", s)
 	}
-	if !strings.Contains(s, "asks for a console") || !strings.HasPrefix(ls[len(ls)-1], "╰─ a open console · d decline") {
+	if !strings.Contains(s, "asks for a console") || !strings.HasPrefix(ls[len(ls)-1], "╰─ O open console · d decline") {
 		t.Fatalf("label or hint:\n%s", s)
 	}
 	for i, l := range ls {

@@ -37,27 +37,25 @@ func scanLockRequest(sc interface{ Scan(...any) error }) (LockRequest, error) {
 
 // AddLockRequest records a pending request. The container is the unit: any process in a
 // container can claim any agent name, so the limits do not trust the agent. ErrLimit when a request
-// for that tool is pending in the container; ErrRate when one for that tool came from the
-// container less than gap seconds ago. Pending requests older than ttl expire first.
+// for that tool is pending (and younger than ttl) in the container; ErrRate when one for that tool
+// was asked or answered in the container less than gap seconds ago (a declined request is not
+// asked again at once). It closes nothing: SweepLockRequests alone expires requests, and tells.
 func (s *Store) AddLockRequest(container, agent, tool, profile string, ttl, gap, now int64) (LockRequest, error) {
 	tx, err := s.db.Begin()
 	if err != nil {
 		return LockRequest{}, err
 	}
 	defer tx.Rollback()
-	if _, err := tx.Exec(`UPDATE lock_requests SET state='expired', decided=? WHERE state='pending' AND at<=?`, now, now-ttl); err != nil {
-		return LockRequest{}, err
-	}
 	var pending, recent int
-	if err := tx.QueryRow(`SELECT COUNT(*) FROM lock_requests WHERE container=? AND tool=? AND state='pending'`,
-		container, tool).Scan(&pending); err != nil {
+	if err := tx.QueryRow(`SELECT COUNT(*) FROM lock_requests WHERE container=? AND tool=? AND state='pending' AND at>?`,
+		container, tool, now-ttl).Scan(&pending); err != nil {
 		return LockRequest{}, err
 	}
 	if pending > 0 {
 		return LockRequest{}, fmt.Errorf("a %s request of this container waits for the user: %w", tool, ErrLimit)
 	}
-	if err := tx.QueryRow(`SELECT COUNT(*) FROM lock_requests WHERE container=? AND tool=? AND at>?`,
-		container, tool, now-gap).Scan(&recent); err != nil {
+	if err := tx.QueryRow(`SELECT COUNT(*) FROM lock_requests WHERE container=? AND tool=? AND (at>? OR decided>?)`,
+		container, tool, now-gap, now-gap).Scan(&recent); err != nil {
 		return LockRequest{}, err
 	}
 	if recent > 0 {

@@ -46,7 +46,7 @@ func menuItems(a Agent, inFolder bool) []menuItem {
 		}
 	}
 	if a.LockAsk != nil && a.Approval == nil {
-		items = append(items, menuItem{"Open console", "a", ""}, menuItem{"Decline console", "d", ""})
+		items = append(items, menuItem{"Open console", "O", ""}, menuItem{"Decline console", "d", ""})
 	}
 	items = append(items, menuItem{"Show", "enter", ""}, menuItem{"Send message", "m", ""}, menuItem{"Messages", "t", ""},
 		menuItem{"Rename", "e", ""}, menuItem{"Role", "r", ""}, menuItem{"Move to folder", "o", ""})

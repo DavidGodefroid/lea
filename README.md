@@ -289,11 +289,12 @@ lockfile consoles cannot live in the deck: they run in their own account's sessi
 An agent may **ask** you to open one (its `lock_request` tool), for a profile you allowed agents to
 ask for: `LEA_LOCKSQL_AGENT_PROFILES="staging prod"` in your lea configuration (empty by default:
 agents may ask for none; `lea config export` never carries it). The request shows as a card on the
-agent's row, with a sound: `a` opens that console as `L` would, `d` declines. The card names the
+agent's row, with a sound: `O` opens that console as `L` would (a second after the card comes into
+view, so a key meant for something else never opens one), `d` declines. The card names the
 tool and the profile only, never text of the agent's. The agent gets back `requested`, then a
 message: opened, declined, failed or expired (after 10 minutes); never what the console shows,
 whether one runs, nor why it failed. It chooses no flag and no argument; one request per tool per
-minute per container, and one pending at a time. Each request is recorded (who, what, when, the
+minute per container (counted from your answer too), and one pending at a time. Each request is recorded (who, what, when, the
 outcome) in lea's database.
 
 The two projects are independent: lea runs without locksql, and locksql works with any agent.

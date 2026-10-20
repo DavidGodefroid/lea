@@ -23,11 +23,11 @@ func TestLockRequestLimitsAreTheContainers(t *testing.T) {
 	if _, err := s.ClaimLockRequest(r.ID, "lea-a", "declined", 600, 1010); err != nil {
 		t.Fatal(err)
 	}
-	// Answered, but less than gap seconds ago it was asked: the rate limit holds.
-	if _, err := s.AddLockRequest("lea-a", "lea-a/dev", "locksql", "prod", 600, 60, 1059); !errors.Is(err, ErrRate) {
+	// Answered: the gap counts from the answer, so a declined request is not asked again at once.
+	if _, err := s.AddLockRequest("lea-a", "lea-a/dev", "locksql", "prod", 600, 60, 1069); !errors.Is(err, ErrRate) {
 		t.Fatalf("within the gap: %v", err)
 	}
-	if _, err := s.AddLockRequest("lea-a", "lea-a/dev", "locksql", "prod", 600, 60, 1060); err != nil {
+	if _, err := s.AddLockRequest("lea-a", "lea-a/dev", "locksql", "prod", 600, 60, 1070); err != nil {
 		t.Fatalf("after the gap: %v", err)
 	}
 }
@@ -92,12 +92,19 @@ func TestLockRequestExpires(t *testing.T) {
 	if gone, _ := s.SweepLockRequests(600, 5000); len(gone) != 0 {
 		t.Fatalf("swept twice: %+v", gone)
 	}
-	// An expired pending request no longer blocks a new one.
+	// A pending request past its ttl no longer blocks a new one; the new one closes nothing (the
+	// sweep alone does, and tells the agent), here or in another container.
 	c, _ := s.AddLockRequest("lea-c", "lea-c/dev", "locksql", "prod", 600, 60, 1000)
+	d, _ := s.AddLockRequest("lea-d", "lea-d/dev", "locksql", "prod", 600, 60, 1000)
 	if _, err := s.AddLockRequest("lea-c", "lea-c/dev", "locksql", "prod", 600, 60, 1600); err != nil {
 		t.Fatalf("after expiry: %v", err)
 	}
-	if got, _ := s.LockRequestByID(c.ID); got.State != "expired" {
-		t.Fatalf("old one: %+v", got)
+	for _, id := range []int64{c.ID, d.ID} {
+		if got, _ := s.LockRequestByID(id); got.State != "pending" {
+			t.Fatalf("closed by another request: %+v", got)
+		}
+	}
+	if gone, _ := s.SweepLockRequests(600, 1600); len(gone) != 2 {
+		t.Fatalf("sweep: %+v", gone)
 	}
 }
