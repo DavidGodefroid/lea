@@ -20,15 +20,24 @@ type boardItem struct {
 	Subagents int
 }
 
-// stateCell is an item's state, with the subagents it still runs ("idle, 2 subagents").
+// stateCell is an item's state as the deck shows it (issue #72), with the subagents it still
+// runs ("idle, 2 subagents"): a live agent whose task names a blocker is blocked, an idle one
+// with a next step and no subagent is waiting.
 func stateCell(it boardItem) string {
+	state, live := it.State, it.State == "working" || it.State == "idle"
+	switch {
+	case live && strings.TrimSpace(it.BlockedOn) != "":
+		state = "blocked"
+	case it.State == "idle" && it.Subagents == 0 && strings.TrimSpace(it.Next) != "":
+		state = "waiting"
+	}
 	switch {
 	case it.Subagents == 1:
-		return it.State + ", 1 subagent"
+		return state + ", 1 subagent"
 	case it.Subagents > 1:
-		return fmt.Sprintf("%s, %d subagents", it.State, it.Subagents)
+		return fmt.Sprintf("%s, %d subagents", state, it.Subagents)
 	}
-	return it.State
+	return state
 }
 
 type board struct {

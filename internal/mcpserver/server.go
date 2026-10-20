@@ -147,6 +147,6 @@ type releaseIn struct {
 
 type taskIn struct {
 	StatusText string `json:"status_text" jsonschema:"what you are doing now: one line, at most 200 characters"`
-	Next       string `json:"next,omitempty" jsonschema:"what comes next: one line, at most 500 characters"`
-	BlockedOn  string `json:"blocked_on,omitempty" jsonschema:"what blocks you, if anything: one line, at most 200 characters"`
+	Next       string `json:"next,omitempty" jsonschema:"what comes next, while something is still to happen (CI, a review, a reply): one line, at most 500 characters; leave it empty once your work is done"`
+	BlockedOn  string `json:"blocked_on,omitempty" jsonschema:"what blocks you, if a human must act: one line, at most 200 characters; your row turns red until you clear it"`
 }

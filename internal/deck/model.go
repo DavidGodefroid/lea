@@ -48,14 +48,33 @@ type Agent struct {
 	Paused bool `json:"paused,omitempty"`
 	// Subagents counts the subagents the agent still runs (agents.Row.Subagents).
 	Subagents int `json:"subagents,omitempty"`
+	// Waiting and BlockedOn: the agent's open task has a next step, or something blocking it
+	// (agents.Row). Display only.
+	Waiting   bool `json:"waiting,omitempty"`
+	BlockedOn bool `json:"blocked_on,omitempty"`
 }
 
-// shownState is the state a row shows: an idle agent whose subagents still run is working.
+// shownState is the state a row shows (issue #72): green only when nothing is pending. A live
+// agent whose task names a blocker is blocked (it needs a human); an idle one whose subagents
+// still run is working; an idle one whose task has a next step is waiting. Ended agents keep
+// their state.
 func shownState(a Agent) string {
-	if a.State == "idle" && a.Subagents > 0 {
+	live := a.State == "working" || a.State == "idle"
+	switch {
+	case live && a.BlockedOn:
+		return "blocked"
+	case a.State == "idle" && a.Subagents > 0:
 		return "working"
+	case a.State == "idle" && a.Waiting:
+		return "waiting"
 	}
 	return a.State
+}
+
+// busy says the shown state spins: the agent works or waits.
+func busy(a Agent) bool {
+	s := shownState(a)
+	return s == "working" || s == "waiting"
 }
 
 // Approval is the permission request an agent waits on (agents.Approval).
@@ -210,7 +229,7 @@ func (m Model) Init() tea.Cmd {
 // working reports whether an agent works: the spinner and the logo's wave then move.
 func (m Model) working() bool {
 	for _, a := range m.agents {
-		if shownState(a) == "working" && !isShell(a) && !a.Paused {
+		if busy(a) && !isShell(a) && !a.Paused {
 			return true
 		}
 	}
@@ -630,13 +649,13 @@ func rank(a Agent, seen map[string]int64) int {
 		return 6
 	case a.Paused: // frozen by the user: it neither needs them nor works
 		return 4
-	case a.State == "blocked":
+	case shownState(a) == "blocked":
 		return 0
 	case a.State == "done" && seen[a.Key] != a.Updated:
 		return 1
 	case a.ForUser > 0:
 		return 2
-	case shownState(a) == "working":
+	case busy(a):
 		return 3
 	case a.State == "idle" || a.State == "done":
 		return 4
@@ -669,6 +688,8 @@ func (m Model) label(a Agent) string {
 		return "see terminal" // the agent's own dialog asks: the deck has no card for it
 	case a.State == "blocked":
 		return "needs you"
+	case shownState(a) == "blocked": // its task names a blocker
+		return "blocked"
 	case r == 1:
 		return "done, unseen"
 	case r == 2:

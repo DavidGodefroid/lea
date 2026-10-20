@@ -840,7 +840,16 @@ func TestUpdateTaskCreatesReportsChangesAndStatuses(t *testing.T) {
 	if ch, _ := s.UpdateTask(a.Key, "blocked", "tests", "review", 4); !ch {
 		t.Fatal("a new report changed nothing")
 	}
-	if st, _ := s.TaskStatuses("lea-a"); st[a.Key] != "blocked" {
+	if st, _ := s.TaskStatuses("lea-a"); st[a.Key] != (TaskState{Status: "blocked", Next: true, Blocked: true}) {
+		t.Fatalf("statuses=%v", st)
+	}
+	// A task with only a next step still says the agent waits; an empty one says nothing.
+	b, _ := s.RegisterAgent("lea-a", "dev-2", "claude", "/p", 1)
+	s.UpdateTask(b.Key, "", "CI", "", 5)
+	c, _ := s.RegisterAgent("lea-a", "dev-3", "claude", "/p", 1)
+	s.UpdateTask(c.Key, "done", "", "", 5)
+	st, _ := s.TaskStatuses("lea-a")
+	if st[b.Key] != (TaskState{Next: true}) || st[c.Key] != (TaskState{Status: "done"}) {
 		t.Fatalf("statuses=%v", st)
 	}
 	if _, err := s.UpdateTask("lea-a/nobody", "x", "", "", 5); !errors.Is(err, ErrNotFound) {

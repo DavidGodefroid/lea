@@ -153,6 +153,10 @@ type Row struct {
 	// Subagents counts the subagents the agent still runs (its Subagent hooks): an idle agent
 	// with some is still at work.
 	Subagents int `json:"subagents,omitempty"`
+	// Waiting and BlockedOn: the agent's open task has a next step, or something blocking it
+	// (task_update next, blocked_on). Display only: the deck spins or turns red; never the text.
+	Waiting   bool `json:"waiting,omitempty"`
+	BlockedOn bool `json:"blocked_on,omitempty"`
 }
 
 type Snapshot struct {

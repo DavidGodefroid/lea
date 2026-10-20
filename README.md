@@ -172,8 +172,10 @@ else in the column opens the deck's own menu: new agent, new shell, sounds, keys
 pointer over a row shows its whole name (cut in the row when long) with the agent's name, role,
 profile and state in the bottom border.
 
-- **States.** A red `●` needs you, an orange spinner is working, a green `●` has finished its
-  turn, an empty `○` has been quiet for 30 minutes, a grey `‖` is paused (`p`: lea freezes the
+- **States.** A red `●` needs you (a permission, or a blocker the agent named with
+  `task_update`), an orange spinner is working or waiting (its subagents, or a next step it
+  named: CI, a review, a reply), a green `●` has finished with nothing pending, an empty `○` has
+  been quiet for 30 minutes, a grey `‖` is paused (`p`: lea freezes the
   agent's processes, tool calls included, until you resume it). Agents stay in the order you started them.
   Each row shows the agent's context use, its directory and branch, and its own report on its
   task. The pane that has the keyboard is the bright one: the deck's frame turns blue when it
