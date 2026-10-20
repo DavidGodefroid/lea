@@ -56,8 +56,27 @@ func (m Model) View() string {
 	c := m.cs()
 	inner := m.innerWidth()
 	w := inner + 2
+	body := m.body(inner)
+	if m.confirm != "" {
+		body = m.overlay(body, inner)
+	}
+	if status := m.statusLine(inner); status != "" {
+		body = append(body, status)
+	}
+	var b strings.Builder
+	b.WriteString(m.top(w) + "\n")
+	for _, l := range body {
+		b.WriteString(m.frameStyle().Render(c.v) + l + m.frameStyle().Render(c.v) + "\n")
+	}
+	b.WriteString(m.bottom(w))
+	return b.String()
+}
+
+// body is the lines between the borders above the status line: the key list or the rows, filled
+// or cut to the deck's height.
+func (m Model) body(inner int) []string {
+	c := m.cs()
 	var body []string
-	status := m.statusLine(inner)
 	switch {
 	case m.help:
 		for _, l := range helpLines {
@@ -71,7 +90,7 @@ func (m Model) View() string {
 	}
 	if m.height > 2 {
 		room := m.height - 2
-		if status != "" {
+		if m.statusLine(inner) != "" {
 			room--
 		}
 		for len(body) < room {
@@ -81,16 +100,7 @@ func (m Model) View() string {
 			body = body[:room]
 		}
 	}
-	if status != "" {
-		body = append(body, status)
-	}
-	var b strings.Builder
-	b.WriteString(m.top(w) + "\n")
-	for _, l := range body {
-		b.WriteString(m.frameStyle().Render(c.v) + l + m.frameStyle().Render(c.v) + "\n")
-	}
-	b.WriteString(m.bottom(w))
-	return b.String()
+	return body
 }
 
 // helpLines is the key list (?).
@@ -108,6 +118,7 @@ var helpLines = []string{
 	"r           its role",
 	"a d A       allow deny always",
 	"x           stop or remove",
+	"S           sounds on or off",
 	"ctrl+space  deck or terminal",
 	"q           detach",
 	"?           these keys",
@@ -184,6 +195,9 @@ func (m Model) top(w int) string {
 	if n == 1 {
 		count = "1 agent"
 	}
+	if m.sound == "off" {
+		count = "muted " + c.dot + " " + count
+	}
 	// c.tl+c.h+" " (3) + title + " " + fill + " " + count + " "+c.h+c.tr (3)
 	fill := w - 8 - tw - lipgloss.Width(count)
 	if fill < 1 {
@@ -203,7 +217,7 @@ func (m Model) bottom(w int) string {
 		}
 	}
 	if m.confirm != "" {
-		hint = fmt.Sprintf("y stop %s other key: no", c.dot)
+		hint = fmt.Sprintf("y stop %s esc cancel", c.dot)
 	}
 	if m.roleFor != "" {
 		hint = fmt.Sprintf("l lead %[1]s d dev %[1]s r reviewer", c.dot)

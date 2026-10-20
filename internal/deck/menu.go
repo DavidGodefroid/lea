@@ -39,7 +39,7 @@ func (m Model) menuAgent() *Agent {
 // openMenu opens key's menu on its first item.
 func (m *Model) openMenu(key string) {
 	m.menuFor, m.menuSel = key, 0
-	m.confirm, m.roleFor = "", ""
+	m.confirm, m.confirmYes, m.roleFor = "", false, ""
 }
 
 // pick runs item i of the open menu as its key on the menu's row.
@@ -93,6 +93,9 @@ func (m Model) menuKey(k string) (tea.Model, tea.Cmd) {
 func (m Model) mouse(e tea.MouseMsg) (tea.Model, tea.Cmd) {
 	if m.help || m.editFor != "" {
 		return m, nil
+	}
+	if m.confirm != "" {
+		return m.confirmMouse(e)
 	}
 	switch e.Button {
 	case tea.MouseButtonWheelUp, tea.MouseButtonWheelDown:

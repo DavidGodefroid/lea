@@ -18,7 +18,7 @@ import (
 // launcher (whose default opens lea), as in the retired shell launcher.
 var coreCommands = map[string]bool{
 	"version": true, "daemon": true, "agents": true, "msg": true, "inbox": true, "approvals": true, "approve": true,
-	"attach-container": true, "role": true, "requests": true, "request": true, "board": true, "deck": true,
+	"attach-container": true, "role": true, "requests": true, "request": true, "board": true, "sound": true, "deck": true,
 	"deck-open": true, "deck-stop": true, "hook": true, "mcp": true, "statusline": true, "acp-probe": true, "launcher-check": true,
 }
 

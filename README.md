@@ -156,6 +156,7 @@ closing the deck, or the terminal, does not stop it: the next `lea` reattaches.
 | `r`, then `l` / `d` / `r` | make the selected agent a lead, a dev or a reviewer |
 | `s` | open a shell in the container (`exit` or `x` closes it) |
 | `-` / `\|` | split: a shell below the selected agent, or at its right, in its directory |
+| `S` | sounds on or off (the top border says `muted` while they are off) |
 | `x`, then `y` | stop the selected agent |
 | `q` | leave the deck; agents keep running |
 | `?` | list the keys |
@@ -170,12 +171,14 @@ shell shows with its agent and steps aside while another agent is shown).
   task. The pane that has the keyboard is the bright one: the deck's frame turns blue when it
   has it; otherwise the terminal on the right shows a blue `▶ <agent> · typing here` bar on its
   top border (grey, with the keys that give it the keyboard, while the deck has it).
-- **Scrolling.** The wheel scrolls an agent's history; the bar then reads `history: type or q to
-  go back`. Any typed key (`q`, `Escape`, `Enter`, a letter…) goes back to the prompt; that key is
+- **Scrolling.** The wheel scrolls an agent's history; the bar then reads `history 251/256: type
+  or q to go back`, the line at the top of the view out of the history's lines, counting down as
+  you scroll up. Any typed key (`q`, `Escape`, `Enter`, a letter…) goes back to the prompt; that key is
   not typed, the next ones are.
 - **Sounds.** lea plays a sound when an agent starts waiting for you, and another when a turn
-  ends, while a deck shows the agent (`LEA_SOUND=0` turns them off; `LEA_SOUND_ATTENTION` and
-  `LEA_SOUND_DONE` pick the files).
+  ends, while a deck shows the agent. `lea sound on|off` and the deck's `S` switch them at
+  runtime; `LEA_SOUND=0` starts with them off; `LEA_SOUND_ATTENTION` and `LEA_SOUND_DONE` pick
+  the files, or mute one event with `0`.
 - **Names.** An agent you have not renamed is named after its first prompt, by a short
   `claude -p` run on the host with a small model (`LEA_AUTONAME_MODEL`, `haiku` by default;
   `LEA_AUTONAME=0` turns it off). The prompt is not stored.
@@ -319,6 +322,7 @@ projects directory cannot be `/`, your home directory or one of its parents, nor
 | `LEA_NESTED_NETWORKS` | empty | networks your compose files expect, created at start |
 | `LEA_APPROVALS`, `LEA_APPROVAL_TIMEOUT` | `deck`, `60` | who answers permission requests |
 | `LEA_SOUND`, `LEA_AUTONAME` | on | the deck's sounds, automatic names (`0`: off) |
+| `LEA_SOUND_ATTENTION`, `LEA_SOUND_DONE` | freedesktop sounds | the file of each sound (`0`: that one off) |
 | `LEA_OTEL_UPSTREAM` | empty | send Claude Code usage telemetry to this OTLP collector |
 | `LEA_ASCII` | off | ASCII marks in the deck (`1`) |
 

@@ -53,6 +53,7 @@ const usage = `usage: lea <command>
                              start an agent (used by the launcher, in this form only;
                              any other new is the launcher's lea new)
   role <agent> <role>        change an agent's role (lead, dev, reviewer)
+  sound [on|off]             show or switch lea's sounds (until the daemon restarts)
   hook claude <event>        Claude Code hook (inside lea)
   mcp                        MCP server for agents (inside lea)
   statusline [--dump FILE]   Claude status line (inside lea)
@@ -73,7 +74,7 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		return 0
 	case "daemon":
 		return runDaemon(stderr)
-	case "agents", "msg", "inbox", "approvals", "approve", "attach-container", "role", "requests", "request", "board":
+	case "agents", "msg", "inbox", "approvals", "approve", "attach-container", "role", "requests", "request", "board", "sound":
 		return runHost(args, stdout, stderr)
 	case "deck":
 		return runDeck(args[1:], stderr)
