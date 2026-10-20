@@ -302,3 +302,48 @@ func TestStatusReportChecksLimits(t *testing.T) {
 		t.Error("accepted three windows")
 	}
 }
+
+// The StopFailure hook that records the limit runs beside the job and may land after the job's
+// first call: the job waits for it (turnFailed wakes it) instead of ending, so a limit is never
+// left without a waiter, shown "resumes at" forever.
+func TestALimitRecordedAfterTheJobsFirstCallIsStillResumed(t *testing.T) {
+	noJitter(t)
+	e := start(t)
+	call(t, e.bus, "dev", "hook_event", map[string]any{"event": "UserPromptSubmit"}, nil)
+	done := make(chan waitAnswer, 1)
+	go func() { done <- limitWait(t, e, "dev", job1, true, 4) }()
+	time.Sleep(300 * time.Millisecond)
+	limitHit(t, e, "dev", "rate_limit")
+	*e.clock += 10_000
+	e.d.wake(limitKey("lea-a/dev"))
+	select {
+	case r := <-done:
+		if !r.Resume {
+			t.Fatalf("a late limit was lost: %+v", r)
+		}
+	case <-time.After(6 * time.Second):
+		t.Fatal("the job never answered")
+	}
+}
+
+// A job for a failure that is not a limit ends once the settle window passes, and a job that saw
+// its limit end (the user took over) ends at once.
+func TestAJobWithoutALimitEndsAfterTheSettleWindow(t *testing.T) {
+	s := limitSettle
+	limitSettle = 300 * time.Millisecond
+	t.Cleanup(func() { limitSettle = s })
+	e := start(t)
+	limitHit(t, e, "dev", "overloaded")
+	start := time.Now()
+	if r := limitWait(t, e, "dev", job1, true, 4); !r.Done {
+		t.Fatalf("answer %+v", r)
+	}
+	if d := time.Since(start); d < 250*time.Millisecond || d > 3*time.Second {
+		t.Fatalf("done after %v", d)
+	}
+	// A job that is not new (first=false) never settles: no limit is done at once.
+	start = time.Now()
+	if r := limitWait(t, e, "dev", job1, false, 4); !r.Done || time.Since(start) > 200*time.Millisecond {
+		t.Fatalf("answer %+v after %v", r, time.Since(start))
+	}
+}

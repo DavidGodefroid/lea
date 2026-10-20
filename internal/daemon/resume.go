@@ -45,6 +45,9 @@ var (
 	resumeJitter int64 = 30
 	// pausedRecheck is how often a waiting job looks again at an agent the user paused.
 	pausedRecheck = time.Minute
+	// limitSettle is how long a new job waits for its limit to be recorded: the StopFailure hook
+	// that records it runs beside the job, and may land after the job's first call.
+	limitSettle = 30 * time.Second
 )
 
 // DefaultResumeDelay is the default wait after the reset time (LEA_RESUME_DELAY), in seconds.
@@ -248,6 +251,12 @@ func (d *Daemon) limitWait(ctx context.Context, o Origin, me string, raw json.Ra
 		d.wake(limitKey(me)) // the older job sees it is superseded
 	}
 	deadline := time.Now().Add(time.Duration(p.TimeoutS) * time.Second)
+	// A new job finding no limit yet waits a while for turnFailed (which wakes it) before it is
+	// done: answered done too early, it would leave a limit recorded later without a waiter.
+	var settle time.Time
+	if p.First {
+		settle = time.Now().Add(limitSettle)
+	}
 	for {
 		if err := ctx.Err(); err != nil {
 			return nil, err
@@ -259,7 +268,13 @@ func (d *Daemon) limitWait(ctx context.Context, o Origin, me string, raw json.Ra
 		if cur != p.Job {
 			return map[string]any{"superseded": true}, nil
 		}
-		res, wait, err := d.limitDue(me)
+		res, wait, none, err := d.limitDue(me)
+		switch {
+		case !none:
+			settle = time.Time{} // a limit was seen: from now on, no limit means it is over
+		case time.Now().Before(settle):
+			res, wait = nil, time.Until(settle)
+		}
 		if err != nil || res != nil {
 			return res, err
 		}
@@ -280,25 +295,26 @@ func (d *Daemon) limitWait(ctx context.Context, o Origin, me string, raw json.Ra
 }
 
 // limitDue checks an agent's limit: resume (claimed: the time is cleared and the try counted)
-// when it is due, done when there is no resume to wait for, or how long to wait.
-func (d *Daemon) limitDue(me string) (map[string]any, time.Duration, error) {
+// when it is due, done when there is no resume to wait for (none: no limit is recorded at all),
+// or how long to wait.
+func (d *Daemon) limitDue(me string) (res map[string]any, wait time.Duration, none bool, err error) {
 	defer d.lockKey(limitKey(me))()
 	a, err := d.st.AgentByKey(me)
 	if err != nil {
-		return nil, 0, err
+		return nil, 0, false, err
 	}
 	if a.LimitUntil <= 0 {
-		return map[string]any{"done": true}, 0, nil
+		return map[string]any{"done": true}, 0, a.LimitUntil == 0, nil
 	}
 	now := d.now()
 	if a.Paused {
-		return nil, pausedRecheck, nil
+		return nil, pausedRecheck, false, nil
 	}
 	if now < a.LimitUntil {
-		return nil, time.Duration(a.LimitUntil-now) * time.Second, nil
+		return nil, time.Duration(a.LimitUntil-now) * time.Second, false, nil
 	}
 	if err := d.st.SetLimit(me, 0, a.LimitTries+1); err != nil {
-		return nil, 0, err
+		return nil, 0, false, err
 	}
 	b, _ := json.Marshal(map[string]any{"try": a.LimitTries + 1})
 	if err := d.st.AddEvent(me, "limit", "resume", string(b), now); err != nil {
@@ -306,5 +322,5 @@ func (d *Daemon) limitDue(me string) (map[string]any, time.Duration, error) {
 	}
 	log.Printf("lea daemon: resuming %s after its usage limit (try %d of %d)", me, a.LimitTries+1, maxResumeTries)
 	d.changed()
-	return map[string]any{"resume": true}, 0, nil
+	return map[string]any{"resume": true}, 0, false, nil
 }

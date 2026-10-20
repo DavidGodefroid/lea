@@ -16,9 +16,10 @@ import (
 const ResumeText = "lea: the usage limit that stopped your last turn should have reset. Continue your task where you left off."
 
 var (
-	// limitBudget bounds a LimitWait job: the 7-day window and a day, under the hook timeout
-	// claude-settings.json gives it (691200 s).
-	limitBudget = 8 * 24 * time.Hour
+	// limitBudget bounds a LimitWait job's calls: the 7-day window and most of a day. With the
+	// grace and its last call it stays under the hook timeout claude-settings.json gives it
+	// (691200 s, 8 days), so the job ends on its own, never killed.
+	limitBudget = 8*24*time.Hour - 2*time.Hour
 	// limitCall is one limit_wait call, under maxWatch.
 	limitCall = 3500
 	// limitRetry is the pause after a failed call; limitFailures failed calls in a row end the job.

@@ -162,3 +162,35 @@ func TestStopFailureForwardsTheErrorClassOnly(t *testing.T) {
 		t.Fatalf("state=%s, want idle: the failed turn is over", st)
 	}
 }
+
+// The job ends on its own before Claude Code's hook timeout: its budget, its grace and its last
+// call (and a failed call's pause) fit in the timeout claude-settings.json gives it.
+func TestLimitWaitEndsWithinItsHookTimeout(t *testing.T) {
+	raw, err := os.ReadFile("../../image/claude-settings.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var s struct {
+		Hooks map[string][]struct {
+			Hooks []struct {
+				Command string `json:"command"`
+				Timeout int    `json:"timeout"`
+			} `json:"hooks"`
+		} `json:"hooks"`
+	}
+	if err := json.Unmarshal(raw, &s); err != nil {
+		t.Fatal(err)
+	}
+	timeout := 0
+	for _, g := range s.Hooks["StopFailure"] {
+		for _, h := range g.Hooks {
+			if strings.Contains(h.Command, "hook claude LimitWait") {
+				timeout = h.Timeout
+			}
+		}
+	}
+	worst := limitGrace + limitBudget + time.Duration(limitCall)*time.Second + 5*time.Second + limitRetry
+	if timeout == 0 || worst+time.Hour > time.Duration(timeout)*time.Second {
+		t.Fatalf("hook timeout %d s, the job may run %v (with an hour of margin)", timeout, worst)
+	}
+}
