@@ -293,3 +293,111 @@ func TestLostAnswerGoesBackToTheInbox(t *testing.T) {
 		t.Fatalf("inbox=%v err=%v", in, err)
 	}
 }
+
+func TestAnswerAlreadyReadIsNotDeliveredTwice(t *testing.T) {
+	e := start(t)
+	register(t, e, "a", "b")
+	q, err := e.d.send("lea-a/a", "lea-a/b", "q", "question", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := e.d.reply("lea-a/b", q.ID, "ok", "secret answer"); err != nil {
+		t.Fatal(err)
+	}
+	var in []delivered
+	if err := call(t, e.bus, "a", "msg_inbox", nil, &in); err != nil || len(in) != 1 {
+		t.Fatalf("inbox=%v err=%v", in, err)
+	}
+	v, ok, err := e.d.answer("lea-a/a", "lea-a/b", q.ID)
+	if err != nil || !ok || v.ID != 0 || strings.Contains(v.Text, "secret answer") || !strings.Contains(v.Text, "already delivered") {
+		t.Fatalf("v=%+v ok=%v err=%v", v, ok, err)
+	}
+}
+
+func TestAskEndsWhenTheTargetIsPausedOrEnds(t *testing.T) {
+	old := askRecheck
+	askRecheck = 50 * time.Millisecond
+	t.Cleanup(func() { askRecheck = old })
+	e := start(t)
+	register(t, e, "a")
+	b := spawned(t, e, "b", "dev", "")
+	for _, c := range []struct {
+		stop func() error
+		want string
+	}{
+		{func() error { return e.d.st.SetPaused(b, true) }, "is paused before answering question #"},
+		{func() error { return e.d.st.SetState(b, "done", "", 1) }, "has ended before answering question #"},
+	} {
+		if err := e.d.st.SetState(b, "idle", "", 1); err != nil {
+			t.Fatal(err)
+		}
+		if err := e.d.st.SetPaused(b, false); err != nil {
+			t.Fatal(err)
+		}
+		ch := askAsync(t, e, "a", map[string]any{"to": "b", "question": "q", "timeout_s": 30})
+		waitAsking(t, e, "lea-a/a")
+		if err := c.stop(); err != nil {
+			t.Fatal(err)
+		}
+		select {
+		case err := <-ch:
+			if _, ok := err.(*askResult); ok || err == nil || !strings.Contains(err.Error(), c.want) {
+				t.Fatalf("err=%v want %q", err, c.want)
+			}
+		case <-time.After(5 * time.Second):
+			t.Fatal("ask did not end")
+		}
+	}
+}
+
+func TestRefusedAsksDoNotSpendTheRate(t *testing.T) {
+	e := start(t)
+	register(t, e, "a", "b")
+	e.d.mu.Lock()
+	e.d.asks["lea-a/b"] = pendingAsk{target: "lea-a/a", id: 1}
+	e.d.mu.Unlock()
+	for i := 0; i < 6; i++ {
+		if err := call(t, e.bus, "a", "ask", map[string]any{"to": "b", "question": "q"}, nil); err == nil || !strings.Contains(err.Error(), "loop") {
+			t.Fatalf("err=%v", err)
+		}
+	}
+	e.d.mu.Lock()
+	delete(e.d.asks, "lea-a/b")
+	e.d.mu.Unlock()
+	if err := call(t, e.bus, "a", "ask", map[string]any{"to": "b", "question": "q", "timeout_s": 1}, nil); err != nil {
+		t.Fatalf("rate spent by refused asks: %v", err)
+	}
+}
+
+// TestRacingAsksNeverCloseALoop: a and b ask each other at the same instant, again and again;
+// at most one of the two asks ever gets through, the other is refused as a loop.
+func TestRacingAsksNeverCloseALoop(t *testing.T) {
+	e := start(t)
+	register(t, e, "a", "b")
+	for i := 0; i < 10; i++ {
+		*e.clock += 61 // fresh rate windows: the asks and their questions
+		go1 := make(chan struct{})
+		chs := []<-chan error{}
+		for _, p := range [][2]string{{"a", "b"}, {"b", "a"}} {
+			ch := make(chan error, 1)
+			chs = append(chs, ch)
+			go func(from, to string) {
+				<-go1
+				ch <- call(t, e.bus, from, "ask", map[string]any{"to": to, "question": "q", "timeout_s": 1}, nil)
+			}(p[0], p[1])
+		}
+		close(go1)
+		loops := 0
+		for _, ch := range chs {
+			if err := <-ch; err != nil {
+				if !strings.Contains(err.Error(), "loop") {
+					t.Fatalf("round %d: %v", i, err)
+				}
+				loops++
+			}
+		}
+		if loops == 0 {
+			t.Fatalf("round %d: both asks passed: a loop of waits", i)
+		}
+	}
+}

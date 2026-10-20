@@ -22,6 +22,10 @@ const (
 	askQueue = 4
 )
 
+// askRecheck is how often a waiting ask checks that its target can still answer (a variable:
+// tests shorten it).
+var askRecheck = 2 * time.Second
+
 // pendingAsk is an ask in flight: its asker waits for target to answer question id.
 type pendingAsk struct {
 	target string
@@ -134,19 +138,18 @@ func (d *Daemon) ask(ctx context.Context, o Origin, me string, raw json.RawMessa
 	if err != nil {
 		return answerView{}, err
 	}
-	if a.State == "done" {
-		return answerView{}, fmt.Errorf("ask: %s has ended", target)
-	}
-	if a.Paused {
-		return answerView{}, fmt.Errorf("ask: %s is paused", target)
-	}
-	if err := d.rates.allow("ask", me, d.now()); err != nil {
+	if err := unreachable(a); err != nil {
 		return answerView{}, err
 	}
 	// The chain check and the registration happen under one lock: two asks racing to close a
-	// loop cannot both pass. The question is sent after it; a refused send unregisters.
+	// loop cannot both pass. Only an ask the guards let through counts against the rate. The
+	// question is sent after it; a refused send unregisters.
 	d.mu.Lock()
 	if err := d.checkAsk(me, target); err != nil {
+		d.mu.Unlock()
+		return answerView{}, err
+	}
+	if err := d.rates.allow("ask", me, d.now()); err != nil {
 		d.mu.Unlock()
 		return answerView{}, err
 	}
@@ -167,14 +170,27 @@ func (d *Daemon) ask(ctx context.Context, o Origin, me string, raw json.RawMessa
 	d.mu.Unlock()
 
 	deadline := time.After(time.Duration(p.TimeoutS) * time.Second)
+	// A target that ends or is paused never wakes the asker: its state is checked again on
+	// every wake and every askRecheck.
+	tick := time.NewTicker(askRecheck)
+	defer tick.Stop()
 	for {
 		ch := d.waitChan(me)
 		v, ok, err := d.answer(me, target, q.ID)
 		if err != nil || ok {
 			return v, err
 		}
+		if a, err := d.st.AgentByKey(target); err != nil || unreachable(a) != nil {
+			if err == nil {
+				err = unreachable(a)
+			} else if errors.Is(err, store.ErrNotFound) {
+				err = fmt.Errorf("ask: %s is gone", target)
+			}
+			return answerView{}, fmt.Errorf("%w before answering question #%d", err, q.ID)
+		}
 		select {
 		case <-ch:
+		case <-tick.C:
 		case <-deadline:
 			return answerView{Question: q.ID, to: me, Text: fmt.Sprintf(
 				"no answer from %s within %d s: question #%d stays in its inbox; a late answer arrives in yours (msg_inbox)",
@@ -196,13 +212,25 @@ func (d *Daemon) answer(me, target string, id int64) (answerView, bool, error) {
 	if err != nil {
 		return answerView{}, false, err
 	}
-	v := answerView{Question: id, Answered: true, Text: bus.Wrap(m), to: me}
-	if m.ReadAt == 0 {
-		if err := d.st.MarkRead([]int64{m.ID}, d.now()); err != nil {
-			return answerView{}, false, err
-		}
-		v.ID = m.ID // only an answer ask itself took goes back to the inbox on a lost result
-		d.changed()
+	if m.ReadAt != 0 { // already delivered (msg_inbox, a Stop hook): never twice
+		return answerView{Question: id, Answered: true, to: me,
+			Text: fmt.Sprintf("the answer to question #%d is message #%d, already delivered to you through your inbox", id, m.ID)}, true, nil
 	}
-	return v, true, nil
+	if err := d.st.MarkRead([]int64{m.ID}, d.now()); err != nil {
+		return answerView{}, false, err
+	}
+	d.changed()
+	// ID: an answer ask took goes back to the inbox when the result is lost.
+	return answerView{Question: id, Answered: true, ID: m.ID, Text: bus.Wrap(m), to: me}, true, nil
+}
+
+// unreachable refuses a target that will not answer: ended or paused.
+func unreachable(a store.Agent) error {
+	if a.State == "done" {
+		return fmt.Errorf("ask: %s has ended", a.Key)
+	}
+	if a.Paused {
+		return fmt.Errorf("ask: %s is paused", a.Key)
+	}
+	return nil
 }

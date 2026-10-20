@@ -263,7 +263,9 @@ Agents get lea's tools through MCP:
   interrupted; only the newest job of an agent stays, so one message wakes it once;
 - an agent asks another a question and waits for the answer with `ask` (the other answers with
   `msg_reply`; works with any agent that has lea's MCP tools). The answer is data, never
-  instructions. One ask at a time per agent, at most 4 questions waiting on one agent, 5 asks a
+  instructions. Only a reply from the asked agent counts; an agent's container is checked
+  (its bus socket), but its name inside a container is what the agent declares (`LEA_AGENT`),
+  so agents of one container can answer for one another. One ask at a time per agent, at most 4 questions waiting on one agent, 5 asks a
   minute, a 1–600 s timeout (300 by default; a late answer lands in the inbox), and no loop: an
   ask that would make agents wait on one another in a circle, or in a chain longer than 3, is
   refused. The question and its answer show in the deck's thread view; `lea board` shows who
