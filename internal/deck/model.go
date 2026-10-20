@@ -132,13 +132,15 @@ type Model struct {
 	asked         map[string]bool  // agents this deck asked the daemon to show, not yet seen shown
 	lastAsked     string           // the latest of them
 	status        string
-	seq           int    // the latest selection; older delayed shows are dropped
-	frame         int    // the working spinner's frame
-	intro         int    // frames left of the logo's start animation (WithIntro)
-	focused       bool   // the deck's pane has the keyboard (focus events)
-	menuFor       string // key whose menu (right click) is open
-	menuSel       int    // the menu's highlighted item
-	ticking       bool   // a frame tick is pending
+	notice        func() string // the update notice (WithNotice)
+	noticeText    string        // its latest text, shown while there is no status
+	seq           int           // the latest selection; older delayed shows are dropped
+	frame         int           // the working spinner's frame
+	intro         int           // frames left of the logo's start animation (WithIntro)
+	focused       bool          // the deck's pane has the keyboard (focus events)
+	menuFor       string        // key whose menu (right click) is open
+	menuSel       int           // the menu's highlighted item
+	ticking       bool          // a frame tick is pending
 	width, height int
 }
 
@@ -224,6 +226,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		if strings.HasPrefix(m.status, "daemon unreachable") {
 			m.status = ""
+		}
+		if m.notice != nil {
+			m.noticeText = m.notice()
 		}
 		var anim tea.Cmd
 		if m.apply(msg.snap) {

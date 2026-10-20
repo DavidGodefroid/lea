@@ -126,6 +126,16 @@ nothing_installed() {
   [ "$(readlink "$LEA_BIN_DIR/lea")" = "$LEA_INSTALL_DIR/v1.3.0/bin/lea" ]
 }
 
+@test "--no-link unpacks the release and leaves the links as they are (the background update links it later)" {
+  sh "$INSTALL" --version v1.2.3 --no-init 2>/dev/null
+  release v1.3.0
+  run sh "$INSTALL" --version v1.3.0 --no-init --no-link
+  [ "$status" -eq 0 ]
+  [ -x "$LEA_INSTALL_DIR/v1.3.0/bin/lea" ]
+  [ "$(readlink "$LEA_BIN_DIR/lea")" = "$LEA_INSTALL_DIR/v1.2.3/bin/lea" ]
+  [[ "$output" == *"installed lea v1.3.0 in $LEA_INSTALL_DIR/v1.3.0, not linked"* ]]
+}
+
 @test "an existing LEA_BIN_DIR/lea that is not a link is refused and kept" {
   mkdir -p "$LEA_BIN_DIR"; echo mine >"$LEA_BIN_DIR/lea"
   run sh "$INSTALL" --version v1.2.3

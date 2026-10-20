@@ -77,6 +77,7 @@ func TestConfigValidatesLikeTheShell(t *testing.T) {
 		"LEA_APPROVALS=popup\n":      "LEA_APPROVALS must be deck or pane, not 'popup'",
 		"LEA_APPROVAL_TIMEOUT=601\n": "LEA_APPROVAL_TIMEOUT must be a number of seconds from 1 to 600 without leading zeros, not '601'",
 		"LEA_APPROVAL_TIMEOUT=060\n": "not '060'",
+		"LEA_AUTOUPDATE=yes\n":       "LEA_AUTOUPDATE must be 1 (check for a new release every day) or 0, not 'yes'",
 	}
 	for conf, want := range cases {
 		writeUserConf(t, w, conf)

@@ -114,7 +114,7 @@ var helpLines = []string{
 }
 
 // statusLine is the line above the bottom border: the rename field while it is open, else the
-// status ("" when none).
+// status, else the update notice ("" when none).
 func (m Model) statusLine(inner int) string {
 	c := m.cs()
 	if m.editFor != "" {
@@ -124,7 +124,10 @@ func (m Model) statusLine(inner int) string {
 			lipgloss.NewStyle().Foreground(theme.Accent).Render(c.bar), inner)
 	}
 	if m.status == "" {
-		return ""
+		if m.noticeText == "" {
+			return ""
+		}
+		return padRight(" "+muted.Render(fit(m.noticeText, inner-1, c)), inner)
 	}
 	return padRight(" "+alert.Render(fit(m.status, inner-1, c)), inner)
 }

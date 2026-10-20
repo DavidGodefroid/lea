@@ -164,6 +164,11 @@ func (c *Config) resolve(root string) error {
 		return fmt.Errorf("LEA_LOCKSQL must be 1 (wire lea for a locksql console) or 0, not '%s'", ls)
 	}
 	c.final["LEA_LOCKSQL"] = ls
+	au := nonEmpty(c.Get("LEA_AUTOUPDATE"), "1")
+	if au != "0" && au != "1" {
+		return fmt.Errorf("LEA_AUTOUPDATE must be 1 (check for a new release every day) or 0, not '%s'", au)
+	}
+	c.final["LEA_AUTOUPDATE"] = au
 	return nil
 }
 
