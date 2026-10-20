@@ -1,0 +1,9 @@
+status 0
+-- calls
+docker [ps] [--filter] [label=lea.prefix=lea] [--format] [{{.Names}}	{{.Label "lea.projects"}}]
+core [deck-stop] [--container] [c1] [--forget]
+docker [stop] [c1]
+docker [network] [ls] [--filter] [label=lea.prefix=lea] [--format] [{{.Name}}]
+tmux [-L] [lea] [-f] [$W/data/lea/host/tmux.conf] [kill-server]
+-- lea
+-- stdout

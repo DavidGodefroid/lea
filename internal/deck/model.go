@@ -621,6 +621,8 @@ func (m Model) label(a Agent) string {
 		return "message for you"
 	case a.State == "done":
 		return "done"
+	case a.State == "stopped": // its container stopped; the next one resumes it
+		return "stopped"
 	case a.State == "working" || a.State == "idle":
 		return a.State
 	}

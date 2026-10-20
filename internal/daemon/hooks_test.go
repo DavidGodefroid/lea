@@ -347,7 +347,7 @@ func TestForgottenAgentsAreDroppedFromTheHookMaps(t *testing.T) {
 	if err := e.d.st.ForgetAgent("lea-a/dev"); err != nil {
 		t.Fatal(err)
 	}
-	if err := call(t, e.api, "", "agents_forget_ended", map[string]any{"container": "lea-a"}, nil); err != nil {
+	if err := call(t, e.api, "", "agents_resume_stopped", map[string]any{"container": "lea-a"}, nil); err != nil {
 		t.Fatal(err)
 	}
 	e.d.mu.Lock()

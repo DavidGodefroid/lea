@@ -183,10 +183,23 @@ func (l *Launcher) coreCall(args ...string) error { return l.foreground(l.Core, 
 
 func words(s string) []string { return strings.Fields(s) }
 
-// stop is lea_stop.
+// stop is lea_stop. The agents of a stopped container are resumed by the next one (deck-stop
+// records them first); --forget drops them for good.
 func (l *Launcher) stop(args []string) error {
-	if len(args) > 0 && args[0] == "--all" {
-		return l.stopAll()
+	all, forget := false, false
+	for _, a := range args {
+		switch a {
+		case "--all":
+			all = true
+		case "--forget":
+			forget = true
+		default:
+			l.logf("error: usage: lea stop [--all] [--forget]")
+			return exitError{2}
+		}
+	}
+	if all {
+		return l.stopAll(forget)
 	}
 	proj, err := l.projectsDir()
 	if err != nil {
@@ -200,6 +213,7 @@ func (l *Launcher) stop(args []string) error {
 	if n > 0 {
 		l.logf("warning: %d lea session(s) still open on %s; stopping anyway", n, proj)
 	}
+	l.deckStop(name, forget)
 	if l.containerRunning(name) || isRegular(l.scanStartFile(proj)) {
 		// As `lea_scan_finish "$_tp" || true`: a failing scan (it prints its own warning) does
 		// not abort the stop.
@@ -220,15 +234,28 @@ func (l *Launcher) stop(args []string) error {
 	return nil
 }
 
-// stopAll is lea_stop --all: every container of the prefix (after its exit scan), the prefix's
-// internal networks, the deck server, the clipboard loop and the daemon.
-func (l *Launcher) stopAll() error {
-	out, _ := l.output(true, "docker", "ps", "--filter", "label=lea.prefix="+l.prefix(), "--format", "{{.ID}}\t{{.Label \"lea.projects\"}}")
+// deckStop records the container's agents as stopped before it stops, so that the next container
+// resumes them, or forgets them with forget. The core prints its own warning when the daemon
+// cannot record them; the stop goes on.
+func (l *Launcher) deckStop(container string, forget bool) {
+	args := []string{"deck-stop", "--container", container}
+	if forget {
+		args = append(args, "--forget")
+	}
+	_ = l.coreCall(args...)
+}
+
+// stopAll is lea_stop --all: every container of the prefix (its agents recorded as stopped, or
+// forgotten, then its exit scan), the prefix's internal networks, the deck server, the clipboard
+// loop and the daemon.
+func (l *Launcher) stopAll(forget bool) error {
+	out, _ := l.output(true, "docker", "ps", "--filter", "label=lea.prefix="+l.prefix(), "--format", "{{.Names}}\t{{.Label \"lea.projects\"}}")
 	for _, line := range strings.Split(out, "\n") {
 		c, p, _ := strings.Cut(line, "\t")
 		if c = strings.TrimSpace(c); c == "" {
 			continue
 		}
+		l.deckStop(c, forget)
 		if p != "" && isDir(p) {
 			_ = l.shNoInput("scan-finish", p)
 		}

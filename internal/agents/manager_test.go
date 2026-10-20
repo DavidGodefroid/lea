@@ -710,39 +710,190 @@ func TestAReattachedAgentOutOfTheSlotIsNotResized(t *testing.T) {
 	}
 }
 
-func TestForgetEndedDropsTheRowsOfAPreviousContainer(t *testing.T) {
+const (
+	sid1 = "0b6f5a1e-4c1d-4f7a-9d2e-1a2b3c4d5e6f"
+	sid2 = "9c8d7e6f-5a4b-4c3d-8e2f-6a5b4c3d2e1f"
+)
+
+// restarted is e after lea stop --all and lea: a new daemon (manager), a new tmux server and a new
+// container that runs no agent, over the same store.
+func (e env) restarted(t *testing.T) env {
+	t.Helper()
+	term := &fakeTerm{sessions: map[string]*fakeSession{}}
+	ctr := &fakeContainers{live: map[string][]string{}, projects: map[string]string{}}
+	m := NewManager(Config{Store: e.st, Term: term, Containers: ctr, LeaBin: leaBin, UID: 1000, GID: 1000,
+		Now: func() int64 { return 2000 }})
+	return env{m, term, ctr, e.st}
+}
+
+// agentArgs are the arguments lea-agent run passes to Claude in an agent's pane.
+func agentArgs(t *testing.T, s *fakeSession, name string) []string {
+	t.Helper()
+	var cmd []string
+	s.locked(func() {
+		if p := s.byAgent(name); p != nil {
+			cmd = p.cmd
+		}
+	})
+	i := slices.Index(cmd, "--")
+	if i < 0 || i < 2 || cmd[i-2] != "run" || cmd[i-1] != name {
+		t.Fatalf("pane of %s: %q", name, cmd)
+	}
+	return cmd[i+1:]
+}
+
+func TestStoppedAgentsResumeTheirConversationInANewContainer(t *testing.T) {
 	e := newEnv(t)
-	s := e.ensure(t, "/p")
-	e.spawn(t, "old")
-	s.locked(func() { s.byAgent("old").dead = true })
-	e.m.Ensure(bg, C, "")                               // old is done, its last screen kept
-	e.st.RegisterAgent(C, "stale", "claude", "/p", 900) // never reconciled: still unknown
-	e.st.RegisterAgent(C, "live", "claude", "/p", 900)
-	e.st.UpsertAgent(C, "hook-only", 900) // not spawned by lea: not the deck's business
-	e.ctr.setLive(C, "live")
-	if err := e.m.ForgetEnded(bg, C); err != nil {
+	e.ensure(t, "/p")
+	e.spawn(t, "lead-1", "--model", "opus")
+	if _, err := e.m.New(bg, NewRequest{Container: C, Name: "fresh", Brief: "do it", Hidden: true}); err != nil {
 		t.Fatal(err)
 	}
-	for _, n := range []string{"old", "stale"} {
-		if _, err := e.st.AgentByKey(C + "/" + n); !errors.Is(err, store.ErrNotFound) {
-			t.Fatalf("%s kept: err=%v", n, err)
+	e.spawn(t, "old")
+	e.st.SetState(C+"/lead-1", "idle", sid1, 1001)
+	e.st.SetState(C+"/old", "done", sid2, 1001)
+	e.st.UpsertAgent(C, "hook-only", 900) // not spawned by lea: not the deck's business
+	if err := e.m.MarkStopped(bg, C, false); err != nil {
+		t.Fatal(err)
+	}
+	for n, want := range map[string]string{"lead-1": "stopped", "fresh": "stopped", "old": "done"} {
+		if got := e.state(t, n); got != want {
+			t.Fatalf("%s is %s after lea stop, want %s", n, got, want)
 		}
 	}
-	for _, n := range []string{"live", "hook-only"} {
-		if _, err := e.st.AgentByKey(C + "/" + n); err != nil {
-			t.Fatalf("%s forgotten: %v", n, err)
-		}
+	// The container is gone: a reconcile meanwhile must not take the stopped agents for ended.
+	e.m.Ensure(bg, C, "")
+	if got := e.state(t, "lead-1"); got != "stopped" {
+		t.Fatalf("lead-1 is %s after a reconcile, want stopped", got)
+	}
+
+	r := e.restarted(t)
+	if err := r.m.ResumeStopped(bg, C); err != nil {
+		t.Fatal(err)
+	}
+	s := r.term.get(C)
+	if got := agentArgs(t, s, "lead-1"); !reflect.DeepEqual(got, []string{"--resume", sid1, "--model", "opus"}) {
+		t.Fatalf("lead-1 restarted with %q", got)
+	}
+	// Never prompted: started again as it was first, its brief still waiting.
+	if got := agentArgs(t, s, "fresh"); len(got) != 1 || !strings.Contains(got[0], "Your brief is waiting") {
+		t.Fatalf("fresh restarted with %q", got)
+	}
+	if _, err := e.st.AgentByKey(C + "/old"); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("an ended agent was kept: err=%v", err)
 	}
 	if s.byAgent("old") != nil {
-		t.Fatal("the pane of a forgotten agent was left")
+		t.Fatal("an ended agent was started again")
+	}
+	if _, err := e.st.AgentByKey(C + "/hook-only"); err != nil {
+		t.Fatalf("hook-only forgotten: %v", err)
+	}
+	for _, n := range []string{"lead-1", "fresh"} {
+		a, err := e.st.AgentByKey(C + "/" + n)
+		if err != nil || a.State != "unknown" || a.Created != 1000 || a.Workdir != "/p" {
+			t.Fatalf("%s after resume: %+v err=%v", n, a, err)
+		}
+	}
+	// A reconcile while Claude starts leaves the panes alone.
+	r.m.Ensure(bg, C, "")
+	if r.ctr.setLive(C, "lead-1", "fresh"); r.m.Ensure(bg, C, "") != nil || s.byAgent("lead-1") == nil {
+		t.Fatal("lead-1 lost its pane")
 	}
 }
 
-func TestForgetEndedWhenLiveAgentsAreUnknownForgetsNothing(t *testing.T) {
+func TestResumeStoppedReplacesTheDeadPaneOfASurvivingSession(t *testing.T) {
+	e := newEnv(t)
+	s := e.ensure(t, "/p")
+	e.spawn(t, "dev-1")
+	e.st.SetState(C+"/dev-1", "idle", sid1, 1001)
+	if err := e.m.MarkStopped(bg, C, false); err != nil {
+		t.Fatal(err)
+	}
+	s.locked(func() { s.byAgent("dev-1").dead = true })
+	if err := e.m.ResumeStopped(bg, C); err != nil {
+		t.Fatal(err)
+	}
+	n := 0
+	s.locked(func() {
+		for _, p := range s.panes {
+			if p.agent == "dev-1" {
+				n++
+				if p.dead {
+					t.Error("the dead pane was kept")
+				}
+			}
+		}
+	})
+	if n != 1 {
+		t.Fatalf("%d panes of dev-1", n)
+	}
+	if got := agentArgs(t, s, "dev-1"); !reflect.DeepEqual(got, []string{"--resume", sid1}) {
+		t.Fatalf("dev-1 restarted with %q", got)
+	}
+}
+
+// The session id comes from the agent's own hooks: one that is not Claude's UUID never reaches
+// the command line (it could pass for a flag), and the agent starts again as it first did.
+func TestResumeStoppedNeverPassesAForgedSessionID(t *testing.T) {
+	e := newEnv(t)
+	e.ensure(t, "/p")
+	e.spawn(t, "dev-1", "--model", "opus")
+	e.st.SetState(C+"/dev-1", "idle", "--dangerously-skip-permissions", 1001)
+	if err := e.m.MarkStopped(bg, C, false); err != nil {
+		t.Fatal(err)
+	}
+	r := e.restarted(t)
+	if err := r.m.ResumeStopped(bg, C); err != nil {
+		t.Fatal(err)
+	}
+	if got := agentArgs(t, r.term.get(C), "dev-1"); !reflect.DeepEqual(got, []string{"--model", "opus"}) {
+		t.Fatalf("dev-1 restarted with %q", got)
+	}
+}
+
+func TestResumeStoppedLeavesALiveAgentAlone(t *testing.T) {
+	e := newEnv(t)
+	s := e.ensure(t, "/p")
+	e.spawn(t, "dev-1")
+	e.ctr.setLive(C, "dev-1")
+	before := agentArgs(t, s, "dev-1")
+	if err := e.m.ResumeStopped(bg, C); err != nil {
+		t.Fatal(err)
+	}
+	if got := agentArgs(t, s, "dev-1"); !reflect.DeepEqual(got, before) || e.state(t, "dev-1") != "unknown" {
+		t.Fatalf("a live agent was restarted: %q", got)
+	}
+}
+
+func TestMarkStoppedForgetDropsTheAgentsForGood(t *testing.T) {
+	e := newEnv(t)
+	e.ensure(t, "/p")
+	e.spawn(t, "dev-1")
+	e.st.UpsertAgent(C, "hook-only", 900)
+	if err := e.m.MarkStopped(bg, C, true); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := e.st.AgentByKey(C + "/dev-1"); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("dev-1 kept: err=%v", err)
+	}
+	if _, err := e.st.AgentByKey(C + "/hook-only"); err != nil {
+		t.Fatalf("hook-only forgotten: %v", err)
+	}
+	r := e.restarted(t)
+	if err := r.m.ResumeStopped(bg, C); err != nil {
+		t.Fatal(err)
+	}
+	if s := r.term.get(C); s != nil && s.byAgent("dev-1") != nil {
+		t.Fatal("a forgotten agent was started again")
+	}
+}
+
+func TestResumeStoppedWhenLiveAgentsAreUnknownDoesNothing(t *testing.T) {
 	e := newEnv(t)
 	e.st.RegisterAgent(C, "a1", "claude", "/p", 900)
+	e.st.SetState(C+"/a1", "done", "", 901)
 	e.ctr.fail(errors.New("docker: cannot connect"), nil)
-	if err := e.m.ForgetEnded(bg, C); err == nil {
+	if err := e.m.ResumeStopped(bg, C); err == nil {
 		t.Fatal("no error")
 	}
 	if _, err := e.st.AgentByKey(C + "/a1"); err != nil {

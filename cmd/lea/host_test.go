@@ -215,8 +215,12 @@ func (c *cliAgents) Watch(ctx context.Context, ctr string, since int64, to time.
 	c.rec(fmt.Sprintf("watch %s", ctr))
 	return c.snap, nil
 }
-func (c *cliAgents) ForgetEnded(ctx context.Context, ctr string) error {
-	c.rec("forget-ended " + ctr)
+func (c *cliAgents) MarkStopped(ctx context.Context, ctr string, forget bool) error {
+	c.rec(fmt.Sprintf("mark-stopped %s %v", ctr, forget))
+	return nil
+}
+func (c *cliAgents) ResumeStopped(ctx context.Context, ctr string) error {
+	c.rec("resume-stopped " + ctr)
 	return nil
 }
 func (c *cliAgents) Attached(ctx context.Context, ctr string) (bool, error) {
@@ -429,15 +433,39 @@ func TestDeckOpenSpawnsTheDefaultAgentOnlyWhenNoneRuns(t *testing.T) {
 	}
 }
 
-func TestDeckOpenOfAFreshContainerForgetsTheOldRowsFirst(t *testing.T) {
+func TestDeckOpenOfAFreshContainerResumesTheStoppedAgentsFirst(t *testing.T) {
 	ca := &cliAgents{}
 	api := startDaemonWith(t, ca)
 	rc, _, e := runEnv(t, map[string]string{"LEA_DAEMON_SOCK": api}, "deck-open", "--container", "lea-a", "--workdir", "/p", "--fresh", "--no-default")
 	if rc != 0 {
 		t.Fatalf("rc=%d err=%q", rc, e)
 	}
-	if !reflect.DeepEqual(ca.calls, []string{"forget-ended lea-a", "ensure lea-a /p"}) {
+	if !reflect.DeepEqual(ca.calls, []string{"resume-stopped lea-a", "ensure lea-a /p"}) {
 		t.Fatalf("calls=%q", ca.calls)
+	}
+}
+
+func TestDeckStopRecordsTheAgentsAsStopped(t *testing.T) {
+	ca := &cliAgents{}
+	api := startDaemonWith(t, ca)
+	for _, args := range [][]string{{"deck-stop", "--container", "lea-a"}, {"deck-stop", "--container", "lea-b", "--forget"}} {
+		if rc, _, e := runEnv(t, map[string]string{"LEA_DAEMON_SOCK": api}, args...); rc != 0 {
+			t.Fatalf("%q: rc=%d err=%q", args, rc, e)
+		}
+	}
+	if !reflect.DeepEqual(ca.calls, []string{"mark-stopped lea-a false", "mark-stopped lea-b true"}) {
+		t.Fatalf("calls=%q", ca.calls)
+	}
+	if rc, _, e := runEnv(t, nil, "deck-stop", "--forget"); rc != 2 || !strings.Contains(e, "usage: lea deck-stop") {
+		t.Fatalf("rc=%d err=%q", rc, e)
+	}
+}
+
+// Without a daemon nothing records the agents: the stop goes on, with a warning.
+func TestDeckStopWithoutADaemonWarns(t *testing.T) {
+	rc, _, e := runEnv(t, map[string]string{"LEA_DAEMON_SOCK": filepath.Join(t.TempDir(), "none.sock")}, "deck-stop", "--container", "lea-a")
+	if rc != 1 || !strings.Contains(e, "lea: warning: the agents of lea-a were not recorded as stopped") {
+		t.Fatalf("rc=%d err=%q", rc, e)
 	}
 }
 

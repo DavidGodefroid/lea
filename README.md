@@ -294,7 +294,8 @@ directory of the projects directory; `--branch B` has it work in its own git wor
 lea                          # the deck, for $LEA_PROJECTS_DIR
 lea new [name] [-- args]     # one more agent (Claude Code arguments after --)
 lea shell [-- cmd...]        # a shell, or one command, in the same lea
-lea stop [--all]             # stop this lea and its agents (--all: every lea)
+lea stop [--all] [--forget] # stop this lea (--all: every lea); the next lea resumes its agents
+                             # in their Claude conversations (--forget: drop them for good)
 lea update                   # the latest release, and its images
 lea doctor                   # check the setup
 lea init                     # set up again (idempotent)
@@ -389,7 +390,7 @@ lea
 ## Uninstall
 
 ```sh
-lea stop --all
+lea stop --all --forget
 rm -rf ~/.local/bin/lea ~/.local/share/lea-install ~/.local/share/lea ~/.config/lea
 docker image ls 'ghcr.io/davidgodefroid/lea*'      # then docker image rm the ones listed
 ```

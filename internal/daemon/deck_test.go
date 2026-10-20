@@ -53,8 +53,12 @@ func (f *fakeAgents) Watch(ctx context.Context, c string, since int64, to time.D
 	f.rec(fmt.Sprintf("watch %s %d %s", c, since, to))
 	return agents.Snapshot{Version: 9, Shown: c + "/claude-1"}, nil
 }
-func (f *fakeAgents) ForgetEnded(ctx context.Context, c string) error {
-	f.rec("forget-ended " + c)
+func (f *fakeAgents) MarkStopped(ctx context.Context, c string, forget bool) error {
+	f.rec(fmt.Sprintf("mark-stopped %s %v", c, forget))
+	return nil
+}
+func (f *fakeAgents) ResumeStopped(ctx context.Context, c string) error {
+	f.rec("resume-stopped " + c)
 	return nil
 }
 func (f *fakeAgents) Attached(ctx context.Context, c string) (bool, error) {
@@ -104,7 +108,8 @@ func TestDeckMethodsReachTheManager(t *testing.T) {
 			t.Fatalf("%s: %v", method, err)
 		}
 	}
-	must("agents_forget_ended", map[string]any{"container": "lea-a"}, nil)
+	must("agents_mark_stopped", map[string]any{"container": "lea-a", "forget": true}, nil)
+	must("agents_resume_stopped", map[string]any{"container": "lea-a"}, nil)
 	must("deck_ensure", map[string]any{"container": "lea-a", "workdir": "/p"}, nil)
 	var row agents.Row
 	must("agent_new", map[string]any{"container": "lea-a", "workdir": "/p", "profile": "claude", "name": "x",
@@ -137,7 +142,7 @@ func TestDeckMethodsReachTheManager(t *testing.T) {
 	if sh.Kind != agents.KindShell || sh.Key != "shell:lea-a/sh-1" {
 		t.Fatalf("shell=%+v", sh)
 	}
-	wantCalls := []string{"forget-ended lea-a", "ensure lea-a /p", "new", "focus lea-a/x true", "stop lea-a/x", "remove-ended lea-a/y", "detach lea-a",
+	wantCalls := []string{"mark-stopped lea-a true", "resume-stopped lea-a", "ensure lea-a /p", "new", "focus lea-a/x true", "stop lea-a/x", "remove-ended lea-a/y", "detach lea-a",
 		"popup lea-a/x true", "watch lea-a 3 5s", "attached lea-a", `label lea-a/x "auth work"`, "shell lea-a"}
 	if !reflect.DeepEqual(fa.calls, wantCalls) {
 		t.Fatalf("calls=%q", fa.calls)
@@ -160,6 +165,22 @@ func TestRenameAndShellsAreRefusedToAgents(t *testing.T) {
 			t.Fatalf("%s is not a deck (host-only) method", m)
 		}
 		err := call(t, e.bus, "dev", m, map[string]any{"key": "lea-a/dev", "label": "pwned", "container": "lea-a"}, nil)
+		if err == nil || !strings.Contains(err.Error(), "host only") {
+			t.Fatalf("%s from an agent: err=%v", m, err)
+		}
+	}
+	if len(fa.calls) != 0 {
+		t.Fatalf("an agent reached the manager: %q", fa.calls)
+	}
+}
+
+// An agent never stops, forgets or restarts the agents of its container.
+func TestStopAndResumeAreRefusedToAgents(t *testing.T) {
+	e := start(t)
+	fa := &fakeAgents{}
+	e.d.SetAgents(fa)
+	for _, m := range []string{"agents_mark_stopped", "agents_resume_stopped"} {
+		err := call(t, e.bus, "dev", m, map[string]any{"container": "lea-a", "forget": true}, nil)
 		if err == nil || !strings.Contains(err.Error(), "host only") {
 			t.Fatalf("%s from an agent: err=%v", m, err)
 		}

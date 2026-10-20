@@ -111,11 +111,11 @@ func TestRegisterAgentAndLookups(t *testing.T) {
 	}
 	want := Agent{Key: "lea-a/claude-1", Container: "lea-a", Name: "claude-1", State: "unknown",
 		Updated: 10, Profile: "claude", Workdir: "/p/shop", Created: 10, Role: "dev"}
-	if a != want {
+	if !reflect.DeepEqual(a, want) {
 		t.Fatalf("registered %+v, want %+v", a, want)
 	}
 	got, err := s.AgentByKey("lea-a/claude-1")
-	if err != nil || got != want {
+	if err != nil || !reflect.DeepEqual(got, want) {
 		t.Fatalf("by key %+v err=%v", got, err)
 	}
 	if _, err := s.AgentByKey("lea-a/nope"); !errors.Is(err, ErrNotFound) {
@@ -470,7 +470,7 @@ func TestRegisterRecordsRoleAndTree(t *testing.T) {
 		t.Fatal(err)
 	}
 	got, err := s.AgentByKey(kid.Key)
-	if err != nil || got != kid || got.Role != "dev" || got.Parent != lead.Key || got.Repo != "shop" || got.Branch != "feat/x" || got.TaskID != 0 {
+	if err != nil || !reflect.DeepEqual(got, kid) || got.Role != "dev" || got.Parent != lead.Key || got.Repo != "shop" || got.Branch != "feat/x" || got.TaskID != 0 {
 		t.Fatalf("kid=%+v stored=%+v err=%v", kid, got, err)
 	}
 	if ks, err := s.Children(lead.Key); err != nil || len(ks) != 1 || ks[0].Name != "dev-1" {
@@ -993,5 +993,32 @@ func TestMigrateAddsTheLabelColumn(t *testing.T) {
 			t.Fatalf("open %d: agent=%+v err=%v", i, a, err)
 		}
 		s.Close()
+	}
+}
+
+func TestLaunchIsRecordedAndResetOnReuse(t *testing.T) {
+	s := open(t)
+	a, err := s.RegisterAgent("lea-a", "dev-1", "claude", "/p", 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.SetLaunch(a.Key, []string{"--model", "x y"}, "You are the lea agent dev-1."); err != nil {
+		t.Fatal(err)
+	}
+	got, err := s.AgentByKey(a.Key)
+	if err != nil || !reflect.DeepEqual(got.Args, []string{"--model", "x y"}) || got.Prompt != "You are the lea agent dev-1." {
+		t.Fatalf("agent=%+v err=%v", got, err)
+	}
+	if err := s.SetState(a.Key, "done", "", 11); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.RegisterAgent("lea-a", "dev-1", "claude", "/p", 12); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := s.AgentByKey(a.Key); got.Args != nil || got.Prompt != "" {
+		t.Fatalf("a reused name kept the launch of the ended agent: %+v", got)
+	}
+	if err := s.SetLaunch("lea-a/none", nil, ""); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("unknown agent: err=%v", err)
 	}
 }

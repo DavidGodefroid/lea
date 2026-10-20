@@ -1,5 +1,6 @@
 status 0
 -- calls
+core [deck-stop] [--container] [lea-$ID]
 docker [inspect] [-f] [{{.State.Running}}] [lea-$ID]
 tmux [-L] [lea] [-f] [$W/data/lea/host/tmux.conf] [kill-session] [-t] [=lea-$ID]
 docker [stop] [lea-$ID]

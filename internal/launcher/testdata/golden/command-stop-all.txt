@@ -1,7 +1,9 @@
 status 0
 -- calls
-docker [ps] [--filter] [label=lea.prefix=lea] [--format] [{{.ID}}	{{.Label "lea.projects"}}]
+docker [ps] [--filter] [label=lea.prefix=lea] [--format] [{{.Names}}	{{.Label "lea.projects"}}]
+core [deck-stop] [--container] [c1]
 docker [stop] [c1]
+core [deck-stop] [--container] [c2]
 docker [stop] [c2]
 docker [network] [ls] [--filter] [label=lea.prefix=lea] [--format] [{{.Name}}]
 docker [network] [disconnect] [-f] [lea-internal-abc] [lea-proxy]

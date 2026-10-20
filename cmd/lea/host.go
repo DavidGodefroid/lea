@@ -613,11 +613,12 @@ func runDeckOpen(args []string, stderr io.Writer) int {
 		return 2
 	}
 	fail := func(err error) int { fmt.Fprintln(stderr, "lea:", clean(err.Error(), false)); return 1 }
-	// --fresh: the launcher has just started the container. The rows of the previous container's
-	// agents go first; a failure only leaves them shown as done.
+	// --fresh: the launcher has just started the container. The previous container's agents
+	// start again first (their conversations resumed), and its ended ones are forgotten; a
+	// failure leaves them shown as done.
 	if fresh {
-		if err := hostCallT("agents_forget_ended", map[string]any{"container": container}, nil, agentTimeout); err != nil {
-			fmt.Fprintln(stderr, "lea: warning: the agents of the previous container are still listed:", clean(err.Error(), false))
+		if err := hostCallT("agents_resume_stopped", map[string]any{"container": container}, nil, agentTimeout); err != nil {
+			fmt.Fprintln(stderr, "lea: warning: the agents of the previous container were not all resumed:", clean(err.Error(), false))
 		}
 	}
 	if err := hostCallT("deck_ensure", map[string]any{"container": container, "workdir": workdir}, nil, agentTimeout); err != nil {
@@ -639,6 +640,35 @@ func runDeckOpen(args []string, stderr io.Writer) int {
 	if err := hostCallT("agent_new", map[string]any{"container": container, "workdir": workdir,
 		"profile": "claude", "role": "lead", "focus": true}, nil, agentTimeout); err != nil {
 		return fail(err)
+	}
+	return 0
+}
+
+// runDeckStop is deck-stop: the launcher is about to stop the container. Its agents are recorded
+// as stopped, so that the next container resumes them (deck-open --fresh), or forgotten with
+// --forget. Exit 1 with a warning when the daemon cannot record them: the stop goes on.
+func runDeckStop(args []string, stderr io.Writer) int {
+	const use = "usage: lea deck-stop --container NAME [--forget]"
+	container, forget := "", false
+	for i := 0; i < len(args); i++ {
+		switch {
+		case args[i] == "--container" && i+1 < len(args):
+			container = args[i+1]
+			i++
+		case args[i] == "--forget":
+			forget = true
+		default:
+			fmt.Fprintln(stderr, use)
+			return 2
+		}
+	}
+	if container == "" {
+		fmt.Fprintln(stderr, use)
+		return 2
+	}
+	if err := hostCallT("agents_mark_stopped", map[string]any{"container": container, "forget": forget}, nil, agentTimeout); err != nil {
+		fmt.Fprintf(stderr, "lea: warning: the agents of %s were not recorded as stopped: %s\n", clean(container, false), clean(err.Error(), false))
+		return 1
 	}
 	return 0
 }

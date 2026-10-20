@@ -46,6 +46,9 @@ const usage = `usage: lea <command>
   deck-open --container NAME [--workdir DIR] [--no-default] [--fresh]
                              open a container's deck session (used by the launcher;
                              --fresh: the container was just started)
+  deck-stop --container NAME [--forget]
+                             record a container's agents as stopped before it stops, so the
+                             next one resumes them; --forget drops them (used by the launcher)
   new --container NAME --workdir DIR [-p claude] [-r ROLE] [--branch B] [--brief FILE] [NAME] [-- ARGS]
                              start an agent (used by the launcher, in this form only;
                              any other new is the launcher's lea new)
@@ -77,6 +80,8 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		return runDeck(args[1:], stderr)
 	case "deck-open":
 		return runDeckOpen(args[1:], stderr)
+	case "deck-stop":
+		return runDeckStop(args[1:], stderr)
 	case "new":
 		return runNew(args[1:], stdout, stderr)
 	case "hook":
