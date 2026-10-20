@@ -47,6 +47,20 @@ agent() {
   [[ "$(cat "$FAKE_LOG")" == *"agent=claude-1 [--claude]" ]]
 }
 
+@test "run --cli codex becomes lea-session --codex" {
+  run "$A" run dev-1 --cli codex -- resume 0e5f7c2a-1b2c-4d5e-8f90-1234567890ab
+  [ "$status" -eq 0 ]
+  [[ "$(cat "$FAKE_LOG")" == *"agent=dev-1 [--codex] [resume] [0e5f7c2a-1b2c-4d5e-8f90-1234567890ab]" ]]
+}
+
+@test "run refuses an unknown CLI" {
+  for c in "" bash "--shell" "claude;sh"; do
+    run "$A" run dev-1 --cli "$c" -- x
+    [ "$status" -eq 2 ]
+  done
+  [ ! -s "$FAKE_LOG" ]
+}
+
 @test "invalid names are refused" {
   for n in "" Claude-1 1abc "a b" "a/b" "../x" abcdefghijklmnopqrstuvwxy; do
     run "$A" run "$n"

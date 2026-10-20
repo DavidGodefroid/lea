@@ -18,6 +18,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/DavidGodefroid/lea/internal/bus"
+	"github.com/DavidGodefroid/lea/internal/providers"
 	"github.com/DavidGodefroid/lea/internal/store"
 	"github.com/DavidGodefroid/lea/internal/wire"
 )
@@ -72,9 +73,12 @@ type Daemon struct {
 	rates rates
 	// namer names agents after their first prompt (nil: off); named holds the agents it was
 	// asked for. afterName is a test seam: it runs when a naming ends.
-	namer     Namer
-	named     map[string]bool
-	afterName func()
+	// providers is the registry of the providers agents may name (nil: the built-in ones).
+	providers   func() (*providers.Registry, error)
+	defProvider string
+	namer       Namer
+	named       map[string]bool
+	afterName   func()
 	// sounder plays the attention and done sounds (nil: off); rang is when each kind last rang;
 	// soundOff is the user's switch (lea sound, the deck's S), which keeps the sounder aside.
 	sounder  Sounder
@@ -262,6 +266,8 @@ func (d *Daemon) dispatch(ctx context.Context, o Origin, req wire.Request) (any,
 		return d.setRole(req.Params)
 	case "agents_list":
 		return d.agentsList(o, me)
+	case "providers_list":
+		return d.providersList()
 	case "msg_send":
 		var p struct {
 			To, Body, Kind string
@@ -351,6 +357,7 @@ type agentView struct {
 	Updated int64  `json:"updated"`
 	Role    string `json:"role,omitempty"`
 	Profile string `json:"profile,omitempty"`
+	Model   string `json:"model,omitempty"`
 	Parent  string `json:"parent,omitempty"`
 	Repo    string `json:"repo,omitempty"`
 	Branch  string `json:"branch,omitempty"`
@@ -397,7 +404,7 @@ func (d *Daemon) agentsList(o Origin, me string) ([]agentView, error) {
 			v.Subagents = n[a.Key]
 		}
 		if a.Profile != "" {
-			v.Role, v.Profile, v.Repo, v.Branch = a.Role, a.Profile, a.Repo, a.Branch
+			v.Role, v.Profile, v.Model, v.Repo, v.Branch = a.Role, a.Profile, a.Model, a.Repo, a.Branch
 			if o.Container == "" {
 				v.Label = a.Label
 			}

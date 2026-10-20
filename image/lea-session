@@ -1,5 +1,5 @@
 #!/bin/sh
-# One lea session: loads lea's git SSH key into the agent if there is one, then runs a shell / command with --shell, or Claude Code with lea's hook settings: with
+# One lea session: loads lea's git SSH key into the agent if there is one, then runs a shell / command with --shell, Codex with --codex, or Claude Code with lea's hook settings: with
 # --claude (a deck agent, lea-agent run) and by default.
 set -eu
 key=/lea/state/ssh/id_ed25519
@@ -10,6 +10,12 @@ if [ "${1:-}" = --shell ]; then
   shift
   if [ $# -gt 0 ]; then exec "$@"; fi
   exec bash -l
+fi
+# A Codex agent (lea-agent run --cli codex): lea's flags come with its arguments (MCP server,
+# notify, sandbox: internal/providers); its state is ~/.codex, private to the projects dir.
+if [ "${1:-}" = --codex ]; then
+  shift
+  exec codex "$@"
 fi
 # lea's Claude hooks (agent state, bus wake-up, approvals) and telemetry env come in through
 # --settings: file-based managed settings are skipped whenever an organisation has

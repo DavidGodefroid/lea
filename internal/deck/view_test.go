@@ -441,6 +441,16 @@ func TestRowOfAnAgentInARepoShowsTheRepo(t *testing.T) {
 	}
 }
 
+// The provider is on the first line, the model the agent asked for on the second.
+func TestRowShowsProviderAndModel(t *testing.T) {
+	a := ag("a", "idle", clock.Unix())
+	a.Workdir, a.Profile, a.Model = "/home/u/projects", "codex", "gpt-5.1-codex"
+	s := strings.Join(viewLines(sized(loaded(t, &fakeAPI{}, "", a), 64, 6)), "\n")
+	if !strings.Contains(s, "codex") || !strings.Contains(s, "gpt-5.1-codex · u/projects · idle") {
+		t.Fatalf("row:\n%s", s)
+	}
+}
+
 func TestAgentStatusCannotImitateLeasOwnLabels(t *testing.T) {
 	a := ag("a", "idle", clock.Unix())
 	a.Status = "◆ ⚠ ✉ ↳ needs you"

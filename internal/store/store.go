@@ -95,13 +95,15 @@ type Agent struct {
 	Key, Container, Name, SessionID, State string
 	Updated                                int64
 	Profile, Workdir                       string
-	Created                                int64
-	Role, Parent, Repo, Branch             string
-	TaskID                                 int64
-	Label                                  string
-	Args                                   []string
-	Prompt                                 string
-	Paused                                 bool
+	// Model is the model the agent was started with ("" for its CLI's default).
+	Model                      string
+	Created                    int64
+	Role, Parent, Repo, Branch string
+	TaskID                     int64
+	Label                      string
+	Args                       []string
+	Prompt                     string
+	Paused                     bool
 }
 
 // agentColumns are the agents columns added after phase 0; migrate adds the missing ones to a
@@ -123,6 +125,12 @@ var agentColumns = [][2]string{
 	{"prompt", "TEXT NOT NULL DEFAULT ''"},
 	{"paused", "INTEGER NOT NULL DEFAULT 0"},
 	{"subagents", "INTEGER NOT NULL DEFAULT 0"},
+	{"model", "TEXT NOT NULL DEFAULT ''"},
+}
+
+// requestColumns are the spawn_requests columns added after it was created.
+var requestColumns = [][2]string{
+	{"model", "TEXT NOT NULL DEFAULT ''"},
 }
 
 // approvalColumns are the approvals columns added after phase 0.
@@ -132,6 +140,9 @@ var approvalColumns = [][2]string{
 
 func migrate(db *sql.DB) error {
 	if err := addColumns(db, "agents", agentColumns); err != nil {
+		return err
+	}
+	if err := addColumns(db, "spawn_requests", requestColumns); err != nil {
 		return err
 	}
 	return addColumns(db, "approvals", approvalColumns)
@@ -183,13 +194,13 @@ func (s *Store) SetState(key, state, sessionID string, now int64) error {
 	return err
 }
 
-const agentCols = `key, container, name, session_id, state, updated, profile, workdir, created, role, parent, repo, branch, task_id, label, args, prompt, paused`
+const agentCols = `key, container, name, session_id, state, updated, profile, workdir, created, role, parent, repo, branch, task_id, label, args, prompt, paused, model`
 
 func scanAgent(sc interface{ Scan(...any) error }) (Agent, error) {
 	var a Agent
 	var args string
 	err := sc.Scan(&a.Key, &a.Container, &a.Name, &a.SessionID, &a.State, &a.Updated, &a.Profile, &a.Workdir, &a.Created,
-		&a.Role, &a.Parent, &a.Repo, &a.Branch, &a.TaskID, &a.Label, &args, &a.Prompt, &a.Paused)
+		&a.Role, &a.Parent, &a.Repo, &a.Branch, &a.TaskID, &a.Label, &args, &a.Prompt, &a.Paused, &a.Model)
 	if err == nil && args != "" {
 		err = json.Unmarshal([]byte(args), &a.Args)
 	}
@@ -256,6 +267,7 @@ func (s *Store) AgentByKey(key string) (Agent, error) {
 type NewAgent struct {
 	Container, Name, Profile, Workdir string
 	Role, Parent, Repo, Branch        string
+	Model                             string
 }
 
 // Caps bound a spawn: at most MaxChildren running children of the parent (0: no bound). An ended
@@ -324,11 +336,11 @@ func (s *Store) Register(n NewAgent, c Caps, now int64) (Agent, error) {
 			return Agent{}, err
 		}
 		_, err = tx.Exec(`UPDATE agents SET profile=?, workdir=?, created=?, updated=?, state='unknown', session_id='',
-			ctx_pct=-1, cost_usd=-1, role=?, parent=?, repo=?, branch=?, task_id=0, label='', args='', prompt='', paused=0, subagents=0 WHERE key=?`,
-			n.Profile, n.Workdir, now, now, n.Role, n.Parent, n.Repo, n.Branch, key)
+			ctx_pct=-1, cost_usd=-1, role=?, parent=?, repo=?, branch=?, task_id=0, label='', args='', prompt='', paused=0, subagents=0, model=? WHERE key=?`,
+			n.Profile, n.Workdir, now, now, n.Role, n.Parent, n.Repo, n.Branch, n.Model, key)
 	} else {
-		_, err = tx.Exec(`INSERT INTO agents(key, container, name, profile, workdir, created, updated, role, parent, repo, branch)
-			VALUES(?,?,?,?,?,?,?,?,?,?,?)`, key, n.Container, n.Name, n.Profile, n.Workdir, now, now, n.Role, n.Parent, n.Repo, n.Branch)
+		_, err = tx.Exec(`INSERT INTO agents(key, container, name, profile, workdir, created, updated, role, parent, repo, branch, model)
+			VALUES(?,?,?,?,?,?,?,?,?,?,?,?)`, key, n.Container, n.Name, n.Profile, n.Workdir, now, now, n.Role, n.Parent, n.Repo, n.Branch, n.Model)
 	}
 	if err != nil {
 		return Agent{}, err
@@ -336,7 +348,7 @@ func (s *Store) Register(n NewAgent, c Caps, now int64) (Agent, error) {
 	if err := tx.Commit(); err != nil {
 		return Agent{}, err
 	}
-	return Agent{Key: key, Container: n.Container, Name: n.Name, State: "unknown", Updated: now, Profile: n.Profile,
+	return Agent{Key: key, Container: n.Container, Name: n.Name, State: "unknown", Updated: now, Profile: n.Profile, Model: n.Model,
 		Workdir: n.Workdir, Created: now, Role: n.Role, Parent: n.Parent, Repo: n.Repo, Branch: n.Branch}, nil
 }
 

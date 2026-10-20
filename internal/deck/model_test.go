@@ -26,9 +26,16 @@ func (f *fakeAPI) Watch(ctx context.Context, c string, since int64) (Snapshot, e
 	f.rec(fmt.Sprintf("watch %s %d", c, since))
 	return f.snap, f.err
 }
-func (f *fakeAPI) New(ctx context.Context, c string) (Agent, error) {
+func (f *fakeAPI) New(ctx context.Context, c, provider string) (Agent, error) {
+	if provider != "" {
+		c += " " + provider
+	}
 	f.rec("new " + c)
 	return f.newAgent, f.err
+}
+func (f *fakeAPI) Providers(ctx context.Context) ([]string, error) {
+	f.rec("providers")
+	return []string{"claude", "codex", "ollama"}, f.err
 }
 func (f *fakeAPI) Show(ctx context.Context, k string, focus bool) error {
 	f.rec(fmt.Sprintf("show %s %v", k, focus))
@@ -203,6 +210,34 @@ func TestNewSelectsTheNewAgent(t *testing.T) {
 		t.Fatalf("selected %q status %q", m.selected, m.status)
 	}
 	if got := api.got(); got[0] != "new lea-a" {
+		t.Fatalf("calls=%q", got)
+	}
+}
+
+// N lists the providers, then a digit starts an agent on one; any other key cancels.
+func TestNewOnAnotherProvider(t *testing.T) {
+	api := &fakeAPI{newAgent: ag("codex-1", "unknown", 1)}
+	m := loaded(t, api, "", ag("a", "idle", 1))
+	m, cmd := step(t, m, key("N"))
+	m, _ = step(t, m, cmd())
+	if m.status != "new agent on: 1 claude 2 codex 3 ollama" {
+		t.Fatalf("status %q", m.status)
+	}
+	m, cmd = step(t, m, key("2"))
+	m, _ = step(t, m, cmd())
+	if m.selected != "lea-a/codex-1" || m.providers != nil {
+		t.Fatalf("selected %q providers %v", m.selected, m.providers)
+	}
+	if got := api.got(); len(got) != 2 || got[1] != "new lea-a codex" {
+		t.Fatalf("calls=%q", got)
+	}
+	m, cmd = step(t, m, key("N"))
+	m, _ = step(t, m, cmd())
+	m, cmd = step(t, m, key("9")) // past the list: cancels
+	if cmd != nil || m.providers != nil || m.status != "" {
+		t.Fatalf("cancel: cmd %v providers %v status %q", cmd != nil, m.providers, m.status)
+	}
+	if got := api.got(); len(got) != 3 {
 		t.Fatalf("calls=%q", got)
 	}
 }

@@ -10,8 +10,9 @@ const Usage = `Usage:
                               open it (in the tool's own account; lea never starts it)
   lea                         open the deck: your agents on the left, the selected one on the right
                               (keys: j/k select, enter focus, ctrl+space back, n new, x stop, q quit)
-  lea new [-r role] [--repo R] [--branch B] [--brief file] [name] [-- claude args]
-                              start one more Claude agent in the deck (roles: lead, dev, reviewer)
+  lea new [-r role] [-p provider] [-m model] [--repo R] [--branch B] [--brief file] [name] [-- args]
+                              start one more agent in the deck (roles: lead, dev, reviewer;
+                              providers: claude, codex and those of ~/.config/lea/providers)
   lea role <agent> <role>     change an agent's role (only you can)
   lea shell [-- cmd...]       open a shell, or run a command, in the same lea
   lea kube refresh            mint a read-only Kubernetes token (8 h)

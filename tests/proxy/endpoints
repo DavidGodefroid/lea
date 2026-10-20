@@ -1,0 +1,4 @@
+# The key forwarder's endpoints (as the launcher renders them).
+llm http://10.99.0.84:8000/v1 /etc/lea/keys/llm
+# A public name that resolves to a private address: squid must refuse it.
+rebind http://rebind.test/v1

@@ -323,6 +323,57 @@ Agents get lea's tools through MCP:
 - before editing files another agent may touch, an agent claims them with `lease_acquire` and
   lets go with `lease_release` (advisory, shown in `lea board --md`).
 
+### Other providers: Codex, Ollama, vLLM
+
+An agent runs on a **provider**: `claude` (Claude Code, the default), `codex` (OpenAI's Codex CLI,
+in the image) or an OpenAI-compatible endpoint of your own, run through Codex (Ollama, vLLM, any
+server with the Responses API).
+
+- `LEA_PROVIDER` and `LEA_MODEL` in `~/.config/lea/lea.conf` are the default provider and model
+  (an agent started without one: the deck's `n`, a lead's `agents_spawn`).
+- `lea new -p codex -m gpt-5.1-codex`, the deck's `N` (then the provider's digit), or a lead's
+  `agents_spawn` with `profile` and `model` start an agent on another one; `providers_list`
+  tells an agent which exist. The deck shows each agent's provider and model.
+- Codex keeps its own login per projects directory, like Claude Code: run `codex login` (or
+  `/login`) in the first Codex agent. It runs with its own sandbox (`workspace-write`) and asks
+  for anything else in its pane; lea's MCP tools reach it, and its turn's end makes it idle in the
+  deck. lea does not see Codex's permission dialogs (the deck shows the agent working) and does
+  not wake an idle Codex agent when a message arrives: it reads its inbox with `msg_inbox` or
+  waits with `msg_wait`.
+
+Endpoints go in `~/.config/lea/providers` (`LEA_PROVIDERS`), one per line
+(`config/providers.example`):
+
+```
+# <name>  <base URL>                          [key=<key file>]             [model=<default model>]
+ollama    http://192.168.1.10:11434/v1                                     model=qwen3-coder:30b
+vllm      https://vllm.example.com/v1         key=/home/me/.config/lea/keys/vllm
+```
+
+- An endpoint's API key never reaches the agents. The file names a key file, not a key: it must
+  be yours, mode `600` (or `400`), a regular file with a single hard link, and outside every
+  directory lea mounts into the agents' container (the projects directory, lea's data, `~/.claude`,
+  `~/.codex`; real paths are compared). Nor may it sit in a Docker volume lea mounts there, such
+  as the nested engine's storage (`<prefix>-podman-<id>`, under Docker's own data directory):
+  every agent reads it. lea
+  mounts it into the proxy container only, where `lea-keyproxy` adds it to the agents' requests;
+  an agent reaches the endpoint at `http://lea-proxy:4400/<name>` and sees neither the key nor the
+  upstream. The key is read at each request: to rotate it, rewrite the file in place
+  (`cat new-key > file`); a file replaced by a new one (`mv`, most editors) is seen once the
+  proxy restarts, which the next `lea` does. Every agent of every lea container can use a
+  configured endpoint (none can read its key); the proxy's egress network (your host, other
+  containers there) cannot.
+- `lea-keyproxy` sends every request through the proxy's own egress rules: an endpoint on your
+  network (an Ollama on your LAN, or on this machine at its Docker bridge address) must be listed
+  in `LEA_INTERNAL_HOSTS` with its port, as any internal host; nothing is open by default, and
+  loopback, `localhost` and link-local addresses are refused. A key goes over HTTPS only, except
+  to a host you listed there. With `LEA_EGRESS_ALLOW` set, a public endpoint's domain must be in it
+  too. The forwarder answers the agents' networks only, never the proxy's egress network (your
+  host, other containers there).
+- Codex needs the endpoint to serve the Responses API (`/v1/responses`): Ollama 0.13.3 or later,
+  a recent vLLM.
+- A change of the providers file restarts the proxy at the next `lea`.
+
 ### Tower control
 
 lea brings its own Claude Code plugin, `lea`, loaded in every agent (from the image, for the
@@ -354,7 +405,7 @@ directory of the projects directory; `--branch B` has it work in its own git wor
 
 ```sh
 lea                          # the deck, for $LEA_PROJECTS_DIR
-lea new [name] [-- args]     # one more agent (Claude Code arguments after --)
+lea new [name] [-- args]     # one more agent (its CLI's arguments after --; -p provider, -m model)
 lea shell [-- cmd...]        # a shell, or one command, in the same lea
 lea stop [--all] [--forget] # stop this lea (--all: every lea); the next lea resumes its agents
                              # in their Claude conversations (--forget: drop them for good)
@@ -411,6 +462,8 @@ read-only. The screen runs in the deck on the host: agents cannot open or drive 
 | `LEA_EGRESS_ALLOW` | empty (off) | the only web domains agents may reach, comma separated (subdomains included) |
 | `LEA_NESTED_NETWORKS` | empty | networks your compose files expect, created at start |
 | `LEA_APPROVALS`, `LEA_APPROVAL_TIMEOUT` | `deck`, `60` | who answers permission requests |
+| `LEA_PROVIDER`, `LEA_MODEL` | `claude`, empty | the default provider and model of a new agent ([providers](#other-providers-codex-ollama-vllm)) |
+| `LEA_PROVIDERS` | `~/.config/lea/providers` | your OpenAI-compatible endpoints and their key files |
 | `LEA_SOUND`, `LEA_AUTONAME` | on | the deck's sounds, automatic names (`0`: off) |
 | `LEA_SOUND_ATTENTION`, `LEA_SOUND_DONE` | freedesktop sounds | the file of each sound (`0`: that one off) |
 | `LEA_OTEL_UPSTREAM` | empty | send Claude Code usage telemetry to this OTLP collector |
@@ -476,6 +529,8 @@ so. Changes apply after `lea init` (endpoints, keys, images, locksql) or `lea st
   name, so a tunnel to an internal name must be TLS with SNI. The proxy cannot see the `Host` header
   inside: if your ingress serves a `Host` other than the SNI, require SNI = Host on it. An IPv4
   literal grants the whole address, every vhost on it included.
+- The API keys of your providers' endpoints stay in the proxy container: no agent mounts a key
+  file, and the key forwarder reaches an endpoint only through the proxy's egress rules.
 - lea never gets the Docker socket; the agents' own containers run in a rootless Podman inside
   lea, under seccomp and, on Linux, AppArmor.
 - Work in lea, not on the host, inside the projects directory: an agent can write files your host

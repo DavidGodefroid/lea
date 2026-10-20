@@ -16,6 +16,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/DavidGodefroid/lea/internal/providers"
 	"github.com/DavidGodefroid/lea/internal/roles"
 	"github.com/DavidGodefroid/lea/internal/store"
 	"github.com/DavidGodefroid/lea/internal/tmux"
@@ -164,7 +165,8 @@ func TestNewNamesAndRefusals(t *testing.T) {
 		t.Fatalf("duplicate name: err=%v", err)
 	}
 	for _, r := range []NewRequest{
-		{Container: C, Profile: "codex"},
+		{Container: C, Profile: "gemini"},
+		{Container: C, Name: "x", Model: "-rf"},
 		{Container: C, Name: "Bad Name"},
 		{Container: C, Name: "x", Args: []string{"a\nb"}},
 		{Container: C, Name: "x", Args: make([]string, MaxArgs+1)},
@@ -176,7 +178,7 @@ func TestNewNamesAndRefusals(t *testing.T) {
 			t.Fatalf("accepted %+v", r)
 		}
 	}
-	if _, err := e.m.New(bg, NewRequest{Container: C, Profile: "codex"}); err == nil || !strings.Contains(err.Error(), "not available yet") {
+	if _, err := e.m.New(bg, NewRequest{Container: C, Profile: "gemini"}); err == nil || !strings.Contains(err.Error(), "unknown provider") {
 		t.Fatalf("other profile: err=%v", err)
 	}
 }
@@ -1599,5 +1601,90 @@ func TestRemoveEndedRefusesAnAgentThatRunsAgain(t *testing.T) {
 	}
 	if err := e.m.RemoveEnded(bg, ShellKey(C, "sh-1")); err == nil {
 		t.Fatal("RemoveEnded took a shell's key")
+	}
+}
+
+// codexArgs are what follows lea-agent run <name> --cli codex in an agent's pane.
+func codexArgs(t *testing.T, s *fakeSession, name string) []string {
+	t.Helper()
+	var cmd []string
+	s.locked(func() {
+		if p := s.byAgent(name); p != nil {
+			cmd = p.cmd
+		}
+	})
+	i := slices.Index(cmd, "run")
+	if i < 0 || len(cmd) < i+5 || cmd[i+1] != name || cmd[i+2] != "--cli" || cmd[i+3] != "codex" || cmd[i+4] != "--" {
+		t.Fatalf("pane of %s: %q", name, cmd)
+	}
+	return cmd[i+5:]
+}
+
+// An agent on Codex runs codex with lea's flags (MCP server, notify, sandbox), its model and its
+// first prompt; started again, it resumes its thread with the same model.
+func TestCodexAgentRunsCodexAndResumesItsThread(t *testing.T) {
+	e := newEnv(t)
+	e.ensure(t, "/p")
+	r, err := e.m.New(bg, NewRequest{Container: C, Name: "cx", Profile: "codex", Model: "gpt-5.1-codex", Brief: "do it", Hidden: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r.Profile != "codex" || r.Model != "gpt-5.1-codex" {
+		t.Fatalf("row=%+v", r)
+	}
+	s := e.term.get(C)
+	got := codexArgs(t, s, "cx")
+	j := strings.Join(got, " ")
+	for _, w := range []string{"--sandbox workspace-write --ask-for-approval on-request", `mcp_servers.lea.env.LEA_AGENT="cx"`,
+		`notify=["/usr/local/bin/lea","hook","codex","notify"]`, `projects."/p".trust_level="untrusted"`, "--model gpt-5.1-codex"} {
+		if !strings.Contains(j, w) {
+			t.Fatalf("missing %s in %q", w, got)
+		}
+	}
+	if !strings.Contains(got[len(got)-1], "Your brief is waiting") {
+		t.Fatalf("no first prompt: %q", got)
+	}
+	e.st.SetState(C+"/cx", "idle", sid1, 1001)
+	if err := e.m.MarkStopped(bg, C, false); err != nil {
+		t.Fatal(err)
+	}
+	re := e.restarted(t)
+	if err := re.m.ResumeStopped(bg, C); err != nil {
+		t.Fatal(err)
+	}
+	got = codexArgs(t, re.term.get(C), "cx")
+	if got[0] != "resume" || got[1] != sid1 || !strings.Contains(strings.Join(got, " "), "--model gpt-5.1-codex") ||
+		strings.Contains(got[len(got)-1], "Your brief") {
+		t.Fatalf("restarted with %q", got)
+	}
+}
+
+// LEA_PROVIDER and LEA_MODEL apply to an agent started without a provider; an endpoint provider
+// of the providers file runs Codex against the forwarder, never with its key or upstream.
+func TestDefaultProviderAndEndpointProviders(t *testing.T) {
+	e := newEnv(t)
+	e.ensure(t, "/p")
+	reg := providers.Builtin()
+	ep, err := providers.Parse(strings.NewReader("lan http://10.0.0.5:11434/v1 model=qwen3\n"),
+		providers.Options{Internal: providers.ParseHosts(strings.NewReader("10.0.0.5 11434\n")), UID: -1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	e.m.cfg.Providers = func() (*providers.Registry, error) { return providers.WithEndpoints(reg, ep), nil }
+	e.m.cfg.DefaultProvider, e.m.cfg.DefaultModel = "codex", "gpt-5.1-codex"
+	r, err := e.m.New(bg, NewRequest{Container: C, Hidden: true})
+	if err != nil || r.Profile != "codex" || r.Model != "gpt-5.1-codex" || r.Name != "codex-1" {
+		t.Fatalf("row=%+v err=%v", r, err)
+	}
+	r, err = e.m.New(bg, NewRequest{Container: C, Profile: "lan", Hidden: true})
+	if err != nil || r.Profile != "lan" || r.Model != "qwen3" {
+		t.Fatalf("row=%+v err=%v", r, err)
+	}
+	j := strings.Join(codexArgs(t, e.term.get(C), r.Name), " ")
+	if !strings.Contains(j, `base_url="http://lea-proxy:4400/lan"`) || strings.Contains(j, "10.0.0.5") {
+		t.Fatalf("args %s", j)
+	}
+	if _, err := e.m.New(bg, NewRequest{Container: C, Profile: "gone", Hidden: true}); err == nil {
+		t.Fatal("an unknown provider was started")
 	}
 }

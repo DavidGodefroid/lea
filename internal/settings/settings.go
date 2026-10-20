@@ -12,6 +12,7 @@ import (
 	"strings"
 
 	"github.com/DavidGodefroid/lea/internal/launcher"
+	"github.com/DavidGodefroid/lea/internal/providers"
 )
 
 // Kind is how a setting is edited.
@@ -61,6 +62,10 @@ var catalog = []Setting{
 		Apply: ApplyAfterStop, Help: "who answers permission requests: the deck, or the agent's own dialog"},
 	{Key: "LEA_APPROVAL_TIMEOUT", Group: "Agents", Name: "Approval timeout", Kind: Text, Default: "60", Apply: ApplyAfterStop,
 		Help: "seconds before the agent's own dialog asks (1 to 600)", check: seconds},
+	{Key: "LEA_PROVIDER", Group: "Agents", Name: "Default provider", Kind: Text, Default: providers.Default, Apply: ApplyNextStart,
+		Help: "the provider of a new agent: claude, codex or a name of the providers file", check: providerName},
+	{Key: "LEA_MODEL", Group: "Agents", Name: "Default model", Kind: Text, Apply: ApplyNextStart,
+		Help: "the model of a new agent on the default provider; empty: the provider's own", check: providers.CheckModel},
 	{Key: "LEA_SOUND", Group: "Sounds", Name: "Sounds", Kind: Toggle, Default: "1", Apply: ApplyNow, Live: true,
 		Help: "a sound when an agent waits for you and when its turn ends"},
 	{Key: "LEA_SOUND_ATTENTION", Group: "Sounds", Name: "Attention sound", Kind: Text, Apply: ApplyAfterStop,
@@ -263,4 +268,18 @@ func soundFile(v string) error {
 		return fmt.Errorf("a sound is an absolute file path, 0 (muted) or empty (the freedesktop sound), not %q", v)
 	}
 	return nil
+}
+
+// providerName accepts the name of a built-in provider or of the user's providers file, as the
+// launcher would read it now.
+func providerName(v string) error {
+	if v == "" {
+		return nil
+	}
+	reg, err := launcher.LoadProviders(os.Getenv)
+	if err != nil {
+		return err
+	}
+	_, err = reg.Get(v)
+	return err
 }

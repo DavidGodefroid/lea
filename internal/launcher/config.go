@@ -15,6 +15,8 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+
+	"github.com/DavidGodefroid/lea/internal/providers"
 )
 
 // protectedKeys: a non-empty value in the environment beats both configuration files
@@ -31,6 +33,7 @@ var ExportedKeys = []string{
 	"LEA_LOCKMQ", "LEA_LOCKFILE", "LEA_LOCKMQ_REF", "LEA_LOCKFILE_REF",
 	"LEA_OTEL_UPSTREAM", "LEA_NESTED_NETWORKS", "LEA_K8S_NAMESPACE", "LEA_INTERNAL_HOSTS", "LEA_EGRESS_ALLOW", "LEA_PROJECTS_DIR",
 	"LEA_APPROVALS", "LEA_APPROVAL_TIMEOUT", "LEA_SOUND", "LEA_SOUND_ATTENTION", "LEA_SOUND_DONE",
+	"LEA_PROVIDER", "LEA_MODEL", "LEA_PROVIDERS",
 }
 
 // Config is what lea_load_config gives the shell: the environment, overlaid by the assignments of
@@ -203,6 +206,18 @@ func (c *Config) resolve(root string) error {
 		}
 	}
 	c.final["LEA_GIT_KNOWN_HOSTS"] = kh
+	// The providers (internal/providers): the default one and its model, and the user's
+	// providers file (its endpoints are checked when the proxy starts and at each spawn).
+	c.final["LEA_PROVIDERS"] = nonEmpty(c.Get("LEA_PROVIDERS"), conf+"/providers")
+	prov := nonEmpty(c.Get("LEA_PROVIDER"), providers.Default)
+	if !providerName.MatchString(prov) {
+		return fmt.Errorf("LEA_PROVIDER must be a provider name (claude, codex or a name of the providers file), not '%s'", prov)
+	}
+	c.final["LEA_PROVIDER"] = prov
+	if err := providers.CheckModel(c.Get("LEA_MODEL")); err != nil {
+		return fmt.Errorf("LEA_MODEL: %v", err)
+	}
+	c.final["LEA_MODEL"] = c.Get("LEA_MODEL")
 	if err := CheckOtelUpstream(c.Get("LEA_OTEL_UPSTREAM")); err != nil {
 		return err
 	}
@@ -236,6 +251,8 @@ func (c *Config) resolve(root string) error {
 	}
 	return nil
 }
+
+var providerName = regexp.MustCompile(`^[a-z][a-z0-9-]{0,15}$`)
 
 // releaseVersion is a release's version, vMAJOR.MINOR.PATCH (libexec/lib/host.sh lea__semver).
 var releaseVersion = regexp.MustCompile(`^v[0-9]+\.[0-9]+\.[0-9]+$`)

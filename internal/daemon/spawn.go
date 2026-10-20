@@ -66,6 +66,7 @@ func (d *Daemon) spawnedCaller(o Origin, me, method string) (store.Agent, error)
 type spawnParams struct {
 	Role    string `json:"role"`
 	Profile string `json:"profile"`
+	Model   string `json:"model"`
 	Repo    string `json:"repo"`
 	Branch  string `json:"branch"`
 	Brief   string `json:"brief"`
@@ -123,6 +124,9 @@ func (d *Daemon) agentsSpawn(ctx context.Context, o Origin, me string, raw json.
 	if err := roles.CanGive(cr, p.Role); err != nil {
 		return nil, err
 	}
+	if err := d.checkProvider(p.Profile, p.Model); err != nil {
+		return nil, err
+	}
 	if err := checkBrief(p.Brief, true); err != nil {
 		return nil, err
 	}
@@ -141,7 +145,11 @@ func (d *Daemon) agentsSpawn(ctx context.Context, o Origin, me string, raw json.
 	if err := d.rates.allow("agents_spawn", me, d.now()); err != nil {
 		return nil, err
 	}
-	nr := agents.NewRequest{Container: o.Container, Profile: p.Profile, Role: p.Role, Parent: me,
+	if req != nil && p.Profile == "" && p.Model == "" {
+		// The provider the requester asked for, unless the lead names one.
+		p.Profile, p.Model = req.Profile, req.Model
+	}
+	nr := agents.NewRequest{Container: o.Container, Profile: p.Profile, Model: p.Model, Role: p.Role, Parent: me,
 		Repo: p.Repo, Branch: p.Branch, Brief: p.Brief, BriefFrom: me, NamePrefix: p.Role, Hidden: true}
 	if req != nil {
 		if err := d.st.MoveSpawnRequest(req.ID, "pending", "accepting", "", d.now()); err != nil {
@@ -160,7 +168,7 @@ func (d *Daemon) agentsSpawn(ctx context.Context, o Origin, me string, raw json.
 		d.acceptRequest(*req, me, p.Role, row)
 	}
 	d.changed()
-	return map[string]string{"name": row.Name, "key": row.Key, "role": row.Role}, nil
+	return map[string]string{"name": row.Name, "key": row.Key, "role": row.Role, "provider": row.Profile, "model": row.Model}, nil
 }
 
 // agentsStop stops one of the calling lead's own children (spec §5.2: several leads may run; each
