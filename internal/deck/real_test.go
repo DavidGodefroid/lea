@@ -202,6 +202,28 @@ func TestRealEveryRightClickOpensAMenu(t *testing.T) {
 	}
 }
 
+// The message items explain themselves (#28): in a row's menu, opened by a right click, the
+// highlighted Send message and Messages each show what they do under the items.
+func TestRealTheMessageItemsExplainThemselves(t *testing.T) {
+	d := startRealDeck(t)
+	d.tm("select-pane", "-t", "e2e:0.1") // the agent's pane has the keyboard
+	d.mouse(2, 3, 'M')                   // b's first line
+	time.Sleep(20 * time.Millisecond)
+	d.mouse(2, 3, 'm')
+	d.waitFor("b's menu", func(s string) bool { return strings.Contains(s, "Send message") && strings.Contains(s, "esc close") })
+	if s := d.screen(); strings.Contains(s, "inbox") {
+		t.Fatalf("a hint under Show:\n%s", s)
+	}
+	d.typed("j")
+	d.waitFor("Send message's hint", func(s string) bool { return strings.Contains(s, "a note to its inbox") })
+	d.typed("j")
+	d.waitFor("Messages' hint", func(s string) bool {
+		return strings.Contains(s, "questions and") && !strings.Contains(s, "inbox")
+	})
+	d.typed("\x1b")
+	d.waitFor("the menu to close", func(s string) bool { return !strings.Contains(s, "esc close") })
+}
+
 // The pointer over a row shows its whole name in the bottom border (#29): tmux passes the moves
 // of no button (SGR 35) on to the deck, which asks for all motion.
 func TestRealHoverShowsTheFullName(t *testing.T) {

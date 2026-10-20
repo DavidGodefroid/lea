@@ -7,12 +7,35 @@ import (
 )
 
 type threadItem struct {
-	ID     int64  `json:"id"`
-	From   string `json:"from"`
-	To     string `json:"to"`
-	Kind   string `json:"kind"`
-	Body   string `json:"body"`
-	ReadAt int64  `json:"read_at"`
+	ID      int64  `json:"id"`
+	From    string `json:"from"`
+	To      string `json:"to"`
+	Kind    string `json:"kind"`
+	Body    string `json:"body"`
+	ReadAt  int64  `json:"read_at"`
+	ReplyTo int64  `json:"reply_to"`
+}
+
+// An answer carries the message it answers, so the deck shows a question and its answer as a
+// pair (#28); a message that answers none carries no reply_to.
+func TestThreadListTiesAnAnswerToItsMessage(t *testing.T) {
+	e := start(t)
+	call(t, e.bus, "dev", "agents_list", nil, nil)
+	call(t, e.bus, "ops", "agents_list", nil, nil)
+	var q struct{ ID int64 }
+	if err := call(t, e.bus, "dev", "msg_send", map[string]any{"to": "ops", "body": "port?", "kind": "request"}, &q); err != nil {
+		t.Fatal(err)
+	}
+	if err := call(t, e.bus, "ops", "msg_reply", map[string]any{"id": q.ID, "status": "ok", "body": "8080"}, nil); err != nil {
+		t.Fatal(err)
+	}
+	var th []threadItem
+	if err := call(t, e.api, "", "thread_list", map[string]any{"key": "lea-a/dev"}, &th); err != nil {
+		t.Fatal(err)
+	}
+	if len(th) != 2 || th[0].ReplyTo != 0 || th[1].ReplyTo != q.ID || th[1].From != "lea-a/ops" {
+		t.Fatalf("thread=%+v question=%d", th, q.ID)
+	}
 }
 
 func TestThreadListShowsBothDirectionsAndReadsOnlyTheUsersMessages(t *testing.T) {

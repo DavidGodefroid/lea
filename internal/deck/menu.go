@@ -16,6 +16,17 @@ import (
 // moves the agent to (target).
 type menuItem struct{ label, key, target string }
 
+// hints are the lines a menu shows under its items while the item typing that key is
+// highlighted: what the action does, when its label alone does not say. A message is not
+// typing into the agent's pane. No other menu uses these keys.
+var hints = map[string]string{
+	"m": "a note to its inbox, read on its next turn",
+	"t": "its notes, questions and answers",
+}
+
+// hintLine is the owner item of a menu's hint line: inside the menu, on no item.
+const hintLine = -2
+
 // The picker's targets besides a folder's row key: the root, and a new folder.
 const (
 	rootTarget      = "\x00root"
@@ -34,7 +45,7 @@ func menuItems(a Agent, inFolder bool) []menuItem {
 			items = append(items, menuItem{"Always allow", "A", ""})
 		}
 	}
-	items = append(items, menuItem{"Show", "enter", ""}, menuItem{"Message", "m", ""}, menuItem{"Thread", "t", ""},
+	items = append(items, menuItem{"Show", "enter", ""}, menuItem{"Send message", "m", ""}, menuItem{"Messages", "t", ""},
 		menuItem{"Rename", "e", ""}, menuItem{"Role", "r", ""}, menuItem{"Move to folder", "o", ""})
 	if inFolder {
 		items = append(items, menuItem{"Move up", "K", ""}, menuItem{"Move down", "J", ""})
@@ -226,6 +237,9 @@ func (m Model) mouse(e tea.MouseMsg) (tea.Model, tea.Cmd) {
 		return nm, nil
 	}
 	if m.menuFor != "" {
+		if key == m.menuFor && item == hintLine {
+			return m, nil
+		}
 		if key == m.menuFor && item >= 0 {
 			if right { // on its own menu: the item under the pointer is highlighted
 				m.menuSel = item
@@ -271,7 +285,16 @@ func (m Model) hit(y int) (string, int) {
 	return o.key, o.item
 }
 
-// menuLines are the lines of a menu of items, inner cells wide.
+// menuOwner is what line j of a menu of n items shows: the item, or the hint under them.
+func menuOwner(j, n int) int {
+	if j < n {
+		return j
+	}
+	return hintLine
+}
+
+// menuLines are the lines of a menu of items, inner cells wide: one per item, then the
+// highlighted item's hint, wrapped, when it has one.
 func (m Model) menuLines(items []menuItem, inner int) []string {
 	c := m.cs()
 	w := inner - 4
@@ -286,6 +309,12 @@ func (m Model) menuLines(items []menuItem, inner int) []string {
 			line = c.mark + line[len(" "):]
 		}
 		out = append(out, plain.Render("    ")+st.Render(fit(line, w, c)))
+	}
+	if m.menuSel >= 0 && m.menuSel < len(items) && items[m.menuSel].target == "" && hints[items[m.menuSel].key] != "" {
+		st := lipgloss.NewStyle().Foreground(theme.Muted).Background(theme.Sel)
+		for _, l := range wrapWords(hints[items[m.menuSel].key], w-2, 3) {
+			out = append(out, plain.Render("    ")+st.Render(fit(padRight(" "+l, w), w, c)))
+		}
 	}
 	return out
 }
