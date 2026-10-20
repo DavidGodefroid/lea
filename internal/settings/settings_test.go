@@ -164,12 +164,15 @@ func TestSetValidatesAndWrites(t *testing.T) {
 }
 
 // The projects directory goes through lea init's checks: an existing directory, never /, the
-// home directory or one of its ancestors, never overlapping ~/.claude, saved as its physical path.
+// home directory or one of its ancestors, never overlapping ~/.claude or a credential directory,
+// saved as its physical path.
 func TestProjectsDirPassesTheInitGuards(t *testing.T) {
 	w := newWorld(t, "")
 	st := w.store()
 	os.MkdirAll(w.cwd+"/.claude/projects", 0o700)
-	for _, v := range []string{"relative", "/", w.cwd, filepath.Dir(w.cwd), w.cwd + "/.claude/projects", w.cwd + "/nope"} {
+	os.MkdirAll(w.cwd+"/.ssh/keys", 0o700)
+	for _, v := range []string{"relative", "/", w.cwd, filepath.Dir(w.cwd), w.cwd + "/.claude/projects", w.cwd + "/.ssh",
+		w.cwd + "/.ssh/keys", w.cwd + "/nope"} {
 		if err := st.Set("LEA_PROJECTS_DIR", v); err == nil {
 			t.Errorf("LEA_PROJECTS_DIR=%q accepted", v)
 		}
