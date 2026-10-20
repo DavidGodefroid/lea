@@ -164,8 +164,9 @@ func paths(doc map[string]any) []string {
 	return out
 }
 
-// line is "<model> · <dir> · 42% · $1.20": the last two only when known, "lea" without a model
-// and a directory.
+// line is "<model> · <dir> · 42%": the context share only when known, "lea" without a model and
+// a directory. The cost is reported to the daemon but not shown: it is a client-side estimate, not
+// what the user is billed.
 func line(doc map[string]any, r Report) string {
 	parts := []string{"lea"}
 	model, dir := text(doc, "model", "display_name"), text(doc, "workspace", "current_dir")
@@ -174,9 +175,6 @@ func line(doc map[string]any, r Report) string {
 	}
 	if r.CtxPct >= 0 {
 		parts = append(parts, fmt.Sprintf("%d%%", r.CtxPct))
-	}
-	if r.CostUSD >= 0 {
-		parts = append(parts, fmt.Sprintf("$%.2f", r.CostUSD))
 	}
 	return strings.Join(parts, " · ")
 }
