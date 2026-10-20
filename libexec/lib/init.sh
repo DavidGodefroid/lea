@@ -135,12 +135,62 @@ EOT
   chmod 600 "$1/claude.json"
 }
 
-# The build context of the locksql console image: locksql's repository at the tag
-# LEA_LOCKSQL_REF, or LEA_LOCKSQL_REF itself when it is a directory (a locksql checkout, to try a
-# locksql not released yet).
-lea__locksql_context() {
-  if [ -d "$LEA_LOCKSQL_REF" ]; then printf '%s' "$LEA_LOCKSQL_REF"
-  else printf '%s' "https://github.com/DavidGodefroid/locksql.git#$LEA_LOCKSQL_REF"; fi
+# lea__locksql_build REF IMAGE [vault]: builds the locksql console image IMAGE (with the vault CLI:
+# locksql's vault target) from REF: a directory, a locksql checkout built as it is (to try a locksql
+# not released yet), or a release vX.Y.Z, whose source lea clones with git at that tag and builds
+# only once cosign proves that locksql's release workflow, run at that very tag on that very commit,
+# signed the release's checksums.txt (a moved tag or another release's signature is refused). Any
+# other ref (a branch) is refused: lea builds no source it cannot verify. Fails, saying why.
+lea__locksql_build() {
+  _lsb_r=$1 _lsb_i=$2 _lsb_t=${3:-} _lsb_u=$(lea__dep_url locksql)
+  set --
+  if [ "$_lsb_t" = vault ]; then set -- --target vault; fi
+  # The console checks each client's uid against its own container's accounts: the agents run as
+  # this uid and have none there.
+  if [ -d "$_lsb_r" ]; then
+    docker build "$@" -t "$_lsb_i" --build-arg "ALLOWED_UIDS=$(id -u)" "$_lsb_r" >&2
+    return
+  fi
+  if ! lea__semver "$_lsb_r" >/dev/null; then
+    lea_log "locksql: LEA_LOCKSQL_REF '$_lsb_r' is neither a release (vX.Y.Z) nor a checkout: lea builds no source it cannot verify"
+    return 1
+  fi
+  command -v git >/dev/null 2>&1 || { lea_log "locksql: git is needed to fetch its source; nothing built"; return 1; }
+  _lsb_tmp=$(mktemp -d) || return 1
+  for _lsb_f in checksums.txt checksums.txt.sigstore.json; do
+    if ! curl -fsSL -o "$_lsb_tmp/$_lsb_f" "$_lsb_u/releases/download/$_lsb_r/$_lsb_f"; then
+      lea_log "locksql: could not download $_lsb_u/releases/download/$_lsb_r/$_lsb_f; nothing built"
+      rm -rf "$_lsb_tmp"
+      return 1
+    fi
+  done
+  if ! git -c advice.detachedHead=false clone -q --depth 1 --branch "$_lsb_r" "$_lsb_u.git" "$_lsb_tmp/src" >&2; then
+    lea_log "locksql: could not clone $_lsb_u at $_lsb_r; nothing built"
+    rm -rf "$_lsb_tmp"
+    return 1
+  fi
+  _lsb_sha=$(git -C "$_lsb_tmp/src" rev-parse HEAD 2>/dev/null) || _lsb_sha=
+  case $_lsb_sha in *[!0-9a-f]*|'') _lsb_sha= ;; esac
+  if [ ${#_lsb_sha} -ne 40 ] || ! _lsb_co=$(lea__cosign "$_lsb_tmp"); then
+    lea_log "locksql: cannot check the signature of $_lsb_r; nothing built"
+    rm -rf "$_lsb_tmp"
+    return 1
+  fi
+  if ! "$_lsb_co" verify-blob --bundle "$_lsb_tmp/checksums.txt.sigstore.json" \
+    --certificate-identity-regexp "^https://github\\.com/DavidGodefroid/locksql/\\.github/workflows/release\\.yml@refs/tags/$(printf '%s' "$_lsb_r" | sed 's/\./\\./g')\$" \
+    --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+    --certificate-github-workflow-repository DavidGodefroid/locksql \
+    --certificate-github-workflow-sha "$_lsb_sha" \
+    "$_lsb_tmp/checksums.txt" >&2; then
+    lea_log "locksql: $_lsb_r at $_lsb_sha is not what locksql's release workflow signed; nothing built"
+    rm -rf "$_lsb_tmp"
+    return 1
+  fi
+  lea_log "locksql $_lsb_r: signature verified (commit $_lsb_sha); building $_lsb_i${1:+ with the vault CLI}"
+  docker build "$@" -t "$_lsb_i" --build-arg "ALLOWED_UIDS=$(id -u)" "$_lsb_tmp/src" >&2
+  _lsb_rc=$?
+  rm -rf "$_lsb_tmp"
+  return "$_lsb_rc"
 }
 
 # The locksql configuration of the projects directory, read by the console.
@@ -152,20 +202,20 @@ lea__locksql_wants_vault() {
   [ -n "${LEA_PROJECTS_DIR:-}" ] && grep -q '^[[:space:]]*credentials[[:space:]]*=[[:space:]]*"vault"' "$(lea__locksql_config)" 2>/dev/null
 }
 
-# The locksql console image (LEA_LOCKSQL_IMAGE), built from lea__locksql_context when it is not
-# there yet, with the vault CLI when a profile needs it. Never fatal: lea runs without it. lea init
-# and lea update (lea_refresh_images) both call it.
+# The locksql console image (LEA_LOCKSQL_IMAGE), built from LEA_LOCKSQL_REF (lea__locksql_build:
+# a release's source only once its signature is verified) when it is not there yet, with the vault
+# CLI when a profile needs it. Never fatal: lea runs without it. lea init and lea update
+# (lea_refresh_images) both call it.
 lea__init_locksql() {
   if docker image inspect "$LEA_LOCKSQL_IMAGE" >/dev/null 2>&1; then
     lea_log "locksql console image $LEA_LOCKSQL_IMAGE: present"
     return 0
   fi
-  set --
-  if lea__locksql_wants_vault; then set -- --target vault; fi
-  lea_log "building the locksql console image $LEA_LOCKSQL_IMAGE from locksql $LEA_LOCKSQL_REF${1:+ with the vault CLI} (LEA_LOCKSQL=0 skips it)"
-  # The console checks each client's uid against its own container's accounts: the agents run as
-  # this uid and have none there.
-  if docker build "$@" -t "$LEA_LOCKSQL_IMAGE" --build-arg "ALLOWED_UIDS=$(id -u)" "$(lea__locksql_context)" >&2; then
+  _il_v=
+  if lea__locksql_wants_vault; then _il_v=vault; fi
+  lea_log "building the locksql console image $LEA_LOCKSQL_IMAGE from locksql $LEA_LOCKSQL_REF${_il_v:+ with the vault CLI} (LEA_LOCKSQL=0 skips it)"
+  # shellcheck disable=SC2086 # no argument without the vault target
+  if lea__locksql_build "$LEA_LOCKSQL_REF" "$LEA_LOCKSQL_IMAGE" $_il_v; then
     return 0
   fi
   lea_log "warning: could not build $LEA_LOCKSQL_IMAGE; lea works without it (rerun lea init or lea update, or set LEA_LOCKSQL=0)"
@@ -221,7 +271,7 @@ lea__init_locksql_profile() {
 lea__init_locksql_vault() {
   if ! docker run --rm --entrypoint sh "$LEA_LOCKSQL_IMAGE" -c 'command -v vault' >/dev/null 2>&1; then
     lea_log "a profile reads its login from Vault: rebuilding $LEA_LOCKSQL_IMAGE with the vault CLI"
-    if ! docker build --target vault -t "$LEA_LOCKSQL_IMAGE" --build-arg "ALLOWED_UIDS=$(id -u)" "$(lea__locksql_context)" >&2; then
+    if ! lea__locksql_build "$LEA_LOCKSQL_REF" "$LEA_LOCKSQL_IMAGE" vault; then
       lea_log "warning: could not build $LEA_LOCKSQL_IMAGE with the vault CLI (lea init again to retry)"
       return 0
     fi

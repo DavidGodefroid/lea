@@ -9,23 +9,9 @@ setup() {
   lea__lockhost_root() { printf '%s' "$R"; }
   lea__lockhost_owner() { printf '%s' "$OWNER"; }
   SHA=0123456789abcdef0123456789abcdef01234567
-  # A git that logs: clone creates the destination, rev-parse HEAD prints $FAKE_GIT_SHA.
-  mkdir -p "$BATS_TEST_TMPDIR/gbin"
-  cat >"$BATS_TEST_TMPDIR/gbin/git" <<'EOT'
-#!/bin/sh
-{ printf git; for a in "$@"; do printf ' [%s]' "$a"; done; printf '\n'; } >>"$FAKE_LOG"
-for last in "$@"; do :; done
-case " $* " in
-  *" clone "*) [ "${FAKE_GIT_CLONE_RC:-0}" -eq 0 ] || exit "$FAKE_GIT_CLONE_RC"; mkdir -p "$last" ;;
-  *" rev-parse HEAD "*) printf '%s\n' "$FAKE_GIT_SHA" ;;
-esac
-EOT
-  chmod +x "$BATS_TEST_TMPDIR/gbin/git"
-  export PATH="$BATS_TEST_TMPDIR/gbin:$PATH" FAKE_GIT_SHA=$SHA
-  # The locksql release lea update downloads: its checksums.txt and a stand-in bundle.
-  D="$BATS_TEST_TMPDIR/rel"; mkdir -p "$D"
-  echo "00  locksql_0.9.0_linux_amd64.tar.gz" >"$D/checksums.txt"; echo '{}' >"$D/checksums.txt.sigstore.json"
-  export FAKE_CURL_DIR="$D"
+  D="$BATS_TEST_TMPDIR/rel"
+  export FAKE_GIT_SHA=$SHA FAKE_CURL_DIR="$D"
+  locksql_release
 }
 # on_tty: lea update talks to a terminal.
 on_tty() { lea__init_tty() { :; }; }

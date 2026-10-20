@@ -1,5 +1,5 @@
 #!/bin/sh
-# End-to-end test of lea update's dependencies (#32), against the real releases on GitHub and the
+# End-to-end test of lea update's dependencies (#32), and of lea init's locksql build, against the real releases on GitHub and the
 # real cosign (the one on PATH, else lea's pinned v3.0.6):
 #   - locksql: the latest release is found, its source cloned at the tag, the clone's commit proven
 #     by the release's Sigstore signature, then built (a stand-in docker records the build context)
@@ -58,6 +58,16 @@ else
   ko "locksql $tag update: $out"
 fi
 
+# lea init: an absent image of the pinned release, built from its verified commit.
+reset; rm -f "$w/built.sha"
+pin=$LEA_LOCKSQL_REF
+if out=$(lea__init_locksql 2>&1) && [ "$(cat "$w/built.sha" 2>/dev/null)" = "$(peeled locksql "$pin")" ] &&
+  printf '%s' "$out" | grep -q "locksql $pin: signature verified"; then
+  ok "lea init: locksql $pin built from its signed commit"
+else
+  ko "lea init build of $pin: $out"
+fi
+
 # A mirror (file://) of locksql: lea__dep_url serves its releases and its repository.
 mirror() {
   rm -rf "$w/m" "$w/m.git" "$w/t"
@@ -73,6 +83,9 @@ mirrored() {
   lea__dep_url() { printf 'file://%s' "$w/m"; }
   lea__dep_latest() { printf '%s' "$tag"; }
   out=$(lea_update_deps all 2>&1) || true
+  # lea init (and lea update's refresh) builds an absent image through the same check.
+  rm -f "$w/docker.log"
+  initout=$(LEA_LOCKSQL_REF=$tag lea__init_locksql 2>&1) || true
   unset -f lea__dep_url lea__dep_latest
   # shellcheck source=/dev/null
   . "$root/libexec/lib/deps.sh"
@@ -81,10 +94,11 @@ mirror "$tag"
 git -C "$w/t" -c user.email=x@x -c user.name=x commit -q --allow-empty -m "not released"
 git -C "$w/t" tag -f "$tag" >/dev/null
 mirrored
-if [ ! -e "$w/docker.log" ] && [ ! -s "$LEA_CONFIG" ] && printf '%s' "$out" | grep -q "is not what locksql's release workflow signed; nothing built"; then
-  ok "locksql: tag $tag moved to another commit, refused"
+if ! grep -q "^docker build" "$w/docker.log" 2>/dev/null && [ ! -s "$LEA_CONFIG" ] && printf '%s' "$out" | grep -q "is not what locksql's release workflow signed; nothing built" &&
+  printf '%s' "$initout" | grep -q "is not what locksql's release workflow signed; nothing built"; then
+  ok "locksql: tag $tag moved to another commit, refused (lea update and lea init)"
 else
-  ko "locksql: moved tag: $out"
+  ko "locksql: moved tag: $out $initout"
 fi
 prev=
 for t in $(git ls-remote --tags --refs https://github.com/DavidGodefroid/locksql.git 'v*' | sed 's|.*refs/tags/||'); do
@@ -92,10 +106,11 @@ for t in $(git ls-remote --tags --refs https://github.com/DavidGodefroid/locksql
 done
 mirror "$prev"
 mirrored
-if [ ! -e "$w/docker.log" ] && [ ! -s "$LEA_CONFIG" ] && printf '%s' "$out" | grep -q "is not what locksql's release workflow signed; nothing built"; then
-  ok "locksql: $tag served with the signature of $prev, refused"
+if ! grep -q "^docker build" "$w/docker.log" 2>/dev/null && [ ! -s "$LEA_CONFIG" ] && printf '%s' "$out" | grep -q "is not what locksql's release workflow signed; nothing built" &&
+  printf '%s' "$initout" | grep -q "is not what locksql's release workflow signed; nothing built"; then
+  ok "locksql: $tag served with the signature of $prev, refused (lea update and lea init)"
 else
-  ko "locksql: other release's signature: $out"
+  ko "locksql: other release's signature: $out $initout"
 fi
 
 # lockfile: a host v0.1.1 (a stand-in: that release ships no binary) replaced by the latest
@@ -119,7 +134,7 @@ fi
 reset; LEA_LOCKSQL_REF=v0.0.1
 lea__init_tty() { :; }
 out=$(echo n | lea_update_deps ask 2>&1)
-if [ ! -e "$w/docker.log" ] && [ ! -s "$LEA_CONFIG" ] && printf '%s' "$out" | grep -q "locksql: kept at v0.0.1"; then
+if ! grep -q "^docker build" "$w/docker.log" 2>/dev/null && [ ! -s "$LEA_CONFIG" ] && printf '%s' "$out" | grep -q "locksql: kept at v0.0.1"; then
   ok "declined: nothing built or recorded"
 else
   ko "declined: $out"

@@ -251,7 +251,9 @@ instead, for example `go-cross darwin arm64 vet ./...`.
 
 lea comes with [locksql](https://github.com/DavidGodefroid/locksql): a console that stands
 between your agents and your databases. The agents propose SQL; you approve each statement in the
-console, which alone holds the credentials. `lea init` builds the locksql console image, wires
+console, which alone holds the credentials. `lea init` builds the locksql console image (from
+the source of the release lea pins, cloned at its tag and built only once cosign proves that
+locksql's release workflow signed that release on that very commit; a branch is refused), wires
 every lea container for it and, when your projects directory has no database profile yet, walks
 you through a first one (engine, host, TLS, where the password comes from; never the password).
 A profile that reads its login from HashiCorp Vault gets the vault CLI in the console image, its
