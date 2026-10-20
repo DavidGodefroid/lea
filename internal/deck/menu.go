@@ -130,6 +130,12 @@ func (m Model) mouse(e tea.MouseMsg) (tea.Model, tea.Cmd) {
 	if m.confirm != "" {
 		return m.confirmMouse(e)
 	}
+	if e.Action == tea.MouseActionMotion {
+		if e.Button != tea.MouseButtonNone { // a drag
+			return m, nil
+		}
+		return m.hoverMove(e.Y)
+	}
 	switch e.Button {
 	case tea.MouseButtonWheelUp, tea.MouseButtonWheelDown:
 		if e.Action != tea.MouseActionPress {

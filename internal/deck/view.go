@@ -235,12 +235,17 @@ func (m Model) bottom(w int) string {
 	if m.help {
 		hint = "any key closes"
 	}
+	text := muted.Render(hint)
+	if a := m.hovered(); a != nil {
+		hint = fit(hoverText(*a), w-5, c)
+		text = lipgloss.NewStyle().Foreground(theme.Text).Render(hint)
+	}
 	// c.bl+c.h+" " (3) + hint + " " + fill + c.br (1)
 	fill := w - 5 - lipgloss.Width(hint)
-	if fill < 1 {
+	if fill < 1 && m.hovered() == nil {
 		return m.frameStyle().Render(c.bl + strings.Repeat(c.h, w-2) + c.br)
 	}
-	return m.frameStyle().Render(c.bl+c.h+" ") + muted.Render(hint) + m.frameStyle().Render(" "+strings.Repeat(c.h, fill)+c.br)
+	return m.frameStyle().Render(c.bl+c.h+" ") + text + m.frameStyle().Render(" "+strings.Repeat(c.h, max(0, fill))+c.br)
 }
 
 // rows renders the agents that fit, scrolled by whole rows so that the selected row (with its
@@ -333,7 +338,7 @@ func (m Model) row(a Agent, inner int) []string {
 	}
 	const profW, ctxW = 6, 4
 	nameW := inner - 4 - (1 + profW) - (1 + ctxW) // mark, space, glyph, space
-	g, gc := stateMark(a.State, a.Updated, m.now().Unix(), m.frame, m.ascii)
+	g, gc := stateMark(shownState(a), a.Updated, m.now().Unix(), m.frame, m.ascii)
 	if isShell(a) {
 		g, gc = "$", theme.Unknown
 	} else if a.Paused {

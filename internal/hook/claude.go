@@ -7,6 +7,7 @@ import (
 	"context"
 	"encoding/json"
 	"io"
+	"regexp"
 	"strconv"
 	"time"
 	"unicode/utf8"
@@ -23,6 +24,9 @@ const (
 	// maxNotification caps the Notification message forwarded to the daemon.
 	maxNotification = 1 << 10
 )
+
+// subagentID is a subagent's agent_id as lea forwards it (daemon.subagentID).
+var subagentID = regexp.MustCompile(`^[A-Za-z0-9_-]{1,64}$`)
 
 type caller struct {
 	sock, agent string
@@ -66,6 +70,7 @@ func Claude(ctx context.Context, event string, stdin io.Reader, stdout io.Writer
 		Message        string          `json:"message"`
 		NotifType      string          `json:"notification_type"`
 		Prompt         string          `json:"prompt"`
+		AgentID        string          `json:"agent_id"`
 	}
 	_ = json.Unmarshal(in, &p)
 	// Forward only what phase 0 needs: never tool_input or tool_response (file contents,
@@ -85,6 +90,10 @@ func Claude(ctx context.Context, event string, stdin io.Reader, stdout io.Writer
 	}
 	if event == "Notification" && p.NotifType != "" {
 		payload["notification_type"] = truncate(p.NotifType, 64)
+	}
+	// A subagent is known by its id only: never its prompt, type or transcript.
+	if (event == "SubagentStart" || event == "SubagentStop") && subagentID.MatchString(p.AgentID) {
+		payload["agent_id"] = p.AgentID
 	}
 	bctx, cancel := context.WithTimeout(ctx, budget)
 	defer cancel()

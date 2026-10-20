@@ -1084,3 +1084,46 @@ func TestReplyFromTakesTheAddresseesFirstReply(t *testing.T) {
 		t.Fatalf("m=%+v err=%v", m, err)
 	}
 }
+
+func TestSubagentCounts(t *testing.T) {
+	s := open(t)
+	a, err := s.RegisterAgent("lea-a", "claude-1", "claude", "/p", 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, _ := s.RegisterAgent("lea-b", "claude-1", "claude", "/p", 1)
+	for i, tc := range []struct {
+		n       int
+		changed bool
+	}{{2, true}, {2, false}, {0, true}} {
+		if ch, err := s.SetSubagents(a.Key, tc.n); err != nil || ch != tc.changed {
+			t.Fatalf("step %d: changed=%v err=%v", i, ch, err)
+		}
+	}
+	s.SetSubagents(a.Key, 3)
+	s.SetSubagents(b.Key, 1)
+	if n, _ := s.Subagents("lea-a"); len(n) != 1 || n[a.Key] != 3 {
+		t.Fatalf("lea-a: %v", n)
+	}
+	if n, _ := s.Subagents(""); len(n) != 2 {
+		t.Fatalf("all: %v", n)
+	}
+	if ch, err := s.SetSubagents("lea-a/nobody", 1); ch || err != nil {
+		t.Fatalf("unknown agent: changed=%v err=%v", ch, err)
+	}
+	if err := s.ClearSubagents(); err != nil {
+		t.Fatal(err)
+	}
+	if n, _ := s.Subagents(""); len(n) != 0 {
+		t.Fatalf("after clear: %v", n)
+	}
+	// A reused name starts with none.
+	s.SetSubagents(a.Key, 2)
+	s.SetState(a.Key, "done", "", 2)
+	if _, err := s.RegisterAgent("lea-a", "claude-1", "claude", "/p", 3); err != nil {
+		t.Fatal(err)
+	}
+	if n, _ := s.Subagents("lea-a"); len(n) != 0 {
+		t.Fatalf("reused: %v", n)
+	}
+}
