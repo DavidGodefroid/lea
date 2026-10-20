@@ -46,7 +46,7 @@ lea__dep_current() {
         lea_log "locksql: no pinned release (LEA_LOCKSQL_REF is empty): lea update installs nothing"
         return 1
       fi
-      if [ -d "$LEA_LOCKSQL_REF" ] || ! lea__semver "$LEA_LOCKSQL_REF" >/dev/null; then
+      if ! lea__semver "$LEA_LOCKSQL_REF" >/dev/null; then
         lea_log "locksql: LEA_LOCKSQL_REF is $LEA_LOCKSQL_REF, not a release: lea update leaves it"
         return 1
       fi

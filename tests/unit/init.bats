@@ -159,8 +159,20 @@ git_ssh() { export LEA_GIT_SSH="$1"; lea_load_config; }
   run lea_init </dev/null
   [[ "$output" == *"could not download https://github.com/DavidGodefroid/locksql/releases/download/v0.8.0/checksums.txt.sigstore.json; nothing built"* ]]
   LEA_LOCKSQL_REF=main run lea__init_locksql
-  [[ "$output" == *"LEA_LOCKSQL_REF 'main' is neither a release (vX.Y.Z) nor a checkout: lea builds no source it cannot verify"* ]]
+  [[ "$output" == *"LEA_LOCKSQL_REF 'main' is neither a release (vX.Y.Z) nor the absolute path of a checkout: lea builds no source it cannot verify"* ]]
+  # A relative checkout is refused, even when it exists.
+  mkdir -p "$P/co"
+  (cd "$P" && LEA_LOCKSQL_REF=co lea__init_locksql) 2>&1 | grep -q "LEA_LOCKSQL_REF 'co' is neither"
   if calls | grep -q '^docker \[build\]\|\[--branch\] \[main\]'; then false; fi
+}
+
+@test "a directory named like the release never stands in for its verified source" {
+  export FAKE_DOCKER_RC_IMAGE_INSPECT_AT_LOCKSQL_0_8_0=1
+  mkdir -p "$P/v0.8.0"
+  cd "$P"
+  FAKE_COSIGN_RC=1 run lea__init_locksql
+  [[ "$output" == *"is not what locksql's release workflow signed; nothing built"* ]]
+  if calls | grep -q '^docker \[build\]'; then false; fi
 }
 
 @test "LEA_LOCKSQL=0 skips the locksql image" {

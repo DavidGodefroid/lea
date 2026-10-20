@@ -136,7 +136,7 @@ EOT
 }
 
 # lea__locksql_build REF IMAGE [vault]: builds the locksql console image IMAGE (with the vault CLI:
-# locksql's vault target) from REF: a directory, a locksql checkout built as it is (to try a locksql
+# locksql's vault target) from REF: the absolute path of a locksql checkout, built as it is (to try a locksql
 # not released yet), or a release vX.Y.Z, whose source lea clones with git at that tag and builds
 # only once cosign proves that locksql's release workflow, run at that very tag on that very commit,
 # signed the release's checksums.txt (a moved tag or another release's signature is refused). Any
@@ -147,12 +147,16 @@ lea__locksql_build() {
   if [ "$_lsb_t" = vault ]; then set -- --target vault; fi
   # The console checks each client's uid against its own container's accounts: the agents run as
   # this uid and have none there.
-  if [ -d "$_lsb_r" ]; then
-    docker build "$@" -t "$_lsb_i" --build-arg "ALLOWED_UIDS=$(id -u)" "$_lsb_r" >&2
-    return
-  fi
+  # A release is always verified, even when a directory of that name exists (a relative path could
+  # name one an agent created); only an absolute path is a checkout.
   if ! lea__semver "$_lsb_r" >/dev/null; then
-    lea_log "locksql: LEA_LOCKSQL_REF '$_lsb_r' is neither a release (vX.Y.Z) nor a checkout: lea builds no source it cannot verify"
+    case $_lsb_r in
+      /*) if [ -d "$_lsb_r" ]; then
+            docker build "$@" -t "$_lsb_i" --build-arg "ALLOWED_UIDS=$(id -u)" "$_lsb_r" >&2
+            return
+          fi ;;
+    esac
+    lea_log "locksql: LEA_LOCKSQL_REF '$_lsb_r' is neither a release (vX.Y.Z) nor the absolute path of a checkout: lea builds no source it cannot verify"
     return 1
   fi
   command -v git >/dev/null 2>&1 || { lea_log "locksql: git is needed to fetch its source; nothing built"; return 1; }
