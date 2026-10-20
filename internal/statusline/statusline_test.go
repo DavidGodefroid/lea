@@ -32,7 +32,7 @@ func TestRunPrintsAndDumps(t *testing.T) {
 	if err := Run(strings.NewReader(in), &out, dump, nil); err != nil {
 		t.Fatal(err)
 	}
-	if got := strings.TrimSpace(out.String()); got != "Opus · shop · $1.20" {
+	if got := strings.TrimSpace(out.String()); got != "Opus · shop" {
 		t.Fatalf("out=%q", got)
 	}
 	b, err := os.ReadFile(dump)
@@ -49,7 +49,7 @@ func TestRunReportsContextCostAndPathNames(t *testing.T) {
 	  "cost":{"total_cost_usd":1.234},"context_window":{"used_percentage":41.6,"context_window_size":200000},
 	  "weird key":{"x":1},"list":[1,2]}`
 	out, got := run(t, in)
-	if out != "Opus · shop · 42% · $1.23" {
+	if out != "Opus · shop · 42%" {
 		t.Fatalf("out=%q", out)
 	}
 	want := Report{CtxPct: 42, CostUSD: 1.23, Paths: []string{"context_window.context_window_size",
