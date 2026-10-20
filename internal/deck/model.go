@@ -46,6 +46,8 @@ type Agent struct {
 	CtxPct   int       `json:"ctx_pct"`
 	CostUSD  float64   `json:"cost_usd"`
 	Approval *Approval `json:"approval,omitempty"`
+	// LockAsk: the agent asks the user to open a lock console (agents.LockAsk).
+	LockAsk *LockAsk `json:"lock_ask,omitempty"`
 	// Paused: the user froze the agent (p); it continues where it stopped on resume.
 	Paused bool `json:"paused,omitempty"`
 	// Subagents counts the subagents the agent still runs (agents.Row.Subagents).
@@ -92,6 +94,14 @@ type Approval struct {
 	Always  bool   `json:"always"`
 }
 
+// LockAsk is an agent's request that the user open a lock tool's console (agents.LockAsk): a
+// card the user answers with a (open) or d (decline). Only the tool and the profile, checked.
+type LockAsk struct {
+	ID      int64  `json:"id"`
+	Tool    string `json:"tool"`
+	Profile string `json:"profile"`
+}
+
 type Snapshot struct {
 	Version int64   `json:"version"`
 	Shown   string  `json:"shown"`
@@ -125,6 +135,8 @@ type API interface {
 	SetSound(ctx context.Context, on bool) (string, error)
 	// LockOpen opens a lock tool's console under the agent (the deck's L), without the keyboard.
 	LockOpen(ctx context.Context, container, tool string) (string, error)
+	// LockDecide answers an agent's lock request: open opens the console it names, as L would.
+	LockDecide(ctx context.Context, container string, id int64, open bool) (string, error)
 }
 
 // isShell reports whether a row is a shell.
@@ -380,6 +392,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		switch {
 		case msg.err != nil:
 			m.status = oneLine(msg.err.Error())
+		case msg.status == "declined":
+			m.status = "lock request declined"
 		case msg.status == "opened":
 			m.status = "locksql console opened below: click it to answer"
 		default:
@@ -715,6 +729,20 @@ func (m Model) key(k string) (tea.Model, tea.Cmd) {
 		return m, nil
 	case "a", "d", "A":
 		a := m.selectedAgent()
+		if a != nil && a.Approval == nil && a.LockAsk != nil && k != "A" {
+			// The agent asks for a lock console: a opens it (as L would, without the keyboard), d
+			// declines. The agent learns which, never what the console shows.
+			id, open, what := a.LockAsk.ID, k == "a", lockAskName(*a.LockAsk)
+			if open {
+				m.status = "opening the " + what + " console…"
+			}
+			return m, func() tea.Msg {
+				ctx, cancel := context.WithTimeout(context.Background(), callTimeout)
+				defer cancel()
+				st, err := api.LockDecide(ctx, c, id, open)
+				return lockMsg{st, err}
+			}
+		}
 		if a == nil || a.Approval == nil {
 			return m, nil
 		}
@@ -804,7 +832,7 @@ func rank(a Agent, seen map[string]int64) int {
 		return 6
 	case a.Paused: // frozen by the user: it neither needs them nor works
 		return 4
-	case shownState(a) == "blocked":
+	case shownState(a) == "blocked" || a.LockAsk != nil:
 		return 0
 	case a.State == "done" && seen[a.Key] != a.Updated:
 		return 1
@@ -839,6 +867,8 @@ func (m Model) label(a Agent) string {
 		return "shell"
 	case a.Paused:
 		return "paused"
+	case a.LockAsk != nil && a.Approval == nil:
+		return "asks for a console"
 	case a.State == "blocked" && a.Approval == nil:
 		return "see terminal" // the agent's own dialog asks: the deck has no card for it
 	case a.State == "blocked":
@@ -874,6 +904,9 @@ func (m Model) limitLabel(until int64) string {
 	}
 	return "usage limit, resumes " + t.Format("15:04")
 }
+
+// lockAskName is what a lock request names: <tool>/<profile>, cleaned for the screen.
+func lockAskName(l LockAsk) string { return clean(l.Tool) + "/" + clean(l.Profile) }
 
 // nextNeedingYou is the first agent after the selection (wrapping, in display order, folded
 // folders included) that needs the user: blocked, done and not yet seen, or holding a message for

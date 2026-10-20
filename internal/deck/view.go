@@ -236,6 +236,9 @@ func (m Model) top(w int) string {
 func (m Model) bottom(w int) string {
 	c := m.cs()
 	hint := fmt.Sprintf("n new %[1]s m msg %[1]s ? keys", c.dot)
+	if a := m.selectedAgent(); a != nil && a.Approval == nil && a.LockAsk != nil {
+		hint = fmt.Sprintf("a open console %s d decline", c.dot)
+	}
 	if a := m.selectedAgent(); a != nil && a.Approval != nil {
 		hint = fmt.Sprintf("a allow %s d deny", c.dot)
 		if a.Approval.Always {
@@ -439,6 +442,15 @@ func (m Model) row(a Agent, inner int, inFolder bool) []string {
 	detail := fit(m.detail(a, inner-4), inner-4, c)
 	line2 := bg(muted).Render(pad) + bg(muted).Render(padRight(detail, inner-4))
 	lines := []string{line1, line2}
+	if l := a.LockAsk; l != nil && a.Approval == nil {
+		warn := "⚠"
+		if m.ascii {
+			warn = "!"
+		}
+		lines = append(lines,
+			bg(muted).Render(pad)+bg(alert).Render(padRight(fit(warn+" open the "+lockAskName(*l)+" console?", inner-4, c), inner-4)),
+			bg(muted).Render(pad)+bg(lipgloss.NewStyle().Foreground(theme.Text)).Render(padRight(fit("[a] open [d]ecline", inner-4, c), inner-4)))
+	}
 	if ap := a.Approval; ap != nil {
 		warn := "⚠"
 		if m.ascii {

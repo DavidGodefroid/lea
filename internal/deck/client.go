@@ -105,6 +105,15 @@ func (c Client) LockOpen(ctx context.Context, container, tool string) (string, e
 	return r.Status, err
 }
 
+// LockDecide answers an agent's request that the user open a lock console (the card's a or d):
+// open opens it as L would, else the request is declined. It answers the console's status
+// ("opened", "already-open") or "declined".
+func (c Client) LockDecide(ctx context.Context, container string, id int64, open bool) (string, error) {
+	var r struct{ Status string }
+	err := c.call(ctx, "lock_request_decide", map[string]any{"container": container, "id": id, "open": open}, &r)
+	return r.Status, err
+}
+
 // Label is an agent's display label ("" when none), from the host's agents_list.
 func (c Client) Label(ctx context.Context, key string) (string, error) {
 	var as []struct{ Key, Label string }

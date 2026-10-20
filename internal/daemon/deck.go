@@ -44,6 +44,9 @@ type Agents interface {
 	LockOpen(ctx context.Context, container, tool, profile string) (string, error)
 	LockClose(ctx context.Context, container, tool, profile string) (string, error)
 	LockList(ctx context.Context, container string) ([]agents.LockRow, error)
+	// LockCheckRequest checks an agent's request that the user open a console (lock_request):
+	// it opens nothing and says nothing of the consoles that run.
+	LockCheckRequest(ctx context.Context, container, tool, profile string) error
 	Changed()
 }
 
@@ -55,7 +58,7 @@ var deckMethods = map[string]bool{
 	"agents_resume_stopped": true,
 	"deck_attached":         true, "deck_popup": true, "agent_label": true, "shell_open": true,
 	"shell_split": true, "agent_pause": true,
-	"lock_open": true, "lock_close": true, "lock_list": true,
+	"lock_open": true, "lock_close": true, "lock_list": true, "lock_request_decide": true,
 }
 
 func (d *Daemon) SetAgents(a Agents) {
@@ -228,6 +231,8 @@ func (d *Daemon) dispatchDeck(ctx context.Context, o Origin, req wire.Request) (
 		}
 		st, err := do(ctx, p.Container, p.Tool, p.Profile)
 		return map[string]string{"status": st}, err
+	case "lock_request_decide":
+		return d.lockRequestDecide(ctx, a, req.Params)
 	case "lock_list":
 		var p struct{ Container string }
 		if err := json.Unmarshal(req.Params, &p); err != nil {

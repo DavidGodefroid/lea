@@ -252,6 +252,38 @@ func (c *Config) resolve(root string) error {
 	return nil
 }
 
+// lockProfile is a lock tool's profile name (agents.lockProfileRe).
+var lockProfile = regexp.MustCompile(`^[a-z0-9][a-z0-9_-]{0,31}$`)
+
+// maxLockAgentProfiles caps an allow-list of profiles agents may ask for.
+const maxLockAgentProfiles = 32
+
+// lockAgentProfiles parses an allow-list of lock profiles agents may ask the user to open:
+// profile names separated by spaces or commas; empty (the default) allows none.
+func lockAgentProfiles(v string) ([]string, error) {
+	ps := strings.FieldsFunc(v, func(r rune) bool { return r == ' ' || r == ',' || r == '\t' })
+	if len(ps) > maxLockAgentProfiles {
+		return nil, fmt.Errorf("at most %d profiles", maxLockAgentProfiles)
+	}
+	for _, p := range ps {
+		if !lockProfile.MatchString(p) {
+			return nil, fmt.Errorf("invalid profile name '%s' (lowercase letters, digits, _ and -, at most 32)", p)
+		}
+	}
+	return ps, nil
+}
+
+// LocksqlAgentProfiles are the locksql profiles agents may ask the user to open
+// (LEA_LOCKSQL_AGENT_PROFILES); none by default. Only the daemon reads it, when an agent asks: an
+// invalid list refuses every request (and nothing else).
+func (c *Config) LocksqlAgentProfiles() ([]string, error) {
+	ps, err := lockAgentProfiles(c.Get("LEA_LOCKSQL_AGENT_PROFILES"))
+	if err != nil {
+		return nil, fmt.Errorf("LEA_LOCKSQL_AGENT_PROFILES: %v", err)
+	}
+	return ps, nil
+}
+
 var providerName = regexp.MustCompile(`^[a-z][a-z0-9-]{0,15}$`)
 
 // releaseVersion is a release's version, vMAJOR.MINOR.PATCH (libexec/lib/host.sh lea__semver).

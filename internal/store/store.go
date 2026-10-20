@@ -60,6 +60,12 @@ CREATE TABLE IF NOT EXISTS leases(
   id INTEGER PRIMARY KEY AUTOINCREMENT, container TEXT NOT NULL, agent TEXT NOT NULL, glob TEXT NOT NULL,
   expires INTEGER NOT NULL, at INTEGER NOT NULL);
 CREATE INDEX IF NOT EXISTS leases_container ON leases(container, expires);
+
+CREATE TABLE IF NOT EXISTS lock_requests(
+  id INTEGER PRIMARY KEY AUTOINCREMENT, container TEXT NOT NULL, agent TEXT NOT NULL, tool TEXT NOT NULL,
+  profile TEXT NOT NULL, state TEXT NOT NULL DEFAULT 'pending', result TEXT NOT NULL DEFAULT '',
+  at INTEGER NOT NULL, decided INTEGER NOT NULL DEFAULT 0);
+CREATE INDEX IF NOT EXISTS lock_requests_container ON lock_requests(container, tool, state);
 `
 
 type Store struct{ db *sql.DB }

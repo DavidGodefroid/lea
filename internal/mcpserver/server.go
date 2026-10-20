@@ -156,7 +156,16 @@ func New(sock, agent, version string) *mcp.Server {
 		func(ctx context.Context, _ *mcp.CallToolRequest, in releaseIn) (*mcp.CallToolResult, any, error) {
 			return proxy(ctx, sock, agent, "lease_release", short, in), nil, nil
 		})
+	mcp.AddTool(s, &mcp.Tool{Name: "lock_request", Description: "Ask the user to open a lock tool's console (locksql) for a profile the user allowed agents to ask for. The user sees the request in the deck and opens the console, or not; you never see, type into or answer a console. The answer is requested, or why it was refused; what the user decided arrives later as a message. One request per tool per minute per container."},
+		func(ctx context.Context, _ *mcp.CallToolRequest, in lockRequestIn) (*mcp.CallToolResult, any, error) {
+			return proxy(ctx, sock, agent, "lock_request", short, in), nil, nil
+		})
 	return s
+}
+
+type lockRequestIn struct {
+	Tool    string `json:"tool" jsonschema:"the lock tool: locksql"`
+	Profile string `json:"profile" jsonschema:"the console profile, one the user allowed agents to ask for"`
 }
 
 type leaseIn struct {

@@ -16,17 +16,30 @@ type Approval struct {
 	Always  bool   `json:"always"`
 }
 
+// LockAsk is an agent's pending request that the user open a lock tool's console (the agent's
+// oldest): the deck shows it as a card the user answers. Tool and profile were checked when the
+// agent asked (a lock tool's name, a profile on the user's allow-list) and are cleaned again here.
+type LockAsk struct {
+	ID      int64  `json:"id"`
+	Tool    string `json:"tool"`
+	Profile string `json:"profile"`
+}
+
+// LockRequestTTL is how long a lock request waits for the user before it expires.
+const LockRequestTTL = 600
+
 // facts are what a row shows besides the agent's own record: its unread messages, the unread
 // messages it sent the user, its usage, its running subagents and its oldest pending approval.
 type facts struct {
 	unread, forUser map[string]int
 	usage           map[string]store.Usage
 	approval        map[string]*Approval
+	lockAsk         map[string]*LockAsk
 	status          map[string]store.TaskState
 	subagents       map[string]int
 }
 
-func loadFacts(st *store.Store, container string) (facts, error) {
+func loadFacts(st *store.Store, container string, now int64) (facts, error) {
 	var f facts
 	var err error
 	if f.unread, err = st.UnreadCounts(); err != nil {
@@ -54,6 +67,17 @@ func loadFacts(st *store.Store, container string) (facts, error) {
 			f.approval[p.Agent] = &Approval{ID: p.ID, Tool: oneLineCap(p.Tool, maxToolRunes), Summary: Summary(p.Tool, p.Input), Always: p.Always}
 		}
 	}
+	locks, err := st.PendingLockRequests(container, LockRequestTTL, now)
+	if err != nil {
+		return f, err
+	}
+	f.lockAsk = map[string]*LockAsk{}
+	for _, l := range locks { // oldest first
+		if _, ok := f.lockAsk[l.Agent]; !ok {
+			f.lockAsk[l.Agent] = &LockAsk{ID: l.ID, Tool: oneLineCap(strings.Map(safeRune, l.Tool), maxToolRunes),
+				Profile: oneLineCap(strings.Map(safeRune, l.Profile), maxToolRunes)}
+		}
+	}
 	return f, nil
 }
 
@@ -63,6 +87,7 @@ func (f facts) row(r Row) Row {
 		r.CtxPct, r.CostUSD = u.CtxPct, u.CostUSD
 	}
 	r.Approval = f.approval[r.Key]
+	r.LockAsk = f.lockAsk[r.Key]
 	ts := f.status[r.Key]
 	r.Status, r.Waiting, r.BlockedOn = ts.Status, ts.Next, ts.Blocked
 	r.Subagents = f.subagents[r.Key]

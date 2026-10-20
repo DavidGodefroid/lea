@@ -220,6 +220,7 @@ func runDaemon(stderr io.Writer) int {
 		DefaultModel:    os.Getenv("LEA_MODEL"),
 	})
 	d.SetAgents(m)
+	d.SweepLockRequestsLater()
 	// A sound when an agent waits for the user and when a turn ends, while a deck shows its
 	// container; LEA_SOUND=0 starts with the sounds off (lea sound and the deck's S switch them).
 	if files, on := soundFiles(os.Getenv); len(files) > 0 {
