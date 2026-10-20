@@ -555,7 +555,8 @@ func TestCommandsMatchTheGoldenFiles(t *testing.T) {
 			want: []string{"curl [-fsSL] [-o] [$W/data/lea/host/update/install.sh] [https://github.com/DavidGodefroid/lea/releases/download/v9.9.9/install.sh]",
 				"cosign [verify-blob] [--bundle] [$W/data/lea/host/update/checksums.txt.sigstore.json]",
 				"installer [--version] [v9.9.9] [--no-init]", "docker [image] [inspect] [locksql:",
-				"lea: updating this release install to lea v9.9.9 with its installer", "lea: updated; running lea containers keep their image until they stop"},
+				"lea: updating this release install to lea v9.9.9 with its installer", "lea: updated; running lea containers keep their image until they stop",
+				"curl [-fsSLI] [-o] [/dev/null] [-w] [%{url_effective}] [https://github.com/DavidGodefroid/locksql/releases/latest]"},
 			absent: []string{"go-build", "raw.githubusercontent.com"}},
 		// The world's root is no release's directory: rollback is for a release install.
 		{name: "rollback outside a release install", args: []string{"rollback"}, exit: 1,

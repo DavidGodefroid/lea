@@ -13,6 +13,7 @@ setup() {
   U="$HOME/.config/lea/lea.conf"
   echo '{"a":1}' >"$HOME/.claude.json"
   S=$(lea_state_dir); H=$(lea_host_dir)
+  locksql_release
 }
 # interactive: lea init as on a terminal (the guided locksql steps need one).
 interactive() { unset LEA_INIT_NONINTERACTIVE; lea__init_tty() { :; }; }
@@ -121,7 +122,7 @@ git_ssh() { export LEA_GIT_SSH="$1"; lea_load_config; }
   [ "$status" -eq 0 ]
   run calls
   [[ "$output" == *"docker [image] [inspect] [locksql:0.8.0]"* ]]
-  [[ "$output" == *"docker [build] [-t] [locksql:0.8.0] [--build-arg] [ALLOWED_UIDS=$(id -u)] [https://github.com/DavidGodefroid/locksql.git#v0.8.0]"* ]]
+  [[ "$output" == *"docker [build] [-t] [locksql:0.8.0] [--build-arg] [ALLOWED_UIDS=$(id -u)] ["*"/src]"* ]]
 }
 
 @test "a present locksql image is not rebuilt" {
@@ -137,6 +138,42 @@ git_ssh() { export LEA_GIT_SSH="$1"; lea_load_config; }
   [ "$status" -eq 0 ]
   [[ "$output" == *"warning: could not build locksql:0.8.0"* ]]
   [[ "$output" == *"ready. Run: lea"* ]]
+}
+
+@test "init builds a release of locksql only from the commit its signature covers" {
+  export FAKE_DOCKER_RC_IMAGE_INSPECT_AT_LOCKSQL_0_8_0=1
+  run lea_init </dev/null
+  [[ "$output" == *"locksql v0.8.0: signature verified (commit $FAKE_GIT_SHA); building locksql:0.8.0"* ]]
+  run calls
+  [[ "$output" == *"git [-C] ["*"/src] [fetch] [-q] [--depth] [1] [--no-tags] [https://github.com/DavidGodefroid/locksql.git] [+refs/tags/v0.8.0:refs/tags/v0.8.0]"*"git [-C] ["*"/src] [-c] [advice.detachedHead=false] [checkout] [-q] [refs/tags/v0.8.0^{commit}]"* ]]
+  [[ "$output" != *"[--branch]"* ]]
+  [[ "$output" == *"cosign [verify-blob] [--bundle] ["*"/checksums.txt.sigstore.json] [--certificate-identity-regexp] [^https://github\\.com/DavidGodefroid/locksql/\\.github/workflows/release\\.yml@refs/tags/v0\\.8\\.0\$] [--certificate-oidc-issuer] [https://token.actions.githubusercontent.com] [--certificate-github-workflow-repository] [DavidGodefroid/locksql] [--certificate-github-workflow-sha] [$FAKE_GIT_SHA] ["*"/checksums.txt]"* ]]
+  [ "$(calls | grep -n '^cosign' | cut -d: -f1)" -lt "$(calls | grep -n '^docker \[build\]' | cut -d: -f1)" ]
+}
+
+@test "init never builds a locksql whose tag moved, whose signature fails, or that is not a release" {
+  export FAKE_DOCKER_RC_IMAGE_INSPECT_AT_LOCKSQL_0_8_0=1
+  FAKE_COSIGN_RC=1 run lea_init </dev/null
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"locksql: v0.8.0 at $FAKE_GIT_SHA is not what locksql's release workflow signed; nothing built"*"warning: could not build locksql:0.8.0; lea works without it"* ]]
+  rm "$FAKE_CURL_DIR/checksums.txt.sigstore.json"
+  run lea_init </dev/null
+  [[ "$output" == *"could not download https://github.com/DavidGodefroid/locksql/releases/download/v0.8.0/checksums.txt.sigstore.json; nothing built"* ]]
+  LEA_LOCKSQL_REF=main run lea__init_locksql
+  [[ "$output" == *"LEA_LOCKSQL_REF 'main' is neither a release (vX.Y.Z) nor the absolute path of a checkout: lea builds no source it cannot verify"* ]]
+  # A relative checkout is refused, even when it exists.
+  mkdir -p "$P/co"
+  (cd "$P" && LEA_LOCKSQL_REF=co lea__init_locksql) 2>&1 | grep -q "LEA_LOCKSQL_REF 'co' is neither"
+  if calls | grep -q '^docker \[build\]\|\[--branch\] \[main\]'; then false; fi
+}
+
+@test "a directory named like the release never stands in for its verified source" {
+  export FAKE_DOCKER_RC_IMAGE_INSPECT_AT_LOCKSQL_0_8_0=1
+  mkdir -p "$P/v0.8.0"
+  cd "$P"
+  FAKE_COSIGN_RC=1 run lea__init_locksql
+  [[ "$output" == *"is not what locksql's release workflow signed; nothing built"* ]]
+  if calls | grep -q '^docker \[build\]'; then false; fi
 }
 
 @test "LEA_LOCKSQL=0 skips the locksql image" {
@@ -375,9 +412,7 @@ update_root() {
   cp "$LEA_ROOT/config/lea.conf" "$R/config/"
   if [ "${1:-}" = checkout ]; then
     mkdir -p "$R/.git"
-    printf '#!/bin/sh\n{ printf git; for a in "$@"; do printf " [%%s]" "$a"; done; printf "\\n"; } >>"$FAKE_LOG"\n' >"$BATS_TEST_TMPDIR/gbin/git"
-    chmod +x "$BATS_TEST_TMPDIR/gbin/git"
-    export PATH="$BATS_TEST_TMPDIR/gbin:$PATH"
+    fake_git
   fi
   LEA_ROOT=$R
 }
@@ -483,8 +518,20 @@ EOT
   [[ "$output" == *"installer --version v9.9.9 --no-init"*"docker [pull] [ghcr.io/davidgodefroid/lea:9.9.9]"* ]]
   [[ "$output" == *"docker [pull] [ghcr.io/davidgodefroid/lea-proxy:9.9.9]"* ]]
   [[ "$output" == *"docker [image] [inspect] [locksql:9.0.0]"* ]]
-  [[ "$output" == *"docker [build] [-t] [locksql:9.0.0] [--build-arg] [ALLOWED_UIDS=$(id -u)] [https://github.com/DavidGodefroid/locksql.git#v9.0.0]"* ]]
+  [[ "$output" == *"docker [build] [-t] [locksql:9.0.0] [--build-arg] [ALLOWED_UIDS=$(id -u)] ["*"/src]"* ]]
   [[ "$output" != *"locksql:0.8.0"* ]]
+}
+
+@test "release update ends with the new installation checking the dependencies, with its own pins" {
+  update_root
+  fake_release v9.9.9
+  export FAKE_CURL_EFFECTIVE_locksql=https://github.com/DavidGodefroid/locksql/releases/tag/v9.1.0
+  run lea_update --deps none
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"updated; running lea containers keep their image"*"locksql: v9.0.0 -> v9.1.0 (release notes: https://github.com/DavidGodefroid/locksql/releases/tag/v9.1.0)"*"locksql: not updated (--deps none)"* ]]
+  run calls
+  [[ "$output" == *"curl [-fsSLI] [-o] [/dev/null] [-w] [%{url_effective}] [https://github.com/DavidGodefroid/locksql/releases/latest]"* ]]
+  [[ "$output" != *"locksql/releases/download"* ]]
 }
 
 @test "release update does not rebuild a present locksql image" {
@@ -586,7 +633,17 @@ EOT
   run lea_update
   [ "$status" -eq 0 ]
   run calls
-  [[ "$output" == *"docker [build] [-t] [locksql:0.8.0] [--build-arg] [ALLOWED_UIDS=$(id -u)] [https://github.com/DavidGodefroid/locksql.git#v0.8.0]"* ]]
+  [[ "$output" == *"docker [build] [-t] [locksql:0.8.0] [--build-arg] [ALLOWED_UIDS=$(id -u)] ["*"/src]"* ]]
+}
+
+@test "update of a checkout checks the dependencies with the pulled code" {
+  src=$LEA_ROOT
+  update_root checkout
+  cp -R "$src/libexec" "$R/"
+  export FAKE_CURL_EFFECTIVE_locksql=https://github.com/DavidGodefroid/locksql/releases/tag/v0.9.0
+  run lea_update
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"locksql: v0.8.0 -> v0.9.0"*"locksql: not updated (no terminal to ask)"* ]]
 }
 
 @test "update of a checkout with LEA_LOCKSQL=0 builds no locksql image" {
@@ -686,7 +743,7 @@ y
   [ "$status" -eq 0 ]
   grep -qx "LEA_LOCKSQL_VAULT_ADDR='https://vault.example.com'" "$U"
   run calls
-  [[ "$output" == *"docker [build] [--target] [vault] [-t] [locksql:0.8.0] [--build-arg] [ALLOWED_UIDS=$(id -u)] [https://github.com/DavidGodefroid/locksql.git#v0.8.0]"* ]]
+  [[ "$output" == *"docker [build] [--target] [vault] [-t] [locksql:0.8.0] [--build-arg] [ALLOWED_UIDS=$(id -u)] ["*"/src]"* ]]
   [[ "$output" == *"[-e] [VAULT_ADDR=https://vault.example.com] [--entrypoint] [vault] [locksql:0.8.0] [token] [lookup]"* ]]
   [[ "$output" == *"docker [run] [-i] [--rm] [--log-driver] [none] [--user] [locksql] [-v] [locksql-home:/home/locksql] [-e] [VAULT_ADDR=https://vault.example.com] [--entrypoint] [vault] [locksql:0.8.0] [login] [-method=oidc]"* ]]
 }
