@@ -37,3 +37,31 @@ EOT
 }
 # no_tmux: skips the test when the test image ships a tmux (these tests need it absent).
 no_tmux() { if command -v tmux >/dev/null 2>&1; then skip "tmux is installed in the test image"; fi; }
+
+# fake_git: a git that logs its calls, first on PATH: init and clone create their destination,
+# rev-parse HEAD prints $FAKE_GIT_SHA (FAKE_GIT_FETCH_RC: a failing fetch).
+fake_git() {
+  mkdir -p "$BATS_TEST_TMPDIR/gbin"
+  cat >"$BATS_TEST_TMPDIR/gbin/git" <<'EOT'
+#!/bin/sh
+{ printf git; for a in "$@"; do printf ' [%s]' "$a"; done; printf '\n'; } >>"$FAKE_LOG"
+for last in "$@"; do :; done
+case " $* " in
+  *" init "*|*" clone "*) mkdir -p "$last" ;;
+  *" fetch "*) exit "${FAKE_GIT_FETCH_RC:-0}" ;;
+  *" rev-parse HEAD "*) printf '%s\n' "$FAKE_GIT_SHA" ;;
+esac
+EOT
+  chmod +x "$BATS_TEST_TMPDIR/gbin/git"
+  export PATH="$BATS_TEST_TMPDIR/gbin:$PATH" FAKE_GIT_SHA=${FAKE_GIT_SHA:-0123456789abcdef0123456789abcdef01234567}
+}
+# locksql_release: a git (fake_git) and a locksql release as lea fetches them before a build: its
+# checksums.txt and a stand-in Sigstore bundle (the fake cosign accepts it unless FAKE_COSIGN_RC),
+# served by the fake curl from $FAKE_CURL_DIR.
+locksql_release() {
+  fake_git
+  export FAKE_CURL_DIR=${FAKE_CURL_DIR:-$BATS_TEST_TMPDIR/rel}
+  mkdir -p "$FAKE_CURL_DIR"
+  [ -f "$FAKE_CURL_DIR/checksums.txt" ] || echo "00  locksql_0.0.0_linux_amd64.tar.gz" >"$FAKE_CURL_DIR/checksums.txt"
+  [ -f "$FAKE_CURL_DIR/checksums.txt.sigstore.json" ] || echo '{}' >"$FAKE_CURL_DIR/checksums.txt.sigstore.json"
+}

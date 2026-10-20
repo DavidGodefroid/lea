@@ -55,16 +55,20 @@ lea__guard_overlap() {
   fi
 }
 
-# lea_update [--background]: a git checkout pulls and rebuilds; a release install (no .git) is
-# replaced by the latest release, installed with that release's own installer. --background is
-# lea_update_background.
+# lea_update [--background | --deps ask|all|none]: a git checkout pulls and rebuilds; a release
+# install (no .git) is replaced by the latest release, installed with that release's own
+# installer. Then the updated lea checks its dependencies (lea_update_deps: ask, the default, asks
+# for each newer release; all takes them all, none none). --background is lea_update_background,
+# which never touches a dependency.
 lea_update() {
-  if [ "${1:-}" = --background ]; then
-    lea_update_background
-    return
-  fi
+  _up_deps=ask
+  case ${1:-} in
+    --background) lea_update_background; return ;;
+    --deps) _up_deps=${2:-} ;;
+  esac
+  case $_up_deps in ask|all|none) ;; *) lea_die "usage: lea update [--deps ask|all|none]" ;; esac
   if [ ! -e "$LEA_ROOT/.git" ]; then
-    lea__update_release
+    lea__update_release "$_up_deps"
     return 0
   fi
   git -C "$LEA_ROOT" pull --ff-only
@@ -72,6 +76,8 @@ lea_update() {
   lea_load_config
   lea_refresh_images
   lea_log "updated; running lea containers keep their image until they stop (lea stop --all); the daemon restarts on the new binary at the next lea"
+  # The pulled code checks the dependencies, with its own pins and floors.
+  "$LEA_ROOT/libexec/lea-sh" update-deps "$_up_deps" || lea_log "warning: the dependencies were not checked (rerun lea update)"
 }
 
 # lea__sha256 FILE: the SHA-256 of FILE, in hex.
@@ -139,10 +145,10 @@ lea__link_root() {
   (cd "$(dirname "$_lr")/.." && pwd -P)
 }
 
-# lea__update_release: resolves the latest release under LEA_RELEASES_URL, runs that release's
+# lea__update_release ask|all|none: resolves the latest release under LEA_RELEASES_URL, runs that release's
 # install.sh (downloaded to <data>/lea/host/update, checked against the release's checksums.txt,
 # whose Sigstore signature is verified first) with --no-init, then hands over to the new installation (its libexec/lea-sh refresh-images) to
-# pull its versioned images and build its locksql console image.
+# pull its versioned images and build its locksql console image, and to check its dependencies.
 lea__update_release() {
   _ur_v=$(curl -fsSLI -o /dev/null -w '%{url_effective}' "$LEA_RELEASES_URL/latest" | sed 's|.*/tag/||') || _ur_v=
   case $_ur_v in v*) ;; *) lea_die "could not find the latest lea release ($LEA_RELEASES_URL/latest)" ;; esac
@@ -178,12 +184,22 @@ lea__update_release() {
     lea_die "lea $_ur_v is installed but its images could not be refreshed: rerun lea update"
   if [ "$_ur_new" != "$LEA_ROOT" ]; then lea__prune_installs "$_ur_new" "$LEA_ROOT"; fi
   lea_log "updated; running lea containers keep their image until they stop (lea stop --all)"
+  # The new installation checks the dependencies, with its own pins and floors.
+  "$_ur_new/libexec/lea-sh" update-deps "${1:-ask}" || lea_log "warning: the dependencies were not checked (rerun lea update)"
 }
 
-# lea__semver V: "MAJOR MINOR PATCH" of a release version vMAJOR.MINOR.PATCH; fails on anything
-# else (dev, a git describe, a pre-release).
+# lea__semver V: "MAJOR MINOR PATCH" of a release version vMAJOR.MINOR.PATCH, one line of it;
+# fails on anything else (dev, a git describe, a pre-release, a leading zero, several lines).
 lea__semver() {
-  printf '%s\n' "$1" | sed -n 's/^v\([0-9][0-9]*\)\.\([0-9][0-9]*\)\.\([0-9][0-9]*\)$/\1 \2 \3/p' | grep .
+  case $1 in *'
+'*) return 1 ;; esac
+  _sv=$(printf '%s\n' "$1" | sed -n 's/^v\([0-9][0-9]*\)\.\([0-9][0-9]*\)\.\([0-9][0-9]*\)$/\1 \2 \3/p')
+  [ -n "$_sv" ] || return 1
+  # No leading zero (v01.2.3 is not v1.2.3), at most 9 digits (the shell compares them).
+  for _sv_n in $_sv; do
+    case $_sv_n in 0?*|??????????*) return 1 ;; esac
+  done
+  printf '%s\n' "$_sv"
 }
 
 # lea__notice TEXT: the deck's update notice (<host>/update-notice), "vX.Y.Z installed",

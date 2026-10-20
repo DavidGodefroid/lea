@@ -13,6 +13,7 @@ lea_load_config() {
   _lc_appt=${LEA_APPROVAL_TIMEOUT:-}
   # shellcheck source=/dev/null
   . "$LEA_ROOT/config/lea.conf"
+  _lc_psql=${LEA_LOCKSQL_REF:-} _lc_pimg=${LEA_LOCKSQL_IMAGE:-} _lc_pmq=${LEA_LOCKMQ_REF:-} _lc_plf=${LEA_LOCKFILE_REF:-}
   _lc_user=$(lea_user_config_path)
   case $_lc_user in /*) ;; *) _lc_user=./$_lc_user ;; esac
   if [ -n "${LEA_CONFIG:-}" ] || [ -f "$_lc_user" ]; then
@@ -57,6 +58,12 @@ lea_load_config() {
   [ -z "$LEA_LOCKMQ_REF" ] || lea__semver "$LEA_LOCKMQ_REF" >/dev/null || lea_die "LEA_LOCKMQ_REF must be a lockmq release (vX.Y.Z), not '$LEA_LOCKMQ_REF'"
   [ -z "$LEA_LOCKFILE_REF" ] || lea__semver "$LEA_LOCKFILE_REF" >/dev/null || lea_die "LEA_LOCKFILE_REF must be a lockfile release (vX.Y.Z), not '$LEA_LOCKFILE_REF'"
   [ -z "$LEA_LOCKFILE_REF" ] || lea__lockfile_safe "$LEA_LOCKFILE_REF" || lea_die "LEA_LOCKFILE_REF $LEA_LOCKFILE_REF is refused: lockfile v0.1.0 lets a plugin escape its sandbox (v0.1.1 or later)"
+  # A release lea update recorded in the user config never holds lea below its own, newer pin
+  # (a later lea may need it); an empty ref or a locksql checkout stays as it is. After the
+  # checks: a refused ref (lockfile v0.1.0) is still refused, never quietly raised.
+  if lea__older "${LEA_LOCKSQL_REF:-}" "$_lc_psql"; then LEA_LOCKSQL_REF=$_lc_psql LEA_LOCKSQL_IMAGE=$_lc_pimg; fi
+  if lea__older "${LEA_LOCKMQ_REF:-}" "$_lc_pmq"; then LEA_LOCKMQ_REF=$_lc_pmq; fi
+  if lea__older "${LEA_LOCKFILE_REF:-}" "$_lc_plf"; then LEA_LOCKFILE_REF=$_lc_plf; fi
   LEA_AUTOUPDATE=${LEA_AUTOUPDATE:-1}
   case $LEA_AUTOUPDATE in 0|1) ;; *) lea_die "LEA_AUTOUPDATE must be 1 (check for a new release every day) or 0, not '$LEA_AUTOUPDATE'" ;; esac
   LEA_AUTOUPDATE_SKIP=${LEA_AUTOUPDATE_SKIP:-}
@@ -130,18 +137,23 @@ lea__check_git_ssh() {
   [ "$_cg_n" -le 16 ] || lea_die "LEA_GIT_SSH lists $_cg_n endpoints, at most 16"
 }
 
-# lea_user_config_set KEY VALUE: sets KEY='VALUE' in the user config and keeps every other line.
-# The file is private; a symlinked file is refused.
+# lea_user_config_set KEY VALUE [KEY VALUE ...]: sets each KEY='VALUE' in the user config and keeps
+# every other line, all of them in one write (never some of them). The file is private; a
+# symlinked file is refused.
 lea_user_config_set() {
   _cs_f=$(lea_user_config_path)
   if [ -L "$_cs_f" ]; then lea_die "refusing to write $_cs_f: it is a symbolic link"; fi
   mkdir -p "${_cs_f%/*}"
-  _cs_v=$(printf '%s' "$2" | sed "s/'/'\\\\''/g")
   _cs_t=$(mktemp "$_cs_f.XXXXXX") || lea_die "cannot create a temporary file next to $_cs_f"
-  if {
-    if [ -f "$_cs_f" ]; then grep -v "^$1=" "$_cs_f" || true; fi
-    printf "%s='%s'\n" "$1" "$_cs_v"
-  } >"$_cs_t" && chmod 600 "$_cs_t" && mv -f "$_cs_t" "$_cs_f"; then return 0; fi
-  rm -f "$_cs_t"
+  if { if [ -f "$_cs_f" ]; then cat "$_cs_f"; fi; } >"$_cs_t"; then
+    while [ $# -ge 2 ]; do
+      _cs_v=$(printf '%s' "$2" | sed "s/'/'\\\\''/g")
+      if ! { grep -v "^$1=" "$_cs_t" || true; printf "%s='%s'\n" "$1" "$_cs_v"; } >"$_cs_t.n" ||
+        ! mv -f "$_cs_t.n" "$_cs_t"; then break; fi
+      shift 2
+    done
+    if [ $# -eq 0 ] && chmod 600 "$_cs_t" && mv -f "$_cs_t" "$_cs_f"; then return 0; fi
+  fi
+  rm -f "$_cs_t" "$_cs_t.n"
   return 1
 }

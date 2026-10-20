@@ -1,7 +1,7 @@
 #!/bin/sh
 # Fake curl: records argv, exits FAKE_CURL_RC. With -w (lea update resolving the latest release)
-# it prints FAKE_CURL_EFFECTIVE. With -o FILE it copies $FAKE_CURL_DIR/<last part of the URL>
-# into FILE (exit 22 when that file is missing). Otherwise it prints FAKE_CURL_BODY.
+# it prints FAKE_CURL_EFFECTIVE (FAKE_CURL_EFFECTIVE_<repo> for a dependency's). With -o FILE it
+# copies $FAKE_CURL_DIR/<last part of the URL> into FILE (exit 22 when that file is missing). Otherwise it prints FAKE_CURL_BODY.
 { printf 'curl'; for a in "$@"; do printf ' [%s]' "$a"; done; printf '\n'; } >>"${FAKE_LOG:?}"
 out='' url='' w=''
 while [ $# -gt 0 ]; do
@@ -10,7 +10,16 @@ while [ $# -gt 0 ]; do
 done
 rc=${FAKE_CURL_RC:-0}
 [ "$rc" -eq 0 ] || exit "$rc"
-if [ -n "$w" ]; then printf '%s' "${FAKE_CURL_EFFECTIVE:-}"; exit 0; fi
+if [ -n "$w" ]; then
+  # The latest release of another repository than lea's (lea update's dependencies):
+  # FAKE_CURL_EFFECTIVE_<repo>.
+  repo=$(printf '%s' "$url" | sed -n 's|^https://github.com/DavidGodefroid/\([a-z]*\)/releases/latest$|\1|p')
+  case $repo in
+    ''|lea) printf '%s' "${FAKE_CURL_EFFECTIVE:-}" ;;
+    *) eval "printf '%s' \"\${FAKE_CURL_EFFECTIVE_$repo:-}\"" ;;
+  esac
+  exit 0
+fi
 if [ -n "$out" ] && [ "$out" != /dev/null ]; then
   [ -f "${FAKE_CURL_DIR:-/nonexistent}/${url##*/}" ] || exit 22
   cp "$FAKE_CURL_DIR/${url##*/}" "$out"
