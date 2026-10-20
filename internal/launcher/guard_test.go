@@ -61,6 +61,33 @@ func TestProjectsDirComesFromTheConfiguration(t *testing.T) {
 	}
 }
 
+// A credential directory, one inside it and one containing it (through a symlink) cannot be a
+// projects dir; a sibling with a common prefix can.
+func TestGuardRefusesCredentialDirectories(t *testing.T) {
+	w := newWorld(t, repoRoot(t))
+	l := w.launcher()
+	for _, d := range []string{".ssh", ".gnupg", ".aws", ".config/gh", ".kube", ".docker"} {
+		os.MkdirAll(w.home+"/"+d+"/sub", 0o700)
+		for _, p := range []string{w.home + "/" + d, w.home + "/" + d + "/sub"} {
+			if err := l.guardProjects(physDir(p)); err == nil || !strings.Contains(err.Error(), "it overlaps") {
+				t.Errorf("%s: err = %v", p, err)
+			}
+		}
+	}
+	os.RemoveAll(w.home + "/.ssh")
+	os.MkdirAll(w.dir+"/elsewhere/ssh", 0o700)
+	os.Symlink(w.dir+"/elsewhere/ssh", w.home+"/.ssh")
+	for _, p := range []string{w.dir + "/elsewhere", w.dir + "/elsewhere/ssh"} {
+		if err := l.guardProjects(physDir(p)); err == nil || !strings.Contains(err.Error(), "it overlaps") {
+			t.Errorf("%s: err = %v", p, err)
+		}
+	}
+	os.MkdirAll(w.home+"/.sshx", 0o700)
+	if err := l.guardProjects(physDir(w.home + "/.sshx")); err != nil {
+		t.Fatalf("sibling refused: %v", err)
+	}
+}
+
 // The lea installation, a directory inside it and one containing it cannot be projects dirs.
 func TestGuardRefusesTheInstallation(t *testing.T) {
 	w := newWorld(t, repoRoot(t))
