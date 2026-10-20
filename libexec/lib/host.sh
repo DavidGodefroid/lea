@@ -72,6 +72,53 @@ lea__sha256() {
   else shasum -a 256 "$1" | cut -d' ' -f1; fi
 }
 
+# lea__cosign_pin PLATFORM: the SHA-256 of cosign v3.0.6 for PLATFORM (linux-amd64, ...), the
+# pins of install.sh (tests/unit/install.bats keeps them equal); fails for any other platform.
+lea__cosign_pin() {
+  case $1 in
+    linux-amd64) echo c956e5dfcac53d52bcf058360d579472f0c1d2d9b69f55209e256fe7783f4c74 ;;
+    linux-arm64) echo bedac92e8c3729864e13d4a17048007cfafa79d5deca993a43a90ffe018ef2b8 ;;
+    darwin-amd64) echo 4c3e7af8372d3ca3296e62fa56f23fcbb5721cc6ac1827900d398f110d7cd280 ;;
+    darwin-arm64) echo 5fadd012ae6381a6a29ff86a7d39aa873878852f1073fc90b15995961ecfb084 ;;
+    *) return 1 ;;
+  esac
+}
+
+# lea__cosign DIR: the cosign that verifies a release, printed: the one on PATH, else cosign
+# v3.0.6 downloaded into DIR and checked against its pinned SHA-256 (never "latest"). Fails, with
+# a message, when neither is available.
+lea__cosign() {
+  if command -v cosign >/dev/null 2>&1; then echo cosign; return 0; fi
+  case $(uname -s) in Linux) _co_p=linux ;; Darwin) _co_p=darwin ;; *) _co_p=$(uname -s) ;; esac
+  case $(uname -m) in x86_64|amd64) _co_p=$_co_p-amd64 ;; aarch64|arm64) _co_p=$_co_p-arm64 ;; *) _co_p=$_co_p-$(uname -m) ;; esac
+  if ! _co_s=$(lea__cosign_pin "$_co_p"); then
+    lea_log "cosign is missing and lea pins no cosign for $_co_p: install cosign (https://docs.sigstore.dev)"
+    return 1
+  fi
+  _co_url=https://github.com/sigstore/cosign/releases/download/v3.0.6/cosign-$_co_p
+  if ! curl -fsSL -o "$1/cosign" "$_co_url"; then
+    lea_log "cannot download cosign from $_co_url: install cosign (https://docs.sigstore.dev)"
+    return 1
+  fi
+  if [ "$(lea__sha256 "$1/cosign")" != "$_co_s" ]; then
+    rm -f "$1/cosign"
+    lea_log "the cosign downloaded from $_co_url does not match its pinned SHA-256: install cosign (https://docs.sigstore.dev)"
+    return 1
+  fi
+  chmod +x "$1/cosign"
+  echo "$1/cosign"
+}
+
+# lea__verify_checksums DIR: verifies DIR/checksums.txt against its Sigstore bundle
+# (DIR/checksums.txt.sigstore.json), signed keyless by the release workflow on a v* tag.
+lea__verify_checksums() {
+  _vc_cosign=$(lea__cosign "$1") || return 1
+  "$_vc_cosign" verify-blob --bundle "$1/checksums.txt.sigstore.json" \
+    --certificate-identity-regexp '^https://github\.com/DavidGodefroid/lea/\.github/workflows/release\.yml@refs/tags/v[0-9]' \
+    --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+    "$1/checksums.txt" >&2
+}
+
 # lea__link_root LINK: the installation LINK (a launcher link, ~/.local/bin/lea) leads to, the
 # directory above its bin/lea; fails when LINK does not exist.
 lea__link_root() {
@@ -85,8 +132,8 @@ lea__link_root() {
 }
 
 # lea__update_release: resolves the latest release under LEA_RELEASES_URL, runs that release's
-# install.sh (downloaded to <data>/lea/host/update, checked against the release's checksums.txt)
-# with --no-init, then hands over to the new installation (its libexec/lea-sh refresh-images) to
+# install.sh (downloaded to <data>/lea/host/update, checked against the release's checksums.txt,
+# whose Sigstore signature is verified first) with --no-init, then hands over to the new installation (its libexec/lea-sh refresh-images) to
 # pull its versioned images and build its locksql console image.
 lea__update_release() {
   _ur_v=$(curl -fsSLI -o /dev/null -w '%{url_effective}' "$LEA_RELEASES_URL/latest" | sed 's|.*/tag/||') || _ur_v=
@@ -98,16 +145,21 @@ lea__update_release() {
   rm -rf "$_ur_tmp"
   lea_mkdirs "$(lea_data_dir)" "$_ur_tmp"
   if ! curl -fsSL -o "$_ur_tmp/install.sh" "$_ur_base/install.sh" ||
-     ! curl -fsSL -o "$_ur_tmp/checksums.txt" "$_ur_base/checksums.txt"; then
+     ! curl -fsSL -o "$_ur_tmp/checksums.txt" "$_ur_base/checksums.txt" ||
+     ! curl -fsSL -o "$_ur_tmp/checksums.txt.sigstore.json" "$_ur_base/checksums.txt.sigstore.json"; then
     rm -rf "$_ur_tmp"
     lea_die "cannot download the installer of lea $_ur_v from $_ur_base"
+  fi
+  if ! lea__verify_checksums "$_ur_tmp"; then
+    rm -rf "$_ur_tmp"
+    lea_die "the checksums.txt of lea $_ur_v does not verify against its Sigstore signature"
   fi
   _ur_want=$(awk '$2 == "install.sh" { print $1 }' "$_ur_tmp/checksums.txt")
   if [ -z "$_ur_want" ] || [ "$(lea__sha256 "$_ur_tmp/install.sh")" != "$_ur_want" ]; then
     rm -rf "$_ur_tmp"
     lea_die "the installer of lea $_ur_v does not match its checksums.txt"
   fi
-  if ! sh "$_ur_tmp/install.sh" --version "$_ur_v" --no-init; then
+  if ! LEA_REQUIRE_COSIGN=1 sh "$_ur_tmp/install.sh" --version "$_ur_v" --no-init; then
     rm -rf "$_ur_tmp"
     lea_die "the installer failed"
   fi
@@ -158,7 +210,7 @@ lea_update_background() {
 # lea__update_background CURRENT: the latest release, when newer than CURRENT. A newer major
 # release is only announced, and so is a newer minor release of 0.x. A newer minor (from 1.0) or
 # patch release is installed beside this one with its
-# own installer, after the Sigstore signature of its checksums.txt (cosign is required here) and
+# own installer, after the Sigstore signature of its checksums.txt (lea__cosign) and
 # the installer's checksum are verified; the launcher link moves to it only once its images are
 # in place. Any failure leaves this version linked.
 lea__update_background() {
@@ -189,11 +241,6 @@ lea__update_background() {
     lea_log "background update: lea $_ub_v is a new minor version of lea 0.x: run lea update"
     return 0
   fi
-  if ! command -v cosign >/dev/null 2>&1; then
-    lea__notice "$_ub_v available"
-    lea_log "background update: lea $_ub_v is available, but cosign is missing to verify it: run lea update"
-    return 0
-  fi
   _ub_bin=${LEA_BIN_DIR:-$HOME/.local/bin}
   if [ "$(lea__link_root "$_ub_bin/lea" 2>/dev/null)" != "$LEA_ROOT" ]; then
     lea_log "background update: $_ub_bin/lea does not lead to $LEA_ROOT, left alone"
@@ -211,10 +258,7 @@ lea__update_background() {
       return 1
     fi
   done
-  if ! cosign verify-blob --bundle "$_ub_tmp/checksums.txt.sigstore.json" \
-    --certificate-identity-regexp '^https://github\.com/DavidGodefroid/lea/\.github/workflows/release\.yml@refs/tags/v[0-9]' \
-    --certificate-oidc-issuer https://token.actions.githubusercontent.com \
-    "$_ub_tmp/checksums.txt" >&2; then
+  if ! lea__verify_checksums "$_ub_tmp"; then
     _ub_fail "the signature of checksums.txt does not verify"
     return 1
   fi
