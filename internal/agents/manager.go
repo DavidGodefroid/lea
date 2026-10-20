@@ -69,6 +69,8 @@ var (
 	reservedNames = map[string]bool{roleDeck: true, rolePlace: true}
 	shellRe       = regexp.MustCompile(`^sh-[1-9][0-9]{0,2}$`)
 	containerRe   = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,63}$`)
+	// sessionRe is a Claude session id, as ResumeStopped passes it to --resume.
+	sessionRe = regexp.MustCompile(`^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$`)
 	// debounce groups the notifications of one change into one reconcile.
 	debounce = 200 * time.Millisecond
 )
@@ -1950,7 +1952,9 @@ func (m *Manager) ResumeStopped(ctx context.Context, container string) error {
 // restart starts a stopped agent's pane again (ResumeStopped), parked. Callers hold m.mu.
 func (m *Manager) restart(ctx context.Context, s Session, container string, a store.Agent) error {
 	args := append([]string{}, a.Args...)
-	if a.SessionID != "" {
+	// The session id comes from the agent's own hooks: only Claude's UUID reaches the command
+	// line, never a value that could pass for a flag (--resume takes an optional one).
+	if sessionRe.MatchString(a.SessionID) {
 		args = append([]string{"--resume", a.SessionID}, args...)
 	} else if a.Prompt != "" {
 		args = append(args, a.Prompt)

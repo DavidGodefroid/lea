@@ -710,6 +710,11 @@ func TestAReattachedAgentOutOfTheSlotIsNotResized(t *testing.T) {
 	}
 }
 
+const (
+	sid1 = "0b6f5a1e-4c1d-4f7a-9d2e-1a2b3c4d5e6f"
+	sid2 = "9c8d7e6f-5a4b-4c3d-8e2f-6a5b4c3d2e1f"
+)
+
 // restarted is e after lea stop --all and lea: a new daemon (manager), a new tmux server and a new
 // container that runs no agent, over the same store.
 func (e env) restarted(t *testing.T) env {
@@ -745,8 +750,8 @@ func TestStoppedAgentsResumeTheirConversationInANewContainer(t *testing.T) {
 		t.Fatal(err)
 	}
 	e.spawn(t, "old")
-	e.st.SetState(C+"/lead-1", "idle", "sess-1", 1001)
-	e.st.SetState(C+"/old", "done", "sess-2", 1001)
+	e.st.SetState(C+"/lead-1", "idle", sid1, 1001)
+	e.st.SetState(C+"/old", "done", sid2, 1001)
 	e.st.UpsertAgent(C, "hook-only", 900) // not spawned by lea: not the deck's business
 	if err := e.m.MarkStopped(bg, C, false); err != nil {
 		t.Fatal(err)
@@ -767,7 +772,7 @@ func TestStoppedAgentsResumeTheirConversationInANewContainer(t *testing.T) {
 		t.Fatal(err)
 	}
 	s := r.term.get(C)
-	if got := agentArgs(t, s, "lead-1"); !reflect.DeepEqual(got, []string{"--resume", "sess-1", "--model", "opus"}) {
+	if got := agentArgs(t, s, "lead-1"); !reflect.DeepEqual(got, []string{"--resume", sid1, "--model", "opus"}) {
 		t.Fatalf("lead-1 restarted with %q", got)
 	}
 	// Never prompted: started again as it was first, its brief still waiting.
@@ -800,7 +805,7 @@ func TestResumeStoppedReplacesTheDeadPaneOfASurvivingSession(t *testing.T) {
 	e := newEnv(t)
 	s := e.ensure(t, "/p")
 	e.spawn(t, "dev-1")
-	e.st.SetState(C+"/dev-1", "idle", "sess-1", 1001)
+	e.st.SetState(C+"/dev-1", "idle", sid1, 1001)
 	if err := e.m.MarkStopped(bg, C, false); err != nil {
 		t.Fatal(err)
 	}
@@ -822,7 +827,26 @@ func TestResumeStoppedReplacesTheDeadPaneOfASurvivingSession(t *testing.T) {
 	if n != 1 {
 		t.Fatalf("%d panes of dev-1", n)
 	}
-	if got := agentArgs(t, s, "dev-1"); !reflect.DeepEqual(got, []string{"--resume", "sess-1"}) {
+	if got := agentArgs(t, s, "dev-1"); !reflect.DeepEqual(got, []string{"--resume", sid1}) {
+		t.Fatalf("dev-1 restarted with %q", got)
+	}
+}
+
+// The session id comes from the agent's own hooks: one that is not Claude's UUID never reaches
+// the command line (it could pass for a flag), and the agent starts again as it first did.
+func TestResumeStoppedNeverPassesAForgedSessionID(t *testing.T) {
+	e := newEnv(t)
+	e.ensure(t, "/p")
+	e.spawn(t, "dev-1", "--model", "opus")
+	e.st.SetState(C+"/dev-1", "idle", "--dangerously-skip-permissions", 1001)
+	if err := e.m.MarkStopped(bg, C, false); err != nil {
+		t.Fatal(err)
+	}
+	r := e.restarted(t)
+	if err := r.m.ResumeStopped(bg, C); err != nil {
+		t.Fatal(err)
+	}
+	if got := agentArgs(t, r.term.get(C), "dev-1"); !reflect.DeepEqual(got, []string{"--model", "opus"}) {
 		t.Fatalf("dev-1 restarted with %q", got)
 	}
 }
