@@ -336,6 +336,7 @@ projects directory cannot be `/`, your home directory or one of its parents, nor
 | `LEA_LOCKSQL` | `1` | wire lea for a locksql console (`0`: no locksql) |
 | `LEA_LOCKSQL_VAULT_ADDR` | asked by `lea init` | Vault address of the locksql console, for a Vault profile |
 | `LEA_INTERNAL_HOSTS` | none | private hosts the proxy may reach (format in `config/internal-hosts`) |
+| `LEA_EGRESS_ALLOW` | empty (off) | the only web domains agents may reach, comma separated (subdomains included) |
 | `LEA_NESTED_NETWORKS` | empty | networks your compose files expect, created at start |
 | `LEA_APPROVALS`, `LEA_APPROVAL_TIMEOUT` | `deck`, `60` | who answers permission requests |
 | `LEA_SOUND`, `LEA_AUTONAME` | on | the deck's sounds, automatic names (`0`: off) |
@@ -350,6 +351,11 @@ projects directory cannot be `/`, your home directory or one of its parents, nor
   `output-styles`, the top-level `*.md` files) and, with locksql, its socket volume. Nothing else.
 - Egress goes through a proxy: HTTPS to public hosts (plus `LEA_INTERNAL_HOSTS`), SSH only to
   `LEA_GIT_SSH`. Private and link-local addresses are refused.
+- To restrict the web to known domains, set `LEA_EGRESS_ALLOW`, for example
+  `github.com,registry.npmjs.org,proxy.golang.org`: each domain covers its subdomains, and
+  `anthropic.com`, `claude.ai` and `claude.com` (the model API and its login) are always allowed.
+  Internal hosts are not affected. The proxy reads it at start: `lea stop --all`, then `lea`.
+  `lea doctor` shows the active list.
 - An internal host name grants that name only, not every vhost of the ingress behind it: the proxy
   peeks at the TLS handshake (no decryption) and passes a tunnel only when its SNI is the allowed
   name, so a tunnel to an internal name must be TLS with SNI. The proxy cannot see the `Host` header
@@ -388,7 +394,8 @@ nowhere unless you set `LEA_OTEL_UPSTREAM`.
 - **Start with `lea doctor`.** It checks Docker, the images, the proxy and the internal networks, tmux,
   the AppArmor profile, the projects directory and the configuration.
 - **An agent cannot reach a host.** Private and link-local addresses are refused on purpose; add
-  the host to `LEA_INTERNAL_HOSTS`. The proxy's refusal page says which host it refused and why.
+  the host to `LEA_INTERNAL_HOSTS`. With `LEA_EGRESS_ALLOW` set, add its domain there. The proxy's
+  refusal page says which host it refused and why.
 - **A change to `~/.claude` does not show.** Single files are mounted as they were at start:
   `lea stop`, then `lea`.
 - **`docker compose` fails with a network error.** Known limitation, below; `docker run` works.

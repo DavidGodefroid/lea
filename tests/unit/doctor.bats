@@ -199,3 +199,11 @@ setup() {
   [ "$status" -eq 1 ]
   [[ "$output" == *'FAIL  configuration: /x/lea.conf line 2: only $HOME and ${HOME} are read'* ]]
 }
+
+@test "the egress allowlist is reported off by default, with its domains when set" {
+  run lea_doctor
+  [[ "$output" == *"ok    egress allowlist: off, any web destination (LEA_EGRESS_ALLOW)"* ]]
+  export LEA_EGRESS_ALLOW=github.com,proxy.golang.org
+  run lea_doctor
+  [[ "$output" == *"ok    egress allowlist: github.com,proxy.golang.org (always: anthropic.com,claude.ai,claude.com)"* ]]
+}
