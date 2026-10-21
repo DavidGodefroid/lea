@@ -1159,8 +1159,9 @@ func TestSubagentCounts(t *testing.T) {
 	}
 }
 
-// A usage limit is recorded, survives the agent's own state changes, and goes with the process
-// (done, stopped, unknown) or a new agent reusing the name.
+// A usage limit is recorded, survives the agent's own state changes and a container restart
+// (stopped, unknown: the resumed session takes it over), and goes with the process (done) or a
+// new agent reusing the name.
 func TestLimitIsSetAndClearedWhenTheProcessGoes(t *testing.T) {
 	s := open(t)
 	if _, err := s.RegisterAgent("lea-a", "claude-1", "claude", "/p", 1); err != nil {
@@ -1182,12 +1183,30 @@ func TestLimitIsSetAndClearedWhenTheProcessGoes(t *testing.T) {
 	if err := s.SetLimit("lea-a/nobody", 1, 0); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("unknown agent: %v", err)
 	}
-	for _, st := range []string{"done", "stopped", "unknown"} {
-		s.SetLimit("lea-a/claude-1", -1, 6)
+	for _, st := range []string{"stopped", "unknown"} {
+		s.SetLimit("lea-a/claude-1", 900, 2)
 		s.SetState("lea-a/claude-1", st, "", 4)
-		if a, _ := s.AgentByKey("lea-a/claude-1"); a.LimitUntil != 0 || a.LimitTries != 0 {
-			t.Fatalf("still limited once %s: %+v", st, a)
+		if a, _ := s.AgentByKey("lea-a/claude-1"); a.LimitUntil != 900 || a.LimitTries != 2 {
+			t.Fatalf("limit lost once %s: %+v", st, a)
 		}
+	}
+	// A paused agent's pending resume is given up when it stops or restarts: the pause it loses
+	// meant "do not resume me".
+	for _, st := range []string{"stopped", "unknown"} {
+		s.SetState("lea-a/claude-1", "idle", "", 4)
+		s.SetLimit("lea-a/claude-1", 900, 2)
+		if err := s.SetPaused("lea-a/claude-1", true); err != nil {
+			t.Fatal(err)
+		}
+		s.SetState("lea-a/claude-1", st, "", 4)
+		if a, _ := s.AgentByKey("lea-a/claude-1"); a.Paused || a.LimitUntil != -1 || a.LimitTries != 2 {
+			t.Fatalf("paused then %s: %+v", st, a)
+		}
+	}
+	s.SetLimit("lea-a/claude-1", -1, 6)
+	s.SetState("lea-a/claude-1", "done", "", 4)
+	if a, _ := s.AgentByKey("lea-a/claude-1"); a.LimitUntil != 0 || a.LimitTries != 0 {
+		t.Fatalf("still limited once done: %+v", a)
 	}
 	s.SetState("lea-a/claude-1", "done", "", 4)
 	s.SetLimit("lea-a/claude-1", 900, 3)

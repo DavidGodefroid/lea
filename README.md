@@ -190,7 +190,10 @@ profile and state in the bottom border.
   known. Resuming wakes the agent with one fixed line of lea's ("the usage limit … should have
   reset. Continue your task"); lea never types into its terminal. After 6 resumes without
   progress, or with `LEA_AUTO_RESUME=0`, the row says `usage limit, resume it` and the agent
-  waits for you. Codex agents are not detected yet: Codex gives no structured signal for its limit.
+  waits for you. A pending resume survives `lea stop` and the next container: the agent comes back
+  with `--resume` and lea resumes it at the same time (at least a minute after the restart; given
+  up past 8 days). Codex agents are not detected yet: Codex gives no structured signal for its
+  limit (its failed turn runs no hook, and the error is not kept in its session file).
 - **Messages.** Typing into an agent's pane (`enter`) talks to it now, in its conversation.
   `m` (Send message) instead leaves it a note in its inbox, as another agent would: it reads it
   on its next turn, or is woken for it once its turn is over. `t` (Messages) shows everything

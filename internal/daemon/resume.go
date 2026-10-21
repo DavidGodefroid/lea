@@ -28,6 +28,15 @@ import (
 // sooner than minResumeWait after the limit, never later than maxResumeHorizon, each one logged
 // and recorded as an event. LEA_AUTO_RESUME=0 turns it off: the agent then shows as limited and
 // waits for the user.
+//
+// A container restart (issue #83) keeps the resume time and tries in lea.db, the daemon's: the
+// agent's resumed session (SessionStart, source resume) starts a LimitResume job, which takes the
+// wait over under the same bounds (resumeAfterRestart).
+//
+// Not covered (issue #83): Codex, whose failed turn runs no hook nor notify and keeps no error in
+// its rollout; and a peer agent of the same container, which can cancel or supersede another's
+// resume by claiming its name (LEA_AGENT). Agents of one container share a uid and may ptrace
+// each other, so no token, socket or peer credential could tell them apart.
 
 var (
 	// maxResumeTries caps the resumes of one agent without progress (a tool used or a turn that
@@ -192,14 +201,23 @@ func limitKey(me string) string { return "limit:" + me }
 // limitProgress clears an agent's limit when it is past it: it used a tool or ended a turn well
 // (progress: the tries start over), or a session started or ended. A prompt (the user's, or the
 // turn a resume started) ends the wait but keeps the tries: only progress shows the limit is gone.
-func (d *Daemon) limitProgress(me, event string) {
+// A resumed session (SessionStart, source resume: a container restart started the agent again
+// with --resume) keeps it: its LimitResume job takes the wait over.
+func (d *Daemon) limitProgress(me, event string, payload json.RawMessage) {
 	a, err := d.st.AgentByKey(me)
 	if err != nil || (a.LimitUntil == 0 && a.LimitTries == 0) {
 		return
 	}
 	tries := 0
 	switch event {
-	case "PreToolUse", "PostToolUse", "Stop", "SessionStart", "SessionEnd":
+	case "SessionStart":
+		var p struct {
+			Source string `json:"source"`
+		}
+		if json.Unmarshal(payload, &p) == nil && p.Source == "resume" {
+			return
+		}
+	case "PreToolUse", "PostToolUse", "Stop", "SessionEnd":
 	case "UserPromptSubmit":
 		if a.LimitUntil == 0 {
 			return
@@ -222,7 +240,9 @@ func (d *Daemon) limitProgress(me, event string) {
 // limitWait is the LimitWait job's call: it answers resume once the agent's resume time has
 // come (and records the try), done when there is nothing to wait for (no limit, auto-resume off,
 // lea gave up), superseded when a newer job of the agent took over, or nothing at the timeout
-// (the job calls again). first registers the job as the agent's newest. Agents only.
+// (the job calls again). first registers the job as the agent's newest. restart (with first: a
+// LimitResume job) takes over a limit recorded before a container restart: there is none to wait
+// for, and the recorded time is bounded again (resumeAfterRestart). Agents only.
 func (d *Daemon) limitWait(ctx context.Context, o Origin, me string, raw json.RawMessage) (any, error) {
 	if o.Container == "" {
 		return nil, errors.New("limit_wait: agents only")
@@ -230,6 +250,7 @@ func (d *Daemon) limitWait(ctx context.Context, o Origin, me string, raw json.Ra
 	var p struct {
 		Job      string `json:"job"`
 		First    bool   `json:"first"`
+		Restart  bool   `json:"restart"`
 		TimeoutS int    `json:"timeout_s"`
 	}
 	if err := json.Unmarshal(raw, &p); err != nil {
@@ -255,7 +276,12 @@ func (d *Daemon) limitWait(ctx context.Context, o Origin, me string, raw json.Ra
 	// while for turnFailed (which wakes it) before it is done: answered done too early, it would
 	// leave a limit recorded later without a waiter.
 	var settle time.Time
-	if p.First {
+	switch {
+	case p.First && p.Restart:
+		if err := d.resumeAfterRestart(me); err != nil {
+			return nil, err
+		}
+	case p.First:
 		settle = time.Now().Add(limitSettle)
 	}
 	for {
@@ -295,6 +321,40 @@ func (d *Daemon) limitWait(ctx context.Context, o Origin, me string, raw json.Ra
 	}
 }
 
+// resumeAfterRestart bounds a resume time a previous container recorded before its restart's
+// job waits for it: with auto-resume off now, or more than maxResumeHorizon past or ahead (a clock
+// set back between containers), it is given up (-1: the agent waits for the user), and one due within minResumeWait is pushed to it, so a restart never resumes at once.
+// The time and tries are the daemon's own (lea.db): the job only says the session resumed.
+func (d *Daemon) resumeAfterRestart(me string) error {
+	defer d.lockKey(limitKey(me))()
+	a, err := d.st.AgentByKey(me)
+	if err != nil || a.LimitUntil <= 0 {
+		return err
+	}
+	d.mu.Lock()
+	off := d.resumeOff
+	d.mu.Unlock()
+	now := d.now()
+	until := a.LimitUntil
+	switch {
+	case off || now-until > maxResumeHorizon || until-now > maxResumeHorizon:
+		until = -1
+	case until < now+minResumeWait:
+		until = now + minResumeWait
+	}
+	if until == a.LimitUntil {
+		return nil
+	}
+	if err := d.st.SetLimit(me, until, a.LimitTries); err != nil {
+		return err
+	}
+	if until < 0 {
+		log.Printf("lea daemon: %s restarted with a resume time it no longer keeps (auto-resume off, or beyond the horizon); it waits for the user", me)
+	}
+	d.changed()
+	return nil
+}
+
 // limitDue checks an agent's limit: resume (claimed: the time is cleared and the try counted)
 // when it is due, done when there is no resume to wait for (idle: no resume time is recorded),
 // or how long to wait.
@@ -308,7 +368,9 @@ func (d *Daemon) limitDue(me string) (res map[string]any, wait time.Duration, id
 		return map[string]any{"done": true}, 0, true, nil
 	}
 	now := d.now()
-	if a.Paused {
+	if a.Paused || a.State == "stopped" {
+		// A paused agent waits for the user; a stopped one ends with its container, and the
+		// next container's LimitResume job claims the resume instead.
 		return nil, pausedRecheck, false, nil
 	}
 	if now < a.LimitUntil {

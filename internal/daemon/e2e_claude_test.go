@@ -44,12 +44,23 @@ while time.time() < end:
 os.kill(pid, signal.SIGKILL)
 `
 
-// The real Claude Code, with lea's hooks (image/claude-settings.json), hits a usage limit (the
-// API answers 429 rate_limit_error) and stops: lea marks the agent limited. Once the limit lifts
-// and the resume time comes, lea's LimitWait job wakes the model with lea's fixed text, typing
-// nothing into the terminal; the turn succeeds and the limit is cleared. Set LEA_E2E_CLAUDE to a
-// claude binary to run it (the image has one: /usr/local/bin/claude).
-func TestClaudeResumesAfterAUsageLimit(t *testing.T) {
+// claudeE2E is the real Claude Code (LEA_E2E_CLAUDE) with lea's hooks (image/claude-settings.json,
+// this build of lea) on a fake Messages API, which answers 429 rate_limit_error while limited,
+// then a short answer; and lea's daemon with the agent's bus.
+type claudeE2E struct {
+	t       *testing.T
+	st      *store.Store
+	mu      sync.Mutex
+	limited bool
+	bodies  []string
+	claude  string
+	wd      string
+	env     []string
+	sf      string
+	out     strings.Builder
+}
+
+func newClaudeE2E(t *testing.T) *claudeE2E {
 	claude := os.Getenv("LEA_E2E_CLAUDE")
 	if claude == "" {
 		t.Skip("LEA_E2E_CLAUDE is not set")
@@ -57,27 +68,21 @@ func TestClaudeResumesAfterAUsageLimit(t *testing.T) {
 	if _, err := exec.LookPath("python3"); err != nil {
 		t.Skip("no python3 for the pseudo-terminal")
 	}
-	defer func(m, b, j int64) { minResumeWait, retryBase, resumeJitter = m, b, j }(minResumeWait, retryBase, resumeJitter)
-	minResumeWait, retryBase, resumeJitter = 1, 3, 0
-
+	e := &claudeE2E{t: t, limited: true, claude: claude}
 	dir := shortDir(t)
 	lea := filepath.Join(dir, "lea")
 	if out, err := exec.Command("go", "build", "-o", lea, "../../cmd/lea").CombinedOutput(); err != nil {
 		t.Fatalf("build lea: %v\n%s", err, out)
 	}
 
-	// The Messages API: 429 while limited, then a short answer.
-	var mu sync.Mutex
-	limited := true
-	var bodies []string
 	api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		b, _ := io.ReadAll(r.Body)
-		mu.Lock()
-		lim := limited
+		e.mu.Lock()
+		lim := e.limited
 		if strings.HasPrefix(r.URL.Path, "/v1/messages") && !strings.Contains(r.URL.Path, "count_tokens") {
-			bodies = append(bodies, fmt.Sprintf("%v %s", lim, b))
+			e.bodies = append(e.bodies, fmt.Sprintf("%v %s", lim, b))
 		}
-		mu.Unlock()
+		e.mu.Unlock()
 		if lim {
 			w.Header().Set("Content-Type", "application/json")
 			w.Header().Set("X-Should-Retry", "false")
@@ -99,22 +104,22 @@ func TestClaudeResumesAfterAUsageLimit(t *testing.T) {
 			`{"type":"message_delta","delta":{"stop_reason":"end_turn","stop_sequence":null},"usage":{"output_tokens":2}}`,
 			`{"type":"message_stop"}`,
 		} {
-			var e struct{ Type string }
-			_ = json.Unmarshal([]byte(ev), &e)
-			io.WriteString(w, "event: "+e.Type+"\ndata: "+ev+"\n\n")
+			var ev2 struct{ Type string }
+			_ = json.Unmarshal([]byte(ev), &ev2)
+			io.WriteString(w, "event: "+ev2.Type+"\ndata: "+ev+"\n\n")
 		}
 	}))
-	defer api.Close()
+	t.Cleanup(api.Close)
 
-	// lea's daemon, and the agent's bus.
 	st, err := store.Open(filepath.Join(dir, "lea.db"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer st.Close()
+	t.Cleanup(func() { st.Close() })
+	e.st = st
 	d := New(st, filepath.Join(dir, "run"), func() int64 { return time.Now().Unix() })
 	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	t.Cleanup(cancel)
 	l, err := Listen(filepath.Join(dir, "d.sock"))
 	if err != nil {
 		t.Fatal(err)
@@ -136,63 +141,128 @@ func TestClaudeResumesAfterAUsageLimit(t *testing.T) {
 	}
 	delete(settings, "env")
 	sb, _ := json.Marshal(settings)
-	sf := filepath.Join(dir, "settings.json")
-	os.WriteFile(sf, sb, 0o600)
-	wd, cfg := filepath.Join(dir, "wd"), filepath.Join(dir, "cfg")
-	os.Mkdir(wd, 0o755)
+	e.sf = filepath.Join(dir, "settings.json")
+	os.WriteFile(e.sf, sb, 0o600)
+	e.wd = filepath.Join(dir, "wd")
+	cfg := filepath.Join(dir, "cfg")
+	os.Mkdir(e.wd, 0o755)
 	os.Mkdir(cfg, 0o700)
 	const key = "sk-ant-api03-e2e-not-a-real-key-0000"
 	seed, _ := json.Marshal(map[string]any{"hasCompletedOnboarding": true, "theme": "dark",
 		"customApiKeyResponses": map[string]any{"approved": []string{key[len(key)-20:]}, "rejected": []string{}},
-		"projects":              map[string]any{wd: map[string]any{"hasTrustDialogAccepted": true, "hasCompletedProjectOnboarding": true}}})
+		"projects":              map[string]any{e.wd: map[string]any{"hasTrustDialogAccepted": true, "hasCompletedProjectOnboarding": true}}})
 	os.WriteFile(filepath.Join(cfg, ".claude.json"), seed, 0o600)
-
-	cmd := exec.Command("python3", "-I", "-c", claudePty, "90", claude, "--settings", sf, "say hi")
-	cmd.Dir = wd
-	cmd.Env = []string{"PATH=" + os.Getenv("PATH"), "HOME=" + dir, "CLAUDE_CONFIG_DIR=" + cfg, "TERM=xterm-256color",
+	e.env = []string{"PATH=" + os.Getenv("PATH"), "HOME=" + dir, "CLAUDE_CONFIG_DIR=" + cfg, "TERM=xterm-256color",
 		"ANTHROPIC_BASE_URL=" + api.URL, "ANTHROPIC_API_KEY=" + key, "DISABLE_TELEMETRY=1", "DISABLE_AUTOUPDATER=1",
 		"LEA_BUS_SOCK=" + bus, "LEA_AGENT=dev"}
-	var out strings.Builder
-	cmd.Stdout, cmd.Stderr = &out, &out
-	if err := cmd.Start(); err != nil {
-		t.Fatal(err)
-	}
-	defer cmd.Process.Kill()
+	return e
+}
 
-	until := func(what string, secs int, ok func(store.Agent) bool) store.Agent {
-		t.Helper()
-		for end := time.Now().Add(time.Duration(secs) * time.Second); time.Now().Before(end); time.Sleep(200 * time.Millisecond) {
-			if a, err := st.AgentByKey("lea-a/dev"); err == nil && ok(a) {
-				return a
-			}
+// run starts claude in a pseudo-terminal with args; kill ends it.
+func (e *claudeE2E) run(args ...string) (kill func()) {
+	argv := append([]string{"-I", "-c", claudePty, "90", e.claude, "--settings", e.sf}, args...)
+	cmd := exec.Command("python3", argv...)
+	cmd.Dir = e.wd
+	cmd.Env = e.env
+	cmd.Stdout, cmd.Stderr = &e.out, &e.out
+	if err := cmd.Start(); err != nil {
+		e.t.Fatal(err)
+	}
+	kill = func() { cmd.Process.Kill(); cmd.Wait() }
+	e.t.Cleanup(kill)
+	return kill
+}
+
+func (e *claudeE2E) setLimited(on bool) {
+	e.mu.Lock()
+	e.limited = on
+	e.mu.Unlock()
+}
+
+func (e *claudeE2E) until(what string, secs int, ok func(store.Agent) bool) store.Agent {
+	e.t.Helper()
+	for end := time.Now().Add(time.Duration(secs) * time.Second); time.Now().Before(end); time.Sleep(200 * time.Millisecond) {
+		if a, err := e.st.AgentByKey("lea-a/dev"); err == nil && ok(a) {
+			return a
 		}
-		a, _ := st.AgentByKey("lea-a/dev")
-		mu.Lock()
-		defer mu.Unlock()
-		t.Fatalf("%s: not in %d s; agent=%+v requests=%d\n%s", what, secs, a, len(bodies), out.String())
-		return a
 	}
-	a := until("the usage limit", 45, func(a store.Agent) bool { return a.LimitUntil > 0 })
-	if a.State != "idle" {
-		t.Fatalf("a limited agent should be idle: %+v", a)
+	a, _ := e.st.AgentByKey("lea-a/dev")
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	var evs []string
+	for _, k := range []string{"SessionStart", "SessionEnd", "StopFailure", "Stop", "UserPromptSubmit", "hit", "resume"} {
+		ps, _ := e.st.EventPayloads("lea-a/dev", k)
+		evs = append(evs, fmt.Sprintf("%s=%q", k, ps))
 	}
-	mu.Lock()
-	limited = false
-	mu.Unlock()
-	until("the resume", 45, func(a store.Agent) bool { return a.LimitUntil == 0 && a.LimitTries == 0 && a.State == "idle" })
-	if ps, _ := st.EventPayloads("lea-a/dev", "resume"); len(ps) == 0 {
-		t.Fatal("no resume event")
+	e.t.Fatalf("%s: not in %d s; agent=%+v requests=%d events=%v\n%s", what, secs, a, len(e.bodies), evs, e.out.String())
+	return a
+}
+
+// resumedWithLeasText checks the first request after the limit lifted carries lea's fixed text.
+func (e *claudeE2E) resumedWithLeasText() {
+	e.t.Helper()
+	if ps, _ := e.st.EventPayloads("lea-a/dev", "resume"); len(ps) == 0 {
+		e.t.Fatal("no resume event")
 	}
-	mu.Lock()
-	defer mu.Unlock()
+	e.mu.Lock()
+	defer e.mu.Unlock()
 	var resumed string
-	for _, b := range bodies {
+	for _, b := range e.bodies {
 		if strings.HasPrefix(b, "false ") {
 			resumed = b
 			break
 		}
 	}
 	if !strings.Contains(resumed, hook.ResumeText) {
-		t.Fatalf("the resumed request lacks lea's text:\n%.2000s", resumed)
+		e.t.Fatalf("the resumed request lacks lea's text:\n%.2000s", resumed)
 	}
+}
+
+// The real Claude Code, with lea's hooks, hits a usage limit (the API answers 429
+// rate_limit_error) and stops: lea marks the agent limited. Once the limit lifts and the resume
+// time comes, lea's LimitWait job wakes the model with lea's fixed text, typing nothing into the
+// terminal; the turn succeeds and the limit is cleared. Set LEA_E2E_CLAUDE to a claude binary to
+// run it (the image has one: /usr/local/bin/claude).
+func TestClaudeResumesAfterAUsageLimit(t *testing.T) {
+	defer func(m, b, j int64) { minResumeWait, retryBase, resumeJitter = m, b, j }(minResumeWait, retryBase, resumeJitter)
+	minResumeWait, retryBase, resumeJitter = 1, 3, 0
+	e := newClaudeE2E(t)
+	e.run("say hi")
+	a := e.until("the usage limit", 45, func(a store.Agent) bool { return a.LimitUntil > 0 })
+	if a.State != "idle" {
+		t.Fatalf("a limited agent should be idle: %+v", a)
+	}
+	e.setLimited(false)
+	e.until("the resume", 45, func(a store.Agent) bool { return a.LimitUntil == 0 && a.LimitTries == 0 && a.State == "idle" })
+	e.resumedWithLeasText()
+}
+
+// A container restart while a resume is pending (#83): Claude ends with the container, lea marks
+// the agent stopped then starts it again with --resume, as lea stop and the next container do.
+// The resumed session keeps the limit, its LimitResume job (SessionStart) waits for the recorded
+// time, and wakes the model with lea's fixed text.
+func TestClaudeResumesAfterAContainerRestart(t *testing.T) {
+	defer func(m, b, j int64) { minResumeWait, retryBase, resumeJitter = m, b, j }(minResumeWait, retryBase, resumeJitter)
+	minResumeWait, retryBase, resumeJitter = 1, 20, 0
+	e := newClaudeE2E(t)
+	kill := e.run("say hi")
+	a := e.until("the usage limit", 45, func(a store.Agent) bool { return a.LimitUntil > 0 && len(a.SessionID) == 36 })
+	// lea stop: the agent is marked stopped, then its container (and Claude, which may still run
+	// its SessionEnd hook) ends; the next container marks it unknown and starts it again.
+	if err := e.st.SetState(a.Key, "stopped", "", time.Now().Unix()); err != nil {
+		t.Fatal(err)
+	}
+	kill()
+	time.Sleep(3 * time.Second)
+	if err := e.st.SetState(a.Key, "unknown", "", time.Now().Unix()); err != nil {
+		t.Fatal(err)
+	}
+	if b := e.until("the limit kept", 1, func(store.Agent) bool { return true }); b.LimitUntil != a.LimitUntil {
+		t.Fatalf("the restart lost the limit: %+v", b)
+	}
+	e.setLimited(false)
+	e.run("--resume", a.SessionID)
+	e.until("the resumed session", 45, func(b store.Agent) bool { return b.State == "idle" && b.LimitUntil > 0 })
+	e.until("the resume", 60, func(b store.Agent) bool { return b.LimitUntil == 0 && b.LimitTries == 0 && b.State == "idle" })
+	e.resumedWithLeasText()
 }

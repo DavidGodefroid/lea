@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"io"
 	"time"
@@ -36,8 +37,31 @@ var (
 // the agent moved on), when a newer job of the agent supersedes it, past limitBudget, or when the
 // bus stays unreachable.
 func LimitWait(ctx context.Context, stdin io.Reader, stderr io.Writer, getenv func(string) string) int {
-	c := caller{identity.BusSock(getenv), identity.Agent(getenv)}
 	_, _ = io.Copy(io.Discard, io.LimitReader(stdin, maxInput))
+	return limitLoop(ctx, stderr, getenv, false)
+}
+
+// LimitResume is `lea hook claude LimitResume`, the SessionStart hook Claude Code runs in the
+// background (asyncRewake): when the agent's session resumes (source resume: a container restart
+// started it again with --resume) while a resume time is pending, it waits for that time as
+// LimitWait would have, the job that held it having ended with the old container. The pending
+// time is the daemon's (lea.db), never this payload's: only its source, matched exactly, is read.
+// Any other start exits 0 at once.
+func LimitResume(ctx context.Context, stdin io.Reader, stderr io.Writer, getenv func(string) string) int {
+	var p struct {
+		Source string `json:"source"`
+	}
+	in, _ := io.ReadAll(io.LimitReader(stdin, maxInput))
+	if json.Unmarshal(in, &p) != nil || p.Source != "resume" {
+		return 0
+	}
+	return limitLoop(ctx, stderr, getenv, true)
+}
+
+// limitLoop waits in limit_wait under limitBudget; restart says the job takes over a limit a
+// previous container recorded (LimitResume), so the daemon does not wait for one to be recorded.
+func limitLoop(ctx context.Context, stderr io.Writer, getenv func(string) string, restart bool) int {
+	c := caller{identity.BusSock(getenv), identity.Agent(getenv)}
 	if c.agent == "" {
 		return 0
 	}
@@ -66,7 +90,11 @@ func LimitWait(ctx context.Context, stdin io.Reader, stderr io.Writer, getenv fu
 			Superseded bool `json:"superseded"`
 		}
 		wctx, cancel := context.WithTimeout(ctx, time.Duration(limitCall)*time.Second+5*time.Second)
-		err := c.call(wctx, "limit_wait", map[string]any{"job": job, "first": first, "timeout_s": limitCall}, &r)
+		params := map[string]any{"job": job, "first": first, "timeout_s": limitCall}
+		if restart && first {
+			params["restart"] = true
+		}
+		err := c.call(wctx, "limit_wait", params, &r)
 		cancel()
 		if err != nil {
 			if fails++; fails >= limitFailures || !sleep(limitRetry) {

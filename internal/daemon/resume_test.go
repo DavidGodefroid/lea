@@ -382,3 +382,184 @@ func TestAStaleGiveUpDoesNotLoseANewLimit(t *testing.T) {
 		t.Fatal("the job never answered")
 	}
 }
+
+func restartWait(t *testing.T, e env, agent, job string, timeoutS int) waitAnswer {
+	t.Helper()
+	var r waitAnswer
+	if err := call(t, e.bus, agent, "limit_wait", map[string]any{"job": job, "first": true, "restart": true, "timeout_s": timeoutS}, &r); err != nil {
+		t.Fatal(err)
+	}
+	return r
+}
+
+// restartContainer does to an agent what lea stop and the next container do: stopped, then
+// started again (unknown), then its resumed session's SessionStart.
+func restartContainer(t *testing.T, e env, agent string) {
+	t.Helper()
+	for _, st := range []string{"stopped", "unknown"} {
+		if err := e.d.st.SetState("lea-a/"+agent, st, "", *e.clock); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := call(t, e.bus, agent, "hook_event", map[string]any{"event": "SessionStart", "session_id": "s1",
+		"payload": map[string]any{"hook_event_name": "SessionStart", "source": "resume"}}, nil); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// A container restart keeps a pending resume (#83): the resumed session's SessionStart keeps the
+// limit, and its LimitResume job (restart) is answered resume at the recorded time, once.
+func TestAPendingResumeSurvivesAContainerRestart(t *testing.T) {
+	noJitter(t)
+	e := start(t)
+	reportLimits(t, e, "dev", map[string]any{"window": "5h", "pct": 100, "resets_at": 1600})
+	limitHit(t, e, "dev", "rate_limit")
+	e.d.st.SetLimit("lea-a/dev", 1660, 2)
+	restartContainer(t, e, "dev")
+	if a := agentRow(t, e, "lea-a/dev"); a.LimitUntil != 1660 || a.LimitTries != 2 || a.State != "idle" {
+		t.Fatalf("the restart lost the limit: %+v", a)
+	}
+	if r := restartWait(t, e, "dev", job1, 1); r != (waitAnswer{}) {
+		t.Fatalf("early answer %+v", r)
+	}
+	*e.clock = 1660
+	if r := limitWait(t, e, "dev", job1, false, 1); !r.Resume {
+		t.Fatalf("not resumed: %+v", r)
+	}
+	if a := agentRow(t, e, "lea-a/dev"); a.LimitUntil != 0 || a.LimitTries != 3 {
+		t.Fatalf("agent=%+v", a)
+	}
+}
+
+// Any other session start still clears the limit: a new or cleared session is not the one that
+// hit it. A source outside Claude Code's four counts as none.
+func TestOnlyAResumedSessionKeepsTheLimit(t *testing.T) {
+	e := start(t)
+	for _, src := range []string{"startup", "clear", "compact", "", "resume "} {
+		limitHit(t, e, "dev", "rate_limit")
+		call(t, e.bus, "dev", "hook_event", map[string]any{"event": "SessionStart",
+			"payload": map[string]any{"hook_event_name": "SessionStart", "source": src}}, nil)
+		if a := agentRow(t, e, "lea-a/dev"); a.LimitUntil != 0 {
+			t.Fatalf("source %q kept the limit: %+v", src, a)
+		}
+	}
+}
+
+// A restart job finds nothing to settle for: without a pending limit it is done at once, not
+// after the settle window a StopFailure's job waits.
+func TestARestartJobWithoutALimitIsDoneAtOnce(t *testing.T) {
+	e := start(t)
+	call(t, e.bus, "dev", "hook_event", map[string]any{"event": "UserPromptSubmit"}, nil)
+	start := time.Now()
+	if r := restartWait(t, e, "dev", job1, 4); !r.Done || time.Since(start) > time.Second {
+		t.Fatalf("answer %+v after %v", r, time.Since(start))
+	}
+}
+
+// The resume time a restart takes over is bounded again by the daemon: one already due waits
+// minResumeWait (a restart never resumes at once), one past beyond maxResumeHorizon or with
+// auto-resume turned off meanwhile is given up, and the agent waits for the user.
+func TestARestartedResumeIsBounded(t *testing.T) {
+	e := start(t)
+	call(t, e.bus, "dev", "hook_event", map[string]any{"event": "UserPromptSubmit"}, nil)
+	e.d.st.SetLimit("lea-a/dev", 900, 1)
+	if r := restartWait(t, e, "dev", job1, 1); r != (waitAnswer{}) {
+		t.Fatalf("a due resume after a restart: %+v", r)
+	}
+	if a := agentRow(t, e, "lea-a/dev"); a.LimitUntil != 1000+minResumeWait || a.LimitTries != 1 {
+		t.Fatalf("agent=%+v", a)
+	}
+
+	*e.clock = 2 * maxResumeHorizon
+	e.d.st.SetLimit("lea-a/dev", *e.clock-maxResumeHorizon-1, 1)
+	if r := restartWait(t, e, "dev", job2, 1); !r.Done {
+		t.Fatalf("a stale resume was kept: %+v", r)
+	}
+	if a := agentRow(t, e, "lea-a/dev"); a.LimitUntil != -1 {
+		t.Fatalf("agent=%+v", a)
+	}
+
+	// A time beyond the horizon ahead (a clock set back between containers) is not believed.
+	e.d.st.SetLimit("lea-a/dev", *e.clock+maxResumeHorizon+1, 1)
+	if r := restartWait(t, e, "dev", job2, 1); !r.Done {
+		t.Fatalf("a resume beyond the horizon was kept: %+v", r)
+	}
+	if a := agentRow(t, e, "lea-a/dev"); a.LimitUntil != -1 {
+		t.Fatalf("agent=%+v", a)
+	}
+
+	e.d.SetResume(false, 0)
+	e.d.st.SetLimit("lea-a/dev", *e.clock+5000, 1)
+	if r := restartWait(t, e, "dev", job1, 1); !r.Done {
+		t.Fatalf("auto-resume off, still resumed: %+v", r)
+	}
+	if a := agentRow(t, e, "lea-a/dev"); a.LimitUntil != -1 {
+		t.Fatalf("agent=%+v", a)
+	}
+}
+
+// The SessionEnd of an agent ending with its container (lea stop marked it stopped first) neither
+// ends it nor clears its pending resume: the next container resumes both.
+func TestTheSessionEndOfAStoppingContainerKeepsTheResume(t *testing.T) {
+	e := start(t)
+	limitHit(t, e, "dev", "rate_limit")
+	e.d.st.SetLimit("lea-a/dev", 1660, 1)
+	e.d.st.SetState("lea-a/dev", "stopped", "", 1000)
+	call(t, e.bus, "dev", "hook_event", map[string]any{"event": "SessionEnd", "payload": map[string]any{"hook_event_name": "SessionEnd"}}, nil)
+	if a := agentRow(t, e, "lea-a/dev"); a.State != "stopped" || a.LimitUntil != 1660 || a.LimitTries != 1 {
+		t.Fatalf("agent=%+v", a)
+	}
+	// A live agent's SessionEnd still ends it.
+	e.d.st.SetState("lea-a/dev", "idle", "", 1000)
+	call(t, e.bus, "dev", "hook_event", map[string]any{"event": "SessionEnd", "payload": map[string]any{"hook_event_name": "SessionEnd"}}, nil)
+	if a := agentRow(t, e, "lea-a/dev"); a.State != "done" || a.LimitUntil != 0 {
+		t.Fatalf("agent=%+v", a)
+	}
+}
+
+// A resume falling due while the container stops (lea stop marked the agent stopped, its old job
+// still runs) is not claimed: the old job would wake a model about to die. The next container's
+// LimitResume job claims it.
+func TestAStoppedAgentsResumeIsLeftToTheNextContainer(t *testing.T) {
+	e := start(t)
+	limitHit(t, e, "dev", "rate_limit")
+	e.d.st.SetLimit("lea-a/dev", 1500, 1)
+	e.d.st.SetState("lea-a/dev", "stopped", "", 1000)
+	*e.clock = 2000
+	if r := limitWait(t, e, "dev", job1, false, 1); r != (waitAnswer{}) {
+		t.Fatalf("a stopped agent was resumed: %+v", r)
+	}
+	if a := agentRow(t, e, "lea-a/dev"); a.LimitUntil != 1500 || a.LimitTries != 1 {
+		t.Fatalf("agent=%+v", a)
+	}
+	restartContainer(t, e, "dev")
+	if r := restartWait(t, e, "dev", job2, 1); r != (waitAnswer{}) {
+		t.Fatalf("resumed at once after the restart: %+v", r)
+	}
+	*e.clock += minResumeWait
+	if r := limitWait(t, e, "dev", job2, false, 1); !r.Resume {
+		t.Fatalf("the next container did not resume it: %+v", r)
+	}
+}
+
+// A user's pause outlives the restart that clears it, for the resume: an agent paused while it
+// waited on its limit is not resumed by the next container, and waits for the user.
+func TestAPausedLimitedAgentIsNotResumedAfterARestart(t *testing.T) {
+	e := start(t)
+	if _, err := e.d.st.RegisterAgent("lea-a", "dev", "claude", "/p", 1000); err != nil {
+		t.Fatal(err)
+	}
+	limitHit(t, e, "dev", "rate_limit")
+	e.d.st.SetLimit("lea-a/dev", 1660, 1)
+	if err := e.d.st.SetPaused("lea-a/dev", true); err != nil {
+		t.Fatal(err)
+	}
+	restartContainer(t, e, "dev")
+	if a := agentRow(t, e, "lea-a/dev"); a.Paused || a.LimitUntil != -1 {
+		t.Fatalf("agent=%+v", a)
+	}
+	*e.clock = 5000
+	if r := restartWait(t, e, "dev", job1, 1); !r.Done {
+		t.Fatalf("a paused agent was resumed after the restart: %+v", r)
+	}
+}

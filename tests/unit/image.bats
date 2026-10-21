@@ -239,6 +239,8 @@ lea_sha256_file() { sha256sum "$1" | cut -d' ' -f1; }
   [ "$(jq -r '.hooks.PermissionRequest[0].hooks[0].timeout' "$s")" = 620 ]
   # The usage-limit resume job (#20) runs in the background and wakes the model on exit 2.
   jq -e '.hooks.StopFailure[0].hooks[1] | (.command | contains("/usr/local/bin/lea hook claude LimitWait")) and .asyncRewake == true and .timeout == 691200' "$s" >/dev/null
+  # Its SessionStart twin (#83) takes a pending resume over after a container restart.
+  jq -e '.hooks.SessionStart[0].hooks[1] | (.command | contains("/usr/local/bin/lea hook claude LimitResume")) and .asyncRewake == true and .timeout == 691200' "$s" >/dev/null
   [ "$(jq -r '.hooks // "none"' "$I/managed-settings.json")" = none ]
   grep -q '^COPY image/claude-settings.json /usr/local/share/lea/claude-settings.json$' "$I/Containerfile"
   grep -q 'settings=${LEA_CLAUDE_SETTINGS:-/usr/local/share/lea/claude-settings.json}' "$I/lea-session"

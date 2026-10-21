@@ -181,16 +181,90 @@ func TestLimitWaitEndsWithinItsHookTimeout(t *testing.T) {
 	if err := json.Unmarshal(raw, &s); err != nil {
 		t.Fatal(err)
 	}
-	timeout := 0
-	for _, g := range s.Hooks["StopFailure"] {
-		for _, h := range g.Hooks {
-			if strings.Contains(h.Command, "hook claude LimitWait") {
-				timeout = h.Timeout
+	worst := limitGrace + limitBudget + time.Duration(limitCall)*time.Second + 5*time.Second + limitRetry
+	for ev, name := range map[string]string{"StopFailure": "LimitWait", "SessionStart": "LimitResume"} {
+		timeout := 0
+		for _, g := range s.Hooks[ev] {
+			for _, h := range g.Hooks {
+				if strings.Contains(h.Command, "hook claude "+name) {
+					timeout = h.Timeout
+				}
 			}
 		}
+		if timeout == 0 || worst+time.Hour > time.Duration(timeout)*time.Second {
+			t.Fatalf("%s: hook timeout %d s, the job may run %v (with an hour of margin)", name, timeout, worst)
+		}
 	}
-	worst := limitGrace + limitBudget + time.Duration(limitCall)*time.Second + 5*time.Second + limitRetry
-	if timeout == 0 || worst+time.Hour > time.Duration(timeout)*time.Second {
-		t.Fatalf("hook timeout %d s, the job may run %v (with an hour of margin)", timeout, worst)
+}
+
+func runLimitResume(bus, payload string) (int, string) {
+	var errOut bytes.Buffer
+	code := LimitResume(context.Background(), strings.NewReader(payload), &errOut,
+		envOf(map[string]string{"LEA_BUS_SOCK": bus, "LEA_AGENT": "dev"}))
+	return code, errOut.String()
+}
+
+// LimitResume (SessionStart) waits only in a resumed session, and tells the daemon its first call
+// takes over a limit from before the restart; any other start exits 0 without a call.
+func TestLimitResumeWaitsOnlyInAResumedSession(t *testing.T) {
+	fastLimit(t)
+	for _, p := range []string{`{"source":"startup"}`, `{"source":"clear"}`, `{"source":"compact"}`, `{}`, `not json`, `{"source":"Resume"}`} {
+		bus, calls := fakeBus(t, `{"resume":true}`)
+		if code, out := runLimitResume(bus, p); code != 0 || out != "" || len(calls()) != 0 {
+			t.Fatalf("%s: code=%d out=%q calls=%v", p, code, out, calls())
+		}
+	}
+	bus, calls := fakeBus(t, `{}`, `{"resume":true}`)
+	code, out := runLimitResume(bus, `{"hook_event_name":"SessionStart","source":"resume","session_id":"s1"}`)
+	if code != 2 || out != ResumeText+"\n" {
+		t.Fatalf("code=%d out=%q", code, out)
+	}
+	cs := calls()
+	if len(cs) != 2 || cs[0]["first"] != true || cs[0]["restart"] != true || cs[1]["first"] != false || cs[1]["restart"] != nil {
+		t.Fatalf("calls=%v", cs)
+	}
+}
+
+// With the real daemon (#83): a limit recorded before a container restart is resumed by the
+// resumed session's LimitResume job; the session's own SessionStart hook keeps it.
+func TestLimitResumeTakesOverAfterARestart(t *testing.T) {
+	fastLimit(t)
+	_, bus := start(t)
+	runHook(bus, "UserPromptSubmit", `{"session_id":"s1"}`, nil)
+	runHook(bus, "StopFailure", `{"hook_event_name":"StopFailure","session_id":"s1","error":"rate_limit"}`, nil)
+	runHook(bus, "SessionStart", `{"hook_event_name":"SessionStart","session_id":"s1","source":"resume"}`, nil)
+	done := make(chan int, 1)
+	go func() { c, _ := runLimitResume(bus, `{"source":"resume"}`); done <- c }()
+	time.Sleep(300 * time.Millisecond)
+	select {
+	case c := <-done:
+		t.Fatalf("the resumed session's job ended at once: %d (the limit was lost)", c)
+	default:
+	}
+	// The user takes over: the job ends without waking the model.
+	runHook(bus, "UserPromptSubmit", `{"session_id":"s1"}`, nil)
+	select {
+	case c := <-done:
+		if c != 0 {
+			t.Fatalf("code=%d", c)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("the job kept waiting")
+	}
+}
+
+// SessionStart forwards its source when it is one of Claude Code's four, nothing else.
+func TestSessionStartForwardsItsSourceOnly(t *testing.T) {
+	_, bus, db := startDB(t)
+	runHook(bus, "SessionStart", `{"hook_event_name":"SessionStart","session_id":"s1","source":"resume","model":"secret-model"}`, nil)
+	runHook(bus, "SessionStart", `{"hook_event_name":"SessionStart","session_id":"s1","source":"resume; rm -rf"}`, nil)
+	ps := storedPayloads(t, db, "SessionStart")
+	if len(ps) != 2 || !strings.Contains(ps[0], `"source":"resume"`) || strings.Contains(ps[1], "source") {
+		t.Fatalf("payloads=%q", ps)
+	}
+	for _, p := range ps {
+		if strings.Contains(p, "secret") {
+			t.Fatalf("payload=%q", p)
+		}
 	}
 }
