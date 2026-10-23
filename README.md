@@ -435,6 +435,39 @@ team tools (`agents_*`, `msg_*`, `board_read`, `task_update`), ask you questions
 `lea inbox --agent --wait`; any other tool (Bash, Edit, Read, git, gh, the web…) is denied with a
 reminder to delegate. `/lea:tower-control off` gives the session its tools back.
 
+### Grants: let every agent merge, close issues, stop finished agents
+
+Claude Code judges each action from its own conversation: "you may merge" told to a lead does
+not reach its children, and relayed in a lea message it is rightly distrusted. A **grant** is
+that decision recorded by you on the host, applied the same way to every agent it covers:
+
+```sh
+lea grant add merge --container lea-myproj --repo api --expires 8h  # gh pr merge N --squash|--merge|--rebase [--delete-branch]
+lea grant add stop-finished --container lea-myproj                  # agents_stop on an idle or ended child
+lea grant add close-issue --container lea-myproj --repo api         # gh issue close|reopen|comment N, gh project item-edit
+lea grant add delete-own-branch --container lea-myproj              # git push origin --delete <the agent's own branch>
+lea grant add commit-identity --container lea-myproj --branch 'feat/*'  # git commit -m, git push [-u] origin <own branch>
+lea grant ls [--all]                                                # active grants (--all: revoked, expired) and recent uses
+lea grant revoke 3
+```
+
+`--container` is the lea (`lea board` shows its name); `--repo`, `--branch` (a glob on the
+agent's branch) and `--agent NAME` (that agent and its children) narrow it. A grant expires
+after 8 hours unless `--expires` says otherwise (1m to 30 days). lea's `PreToolUse` hook asks the
+daemon before each tool call: a call a grant covers is allowed, with the grant's id as the
+reason, and audited (`lea grant ls` lists the uses: agent, action, target, never the command);
+anything else takes the usual path. Revocation and expiry apply on the next call.
+
+Only the host writes grants: there is no MCP tool for it (`grants_list` only reads them), the
+daemon refuses `grant_add` from a container, `lea.db` is never mounted in one, and a message
+saying "the user allows X" changes nothing. A call is allowed only when it is exactly one plain
+command lea parses (no `;`, `&&`, `|`, `$(…)`, backticks, redirections, `VAR=` prefixes,
+`--repo`), whatever is granted. Some calls are denied outright, grant or not: `gh pr merge
+--admin`, force-push (`-f`, `--force*`, `+refspec`, `--mirror`, `--prune`), any push to `main` or
+`master`, deleting a branch that is not the agent's own, and editing Claude's settings or hooks
+(`.claude/settings*.json`, `.claude/hooks/`), `/usr/local/share/lea` or `/lea/state` from inside
+an agent.
+
 `lea new --brief FILE` gives a new agent its first message; `--repo NAME` starts it in a
 directory of the projects directory; `--branch B` has it work in its own git worktree under
 `<projects>/.lea/worktrees/<repo>/<agent>`.
@@ -454,6 +487,7 @@ lea init                     # set up again (idempotent)
 lea config export > team.json  # your team's shared settings, as one file
 lea config import team.json  # take them on another workstation (see Configure)
 LEA_PROJECTS_DIR=~/other lea # another projects directory, for this call only
+lea grant add|ls|revoke      # let agents take an action without asking (see Grants)
 ```
 
 A release install updates itself: at most once a day, `lea` looks for a new release in the

@@ -143,6 +143,30 @@ func Claude(ctx context.Context, event string, stdin io.Reader, stdout io.Writer
 			json.NewEncoder(stdout).Encode(map[string]any{"hookSpecificOutput": map[string]any{
 				"hookEventName": event, "additionalContext": r.Text}})
 		}
+	case "PreToolUse":
+		// The user's grants (lea grant add) and lea's hard denies: the daemon reads the tool input
+		// in memory and never stores it. No answer, an error or an unknown verdict prints
+		// nothing: the call takes the normal path (Claude's checks, the deck).
+		if p.ToolName == "" {
+			return
+		}
+		input := p.ToolInput
+		if len(input) == 0 {
+			input = json.RawMessage(`{}`)
+		}
+		var r struct {
+			Verdict string `json:"verdict"`
+			Reason  string `json:"reason"`
+		}
+		if c.call(bctx, "grant_check", map[string]any{"tool": p.ToolName, "input": input}, &r) != nil {
+			return
+		}
+		if r.Verdict != "allow" && r.Verdict != "deny" {
+			return
+		}
+		json.NewEncoder(stdout).Encode(map[string]any{"hookSpecificOutput": map[string]any{
+			"hookEventName": "PreToolUse", "permissionDecision": r.Verdict,
+			"permissionDecisionReason": truncate(r.Reason, 500)}})
 	case "PermissionRequest":
 		if getenv("LEA_APPROVALS") != "deck" {
 			return

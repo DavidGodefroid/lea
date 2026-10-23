@@ -66,6 +66,15 @@ CREATE TABLE IF NOT EXISTS lock_requests(
   profile TEXT NOT NULL, state TEXT NOT NULL DEFAULT 'pending', result TEXT NOT NULL DEFAULT '',
   at INTEGER NOT NULL, decided INTEGER NOT NULL DEFAULT 0);
 CREATE INDEX IF NOT EXISTS lock_requests_container ON lock_requests(container, tool, state);
+
+CREATE TABLE IF NOT EXISTS grants(
+  id INTEGER PRIMARY KEY AUTOINCREMENT, container TEXT NOT NULL, action TEXT NOT NULL,
+  repo TEXT NOT NULL DEFAULT '', branch TEXT NOT NULL DEFAULT '', agent TEXT NOT NULL DEFAULT '',
+  created INTEGER NOT NULL, expires INTEGER NOT NULL, revoked INTEGER NOT NULL DEFAULT 0);
+CREATE INDEX IF NOT EXISTS grants_container ON grants(container, revoked, expires);
+CREATE TABLE IF NOT EXISTS grant_uses(
+  id INTEGER PRIMARY KEY AUTOINCREMENT, grant_id INTEGER NOT NULL, agent TEXT NOT NULL,
+  action TEXT NOT NULL, target TEXT NOT NULL, at INTEGER NOT NULL);
 `
 
 type Store struct{ db *sql.DB }
