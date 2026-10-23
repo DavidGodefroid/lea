@@ -228,9 +228,10 @@ func (d *Daemon) finishedChild(o Origin, me string, input json.RawMessage) bool 
 // naming its target only. Any error is no verdict: the call takes the normal path.
 func (d *Daemon) grantCheck(o Origin, me string, raw json.RawMessage) (any, error) {
 	var p struct {
-		Tool  string          `json:"tool"`
-		Input json.RawMessage `json:"input"`
-		Cwd   string          `json:"cwd"`
+		Tool  string            `json:"tool"`
+		Input json.RawMessage   `json:"input"`
+		Cwd   string            `json:"cwd"`
+		Env   map[string]string `json:"env"`
 	}
 	if err := json.Unmarshal(raw, &p); err != nil {
 		return nil, err
@@ -238,6 +239,12 @@ func (d *Daemon) grantCheck(o Origin, me string, raw json.RawMessage) (any, erro
 	c, err := d.grantCaller(o, me, p.Cwd)
 	if err != nil {
 		return nil, err
+	}
+	c.Env = map[string]string{}
+	for _, k := range grants.SafeEnv {
+		if v, ok := p.Env[k]; ok {
+			c.Env[k] = v
+		}
 	}
 	now := d.now()
 	gs, err := d.st.ActiveGrants(o.Container, now)

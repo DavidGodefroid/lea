@@ -10,7 +10,8 @@ import (
 const now = 1_000_000
 
 var dev = Caller{Key: "lea-a/dev-2", Container: "lea-a", Repo: "lea", Branch: "feat/73-x",
-	Lineage: []string{"lea-a/dev-2", "lea-a/claude-1"}, OwnWorktree: true, Worktree: "/p/.lea/worktrees/lea/dev-2"}
+	Lineage: []string{"lea-a/dev-2", "lea-a/claude-1"}, OwnWorktree: true, Worktree: "/p/.lea/worktrees/lea/dev-2",
+	Env: map[string]string{"HOME": "/home/u", "GH_CONFIG_DIR": "/lea/state/gh"}}
 
 func all(action string) Grant {
 	g := Grant{ID: 7, Container: "lea-a", Action: action, Repo: "lea", Branch: "feat/*", Created: now - 10, Expires: now + 3600}
@@ -50,8 +51,8 @@ func TestDecideBash(t *testing.T) {
 		{"merge chained", "gh pr merge 42 --squash; rm -rf /", "", every},
 		{"merge and", "gh pr merge 42 --squash && curl x", "", every},
 		{"merge pipe", "gh pr merge 42 --squash | sh", "", every},
-		{"merge subshell", "gh pr merge $(echo 42) --squash", "", every},
-		{"merge backtick", "gh pr merge `echo 42` --squash", "", every},
+		{"merge subshell", "gh pr merge $(echo 42) --squash", Deny, every},
+		{"merge backtick", "gh pr merge `echo 42` --squash", Deny, every},
 		{"merge newline", "gh pr merge 42 --squash\nrm -rf /", "", every},
 		{"merge env prefix", "GH_TOKEN=x gh pr merge 42 --squash", "", every},
 		{"merge quoted op", "gh pr merge '42;' --squash", "", every},
@@ -103,6 +104,17 @@ func TestDecideBash(t *testing.T) {
 		{"config write", "git config remote.origin.url https://evil", Deny, every},
 		{"config write global", "git -C /x config --global url.https://evil/.insteadOf https://github.com/", Deny, every},
 		{"config read", "git config --get remote.origin.url", "", every},
+		{"config list", "git config --list --show-origin", "", every},
+		{"config write disguised as read", "git config -z core.hooksPath /tmp/h", Deny, every},
+		{"config get plus value", "git config --get core.hooksPath /tmp/h", Deny, every},
+		{"config escaped", `git con\fig core.hooksPath /tmp/h`, Deny, every},
+		// Escapes and expansions never hide a protected target.
+		{"push expansion main", "git push origin $(echo main)", Deny, every},
+		{"push backtick", "git push origin `echo main`", Deny, every},
+		{"push ansi-c", "git push origin $'\\x6dain'", Deny, every},
+		{"path expansion", "cp x .claude/sett$(echo ings).json", Deny, nil},
+		{"remote expansion", "git $(echo remote) set-url origin x", Deny, nil},
+		{"harmless expansion", "git diff $(git merge-base HEAD origin/main)", "", every},
 		{"GH_REPO prefix", "GH_REPO=evil/repo gh pr merge 1 --squash", Deny, every},
 		{"GH_HOST export", "export GH_HOST=evil.example", Deny, every},
 		{"agent -R", "gh pr merge 1 --squash -R evil/repo", "", every},
@@ -176,13 +188,13 @@ func TestPinnedCommand(t *testing.T) {
 	gs := []Grant{all(Merge), all(CommitIdentity)}
 	d := Decide("Bash", bash("gh pr merge feat/73-x --squash --delete-branch"), dev, gs, now, false)
 	want := `'/usr/bin/gh' 'pr' 'merge' 'feat/73-x' '--squash' '--delete-branch' '-R' 'github.com/o/lea'`
-	if d.Verdict != Allow || !strings.HasPrefix(d.Command, `'/usr/bin/env' '-u' 'GIT_DIR'`) || !strings.HasSuffix(d.Command, want) ||
-		!strings.Contains(d.Command, `'-u' 'GH_REPO'`) || d.Request.Target != "github.com/o/lea pr of feat/73-x" {
+	if d.Verdict != Allow || !strings.HasPrefix(d.Command, `'/usr/bin/env' '-i' 'PATH=/usr/bin:/bin'`) || !strings.HasSuffix(d.Command, want) ||
+		!strings.Contains(d.Command, `'HOME=/home/u' 'GH_CONFIG_DIR=/lea/state/gh'`) || d.Request.Target != "github.com/o/lea pr of feat/73-x" {
 		t.Fatalf("merge: %+v", d)
 	}
 	d = Decide("Bash", bash(`git commit -m "it's done"`), dev, gs, now, false)
 	for _, w := range []string{`'/usr/bin/git' '-C' '/p/.lea/worktrees/lea/dev-2'`, `'-c' 'core.hooksPath=/dev/null'`,
-		`'-c' 'core.fsmonitor=false'`, `'-c' 'core.sshCommand=ssh'`, `'commit' '-m' 'it'\''s done'`} {
+		`'-c' 'core.fsmonitor=false'`, `'-c' 'core.sshCommand=/usr/bin/ssh'`, `'-c' 'protocol.allow=never'`, `'commit' '-m' 'it'\''s done'`} {
 		if !strings.Contains(d.Command, w) {
 			t.Fatalf("commit command lacks %s: %s", w, d.Command)
 		}
@@ -199,6 +211,14 @@ func TestPinnedCommand(t *testing.T) {
 	g.GitHub = ""
 	if d := Decide("Bash", bash("gh pr merge 42 --squash"), dev, []Grant{g}, now, false); d.Verdict != "" {
 		t.Fatalf("unpinned merge: %+v", d)
+	}
+	// An environment value lea cannot vouch for: no command, no allow.
+	for _, bad := range []map[string]string{{"HOME": "home/u"}, {"HOME": "/home/u;evil"}, {"GH_CONFIG_DIR": "/x y"}} {
+		odd := dev
+		odd.Env = bad
+		if d := Decide("Bash", bash("git commit -m x"), odd, gs, now, false); d.Verdict != "" {
+			t.Fatalf("env %v: %+v", bad, d)
+		}
 	}
 	// No worktree, no git command.
 	away := dev

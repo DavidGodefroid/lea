@@ -73,7 +73,16 @@ type Caller struct {
 	// Worktree is the caller's worktree root (the hook's cwd, when OwnWorktree): every git call
 	// a grant allows runs there (git -C).
 	Worktree string
+	// Env is the environment an allowed call runs with, and nothing else (env -i): the variables
+	// of SafeEnv, as the hook's own process (Claude's, not the agent's shell) has them.
+	Env map[string]string
 }
+
+// SafeEnv are the variables an allowed git or gh call keeps, each checked by safeEnvValue.
+// Everything else (GIT_*, GH_REPO, GH_HOST, tokens, LD_*, BASH_ENV…) is dropped.
+var SafeEnv = []string{"HOME", "GH_CONFIG_DIR", "SSH_AUTH_SOCK", "LANG"}
+
+var safeEnvValue = regexp.MustCompile(`^[A-Za-z0-9/._@:+-]{1,256}$`)
 
 // InWorktree says whether cwd is exactly the root of <...>/.lea/worktrees/<repo>/<name>: not a
 // subdirectory (which could hold a nested repository), and with one worktrees segment only.
@@ -213,34 +222,34 @@ func Decide(tool string, input json.RawMessage, c Caller, gs []Grant, now int64,
 	return d
 }
 
-// Programs and environment of an allowed call: absolute paths (no PATH, alias or function
-// lookup of the program), and none of the variables that would point git or gh elsewhere or run
-// a command of the agent's.
+// Programs of an allowed call: absolute paths, so no PATH, alias or function lookup.
 const (
 	gitPath = "/usr/bin/git"
 	ghPath  = "/usr/bin/gh"
 	envPath = "/usr/bin/env"
+	sshPath = "/usr/bin/ssh"
 )
 
-var unsetEnv = []string{"GIT_DIR", "GIT_WORK_TREE", "GIT_COMMON_DIR", "GIT_INDEX_FILE", "GIT_OBJECT_DIRECTORY",
-	"GIT_SSH", "GIT_SSH_COMMAND", "GIT_ASKPASS", "SSH_ASKPASS", "GIT_EXEC_PATH", "GIT_TEMPLATE_DIR",
-	"GIT_CONFIG", "GIT_CONFIG_GLOBAL", "GIT_CONFIG_SYSTEM", "GIT_CONFIG_PARAMETERS", "GIT_CONFIG_COUNT",
-	"GIT_EXTERNAL_DIFF", "GIT_PAGER", "GIT_PROXY_COMMAND", "GH_REPO", "GH_HOST", "GH_ENTERPRISE_TOKEN",
-	"GH_PAGER", "GH_BROWSER", "BROWSER", "BASH_ENV", "ENV", "LD_PRELOAD", "LD_LIBRARY_PATH"}
-
-// gitPins neutralise what in git's configuration would run a program during commit or push.
-var gitPins = []string{"core.hooksPath=/dev/null", "core.fsmonitor=false", "core.sshCommand=ssh",
-	"commit.gpgSign=false", "core.pager=cat", "core.editor=true", "push.recurseSubmodules=no",
-	"protocol.ext.allow=never", "protocol.file.allow=never"}
+// gitPins neutralise what in git's configuration would run a program or send the push elsewhere
+// during commit or push: hooks, fsmonitor, the SSH command, signing, pager, editor, askpass, and
+// every transport but https and ssh.
+var gitPins = []string{"core.hooksPath=/dev/null", "core.fsmonitor=false", "core.sshCommand=" + sshPath,
+	"commit.gpgSign=false", "core.pager=cat", "core.editor=true", "core.askPass=/bin/false",
+	"push.recurseSubmodules=no", "protocol.allow=never", "protocol.https.allow=always", "protocol.ssh.allow=always"}
 
 // Command is the command an allowed Bash call runs instead of the agent's: the validated argv
-// with an absolute program, a scrubbed environment, git pinned to the caller's worktree with its
+// with an absolute program, an environment of SafeEnv only (env -i), git pinned to the caller's worktree with its
 // command-running settings neutralised, gh pinned to the grant's repository. Every word is
 // single-quoted. "" when the call cannot be pinned.
 func Command(req Request, c Caller, g Grant) string {
-	argv := []string{envPath}
-	for _, v := range unsetEnv {
-		argv = append(argv, "-u", v)
+	argv := []string{envPath, "-i", "PATH=/usr/bin:/bin", "GIT_TERMINAL_PROMPT=0", "GIT_EDITOR=true", "GH_PROMPT_DISABLED=1"}
+	for _, k := range SafeEnv {
+		if v, ok := c.Env[k]; ok {
+			if !safeEnvValue.MatchString(v) || (k != "LANG" && !strings.HasPrefix(v, "/")) {
+				return ""
+			}
+			argv = append(argv, k+"="+v)
+		}
 	}
 	switch req.Prog {
 	case "git":

@@ -13,6 +13,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/DavidGodefroid/lea/internal/client"
+	"github.com/DavidGodefroid/lea/internal/grants"
 	"github.com/DavidGodefroid/lea/internal/identity"
 	"github.com/DavidGodefroid/lea/internal/wire"
 )
@@ -160,7 +161,15 @@ func Claude(ctx context.Context, event string, stdin io.Reader, stdout io.Writer
 			Reason  string `json:"reason"`
 			Command string `json:"command"`
 		}
-		if c.call(bctx, "grant_check", map[string]any{"tool": p.ToolName, "input": input, "cwd": truncate(p.Cwd, 4096)}, &r) != nil {
+		// The environment a pinned command keeps comes from this process (Claude's), never from
+		// the agent's shell: the daemon checks each value and drops the rest.
+		env := map[string]string{}
+		for _, k := range grants.SafeEnv {
+			if v := getenv(k); v != "" {
+				env[k] = truncate(v, 256)
+			}
+		}
+		if c.call(bctx, "grant_check", map[string]any{"tool": p.ToolName, "input": input, "cwd": truncate(p.Cwd, 4096), "env": env}, &r) != nil {
 			return
 		}
 		if r.Verdict != "allow" && r.Verdict != "deny" {

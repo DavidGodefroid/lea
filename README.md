@@ -459,9 +459,10 @@ reason, and audited (`lea grant ls` lists the uses: agent, action, target, never
 anything else takes the usual path. Revocation and expiry apply on the next call.
 
 An allowed shell call never runs the agent's text: lea runs the command it parsed, rebuilt word by
-word with `/usr/bin/git` or `/usr/bin/gh`, through `env` without the variables that would point
-git or gh elsewhere (`GIT_DIR`, `GIT_SSH_COMMAND`, `GH_REPO`, `GH_HOST`…). git runs with
-`-C <the agent's worktree>` and its hooks, fsmonitor, signing and SSH command switched off; gh
+word with `/usr/bin/git` or `/usr/bin/gh`, through `env -i` with a fixed `PATH` and only
+`HOME`, `GH_CONFIG_DIR`, `SSH_AUTH_SOCK` and `LANG` as Claude's own process has them (never
+`GIT_*`, `GH_REPO`, `GH_HOST`, tokens…). git runs with `-C <the agent's worktree>`, its hooks,
+fsmonitor, signing, askpass and pager off, `/usr/bin/ssh`, and https or ssh only; gh
 runs with `-R github.com/<--github>`, which merge and close-issue grants must name.
 
 Only the host writes grants: there is no MCP tool for it (`grants_list` only reads them), the
@@ -476,7 +477,9 @@ live agent of the lea works on it. Some calls are denied outright, grant or not:
 set-url|add|…`, writes with `git config`, `gh repo set-default`, `GH_REPO=`/`GH_HOST=`), and
 writing a file that makes a later command run something else: Claude's settings, hooks and shell
 snapshots, git's config and hooks (`.git/config`, `.git/hooks/`, `~/.gitconfig`), the shell's
-startup files (`~/.bashrc`…), `/usr/local/share/lea` or `/lea/state`.
+startup files (`~/.bashrc`…), `/usr/local/share/lea` or `/lea/state`. A command that hides
+words behind escapes or expansions (`\`, `$…`, backticks) and touches any of these is denied
+too: run it plainly.
 
 `lea new --brief FILE` gives a new agent its first message; `--repo NAME` starts it in a
 directory of the projects directory; `--branch B` has it work in its own git worktree under

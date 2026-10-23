@@ -77,8 +77,12 @@ var (
 	ghDefaultRe  = regexp.MustCompile(`\bgh\s+repo\s+set-default\b`)
 	ghEnvRe      = regexp.MustCompile(`\bGH_(REPO|HOST|ENTERPRISE_TOKEN|CONFIG_DIR)\s*=`)
 	obfuscatedRe = regexp.MustCompile("[\\\\$`]")
-	readOnlyOn   = map[string]bool{"cat": true, "head": true, "tail": true, "less": true, "jq": true, "grep": true, "ls": true, "wc": true, "diff": true, "stat": true}
-	unquote      = strings.NewReplacer(`"`, "", `'`, "")
+	// sensitiveRe names what a hard deny protects, loosely: a command that mentions it and hides
+	// words behind escapes or expansions is denied, whatever it does.
+	sensitiveRe = regexp.MustCompile(`\.claude|\.git\b|gitconfig|\.(bash|zsh|profile)|lea/state|share/lea|\.config/(git|lea)|` +
+		`\bgit\b[\s\S]*\b(push|config|remote)\b|\bgh\b[\s\S]*\b(repo|merge|--admin)\b|GH_`)
+	readOnlyOn = map[string]bool{"cat": true, "head": true, "tail": true, "less": true, "jq": true, "grep": true, "ls": true, "wc": true, "diff": true, "stat": true}
+	unquote    = strings.NewReplacer(`"`, "", `'`, "", `\`, "")
 )
 
 // hardBash returns why a shell command is a hard deny, or "". It looks at the raw text with its
@@ -86,6 +90,9 @@ var (
 func hardBash(cmd string, c Caller) string {
 	raw := cmd
 	cmd = unquote.Replace(cmd)
+	if _, ok := Words(raw); !ok && obfuscatedRe.MatchString(raw) && sensitiveRe.MatchString(cmd) {
+		return "a command with escapes or expansions that touches git, gh or protected files is never allowed: run it plainly"
+	}
 	if adminRe.MatchString(cmd) {
 		return "gh pr merge --admin bypasses branch protection"
 	}
@@ -105,9 +112,6 @@ func hardBash(cmd string, c Caller) string {
 	}
 	if !pushRe.MatchString(cmd) {
 		return ""
-	}
-	if _, ok := Words(raw); !ok && obfuscatedRe.MatchString(raw) {
-		return "a push in a command with escapes or expansions is never allowed: run it alone"
 	}
 	if forceRe.MatchString(cmd) {
 		return "force-push (or a push that rewrites or prunes remote branches) is never allowed"
@@ -129,17 +133,34 @@ func hardBash(cmd string, c Caller) string {
 	return ""
 }
 
-// gitConfigRead says whether cmd is one plain "git config" that only reads.
+// gitConfigRead says whether cmd is one plain "git config" that only reads: --get, --get-all or
+// --get-regexp with exactly one key, or --list/-l with none, plus scope and format modifiers.
 func gitConfigRead(cmd string) bool {
 	w, ok := Words(cmd)
 	if !ok || len(w) < 3 || w[0] != "git" || w[1] != "config" {
 		return false
 	}
+	action, pos := "", 0
 	for _, a := range w[2:] {
 		switch a {
-		case "--get", "--get-all", "--get-regexp", "--list", "-l", "--show-origin", "--show-scope", "--name-only", "--null", "-z":
-			return true
+		case "--get", "--get-all", "--get-regexp", "--list", "-l":
+			if action != "" {
+				return false
+			}
+			action = a
+		case "--show-origin", "--show-scope", "--name-only", "--null", "-z", "--local", "--global", "--system", "--worktree":
+		default:
+			if strings.HasPrefix(a, "-") {
+				return false
+			}
+			pos++
 		}
+	}
+	switch action {
+	case "--get", "--get-all", "--get-regexp":
+		return pos == 1
+	case "--list", "-l":
+		return pos == 0
 	}
 	return false
 }
