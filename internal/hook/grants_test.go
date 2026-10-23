@@ -8,13 +8,31 @@ import (
 	"testing"
 
 	"github.com/DavidGodefroid/lea/internal/client"
+	"github.com/DavidGodefroid/lea/internal/store"
 	"github.com/DavidGodefroid/lea/internal/wire"
 )
 
+const devCwd = "/p/.lea/worktrees/fixture/dev"
+
 func preToolUse(cmd string) string {
 	b, _ := json.Marshal(map[string]any{"session_id": "s1", "hook_event_name": "PreToolUse", "tool_name": "Bash",
-		"tool_input": map[string]string{"command": cmd}})
+		"tool_input": map[string]string{"command": cmd}, "cwd": devCwd})
 	return string(b)
+}
+
+// registerDev records agent dev as lea spawns it: repo fixture, branch feat/x, so its worktree is
+// devCwd.
+func registerDev(t *testing.T, db string) {
+	t.Helper()
+	st, err := store.Open(db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	if _, err := st.Register(store.NewAgent{Container: "lea-a", Name: "dev", Profile: "claude", Workdir: "/p", Role: "dev",
+		Repo: "fixture", Branch: "feat/x"}, store.Caps{}, 1); err != nil {
+		t.Fatal(err)
+	}
 }
 
 func hookDecision(t *testing.T, out string) (string, string) {
@@ -40,7 +58,8 @@ func call(sock, agent, method string, params any, result any) error {
 
 func TestPreToolUseGrantAllowsRevokeAndHardDeny(t *testing.T) {
 	api, bus, db := startDB(t)
-	merge := preToolUse("gh pr merge 42 --squash --delete-branch")
+	registerDev(t, db)
+	merge := preToolUse("gh pr merge 42 --squash")
 	// No grant: no opinion, today's path.
 	if d, _ := hookDecision(t, runHook(bus, "PreToolUse", merge, nil)); d != "" {
 		t.Fatalf("no grant: %q", d)
@@ -70,6 +89,14 @@ func TestPreToolUseGrantAllowsRevokeAndHardDeny(t *testing.T) {
 	if d, _ := hookDecision(t, runHook(bus, "PreToolUse", merge, nil)); d != "" {
 		t.Fatalf("revoked: %q", d)
 	}
+	// Outside its own worktree the call is not covered.
+	if err := call(api, "", "grant_add", map[string]any{"container": "lea-a", "action": "merge"}, &g); err != nil {
+		t.Fatal(err)
+	}
+	away := strings.Replace(merge, devCwd, "/p/fixture", 1)
+	if d, _ := hookDecision(t, runHook(bus, "PreToolUse", away, nil)); d != "" {
+		t.Fatalf("outside its worktree: %q", d)
+	}
 	// The tool input is never stored; the audit names the target only.
 	h, err := sql.Open("sqlite", db)
 	if err != nil {
@@ -81,7 +108,8 @@ func TestPreToolUseGrantAllowsRevokeAndHardDeny(t *testing.T) {
 	if err := h.QueryRow(`SELECT count(*), max(target) FROM grant_uses`).Scan(&n, &target); err != nil || n != 1 || target != "pr 42" {
 		t.Fatalf("audit: %d %q %v", n, target, err)
 	}
-	for _, q := range []string{`SELECT count(*) FROM events WHERE payload LIKE '%squash%'`, `SELECT count(*) FROM grant_uses WHERE target LIKE '%squash%'`} {
+	for _, q := range []string{`SELECT count(*) FROM events WHERE payload LIKE '%squash%' OR payload LIKE '%worktrees%'`,
+		`SELECT count(*) FROM grant_uses WHERE target LIKE '%squash%'`} {
 		if err := h.QueryRow(q).Scan(&n); err != nil || n != 0 {
 			t.Fatalf("%s: %d %v", q, n, err)
 		}

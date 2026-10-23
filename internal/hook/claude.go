@@ -80,6 +80,7 @@ func Claude(ctx context.Context, event string, stdin io.Reader, stdout io.Writer
 		AgentID        string          `json:"agent_id"`
 		Error          string          `json:"error"`
 		Source         string          `json:"source"`
+		Cwd            string          `json:"cwd"`
 	}
 	_ = json.Unmarshal(in, &p)
 	// Forward only what phase 0 needs: never tool_input or tool_response (file contents,
@@ -145,7 +146,7 @@ func Claude(ctx context.Context, event string, stdin io.Reader, stdout io.Writer
 		}
 	case "PreToolUse":
 		// The user's grants (lea grant add) and lea's hard denies: the daemon reads the tool input
-		// in memory and never stores it. No answer, an error or an unknown verdict prints
+		// and the working directory in memory and never stores them. No answer, an error or an unknown verdict prints
 		// nothing: the call takes the normal path (Claude's checks, the deck).
 		if p.ToolName == "" {
 			return
@@ -158,7 +159,7 @@ func Claude(ctx context.Context, event string, stdin io.Reader, stdout io.Writer
 			Verdict string `json:"verdict"`
 			Reason  string `json:"reason"`
 		}
-		if c.call(bctx, "grant_check", map[string]any{"tool": p.ToolName, "input": input}, &r) != nil {
+		if c.call(bctx, "grant_check", map[string]any{"tool": p.ToolName, "input": input, "cwd": truncate(p.Cwd, 4096)}, &r) != nil {
 			return
 		}
 		if r.Verdict != "allow" && r.Verdict != "deny" {

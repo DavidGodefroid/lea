@@ -8,7 +8,7 @@ import (
 const now = 1_000_000
 
 var dev = Caller{Key: "lea-a/dev-2", Container: "lea-a", Repo: "lea", Branch: "feat/73-x",
-	Lineage: []string{"lea-a/dev-2", "lea-a/claude-1"}}
+	Lineage: []string{"lea-a/dev-2", "lea-a/claude-1"}, OwnWorktree: true}
 
 func all(action string) Grant {
 	return Grant{ID: 7, Container: "lea-a", Action: action, Repo: "lea", Branch: "feat/*", Created: now - 10, Expires: now + 3600}
@@ -25,8 +25,11 @@ func TestDecideBash(t *testing.T) {
 		name, cmd, want string
 		gs              []Grant
 	}{
-		{"merge squash", "gh pr merge 42 --squash --delete-branch", Allow, every},
+		{"merge numbered", "gh pr merge 42 --squash", Allow, every},
 		{"merge current branch", "gh pr merge --merge", Allow, every},
+		{"merge own branch delete", "gh pr merge --squash --delete-branch", Allow, every},
+		{"merge numbered delete", "gh pr merge 42 --squash --delete-branch", "", every},
+		{"merge numbered -d", "gh pr merge 42 -s -d", "", every},
 		{"merge no grant", "gh pr merge 42 --squash", "", nil},
 		{"merge other action granted", "gh pr merge 42 --squash", "", []Grant{all(CloseIssue)}},
 		{"merge admin", "gh pr merge 42 --squash --admin", Deny, every},
@@ -124,6 +127,35 @@ func TestDecideScope(t *testing.T) {
 				t.Fatalf("verdict %q (%s), want %q", d.Verdict, d.Reason, tc.want)
 			}
 		})
+	}
+}
+
+func TestOwnWorktreeAndBranch(t *testing.T) {
+	every := []Grant{all(Merge), all(CloseIssue), all(DeleteOwnBranch), all(CommitIdentity)}
+	away := dev
+	away.OwnWorktree = false
+	for _, c := range []string{"gh pr merge 42 --squash", "gh issue close 3", "git commit -m x", "git push origin feat/73-x", "git push origin --delete feat/73-x"} {
+		if d := Decide("Bash", bash(c), away, every, now, false); d.Verdict != "" {
+			t.Fatalf("outside its worktree %q: %+v", c, d)
+		}
+	}
+	shared := dev
+	shared.Branch = ""
+	if d := Decide("Bash", bash("git push origin --delete feat/73-x"), shared, every, now, false); d.Verdict != Deny {
+		t.Fatalf("shared branch delete: %+v", d)
+	}
+	if d := Decide("Bash", bash("git push origin feat/73-x"), shared, every, now, false); d.Verdict != "" {
+		t.Fatalf("shared branch push: %+v", d)
+	}
+	for _, tc := range []struct {
+		cwd string
+		ok  bool
+	}{{"/p/.lea/worktrees/lea/dev-2", true}, {"/p/.lea/worktrees/lea/dev-2/internal", true},
+		{"/p/.lea/worktrees/lea/dev-22", false}, {"/p/.lea/worktrees/other/dev-2", false}, {"/p/lea", false},
+		{"/p/.lea/worktrees/lea/dev-2/../dev-3", false}, {"p/.lea/worktrees/lea/dev-2", false}, {"", false}} {
+		if InWorktree(tc.cwd, "lea", "dev-2") != tc.ok {
+			t.Fatalf("InWorktree(%q) != %v", tc.cwd, tc.ok)
+		}
 	}
 }
 

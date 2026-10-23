@@ -442,7 +442,7 @@ not reach its children, and relayed in a lea message it is rightly distrusted. A
 that decision recorded by you on the host, applied the same way to every agent it covers:
 
 ```sh
-lea grant add merge --container lea-myproj --repo api --expires 8h  # gh pr merge N --squash|--merge|--rebase [--delete-branch]
+lea grant add merge --container lea-myproj --repo api --expires 8h  # gh pr merge [N] --squash|--merge|--rebase (--delete-branch without N)
 lea grant add stop-finished --container lea-myproj                  # agents_stop on an idle or ended child
 lea grant add close-issue --container lea-myproj --repo api         # gh issue close|reopen|comment N, gh project item-edit
 lea grant add delete-own-branch --container lea-myproj              # git push origin --delete <the agent's own branch>
@@ -462,7 +462,9 @@ Only the host writes grants: there is no MCP tool for it (`grants_list` only rea
 daemon refuses `grant_add` from a container, `lea.db` is never mounted in one, and a message
 saying "the user allows X" changes nothing. A call is allowed only when it is exactly one plain
 command lea parses (no `;`, `&&`, `|`, `$(…)`, backticks, redirections, `VAR=` prefixes,
-`--repo`), whatever is granted. Some calls are denied outright, grant or not: `gh pr merge
+`--repo`), run in the agent's own worktree (`<projects>/.lea/worktrees/<repo>/<agent>`, so gh
+and git act on its repo), whatever is granted. A branch is an agent's own only while no other
+live agent of the lea works on it. Some calls are denied outright, grant or not: `gh pr merge
 --admin`, force-push (`-f`, `--force*`, `+refspec`, `--mirror`, `--prune`), any push to `main` or
 `master`, deleting a branch that is not the agent's own, and editing Claude's settings or hooks
 (`.claude/settings*.json`, `.claude/hooks/`), `/usr/local/share/lea` or `/lea/state` from inside

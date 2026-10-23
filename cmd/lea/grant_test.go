@@ -14,9 +14,10 @@ import (
 // and returns the permission decision it prints ("" when none).
 func preToolUseAs(t *testing.T, bus, agent, tool string, input any) string {
 	t.Helper()
+	cwd := "/p/.lea/worktrees/fixture/" + agent
 	t.Setenv("LEA_BUS_SOCK", bus)
 	t.Setenv("LEA_AGENT", agent)
-	b, _ := json.Marshal(map[string]any{"session_id": "s", "hook_event_name": "PreToolUse", "tool_name": tool, "tool_input": input})
+	b, _ := json.Marshal(map[string]any{"session_id": "s", "hook_event_name": "PreToolUse", "tool_name": tool, "tool_input": input, "cwd": cwd})
 	var out, errb bytes.Buffer
 	if rc := run([]string{"hook", "claude", "PreToolUse"}, bytes.NewReader(b), &out, &errb); rc != 0 {
 		t.Fatalf("hook rc=%d %s", rc, errb.String())
@@ -52,7 +53,7 @@ func TestGrantsReachTheWholeSubtree(t *testing.T) {
 	reg("sub", "reviewer", lead.Key, "feat/a-1")
 	reg("other", "dev", "", "feat/b")
 	host := map[string]string{"LEA_DAEMON_SOCK": api}
-	merge := cmd("gh pr merge 7 --squash --delete-branch")
+	merge := cmd("gh pr merge --squash --delete-branch")
 	admin := cmd("gh pr merge 7 --squash --admin")
 
 	if d := preToolUseAs(t, bus, "sub", "Bash", merge); d != "" {
@@ -73,7 +74,7 @@ func TestGrantsReachTheWholeSubtree(t *testing.T) {
 		t.Fatalf("--admin with a grant: %q", d)
 	}
 	rc, out, _ = runEnv(t, host, "grant", "ls")
-	if rc != 0 || !strings.Contains(out, "#"+id+"  active") || !strings.Contains(out, "lea-a/sub merge: pr 7") {
+	if rc != 0 || !strings.Contains(out, "#"+id+"  active") || !strings.Contains(out, "lea-a/sub merge: pr (own branch)") {
 		t.Fatalf("grant ls rc=%d out=%q", rc, out)
 	}
 	if rc, out, _ := runEnv(t, host, "grant", "revoke", id); rc != 0 || !strings.Contains(out, "revoked") {
@@ -87,6 +88,19 @@ func TestGrantsReachTheWholeSubtree(t *testing.T) {
 	}
 	if rc, out, _ := runEnv(t, host, "grant", "ls", "--all"); rc != 0 || !strings.Contains(out, "#"+id+"  revoked") {
 		t.Fatalf("grant ls --all rc=%d out=%q", rc, out)
+	}
+
+	// delete-own-branch: the caller's own branch only while no other live agent shares it.
+	if rc, _, e := runEnv(t, host, "grant", "add", "delete-own-branch", "--container", "lea-a"); rc != 0 {
+		t.Fatalf("grant delete-own-branch: %s", e)
+	}
+	del := cmd("git push origin --delete feat/a-1")
+	if d := preToolUseAs(t, bus, "sub", "Bash", del); d != "allow" {
+		t.Fatalf("delete own branch: %q", d)
+	}
+	reg("twin", "dev", lead.Key, "feat/a-1")
+	if d := preToolUseAs(t, bus, "sub", "Bash", del); d != "deny" {
+		t.Fatalf("delete a branch another agent works on: %q", d)
 	}
 
 	// stop-finished: the lead stops its idle child, not a working one, not another's child.

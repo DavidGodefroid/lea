@@ -100,7 +100,7 @@ func hardBash(cmd string, c Caller) string {
 			return "deleting a remote branch in a compound command is never allowed"
 		}
 		for _, b := range pushDeletes(w) {
-			if b != c.Branch || Protected(b) {
+			if c.Branch == "" || b != c.Branch || Protected(b) {
 				return "deleting a branch that is not the agent's own is never allowed"
 			}
 		}
@@ -143,6 +143,11 @@ func pushDeletes(w []string) []string {
 // bashRequest recognises a command a grant can cover. Every word must be one the matcher knows:
 // an unknown flag means no grant applies.
 func bashRequest(w []string, c Caller) (Request, bool) {
+	// gh and git act on the repository of the directory they run in: only the caller's own
+	// worktree binds them to the caller's repo and branch.
+	if !c.OwnWorktree {
+		return Request{}, false
+	}
 	switch {
 	case len(w) >= 3 && w[0] == "gh" && w[1] == "pr" && w[2] == "merge":
 		return ghMerge(w[3:])
@@ -171,10 +176,12 @@ func number(s string) bool {
 }
 
 // ghMerge: gh pr merge [<number>] [--squash|--merge|--rebase] [--delete-branch]. No --repo: the
-// PR is the one of the repository the agent works in.
+// PR is one of the repository of the caller's worktree. --delete-branch deletes the PR's head
+// branch: it is accepted only without a number, where the PR is the one of the worktree's branch,
+// the caller's own.
 func ghMerge(args []string) (Request, bool) {
-	target := "pr (current branch)"
-	method := false
+	target := "pr (own branch)"
+	method, del, numbered := false, false, false
 	for i, a := range args {
 		switch a {
 		case "--squash", "-s", "--merge", "-m", "--rebase", "-r":
@@ -183,12 +190,16 @@ func ghMerge(args []string) (Request, bool) {
 			}
 			method = true
 		case "--delete-branch", "-d":
+			del = true
 		default:
 			if i != 0 || !number(a) {
 				return Request{}, false
 			}
-			target = "pr " + a
+			target, numbered = "pr "+a, true
 		}
+	}
+	if del && numbered {
+		return Request{}, false
 	}
 	return Request{Action: Merge, Target: target}, true
 }
@@ -271,7 +282,7 @@ func gitPush(args []string, c Caller) (Request, bool) {
 			pos = append(pos, a)
 		}
 	}
-	if len(pos) != 2 || pos[0] != "origin" || pos[1] != c.Branch || Protected(pos[1]) {
+	if len(pos) != 2 || pos[0] != "origin" || c.Branch == "" || pos[1] != c.Branch || Protected(pos[1]) {
 		return Request{}, false
 	}
 	if del {

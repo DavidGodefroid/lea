@@ -126,7 +126,7 @@ func (d *Daemon) grantList(raw json.RawMessage) (any, error) {
 
 // grantsMine is an agent's read-only view: the active grants of its lea that cover it.
 func (d *Daemon) grantsMine(o Origin, me string) (any, error) {
-	c, err := d.grantCaller(o, me)
+	c, err := d.grantCaller(o, me, "")
 	if err != nil {
 		return nil, err
 	}
@@ -155,8 +155,10 @@ func contains(xs []string, x string) bool {
 }
 
 // grantCaller is the calling agent as the daemon knows it: its container is the socket's, its
-// repo, branch and parents its row's, never anything the agent says.
-func (d *Daemon) grantCaller(o Origin, me string) (grants.Caller, error) {
+// repo, branch and parents its row's, never anything the agent says. A branch another live agent
+// of the lea also works on (same repo) is nobody's own. cwd is where the tool call runs (the
+// hook's): it only says whether that is the caller's own worktree.
+func (d *Daemon) grantCaller(o Origin, me, cwd string) (grants.Caller, error) {
 	if o.Container == "" {
 		return grants.Caller{}, errors.New("grants apply to agents only")
 	}
@@ -164,7 +166,20 @@ func (d *Daemon) grantCaller(o Origin, me string) (grants.Caller, error) {
 	if err != nil {
 		return grants.Caller{}, err
 	}
-	c := grants.Caller{Key: me, Container: o.Container, Repo: a.Repo, Branch: a.Branch, Lineage: []string{me}}
+	c := grants.Caller{Key: me, Container: o.Container, Repo: a.Repo, Branch: a.Branch, Lineage: []string{me},
+		OwnWorktree: grants.InWorktree(cwd, a.Repo, a.Name)}
+	if c.Branch != "" {
+		as, err := d.st.Agents()
+		if err != nil {
+			return grants.Caller{}, err
+		}
+		for _, x := range as {
+			if x.Key != me && x.Container == o.Container && x.Repo == a.Repo && x.Branch == a.Branch && x.State != "done" {
+				c.Branch = ""
+				break
+			}
+		}
+	}
 	for p := a.Parent; p != "" && len(c.Lineage) < maxLineage && !contains(c.Lineage, p); {
 		c.Lineage = append(c.Lineage, p)
 		pa, err := d.st.AgentByKey(p)
@@ -203,11 +218,12 @@ func (d *Daemon) grantCheck(o Origin, me string, raw json.RawMessage) (any, erro
 	var p struct {
 		Tool  string          `json:"tool"`
 		Input json.RawMessage `json:"input"`
+		Cwd   string          `json:"cwd"`
 	}
 	if err := json.Unmarshal(raw, &p); err != nil {
 		return nil, err
 	}
-	c, err := d.grantCaller(o, me)
+	c, err := d.grantCaller(o, me, p.Cwd)
 	if err != nil {
 		return nil, err
 	}
