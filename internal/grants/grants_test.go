@@ -115,6 +115,10 @@ func TestDecideBash(t *testing.T) {
 		{"path expansion", "cp x .claude/sett$(echo ings).json", Deny, nil},
 		{"remote expansion", "git $(echo remote) set-url origin x", Deny, nil},
 		{"harmless expansion", "git diff $(git merge-base HEAD origin/main)", "", every},
+		{"built verb push", "$(printf g)it push origin x", Deny, nil},
+		{"variable program push", "$G push origin x", Deny, nil},
+		{"built remote", "g${x}it remote set-url origin y", Deny, nil},
+		{"files loop", "for f in $(git ls-files); do wc -l $f; done", "", nil},
 		{"GH_REPO prefix", "GH_REPO=evil/repo gh pr merge 1 --squash", Deny, every},
 		{"GH_HOST export", "export GH_HOST=evil.example", Deny, every},
 		{"agent -R", "gh pr merge 1 --squash -R evil/repo", "", every},
@@ -194,7 +198,7 @@ func TestPinnedCommand(t *testing.T) {
 	}
 	d = Decide("Bash", bash(`git commit -m "it's done"`), dev, gs, now, false)
 	for _, w := range []string{`'/usr/bin/git' '-C' '/p/.lea/worktrees/lea/dev-2'`, `'-c' 'core.hooksPath=/dev/null'`,
-		`'-c' 'core.fsmonitor=false'`, `'-c' 'core.sshCommand=/usr/bin/ssh'`, `'-c' 'protocol.allow=never'`, `'commit' '-m' 'it'\''s done'`} {
+		`'-c' 'core.fsmonitor=false'`, `'-c' 'core.sshCommand=/usr/bin/ssh'`, `'-c' 'protocol.allow=never'`, `'GIT_CONFIG_GLOBAL=/dev/null'`, `'-c' 'credential.helper=' '-c' 'credential.helper=store`, `'commit' '-m' 'it'\''s done'`} {
 		if !strings.Contains(d.Command, w) {
 			t.Fatalf("commit command lacks %s: %s", w, d.Command)
 		}

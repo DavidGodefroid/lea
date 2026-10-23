@@ -235,14 +235,21 @@ const (
 // every transport but https and ssh.
 var gitPins = []string{"core.hooksPath=/dev/null", "core.fsmonitor=false", "core.sshCommand=" + sshPath,
 	"commit.gpgSign=false", "core.pager=cat", "core.editor=true", "core.askPass=/bin/false",
-	"push.recurseSubmodules=no", "protocol.allow=never", "protocol.https.allow=always", "protocol.ssh.allow=always"}
+	"push.recurseSubmodules=no", "protocol.allow=never", "protocol.https.allow=always", "protocol.ssh.allow=always",
+	// An empty helper resets the list (the repository's too); then only lea's: the image's store
+	// and gh's.
+	"credential.helper=", "credential.helper=store --file=/lea/state/git/credentials",
+	"credential.helper=!/usr/bin/gh auth git-credential"}
 
 // Command is the command an allowed Bash call runs instead of the agent's: the validated argv
 // with an absolute program, an environment of SafeEnv only (env -i), git pinned to the caller's worktree with its
 // command-running settings neutralised, gh pinned to the grant's repository. Every word is
 // single-quoted. "" when the call cannot be pinned.
 func Command(req Request, c Caller, g Grant) string {
-	argv := []string{envPath, "-i", "PATH=/usr/bin:/bin", "GIT_TERMINAL_PROMPT=0", "GIT_EDITOR=true", "GH_PROMPT_DISABLED=1"}
+	// GIT_CONFIG_GLOBAL=/dev/null: ~/.gitconfig is the agent's to write (url.insteadOf,
+	// include.path, helpers); /etc/gitconfig is the image's.
+	argv := []string{envPath, "-i", "PATH=/usr/bin:/bin", "GIT_CONFIG_GLOBAL=/dev/null", "GIT_TERMINAL_PROMPT=0",
+		"GIT_EDITOR=true", "GH_PROMPT_DISABLED=1"}
 	for _, k := range SafeEnv {
 		if v, ok := c.Env[k]; ok {
 			if !safeEnvValue.MatchString(v) || (k != "LANG" && !strings.HasPrefix(v, "/")) {

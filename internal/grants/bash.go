@@ -79,8 +79,11 @@ var (
 	obfuscatedRe = regexp.MustCompile("[\\\\$`]")
 	// sensitiveRe names what a hard deny protects, loosely: a command that mentions it and hides
 	// words behind escapes or expansions is denied, whatever it does.
+	// The verbs are matched alone, in any order: an expansion can build "git" or "gh" itself. This
+	// is defence in depth: a shell can compute any word, so the hard denies cannot catch every
+	// spelling; what a grant allows is only ever the parsed, rebuilt command (Command).
 	sensitiveRe = regexp.MustCompile(`\.claude|\.git\b|gitconfig|\.(bash|zsh|profile)|lea/state|share/lea|\.config/(git|lea)|` +
-		`\bgit\b[\s\S]*\b(push|config|remote)\b|\bgh\b[\s\S]*\b(repo|merge|--admin)\b|GH_`)
+		`\b(push|config|remote|set-default|set-url|insteadOf|hooksPath)\b|\bmerge(\s|$)|--admin|GH_`)
 	readOnlyOn = map[string]bool{"cat": true, "head": true, "tail": true, "less": true, "jq": true, "grep": true, "ls": true, "wc": true, "diff": true, "stat": true}
 	unquote    = strings.NewReplacer(`"`, "", `'`, "", `\`, "")
 )
