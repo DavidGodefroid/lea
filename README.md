@@ -460,8 +460,8 @@ reason, and audited (`lea grant ls` lists the uses: agent, action, target, never
 anything else takes the usual path. Revocation and expiry apply on the next call.
 
 An allowed shell call never runs the agent's text: lea runs the command it parsed, rebuilt word by
-word, in a fresh `/bin/sh` under `env -i` (so no shell function, alias or variable of the agent's
-applies), with a fixed `PATH` and only `HOME`, `GH_CONFIG_DIR`, `SSH_AUTH_SOCK` and `LANG` as
+word, in a fresh `/bin/sh` under `env -i` (so the agent's variables, aliases and shell
+functions do not apply), with a fixed `PATH` and only `HOME`, `GH_CONFIG_DIR`, `SSH_AUTH_SOCK` and `LANG` as
 Claude's own process has them.
 
 - gh runs as `/usr/bin/gh … -R github.com/<--github>`; every grant but stop-finished names
@@ -469,8 +469,8 @@ Claude's own process has them.
 - A commit goes through plumbing in the agent's worktree (`write-tree`, `commit-tree`,
   `update-ref`): no hook, filter or signing runs. It commits the index as it is (`git add`
   first: no `-a`).
-- A push runs from a bare repository lea creates for the call (no config of its own, the
-  worktree's objects borrowed) to `https://github.com/<--github>.git` with the full ref
+- A push runs from a bare repository lea creates for the call (random name, mode 0700, its
+  config checked right before the push, the worktree's objects borrowed) to `https://github.com/<--github>.git` with the full ref
   (`refs/heads/<branch>:refs/heads/<branch>`): the remote's config never decides where it goes.
 - git's hooks, fsmonitor, askpass and pager are off, ssh is `/usr/bin/ssh`, https and ssh are the
   only transports, `~/.gitconfig` is not read; and lea refuses a repository whose own config
@@ -498,7 +498,16 @@ misreads a message, a brief or its own transcript) from merging, pushing or dele
 not say it may; they are not a sandbox against a *hostile* one. An agent can still write and run
 code through the tools it is allowed (`go run`, a test, a script), and it can read the gh token
 in `/lea/state/gh`: what keeps a hostile agent in check is the container, its network rules and
-the scope of the tokens you give lea, not grants.
+the scope of the tokens you give lea, not grants. Two ways a hostile agent gets past them, among
+others: a shell function named `/usr/bin/env` in Claude's shell snapshot replaces the pinned
+call, and a loop rewriting the per-call bare repository's config (same user) between lea's check
+and the push can send the push elsewhere.
+
+To check that a Claude Code release runs the command lea rebuilds (the hook's `updatedInput`)
+before relying on grants, in a lea: `lea grant add commit-identity --container <lea> --repo <r>
+--github <owner>/<r> --expires 10m`, ask an agent working on a branch of `<r>` to `git add` a
+file and run `git commit -m test`, then check that `git reflog -1` in its worktree says
+`commit (lea grant)` (a plain `git commit` writes `commit: test`); `lea grant ls` lists the use.
 
 `lea new --brief FILE` gives a new agent its first message; `--repo NAME` starts it in a
 directory of the projects directory; `--branch B` has it work in its own git worktree under

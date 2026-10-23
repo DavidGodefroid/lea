@@ -247,16 +247,20 @@ var gitPins = []string{"core.hooksPath=/dev/null", "core.fsmonitor=false", "core
 	"http.sslCAInfo=/etc/ssl/certs/ca-certificates.crt", "http.sslCAPath=/etc/ssl/certs"}
 
 // Command is the command an allowed Bash call runs instead of the agent's. Claude's shell only
-// starts env, by a quoted absolute path (no alias, no function: a name with a slash is never
-// looked up as one); everything else runs in a fresh /bin/sh under env -i, so nothing the agent
-// put in its shell (functions, aliases, variables, BASH_ENV) reaches it:
+// starts env, by a quoted absolute path (a quoted word is never alias-expanded); everything else
+// runs in a fresh /bin/sh under env -i, so the agent's variables, aliases and functions do not
+// reach it. Not against a hostile agent: bash accepts "function /usr/bin/env { … }" in Claude's
+// shell snapshot, and that would replace the call (README, grants: what they protect against).
 //
 //   - gh: the validated argv, pinned to the grant's repository with -R;
 //   - git commit: plumbing in the caller's worktree (write-tree, commit-tree, update-ref): no
 //     hook, filter, index refresh or signing runs, whatever the repository's config says;
-//   - git push: from a bare repository lea creates for the call, with no config of its own and
-//     the worktree's objects borrowed (alternates), to the grant's URL and the full ref: the
-//     repository's config (url, pushurl, http, credential, push refspecs) is never read.
+//   - git push: from a bare repository lea creates for the call (mktemp -d: random name, mode
+//     0700), with the worktree's objects borrowed (alternates), to the grant's URL and the full
+//     ref: the worktree repository's config (url, pushurl, http, credential, push refspecs) is
+//     not read, and the bare repository's is checked just before the push. Not against a hostile
+//     agent: it runs as the same user and could rewrite that config between the check and the
+//     push.
 //
 // Every word lea builds is single-quoted. "" when the call cannot be pinned.
 func Command(req Request, c Caller, g Grant) string {
@@ -265,7 +269,8 @@ func Command(req Request, c Caller, g Grant) string {
 	}
 	// GIT_CONFIG_GLOBAL=/dev/null: ~/.gitconfig is the agent's to write (url.insteadOf,
 	// include.path, helpers); /etc/gitconfig is the image's.
-	env := []string{envPath, "-i", "PATH=/usr/bin:/bin", "GIT_CONFIG_GLOBAL=/dev/null", "GIT_TERMINAL_PROMPT=0",
+	// GIT_CONFIG_NOSYSTEM: lea's credential store comes in as a pin (gitPins), not from it.
+	env := []string{envPath, "-i", "PATH=/usr/bin:/bin", "GIT_CONFIG_GLOBAL=/dev/null", "GIT_CONFIG_NOSYSTEM=1", "GIT_TERMINAL_PROMPT=0",
 		"GIT_EDITOR=true", "GH_PROMPT_DISABLED=1"}
 	for _, k := range SafeEnv {
 		if v, ok := c.Env[k]; ok {
@@ -300,6 +305,8 @@ const (
 	shPath     = "/bin/sh"
 	mktempPath = "/usr/bin/mktemp"
 	rmPath     = "/bin/rm"
+	mkdirPath  = "/bin/mkdir"
+	cpPath     = "/bin/cp"
 )
 
 // pins are lea's -c options for git.
@@ -351,8 +358,16 @@ func commitScript(args []string, wt string) string {
 		return ""
 	}
 	git := shellWords(gitIn(wt))
+	// write-tree runs on a copy of the index against an empty work tree: writing the index back
+	// re-checks racily clean entries against the work tree, through the clean filters.
+	isolated := shellWords([]string{envPath}) + ` GIT_INDEX_FILE="$tmp/index" ` + shellWords([]string{gitPath, "--git-dir"}) +
+		` "$gd" --work-tree "$tmp/w" ` + shellWords(pins())
 	return configGuard(wt) +
-		"tree=$(" + git + " write-tree) || exit 1\n" +
+		"gd=$(" + git + " rev-parse --absolute-git-dir) || exit 1\n" +
+		"tmp=$(" + shellWords([]string{mktempPath, "-d"}) + ") || exit 1\n" +
+		"trap " + shellWords([]string{rmPath + ` -rf "$tmp"`}) + " EXIT\n" +
+		shellWords([]string{mkdirPath}) + ` "$tmp/w" && ` + shellWords([]string{cpPath}) + ` "$gd/index" "$tmp/index" || exit 1` + "\n" +
+		"tree=$(" + isolated + " write-tree) || exit 1\n" +
 		"parent=$(" + git + " rev-parse --verify HEAD) || exit 1\n" +
 		"new=$(" + git + ` commit-tree "$tree" -p "$parent" ` + shellWords(msgs) + ") || exit 1\n" +
 		git + ` update-ref -m 'commit (lea grant)' HEAD "$new" "$parent" || exit 1` + "\n" +
@@ -375,11 +390,14 @@ func pushScript(args []string, wt, gh string) string {
 		shellWords([]string{gitPath, "init", "-q", "--bare", "--template="}) + ` "$tmp" || exit 1` + "\n" +
 		`echo "$common/objects" > "$tmp/objects/info/alternates" || exit 1` + "\n"
 	url, ref := pa[0], pa[1]
+	// The bare repository's own config, checked again right before the push.
+	check := shellWords([]string{gitPath, "--git-dir"}) + ` "$tmp" ` + shellWords([]string{"config", "--local", "--get-regexp", riskyConfig}) +
+		" >/dev/null 2>&1; s=$?; if [ \"$s\" -ne 1 ]; then " + refuse("the push repository config changed") + "; fi\n"
 	if pa[2] == "delete" {
-		return s + bare + " push " + shellWords([]string{url, "--delete", ref})
+		return s + check + bare + " push " + shellWords([]string{url, "--delete", ref})
 	}
 	return s + "sha=$(" + git + " rev-parse --verify " + shellWords([]string{ref + "^{commit}"}) + ") || exit 1\n" +
-		bare + " push " + shellWords([]string{url}) + ` "$sha"` + shellWords([]string{":" + ref})
+		check + bare + " push " + shellWords([]string{url}) + ` "$sha"` + shellWords([]string{":" + ref})
 }
 
 // riskyConfig matches the repository config keys a pinned git refuses to run with (names as git

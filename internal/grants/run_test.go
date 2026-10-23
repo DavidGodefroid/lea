@@ -66,8 +66,8 @@ func pinnedCaller(root, wt string) (Caller, Grant) {
 
 func notPwned(t *testing.T, root string) {
 	t.Helper()
-	if _, err := os.Stat(filepath.Join(root, "pwned")); err == nil {
-		t.Fatal("the agent's code ran")
+	if b, err := os.ReadFile(filepath.Join(root, "pwned")); err == nil {
+		t.Fatalf("the agent's code ran: %q", b)
 	}
 }
 
@@ -89,6 +89,13 @@ func TestPinnedCommitIgnoresTheAgentsShell(t *testing.T) {
 	notPwned(t, root)
 	if out, _ := exec.Command(gitPath, "-C", wt, "log", "-1", "--format=%s").Output(); strings.TrimSpace(string(out)) != "it's" {
 		t.Fatalf("log %q", out)
+	}
+	// The commit is the index as it was staged, and the work tree stays clean against it.
+	if out, _ := exec.Command(gitPath, "-C", wt, "show", "HEAD:a").Output(); string(out) != "b\n" {
+		t.Fatalf("committed a = %q", out)
+	}
+	if out, _ := exec.Command(gitPath, "-C", wt, "diff", "--cached", "--name-only").Output(); len(out) != 0 {
+		t.Fatalf("index differs from the commit: %s", out)
 	}
 }
 
@@ -123,7 +130,7 @@ func TestPinnedCommitRunsNoFilterWhileConfigChanges(t *testing.T) {
 			}
 		}
 	}()
-	for i := 0; i < 20; i++ {
+	for i := 0; i < 60; i++ {
 		run(root, commit)
 	}
 	close(stop)
@@ -182,6 +189,9 @@ func TestPinnedPushNeverReadsTheRepositoryConfig(t *testing.T) {
 		t.Fatalf("the push went to the agent's repository: %s", out)
 	}
 	notPwned(t, root)
+	if !strings.Contains(lastWord(t, push), "the push repository config changed") || !strings.Contains(push, "'GIT_CONFIG_NOSYSTEM=1'") {
+		t.Fatalf("push does not check the bare repository's config: %s", push)
+	}
 	if !strings.Contains(lastWord(t, push), `"$sha"':refs/heads/feat/73-x'`) {
 		t.Fatalf("push refspec not one quoted word: %s", lastWord(t, push))
 	}
