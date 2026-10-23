@@ -53,7 +53,7 @@ const usage = `usage: lea <command>
                              start an agent (used by the launcher, in this form only;
                              any other new is the launcher's lea new)
   role <agent> <role>        change an agent's role (lead, dev, reviewer)
-  grant add <action> --container NAME [--repo R] [--branch GLOB] [--agent NAME] [--expires 8h]
+  grant add <action> --container NAME [--repo R] [--github OWNER/NAME] [--branch GLOB] [--agent NAME] [--expires 8h]
                              let every agent of a lea (or one agent's subtree) take an action
                              without asking: merge, stop-finished, close-issue,
                              delete-own-branch, commit-identity (hard denies always hold)

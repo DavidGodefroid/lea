@@ -66,27 +66,48 @@ func Words(cmd string) ([]string, bool) {
 }
 
 var (
-	adminRe    = regexp.MustCompile(`\bgh\b[\s\S]*\bmerge\b[\s\S]*--admin\b`)
-	pushRe     = regexp.MustCompile(`\bgit\b[\s\S]*\bpush\b`)
-	forceRe    = regexp.MustCompile(`\s(--force(-with-lease|-if-includes)?|--mirror|--prune|-[A-Za-z]*f[A-Za-z]*)(\s|=|$)|\s\+\S`)
-	toMainRe   = regexp.MustCompile(`[\s:](refs/heads/)?(main|master)(\s|$|[;&|)'"])`)
-	deleteRe   = regexp.MustCompile(`\s(--delete|-[A-Za-z]*d[A-Za-z]*)(\s|=|$)|\s:\S`)
-	readOnlyOn = map[string]bool{"cat": true, "head": true, "tail": true, "less": true, "jq": true, "grep": true, "ls": true, "wc": true, "diff": true, "stat": true}
+	adminRe  = regexp.MustCompile(`\bgh\b[\s\S]*\bmerge\b[\s\S]*--admin\b`)
+	pushRe   = regexp.MustCompile(`\bgit\b[\s\S]*\bpush\b`)
+	forceRe  = regexp.MustCompile(`\s(--force(-with-lease|-if-includes)?|--mirror|--prune|-[A-Za-z]*f[A-Za-z]*)(\s|=|$)|\s\+\S`)
+	toMainRe = regexp.MustCompile(`[\s:](refs/heads/)?(main|master)(\s|$|[;&|)])`)
+	deleteRe = regexp.MustCompile(`\s(--delete|-[A-Za-z]*d[A-Za-z]*)(\s|=|$)|\s:\S`)
+	// gitSub matches a git subcommand after git's own options (git -C x -c y=z config ...).
+	gitConfigRe  = regexp.MustCompile(`\bgit(\s+-\S+(\s+[^-\s]\S*)?)*\s+config\b`)
+	gitRemoteRe  = regexp.MustCompile(`\bgit(\s+-\S+(\s+[^-\s]\S*)?)*\s+remote\s+(set-url|add|rename|remove|rm|set-head|set-branches)\b`)
+	ghDefaultRe  = regexp.MustCompile(`\bgh\s+repo\s+set-default\b`)
+	ghEnvRe      = regexp.MustCompile(`\bGH_(REPO|HOST|ENTERPRISE_TOKEN|CONFIG_DIR)\s*=`)
+	obfuscatedRe = regexp.MustCompile("[\\\\$`]")
+	readOnlyOn   = map[string]bool{"cat": true, "head": true, "tail": true, "less": true, "jq": true, "grep": true, "ls": true, "wc": true, "diff": true, "stat": true}
+	unquote      = strings.NewReplacer(`"`, "", `'`, "")
 )
 
-// hardBash returns why a shell command is a hard deny, or "". It looks at the raw text, so it
-// holds for chained commands the parser rejects.
+// hardBash returns why a shell command is a hard deny, or "". It looks at the raw text with its
+// quotes removed, so it holds for chained and quoted commands the parser rejects.
 func hardBash(cmd string, c Caller) string {
+	raw := cmd
+	cmd = unquote.Replace(cmd)
 	if adminRe.MatchString(cmd) {
 		return "gh pr merge --admin bypasses branch protection"
 	}
 	if protectedPathRe.MatchString(cmd) {
-		if w, ok := Words(cmd); !ok || !readOnlyOn[w[0]] {
-			return "editing Claude's or lea's own settings from inside an agent is never allowed"
+		if w, ok := Words(raw); !ok || !readOnlyOn[w[0]] {
+			return "editing Claude's, git's, the shell's or lea's own settings from inside an agent is never allowed"
 		}
+	}
+	if gitConfigRe.MatchString(cmd) && !gitConfigRead(raw) {
+		return "changing git's configuration from inside an agent is never allowed"
+	}
+	if gitRemoteRe.MatchString(cmd) || (ghDefaultRe.MatchString(cmd) && !strings.Contains(cmd, "--view")) {
+		return "changing where git or gh push and merge is never allowed"
+	}
+	if ghEnvRe.MatchString(cmd) {
+		return "pointing gh at another repository or host is never allowed"
 	}
 	if !pushRe.MatchString(cmd) {
 		return ""
+	}
+	if _, ok := Words(raw); !ok && obfuscatedRe.MatchString(raw) {
+		return "a push in a command with escapes or expansions is never allowed: run it alone"
 	}
 	if forceRe.MatchString(cmd) {
 		return "force-push (or a push that rewrites or prunes remote branches) is never allowed"
@@ -95,7 +116,7 @@ func hardBash(cmd string, c Caller) string {
 		return "pushing to the default branch is never allowed"
 	}
 	if deleteRe.MatchString(cmd) {
-		w, ok := Words(cmd)
+		w, ok := Words(raw)
 		if !ok {
 			return "deleting a remote branch in a compound command is never allowed"
 		}
@@ -106,6 +127,21 @@ func hardBash(cmd string, c Caller) string {
 		}
 	}
 	return ""
+}
+
+// gitConfigRead says whether cmd is one plain "git config" that only reads.
+func gitConfigRead(cmd string) bool {
+	w, ok := Words(cmd)
+	if !ok || len(w) < 3 || w[0] != "git" || w[1] != "config" {
+		return false
+	}
+	for _, a := range w[2:] {
+		switch a {
+		case "--get", "--get-all", "--get-regexp", "--list", "-l", "--show-origin", "--show-scope", "--name-only", "--null", "-z":
+			return true
+		}
+	}
+	return false
 }
 
 // pushDeletes returns the branches a git push deletes ("git push origin --delete b", ":b").
@@ -148,19 +184,23 @@ func bashRequest(w []string, c Caller) (Request, bool) {
 	if !c.OwnWorktree {
 		return Request{}, false
 	}
+	var r Request
+	ok := false
 	switch {
 	case len(w) >= 3 && w[0] == "gh" && w[1] == "pr" && w[2] == "merge":
-		return ghMerge(w[3:], c)
+		r, ok = ghMerge(w[3:], c)
 	case len(w) >= 3 && w[0] == "gh" && w[1] == "issue":
-		return ghIssue(w[2:])
-	case len(w) >= 3 && w[0] == "gh" && w[1] == "project" && w[2] == "item-edit":
-		return ghItemEdit(w[3:])
+		r, ok = ghIssue(w[2:])
 	case len(w) >= 2 && w[0] == "git" && w[1] == "commit":
-		return gitCommit(w[2:])
+		r, ok = gitCommit(w[2:])
 	case len(w) >= 2 && w[0] == "git" && w[1] == "push":
-		return gitPush(w[2:], c)
+		r, ok = gitPush(w[2:], c)
 	}
-	return Request{}, false
+	if !ok {
+		return Request{}, false
+	}
+	r.Prog, r.Args = w[0], w[1:]
+	return r, true
 }
 
 func number(s string) bool {
@@ -175,12 +215,13 @@ func number(s string) bool {
 	return true
 }
 
-// ghMerge: gh pr merge [<number>|<own branch>] [--squash|--merge|--rebase] [--delete-branch].
-// No --repo: the PR is one of the repository of the caller's worktree. --delete-branch deletes
-// the PR's head branch: it is accepted only when the PR is named by the caller's own branch (not
-// a number, not the worktree's HEAD, which the agent can change), never a protected one.
+// ghMerge: gh pr merge <number>|<own branch> [--squash|--merge|--rebase] [--delete-branch].
+// No --repo from the agent: lea pins it to the grant's repository (Command). The PR is named:
+// with -R, gh has no worktree branch to fall back on. --delete-branch deletes the PR's head
+// branch: it is accepted only when the PR is named by the caller's own branch (not a number),
+// never a protected one.
 func ghMerge(args []string, c Caller) (Request, bool) {
-	target := "pr (worktree branch)"
+	target := ""
 	method, del, own := false, false, false
 	for i, a := range args {
 		switch a {
@@ -204,7 +245,7 @@ func ghMerge(args []string, c Caller) (Request, bool) {
 			}
 		}
 	}
-	if del && !own {
+	if target == "" || (del && !own) {
 		return Request{}, false
 	}
 	return Request{Action: Merge, Target: target}, true
@@ -251,20 +292,16 @@ func ghIssue(args []string) (Request, bool) {
 	return Request{Action: CloseIssue, Target: args[0] + " issue " + n}, true
 }
 
-func ghItemEdit(args []string) (Request, bool) {
-	valued := map[string]bool{"--id": true, "--project-id": true, "--field-id": true, "--single-select-option-id": true,
-		"--text": true, "--number": true, "--date": true, "--iteration-id": true}
-	if _, ok := flagArgs(args, false, valued, map[string]bool{"--clear": true}); !ok {
-		return Request{}, false
-	}
-	return Request{Action: CloseIssue, Target: "project item-edit"}, true
-}
-
-// gitCommit: git commit with a message and the usual flags; no pathspec, no -c/--author/-F.
+// gitCommit: git commit with a message and the usual flags; no pathspec, no -c/--author/-F, no
+// --amend (it rewrites a commit that may be pushed already, or someone else's).
 func gitCommit(args []string) (Request, bool) {
 	valued := map[string]bool{"-m": true, "--message": true}
-	bare := map[string]bool{"-a": true, "--all": true, "--amend": true, "--no-edit": true, "-s": true, "--signoff": true, "-q": true, "--quiet": true}
-	if _, ok := flagArgs(args, false, valued, bare); !ok {
+	bare := map[string]bool{"-a": true, "--all": true, "-s": true, "--signoff": true, "-q": true, "--quiet": true}
+	hasMsg := false
+	for _, a := range args {
+		hasMsg = hasMsg || valued[a]
+	}
+	if _, ok := flagArgs(args, false, valued, bare); !ok || !hasMsg {
 		return Request{}, false
 	}
 	return Request{Action: CommitIdentity, Target: "commit"}, true

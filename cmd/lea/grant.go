@@ -11,7 +11,8 @@ import (
 	"github.com/DavidGodefroid/lea/internal/grants"
 )
 
-const grantUsage = `usage: lea grant add <action> --container NAME [--repo R] [--branch GLOB] [--agent NAME] [--expires 8h]
+const grantUsage = `usage: lea grant add <action> --container NAME [--repo R] [--github OWNER/NAME] [--branch GLOB] [--agent NAME] [--expires 8h]
+       (merge and close-issue need --github: every gh call they allow is pinned to it)
        lea grant ls [--all]
        lea grant revoke <id>
 actions: ` + "merge, stop-finished, close-issue, delete-own-branch, commit-identity"
@@ -40,6 +41,8 @@ func runGrant(args []string, stdout, stderr io.Writer) int {
 				p["container"] = v
 			case "--repo":
 				p["repo"] = v
+			case "--github":
+				p["github"] = v
 			case "--branch":
 				p["branch"] = v
 			case "--agent":
@@ -128,6 +131,9 @@ func describeGrant(g grants.Grant) string {
 		s += " repo " + oneLine(g.Repo, 100)
 	} else {
 		s += " (every repo)"
+	}
+	if g.GitHub != "" {
+		s += " gh " + oneLine(g.GitHub, 160)
 	}
 	if g.Branch != "" && g.Branch != "*" {
 		s += " branch " + oneLine(g.Branch, 128)

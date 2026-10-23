@@ -158,6 +158,7 @@ func Claude(ctx context.Context, event string, stdin io.Reader, stdout io.Writer
 		var r struct {
 			Verdict string `json:"verdict"`
 			Reason  string `json:"reason"`
+			Command string `json:"command"`
 		}
 		if c.call(bctx, "grant_check", map[string]any{"tool": p.ToolName, "input": input, "cwd": truncate(p.Cwd, 4096)}, &r) != nil {
 			return
@@ -165,9 +166,19 @@ func Claude(ctx context.Context, event string, stdin io.Reader, stdout io.Writer
 		if r.Verdict != "allow" && r.Verdict != "deny" {
 			return
 		}
-		json.NewEncoder(stdout).Encode(map[string]any{"hookSpecificOutput": map[string]any{
-			"hookEventName": "PreToolUse", "permissionDecision": r.Verdict,
-			"permissionDecisionReason": truncate(r.Reason, 500)}})
+		out := map[string]any{"hookEventName": "PreToolUse", "permissionDecision": r.Verdict,
+			"permissionDecisionReason": truncate(r.Reason, 500)}
+		if r.Verdict == "allow" && p.ToolName == "Bash" {
+			// An allowed shell call runs the daemon's pinned command, never the agent's text: no
+			// pinned command, no allow.
+			var in map[string]any
+			if r.Command == "" || json.Unmarshal(input, &in) != nil || in == nil {
+				return
+			}
+			in["command"] = r.Command
+			out["updatedInput"] = in
+		}
+		json.NewEncoder(stdout).Encode(map[string]any{"hookSpecificOutput": out})
 	case "PermissionRequest":
 		if getenv("LEA_APPROVALS") != "deck" {
 			return

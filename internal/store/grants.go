@@ -9,18 +9,18 @@ import (
 
 // Grants are the user's decisions (lea grant add): only the host API writes them (issue #73).
 
-const grantCols = `id, container, action, repo, branch, agent, created, expires, revoked`
+const grantCols = `id, container, action, repo, branch, agent, github, created, expires, revoked`
 
 func scanGrant(sc interface{ Scan(...any) error }) (grants.Grant, error) {
 	var g grants.Grant
-	err := sc.Scan(&g.ID, &g.Container, &g.Action, &g.Repo, &g.Branch, &g.Agent, &g.Created, &g.Expires, &g.Revoked)
+	err := sc.Scan(&g.ID, &g.Container, &g.Action, &g.Repo, &g.Branch, &g.Agent, &g.GitHub, &g.Created, &g.Expires, &g.Revoked)
 	return g, err
 }
 
 // AddGrant records a grant and returns it with its id.
 func (s *Store) AddGrant(g grants.Grant) (grants.Grant, error) {
-	res, err := s.db.Exec(`INSERT INTO grants(container, action, repo, branch, agent, created, expires) VALUES(?,?,?,?,?,?,?)`,
-		g.Container, g.Action, g.Repo, g.Branch, g.Agent, g.Created, g.Expires)
+	res, err := s.db.Exec(`INSERT INTO grants(container, action, repo, branch, agent, github, created, expires) VALUES(?,?,?,?,?,?,?,?)`,
+		g.Container, g.Action, g.Repo, g.Branch, g.Agent, g.GitHub, g.Created, g.Expires)
 	if err != nil {
 		return grants.Grant{}, err
 	}

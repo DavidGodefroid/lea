@@ -2,16 +2,22 @@ package grants
 
 import (
 	"encoding/json"
+	"os/exec"
+	"strings"
 	"testing"
 )
 
 const now = 1_000_000
 
 var dev = Caller{Key: "lea-a/dev-2", Container: "lea-a", Repo: "lea", Branch: "feat/73-x",
-	Lineage: []string{"lea-a/dev-2", "lea-a/claude-1"}, OwnWorktree: true}
+	Lineage: []string{"lea-a/dev-2", "lea-a/claude-1"}, OwnWorktree: true, Worktree: "/p/.lea/worktrees/lea/dev-2"}
 
 func all(action string) Grant {
-	return Grant{ID: 7, Container: "lea-a", Action: action, Repo: "lea", Branch: "feat/*", Created: now - 10, Expires: now + 3600}
+	g := Grant{ID: 7, Container: "lea-a", Action: action, Repo: "lea", Branch: "feat/*", Created: now - 10, Expires: now + 3600}
+	if NeedsGitHub(action) {
+		g.GitHub = "github.com/o/lea"
+	}
+	return g
 }
 
 func bash(cmd string) json.RawMessage {
@@ -26,7 +32,7 @@ func TestDecideBash(t *testing.T) {
 		gs              []Grant
 	}{
 		{"merge numbered", "gh pr merge 42 --squash", Allow, every},
-		{"merge current branch", "gh pr merge --merge", Allow, every},
+		{"merge unnamed", "gh pr merge --merge", "", every},
 		{"merge own branch delete", "gh pr merge feat/73-x --squash --delete-branch", Allow, every},
 		{"merge own branch", "gh pr merge feat/73-x --squash", Allow, every},
 		{"merge HEAD delete", "gh pr merge --squash --delete-branch", "", every},
@@ -54,8 +60,10 @@ func TestDecideBash(t *testing.T) {
 		{"issue comment dq expansion", `gh issue comment 12 --body "$(cat /etc/passwd)"`, "", every},
 		{"issue delete", "gh issue delete 12", "", every},
 		{"issue edit", "gh issue edit 12 --title x", "", every},
-		{"item edit", "gh project item-edit --id X --project-id P --field-id F --single-select-option-id O", Allow, every},
+		{"item edit not covered", "gh project item-edit --id X --project-id P --field-id F --single-select-option-id O", "", every},
 		{"commit", "git commit -m 'feat: x'", Allow, every},
+		{"commit amend", "git commit --amend -m x", "", every},
+		{"commit no message", "git commit -a", "", every},
 		{"commit author", "git commit -m x --author 'a <b>'", "", every},
 		{"commit config", "git -c user.name=x commit -m x", "", every},
 		{"push own", "git push -u origin feat/73-x", Allow, every},
@@ -87,6 +95,34 @@ func TestDecideBash(t *testing.T) {
 		{"lea state git identity", "git config --file /lea/state/git/config user.name x", Deny, nil},
 		{"repo's own claude-settings source", "go test ./image/claude-settings.json", "", nil},
 		{"unrelated", "go test ./...", "", every},
+		// B1: nothing may repoint git or gh.
+		{"gh set-default", "gh repo set-default evil/repo", Deny, every},
+		{"gh set-default view", "gh repo set-default --view", "", every},
+		{"remote set-url", "git remote set-url origin https://github.com/evil/repo", Deny, every},
+		{"remote add chained", "git remote add x u && git push x feat/73-x", Deny, every},
+		{"config write", "git config remote.origin.url https://evil", Deny, every},
+		{"config write global", "git -C /x config --global url.https://evil/.insteadOf https://github.com/", Deny, every},
+		{"config read", "git config --get remote.origin.url", "", every},
+		{"GH_REPO prefix", "GH_REPO=evil/repo gh pr merge 1 --squash", Deny, every},
+		{"GH_HOST export", "export GH_HOST=evil.example", Deny, every},
+		{"agent -R", "gh pr merge 1 --squash -R evil/repo", "", every},
+		// B2: nothing may plant a program git runs.
+		{"hook planted", "cp x .git/hooks/pre-commit", Deny, nil},
+		{"hook abs", "chmod +x /p/lea/.git/hooks/pre-push", Deny, nil},
+		{"git config file", "sed -i s/x/y/ .git/config", Deny, nil},
+		{"worktree config", "echo x >> /p/lea/.git/worktrees/dev-2/config.worktree", Deny, nil},
+		{"gitconfig", "echo '[core] hooksPath=/tmp' >> ~/.gitconfig", Deny, nil},
+		{"bashrc", "echo 'alias git=evil' >> ~/.bashrc", Deny, nil},
+		{"shell snapshot", "cp x ~/.claude/shell-snapshots/s.sh", Deny, nil},
+		// (a) relative and quoted paths.
+		{"relative settings", "cp x .claude/settings.json", Deny, nil},
+		{"quoted settings", `cp x ".claude/settings.local.json"`, Deny, nil},
+		{"single-quoted settings", "cp x '.claude/settings.json'", Deny, nil},
+		// (b) quoted push targets.
+		{"quoted plus", `git push origin "+feat/73-x"`, Deny, every},
+		{"quoted main", "git push origin 'main'", Deny, every},
+		{"quoted refspec main", `git push origin HEAD:"main"`, Deny, every},
+		{"escaped main compound", `true; git push origin ma\in`, Deny, nil},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -94,8 +130,8 @@ func TestDecideBash(t *testing.T) {
 			if d.Verdict != tc.want {
 				t.Fatalf("%q: verdict %q (%s), want %q", tc.cmd, d.Verdict, d.Reason, tc.want)
 			}
-			if d.Verdict == Allow && d.Grant != 7 {
-				t.Fatalf("allow names grant %d", d.Grant)
+			if d.Verdict == Allow && (d.Grant != 7 || d.Command == "") {
+				t.Fatalf("allow names grant %d, command %q", d.Grant, d.Command)
 			}
 		})
 	}
@@ -130,6 +166,45 @@ func TestDecideScope(t *testing.T) {
 				t.Fatalf("verdict %q (%s), want %q", d.Verdict, d.Reason, tc.want)
 			}
 		})
+	}
+}
+
+// TestPinnedCommand: an allowed call runs lea's command, built from the validated argv: absolute
+// program, scrubbed environment, git in the caller's worktree with hooks and command-running
+// settings off, gh on the grant's repository; the audit target names the repository.
+func TestPinnedCommand(t *testing.T) {
+	gs := []Grant{all(Merge), all(CommitIdentity)}
+	d := Decide("Bash", bash("gh pr merge feat/73-x --squash --delete-branch"), dev, gs, now, false)
+	want := `'/usr/bin/gh' 'pr' 'merge' 'feat/73-x' '--squash' '--delete-branch' '-R' 'github.com/o/lea'`
+	if d.Verdict != Allow || !strings.HasPrefix(d.Command, `'/usr/bin/env' '-u' 'GIT_DIR'`) || !strings.HasSuffix(d.Command, want) ||
+		!strings.Contains(d.Command, `'-u' 'GH_REPO'`) || d.Request.Target != "github.com/o/lea pr of feat/73-x" {
+		t.Fatalf("merge: %+v", d)
+	}
+	d = Decide("Bash", bash(`git commit -m "it's done"`), dev, gs, now, false)
+	for _, w := range []string{`'/usr/bin/git' '-C' '/p/.lea/worktrees/lea/dev-2'`, `'-c' 'core.hooksPath=/dev/null'`,
+		`'-c' 'core.fsmonitor=false'`, `'-c' 'core.sshCommand=ssh'`, `'commit' '-m' 'it'\''s done'`} {
+		if !strings.Contains(d.Command, w) {
+			t.Fatalf("commit command lacks %s: %s", w, d.Command)
+		}
+	}
+	if d.Request.Target != "lea commit" {
+		t.Fatalf("target %q", d.Request.Target)
+	}
+	out, err := exec.Command("/bin/sh", "-c", "set -- "+strings.TrimPrefix(d.Command, `'/usr/bin/env' `)+`; for a; do printf '[%s]' "$a"; done`).Output()
+	if err != nil || !strings.HasSuffix(string(out), "[commit][-m][it's done]") {
+		t.Fatalf("shell reads %q (%v)", out, err)
+	}
+	// A merge grant without a GitHub repository allows no gh call.
+	g := all(Merge)
+	g.GitHub = ""
+	if d := Decide("Bash", bash("gh pr merge 42 --squash"), dev, []Grant{g}, now, false); d.Verdict != "" {
+		t.Fatalf("unpinned merge: %+v", d)
+	}
+	// No worktree, no git command.
+	away := dev
+	away.Worktree = ""
+	if d := Decide("Bash", bash("git commit -m x"), away, gs, now, false); d.Verdict != "" {
+		t.Fatalf("no worktree: %+v", d)
 	}
 }
 
@@ -179,7 +254,7 @@ func TestDecideTools(t *testing.T) {
 	if d := Decide(StopTool, stop, dev, nil, now, true); d.Verdict != "" {
 		t.Fatalf("no grant allowed: %+v", d)
 	}
-	for _, p := range []string{"/home/u/.claude/settings.json", "/home/u/.claude/settings.local.json", "/repo/.claude/settings.json", "/usr/local/share/lea/claude-settings.json", "/lea/state/git/config"} {
+	for _, p := range []string{"/home/u/.claude/settings.json", "/home/u/.claude/settings.local.json", "/repo/.claude/settings.json", "/usr/local/share/lea/claude-settings.json", "/lea/state/git/config", "/p/lea/.git/config", "/p/lea/.git/hooks/pre-commit", "/home/u/.gitconfig", "/home/u/.bashrc", ".claude/settings.json"} {
 		in, _ := json.Marshal(map[string]string{"file_path": p})
 		if d := Decide("Edit", in, dev, gs, now, true); d.Verdict != Deny {
 			t.Fatalf("edit %s: %+v", p, d)

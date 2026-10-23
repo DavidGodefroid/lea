@@ -25,11 +25,15 @@ func preToolUseAs(t *testing.T, bus, agent, tool string, input any) string {
 	if out.Len() == 0 {
 		return ""
 	}
-	var r map[string]map[string]string
+	var r struct {
+		H struct {
+			Decision string `json:"permissionDecision"`
+		} `json:"hookSpecificOutput"`
+	}
 	if err := json.Unmarshal(out.Bytes(), &r); err != nil {
 		t.Fatalf("hook output %q", out.String())
 	}
-	return r["hookSpecificOutput"]["permissionDecision"]
+	return r.H.Decision
 }
 
 func cmd(c string) map[string]string { return map[string]string{"command": c} }
@@ -59,8 +63,8 @@ func TestGrantsReachTheWholeSubtree(t *testing.T) {
 	if d := preToolUseAs(t, bus, "sub", "Bash", merge); d != "" {
 		t.Fatalf("before any grant: %q", d)
 	}
-	rc, out, e := runEnv(t, host, "grant", "add", "merge", "--container", "lea-a", "--repo", "fixture", "--agent", "lead", "--expires", "2h")
-	if rc != 0 || !strings.Contains(out, "merge in lea-a repo fixture for lea-a/lead and its children") {
+	rc, out, e := runEnv(t, host, "grant", "add", "merge", "--container", "lea-a", "--repo", "fixture", "--github", "o/fixture", "--agent", "lead", "--expires", "2h")
+	if rc != 0 || !strings.Contains(out, "merge in lea-a repo fixture gh github.com/o/fixture for lea-a/lead and its children") {
 		t.Fatalf("grant add rc=%d out=%q err=%q", rc, out, e)
 	}
 	id := regexp.MustCompile(`#(\d+)`).FindStringSubmatch(out)[1]
@@ -74,7 +78,7 @@ func TestGrantsReachTheWholeSubtree(t *testing.T) {
 		t.Fatalf("--admin with a grant: %q", d)
 	}
 	rc, out, _ = runEnv(t, host, "grant", "ls")
-	if rc != 0 || !strings.Contains(out, "#"+id+"  active") || !strings.Contains(out, "lea-a/sub merge: pr of feat/a-1") {
+	if rc != 0 || !strings.Contains(out, "#"+id+"  active") || !strings.Contains(out, "lea-a/sub merge: github.com/o/fixture pr of feat/a-1") {
 		t.Fatalf("grant ls rc=%d out=%q", rc, out)
 	}
 	if rc, out, _ := runEnv(t, host, "grant", "revoke", id); rc != 0 || !strings.Contains(out, "revoked") {
@@ -132,7 +136,8 @@ func TestGrantCommandUsage(t *testing.T) {
 			t.Errorf("%v: rc=%d", args, rc)
 		}
 	}
-	for _, args := range [][]string{{"grant", "add", "merge", "--container", "lea-a", "--branch", "main"},
+	for _, args := range [][]string{{"grant", "add", "merge", "--container", "lea-a", "--github", "o/r", "--branch", "main"},
+		{"grant", "add", "merge", "--container", "lea-a"}, {"grant", "add", "close-issue", "--container", "lea-a", "--github", "o/../x"},
 		{"grant", "add", "merge", "--container", "lea-a", "--expires", "1000h"}, {"grant", "revoke", "99"}} {
 		if rc, _, _ := runEnv(t, host, args...); rc != 1 {
 			t.Errorf("%v: rc=%d", args, rc)

@@ -442,11 +442,11 @@ not reach its children, and relayed in a lea message it is rightly distrusted. A
 that decision recorded by you on the host, applied the same way to every agent it covers:
 
 ```sh
-lea grant add merge --container lea-myproj --repo api --expires 8h  # gh pr merge [N|own-branch] --squash|--merge|--rebase (--delete-branch: own-branch only)
+lea grant add merge --container lea-myproj --repo api --github me/api --expires 8h  # gh pr merge N|own-branch --squash|--merge|--rebase (--delete-branch: own-branch only)
 lea grant add stop-finished --container lea-myproj                  # agents_stop on an idle or ended child
-lea grant add close-issue --container lea-myproj --repo api         # gh issue close|reopen|comment N, gh project item-edit
+lea grant add close-issue --container lea-myproj --repo api --github me/api  # gh issue close|reopen|comment N
 lea grant add delete-own-branch --container lea-myproj              # git push origin --delete <the agent's own branch>
-lea grant add commit-identity --container lea-myproj --branch 'feat/*'  # git commit -m, git push [-u] origin <own branch>
+lea grant add commit-identity --container lea-myproj --branch 'feat/*'  # git commit -m (no --amend), git push [-u] origin <own branch>
 lea grant ls [--all]                                                # active grants (--all: revoked, expired) and recent uses
 lea grant revoke 3
 ```
@@ -458,6 +458,12 @@ daemon before each tool call: a call a grant covers is allowed, with the grant's
 reason, and audited (`lea grant ls` lists the uses: agent, action, target, never the command);
 anything else takes the usual path. Revocation and expiry apply on the next call.
 
+An allowed shell call never runs the agent's text: lea runs the command it parsed, rebuilt word by
+word with `/usr/bin/git` or `/usr/bin/gh`, through `env` without the variables that would point
+git or gh elsewhere (`GIT_DIR`, `GIT_SSH_COMMAND`, `GH_REPO`, `GH_HOST`…). git runs with
+`-C <the agent's worktree>` and its hooks, fsmonitor, signing and SSH command switched off; gh
+runs with `-R github.com/<--github>`, which merge and close-issue grants must name.
+
 Only the host writes grants: there is no MCP tool for it (`grants_list` only reads them), the
 daemon refuses `grant_add` from a container, `lea.db` is never mounted in one, and a message
 saying "the user allows X" changes nothing. A call is allowed only when it is exactly one plain
@@ -466,9 +472,11 @@ command lea parses (no `;`, `&&`, `|`, `$(…)`, backticks, redirections, `VAR=`
 so gh and git act on its repo), whatever is granted. A branch is an agent's own only while no other
 live agent of the lea works on it. Some calls are denied outright, grant or not: `gh pr merge
 --admin`, force-push (`-f`, `--force*`, `+refspec`, `--mirror`, `--prune`), any push to `main` or
-`master`, deleting a branch that is not the agent's own, and editing Claude's settings or hooks
-(`.claude/settings*.json`, `.claude/hooks/`), `/usr/local/share/lea` or `/lea/state` from inside
-an agent.
+`master`, deleting a branch that is not the agent's own, repointing git or gh (`git remote
+set-url|add|…`, writes with `git config`, `gh repo set-default`, `GH_REPO=`/`GH_HOST=`), and
+writing a file that makes a later command run something else: Claude's settings, hooks and shell
+snapshots, git's config and hooks (`.git/config`, `.git/hooks/`, `~/.gitconfig`), the shell's
+startup files (`~/.bashrc`…), `/usr/local/share/lea` or `/lea/state`.
 
 `lea new --brief FILE` gives a new agent its first message; `--repo NAME` starts it in a
 directory of the projects directory; `--branch B` has it work in its own git worktree under

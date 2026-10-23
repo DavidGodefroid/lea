@@ -16,7 +16,7 @@ const devCwd = "/p/.lea/worktrees/fixture/dev"
 
 func preToolUse(cmd string) string {
 	b, _ := json.Marshal(map[string]any{"session_id": "s1", "hook_event_name": "PreToolUse", "tool_name": "Bash",
-		"tool_input": map[string]string{"command": cmd}, "cwd": devCwd})
+		"tool_input": map[string]string{"command": cmd, "description": "merge it"}, "cwd": devCwd})
 	return string(b)
 }
 
@@ -40,15 +40,17 @@ func hookDecision(t *testing.T, out string) (string, string) {
 	if out == "" {
 		return "", ""
 	}
-	var raw map[string]map[string]string
-	if err := json.Unmarshal([]byte(out), &raw); err != nil {
+	var raw struct {
+		H struct {
+			Event    string `json:"hookEventName"`
+			Decision string `json:"permissionDecision"`
+			Reason   string `json:"permissionDecisionReason"`
+		} `json:"hookSpecificOutput"`
+	}
+	if err := json.Unmarshal([]byte(out), &raw); err != nil || raw.H.Event != "PreToolUse" {
 		t.Fatalf("hook output %q: %v", out, err)
 	}
-	h := raw["hookSpecificOutput"]
-	if h["hookEventName"] != "PreToolUse" {
-		t.Fatalf("hook output %q", out)
-	}
-	return h["permissionDecision"], h["permissionDecisionReason"]
+	return raw.H.Decision, raw.H.Reason
 }
 
 func call(sock, agent, method string, params any, result any) error {
@@ -65,12 +67,23 @@ func TestPreToolUseGrantAllowsRevokeAndHardDeny(t *testing.T) {
 		t.Fatalf("no grant: %q", d)
 	}
 	var g struct{ ID int64 }
-	if err := call(api, "", "grant_add", map[string]any{"container": "lea-a", "action": "merge"}, &g); err != nil {
+	if err := call(api, "", "grant_add", map[string]any{"container": "lea-a", "action": "merge", "github": "o/fixture"}, &g); err != nil {
 		t.Fatal(err)
 	}
-	d, reason := hookDecision(t, runHook(bus, "PreToolUse", merge, nil))
+	out := runHook(bus, "PreToolUse", merge, nil)
+	d, reason := hookDecision(t, out)
 	if d != "allow" || !strings.Contains(reason, "lea grant #") {
 		t.Fatalf("granted: %q %q", d, reason)
+	}
+	// The call runs lea's pinned command, with the rest of the tool input kept.
+	var r struct {
+		H struct {
+			In map[string]any `json:"updatedInput"`
+		} `json:"hookSpecificOutput"`
+	}
+	if err := json.Unmarshal([]byte(out), &r); err != nil || !strings.HasSuffix(r.H.In["command"].(string), `'-R' 'github.com/o/fixture'`) ||
+		r.H.In["description"] != "merge it" {
+		t.Fatalf("updatedInput: %s", out)
 	}
 	// Hard denies hold with the grant and without it.
 	if d, _ := hookDecision(t, runHook(bus, "PreToolUse", preToolUse("gh pr merge 42 --squash --admin"), nil)); d != "deny" {
@@ -90,7 +103,7 @@ func TestPreToolUseGrantAllowsRevokeAndHardDeny(t *testing.T) {
 		t.Fatalf("revoked: %q", d)
 	}
 	// Outside its own worktree the call is not covered.
-	if err := call(api, "", "grant_add", map[string]any{"container": "lea-a", "action": "merge"}, &g); err != nil {
+	if err := call(api, "", "grant_add", map[string]any{"container": "lea-a", "action": "merge", "github": "o/fixture"}, &g); err != nil {
 		t.Fatal(err)
 	}
 	away := strings.Replace(merge, devCwd, "/p/fixture", 1)
@@ -105,7 +118,7 @@ func TestPreToolUseGrantAllowsRevokeAndHardDeny(t *testing.T) {
 	defer h.Close()
 	var n int
 	var target string
-	if err := h.QueryRow(`SELECT count(*), max(target) FROM grant_uses`).Scan(&n, &target); err != nil || n != 1 || target != "pr 42" {
+	if err := h.QueryRow(`SELECT count(*), max(target) FROM grant_uses`).Scan(&n, &target); err != nil || n != 1 || target != "github.com/o/fixture pr 42" {
 		t.Fatalf("audit: %d %q %v", n, target, err)
 	}
 	for _, q := range []string{`SELECT count(*) FROM events WHERE payload LIKE '%squash%' OR payload LIKE '%worktrees%'`,

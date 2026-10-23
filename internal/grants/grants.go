@@ -47,8 +47,14 @@ type Grant struct {
 	ID                              int64
 	Container, Action, Repo, Branch string
 	Agent                           string
-	Created, Expires, Revoked       int64
+	// GitHub is the repository gh acts on, github.com/OWNER/NAME: every gh call a grant allows
+	// is pinned to it with -R (merge and close-issue grants need one).
+	GitHub                    string
+	Created, Expires, Revoked int64
 }
+
+// NeedsGitHub says whether a grant of action acts through gh, so names its GitHub repository.
+func NeedsGitHub(action string) bool { return action == Merge || action == CloseIssue }
 
 // Active says whether g still applies at now.
 func (g Grant) Active(now int64) bool {
@@ -64,6 +70,9 @@ type Caller struct {
 	Key, Container, Repo, Branch string
 	Lineage                      []string
 	OwnWorktree                  bool
+	// Worktree is the caller's worktree root (the hook's cwd, when OwnWorktree): every git call
+	// a grant allows runs there (git -C).
+	Worktree string
 }
 
 // InWorktree says whether cwd is exactly the root of <...>/.lea/worktrees/<repo>/<name>: not a
@@ -82,6 +91,10 @@ func InWorktree(cwd, repo, name string) bool {
 // ("pr 42", "issue 7", a branch, a child agent's name): never the tool input itself.
 type Request struct {
 	Action, Target string
+	// Prog ("git" or "gh") and Args are a Bash call's validated argv after the program: an
+	// allowed call runs exactly that, rewritten by Command.
+	Prog string
+	Args []string
 }
 
 // Verdicts of Decide.
@@ -96,6 +109,9 @@ type Decision struct {
 	Verdict, Reason string
 	Grant           int64
 	Request         Request
+	// Command replaces an allowed Bash call's command (the hook's updatedInput): the validated
+	// argv, pinned (Command).
+	Command string
 }
 
 // Classify parses a tool call: hard is the reason of a hard deny ("" when none); req is the
@@ -127,7 +143,7 @@ func Classify(tool string, input json.RawMessage, c Caller) (hard string, req Re
 		_ = json.Unmarshal(input, &in)
 		for _, p := range []string{in.FilePath, in.NotebookPath} {
 			if protectedPath(p) {
-				return "editing Claude's or lea's own settings from inside an agent is never allowed", Request{}, false
+				return "editing Claude's, git's, the shell's or lea's own settings from inside an agent is never allowed", Request{}, false
 			}
 		}
 		return "", Request{}, false
@@ -158,6 +174,9 @@ func Match(req Request, c Caller, gs []Grant, now int64) (Grant, bool) {
 		if g.Agent != "" && !contains(c.Lineage, g.Agent) {
 			continue
 		}
+		if req.Prog == "gh" && g.GitHub == "" {
+			continue
+		}
 		return g, true
 	}
 	return Grant{}, false
@@ -178,8 +197,76 @@ func Decide(tool string, input json.RawMessage, c Caller, gs []Grant, now int64,
 	if !ok {
 		return Decision{}
 	}
-	return Decision{Verdict: Allow, Grant: g.ID, Request: req,
+	d := Decision{Verdict: Allow, Grant: g.ID, Request: req,
 		Reason: fmt.Sprintf("lea grant #%d (%s) recorded by the user", g.ID, g.Action)}
+	switch req.Prog {
+	case "gh":
+		d.Request.Target = g.GitHub + " " + req.Target
+		d.Command = Command(req, c, g)
+	case "git":
+		d.Request.Target = c.Repo + " " + req.Target
+		d.Command = Command(req, c, g)
+	}
+	if req.Prog != "" && d.Command == "" {
+		return Decision{}
+	}
+	return d
+}
+
+// Programs and environment of an allowed call: absolute paths (no PATH, alias or function
+// lookup of the program), and none of the variables that would point git or gh elsewhere or run
+// a command of the agent's.
+const (
+	gitPath = "/usr/bin/git"
+	ghPath  = "/usr/bin/gh"
+	envPath = "/usr/bin/env"
+)
+
+var unsetEnv = []string{"GIT_DIR", "GIT_WORK_TREE", "GIT_COMMON_DIR", "GIT_INDEX_FILE", "GIT_OBJECT_DIRECTORY",
+	"GIT_SSH", "GIT_SSH_COMMAND", "GIT_ASKPASS", "SSH_ASKPASS", "GIT_EXEC_PATH", "GIT_TEMPLATE_DIR",
+	"GIT_CONFIG", "GIT_CONFIG_GLOBAL", "GIT_CONFIG_SYSTEM", "GIT_CONFIG_PARAMETERS", "GIT_CONFIG_COUNT",
+	"GIT_EXTERNAL_DIFF", "GIT_PAGER", "GIT_PROXY_COMMAND", "GH_REPO", "GH_HOST", "GH_ENTERPRISE_TOKEN",
+	"GH_PAGER", "GH_BROWSER", "BROWSER", "BASH_ENV", "ENV", "LD_PRELOAD", "LD_LIBRARY_PATH"}
+
+// gitPins neutralise what in git's configuration would run a program during commit or push.
+var gitPins = []string{"core.hooksPath=/dev/null", "core.fsmonitor=false", "core.sshCommand=ssh",
+	"commit.gpgSign=false", "core.pager=cat", "core.editor=true", "push.recurseSubmodules=no",
+	"protocol.ext.allow=never", "protocol.file.allow=never"}
+
+// Command is the command an allowed Bash call runs instead of the agent's: the validated argv
+// with an absolute program, a scrubbed environment, git pinned to the caller's worktree with its
+// command-running settings neutralised, gh pinned to the grant's repository. Every word is
+// single-quoted. "" when the call cannot be pinned.
+func Command(req Request, c Caller, g Grant) string {
+	argv := []string{envPath}
+	for _, v := range unsetEnv {
+		argv = append(argv, "-u", v)
+	}
+	switch req.Prog {
+	case "git":
+		if !c.OwnWorktree || c.Worktree == "" {
+			return ""
+		}
+		argv = append(argv, gitPath, "-C", c.Worktree)
+		for _, p := range gitPins {
+			argv = append(argv, "-c", p)
+		}
+		argv = append(argv, req.Args...)
+	case "gh":
+		if g.GitHub == "" {
+			return ""
+		}
+		argv = append(argv, ghPath)
+		argv = append(argv, req.Args...)
+		argv = append(argv, "-R", g.GitHub)
+	default:
+		return ""
+	}
+	q := make([]string, len(argv))
+	for i, w := range argv {
+		q[i] = "'" + strings.ReplaceAll(w, "'", `'\''`) + "'"
+	}
+	return strings.Join(q, " ")
 }
 
 func contains(xs []string, x string) bool {
@@ -222,11 +309,18 @@ func Protected(b string) bool {
 	return b == "main" || b == "master" || b == "HEAD" || b == ""
 }
 
-var protectedPathRe = regexp.MustCompile(`(^|/)\.claude/(settings[^/]*\.json|hooks(/|$))|(^|[\s'"=])/usr/local/share/lea(/|$)|(^|[\s'"=])/lea/state(/|$)|(^|/)\.config/lea(/|$)`)
+var protectedPathRe = regexp.MustCompile(`(^|[\s'"=:/])(` +
+	`\.claude/(settings[^/\s'"]*\.json|hooks|shell-snapshots|session-env)` +
+	`|\.git/(config|hooks|info|worktrees/[^/\s'"]+/config)` +
+	`|\.gitconfig|\.config/git(/|$)` +
+	`|\.(bashrc|bash_profile|bash_login|bash_logout|profile|zshrc|zshenv|zprofile|zlogin|inputrc)([\s'"]|$)` +
+	`|\.config/lea(/|$)|usr/local/share/lea(/|$)|lea/state(/|$))`)
 
-// protectedPath says whether p is one of Claude's settings or hook files, lea's settings for Claude
-// (/usr/local/share/lea), lea's state in the container (/lea/state: git identity, gh login, SSH)
-// or lea's config.
+// protectedPath says whether p is one of the files that make a later command run something else:
+// Claude's settings, hooks and shell snapshots, git's config and hooks (repository, worktree,
+// user), the shell's startup files, lea's settings for Claude (/usr/local/share/lea), lea's state
+// in the container (/lea/state: git identity, gh login, SSH) or lea's config. Relative and quoted
+// spellings count.
 func protectedPath(p string) bool {
 	return p != "" && protectedPathRe.MatchString(p)
 }

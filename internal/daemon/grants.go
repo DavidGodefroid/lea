@@ -31,13 +31,14 @@ const (
 var (
 	grantRepo   = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,99}$`)
 	grantBranch = regexp.MustCompile(`^[A-Za-z0-9*][A-Za-z0-9*._/-]{0,127}$`)
+	grantGitHub = regexp.MustCompile(`^(github\.com/)?([A-Za-z0-9][A-Za-z0-9-]{0,38})/([A-Za-z0-9._-]{1,100})$`)
 )
 
 // grantAdd records a grant: the host's only.
 func (d *Daemon) grantAdd(raw json.RawMessage) (any, error) {
 	var p struct {
-		Container, Action, Repo, Branch, Agent string
-		TTLS                                   int64 `json:"ttl_s"`
+		Container, Action, Repo, Branch, Agent, GitHub string
+		TTLS                                           int64 `json:"ttl_s"`
 	}
 	if err := json.Unmarshal(raw, &p); err != nil {
 		return nil, err
@@ -57,6 +58,14 @@ func (d *Daemon) grantAdd(raw json.RawMessage) (any, error) {
 	if p.Branch != "" && !strings.Contains(p.Branch, "*") && grants.Protected(p.Branch) {
 		return nil, errors.New("branch: no grant covers the default branch")
 	}
+	switch m := grantGitHub.FindStringSubmatch(p.GitHub); {
+	case p.GitHub == "" && grants.NeedsGitHub(p.Action):
+		return nil, fmt.Errorf("github: a %s grant names the GitHub repository gh is pinned to (OWNER/NAME)", p.Action)
+	case p.GitHub != "" && (m == nil || m[3] == "." || m[3] == ".."):
+		return nil, errors.New("github: OWNER/NAME of a github.com repository")
+	case p.GitHub != "":
+		p.GitHub = "github.com/" + m[2] + "/" + m[3]
+	}
 	if p.Agent != "" {
 		key, err := d.resolveSpawned(p.Agent, p.Container)
 		if err != nil {
@@ -73,7 +82,7 @@ func (d *Daemon) grantAdd(raw json.RawMessage) (any, error) {
 	}
 	now := d.now()
 	g, err := d.st.AddGrant(grants.Grant{Container: p.Container, Action: p.Action, Repo: p.Repo, Branch: p.Branch,
-		Agent: p.Agent, Created: now, Expires: now + int64(ttl/time.Second)})
+		Agent: p.Agent, GitHub: p.GitHub, Created: now, Expires: now + int64(ttl/time.Second)})
 	if err != nil {
 		return nil, err
 	}
@@ -140,7 +149,7 @@ func (d *Daemon) grantsMine(o Origin, me string) (any, error) {
 			continue
 		}
 		out = append(out, map[string]any{"id": g.ID, "action": g.Action, "repo": g.Repo, "branch": g.Branch,
-			"agent": g.Agent, "expires": g.Expires})
+			"agent": g.Agent, "github": g.GitHub, "expires": g.Expires})
 	}
 	return out, nil
 }
@@ -168,6 +177,9 @@ func (d *Daemon) grantCaller(o Origin, me, cwd string) (grants.Caller, error) {
 	}
 	c := grants.Caller{Key: me, Container: o.Container, Repo: a.Repo, Branch: a.Branch, Lineage: []string{me},
 		OwnWorktree: grants.InWorktree(cwd, a.Repo, a.Name)}
+	if c.OwnWorktree {
+		c.Worktree = strings.TrimSuffix(cwd, "/")
+	}
 	if c.Branch != "" {
 		as, err := d.st.Agents()
 		if err != nil {
@@ -243,5 +255,5 @@ func (d *Daemon) grantCheck(o Origin, me string, raw json.RawMessage) (any, erro
 		}
 		d.changed()
 	}
-	return map[string]any{"verdict": dec.Verdict, "reason": dec.Reason, "grant": dec.Grant}, nil
+	return map[string]any{"verdict": dec.Verdict, "reason": dec.Reason, "grant": dec.Grant, "command": dec.Command}, nil
 }
