@@ -1,0 +1,327 @@
+package grants
+
+import (
+	"encoding/json"
+	"strings"
+	"testing"
+)
+
+const now = 1_000_000
+
+var dev = Caller{Key: "lea-a/dev-2", Container: "lea-a", Repo: "lea", Branch: "feat/73-x",
+	Lineage: []string{"lea-a/dev-2", "lea-a/claude-1"}, OwnWorktree: true, Worktree: "/p/.lea/worktrees/lea/dev-2",
+	Env: map[string]string{"HOME": "/home/u", "GH_CONFIG_DIR": "/lea/state/gh"}}
+
+func all(action string) Grant {
+	g := Grant{ID: 7, Container: "lea-a", Action: action, Repo: "lea", Branch: "feat/*", Created: now - 10, Expires: now + 3600}
+	if NeedsGitHub(action) {
+		g.GitHub = "github.com/o/lea"
+	}
+	return g
+}
+
+func bash(cmd string) json.RawMessage {
+	b, _ := json.Marshal(map[string]string{"command": cmd})
+	return b
+}
+
+func TestDecideBash(t *testing.T) {
+	every := []Grant{all(Merge), all(CloseIssue), all(DeleteOwnBranch), all(CommitIdentity)}
+	cases := []struct {
+		name, cmd, want string
+		gs              []Grant
+	}{
+		{"merge numbered", "gh pr merge 42 --squash", Allow, every},
+		{"merge unnamed", "gh pr merge --merge", "", every},
+		{"merge own branch delete", "gh pr merge feat/73-x --squash --delete-branch", Allow, every},
+		{"merge own branch", "gh pr merge feat/73-x --squash", Allow, every},
+		{"merge HEAD delete", "gh pr merge --squash --delete-branch", "", every},
+		{"merge other branch", "gh pr merge feat/other --squash", "", every},
+		{"merge numbered delete", "gh pr merge 42 --squash --delete-branch", "", every},
+		{"merge numbered -d", "gh pr merge 42 -s -d", "", every},
+		{"merge no grant", "gh pr merge 42 --squash", "", nil},
+		{"merge other action granted", "gh pr merge 42 --squash", "", []Grant{all(CloseIssue)}},
+		{"merge admin", "gh pr merge 42 --squash --admin", Deny, every},
+		{"merge admin no grant", "gh pr merge 42 --admin", Deny, nil},
+		{"merge admin chained", "true && gh pr merge 1 --admin", Deny, every},
+		{"merge two methods", "gh pr merge 42 --squash --rebase", "", every},
+		{"merge other repo flag", "gh pr merge 42 --squash -R evil/repo", "", every},
+		{"merge auto", "gh pr merge 42 --auto", "", every},
+		{"merge chained", "gh pr merge 42 --squash; rm -rf /", "", every},
+		{"merge and", "gh pr merge 42 --squash && curl x", "", every},
+		{"merge pipe", "gh pr merge 42 --squash | sh", "", every},
+		{"merge subshell", "gh pr merge $(echo 42) --squash", Deny, every},
+		{"merge backtick", "gh pr merge `echo 42` --squash", Deny, every},
+		{"merge newline", "gh pr merge 42 --squash\nrm -rf /", "", every},
+		{"merge env prefix", "GH_TOKEN=x gh pr merge 42 --squash", "", every},
+		{"merge quoted op", "gh pr merge '42;' --squash", "", every},
+		{"issue close", "gh issue close 12 --comment 'done in #13; thanks'", Allow, every},
+		{"issue comment dq", `gh issue comment 12 --body "fixed by PR 13"`, Allow, every},
+		{"issue comment dq expansion", `gh issue comment 12 --body "$(cat /etc/passwd)"`, "", every},
+		{"issue delete", "gh issue delete 12", "", every},
+		{"issue edit", "gh issue edit 12 --title x", "", every},
+		{"item edit not covered", "gh project item-edit --id X --project-id P --field-id F --single-select-option-id O", "", every},
+		{"commit", "git commit -m 'feat: x'", Allow, every},
+		{"commit amend", "git commit --amend -m x", "", every},
+		{"commit no message", "git commit -q", "", every},
+		{"commit all", "git commit -a -m x", "", every},
+		{"commit signoff", "git commit -s -m x", "", every},
+		{"commit author", "git commit -m x --author 'a <b>'", "", every},
+		{"commit config", "git -c user.name=x commit -m x", "", every},
+		{"push own", "git push -u origin feat/73-x", Allow, every},
+		{"push bare", "git push", "", every},
+		{"push other branch", "git push origin feat/other", "", every},
+		{"push main", "git push origin main", Deny, every},
+		{"push refspec main", "git push origin HEAD:main", Deny, every},
+		{"push refs main", "git push origin feat/73-x:refs/heads/main", Deny, every},
+		{"push force", "git push --force origin feat/73-x", Deny, every},
+		{"push -f", "git push -f origin feat/73-x", Deny, every},
+		{"push -uf", "git push -uf origin feat/73-x", Deny, every},
+		{"push lease", "git push --force-with-lease origin feat/73-x", Deny, every},
+		{"push plus", "git push origin +feat/73-x", Deny, every},
+		{"push mirror", "git push --mirror", Deny, nil},
+		{"push force chained", "echo ok && git push --force", Deny, nil},
+		{"delete own", "git push origin --delete feat/73-x", Allow, every},
+		{"delete own no grant", "git push origin --delete feat/73-x", "", nil},
+		{"delete other", "git push origin --delete feat/other", Deny, every},
+		{"delete other colon", "git push origin :feat/other", Deny, every},
+		{"delete own colon", "git push origin :feat/73-x", "", every},
+		{"delete -d other", "git push -d origin feat/other", Deny, every},
+		{"delete chained", "true; git push origin --delete feat/73-x", Deny, every},
+		{"delete main", "git push origin --delete main", Deny, every},
+		{"edit settings by shell", "sed -i s/a/b/ ~/.claude/settings.json", Deny, nil},
+		{"write settings redirect", "echo {} > /home/u/.claude/settings.local.json", Deny, nil},
+		{"read settings", "cat /home/u/.claude/settings.json", "", nil},
+		{"hooks dir", "cp x /home/u/.claude/hooks/pre.sh", Deny, nil},
+		{"lea settings", "cp x /usr/local/share/lea/claude-settings.json", Deny, nil},
+		{"lea state git identity", "git config --file /lea/state/git/config user.name x", Deny, nil},
+		{"repo's own claude-settings source", "go test ./image/claude-settings.json", "", nil},
+		{"unrelated", "go test ./...", "", every},
+		// B1: nothing may repoint git or gh.
+		{"gh set-default", "gh repo set-default evil/repo", Deny, every},
+		{"gh set-default view", "gh repo set-default --view", "", every},
+		{"remote set-url", "git remote set-url origin https://github.com/evil/repo", Deny, every},
+		{"remote add chained", "git remote add x u && git push x feat/73-x", Deny, every},
+		{"config write", "git config remote.origin.url https://evil", Deny, every},
+		{"config write global", "git -C /x config --global url.https://evil/.insteadOf https://github.com/", Deny, every},
+		{"config read", "git config --get remote.origin.url", "", every},
+		{"config list", "git config --list --show-origin", "", every},
+		{"config write disguised as read", "git config -z core.hooksPath /tmp/h", Deny, every},
+		{"config get plus value", "git config --get core.hooksPath /tmp/h", Deny, every},
+		{"config escaped", `git con\fig core.hooksPath /tmp/h`, Deny, every},
+		// Escapes and expansions never hide a protected target.
+		{"push expansion main", "git push origin $(echo main)", Deny, every},
+		{"push backtick", "git push origin `echo main`", Deny, every},
+		{"push ansi-c", "git push origin $'\\x6dain'", Deny, every},
+		{"path expansion", "cp x .claude/sett$(echo ings).json", Deny, nil},
+		{"remote expansion", "git $(echo remote) set-url origin x", Deny, nil},
+		{"harmless expansion", "git diff $(git merge-base HEAD origin/main)", "", every},
+		{"built verb push", "$(printf g)it push origin x", Deny, nil},
+		{"variable program push", "$G push origin x", Deny, nil},
+		{"built remote", "g${x}it remote set-url origin y", Deny, nil},
+		{"files loop", "for f in $(git ls-files); do wc -l $f; done", "", nil},
+		{"GH_REPO prefix", "GH_REPO=evil/repo gh pr merge 1 --squash", Deny, every},
+		{"GH_HOST export", "export GH_HOST=evil.example", Deny, every},
+		{"agent -R", "gh pr merge 1 --squash -R evil/repo", "", every},
+		// B2: nothing may plant a program git runs.
+		{"hook planted", "cp x .git/hooks/pre-commit", Deny, nil},
+		{"hook abs", "chmod +x /p/lea/.git/hooks/pre-push", Deny, nil},
+		{"git config file", "sed -i s/x/y/ .git/config", Deny, nil},
+		{"worktree config", "echo x >> /p/lea/.git/worktrees/dev-2/config.worktree", Deny, nil},
+		{"gitconfig", "echo '[core] hooksPath=/tmp' >> ~/.gitconfig", Deny, nil},
+		{"bashrc", "echo 'alias git=evil' >> ~/.bashrc", Deny, nil},
+		{"shell snapshot", "cp x ~/.claude/shell-snapshots/s.sh", Deny, nil},
+		// (a) relative and quoted paths.
+		{"relative settings", "cp x .claude/settings.json", Deny, nil},
+		{"quoted settings", `cp x ".claude/settings.local.json"`, Deny, nil},
+		{"single-quoted settings", "cp x '.claude/settings.json'", Deny, nil},
+		// (b) quoted push targets.
+		{"quoted plus", `git push origin "+feat/73-x"`, Deny, every},
+		{"quoted main", "git push origin 'main'", Deny, every},
+		{"quoted refspec main", `git push origin HEAD:"main"`, Deny, every},
+		{"escaped main compound", `true; git push origin ma\in`, Deny, nil},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			d := Decide("Bash", bash(tc.cmd), dev, tc.gs, now, false)
+			if d.Verdict != tc.want {
+				t.Fatalf("%q: verdict %q (%s), want %q", tc.cmd, d.Verdict, d.Reason, tc.want)
+			}
+			if d.Verdict == Allow && (d.Grant != 7 || d.Command == "") {
+				t.Fatalf("allow names grant %d, command %q", d.Grant, d.Command)
+			}
+		})
+	}
+}
+
+func TestDecideScope(t *testing.T) {
+	cmd := bash("gh pr merge 42 --squash")
+	base := all(Merge)
+	mod := func(f func(*Grant)) []Grant { g := base; f(&g); return []Grant{g} }
+	cases := []struct {
+		name string
+		gs   []Grant
+		c    Caller
+		want string
+	}{
+		{"match", []Grant{base}, dev, Allow},
+		{"expired", mod(func(g *Grant) { g.Expires = now }), dev, ""},
+		{"revoked", mod(func(g *Grant) { g.Revoked = now - 1 }), dev, ""},
+		{"other lea", mod(func(g *Grant) { g.Container = "lea-b" }), dev, ""},
+		{"other repo", mod(func(g *Grant) { g.Repo = "other" }), dev, ""},
+		{"no repo binding", mod(func(g *Grant) { g.Repo = "" }), dev, ""},
+		{"branch glob miss", mod(func(g *Grant) { g.Branch = "fix/*" }), dev, ""},
+		{"branch any", mod(func(g *Grant) { g.Branch = "" }), dev, Allow},
+		{"subtree of lead", mod(func(g *Grant) { g.Agent = "lea-a/claude-1" }), dev, Allow},
+		{"subtree self", mod(func(g *Grant) { g.Agent = "lea-a/dev-2" }), dev, Allow},
+		{"subtree sibling", mod(func(g *Grant) { g.Agent = "lea-a/dev-3" }), dev, ""},
+		{"caller without repo", []Grant{base}, Caller{Key: "lea-a/x", Container: "lea-a", Lineage: []string{"lea-a/x"}}, ""},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if d := Decide("Bash", cmd, tc.c, tc.gs, now, false); d.Verdict != tc.want {
+				t.Fatalf("verdict %q (%s), want %q", d.Verdict, d.Reason, tc.want)
+			}
+		})
+	}
+}
+
+// TestPinnedCommand: an allowed call runs lea's command, built from the validated argv: absolute
+// program, scrubbed environment, git in the caller's worktree with hooks and command-running
+// settings off, gh on the grant's repository; the audit target names the repository.
+func TestPinnedCommand(t *testing.T) {
+	gs := []Grant{all(Merge), all(CommitIdentity)}
+	d := Decide("Bash", bash("gh pr merge feat/73-x --squash --delete-branch"), dev, gs, now, false)
+	if d.Verdict != Allow || !strings.HasPrefix(d.Command, `'/usr/bin/env' '-i' 'PATH=/usr/bin:/bin'`) ||
+		!strings.Contains(d.Command, `'HOME=/home/u' 'GH_CONFIG_DIR=/lea/state/gh' '/bin/sh' '-c' `) || d.Request.Target != "github.com/o/lea pr of feat/73-x" {
+		t.Fatalf("merge: %+v", d)
+	}
+	if s := lastWord(t, d.Command); s != `'/usr/bin/gh' 'pr' 'merge' 'feat/73-x' '--squash' '--delete-branch' '-R' 'github.com/o/lea'` {
+		t.Fatalf("merge script %q", s)
+	}
+	d = Decide("Bash", bash(`git commit -m "it's done"`), dev, gs, now, false)
+	s := lastWord(t, d.Command)
+	for _, w := range []string{`'/usr/bin/git' '-C' '/p/.lea/worktrees/lea/dev-2'`, `'-c' 'core.hooksPath=/dev/null'`,
+		`'-c' 'core.fsmonitor=false'`, `'-c' 'core.sshCommand=/usr/bin/ssh'`, `'-c' 'protocol.allow=never'`, ` write-tree)`,
+		` commit-tree "$tree" -p "$parent" '-m' 'it'\''s done'`, `'-c' 'credential.helper=' '-c' 'credential.helper=store`} {
+		if !strings.Contains(s, w) {
+			t.Fatalf("commit script lacks %s:\n%s", w, s)
+		}
+	}
+	if d.Request.Target != "lea commit" || !strings.Contains(d.Command, `'GIT_CONFIG_GLOBAL=/dev/null'`) {
+		t.Fatalf("commit %+v", d)
+	}
+	// A merge grant without a GitHub repository allows no gh call.
+	g := all(Merge)
+	g.GitHub = ""
+	if d := Decide("Bash", bash("gh pr merge 42 --squash"), dev, []Grant{g}, now, false); d.Verdict != "" {
+		t.Fatalf("unpinned merge: %+v", d)
+	}
+	// An environment value lea cannot vouch for: no command, no allow.
+	for _, bad := range []map[string]string{{"HOME": "home/u"}, {"HOME": "/home/u;evil"}, {"GH_CONFIG_DIR": "/x y"}} {
+		odd := dev
+		odd.Env = bad
+		if d := Decide("Bash", bash("git commit -m x"), odd, gs, now, false); d.Verdict != "" {
+			t.Fatalf("env %v: %+v", bad, d)
+		}
+	}
+	// No worktree, no git command.
+	away := dev
+	away.Worktree = ""
+	if d := Decide("Bash", bash("git commit -m x"), away, gs, now, false); d.Verdict != "" {
+		t.Fatalf("no worktree: %+v", d)
+	}
+}
+
+func TestOwnWorktreeAndBranch(t *testing.T) {
+	every := []Grant{all(Merge), all(CloseIssue), all(DeleteOwnBranch), all(CommitIdentity)}
+	away := dev
+	away.OwnWorktree = false
+	for _, c := range []string{"gh pr merge 42 --squash", "gh issue close 3", "git commit -m x", "git push origin feat/73-x", "git push origin --delete feat/73-x"} {
+		if d := Decide("Bash", bash(c), away, every, now, false); d.Verdict != "" {
+			t.Fatalf("outside its worktree %q: %+v", c, d)
+		}
+	}
+	shared := dev
+	shared.Branch = ""
+	if d := Decide("Bash", bash("git push origin --delete feat/73-x"), shared, every, now, false); d.Verdict != Deny {
+		t.Fatalf("shared branch delete: %+v", d)
+	}
+	if d := Decide("Bash", bash("gh pr merge feat/73-x --squash -d"), shared, every, now, false); d.Verdict != "" {
+		t.Fatalf("shared branch merge+delete: %+v", d)
+	}
+	if d := Decide("Bash", bash("git push origin feat/73-x"), shared, every, now, false); d.Verdict != "" {
+		t.Fatalf("shared branch push: %+v", d)
+	}
+	for _, tc := range []struct {
+		cwd string
+		ok  bool
+	}{{"/p/.lea/worktrees/lea/dev-2", true}, {"/p/.lea/worktrees/lea/dev-2/", true}, {"/p/.lea/worktrees/lea/dev-2/internal", false},
+		{"/p/.lea/worktrees/lea/dev-2/x/.lea/worktrees/lea/dev-2", false}, {"/p/.lea/worktrees/lea/./dev-2", false},
+		{"/p/.lea/worktrees/lea/dev-22", false}, {"/p/.lea/worktrees/other/dev-2", false}, {"/p/lea", false},
+		{"/p/.lea/worktrees/lea/dev-2/../dev-3", false}, {"p/.lea/worktrees/lea/dev-2", false}, {"", false}} {
+		if InWorktree(tc.cwd, "lea", "dev-2") != tc.ok {
+			t.Fatalf("InWorktree(%q) != %v", tc.cwd, tc.ok)
+		}
+	}
+}
+
+func TestDecideTools(t *testing.T) {
+	stop := json.RawMessage(`{"name":"dev-3"}`)
+	gs := []Grant{all(StopFinished)}
+	gs[0].Branch = ""
+	if d := Decide(StopTool, stop, dev, gs, now, true); d.Verdict != Allow || d.Request.Target != "dev-3" {
+		t.Fatalf("finished child: %+v", d)
+	}
+	if d := Decide(StopTool, stop, dev, gs, now, false); d.Verdict != "" {
+		t.Fatalf("unfinished child allowed: %+v", d)
+	}
+	if d := Decide(StopTool, stop, dev, nil, now, true); d.Verdict != "" {
+		t.Fatalf("no grant allowed: %+v", d)
+	}
+	for _, p := range []string{"/home/u/.claude/settings.json", "/home/u/.claude/settings.local.json", "/repo/.claude/settings.json", "/usr/local/share/lea/claude-settings.json", "/lea/state/git/config", "/p/lea/.git/config", "/p/lea/.git/hooks/pre-commit", "/home/u/.gitconfig", "/home/u/.bashrc", ".claude/settings.json"} {
+		in, _ := json.Marshal(map[string]string{"file_path": p})
+		if d := Decide("Edit", in, dev, gs, now, true); d.Verdict != Deny {
+			t.Fatalf("edit %s: %+v", p, d)
+		}
+	}
+	for _, p := range []string{"/repo/main.go", "/repo/image/claude-settings.json", "/repo/lea/state.go"} {
+		in, _ := json.Marshal(map[string]string{"file_path": p})
+		if d := Decide("Edit", in, dev, gs, now, true); d.Verdict != "" {
+			t.Fatalf("edit %s: %+v", p, d)
+		}
+	}
+	in, _ := json.Marshal(map[string]string{"file_path": "/repo/main.go"})
+	if d := Decide("Write", in, dev, gs, now, true); d.Verdict != "" {
+		t.Fatalf("plain write: %+v", d)
+	}
+	for _, bad := range []string{``, `nope`, `{"command":7}`} {
+		if d := Decide("Bash", json.RawMessage(bad), dev, []Grant{all(Merge)}, now, true); d.Verdict == Allow {
+			t.Fatalf("bad input %q allowed", bad)
+		}
+	}
+}
+
+func TestWords(t *testing.T) {
+	w, ok := Words(`gh issue close 3 --comment 'a; b' -r "not planned"`)
+	if !ok || len(w) != 8 || w[5] != "a; b" || w[7] != "not planned" {
+		t.Fatalf("%q %v", w, ok)
+	}
+	for _, bad := range []string{"", "  ", "a 'b", `a "b`, "a\\ b", "a=b c", "a > f", "a ~/x", "a *", "a #c", `a "$x"`, "a !b"} {
+		if _, ok := Words(bad); ok {
+			t.Fatalf("%q parsed", bad)
+		}
+	}
+}
+
+func TestGlob(t *testing.T) {
+	for _, tc := range []struct {
+		p, s string
+		ok   bool
+	}{{"*", "a/b", true}, {"feat/*", "feat/73-x", true}, {"feat/*", "fix/1", false}, {"*-x", "feat/73-x", true},
+		{"feat/*/x", "feat/a/b/x", true}, {"main", "main", true}, {"main", "mainx", false}, {"a*b*c", "axc", false}} {
+		if Glob(tc.p, tc.s) != tc.ok {
+			t.Fatalf("Glob(%q, %q) != %v", tc.p, tc.s, tc.ok)
+		}
+	}
+}

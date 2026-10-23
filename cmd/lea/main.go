@@ -53,6 +53,12 @@ const usage = `usage: lea <command>
                              start an agent (used by the launcher, in this form only;
                              any other new is the launcher's lea new)
   role <agent> <role>        change an agent's role (lead, dev, reviewer)
+  grant add <action> --container NAME [--repo R] [--github OWNER/NAME] [--branch GLOB] [--agent NAME] [--expires 8h]
+                             let every agent of a lea (or one agent's subtree) take an action
+                             without asking: merge, stop-finished, close-issue,
+                             delete-own-branch, commit-identity (hard denies always hold)
+  grant ls [--all] | grant revoke <id>
+                             list or revoke grants
   sound [on|off]             show or switch lea's sounds (until the daemon restarts)
   hook claude <event>        Claude Code hook (inside lea)
   mcp                        MCP server for agents (inside lea)
@@ -76,6 +82,8 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		return runDaemon(stderr)
 	case "agents", "msg", "inbox", "approvals", "approve", "attach-container", "role", "requests", "request", "board", "sound":
 		return runHost(args, stdout, stderr)
+	case "grant":
+		return runGrant(args, stdout, stderr)
 	case "deck":
 		return runDeck(args[1:], stderr)
 	case "deck-open":

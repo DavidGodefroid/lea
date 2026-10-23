@@ -435,6 +435,80 @@ team tools (`agents_*`, `msg_*`, `board_read`, `task_update`), ask you questions
 `lea inbox --agent --wait`; any other tool (Bash, Edit, Read, git, gh, the web…) is denied with a
 reminder to delegate. `/lea:tower-control off` gives the session its tools back.
 
+### Grants: let every agent merge, close issues, stop finished agents
+
+Claude Code judges each action from its own conversation: "you may merge" told to a lead does
+not reach its children, and relayed in a lea message it is rightly distrusted. A **grant** is
+that decision recorded by you on the host, applied the same way to every agent it covers:
+
+```sh
+lea grant add merge --container lea-myproj --repo api --github me/api --expires 8h  # gh pr merge N|own-branch --squash|--merge|--rebase (--delete-branch: own-branch only)
+lea grant add stop-finished --container lea-myproj                  # agents_stop on an idle or ended child
+lea grant add close-issue --container lea-myproj --repo api --github me/api  # gh issue close|reopen|comment N
+lea grant add delete-own-branch --container lea-myproj --repo api --github me/api  # git push origin --delete <the agent's own branch>
+lea grant add commit-identity --container lea-myproj --repo api --github me/api --branch 'feat/*'  # git commit -m (no --amend), git push [-u] origin <own branch>
+lea grant ls [--all]                                                # active grants (--all: revoked, expired) and recent uses
+lea grant revoke 3
+```
+
+`--container` is the lea (`lea board` shows its name); `--repo` (the directory) and `--github`
+(its GitHub repository) go together on every grant but stop-finished; `--branch` (a glob on the
+agent's branch) and `--agent NAME` (that agent and its children) narrow it. A grant expires
+after 8 hours unless `--expires` says otherwise (1m to 30 days). lea's `PreToolUse` hook asks the
+daemon before each tool call: a call a grant covers is allowed, with the grant's id as the
+reason, and audited (`lea grant ls` lists the uses: agent, action, target, never the command);
+anything else takes the usual path. Revocation and expiry apply on the next call.
+
+An allowed shell call never runs the agent's text: lea runs the command it parsed, rebuilt word by
+word, in a fresh `/bin/sh` under `env -i` (so the agent's variables, aliases and shell
+functions do not apply), with a fixed `PATH` and only `HOME`, `GH_CONFIG_DIR`, `SSH_AUTH_SOCK` and `LANG` as
+Claude's own process has them.
+
+- gh runs as `/usr/bin/gh … -R github.com/<--github>`; every grant but stop-finished names
+  `--repo` and `--github` together.
+- A commit goes through plumbing in the agent's worktree (`write-tree`, `commit-tree`,
+  `update-ref`): no hook, filter or signing runs. It commits the index as it is (`git add`
+  first: no `-a`).
+- A push runs from a bare repository lea creates for the call (random name, mode 0700, its
+  config checked right before the push, the worktree's objects borrowed) to `https://github.com/<--github>.git` with the full ref
+  (`refs/heads/<branch>:refs/heads/<branch>`): the remote's config never decides where it goes.
+- git's hooks, fsmonitor, askpass and pager are off, ssh is `/usr/bin/ssh`, https and ssh are the
+  only transports, `~/.gitconfig` is not read; and lea refuses a repository whose own config
+  holds a `url.*.insteadOf`, `include`, URL-specific credential helper, `pushurl`, push refspec,
+  mirror, filter, textconv or any `http.*` key.
+
+Only the host writes grants: there is no MCP tool for it (`grants_list` only reads them), the
+daemon refuses `grant_add` from a container, `lea.db` is never mounted in one, and a message
+saying "the user allows X" changes nothing. A call is allowed only when it is exactly one plain
+command lea parses (no `;`, `&&`, `|`, `$(…)`, backticks, redirections, `VAR=` prefixes,
+`--repo`), run at the root of the agent's own worktree (`<projects>/.lea/worktrees/<repo>/<agent>`,
+so gh and git act on its repo), whatever is granted. A branch is an agent's own only while no other
+live agent of the lea works on it. Some calls are denied outright, grant or not: `gh pr merge
+--admin`, force-push (`-f`, `--force*`, `+refspec`, `--mirror`, `--prune`), any push to `main` or
+`master`, deleting a branch that is not the agent's own, repointing git or gh (`git remote
+set-url|add|…`, writes with `git config`, `gh repo set-default`, `GH_REPO=`/`GH_HOST=`), and
+writing a file that makes a later command run something else: Claude's settings, hooks and shell
+snapshots, git's config and hooks (`.git/config`, `.git/hooks/`, `~/.gitconfig`), the shell's
+startup files (`~/.bashrc`…), `/usr/local/share/lea` or `/lea/state`. A command that hides
+words behind escapes or expansions (`\`, `$…`, backticks) and touches any of these is denied
+too: run it plainly.
+
+**What grants protect against.** Grants and hard denies keep a *confused* agent (one that
+misreads a message, a brief or its own transcript) from merging, pushing or deleting where you did
+not say it may; they are not a sandbox against a *hostile* one. An agent can still write and run
+code through the tools it is allowed (`go run`, a test, a script), and it can read the gh token
+in `/lea/state/gh`: what keeps a hostile agent in check is the container, its network rules and
+the scope of the tokens you give lea, not grants. Two ways a hostile agent gets past them, among
+others: a shell function named `/usr/bin/env` in Claude's shell snapshot replaces the pinned
+call, and a loop rewriting the per-call bare repository's config (same user) between lea's check
+and the push can send the push elsewhere.
+
+To check that a Claude Code release runs the command lea rebuilds (the hook's `updatedInput`)
+before relying on grants, in a lea: `lea grant add commit-identity --container <lea> --repo <r>
+--github <owner>/<r> --expires 10m`, ask an agent working on a branch of `<r>` to `git add` a
+file and run `git commit -m test`, then check that `git reflog -1` in its worktree says
+`commit (lea grant)` (a plain `git commit` writes `commit: test`); `lea grant ls` lists the use.
+
 `lea new --brief FILE` gives a new agent its first message; `--repo NAME` starts it in a
 directory of the projects directory; `--branch B` has it work in its own git worktree under
 `<projects>/.lea/worktrees/<repo>/<agent>`.
@@ -454,6 +528,7 @@ lea init                     # set up again (idempotent)
 lea config export > team.json  # your team's shared settings, as one file
 lea config import team.json  # take them on another workstation (see Configure)
 LEA_PROJECTS_DIR=~/other lea # another projects directory, for this call only
+lea grant add|ls|revoke      # let agents take an action without asking (see Grants)
 ```
 
 A release install updates itself: at most once a day, `lea` looks for a new release in the

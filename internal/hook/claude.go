@@ -13,6 +13,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/DavidGodefroid/lea/internal/client"
+	"github.com/DavidGodefroid/lea/internal/grants"
 	"github.com/DavidGodefroid/lea/internal/identity"
 	"github.com/DavidGodefroid/lea/internal/wire"
 )
@@ -80,6 +81,7 @@ func Claude(ctx context.Context, event string, stdin io.Reader, stdout io.Writer
 		AgentID        string          `json:"agent_id"`
 		Error          string          `json:"error"`
 		Source         string          `json:"source"`
+		Cwd            string          `json:"cwd"`
 	}
 	_ = json.Unmarshal(in, &p)
 	// Forward only what phase 0 needs: never tool_input or tool_response (file contents,
@@ -143,6 +145,49 @@ func Claude(ctx context.Context, event string, stdin io.Reader, stdout io.Writer
 			json.NewEncoder(stdout).Encode(map[string]any{"hookSpecificOutput": map[string]any{
 				"hookEventName": event, "additionalContext": r.Text}})
 		}
+	case "PreToolUse":
+		// The user's grants (lea grant add) and lea's hard denies: the daemon reads the tool input
+		// and the working directory in memory and never stores them. No answer, an error or an unknown verdict prints
+		// nothing: the call takes the normal path (Claude's checks, the deck).
+		if p.ToolName == "" {
+			return
+		}
+		input := p.ToolInput
+		if len(input) == 0 {
+			input = json.RawMessage(`{}`)
+		}
+		var r struct {
+			Verdict string `json:"verdict"`
+			Reason  string `json:"reason"`
+			Command string `json:"command"`
+		}
+		// The environment a pinned command keeps comes from this process (Claude's), never from
+		// the agent's shell: the daemon checks each value and drops the rest.
+		env := map[string]string{}
+		for _, k := range grants.SafeEnv {
+			if v := getenv(k); v != "" {
+				env[k] = truncate(v, 256)
+			}
+		}
+		if c.call(bctx, "grant_check", map[string]any{"tool": p.ToolName, "input": input, "cwd": truncate(p.Cwd, 4096), "env": env}, &r) != nil {
+			return
+		}
+		if r.Verdict != "allow" && r.Verdict != "deny" {
+			return
+		}
+		out := map[string]any{"hookEventName": "PreToolUse", "permissionDecision": r.Verdict,
+			"permissionDecisionReason": truncate(r.Reason, 500)}
+		if r.Verdict == "allow" && p.ToolName == "Bash" {
+			// An allowed shell call runs the daemon's pinned command, never the agent's text: no
+			// pinned command, no allow.
+			var in map[string]any
+			if r.Command == "" || json.Unmarshal(input, &in) != nil || in == nil {
+				return
+			}
+			in["command"] = r.Command
+			out["updatedInput"] = in
+		}
+		json.NewEncoder(stdout).Encode(map[string]any{"hookSpecificOutput": out})
 	case "PermissionRequest":
 		if getenv("LEA_APPROVALS") != "deck" {
 			return
