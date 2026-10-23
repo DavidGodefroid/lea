@@ -445,13 +445,14 @@ that decision recorded by you on the host, applied the same way to every agent i
 lea grant add merge --container lea-myproj --repo api --github me/api --expires 8h  # gh pr merge N|own-branch --squash|--merge|--rebase (--delete-branch: own-branch only)
 lea grant add stop-finished --container lea-myproj                  # agents_stop on an idle or ended child
 lea grant add close-issue --container lea-myproj --repo api --github me/api  # gh issue close|reopen|comment N
-lea grant add delete-own-branch --container lea-myproj --github me/api  # git push origin --delete <the agent's own branch>
-lea grant add commit-identity --container lea-myproj --github me/api --branch 'feat/*'  # git commit -m (no --amend), git push [-u] origin <own branch>
+lea grant add delete-own-branch --container lea-myproj --repo api --github me/api  # git push origin --delete <the agent's own branch>
+lea grant add commit-identity --container lea-myproj --repo api --github me/api --branch 'feat/*'  # git commit -m (no --amend), git push [-u] origin <own branch>
 lea grant ls [--all]                                                # active grants (--all: revoked, expired) and recent uses
 lea grant revoke 3
 ```
 
-`--container` is the lea (`lea board` shows its name); `--repo`, `--branch` (a glob on the
+`--container` is the lea (`lea board` shows its name); `--repo` (the directory) and `--github`
+(its GitHub repository) go together on every grant but stop-finished; `--branch` (a glob on the
 agent's branch) and `--agent NAME` (that agent and its children) narrow it. A grant expires
 after 8 hours unless `--expires` says otherwise (1m to 30 days). lea's `PreToolUse` hook asks the
 daemon before each tool call: a call a grant covers is allowed, with the grant's id as the

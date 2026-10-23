@@ -167,7 +167,7 @@ func TestDecideScope(t *testing.T) {
 		{"revoked", mod(func(g *Grant) { g.Revoked = now - 1 }), dev, ""},
 		{"other lea", mod(func(g *Grant) { g.Container = "lea-b" }), dev, ""},
 		{"other repo", mod(func(g *Grant) { g.Repo = "other" }), dev, ""},
-		{"any repo", mod(func(g *Grant) { g.Repo = "" }), dev, Allow},
+		{"no repo binding", mod(func(g *Grant) { g.Repo = "" }), dev, ""},
 		{"branch glob miss", mod(func(g *Grant) { g.Branch = "fix/*" }), dev, ""},
 		{"branch any", mod(func(g *Grant) { g.Branch = "" }), dev, Allow},
 		{"subtree of lead", mod(func(g *Grant) { g.Agent = "lea-a/claude-1" }), dev, Allow},

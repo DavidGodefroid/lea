@@ -184,7 +184,9 @@ func Match(req Request, c Caller, gs []Grant, now int64) (Grant, bool) {
 		if g.Agent != "" && !contains(c.Lineage, g.Agent) {
 			continue
 		}
-		if req.Prog != "" && g.GitHub == "" {
+		// --repo binds the worktree to --github: a grant without it pins nothing to the caller's
+		// repository.
+		if req.Prog != "" && (g.GitHub == "" || g.Repo == "") {
 			continue
 		}
 		return g, true

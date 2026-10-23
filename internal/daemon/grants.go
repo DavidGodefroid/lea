@@ -58,6 +58,9 @@ func (d *Daemon) grantAdd(raw json.RawMessage) (any, error) {
 	if p.Branch != "" && !strings.Contains(p.Branch, "*") && grants.Protected(p.Branch) {
 		return nil, errors.New("branch: no grant covers the default branch")
 	}
+	if p.Repo == "" && grants.NeedsGitHub(p.Action) {
+		return nil, fmt.Errorf("repo: a %s grant names the repository it covers, the one --github is", p.Action)
+	}
 	switch m := grantGitHub.FindStringSubmatch(p.GitHub); {
 	case p.GitHub == "" && grants.NeedsGitHub(p.Action):
 		return nil, fmt.Errorf("github: a %s grant names the GitHub repository its gh and git calls are pinned to (OWNER/NAME)", p.Action)

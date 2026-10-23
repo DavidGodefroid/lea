@@ -67,7 +67,7 @@ func TestPreToolUseGrantAllowsRevokeAndHardDeny(t *testing.T) {
 		t.Fatalf("no grant: %q", d)
 	}
 	var g struct{ ID int64 }
-	if err := call(api, "", "grant_add", map[string]any{"container": "lea-a", "action": "merge", "github": "o/fixture"}, &g); err != nil {
+	if err := call(api, "", "grant_add", map[string]any{"container": "lea-a", "action": "merge", "repo": "fixture", "github": "o/fixture"}, &g); err != nil {
 		t.Fatal(err)
 	}
 	out := runHook(bus, "PreToolUse", merge, nil)
@@ -103,7 +103,7 @@ func TestPreToolUseGrantAllowsRevokeAndHardDeny(t *testing.T) {
 		t.Fatalf("revoked: %q", d)
 	}
 	// Outside its own worktree the call is not covered.
-	if err := call(api, "", "grant_add", map[string]any{"container": "lea-a", "action": "merge", "github": "o/fixture"}, &g); err != nil {
+	if err := call(api, "", "grant_add", map[string]any{"container": "lea-a", "action": "merge", "repo": "fixture", "github": "o/fixture"}, &g); err != nil {
 		t.Fatal(err)
 	}
 	away := strings.Replace(merge, devCwd, "/p/fixture", 1)
