@@ -460,15 +460,22 @@ reason, and audited (`lea grant ls` lists the uses: agent, action, target, never
 anything else takes the usual path. Revocation and expiry apply on the next call.
 
 An allowed shell call never runs the agent's text: lea runs the command it parsed, rebuilt word by
-word with `/usr/bin/git` or `/usr/bin/gh`, through `env -i` with a fixed `PATH` and only
-`HOME`, `GH_CONFIG_DIR`, `SSH_AUTH_SOCK` and `LANG` as Claude's own process has them (never
-`GIT_*`, `GH_REPO`, `GH_HOST`, tokens…). git runs with `-C <the agent's worktree>`, its hooks,
-fsmonitor, signing, askpass and pager off, `/usr/bin/ssh`, and https or ssh only; gh
-runs with `-R github.com/<--github>`, which every grant but stop-finished must name. Before git
-runs, lea checks the repository's own config: a `url.*.insteadOf`, `include`, URL-specific
-credential helper, `pushurl`, push refspec, mirror, filter or textconv there stops the call. A
-push never goes where the remote's config says: lea pushes to `https://github.com/<--github>.git`
-with the full ref (`refs/heads/<branch>:refs/heads/<branch>`).
+word, in a fresh `/bin/sh` under `env -i` (so no shell function, alias or variable of the agent's
+applies), with a fixed `PATH` and only `HOME`, `GH_CONFIG_DIR`, `SSH_AUTH_SOCK` and `LANG` as
+Claude's own process has them.
+
+- gh runs as `/usr/bin/gh … -R github.com/<--github>`; every grant but stop-finished names
+  `--repo` and `--github` together.
+- A commit goes through plumbing in the agent's worktree (`write-tree`, `commit-tree`,
+  `update-ref`): no hook, filter or signing runs. It commits the index as it is (`git add`
+  first: no `-a`).
+- A push runs from a bare repository lea creates for the call (no config of its own, the
+  worktree's objects borrowed) to `https://github.com/<--github>.git` with the full ref
+  (`refs/heads/<branch>:refs/heads/<branch>`): the remote's config never decides where it goes.
+- git's hooks, fsmonitor, askpass and pager are off, ssh is `/usr/bin/ssh`, https and ssh are the
+  only transports, `~/.gitconfig` is not read; and lea refuses a repository whose own config
+  holds a `url.*.insteadOf`, `include`, URL-specific credential helper, `pushurl`, push refspec,
+  mirror, filter, textconv or any `http.*` key.
 
 Only the host writes grants: there is no MCP tool for it (`grants_list` only reads them), the
 daemon refuses `grant_add` from a container, `lea.db` is never mounted in one, and a message
@@ -485,6 +492,13 @@ snapshots, git's config and hooks (`.git/config`, `.git/hooks/`, `~/.gitconfig`)
 startup files (`~/.bashrc`…), `/usr/local/share/lea` or `/lea/state`. A command that hides
 words behind escapes or expansions (`\`, `$…`, backticks) and touches any of these is denied
 too: run it plainly.
+
+**What grants protect against.** Grants and hard denies keep a *confused* agent (one that
+misreads a message, a brief or its own transcript) from merging, pushing or deleting where you did
+not say it may; they are not a sandbox against a *hostile* one. An agent can still write and run
+code through the tools it is allowed (`go run`, a test, a script), and it can read the gh token
+in `/lea/state/gh`: what keeps a hostile agent in check is the container, its network rules and
+the scope of the tokens you give lea, not grants.
 
 `lea new --brief FILE` gives a new agent its first message; `--repo NAME` starts it in a
 directory of the projects directory; `--branch B` has it work in its own git worktree under

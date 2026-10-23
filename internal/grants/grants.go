@@ -243,12 +243,22 @@ var gitPins = []string{"core.hooksPath=/dev/null", "core.fsmonitor=false", "core
 	// and gh's.
 	"credential.helper=", "credential.helper=store --file=/lea/state/git/credentials",
 	"credential.helper=!/usr/bin/gh auth git-credential",
-	"http.sslVerify=true", "http.proxy=", "http.extraHeader="}
+	"http.sslVerify=true", "http.proxy=", "http.extraHeader=", "http.cookieFile=", "http.curloptResolve=",
+	"http.sslCAInfo=/etc/ssl/certs/ca-certificates.crt", "http.sslCAPath=/etc/ssl/certs"}
 
-// Command is the command an allowed Bash call runs instead of the agent's: the validated argv
-// with an absolute program, an environment of SafeEnv only (env -i), git pinned to the caller's worktree with its
-// command-running settings neutralised, gh pinned to the grant's repository. Every word is
-// single-quoted. "" when the call cannot be pinned.
+// Command is the command an allowed Bash call runs instead of the agent's. Claude's shell only
+// starts env, by a quoted absolute path (no alias, no function: a name with a slash is never
+// looked up as one); everything else runs in a fresh /bin/sh under env -i, so nothing the agent
+// put in its shell (functions, aliases, variables, BASH_ENV) reaches it:
+//
+//   - gh: the validated argv, pinned to the grant's repository with -R;
+//   - git commit: plumbing in the caller's worktree (write-tree, commit-tree, update-ref): no
+//     hook, filter, index refresh or signing runs, whatever the repository's config says;
+//   - git push: from a bare repository lea creates for the call, with no config of its own and
+//     the worktree's objects borrowed (alternates), to the grant's URL and the full ref: the
+//     repository's config (url, pushurl, http, credential, push refspecs) is never read.
+//
+// Every word lea builds is single-quoted. "" when the call cannot be pinned.
 func Command(req Request, c Caller, g Grant) string {
 	if g.GitHub == "" {
 		return ""
@@ -265,46 +275,123 @@ func Command(req Request, c Caller, g Grant) string {
 			env = append(env, k+"="+v)
 		}
 	}
+	var script string
 	switch req.Prog {
 	case "gh":
-		argv := append(append(append(env, ghPath), req.Args...), "-R", g.GitHub)
-		return shellWords(argv)
+		script = shellWords(append(append([]string{ghPath}, req.Args...), "-R", g.GitHub))
 	case "git":
 		if !c.OwnWorktree || c.Worktree == "" {
 			return ""
 		}
-		git := append(env, gitPath, "-C", c.Worktree)
-		for _, p := range gitPins {
-			git = append(git, "-c", p)
+		switch req.Args[0] {
+		case "commit":
+			script = commitScript(req.Args[1:], c.Worktree)
+		case "push":
+			script = pushScript(req.Args, c.Worktree, g.GitHub)
 		}
-		// The repository's own config is still read: lea runs nothing when it holds a key that
-		// would send a push elsewhere or run a program. A push never reads the remote's config:
-		// it names the grant's repository URL and the full refspec (pushArgs). The guard is lea's
-		// text, not the agent's.
-		guard := shellWords(append(append([]string{}, git...), "config", "--get-regexp", riskyConfig)) +
-			" >/dev/null 2>&1; test $? -eq 1"
-		args := req.Args
-		if args[0] == "push" {
-			if args = pushArgs(args, g.GitHub); args == nil {
+	}
+	if script == "" {
+		return ""
+	}
+	return shellWords(append(env, shPath, "-c", script))
+}
+
+const (
+	shPath     = "/bin/sh"
+	mktempPath = "/usr/bin/mktemp"
+	rmPath     = "/bin/rm"
+)
+
+// pins are lea's -c options for git.
+func pins() []string {
+	var o []string
+	for _, p := range gitPins {
+		o = append(o, "-c", p)
+	}
+	return o
+}
+
+// gitIn is git in dir with lea's pins.
+func gitIn(dir string) []string {
+	return append([]string{gitPath, "-C", dir}, pins()...)
+}
+
+// refuse is the script line that ends the call with lea's reason.
+func refuse(why string) string {
+	return "echo " + shellWords([]string{"lea: grant not applied: " + why}) + " >&2; exit 1"
+}
+
+// configGuard refuses a repository whose config holds a key that would redirect git or run a
+// program: defence in depth, the plumbing and the bare push do not depend on it. It reads the
+// repository's file only (--local: lea's own -c pins are not in it, includes are listed, not
+// followed).
+func configGuard(wt string) string {
+	return shellWords([]string{gitPath, "-C", wt, "config", "--local", "--get-regexp", riskyConfig}) +
+		" >/dev/null 2>&1; s=$?; if [ \"$s\" -ne 1 ]; then " + refuse("the repository git config redirects or runs programs") + "; fi\n"
+}
+
+// commitScript commits the index with the messages of args (-m/--message; -q/--quiet) through
+// plumbing.
+func commitScript(args []string, wt string) string {
+	var msgs []string
+	for i := 0; i < len(args); i++ {
+		switch args[i] {
+		case "-m", "--message":
+			if i+1 >= len(args) {
 				return ""
 			}
+			msgs = append(msgs, "-m", args[i+1])
+			i++
+		case "-q", "--quiet":
+		default:
+			return ""
 		}
-		run := shellWords(append(append([]string{}, git...), args...))
-		return "if " + guard + "; then " + run + "; else echo 'lea: grant not applied: the repository git config redirects or runs programs' >&2; false; fi"
 	}
-	return ""
+	if len(msgs) == 0 {
+		return ""
+	}
+	git := shellWords(gitIn(wt))
+	return configGuard(wt) +
+		"tree=$(" + git + " write-tree) || exit 1\n" +
+		"parent=$(" + git + " rev-parse --verify HEAD) || exit 1\n" +
+		"new=$(" + git + ` commit-tree "$tree" -p "$parent" ` + shellWords(msgs) + ") || exit 1\n" +
+		git + ` update-ref -m 'commit (lea grant)' HEAD "$new" "$parent" || exit 1` + "\n" +
+		`echo "[lea grant] committed $new"`
+}
+
+// pushScript pushes the caller's branch (or deletes it) from a bare repository lea creates for
+// the call (pushArgs gives the URL and the ref).
+func pushScript(args []string, wt, gh string) string {
+	pa := pushArgs(args, gh)
+	if pa == nil {
+		return ""
+	}
+	git := shellWords(gitIn(wt))
+	bare := shellWords([]string{gitPath, "--git-dir"}) + ` "$tmp" ` + shellWords(pins())
+	s := configGuard(wt) +
+		"common=$(" + git + " rev-parse --path-format=absolute --git-common-dir) || exit 1\n" +
+		"tmp=$(" + shellWords([]string{mktempPath, "-d"}) + ") || exit 1\n" +
+		"trap " + shellWords([]string{rmPath + ` -rf "$tmp"`}) + " EXIT\n" +
+		shellWords([]string{gitPath, "init", "-q", "--bare", "--template="}) + ` "$tmp" || exit 1` + "\n" +
+		`echo "$common/objects" > "$tmp/objects/info/alternates" || exit 1` + "\n"
+	url, ref := pa[0], pa[1]
+	if pa[2] == "delete" {
+		return s + bare + " push " + shellWords([]string{url, "--delete", ref})
+	}
+	return s + "sha=$(" + git + " rev-parse --verify " + shellWords([]string{ref + "^{commit}"}) + ") || exit 1\n" +
+		bare + " push " + shellWords([]string{url}) + ` "$sha:` + ref + `"`
 }
 
 // riskyConfig matches the repository config keys a pinned git refuses to run with (names as git
 // prints them: section and key lower-case).
 const riskyConfig = `^(url\..*\.(insteadof|pushinsteadof)|include\.path|includeif\..*|credential\..+\.helper|` +
 	`remote\..*\.(pushurl|push|mirror|receivepack|uploadpack|proxy)|filter\..*|diff\..*\.(textconv|command)|core\.gitproxy|` +
-	`core\.attributesfile|http\..*\.(proxy|extraheader|sslverify|cookiefile))$`
+	`core\.attributesfile|core\.hookspath|core\.fsmonitor|core\.sshcommand|extensions\.worktreeconfig|http\..+)$`
 
-// pushArgs rewrites a validated "push [-u|--set-upstream] [--delete|-d] origin <branch>" to the
-// grant's repository and the full ref, so no remote config (url, pushurl, push refspecs, mirror)
-// decides where it goes: "push [-u] https://github.com/O/N.git refs/heads/b:refs/heads/b" or
-// "push https://github.com/O/N.git --delete refs/heads/b". nil when args are not that shape.
+// pushArgs reads a validated "push [-u|--set-upstream] [--delete|-d] origin <branch>": it returns
+// the grant's repository URL, the full ref and "delete" or "push", or nil when args are not that
+// shape. Where it goes never depends on the remote's config. -u is accepted and does nothing: the
+// bare repository a push runs from has no upstream to record.
 func pushArgs(args []string, gh string) []string {
 	upstream, del := false, false
 	var pos []string
@@ -318,19 +405,14 @@ func pushArgs(args []string, gh string) []string {
 			pos = append(pos, a)
 		}
 	}
-	if len(pos) != 2 || pos[0] != "origin" || Protected(pos[1]) || !strings.HasPrefix(gh, "github.com/") {
+	if len(pos) != 2 || pos[0] != "origin" || Protected(pos[1]) || !strings.HasPrefix(gh, "github.com/") || (del && upstream) {
 		return nil
 	}
-	url, ref := "https://"+gh+".git", "refs/heads/"+pos[1]
-	switch {
-	case del && upstream:
-		return nil
-	case del:
-		return []string{"push", url, "--delete", ref}
-	case upstream:
-		return []string{"push", "-u", url, ref + ":" + ref}
+	mode := "push"
+	if del {
+		mode = "delete"
 	}
-	return []string{"push", url, ref + ":" + ref}
+	return []string{"https://" + gh + ".git", "refs/heads/" + pos[1], mode}
 }
 
 // shellWords single-quotes every word.

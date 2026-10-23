@@ -63,7 +63,9 @@ func TestDecideBash(t *testing.T) {
 		{"item edit not covered", "gh project item-edit --id X --project-id P --field-id F --single-select-option-id O", "", every},
 		{"commit", "git commit -m 'feat: x'", Allow, every},
 		{"commit amend", "git commit --amend -m x", "", every},
-		{"commit no message", "git commit -a", "", every},
+		{"commit no message", "git commit -q", "", every},
+		{"commit all", "git commit -a -m x", "", every},
+		{"commit signoff", "git commit -s -m x", "", every},
 		{"commit author", "git commit -m x --author 'a <b>'", "", every},
 		{"commit config", "git -c user.name=x commit -m x", "", every},
 		{"push own", "git push -u origin feat/73-x", Allow, every},
@@ -190,20 +192,24 @@ func TestDecideScope(t *testing.T) {
 func TestPinnedCommand(t *testing.T) {
 	gs := []Grant{all(Merge), all(CommitIdentity)}
 	d := Decide("Bash", bash("gh pr merge feat/73-x --squash --delete-branch"), dev, gs, now, false)
-	want := `'/usr/bin/gh' 'pr' 'merge' 'feat/73-x' '--squash' '--delete-branch' '-R' 'github.com/o/lea'`
-	if d.Verdict != Allow || !strings.HasPrefix(d.Command, `'/usr/bin/env' '-i' 'PATH=/usr/bin:/bin'`) || !strings.HasSuffix(d.Command, want) ||
-		!strings.Contains(d.Command, `'HOME=/home/u' 'GH_CONFIG_DIR=/lea/state/gh'`) || d.Request.Target != "github.com/o/lea pr of feat/73-x" {
+	if d.Verdict != Allow || !strings.HasPrefix(d.Command, `'/usr/bin/env' '-i' 'PATH=/usr/bin:/bin'`) ||
+		!strings.Contains(d.Command, `'HOME=/home/u' 'GH_CONFIG_DIR=/lea/state/gh' '/bin/sh' '-c' `) || d.Request.Target != "github.com/o/lea pr of feat/73-x" {
 		t.Fatalf("merge: %+v", d)
 	}
+	if s := lastWord(t, d.Command); s != `'/usr/bin/gh' 'pr' 'merge' 'feat/73-x' '--squash' '--delete-branch' '-R' 'github.com/o/lea'` {
+		t.Fatalf("merge script %q", s)
+	}
 	d = Decide("Bash", bash(`git commit -m "it's done"`), dev, gs, now, false)
+	s := lastWord(t, d.Command)
 	for _, w := range []string{`'/usr/bin/git' '-C' '/p/.lea/worktrees/lea/dev-2'`, `'-c' 'core.hooksPath=/dev/null'`,
-		`'-c' 'core.fsmonitor=false'`, `'-c' 'core.sshCommand=/usr/bin/ssh'`, `'-c' 'protocol.allow=never'`, `'GIT_CONFIG_GLOBAL=/dev/null'`, `'-c' 'credential.helper=' '-c' 'credential.helper=store`, `'commit' '-m' 'it'\''s done'`} {
-		if !strings.Contains(d.Command, w) {
-			t.Fatalf("commit command lacks %s: %s", w, d.Command)
+		`'-c' 'core.fsmonitor=false'`, `'-c' 'core.sshCommand=/usr/bin/ssh'`, `'-c' 'protocol.allow=never'`, ` write-tree)`,
+		` commit-tree "$tree" -p "$parent" '-m' 'it'\''s done'`, `'-c' 'credential.helper=' '-c' 'credential.helper=store`} {
+		if !strings.Contains(s, w) {
+			t.Fatalf("commit script lacks %s:\n%s", w, s)
 		}
 	}
-	if d.Request.Target != "lea commit" {
-		t.Fatalf("target %q", d.Request.Target)
+	if d.Request.Target != "lea commit" || !strings.Contains(d.Command, `'GIT_CONFIG_GLOBAL=/dev/null'`) {
+		t.Fatalf("commit %+v", d)
 	}
 	// A merge grant without a GitHub repository allows no gh call.
 	g := all(Merge)

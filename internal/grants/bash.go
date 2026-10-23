@@ -316,11 +316,13 @@ func ghIssue(args []string) (Request, bool) {
 	return Request{Action: CloseIssue, Target: args[0] + " issue " + n}, true
 }
 
-// gitCommit: git commit with a message and the usual flags; no pathspec, no -c/--author/-F, no
-// --amend (it rewrites a commit that may be pushed already, or someone else's).
+// gitCommit: git commit -m <message> [-q]: the index as it is (no -a, no pathspec), no
+// -c/--author/-F/--signoff, no --amend (it rewrites a commit that may be pushed already).
 func gitCommit(args []string) (Request, bool) {
 	valued := map[string]bool{"-m": true, "--message": true}
-	bare := map[string]bool{"-a": true, "--all": true, "-s": true, "--signoff": true, "-q": true, "--quiet": true}
+	// No -a/--all: staging would run the repository's clean filters (lea commits through
+	// plumbing, the index as it is).
+	bare := map[string]bool{"-q": true, "--quiet": true}
 	hasMsg := false
 	for _, a := range args {
 		hasMsg = hasMsg || valued[a]

@@ -81,7 +81,8 @@ func TestPreToolUseGrantAllowsRevokeAndHardDeny(t *testing.T) {
 			In map[string]any `json:"updatedInput"`
 		} `json:"hookSpecificOutput"`
 	}
-	if err := json.Unmarshal([]byte(out), &r); err != nil || !strings.HasSuffix(r.H.In["command"].(string), `'-R' 'github.com/o/fixture'`) ||
+	if err := json.Unmarshal([]byte(out), &r); err != nil || !strings.HasPrefix(r.H.In["command"].(string), `'/usr/bin/env' '-i' `) ||
+		!strings.Contains(r.H.In["command"].(string), `'/bin/sh' '-c' `) || !strings.Contains(r.H.In["command"].(string), "github.com/o/fixture") ||
 		r.H.In["description"] != "merge it" {
 		t.Fatalf("updatedInput: %s", out)
 	}
