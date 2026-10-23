@@ -27,7 +27,10 @@ func TestDecideBash(t *testing.T) {
 	}{
 		{"merge numbered", "gh pr merge 42 --squash", Allow, every},
 		{"merge current branch", "gh pr merge --merge", Allow, every},
-		{"merge own branch delete", "gh pr merge --squash --delete-branch", Allow, every},
+		{"merge own branch delete", "gh pr merge feat/73-x --squash --delete-branch", Allow, every},
+		{"merge own branch", "gh pr merge feat/73-x --squash", Allow, every},
+		{"merge HEAD delete", "gh pr merge --squash --delete-branch", "", every},
+		{"merge other branch", "gh pr merge feat/other --squash", "", every},
 		{"merge numbered delete", "gh pr merge 42 --squash --delete-branch", "", every},
 		{"merge numbered -d", "gh pr merge 42 -s -d", "", every},
 		{"merge no grant", "gh pr merge 42 --squash", "", nil},
@@ -144,13 +147,17 @@ func TestOwnWorktreeAndBranch(t *testing.T) {
 	if d := Decide("Bash", bash("git push origin --delete feat/73-x"), shared, every, now, false); d.Verdict != Deny {
 		t.Fatalf("shared branch delete: %+v", d)
 	}
+	if d := Decide("Bash", bash("gh pr merge feat/73-x --squash -d"), shared, every, now, false); d.Verdict != "" {
+		t.Fatalf("shared branch merge+delete: %+v", d)
+	}
 	if d := Decide("Bash", bash("git push origin feat/73-x"), shared, every, now, false); d.Verdict != "" {
 		t.Fatalf("shared branch push: %+v", d)
 	}
 	for _, tc := range []struct {
 		cwd string
 		ok  bool
-	}{{"/p/.lea/worktrees/lea/dev-2", true}, {"/p/.lea/worktrees/lea/dev-2/internal", true},
+	}{{"/p/.lea/worktrees/lea/dev-2", true}, {"/p/.lea/worktrees/lea/dev-2/", true}, {"/p/.lea/worktrees/lea/dev-2/internal", false},
+		{"/p/.lea/worktrees/lea/dev-2/x/.lea/worktrees/lea/dev-2", false}, {"/p/.lea/worktrees/lea/./dev-2", false},
 		{"/p/.lea/worktrees/lea/dev-22", false}, {"/p/.lea/worktrees/other/dev-2", false}, {"/p/lea", false},
 		{"/p/.lea/worktrees/lea/dev-2/../dev-3", false}, {"p/.lea/worktrees/lea/dev-2", false}, {"", false}} {
 		if InWorktree(tc.cwd, "lea", "dev-2") != tc.ok {

@@ -150,7 +150,7 @@ func bashRequest(w []string, c Caller) (Request, bool) {
 	}
 	switch {
 	case len(w) >= 3 && w[0] == "gh" && w[1] == "pr" && w[2] == "merge":
-		return ghMerge(w[3:])
+		return ghMerge(w[3:], c)
 	case len(w) >= 3 && w[0] == "gh" && w[1] == "issue":
 		return ghIssue(w[2:])
 	case len(w) >= 3 && w[0] == "gh" && w[1] == "project" && w[2] == "item-edit":
@@ -175,13 +175,13 @@ func number(s string) bool {
 	return true
 }
 
-// ghMerge: gh pr merge [<number>] [--squash|--merge|--rebase] [--delete-branch]. No --repo: the
-// PR is one of the repository of the caller's worktree. --delete-branch deletes the PR's head
-// branch: it is accepted only without a number, where the PR is the one of the worktree's branch,
-// the caller's own.
-func ghMerge(args []string) (Request, bool) {
-	target := "pr (own branch)"
-	method, del, numbered := false, false, false
+// ghMerge: gh pr merge [<number>|<own branch>] [--squash|--merge|--rebase] [--delete-branch].
+// No --repo: the PR is one of the repository of the caller's worktree. --delete-branch deletes
+// the PR's head branch: it is accepted only when the PR is named by the caller's own branch (not
+// a number, not the worktree's HEAD, which the agent can change), never a protected one.
+func ghMerge(args []string, c Caller) (Request, bool) {
+	target := "pr (worktree branch)"
+	method, del, own := false, false, false
 	for i, a := range args {
 		switch a {
 		case "--squash", "-s", "--merge", "-m", "--rebase", "-r":
@@ -192,13 +192,19 @@ func ghMerge(args []string) (Request, bool) {
 		case "--delete-branch", "-d":
 			del = true
 		default:
-			if i != 0 || !number(a) {
+			switch {
+			case i != 0:
+				return Request{}, false
+			case number(a):
+				target = "pr " + a
+			case c.Branch != "" && a == c.Branch && !Protected(a):
+				target, own = "pr of "+a, true
+			default:
 				return Request{}, false
 			}
-			target, numbered = "pr "+a, true
 		}
 	}
-	if del && numbered {
+	if del && !own {
 		return Request{}, false
 	}
 	return Request{Action: Merge, Target: target}, true

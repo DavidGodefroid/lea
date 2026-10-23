@@ -53,7 +53,7 @@ func TestGrantsReachTheWholeSubtree(t *testing.T) {
 	reg("sub", "reviewer", lead.Key, "feat/a-1")
 	reg("other", "dev", "", "feat/b")
 	host := map[string]string{"LEA_DAEMON_SOCK": api}
-	merge := cmd("gh pr merge --squash --delete-branch")
+	merge := cmd("gh pr merge feat/a-1 --squash --delete-branch")
 	admin := cmd("gh pr merge 7 --squash --admin")
 
 	if d := preToolUseAs(t, bus, "sub", "Bash", merge); d != "" {
@@ -74,7 +74,7 @@ func TestGrantsReachTheWholeSubtree(t *testing.T) {
 		t.Fatalf("--admin with a grant: %q", d)
 	}
 	rc, out, _ = runEnv(t, host, "grant", "ls")
-	if rc != 0 || !strings.Contains(out, "#"+id+"  active") || !strings.Contains(out, "lea-a/sub merge: pr (own branch)") {
+	if rc != 0 || !strings.Contains(out, "#"+id+"  active") || !strings.Contains(out, "lea-a/sub merge: pr of feat/a-1") {
 		t.Fatalf("grant ls rc=%d out=%q", rc, out)
 	}
 	if rc, out, _ := runEnv(t, host, "grant", "revoke", id); rc != 0 || !strings.Contains(out, "revoked") {

@@ -58,27 +58,24 @@ func (g Grant) Active(now int64) bool {
 // Caller is the agent making the call, as the daemon knows it (never as the agent says).
 // Lineage is its key followed by its ancestors' keys, nearest first. Branch is "" when another
 // live agent of the lea works on the same repo and branch: then no branch is the caller's own.
-// OwnWorktree says the call runs in the caller's own git worktree
-// (<projects>/.lea/worktrees/<repo>/<agent>): gh and git then act on the caller's repo and, for
-// a command that names no branch or PR, on the caller's branch.
+// OwnWorktree says the call runs at the root of the caller's own git worktree
+// (<projects>/.lea/worktrees/<repo>/<agent>): gh and git then act on the caller's repo.
 type Caller struct {
 	Key, Container, Repo, Branch string
 	Lineage                      []string
 	OwnWorktree                  bool
 }
 
-// InWorktree says whether cwd is inside <...>/.lea/worktrees/<repo>/<name>.
+// InWorktree says whether cwd is exactly the root of <...>/.lea/worktrees/<repo>/<name>: not a
+// subdirectory (which could hold a nested repository), and with one worktrees segment only.
 func InWorktree(cwd, repo, name string) bool {
-	if repo == "" || name == "" || !strings.HasPrefix(cwd, "/") || strings.Contains(cwd, "/..") || strings.Contains(cwd, "//") {
+	if repo == "" || name == "" || !strings.HasPrefix(cwd, "/") || strings.Contains(cwd, "/..") ||
+		strings.Contains(cwd, "/./") || strings.Contains(cwd, "//") {
 		return false
 	}
-	seg := "/.lea/worktrees/" + repo + "/" + name
-	i := strings.LastIndex(cwd, seg)
-	if i < 0 {
-		return false
-	}
-	rest := cwd[i+len(seg):]
-	return rest == "" || rest == "/" || strings.HasPrefix(rest, "/")
+	cwd = strings.TrimSuffix(cwd, "/")
+	const marker = "/.lea/worktrees/"
+	return strings.Count(cwd, marker) == 1 && strings.HasSuffix(cwd, marker+repo+"/"+name)
 }
 
 // Request is a tool call recognised as one action. Target names what it acts on, for the audit
