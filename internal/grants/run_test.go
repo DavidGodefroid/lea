@@ -182,6 +182,20 @@ func TestPinnedPushNeverReadsTheRepositoryConfig(t *testing.T) {
 		t.Fatalf("the push went to the agent's repository: %s", out)
 	}
 	notPwned(t, root)
+	if !strings.Contains(lastWord(t, push), `"$sha"':refs/heads/feat/73-x'`) {
+		t.Fatalf("push refspec not one quoted word: %s", lastWord(t, push))
+	}
+	// A branch name that would break out of the script is never pinned.
+	for _, b := range []string{`x";touch /tmp/p;"`, "x$(id)", "x`id`", "a b", "a..b", "-x", "x.lock", "x/"} {
+		odd := c
+		odd.Branch = b
+		if cmd := Command(Request{Prog: "git", Args: []string{"push", "origin", b}}, odd, g); cmd != "" {
+			t.Fatalf("branch %q pinned: %s", b, cmd)
+		}
+		if d := Decide("Bash", bash("git push origin '"+b+"'"), odd, []Grant{g}, now, false); d.Verdict == Allow {
+			t.Fatalf("branch %q allowed: %+v", b, d)
+		}
+	}
 	for _, bad := range [][]string{{"push", "origin", "main"}, {"push", "origin"}, {"push", "-u", "--delete", "origin", "x"}} {
 		if cmd := Command(Request{Prog: "git", Args: bad}, c, g); cmd != "" {
 			t.Fatalf("%v: %s", bad, cmd)

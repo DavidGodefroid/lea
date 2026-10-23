@@ -262,7 +262,7 @@ func ghMerge(args []string, c Caller) (Request, bool) {
 				return Request{}, false
 			case number(a):
 				target = "pr " + a
-			case c.Branch != "" && a == c.Branch && !Protected(a):
+			case c.Branch != "" && a == c.Branch && BranchName(a) && !Protected(a):
 				target, own = "pr of "+a, true
 			default:
 				return Request{}, false
@@ -351,7 +351,7 @@ func gitPush(args []string, c Caller) (Request, bool) {
 			pos = append(pos, a)
 		}
 	}
-	if len(pos) != 2 || pos[0] != "origin" || c.Branch == "" || pos[1] != c.Branch || Protected(pos[1]) {
+	if len(pos) != 2 || pos[0] != "origin" || c.Branch == "" || pos[1] != c.Branch || !BranchName(pos[1]) || Protected(pos[1]) {
 		return Request{}, false
 	}
 	if del {

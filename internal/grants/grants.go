@@ -379,7 +379,7 @@ func pushScript(args []string, wt, gh string) string {
 		return s + bare + " push " + shellWords([]string{url, "--delete", ref})
 	}
 	return s + "sha=$(" + git + " rev-parse --verify " + shellWords([]string{ref + "^{commit}"}) + ") || exit 1\n" +
-		bare + " push " + shellWords([]string{url}) + ` "$sha:` + ref + `"`
+		bare + " push " + shellWords([]string{url}) + ` "$sha"` + shellWords([]string{":" + ref})
 }
 
 // riskyConfig matches the repository config keys a pinned git refuses to run with (names as git
@@ -405,7 +405,7 @@ func pushArgs(args []string, gh string) []string {
 			pos = append(pos, a)
 		}
 	}
-	if len(pos) != 2 || pos[0] != "origin" || Protected(pos[1]) || !strings.HasPrefix(gh, "github.com/") || (del && upstream) {
+	if len(pos) != 2 || pos[0] != "origin" || !BranchName(pos[1]) || Protected(pos[1]) || !strings.HasPrefix(gh, "github.com/") || (del && upstream) {
 		return nil
 	}
 	mode := "push"
@@ -456,6 +456,15 @@ func Glob(pattern, s string) bool {
 		s = s[i+len(p):]
 	}
 	return strings.HasSuffix(s, parts[last])
+}
+
+var branchName = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._/-]{0,199}$`)
+
+// BranchName says whether b is a branch name a grant may act on: plain characters only (a
+// subset of git check-ref-format's rules), no "..", no "//", no ".lock" or "/" at the end.
+func BranchName(b string) bool {
+	return branchName.MatchString(b) && !strings.Contains(b, "..") && !strings.Contains(b, "//") &&
+		!strings.HasSuffix(b, ".lock") && !strings.HasSuffix(b, "/") && !strings.HasSuffix(b, ".") && !strings.Contains(b, "/.")
 }
 
 // Protected says whether a branch is one no agent may push to or delete: the default branch.
