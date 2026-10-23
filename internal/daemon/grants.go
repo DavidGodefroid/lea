@@ -60,7 +60,7 @@ func (d *Daemon) grantAdd(raw json.RawMessage) (any, error) {
 	}
 	switch m := grantGitHub.FindStringSubmatch(p.GitHub); {
 	case p.GitHub == "" && grants.NeedsGitHub(p.Action):
-		return nil, fmt.Errorf("github: a %s grant names the GitHub repository gh is pinned to (OWNER/NAME)", p.Action)
+		return nil, fmt.Errorf("github: a %s grant names the GitHub repository its gh and git calls are pinned to (OWNER/NAME)", p.Action)
 	case p.GitHub != "" && (m == nil || m[3] == "." || m[3] == ".."):
 		return nil, errors.New("github: OWNER/NAME of a github.com repository")
 	case p.GitHub != "":

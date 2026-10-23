@@ -445,8 +445,8 @@ that decision recorded by you on the host, applied the same way to every agent i
 lea grant add merge --container lea-myproj --repo api --github me/api --expires 8h  # gh pr merge N|own-branch --squash|--merge|--rebase (--delete-branch: own-branch only)
 lea grant add stop-finished --container lea-myproj                  # agents_stop on an idle or ended child
 lea grant add close-issue --container lea-myproj --repo api --github me/api  # gh issue close|reopen|comment N
-lea grant add delete-own-branch --container lea-myproj              # git push origin --delete <the agent's own branch>
-lea grant add commit-identity --container lea-myproj --branch 'feat/*'  # git commit -m (no --amend), git push [-u] origin <own branch>
+lea grant add delete-own-branch --container lea-myproj --github me/api  # git push origin --delete <the agent's own branch>
+lea grant add commit-identity --container lea-myproj --github me/api --branch 'feat/*'  # git commit -m (no --amend), git push [-u] origin <own branch>
 lea grant ls [--all]                                                # active grants (--all: revoked, expired) and recent uses
 lea grant revoke 3
 ```
@@ -463,7 +463,10 @@ word with `/usr/bin/git` or `/usr/bin/gh`, through `env -i` with a fixed `PATH` 
 `HOME`, `GH_CONFIG_DIR`, `SSH_AUTH_SOCK` and `LANG` as Claude's own process has them (never
 `GIT_*`, `GH_REPO`, `GH_HOST`, tokens…). git runs with `-C <the agent's worktree>`, its hooks,
 fsmonitor, signing, askpass and pager off, `/usr/bin/ssh`, and https or ssh only; gh
-runs with `-R github.com/<--github>`, which merge and close-issue grants must name.
+runs with `-R github.com/<--github>`, which every grant but stop-finished must name. Before git
+runs, lea checks the repository's own config: a `url.*.insteadOf`, `include`, URL-specific
+credential helper, `pushurl`, filter or textconv there stops the call, and a push goes ahead only
+when `origin` is the `--github` repository.
 
 Only the host writes grants: there is no MCP tool for it (`grants_list` only reads them), the
 daemon refuses `grant_add` from a container, `lea.db` is never mounted in one, and a message

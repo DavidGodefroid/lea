@@ -95,7 +95,7 @@ func TestGrantsReachTheWholeSubtree(t *testing.T) {
 	}
 
 	// delete-own-branch: the caller's own branch only while no other live agent shares it.
-	if rc, _, e := runEnv(t, host, "grant", "add", "delete-own-branch", "--container", "lea-a"); rc != 0 {
+	if rc, _, e := runEnv(t, host, "grant", "add", "delete-own-branch", "--container", "lea-a", "--github", "o/fixture"); rc != 0 {
 		t.Fatalf("grant delete-own-branch: %s", e)
 	}
 	del := cmd("git push origin --delete feat/a-1")

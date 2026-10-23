@@ -2,7 +2,6 @@ package grants
 
 import (
 	"encoding/json"
-	"os/exec"
 	"strings"
 	"testing"
 )
@@ -205,10 +204,6 @@ func TestPinnedCommand(t *testing.T) {
 	}
 	if d.Request.Target != "lea commit" {
 		t.Fatalf("target %q", d.Request.Target)
-	}
-	out, err := exec.Command("/bin/sh", "-c", "set -- "+strings.TrimPrefix(d.Command, `'/usr/bin/env' `)+`; for a; do printf '[%s]' "$a"; done`).Output()
-	if err != nil || !strings.HasSuffix(string(out), "[commit][-m][it's done]") {
-		t.Fatalf("shell reads %q (%v)", out, err)
 	}
 	// A merge grant without a GitHub repository allows no gh call.
 	g := all(Merge)

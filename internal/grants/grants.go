@@ -53,8 +53,9 @@ type Grant struct {
 	Created, Expires, Revoked int64
 }
 
-// NeedsGitHub says whether a grant of action acts through gh, so names its GitHub repository.
-func NeedsGitHub(action string) bool { return action == Merge || action == CloseIssue }
+// NeedsGitHub says whether a grant of action names its GitHub repository: every action but
+// stop-finished runs gh or git against it (gh -R, git push only to an origin that is it).
+func NeedsGitHub(action string) bool { return action != StopFinished }
 
 // Active says whether g still applies at now.
 func (g Grant) Active(now int64) bool {
@@ -183,7 +184,7 @@ func Match(req Request, c Caller, gs []Grant, now int64) (Grant, bool) {
 		if g.Agent != "" && !contains(c.Lineage, g.Agent) {
 			continue
 		}
-		if req.Prog == "gh" && g.GitHub == "" {
+		if req.Prog != "" && g.GitHub == "" {
 			continue
 		}
 		return g, true
@@ -239,45 +240,83 @@ var gitPins = []string{"core.hooksPath=/dev/null", "core.fsmonitor=false", "core
 	// An empty helper resets the list (the repository's too); then only lea's: the image's store
 	// and gh's.
 	"credential.helper=", "credential.helper=store --file=/lea/state/git/credentials",
-	"credential.helper=!/usr/bin/gh auth git-credential"}
+	"credential.helper=!/usr/bin/gh auth git-credential",
+	"http.sslVerify=true", "http.proxy=", "http.extraHeader="}
 
 // Command is the command an allowed Bash call runs instead of the agent's: the validated argv
 // with an absolute program, an environment of SafeEnv only (env -i), git pinned to the caller's worktree with its
 // command-running settings neutralised, gh pinned to the grant's repository. Every word is
 // single-quoted. "" when the call cannot be pinned.
 func Command(req Request, c Caller, g Grant) string {
+	if g.GitHub == "" {
+		return ""
+	}
 	// GIT_CONFIG_GLOBAL=/dev/null: ~/.gitconfig is the agent's to write (url.insteadOf,
 	// include.path, helpers); /etc/gitconfig is the image's.
-	argv := []string{envPath, "-i", "PATH=/usr/bin:/bin", "GIT_CONFIG_GLOBAL=/dev/null", "GIT_TERMINAL_PROMPT=0",
+	env := []string{envPath, "-i", "PATH=/usr/bin:/bin", "GIT_CONFIG_GLOBAL=/dev/null", "GIT_TERMINAL_PROMPT=0",
 		"GIT_EDITOR=true", "GH_PROMPT_DISABLED=1"}
 	for _, k := range SafeEnv {
 		if v, ok := c.Env[k]; ok {
 			if !safeEnvValue.MatchString(v) || (k != "LANG" && !strings.HasPrefix(v, "/")) {
 				return ""
 			}
-			argv = append(argv, k+"="+v)
+			env = append(env, k+"="+v)
 		}
 	}
 	switch req.Prog {
+	case "gh":
+		argv := append(append(append(env, ghPath), req.Args...), "-R", g.GitHub)
+		return shellWords(argv)
 	case "git":
 		if !c.OwnWorktree || c.Worktree == "" {
 			return ""
 		}
-		argv = append(argv, gitPath, "-C", c.Worktree)
+		git := append(env, gitPath, "-C", c.Worktree)
 		for _, p := range gitPins {
-			argv = append(argv, "-c", p)
+			git = append(git, "-c", p)
 		}
-		argv = append(argv, req.Args...)
-	case "gh":
-		if g.GitHub == "" {
-			return ""
+		// The repository's own config is still read (it holds the remote): lea runs nothing when
+		// it holds a key that would send the push elsewhere or run a program, and pushes only
+		// when origin is the grant's repository. The guard is lea's text, not the agent's.
+		guard := shellWords(append(append([]string{}, git...), "config", "--get-regexp", riskyConfig)) +
+			" >/dev/null 2>&1; test $? -eq 1"
+		run := shellWords(append(append([]string{}, git...), req.Args...))
+		if req.Args[0] == "push" {
+			origin := shellWords(append(append([]string{}, git...), "config", "--get", "remote.origin.url", originPattern(g.GitHub)))
+			guard += " && " + origin + " >/dev/null"
 		}
-		argv = append(argv, ghPath)
-		argv = append(argv, req.Args...)
-		argv = append(argv, "-R", g.GitHub)
-	default:
-		return ""
+		return "if " + guard + "; then " + run + "; else echo 'lea: grant not applied: the repository git config redirects or runs programs, or origin is not " +
+			g.GitHub + "' >&2; false; fi"
 	}
+	return ""
+}
+
+// riskyConfig matches the repository config keys a pinned git refuses to run with (names as git
+// prints them: section and key lower-case).
+const riskyConfig = `^(url\..*\.(insteadof|pushinsteadof)|include\.path|includeif\..*|credential\..+\.helper|` +
+	`remote\..*\.(pushurl|receivepack|uploadpack|proxy)|filter\..*|diff\..*\.(textconv|command)|core\.gitproxy|` +
+	`core\.attributesfile|http\..*\.(proxy|extraheader|sslverify|cookiefile))$`
+
+// originPattern is the value regex remote.origin.url must match: the grant's repository on
+// github.com, over https or ssh, owner and name in any case.
+func originPattern(gh string) string {
+	slug := strings.TrimPrefix(gh, "github.com/")
+	var b strings.Builder
+	for _, r := range slug {
+		switch {
+		case r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z':
+			b.WriteString("[" + strings.ToLower(string(r)) + strings.ToUpper(string(r)) + "]")
+		case r == '.':
+			b.WriteString(`\.`)
+		default:
+			b.WriteRune(r)
+		}
+	}
+	return `^(https://github\.com/|git@github\.com:|ssh://git@github\.com/)` + b.String() + `(\.git)?/?$`
+}
+
+// shellWords single-quotes every word.
+func shellWords(argv []string) string {
 	q := make([]string, len(argv))
 	for i, w := range argv {
 		q[i] = "'" + strings.ReplaceAll(w, "'", `'\''`) + "'"
