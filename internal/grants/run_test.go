@@ -46,22 +46,25 @@ func TestPinnedGitRuns(t *testing.T) {
 	if out, _ := sh(wt, "git log --format=%s"); strings.TrimSpace(out) != "it's" {
 		t.Fatalf("log %q", out)
 	}
-	// Origin is the grant's repository (any case): the guard lets the push through to git, which
-	// then fails offline; another origin stops it in the guard.
-	push := Command(Request{Action: CommitIdentity, Prog: "git", Args: []string{"push", "origin", "feat/73-x"}}, c, g)
-	g2 := g
-	g2.GitHub = "github.com/other/lea"
-	other := Command(Request{Action: CommitIdentity, Prog: "git", Args: []string{"push", "origin", "feat/73-x"}}, c, g2)
-	if out, err := sh(root, other); err == nil || !strings.Contains(out, "lea: grant not applied") {
-		t.Fatalf("push to an origin that is not the grant's: %v %s", err, out)
+	// A push names the grant's repository and the full ref, whatever origin says.
+	push := Command(Request{Action: CommitIdentity, Prog: "git", Args: []string{"push", "-u", "origin", "feat/73-x"}}, c, g)
+	if !strings.Contains(push, `'push' '-u' 'https://github.com/someone/lea.git' 'refs/heads/feat/73-x:refs/heads/feat/73-x'`) {
+		t.Fatalf("push %s", push)
 	}
-	if out, _ := sh(root, push); strings.Contains(out, "lea: grant not applied") {
-		t.Fatalf("push to the grant's origin stopped by the guard: %s", out)
+	del := Command(Request{Action: DeleteOwnBranch, Prog: "git", Args: []string{"push", "origin", "--delete", "feat/73-x"}}, c, g)
+	if !strings.Contains(del, `'push' 'https://github.com/someone/lea.git' '--delete' 'refs/heads/feat/73-x'`) {
+		t.Fatalf("delete %s", del)
+	}
+	for _, bad := range [][]string{{"push", "origin", "main"}, {"push", "origin"}, {"push", "-u", "--delete", "origin", "x"}} {
+		if cmd := Command(Request{Prog: "git", Args: bad}, c, g); cmd != "" {
+			t.Fatalf("%v: %s", bad, cmd)
+		}
 	}
 	// A redirecting or program-running key in the repository config stops every pinned call.
 	for _, kv := range [][2]string{{"url.https://evil.example/.insteadOf", "https://github.com/"},
 		{"include.path", "/tmp/x"}, {"filter.x.clean", "touch " + root + "/pwned"}, {"remote.origin.pushurl", "https://evil.example/r"},
-		{"credential.https://github.com.helper", "!touch " + root + "/pwned"}} {
+		{"credential.https://github.com.helper", "!touch " + root + "/pwned"}, {"remote.origin.push", "refs/heads/x:refs/heads/main"},
+		{"remote.origin.mirror", "true"}} {
 		if out, err := sh(wt, "git config '"+kv[0]+"' '"+kv[1]+"'"); err != nil {
 			t.Fatalf("%v %s", err, out)
 		}

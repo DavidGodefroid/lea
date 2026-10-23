@@ -465,8 +465,9 @@ word with `/usr/bin/git` or `/usr/bin/gh`, through `env -i` with a fixed `PATH` 
 fsmonitor, signing, askpass and pager off, `/usr/bin/ssh`, and https or ssh only; gh
 runs with `-R github.com/<--github>`, which every grant but stop-finished must name. Before git
 runs, lea checks the repository's own config: a `url.*.insteadOf`, `include`, URL-specific
-credential helper, `pushurl`, filter or textconv there stops the call, and a push goes ahead only
-when `origin` is the `--github` repository.
+credential helper, `pushurl`, push refspec, mirror, filter or textconv there stops the call. A
+push never goes where the remote's config says: lea pushes to `https://github.com/<--github>.git`
+with the full ref (`refs/heads/<branch>:refs/heads/<branch>`).
 
 Only the host writes grants: there is no MCP tool for it (`grants_list` only reads them), the
 daemon refuses `grant_add` from a container, `lea.db` is never mounted in one, and a message

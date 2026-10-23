@@ -275,18 +275,20 @@ func Command(req Request, c Caller, g Grant) string {
 		for _, p := range gitPins {
 			git = append(git, "-c", p)
 		}
-		// The repository's own config is still read (it holds the remote): lea runs nothing when
-		// it holds a key that would send the push elsewhere or run a program, and pushes only
-		// when origin is the grant's repository. The guard is lea's text, not the agent's.
+		// The repository's own config is still read: lea runs nothing when it holds a key that
+		// would send a push elsewhere or run a program. A push never reads the remote's config:
+		// it names the grant's repository URL and the full refspec (pushArgs). The guard is lea's
+		// text, not the agent's.
 		guard := shellWords(append(append([]string{}, git...), "config", "--get-regexp", riskyConfig)) +
 			" >/dev/null 2>&1; test $? -eq 1"
-		run := shellWords(append(append([]string{}, git...), req.Args...))
-		if req.Args[0] == "push" {
-			origin := shellWords(append(append([]string{}, git...), "config", "--get", "remote.origin.url", originPattern(g.GitHub)))
-			guard += " && " + origin + " >/dev/null"
+		args := req.Args
+		if args[0] == "push" {
+			if args = pushArgs(args, g.GitHub); args == nil {
+				return ""
+			}
 		}
-		return "if " + guard + "; then " + run + "; else echo 'lea: grant not applied: the repository git config redirects or runs programs, or origin is not " +
-			g.GitHub + "' >&2; false; fi"
+		run := shellWords(append(append([]string{}, git...), args...))
+		return "if " + guard + "; then " + run + "; else echo 'lea: grant not applied: the repository git config redirects or runs programs' >&2; false; fi"
 	}
 	return ""
 }
@@ -294,25 +296,39 @@ func Command(req Request, c Caller, g Grant) string {
 // riskyConfig matches the repository config keys a pinned git refuses to run with (names as git
 // prints them: section and key lower-case).
 const riskyConfig = `^(url\..*\.(insteadof|pushinsteadof)|include\.path|includeif\..*|credential\..+\.helper|` +
-	`remote\..*\.(pushurl|receivepack|uploadpack|proxy)|filter\..*|diff\..*\.(textconv|command)|core\.gitproxy|` +
+	`remote\..*\.(pushurl|push|mirror|receivepack|uploadpack|proxy)|filter\..*|diff\..*\.(textconv|command)|core\.gitproxy|` +
 	`core\.attributesfile|http\..*\.(proxy|extraheader|sslverify|cookiefile))$`
 
-// originPattern is the value regex remote.origin.url must match: the grant's repository on
-// github.com, over https or ssh, owner and name in any case.
-func originPattern(gh string) string {
-	slug := strings.TrimPrefix(gh, "github.com/")
-	var b strings.Builder
-	for _, r := range slug {
-		switch {
-		case r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z':
-			b.WriteString("[" + strings.ToLower(string(r)) + strings.ToUpper(string(r)) + "]")
-		case r == '.':
-			b.WriteString(`\.`)
+// pushArgs rewrites a validated "push [-u|--set-upstream] [--delete|-d] origin <branch>" to the
+// grant's repository and the full ref, so no remote config (url, pushurl, push refspecs, mirror)
+// decides where it goes: "push [-u] https://github.com/O/N.git refs/heads/b:refs/heads/b" or
+// "push https://github.com/O/N.git --delete refs/heads/b". nil when args are not that shape.
+func pushArgs(args []string, gh string) []string {
+	upstream, del := false, false
+	var pos []string
+	for _, a := range args[1:] {
+		switch a {
+		case "-u", "--set-upstream":
+			upstream = true
+		case "--delete", "-d":
+			del = true
 		default:
-			b.WriteRune(r)
+			pos = append(pos, a)
 		}
 	}
-	return `^(https://github\.com/|git@github\.com:|ssh://git@github\.com/)` + b.String() + `(\.git)?/?$`
+	if len(pos) != 2 || pos[0] != "origin" || Protected(pos[1]) || !strings.HasPrefix(gh, "github.com/") {
+		return nil
+	}
+	url, ref := "https://"+gh+".git", "refs/heads/"+pos[1]
+	switch {
+	case del && upstream:
+		return nil
+	case del:
+		return []string{"push", url, "--delete", ref}
+	case upstream:
+		return []string{"push", "-u", url, ref + ":" + ref}
+	}
+	return []string{"push", url, ref + ":" + ref}
 }
 
 // shellWords single-quotes every word.
