@@ -75,6 +75,8 @@ func segments(cmd string) (segs [][]string, inners []string, ok bool) {
 					if cmd[i] != '\n' {
 						cur.WriteByte(cmd[i])
 					}
+				case c == '$' && i+1 < len(cmd) && (cmd[i+1] == '"' || cmd[i+1] == '\''):
+					cur.WriteByte('$') // inside double quotes, $" and $' are a plain $
 				case c == '$' || c == '`':
 					e, ok := expand(i)
 					if !ok {
@@ -98,6 +100,8 @@ func segments(cmd string) (segs [][]string, inners []string, ok bool) {
 				cur.WriteByte(cmd[i])
 				in = true
 			}
+		case ch == '$' && i+1 < len(cmd) && cmd[i+1] == '"':
+			in = true // $"…" is "…" (a translated string): read by the double-quote case
 		case ch == '$' || ch == '`':
 			e, ok := expand(i)
 			if !ok {
@@ -166,12 +170,18 @@ func segments(cmd string) (segs [][]string, inners []string, ok bool) {
 // a lone $, which is itself) and inner the command it runs, if any.
 func expansion(cmd string, i int) (end int, inner string, ok bool) {
 	if cmd[i] == '`' {
+		// The command a backtick runs is its body with \`, \$ and \\ unescaped: a nested
+		// substitution is written \`…\`.
+		var body strings.Builder
 		for j := i + 1; j < len(cmd); j++ {
-			switch cmd[j] {
-			case '\\':
+			switch c := cmd[j]; {
+			case c == '\\' && j+1 < len(cmd) && strings.IndexByte("`$\\", cmd[j+1]) >= 0:
 				j++
-			case '`':
-				return j, cmd[i+1 : j], true
+				body.WriteByte(cmd[j])
+			case c == '`':
+				return j, body.String(), true
+			default:
+				body.WriteByte(c)
 			}
 		}
 		return 0, "", false
@@ -190,7 +200,7 @@ func expansion(cmd string, i int) (end int, inner string, ok bool) {
 			return 0, "", false
 		}
 		return e, cmd[i+2 : e], true
-	case n == '\'' || n == '"':
+	case n == '\'':
 		for j := i + 2; j < len(cmd); j++ {
 			switch cmd[j] {
 			case '\\':
@@ -419,6 +429,13 @@ func segmentGit(w []string, c Caller, compound bool) string {
 	}
 	if strings.Contains(w[p], wild) && contains(w[p:], "git") || strings.Contains(w[p], wild) && anyWord(w[p:], pushWord) {
 		return pushWild // the shell picks the program: maybe git
+	}
+	// Under a builder (xargs, find -exec…), any word naming git may become a git call with
+	// words lea cannot read, a script's (sh -c 'git X …') included.
+	for k := p; k < len(w); k++ {
+		if builders[path.Base(w[k])] && anyWord(w[k+1:], func(x string) bool { return gitWordRe.MatchString(x) }) {
+			return gitBuilt
+		}
 	}
 	reader := printsOnly(w[p:])
 	scripted := false // a word names git and holds an expansion, or another word is a push
