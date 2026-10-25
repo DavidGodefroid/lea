@@ -442,7 +442,7 @@ not reach its children, and relayed in a lea message it is rightly distrusted. A
 that decision recorded by you on the host, applied the same way to every agent it covers:
 
 ```sh
-lea grant add merge --container lea-myproj --repo api --github me/api --expires 8h  # gh pr merge N|own-branch --squash|--merge|--rebase (--delete-branch: own-branch only; PR N must have the agent's branch as head)
+lea grant add merge --container lea-myproj --repo api --github me/api --expires 8h  # gh pr merge N|own-branch --squash|--merge|--rebase (--delete-branch: own-branch only; the PR's head must be the agent's branch)
 lea grant add stop-finished --container lea-myproj                  # agents_stop on an idle or ended child
 lea grant add close-issue --container lea-myproj --repo api --github me/api  # gh issue close|reopen|comment N
 lea grant add delete-own-branch --container lea-myproj --repo api --github me/api  # git push origin --delete <the agent's own branch>
@@ -485,11 +485,13 @@ command lea parses (no `;`, `&&`, `|`, `$(…)`, backticks, redirections, `VAR=`
 so gh and git act on its repo), whatever is granted. A branch is an agent's own only while no other
 live agent of the lea works on it. Some calls are denied outright, grant or not: `gh pr merge
 --admin`, force-push (`-f`, `--force*`, `+refspec`, `--mirror`, `--prune`), any push to `main` or
-`master` however its refspec spells it, a push of every branch or tag (`--all`, `--branches`,
-`--tags`, a wildcard or a bare `:`), a push lea cannot read (an unknown option, git options before
-`push` other than `-C`, a shell glob, a push run through another program or shell), a push that
-leaves its branch implicit (bare `git push`, `HEAD`) anywhere but the root of the agent's own
-worktree, deleting a branch that is not the agent's own, repointing git or gh (`git remote
+`master` however its refspec spells it, a push to any branch but the agent's own (named: a bare
+`git push`, `HEAD` or `@` follows whatever is checked out), a push of every branch or tag (`--all`,
+`--branches`, `--tags`, a wildcard or a bare `:`), other git transports (`send-pack`, `http-push`,
+`remote-<helper>`, `svn`, `p4`), a push lea cannot read (an unknown option, a shell glob, a push run
+through another program, a shell or an interpreter), git options before the subcommand other than
+`-C`, `-c user.name|user.email|color.ui|core.quotepath` and display options, setting `GIT_*`,
+`HOME` or `XDG_CONFIG_HOME`, deleting a branch that is not the agent's own, repointing git or gh (`git remote
 set-url|add|…`, writes with `git config`, `gh repo set-default`, `GH_REPO=`/`GH_HOST=`), and
 writing a file that makes a later command run something else: Claude's settings, hooks and shell
 snapshots, git's config and hooks (`.git/config`, `.git/hooks/`, `~/.gitconfig`), the shell's

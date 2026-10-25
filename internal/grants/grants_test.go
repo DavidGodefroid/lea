@@ -69,8 +69,8 @@ func TestDecideBash(t *testing.T) {
 		{"commit author", "git commit -m x --author 'a <b>'", "", every},
 		{"commit config", "git -c user.name=x commit -m x", "", every},
 		{"push own", "git push -u origin feat/73-x", Allow, every},
-		{"push bare", "git push", "", every},
-		{"push other branch", "git push origin feat/other", "", every},
+		{"push bare", "git push", Deny, every},
+		{"push other branch", "git push origin feat/other", Deny, every},
 		{"push main", "git push origin main", Deny, every},
 		{"push refspec main", "git push origin HEAD:main", Deny, every},
 		{"push refs main", "git push origin feat/73-x:refs/heads/main", Deny, every},
@@ -172,7 +172,7 @@ func TestDecideBash(t *testing.T) {
 		{"push via env", "env git push origin main", Deny, nil},
 		{"alias from a variable", "git -c alias.p=$X p origin main", Deny, nil},
 		{"alias by GIT_CONFIG env", "GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=alias.p GIT_CONFIG_VALUE_0=$V git p origin main", Deny, nil},
-		{"pager pin is fine", "git -c core.pager=cat log --oneline", "", nil},
+		{"pager pin", "git -c core.pager=cat log --oneline", Deny, nil},
 		{"other config pin", "git -c core.fsmonitor=/tmp/x status", Deny, nil},
 		{"push via python", `python3 -c "import os; os.system('git push origin main')"`, Deny, nil},
 		{"subtree push", "git subtree push --prefix x origin main", Deny, nil},
@@ -188,13 +188,34 @@ func TestDecideBash(t *testing.T) {
 		{"exec path", "git --exec-path=/tmp/x p origin main", Deny, nil},
 		{"identity pin is fine", "git -c user.name=x -c user.email=y log -1", "", nil},
 		{"mention config env is fine", "grep -n GIT_CONFIG_GLOBAL internal/grants/grants.go", "", nil},
-		{"push own HEAD", "git push -u origin HEAD", "", nil},
+		{"push own HEAD", "git push -u origin HEAD", Deny, nil},
 		{"push own refspec", "git push origin HEAD:feat/73-x", "", nil},
+		{"send-pack main", "git send-pack https://github.com/o/lea.git feat/73-x:main", Deny, nil},
+		{"http-push main", "git http-push https://x/lea.git feat/73-x:main", Deny, nil},
+		{"remote helper", "git remote-ext 'sh -c x' https://x", Deny, nil},
+		{"push @", "git push origin @", Deny, nil},
+		{"push origin only", "git push origin", Deny, nil},
+		{"push to other agent", "git push origin feat/73-x:feat/other", Deny, nil},
+		{"push tag ref", "git push origin refs/tags/v1", Deny, nil},
+		{"push own full ref", "git push origin HEAD:refs/heads/feat/73-x", "", nil},
+		{"gh pr title mentions push", `gh pr create --title "fix git push" --body "no more git push origin main"`, "", nil},
+		{"log grep push", "git log --grep push", "", nil},
+		{"echo git", "echo git", "", nil},
+		{"no-pager diff", "git --no-pager diff --stat", "", nil},
+		{"xargs git add", "git ls-files -m | xargs git add", "", nil},
+		{"gh body with push", `gh pr comment 1 --body "run git push origin main yourself"`, "", nil},
+		{"rebase exec push", "git rebase -x 'git push origin main' HEAD~2", Deny, nil},
+		{"git-dir then alias", "git --git-dir .git -c alias.p=push p origin main", Deny, nil},
+		{"work-tree", "git --work-tree /tmp/x status", Deny, nil},
+		{"home config", "HOME=/tmp/h git p origin main", Deny, nil},
+		{"xdg config", "XDG_CONFIG_HOME=/tmp/x git p origin main", Deny, nil},
+		{"read config var", "read GIT_CONFIG_GLOBAL < f; git p origin main", Deny, nil},
+		{"git editor var", "GIT_EDITOR=true git rebase --continue", Deny, nil},
 		{"push own chained", "git commit -m 'push it' && git push origin feat/73-x", "", nil},
 		{"push quiet own", "git push -q -o ci.skip origin feat/73-x", "", nil},
 		{"commit mentions push main", "git commit -m 'git push origin main'", "", nil},
-		// Fail closed: a word holding a whole git push may be a script some program runs.
-		{"grep push main", "grep -rn 'git push origin main' docs", Deny, nil},
+		// A word holding a whole git push is checked only for programs that run it.
+		{"grep push main", "grep -rn 'git push origin main' docs", "", nil},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -251,7 +272,8 @@ func TestPinnedCommand(t *testing.T) {
 		!strings.Contains(d.Command, `'HOME=/home/u' 'GH_CONFIG_DIR=/lea/state/gh' '/bin/sh' '-c' `) || d.Request.Target != "github.com/o/lea pr of feat/73-x" {
 		t.Fatalf("merge: %+v", d)
 	}
-	if s := lastWord(t, d.Command); s != `'/usr/bin/gh' 'pr' 'merge' 'feat/73-x' '--squash' '--delete-branch' '-R' 'github.com/o/lea'` {
+	if s := lastWord(t, d.Command); !strings.Contains(s, `'/usr/bin/gh' 'pr' 'view' 'feat/73-x' '--json' 'headRefName,isCrossRepository'`) ||
+		!strings.HasSuffix(s, "\n"+`'/usr/bin/gh' 'pr' 'merge' 'feat/73-x' '--squash' '--delete-branch' '-R' 'github.com/o/lea'`) {
 		t.Fatalf("merge script %q", s)
 	}
 	// A PR named by number is merged only after gh says its head is the caller's own branch
@@ -318,7 +340,7 @@ func TestOwnWorktreeAndBranch(t *testing.T) {
 	if d := Decide("Bash", bash("gh pr merge feat/73-x --squash -d"), shared, every, now, false); d.Verdict != "" {
 		t.Fatalf("shared branch merge+delete: %+v", d)
 	}
-	if d := Decide("Bash", bash("git push origin feat/73-x"), shared, every, now, false); d.Verdict != "" {
+	if d := Decide("Bash", bash("git push origin feat/73-x"), shared, every, now, false); d.Verdict != Deny {
 		t.Fatalf("shared branch push: %+v", d)
 	}
 	for _, tc := range []struct {

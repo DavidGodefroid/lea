@@ -284,7 +284,7 @@ func Command(req Request, c Caller, g Grant) string {
 	switch req.Prog {
 	case "gh":
 		script = shellWords(append(append([]string{ghPath}, req.Args...), "-R", g.GitHub))
-		if req.Action == Merge && len(req.Args) > 2 && number(req.Args[2]) {
+		if req.Action == Merge && len(req.Args) > 2 {
 			if c.Branch == "" || !BranchName(c.Branch) || Protected(c.Branch) {
 				return ""
 			}
@@ -315,9 +315,10 @@ const (
 	cpPath     = "/bin/cp"
 )
 
-// prHeadCheck is the script lines that end the call unless PR n of the repository gh has its
-// head on branch, in that repository (not a fork's branch of the same name). A PR's head branch
-// never changes once opened.
+// prHeadCheck is the script lines that end the call unless the PR n names (a number or a head
+// branch) has its head on branch, in the repository gh (not a fork's branch of the same name: gh
+// finds a PR by its head's name, whatever its owner). A PR's head branch never changes once
+// opened.
 func prHeadCheck(n, branch, gh string) string {
 	view := shellWords([]string{ghPath, "pr", "view", n, "--json", "headRefName,isCrossRepository",
 		"--jq", `(.isCrossRepository|tostring) + " " + .headRefName`, "-R", gh})
