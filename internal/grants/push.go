@@ -1,9 +1,6 @@
 package grants
 
-import (
-	"path"
-	"strings"
-)
+import "strings"
 
 // wild marks, inside a word segments returns, an unquoted character the shell would expand (a
 // glob, a brace, a leading ~): such a word names refs the shell chooses, not the agent.
@@ -109,7 +106,7 @@ func segments(cmd string) (segs [][]string, ok bool) {
 const (
 	pushUnread    = "a git push lea cannot read (heredoc, process substitution, odd quoting) is never allowed: run it plainly"
 	pushIndirect  = "a git push run through another program, a shell or with variables before it is never allowed: run git push plainly"
-	pushGlobals   = "git options before push other than -C are never allowed on a push"
+	pushGlobals   = "git options before the subcommand other than -C (-c, --config-env, --git-dir…) are never allowed in a command that mentions a push"
 	pushWild      = "a git push with an unquoted *, ?, [, {, or ~ is never allowed: the shell would choose the refs"
 	pushForce     = "force-push (or a push that rewrites or prunes remote branches) is never allowed"
 	pushEvery     = "pushing every branch or tag (--all, --branches, --tags, --mirror, --prune, a wildcard or a bare \":\") is never allowed: name the branch"
@@ -118,9 +115,6 @@ const (
 	pushDelete    = "deleting a branch that is not the agent's own is never allowed"
 	pushDeleteAnd = "deleting a remote branch in a compound command is never allowed"
 )
-
-// shells run a string as a command: a git push inside it is one lea cannot read.
-var shells = map[string]bool{"sh": true, "bash": true, "dash": true, "zsh": true, "ksh": true, "fish": true, "eval": true, "su": true, "ssh": true}
 
 // pushFlags are the git push options that change neither what is pushed nor where.
 var pushFlags = map[string]bool{"--set-upstream": true, "--verbose": true, "--quiet": true, "--dry-run": true, "--porcelain": true,
@@ -131,7 +125,10 @@ var pushFlags = map[string]bool{"--set-upstream": true, "--verbose": true, "--qu
 var gitGlobals = map[string]bool{"--no-pager": true, "-P": true, "--no-replace-objects": true, "--no-optional-locks": true}
 
 // hardPush returns why a command holding a git push is a hard deny, or "". It parses every
-// simple command and every refspec: what it cannot read is denied, never guessed.
+// simple command and every refspec: what it cannot read is denied, never guessed. It runs on
+// every command that names a push. An alias the repository's config
+// already maps to push is out of its reach (writing config is a hard deny of its own): branch
+// protection on the remote remains the control that holds.
 func hardPush(raw string, c Caller) string {
 	segs, ok := segments(raw)
 	if !ok {
@@ -154,11 +151,13 @@ func isGit(w string) bool { return w == "git" || strings.HasSuffix(w, "/git") }
 // segmentPush checks one simple command.
 func segmentPush(w []string, c Caller, compound, moved bool) string {
 	if !isGit(w[0]) {
+		if strings.Contains(w[0], wild) && contains(w, "push") {
+			return pushWild // the shell picks the program: maybe git
+		}
 		for k, x := range w {
-			if k > 0 && isGit(x) && contains(w[k+1:], "push") {
-				return pushIndirect
-			}
-			if k > 0 && shells[path.Base(w[0])] && pushRe.MatchString(x) {
+			// git run by another program (xargs, env, find…) gets its words from it, maybe
+			// "push"; a word holding a whole git push is a script some interpreter may run.
+			if k > 0 && (isGit(x) || pushRe.MatchString(x)) {
 				return pushIndirect
 			}
 		}
@@ -176,14 +175,26 @@ func segmentPush(w []string, c Caller, compound, moved bool) string {
 			j++
 			continue
 		case strings.HasPrefix(w[j], "-"):
-			if contains(w[j:], "push") {
-				return pushGlobals
-			}
-			return ""
+			// -c, --config-env, --git-dir…: an alias or a config can make any subcommand a push.
+			return pushGlobals
 		}
 		break
 	}
-	if j >= len(w) || w[j] != "push" {
+	if j >= len(w) {
+		return ""
+	}
+	if w[j] != "push" {
+		// Another subcommand that pushes or runs commands (subtree push, send-pack, submodule
+		// foreach git push…): any word naming a push, but a commit's message, is denied.
+		for k := j + 1; k < len(w); k++ {
+			if w[j] == "commit" && (w[k] == "-m" || w[k] == "--message") {
+				k++
+				continue
+			}
+			if pushWordRe.MatchString(w[k]) {
+				return pushIndirect
+			}
+		}
 		return ""
 	}
 	return parsePush(w[j+1:], c, here, compound)

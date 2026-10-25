@@ -66,8 +66,10 @@ func Words(cmd string) ([]string, bool) {
 }
 
 var (
-	adminRe = regexp.MustCompile(`\bgh\b[\s\S]*\bmerge\b[\s\S]*--admin\b`)
-	pushRe  = regexp.MustCompile(`\bgit\b[\s\S]*\bpush\b`)
+	adminRe    = regexp.MustCompile(`\bgh\b[\s\S]*\bmerge\b[\s\S]*--admin\b`)
+	pushRe     = regexp.MustCompile(`\bgit\b[\s\S]*\bpush\b`)
+	gitAliasRe = regexp.MustCompile(`\bgit\b[\s\S]*\s-c\s*alias\.|--config-env|\bGIT_CONFIG_(PARAMETERS|COUNT|KEY_|VALUE_)`)
+	pushWordRe = regexp.MustCompile(`\bpush\b`)
 	// gitSub matches a git subcommand after git's own options (git -C x -c y=z config ...).
 	gitConfigRe  = regexp.MustCompile(`\bgit(\s+-\S+(\s+[^-\s]\S*)?)*\s+config\b`)
 	gitRemoteRe  = regexp.MustCompile(`\bgit(\s+-\S+(\s+[^-\s]\S*)?)*\s+remote\s+(set-url|add|rename|remove|rm|set-head|set-branches)\b`)
@@ -110,7 +112,10 @@ func hardBash(cmd string, c Caller) string {
 	if ghEnvRe.MatchString(cmd) {
 		return "pointing gh at another repository or host is never allowed"
 	}
-	if !pushRe.MatchString(cmd) {
+	if gitAliasRe.MatchString(cmd) {
+		return "defining git aliases or configuration on the command line (-c alias.*, --config-env, GIT_CONFIG_*) is never allowed: any subcommand could become a push"
+	}
+	if !pushWordRe.MatchString(cmd) {
 		return ""
 	}
 	return hardPush(raw, c)

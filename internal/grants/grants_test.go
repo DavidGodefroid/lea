@@ -166,12 +166,26 @@ func TestDecideBash(t *testing.T) {
 		{"push via xargs", "echo main | xargs git push origin", Deny, nil},
 		{"push heredoc", "git push origin <<EOF\nmain\nEOF", Deny, nil},
 		{"push abs git main", "/usr/bin/git push origin main", Deny, nil},
+		{"push alias via -c", "git -c alias.p=push p origin main", Deny, nil},
+		{"push alias via config-env", "git --config-env=alias.p=P p origin main", Deny, nil},
+		{"push via xargs stdin", "echo push origin main | xargs git", Deny, nil},
+		{"push via env", "env git push origin main", Deny, nil},
+		{"alias from a variable", "git -c alias.p=$X p origin main", Deny, nil},
+		{"alias by GIT_CONFIG env", "GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=alias.p GIT_CONFIG_VALUE_0=$V git p origin main", Deny, nil},
+		{"pager pin is fine", "git -c core.pager=cat log --oneline", "", nil},
+		{"push via python", `python3 -c "import os; os.system('git push origin main')"`, Deny, nil},
+		{"subtree push", "git subtree push --prefix x origin main", Deny, nil},
+		{"submodule foreach push", "git submodule foreach git push origin main", Deny, nil},
+		{"globbed program", "/usr/bin/gi? push origin main", Deny, nil},
+		{"globbed short program", "g?t push origin main", Deny, nil},
+		{"docker push", "docker push img:1", "", nil},
 		{"push own HEAD", "git push -u origin HEAD", "", nil},
 		{"push own refspec", "git push origin HEAD:feat/73-x", "", nil},
 		{"push own chained", "git commit -m 'push it' && git push origin feat/73-x", "", nil},
 		{"push quiet own", "git push -q -o ci.skip origin feat/73-x", "", nil},
 		{"commit mentions push main", "git commit -m 'git push origin main'", "", nil},
-		{"grep push main", "grep -rn 'git push origin main' docs", "", nil},
+		// Fail closed: a word holding a whole git push may be a script some program runs.
+		{"grep push main", "grep -rn 'git push origin main' docs", Deny, nil},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
