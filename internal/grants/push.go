@@ -2,6 +2,7 @@ package grants
 
 import (
 	"path"
+	"regexp"
 	"strings"
 )
 
@@ -120,7 +121,8 @@ const (
 	pushDeleteAnd = "deleting a remote branch in a compound command is never allowed"
 	gitGlobal     = "git options before the subcommand other than -C, -c user.name|user.email|color.ui|core.quotepath and display options are never allowed: " +
 		"a configuration, an alias or another repository could make any subcommand a push"
-	gitEnv = "setting GIT_*, HOME or XDG_CONFIG_HOME is never allowed: git would read another configuration, repository or program"
+	gitBuilt = "git run by xargs, parallel or find is never allowed: they build its words, lea cannot read them"
+	gitEnv   = "setting GIT_* (but GIT_EDITOR/GIT_SEQUENCE_EDITOR=true|:, GIT_PAGER=cat, GIT_TERMINAL_PROMPT=0), HOME or XDG_CONFIG_HOME is never allowed: git would read another configuration, repository or program"
 )
 
 // pushFlags are the git push options that change neither what is pushed nor where.
@@ -137,15 +139,6 @@ var safeConfig = map[string]bool{"user.name": true, "user.email": true, "color.u
 var gitFlags = map[string]bool{"--no-pager": true, "-P": true, "-p": true, "--paginate": true, "--no-replace-objects": true,
 	"--no-optional-locks": true, "--literal-pathspecs": true, "--glob-pathspecs": true, "--noglob-pathspecs": true,
 	"--icase-pathspecs": true, "--no-lazy-fetch": true, "--version": true, "--help": true, "-v": true, "-h": true}
-
-// runners run their arguments as a command or a script: a word of theirs that holds a git push
-// is a push lea cannot read.
-var runners = map[string]bool{"sh": true, "bash": true, "dash": true, "zsh": true, "ksh": true, "fish": true, "eval": true,
-	"exec": true, "command": true, "builtin": true, "su": true, "sudo": true, "doas": true, "ssh": true, "script": true,
-	"perl": true, "ruby": true, "node": true, "nodejs": true, "php": true, "lua": true, "tclsh": true, "awk": true, "gawk": true,
-	"busybox": true, "watch": true, "timeout": true, "nice": true, "nohup": true, "env": true, "time": true, "stdbuf": true,
-	"setsid": true, "flock": true, "xargs": true, "parallel": true, "find": true, "make": true, "if": true, "then": true,
-	"else": true, "do": true, "while": true, "until": true, "!": true}
 
 // runsCommands are git subcommands that run commands given as arguments.
 var runsCommands = map[string]bool{"submodule": true, "rebase": true, "bisect": true, "difftool": true, "mergetool": true,
@@ -176,10 +169,34 @@ func isAssignment(w string) bool {
 
 func isGit(w string) bool { return w == "git" || strings.HasSuffix(w, "/git") }
 
-func interpreter(w string) bool {
-	b := path.Base(w)
-	return runners[b] || strings.HasPrefix(b, "python") || strings.HasPrefix(b, "perl") || strings.HasPrefix(b, "ruby")
+// readers only search or print their words: a git push in one is text.
+var readers = map[string]bool{"grep": true, "egrep": true, "fgrep": true, "rg": true, "ag": true, "echo": true, "printf": true}
+
+// printsOnly says whether w (a program and its words) runs none of its words: a reader, or gh
+// pr/issue (titles, bodies, comments). gh alias set can define a shell alias: not a reader.
+func printsOnly(w []string) bool {
+	b := path.Base(w[0])
+	return readers[b] || (b == "gh" && len(w) > 1 && (w[1] == "pr" || w[1] == "issue"))
 }
+
+// pushWord says whether x, a whole word, is a push or a git transport that writes remote refs
+// (a branch named fix/x-push is not).
+func pushWord(x string) bool {
+	return x == "push" || x == "send-pack" || x == "http-push" || strings.HasPrefix(x, "remote-")
+}
+
+// safeGitEnv are the GIT_* assignments an agent may make: fixed values that run no program of
+// its choosing.
+var safeGitEnv = map[string]bool{"GIT_EDITOR=true": true, "GIT_EDITOR=:": true, "GIT_SEQUENCE_EDITOR=true": true,
+	"GIT_SEQUENCE_EDITOR=:": true, "GIT_PAGER=cat": true, "GIT_TERMINAL_PROMPT=0": true}
+
+// holdsPush says whether a word names git and a push or a ref-writing transport: a script.
+func holdsPush(x string) bool { return gitWordRe.MatchString(x) && pushWordRe.MatchString(x) }
+
+var gitWordRe = regexp.MustCompile(`\bgit\b`)
+
+// programOpts are git options, on any subcommand, whose value is a program git runs.
+var programOpts = []string{"--upload-pack", "--receive-pack", "--exec", "--extcmd", "--open-files-in-pager", "-O"}
 
 // hardGit returns why a command is a hard deny for what it makes git read or push, or "". It
 // parses every simple command, git's own options and every refspec: what it cannot read is
@@ -211,16 +228,19 @@ func hardGit(raw, cmd string, c Caller) string {
 func segmentGit(w []string, c Caller, compound bool) string {
 	if declarers[path.Base(w[0])] {
 		for _, x := range w[1:] {
-			if gitVar(x) {
+			if gitVar(x) && !safeGitEnv[x] {
 				return gitEnv
 			}
 		}
 	}
-	p := 0 // the program, after VAR=value prefixes
-	for p < len(w) && isAssignment(w[p]) {
-		if gitVar(w[p]) {
+	for _, x := range w {
+		// Wherever it stands: sudo, env and others pass assignments on to the program they run.
+		if isAssignment(x) && gitVar(x) && !safeGitEnv[x] {
 			return gitEnv
 		}
+	}
+	p := 0 // the program, after VAR=value prefixes
+	for p < len(w) && isAssignment(w[p]) {
 		p++
 	}
 	if p == len(w) {
@@ -229,7 +249,7 @@ func segmentGit(w []string, c Caller, compound bool) string {
 	if !isGit(w[p]) {
 		named := false
 		for _, x := range w[p:] {
-			named = named || pushWordRe.MatchString(x)
+			named = named || pushWord(x)
 		}
 		if strings.Contains(w[p], wild) && named {
 			return pushWild // the shell picks the program: maybe git
@@ -238,15 +258,18 @@ func segmentGit(w []string, c Caller, compound bool) string {
 			// git run by another program (xargs, env, find…) gets its words from it, maybe
 			// "push"; a word holding a whole git push is a script an interpreter may run.
 			if isGit(w[k]) {
+				if b := path.Base(w[p]); b == "xargs" || b == "parallel" || b == "find" {
+					return gitBuilt
+				}
 				if why := gitArgs(w[k:], c, compound); why != "" {
 					return why
 				}
-				// xargs and parallel append words from stdin: maybe the subcommand.
-				if named || (k == len(w)-1 && (path.Base(w[p]) == "xargs" || path.Base(w[p]) == "parallel")) {
+				if named {
 					return pushIndirect
 				}
 			}
-			if interpreter(w[p]) && pushWordRe.MatchString(w[k]) && strings.Contains(w[k], "git") {
+			// Fail closed: only programs known to just read or print their words may hold one.
+			if !printsOnly(w[p:]) && holdsPush(w[k]) {
 				return pushIndirect
 			}
 		}
@@ -255,8 +278,10 @@ func segmentGit(w []string, c Caller, compound bool) string {
 	if why := gitArgs(w[p:], c, compound); why != "" {
 		return why
 	}
-	if p > 0 && pushWordRe.MatchString(strings.Join(w[p:], " ")) {
-		return pushIndirect
+	for _, x := range w[p:] {
+		if p > 0 && pushWord(x) {
+			return pushIndirect
+		}
 	}
 	return ""
 }
@@ -283,17 +308,29 @@ func gitArgs(w []string, c Caller, compound bool) string {
 		return ""
 	}
 	sub := w[j]
+	for k := j + 1; k < len(w); k++ {
+		x := w[k]
+		if sub == "commit" && (x == "-m" || x == "--message") {
+			k++ // a commit's message is text
+			continue
+		}
+		for _, o := range programOpts {
+			if x == o || strings.HasPrefix(x, o+"=") || (o == "-O" && strings.HasPrefix(x, o)) {
+				return "git options that run a program (--upload-pack, --receive-pack, --exec, --extcmd, -O) are never allowed"
+			}
+		}
+		if sub == "rebase" && (x == "-x" || strings.HasPrefix(x, "-x")) {
+			return "git rebase --exec is never allowed"
+		}
+		if holdsPush(x) || (runsCommands[sub] && pushWord(x)) {
+			return pushIndirect
+		}
+	}
 	switch {
 	case sub == "push":
 		return parsePush(w[j+1:], c, compound)
 	case sub == "send-pack" || sub == "http-push" || strings.HasPrefix(sub, "remote-") || sub == "svn" || sub == "p4":
 		return pushTransport
-	case runsCommands[sub]:
-		for _, x := range w[j+1:] {
-			if pushWordRe.MatchString(x) {
-				return pushIndirect
-			}
-		}
 	}
 	return ""
 }
