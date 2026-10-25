@@ -66,9 +66,12 @@ func Words(cmd string) ([]string, bool) {
 }
 
 var (
-	adminRe    = regexp.MustCompile(`\bgh\b[\s\S]*\bmerge\b[\s\S]*--admin\b`)
-	pushRe     = regexp.MustCompile(`\bgit\b[\s\S]*\bpush\b`)
-	gitAliasRe = regexp.MustCompile(`\bgit\b[\s\S]*\s-c\s*alias\.|--config-env|\bGIT_CONFIG_(PARAMETERS|COUNT|KEY_|VALUE_)`)
+	adminRe = regexp.MustCompile(`\bgh\b[\s\S]*\bmerge\b[\s\S]*--admin\b`)
+	pushRe  = regexp.MustCompile(`\bgit\b[\s\S]*\bpush\b`)
+	// gitEnvRe: variables that hand git another configuration, repository or programs.
+	gitEnvRe = regexp.MustCompile(`\bGIT_(CONFIG\w*|DIR|WORK_TREE|COMMON_DIR|EXEC_PATH|NAMESPACE)\s*=`)
+	// gitOptRe: git -c/--config-env/--exec-path in a command lea cannot split.
+	gitOptRe   = regexp.MustCompile(`\bgit\b[\s\S]*\s(-c|--config-env|--exec-path)`)
 	pushWordRe = regexp.MustCompile(`\bpush\b`)
 	// gitSub matches a git subcommand after git's own options (git -C x -c y=z config ...).
 	gitConfigRe  = regexp.MustCompile(`\bgit(\s+-\S+(\s+[^-\s]\S*)?)*\s+config\b`)
@@ -112,13 +115,57 @@ func hardBash(cmd string, c Caller) string {
 	if ghEnvRe.MatchString(cmd) {
 		return "pointing gh at another repository or host is never allowed"
 	}
-	if gitAliasRe.MatchString(cmd) {
-		return "defining git aliases or configuration on the command line (-c alias.*, --config-env, GIT_CONFIG_*) is never allowed: any subcommand could become a push"
+	if why := gitCommandLineConfig(raw, cmd); why != "" {
+		return why
 	}
 	if !pushWordRe.MatchString(cmd) {
 		return ""
 	}
 	return hardPush(raw, c)
+}
+
+// safeConfig are the keys "git -c" may set from inside an agent: none runs a program, includes
+// a file or defines an alias.
+var safeConfig = map[string]bool{"user.name": true, "user.email": true, "core.pager": true, "color.ui": true, "core.quotepath": true}
+
+const cmdLineConfig = "configuring git from the command line (-c other than user.name, user.email, core.pager, color.ui, " +
+	"core.quotepath; --config-env, --exec-path, GIT_CONFIG*, GIT_DIR…) is never allowed: an alias, include or program could make any subcommand a push"
+
+// gitCommandLineConfig returns why a command hands git a configuration lea does not read, or "":
+// on every git call, push or not, since an alias or an include can make any subcommand a push.
+func gitCommandLineConfig(raw, cmd string) string {
+	if gitEnvRe.MatchString(cmd) {
+		return cmdLineConfig
+	}
+	segs, ok := segments(raw)
+	if !ok {
+		if gitOptRe.MatchString(cmd) {
+			return cmdLineConfig
+		}
+		return ""
+	}
+	for _, w := range segs {
+		for k := 0; k < len(w); k++ {
+			if !isGit(w[k]) {
+				continue
+			}
+			for j := k + 1; j < len(w) && strings.HasPrefix(w[j], "-"); j++ {
+				switch {
+				case w[j] == "-c" && j+1 < len(w):
+					key, _, _ := strings.Cut(w[j+1], "=")
+					if !safeConfig[strings.ToLower(key)] {
+						return cmdLineConfig
+					}
+					j++
+				case w[j] == "-C" && j+1 < len(w):
+					j++
+				case strings.HasPrefix(w[j], "-c"), strings.HasPrefix(w[j], "--config-env"), strings.HasPrefix(w[j], "--exec-path"):
+					return cmdLineConfig
+				}
+			}
+		}
+	}
+	return ""
 }
 
 // gitConfigRead says whether cmd is one plain "git config" that only reads: --get, --get-all or
