@@ -10,11 +10,17 @@ import (
 // glob, a brace, a leading ~): such a word names refs the shell chooses, not the agent.
 const wild = "\x00"
 
+// expanded marks, inside a word segments returns, a shell expansion ($x, ${x}, $(…), `…`, $'…'):
+// that part of the word is the shell's to compute, not the agent's to name.
+const expanded = "\x01"
+
 // segments splits a shell command into its simple commands (cut at ; & | && || newlines and
-// parentheses), each as the words its program receives. Redirections (>f, 2>&1, &>f, <f) are
-// dropped with their target. ok is false for what it cannot read: an escape, an expansion, a
-// heredoc, a process substitution, an unterminated quote.
-func segments(cmd string) (segs [][]string, ok bool) {
+// parentheses), each as the words its program receives. Quotes and escapes are resolved; an
+// expansion is kept as the expanded mark, and the command a substitution ($(…), `…`) runs is
+// returned in inners, to be checked on its own. Redirections (>f, 2>&1, &>f, <f) are dropped
+// with their target. ok is false for what it cannot read: a heredoc, a process substitution, an
+// unterminated quote or substitution.
+func segments(cmd string) (segs [][]string, inners []string, ok bool) {
 	var words []string
 	var cur strings.Builder
 	in := false
@@ -32,23 +38,73 @@ func segments(cmd string) (segs [][]string, ok bool) {
 			words = nil
 		}
 	}
+	// expand reads the expansion at cmd[i] into cur; it returns where it ends.
+	expand := func(i int) (int, bool) {
+		e, inner, ok := expansion(cmd, i)
+		if !ok {
+			return 0, false
+		}
+		if e < 0 { // a lone $: itself
+			cur.WriteByte('$')
+			return i, true
+		}
+		cur.WriteString(expanded)
+		if inner != "" {
+			inners = append(inners, inner)
+		}
+		return e, true
+	}
 	for i := 0; i < len(cmd); i++ {
 		ch := cmd[i]
 		switch {
 		case ch == ' ' || ch == '\t':
 			end()
-		case ch == '\'' || ch == '"':
-			j := strings.IndexByte(cmd[i+1:], ch)
+		case ch == '\'':
+			j := strings.IndexByte(cmd[i+1:], '\'')
 			if j < 0 {
-				return nil, false
+				return nil, nil, false
 			}
-			s := cmd[i+1 : i+1+j]
-			if strings.ContainsAny(s, "\n\r") || (ch == '"' && strings.ContainsAny(s, "$`\\")) {
-				return nil, false
-			}
-			cur.WriteString(s)
+			cur.WriteString(cmd[i+1 : i+1+j])
 			in = true
 			i += j + 1
+		case ch == '"':
+			for i++; i < len(cmd) && cmd[i] != '"'; i++ {
+				switch c := cmd[i]; {
+				case c == '\\' && i+1 < len(cmd) && strings.IndexByte("$`\"\\\n", cmd[i+1]) >= 0:
+					i++
+					if cmd[i] != '\n' {
+						cur.WriteByte(cmd[i])
+					}
+				case c == '$' || c == '`':
+					e, ok := expand(i)
+					if !ok {
+						return nil, nil, false
+					}
+					i = e
+				default:
+					cur.WriteByte(c)
+				}
+			}
+			if i >= len(cmd) {
+				return nil, nil, false
+			}
+			in = true
+		case ch == '\\':
+			if i+1 >= len(cmd) {
+				return nil, nil, false
+			}
+			i++
+			if cmd[i] != '\n' { // \newline: a line continuation
+				cur.WriteByte(cmd[i])
+				in = true
+			}
+		case ch == '$' || ch == '`':
+			e, ok := expand(i)
+			if !ok {
+				return nil, nil, false
+			}
+			i = e
+			in = true
 		case ch == ';' || ch == '\n' || ch == '|' || ch == '(' || ch == ')':
 			cut()
 		case ch == '&' && (i+1 >= len(cmd) || cmd[i+1] != '>'):
@@ -65,7 +121,7 @@ func segments(cmd string) (segs [][]string, ok bool) {
 				j++ // &>
 			}
 			if j < len(cmd) && (cmd[j] == '(' || (ch == '<' && cmd[j] == '<')) {
-				return nil, false
+				return nil, nil, false
 			}
 			for j < len(cmd) && (cmd[j] == '>' || cmd[j] == '&' || cmd[j] == '|') {
 				j++
@@ -76,12 +132,12 @@ func segments(cmd string) (segs [][]string, ok bool) {
 			k := j
 			for k < len(cmd) && strings.IndexByte(" \t\n;&|()<>", cmd[k]) < 0 {
 				if strings.IndexByte("'\"$`\\", cmd[k]) >= 0 {
-					return nil, false
+					return nil, nil, false
 				}
 				k++
 			}
 			if k == j {
-				return nil, false
+				return nil, nil, false
 			}
 			i = k - 1
 		case ch == '#' && !in:
@@ -91,8 +147,8 @@ func segments(cmd string) (segs [][]string, ok bool) {
 			} else {
 				i += j - 1
 			}
-		case ch < 0x20 || ch == 0x7f || ch == '$' || ch == '`' || ch == '\\':
-			return nil, false
+		case ch < 0x20 || ch == 0x7f:
+			return nil, nil, false
 		case strings.IndexByte("*?[]{}", ch) >= 0 || (ch == '~' && !in):
 			cur.WriteString(wild)
 			cur.WriteByte(ch)
@@ -103,7 +159,91 @@ func segments(cmd string) (segs [][]string, ok bool) {
 		}
 	}
 	cut()
-	return segs, true
+	return segs, inners, true
+}
+
+// expansion reads the shell expansion starting at cmd[i] ($ or `): end is its last byte (-1 for
+// a lone $, which is itself) and inner the command it runs, if any.
+func expansion(cmd string, i int) (end int, inner string, ok bool) {
+	if cmd[i] == '`' {
+		for j := i + 1; j < len(cmd); j++ {
+			switch cmd[j] {
+			case '\\':
+				j++
+			case '`':
+				return j, cmd[i+1 : j], true
+			}
+		}
+		return 0, "", false
+	}
+	if i+1 >= len(cmd) {
+		return -1, "", true
+	}
+	switch n := cmd[i+1]; {
+	case n == '(' || n == '{':
+		close := byte(')')
+		if n == '{' {
+			close = '}'
+		}
+		e, ok := closing(cmd, i+2, n, close)
+		if !ok {
+			return 0, "", false
+		}
+		return e, cmd[i+2 : e], true
+	case n == '\'' || n == '"':
+		for j := i + 2; j < len(cmd); j++ {
+			switch cmd[j] {
+			case '\\':
+				j++
+			case n:
+				return j, "", true
+			}
+		}
+		return 0, "", false
+	case n == '_' || (n >= 'A' && n <= 'Z') || (n >= 'a' && n <= 'z'):
+		j := i + 1
+		for j+1 < len(cmd) && (cmd[j+1] == '_' || (cmd[j+1] >= 'A' && cmd[j+1] <= 'Z') || (cmd[j+1] >= 'a' && cmd[j+1] <= 'z') || (cmd[j+1] >= '0' && cmd[j+1] <= '9')) {
+			j++
+		}
+		return j, "", true
+	case (n >= '0' && n <= '9') || strings.IndexByte("@*#?$!-", n) >= 0:
+		return i + 1, "", true
+	}
+	return -1, "", true
+}
+
+// closing finds the byte that closes an open bracket before j, skipping quotes and escapes.
+func closing(cmd string, j int, open, close byte) (int, bool) {
+	depth := 1
+	for ; j < len(cmd); j++ {
+		switch c := cmd[j]; {
+		case c == '\\':
+			j++
+		case c == '\'':
+			k := strings.IndexByte(cmd[j+1:], '\'')
+			if k < 0 {
+				return 0, false
+			}
+			j += k + 1
+		case c == '"':
+			for j++; j < len(cmd) && cmd[j] != '"'; j++ {
+				if cmd[j] == '\\' {
+					j++
+				}
+			}
+			if j >= len(cmd) {
+				return 0, false
+			}
+		case c == open:
+			depth++
+		case c == close:
+			depth--
+			if depth == 0 {
+				return j, true
+			}
+		}
+	}
+	return 0, false
 }
 
 // Reasons of hardGit.
@@ -121,8 +261,9 @@ const (
 	pushDeleteAnd = "deleting a remote branch in a compound command is never allowed"
 	gitGlobal     = "git options before the subcommand other than -C, -c user.name|user.email|color.ui|core.quotepath and display options are never allowed: " +
 		"a configuration, an alias or another repository could make any subcommand a push"
-	gitBuilt = "git run by xargs, parallel or find is never allowed: they build its words, lea cannot read them"
-	gitEnv   = "setting GIT_* (but GIT_EDITOR/GIT_SEQUENCE_EDITOR=true|:, GIT_PAGER=cat, GIT_TERMINAL_PROMPT=0), HOME or XDG_CONFIG_HOME is never allowed: git would read another configuration, repository or program"
+	gitBuilt    = "git run by xargs, parallel, find (or with no subcommand by another program) is never allowed: they build its words, lea cannot read them"
+	gitComputed = "a git program, subcommand or push argument computed by the shell ($…, `…`) is never allowed: write it out"
+	gitEnv      = "setting GIT_* (but GIT_EDITOR/GIT_SEQUENCE_EDITOR=true|:, GIT_PAGER=cat, GIT_TERMINAL_PROMPT=0), HOME or XDG_CONFIG_HOME is never allowed: git would read another configuration, repository or program"
 )
 
 // pushFlags are the git push options that change neither what is pushed nor where.
@@ -140,9 +281,15 @@ var gitFlags = map[string]bool{"--no-pager": true, "-P": true, "-p": true, "--pa
 	"--no-optional-locks": true, "--literal-pathspecs": true, "--glob-pathspecs": true, "--noglob-pathspecs": true,
 	"--icase-pathspecs": true, "--no-lazy-fetch": true, "--version": true, "--help": true, "-v": true, "-h": true}
 
-// runsCommands are git subcommands that run commands given as arguments.
-var runsCommands = map[string]bool{"submodule": true, "rebase": true, "bisect": true, "difftool": true, "mergetool": true,
-	"filter-branch": true, "subtree": true, "worktree": true, "notes": true}
+// builders run a program with words they build (from stdin, file names…): git run by one
+// gets words lea cannot read.
+var builders = map[string]bool{"xargs": true, "parallel": true, "find": true, "fd": true, "fdfind": true, "busybox": true}
+
+// wrappers run the program their arguments name: a computed one is any program.
+var wrappers = map[string]bool{"env": true, "sudo": true, "doas": true, "su": true, "runuser": true, "nice": true, "ionice": true,
+	"nohup": true, "time": true, "timeout": true, "stdbuf": true, "setsid": true, "command": true, "exec": true, "builtin": true,
+	"xargs": true, "parallel": true, "flock": true, "watch": true, "chronic": true, "unbuffer": true, "chroot": true,
+	"sh": true, "bash": true, "dash": true, "zsh": true, "ksh": true, "eval": true}
 
 // declarers set or read the variables named in their arguments.
 var declarers = map[string]bool{"export": true, "declare": true, "typeset": true, "local": true, "readonly": true, "read": true,
@@ -195,6 +342,10 @@ func holdsPush(x string) bool { return gitWordRe.MatchString(x) && pushWordRe.Ma
 
 var gitWordRe = regexp.MustCompile(`\bgit\b`)
 
+// gitComputedRe: in a command lea cannot split, git with a computed subcommand, or a computed
+// program.
+var gitComputedRe = regexp.MustCompile("\\bgit\\s+(-\\S+\\s+)*[^a-z\\s-]|(^|[;&|(]\\s*)[$`]")
+
 // programOpts are git options, on any subcommand, whose value is a program git runs.
 var programOpts = []string{"--upload-pack", "--receive-pack", "--exec", "--extcmd", "--open-files-in-pager", "-O"}
 
@@ -204,7 +355,7 @@ var programOpts = []string{"--upload-pack", "--receive-pack", "--exec", "--extcm
 // script file that pushes (writing config is a hard deny of its own); branch protection on the
 // remote remains the control that holds.
 func hardGit(raw, cmd string, c Caller) string {
-	segs, ok := segments(raw)
+	segs, inners, ok := segments(raw)
 	if !ok {
 		switch {
 		case gitEnvRe.MatchString(cmd):
@@ -213,8 +364,15 @@ func hardGit(raw, cmd string, c Caller) string {
 			return gitGlobal
 		case pushWordRe.MatchString(cmd):
 			return pushUnread
+		case gitComputedRe.MatchString(raw):
+			return gitComputed
 		}
 		return ""
+	}
+	for _, in := range inners {
+		if why := hardGit(in, unquote.Replace(in), c); why != "" {
+			return why
+		}
 	}
 	for _, w := range segs {
 		if why := segmentGit(w, c, len(segs) > 1); why != "" {
@@ -228,7 +386,8 @@ func hardGit(raw, cmd string, c Caller) string {
 func segmentGit(w []string, c Caller, compound bool) string {
 	if declarers[path.Base(w[0])] {
 		for _, x := range w[1:] {
-			if gitVar(x) && !safeGitEnv[x] {
+			name, _, _ := strings.Cut(x, "=")
+			if (gitVar(x) && !safeGitEnv[x]) || strings.Contains(name, expanded) {
 				return gitEnv
 			}
 		}
@@ -246,50 +405,83 @@ func segmentGit(w []string, c Caller, compound bool) string {
 	if p == len(w) {
 		return ""
 	}
-	if !isGit(w[p]) {
-		named := false
-		for _, x := range w[p:] {
-			named = named || pushWord(x)
+	if strings.Contains(w[p], expanded) {
+		return gitComputed
+	}
+	if isGit(w[p]) {
+		if why := gitArgs(w[p:], c, compound); why != "" {
+			return why
 		}
-		if strings.Contains(w[p], wild) && named {
-			return pushWild // the shell picks the program: maybe git
-		}
-		for k := p + 1; k < len(w); k++ {
-			// git run by another program (xargs, env, find…) gets its words from it, maybe
-			// "push"; a word holding a whole git push is a script an interpreter may run.
-			if isGit(w[k]) {
-				if b := path.Base(w[p]); b == "xargs" || b == "parallel" || b == "find" {
-					return gitBuilt
-				}
-				if why := gitArgs(w[k:], c, compound); why != "" {
-					return why
-				}
-				if named {
-					return pushIndirect
-				}
-			}
-			// Fail closed: only programs known to just read or print their words may hold one.
-			if !printsOnly(w[p:]) && holdsPush(w[k]) {
-				return pushIndirect
-			}
+		if s := gitSub(w[p:]); p > 0 && s > 0 && pushWord(w[p+s]) {
+			return pushIndirect
 		}
 		return ""
 	}
-	if why := gitArgs(w[p:], c, compound); why != "" {
-		return why
+	if strings.Contains(w[p], wild) && contains(w[p:], "git") || strings.Contains(w[p], wild) && anyWord(w[p:], pushWord) {
+		return pushWild // the shell picks the program: maybe git
 	}
-	for _, x := range w[p:] {
-		if p > 0 && pushWord(x) {
+	reader := printsOnly(w[p:])
+	scripted := false // a word names git and holds an expansion, or another word is a push
+	for k := p + 1; k < len(w); k++ {
+		if gitWordRe.MatchString(w[k]) && !reader && (strings.ContainsAny(w[k], "$`") || holdsPush(w[k])) {
+			scripted = true
+		}
+	}
+	if scripted || (!reader && anyWord(w[p+1:], func(x string) bool { return gitWordRe.MatchString(x) && x != "git" }) && anyWord(w[p+1:], pushWord)) {
+		return pushIndirect // a script of a shell or an interpreter that pushes
+	}
+	for k := p; k < len(w); k++ {
+		if wrappers[path.Base(w[k])] && anyWord(w[k+1:], func(x string) bool { return strings.Contains(x, expanded) }) {
+			return gitComputed // env $G …, sudo $P …: the program run is computed
+		}
+		if !isGit(w[k]) || k == p || reader {
+			continue
+		}
+		// git run by another program: xargs, parallel, find and the like build its words.
+		for _, b := range w[p:k] {
+			if builders[path.Base(b)] {
+				return gitBuilt
+			}
+		}
+		if gitSub(w[k:]) < 0 {
+			return gitBuilt // no subcommand: whoever runs it may add one
+		}
+		if why := gitArgs(w[k:], c, compound); why != "" {
+			return why
+		}
+		if anyWord(w[k:], pushWord) {
 			return pushIndirect
 		}
 	}
 	return ""
 }
 
-// gitArgs checks one git call, w[0] being git: its own options, then its subcommand.
-func gitArgs(w []string, c Caller, compound bool) string {
+func anyWord(w []string, f func(string) bool) bool {
+	for _, x := range w {
+		if f(x) {
+			return true
+		}
+	}
+	return false
+}
+
+// gitSub is the index of git's subcommand in w (w[0] being git), -1 when there is none.
+func gitSub(w []string) int {
 	j := 1
 	for ; j < len(w) && strings.HasPrefix(w[j], "-"); j++ {
+		if (w[j] == "-C" || w[j] == "-c") && j+1 < len(w) {
+			j++
+		}
+	}
+	if j >= len(w) {
+		return -1
+	}
+	return j
+}
+
+// gitArgs checks one git call, w[0] being git: its own options, then its subcommand.
+func gitArgs(w []string, c Caller, compound bool) string {
+	for j := 1; j < len(w) && strings.HasPrefix(w[j], "-"); j++ {
 		switch {
 		case w[j] == "-C" && j+1 < len(w):
 			j++
@@ -304,10 +496,14 @@ func gitArgs(w []string, c Caller, compound bool) string {
 			return gitGlobal
 		}
 	}
-	if j >= len(w) {
+	j := gitSub(w)
+	if j < 0 {
 		return ""
 	}
 	sub := w[j]
+	if strings.Contains(sub, expanded) || strings.Contains(sub, wild) {
+		return gitComputed
+	}
 	for k := j + 1; k < len(w); k++ {
 		x := w[k]
 		if sub == "commit" && (x == "-m" || x == "--message") {
@@ -322,15 +518,24 @@ func gitArgs(w []string, c Caller, compound bool) string {
 		if sub == "rebase" && (x == "-x" || strings.HasPrefix(x, "-x")) {
 			return "git rebase --exec is never allowed"
 		}
-		if holdsPush(x) || (runsCommands[sub] && pushWord(x)) {
+		if holdsPush(x) {
 			return pushIndirect
 		}
 	}
 	switch {
 	case sub == "push":
+		for _, x := range w[j+1:] {
+			if strings.Contains(x, expanded) {
+				return gitComputed
+			}
+		}
 		return parsePush(w[j+1:], c, compound)
 	case sub == "send-pack" || sub == "http-push" || strings.HasPrefix(sub, "remote-") || sub == "svn" || sub == "p4":
 		return pushTransport
+	case sub == "filter-branch" || (sub == "submodule" && contains(w[j+1:], "foreach")) || (sub == "bisect" && contains(w[j+1:], "run")):
+		return "git subcommands that run a script (submodule foreach, bisect run, filter-branch) are never allowed"
+	case sub == "subtree" && anyWord(w[j+1:], pushWord):
+		return pushIndirect
 	}
 	return ""
 }

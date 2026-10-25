@@ -490,7 +490,10 @@ live agent of the lea works on it. Some calls are denied outright, grant or not:
 `--branches`, `--tags`, a wildcard or a bare `:`), other git transports (`send-pack`, `http-push`,
 `remote-<helper>`, `svn`, `p4`), a push lea cannot read (an unknown option, a shell glob, a push run
 through another program, or a `git … push` in the arguments of any program but `grep`, `rg`,
-`echo`, `printf`, `gh pr|issue`), git run by `xargs`, `parallel` or `find`, git options that run a
+`echo`, `printf`, `gh pr|issue`), git run by `xargs`, `parallel`, `find` (or by another program without a subcommand), a git
+program, subcommand or push argument computed by the shell (`$…`, backticks; a substitution's own
+command is checked too), a program computed by the shell or run by `env`/`sudo`/… from a computed
+word, `submodule foreach`, `bisect run`, `filter-branch`, git options that run a
 program (`--upload-pack`, `--receive-pack`, `--exec`, `--extcmd`, `-O`, `rebase -x`), git options
 before the subcommand other than `-C`, `-c user.name|user.email|color.ui|core.quotepath` and display
 options, setting `GIT_*` (but `GIT_EDITOR`/`GIT_SEQUENCE_EDITOR=true|:`, `GIT_PAGER=cat`,
