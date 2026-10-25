@@ -140,6 +140,38 @@ func TestDecideBash(t *testing.T) {
 		{"quoted main", "git push origin 'main'", Deny, every},
 		{"quoted refspec main", `git push origin HEAD:"main"`, Deny, every},
 		{"escaped main compound", `true; git push origin ma\in`, Deny, nil},
+		// Pushes to the default branch however the refspec spells it (a parse, not a regex).
+		{"push all", "git push --all origin", Deny, nil},
+		{"push branches", "git push --branches origin", Deny, nil},
+		{"push tags", "git push --tags origin", Deny, nil},
+		{"push heads main", "git push origin heads/main", Deny, nil},
+		{"push refs heads main", "git push origin refs/heads/main", Deny, nil},
+		{"push src refs main", "git push origin feat/73-x:heads/main", Deny, nil},
+		{"push main redirect", "git push origin main>/dev/null", Deny, nil},
+		{"push main 2>&1", "git push origin main 2>&1", Deny, nil},
+		{"push second refspec main", "git push origin feat/73-x main", Deny, nil},
+		{"push option then main", "git push -o ci.skip origin main", Deny, nil},
+		{"push matching colon", "git push origin :", Deny, nil},
+		{"push wildcard refspec", "git push origin 'refs/heads/*:refs/heads/*'", Deny, nil},
+		{"push glob", "git push origin ma?n", Deny, nil},
+		{"push brace", "git push origin {feat/73-x,main}", Deny, nil},
+		{"push delete colon main", "git push origin :main", Deny, nil},
+		{"push unknown option", "git push --repo=x origin feat/73-x", Deny, nil},
+		{"push config pin", "git -c remote.origin.push=refs/heads/main push", Deny, nil},
+		{"push git-dir", "git --git-dir=/p/lea/.git push origin HEAD", Deny, nil},
+		{"push other dir HEAD", "git -C /p/lea push origin HEAD", Deny, nil},
+		{"push cd then bare", "cd /p/lea && git push", Deny, nil},
+		{"push env prefix", "GIT_DIR=/p/lea/.git git push", Deny, nil},
+		{"push via shell", "sh -c 'git push origin main'", Deny, nil},
+		{"push via xargs", "echo main | xargs git push origin", Deny, nil},
+		{"push heredoc", "git push origin <<EOF\nmain\nEOF", Deny, nil},
+		{"push abs git main", "/usr/bin/git push origin main", Deny, nil},
+		{"push own HEAD", "git push -u origin HEAD", "", nil},
+		{"push own refspec", "git push origin HEAD:feat/73-x", "", nil},
+		{"push own chained", "git commit -m 'push it' && git push origin feat/73-x", "", nil},
+		{"push quiet own", "git push -q -o ci.skip origin feat/73-x", "", nil},
+		{"commit mentions push main", "git commit -m 'git push origin main'", "", nil},
+		{"grep push main", "grep -rn 'git push origin main' docs", "", nil},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -198,6 +230,19 @@ func TestPinnedCommand(t *testing.T) {
 	}
 	if s := lastWord(t, d.Command); s != `'/usr/bin/gh' 'pr' 'merge' 'feat/73-x' '--squash' '--delete-branch' '-R' 'github.com/o/lea'` {
 		t.Fatalf("merge script %q", s)
+	}
+	// A PR named by number is merged only after gh says its head is the caller's own branch
+	// (in the grant's repository, not a fork): the grant's branch glob matched that branch.
+	d = Decide("Bash", bash("gh pr merge 42 --squash"), dev, gs, now, false)
+	s0 := lastWord(t, d.Command)
+	for _, w := range []string{`'/usr/bin/gh' 'pr' 'view' '42' '--json' 'headRefName,isCrossRepository'`, `'-R' 'github.com/o/lea') || exit 1`,
+		`[ "$head" != 'false feat/73-x' ]`, `'/usr/bin/gh' 'pr' 'merge' '42' '--squash' '-R' 'github.com/o/lea'`} {
+		if !strings.Contains(s0, w) {
+			t.Fatalf("numbered merge script lacks %s:\n%s", w, s0)
+		}
+	}
+	if strings.Index(s0, "'view'") > strings.Index(s0, "'merge'") {
+		t.Fatalf("head checked after the merge:\n%s", s0)
 	}
 	d = Decide("Bash", bash(`git commit -m "it's done"`), dev, gs, now, false)
 	s := lastWord(t, d.Command)

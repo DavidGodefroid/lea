@@ -442,7 +442,7 @@ not reach its children, and relayed in a lea message it is rightly distrusted. A
 that decision recorded by you on the host, applied the same way to every agent it covers:
 
 ```sh
-lea grant add merge --container lea-myproj --repo api --github me/api --expires 8h  # gh pr merge N|own-branch --squash|--merge|--rebase (--delete-branch: own-branch only)
+lea grant add merge --container lea-myproj --repo api --github me/api --expires 8h  # gh pr merge N|own-branch --squash|--merge|--rebase (--delete-branch: own-branch only; PR N must have the agent's branch as head)
 lea grant add stop-finished --container lea-myproj                  # agents_stop on an idle or ended child
 lea grant add close-issue --container lea-myproj --repo api --github me/api  # gh issue close|reopen|comment N
 lea grant add delete-own-branch --container lea-myproj --repo api --github me/api  # git push origin --delete <the agent's own branch>
@@ -485,7 +485,11 @@ command lea parses (no `;`, `&&`, `|`, `$(…)`, backticks, redirections, `VAR=`
 so gh and git act on its repo), whatever is granted. A branch is an agent's own only while no other
 live agent of the lea works on it. Some calls are denied outright, grant or not: `gh pr merge
 --admin`, force-push (`-f`, `--force*`, `+refspec`, `--mirror`, `--prune`), any push to `main` or
-`master`, deleting a branch that is not the agent's own, repointing git or gh (`git remote
+`master` however its refspec spells it, a push of every branch or tag (`--all`, `--branches`,
+`--tags`, a wildcard or a bare `:`), a push lea cannot read (an unknown option, git options before
+`push` other than `-C`, a shell glob, a push run through another program or shell), a push that
+leaves its branch implicit (bare `git push`, `HEAD`) anywhere but the root of the agent's own
+worktree, deleting a branch that is not the agent's own, repointing git or gh (`git remote
 set-url|add|…`, writes with `git config`, `gh repo set-default`, `GH_REPO=`/`GH_HOST=`), and
 writing a file that makes a later command run something else: Claude's settings, hooks and shell
 snapshots, git's config and hooks (`.git/config`, `.git/hooks/`, `~/.gitconfig`), the shell's
