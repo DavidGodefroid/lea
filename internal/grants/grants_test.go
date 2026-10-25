@@ -229,6 +229,10 @@ func TestDecideBash(t *testing.T) {
 		{"diff merge-base subst", "git diff $(git merge-base HEAD origin/main)", "", nil},
 		{"sudo xargs git", "echo push | sudo xargs -I X git X origin feat/73-x:main", Deny, nil},
 		{"xargs sh -c git", "echo push | xargs -I X sh -c 'git X origin feat/73-x:main'", Deny, nil},
+		{"quote-split script", `sh -c 'g""it pu""sh origin feat/73-x:main'`, Deny, nil},
+		{"quote-split script send-pack", `sh -c 'g""it se""nd-pack u feat/73-x:main'`, Deny, nil},
+		{"quote-split under xargs", `echo x | xargs sh -c 'g""it status'`, Deny, nil},
+		{"dq backtick escaped quote", "echo \"`g\\\"\\\"it se\\\"\\\"nd-pack u feat/73-x:main`\"", Deny, nil},
 		// send-pack: no word the escape/expansion rule of hardBash knows, only the parser sees it.
 		{"dq dollar quote swallow", `echo "$"; git send-pack u feat/73-x:main; echo "x"`, Deny, nil},
 		{"dq dollar squote", `echo "a$'"; git send-pack u feat/73-x:main; echo "'"`, Deny, nil},

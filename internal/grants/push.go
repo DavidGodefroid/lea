@@ -175,6 +175,8 @@ func expansion(cmd string, i int) (end int, inner string, ok bool) {
 		var body strings.Builder
 		for j := i + 1; j < len(cmd); j++ {
 			switch c := cmd[j]; {
+			case c == '\\' && j+1 < len(cmd) && cmd[j+1] == '"':
+				return 0, "", false // \" is " inside double quotes only: not read, denied by the caller
 			case c == '\\' && j+1 < len(cmd) && strings.IndexByte("`$\\", cmd[j+1]) >= 0:
 				j++
 				body.WriteByte(cmd[j])
@@ -348,7 +350,11 @@ var safeGitEnv = map[string]bool{"GIT_EDITOR=true": true, "GIT_EDITOR=:": true, 
 	"GIT_SEQUENCE_EDITOR=:": true, "GIT_PAGER=cat": true, "GIT_TERMINAL_PROMPT=0": true}
 
 // holdsPush says whether a word names git and a push or a ref-writing transport: a script.
-func holdsPush(x string) bool { return gitWordRe.MatchString(x) && pushWordRe.MatchString(x) }
+// A shell reading the word as a script drops its quotes and escapes: g""it pu""sh is git push.
+func holdsPush(x string) bool { return namesGit(x) && pushWordRe.MatchString(unquote.Replace(x)) }
+
+// namesGit says whether a word, read as a script, names git.
+func namesGit(x string) bool { return gitWordRe.MatchString(unquote.Replace(x)) }
 
 var gitWordRe = regexp.MustCompile(`\bgit\b`)
 
@@ -433,18 +439,18 @@ func segmentGit(w []string, c Caller, compound bool) string {
 	// Under a builder (xargs, find -exec…), any word naming git may become a git call with
 	// words lea cannot read, a script's (sh -c 'git X …') included.
 	for k := p; k < len(w); k++ {
-		if builders[path.Base(w[k])] && anyWord(w[k+1:], func(x string) bool { return gitWordRe.MatchString(x) }) {
+		if builders[path.Base(w[k])] && anyWord(w[k+1:], namesGit) {
 			return gitBuilt
 		}
 	}
 	reader := printsOnly(w[p:])
 	scripted := false // a word names git and holds an expansion, or another word is a push
 	for k := p + 1; k < len(w); k++ {
-		if gitWordRe.MatchString(w[k]) && !reader && (strings.ContainsAny(w[k], "$`") || holdsPush(w[k])) {
+		if namesGit(w[k]) && !reader && (strings.ContainsAny(w[k], "$`") || holdsPush(w[k])) {
 			scripted = true
 		}
 	}
-	if scripted || (!reader && anyWord(w[p+1:], func(x string) bool { return gitWordRe.MatchString(x) && x != "git" }) && anyWord(w[p+1:], pushWord)) {
+	if scripted || (!reader && anyWord(w[p+1:], func(x string) bool { return namesGit(x) && x != "git" }) && anyWord(w[p+1:], pushWord)) {
 		return pushIndirect // a script of a shell or an interpreter that pushes
 	}
 	for k := p; k < len(w); k++ {
