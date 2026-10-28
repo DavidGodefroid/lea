@@ -529,21 +529,22 @@ To let every agent of a lea push its own branch, open its pull request and merge
 prompt, run once, on the host, in the projects directory:
 
 ```sh
-lea delivery on        # lists the GitHub repository each repository here is pinned to
-lea delivery on --yes  # records them: standing grants on each one whose origin is on github.com
-lea delivery status    # which repositories are covered
-lea delivery off       # revoke them: agents ask as usual
+lea delivery on                # lists the GitHub repository each repository here is pinned to, and their digest
+lea delivery on --yes DIGEST   # records exactly those: standing grants on each one whose origin is on github.com
+lea delivery status            # which repositories are covered
+lea delivery off               # revoke them: agents ask as usual
 ```
 
 `on` reads each repository's `origin` from its `.git/config` (as a file: no git runs on the host)
 at that moment, and records, for each one on github.com, the grants `commit-identity`,
 `pr-create`, `merge` and `delete-own-branch` for every agent of this lea, pinned to that GitHub
 repository, with no expiry (`lea grant ls` shows them as `standing`, and their uses). A repository
-added later, or an origin changed, is covered once you run `lea delivery on --yes` again (it replaces
+added later, or an origin changed, is covered once you run `lea delivery on` again and confirm (it replaces
 the standing grants; grants you added by hand stay). Agents can write a repository's
 `.git/config` (or add a repository): `on` records nothing while a pin is new or differs from the
 last one recorded for that repository of this lea (revoked ones included); it lists them, you
-check them, then run `lea delivery on --yes`. Once confirmed, a plain `on` applies. Delivery is
+check them, then run `lea delivery on --yes DIGEST` with the digest it printed: if any pin
+was read differently in between, nothing is recorded. Once confirmed, a plain `on` applies. Delivery is
 off until you turn it on, and only the host can: the daemon refuses `delivery_set` from a
 container.
 
@@ -553,7 +554,7 @@ deny (no push to `main`, no force-push, no `--admin`). The calls covered:
 - `git commit -m …`, `git push [-u] origin <own branch>`;
 - `gh pr create --head <own branch> --title T (--body B | --body-file F) [--base B] [--draft]`:
   `--head` is required, `F` is a path relative to the agent's worktree that must resolve to a
-  plain file inside it, outside `.git` (lea opens it once and gh reads that open file; a quoted heredoc, `--body "$(cat <<'EOF' … EOF)"`, is
+  plain file inside it, outside `.git` (lea checks it is a plain file, opens it once and gh reads that open file; a quoted heredoc, `--body "$(cat <<'EOF' … EOF)"`, is
   not covered: write the body to a file);
 - `gh pr merge <n>|<own branch> --squash|--merge|--rebase [--delete-branch]` (the PR's head must be
   the agent's branch), and `git push origin --delete <own branch>`.

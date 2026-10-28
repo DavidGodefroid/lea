@@ -536,7 +536,7 @@ func TestPRCreate(t *testing.T) {
 	// after a check that it resolves (symlinks too) to a plain file of the worktree outside .git.
 	d = Decide("Bash", bash(`gh pr create --head feat/73-x --title x --body-file docs/pr.md`), dev, gs, now, false)
 	s := lastWord(t, d.Command)
-	for _, w := range []string{"exec 3< '/p/.lea/worktrees/lea/dev-2/docs/pr.md' || exit 1",
+	for _, w := range []string{"[ -f '/p/.lea/worktrees/lea/dev-2/docs/pr.md' ] || {", "exec 3< '/p/.lea/worktrees/lea/dev-2/docs/pr.md' || exit 1",
 		`r=$('/usr/bin/realpath' '-e' '--' '/proc/self/fd/3') || exit 1`, `'--body-file' '-' '-R' 'github.com/o/lea' <&3`,
 		`case "$r" in '/p/.lea/worktrees/lea/dev-2'/.git|'/p/.lea/worktrees/lea/dev-2'/.git/*)`, `[ -f /proc/self/fd/3 ] ||`} {
 		if !strings.Contains(s, w) {

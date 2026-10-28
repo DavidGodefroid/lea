@@ -2,5 +2,5 @@ status 2
 -- calls
 
 -- lea
-lea: error: usage: lea delivery on [--yes]|off|status
+lea: error: usage: lea delivery on [--yes DIGEST]|off|status
 -- stdout

@@ -3,6 +3,7 @@ package main
 import (
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"syscall"
 	"testing"
@@ -108,15 +109,38 @@ func TestDeliveryCommand(t *testing.T) {
 	if d := preToolUseAs(t, bus, "dev", "Bash", push); d != "" {
 		t.Fatalf("before delivery: %q", d)
 	}
-	// The first on only lists the pins: the user confirms them with --yes.
-	if rc, _, e := runEnv(t, host, "delivery", "--container", "lea-a", "--projects", proj, "on"); rc != 1 ||
-		!strings.Contains(e, "fixture: new pin github.com/o/fixture") || !strings.Contains(e, "lea delivery on --yes") {
+	// The first on only lists the pins and their digest: the user confirms exactly those with
+	// --yes DIGEST. A pin that changed in between (an agent rewrote an origin, added a
+	// repository) makes the digest stale: nothing is recorded.
+	confirm := func() string {
+		t.Helper()
+		rc, _, e := runEnv(t, host, "delivery", "--container", "lea-a", "--projects", proj, "on")
+		m := regexp.MustCompile(`lea delivery on --yes ([0-9a-f]{16})\b`).FindStringSubmatch(e)
+		if rc != 1 || m == nil {
+			t.Fatalf("on without --yes: rc=%d err=%q", rc, e)
+		}
+		return m[1]
+	}
+	if rc, _, e := runEnv(t, host, "delivery", "--container", "lea-a", "--projects", proj, "on"); rc != 1 || !strings.Contains(e, "fixture: new pin github.com/o/fixture") {
 		t.Fatalf("first on: rc=%d err=%q", rc, e)
 	}
+	digest := confirm()
 	if d := preToolUseAs(t, bus, "dev", "Bash", push); d != "" {
 		t.Fatalf("after an unconfirmed on: %q", d)
 	}
-	rc, out, e := runEnv(t, host, "delivery", "--container", "lea-a", "--projects", proj, "on", "--yes")
+	origin("web", "https://github.com/swap/web.git")
+	if rc, _, e := runEnv(t, host, "delivery", "--container", "lea-a", "--projects", proj, "on", "--yes", digest); rc != 1 ||
+		!strings.Contains(e, "the pins changed since they were listed") {
+		t.Fatalf("stale digest: rc=%d err=%q", rc, e)
+	}
+	if d := preToolUseAs(t, bus, "dev", "Bash", push); d != "" {
+		t.Fatalf("after a stale digest: %q", d)
+	}
+	origin("web", "https://github.com/o/web.git")
+	if rc, _, _ := runEnv(t, host, "delivery", "--container", "lea-a", "--projects", proj, "on", "--yes", "0000000000000000"); rc != 1 {
+		t.Fatal("a made-up digest")
+	}
+	rc, out, e := runEnv(t, host, "delivery", "--container", "lea-a", "--projects", proj, "on", "--yes", confirm())
 	if rc != 0 || !strings.Contains(out, "fixture  github.com/o/fixture") || !strings.Contains(out, "web  github.com/o/web") ||
 		!strings.Contains(out, "gl  skipped: origin is not on github.com") || strings.Contains(out, "hidden") || !strings.Contains(out, "plain  skipped: no origin") {
 		t.Fatalf("on: rc=%d out=%q err=%q", rc, out, e)
@@ -140,13 +164,13 @@ func TestDeliveryCommand(t *testing.T) {
 	// without --yes: the user checks it first.
 	origin("web", "https://github.com/evil/web.git")
 	if rc, _, e := runEnv(t, host, "delivery", "--container", "lea-a", "--projects", proj, "on"); rc != 1 ||
-		!strings.Contains(e, "web: origin changed from github.com/o/web to github.com/evil/web") || !strings.Contains(e, "lea delivery on --yes") {
+		!strings.Contains(e, "web: origin changed from github.com/o/web to github.com/evil/web") {
 		t.Fatalf("changed origin: rc=%d err=%q", rc, e)
 	}
 	if rc, out, _ := runEnv(t, host, "delivery", "--container", "lea-a", "--projects", proj, "status"); rc != 0 || !strings.Contains(out, "web (github.com/o/web)") {
 		t.Fatalf("status after a refused on: rc=%d %q", rc, out)
 	}
-	if rc, out, e := runEnv(t, host, "delivery", "--container", "lea-a", "--projects", proj, "on", "--yes"); rc != 0 || !strings.Contains(out, "web  github.com/evil/web") {
+	if rc, out, e := runEnv(t, host, "delivery", "--container", "lea-a", "--projects", proj, "on", "--yes", confirm()); rc != 0 || !strings.Contains(out, "web  github.com/evil/web") {
 		t.Fatalf("on --yes: rc=%d out=%q err=%q", rc, out, e)
 	}
 	if rc, out, _ := runEnv(t, host, "delivery", "--container", "lea-a", "--projects", proj, "off"); rc != 0 || !strings.Contains(out, "delivery is off") {
@@ -171,6 +195,7 @@ func TestDeliveryCommand(t *testing.T) {
 	}
 	for _, args := range [][]string{{"delivery", "--container", "lea-a", "--projects", proj}, {"delivery", "--container", "lea-a", "--projects", proj, "maybe"},
 		{"delivery", "--container", "lea-a", "--projects", proj, "off", "--yes"}, {"delivery", "--container", "lea-a", "--projects", proj, "on", "-y"},
+		{"delivery", "--container", "lea-a", "--projects", proj, "on", "--yes"}, {"delivery", "--container", "lea-a", "--projects", proj, "on", "--yes", "xyz"},
 		{"delivery", "--container", "lea-a", "on"}, {"delivery", "--container", "lea-a", "--projects", "relative", "on"}} {
 		if rc, _, _ := runEnv(t, host, args...); rc != 2 {
 			t.Errorf("%v: rc=%d", args, rc)

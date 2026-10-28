@@ -3,6 +3,8 @@ package main
 import (
 	"bufio"
 	"bytes"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"io"
 	"os"
@@ -14,16 +16,16 @@ import (
 	"github.com/DavidGodefroid/lea/internal/grants"
 )
 
-const deliveryUse = "usage: lea delivery on [--yes]|off|status"
+const deliveryUse = "usage: lea delivery on [--yes DIGEST]|off|status"
 
 // runDelivery is the core form of lea delivery (lea delivery --container NAME --projects DIR
-// on|off|status), issue #92: the launcher names the container and the projects directory. on
+// on [--yes DIGEST]|off|status), issue #92: the launcher names the container and the projects directory. on
 // reads, on the host and at that moment, the origin of each repository of DIR, and records
 // standing grants (no expiry) so every agent of the lea pushes its own branch, opens and merges
 // its PR there without a prompt; off revokes them. The host API only: no agent turns it on.
 func runDelivery(args []string, stdout, stderr io.Writer) int {
 	fail := func(err error) int { fmt.Fprintln(stderr, "lea:", clean(err.Error(), false)); return 1 }
-	yes := len(args) == 6 && args[4] == "on" && args[5] == "--yes"
+	yes := len(args) == 7 && args[4] == "on" && args[5] == "--yes" && digestRe.MatchString(args[6])
 	if (len(args) != 5 && !yes) || args[0] != "--container" || args[2] != "--projects" || !filepath.IsAbs(args[3]) {
 		fmt.Fprintln(stderr, deliveryUse)
 		return 2
@@ -80,11 +82,22 @@ func runDelivery(args []string, stdout, stderr io.Writer) int {
 				unseen = true
 			}
 		}
+		// --yes names the digest of the pins the user was shown: pins read again since (an agent
+		// rewrote an origin or added a repository between the two commands) do not match it.
+		sum := sha256.New()
+		for _, x := range repos {
+			fmt.Fprintf(sum, "%s\x00%s\n", x.Repo, x.GitHub)
+		}
+		digest := hex.EncodeToString(sum.Sum(nil))[:16]
+		if yes && args[6] != digest {
+			fmt.Fprintln(stderr, "lea: nothing recorded: the pins changed since they were listed; run lea delivery on again and check them")
+			return 1
+		}
 		if unseen && !yes {
 			for _, sk := range skipped {
 				fmt.Fprintf(stderr, "lea: %s\n", oneLine(sk, 200))
 			}
-			fmt.Fprintln(stderr, "lea: nothing recorded: check those repositories (agents can rewrite .git/config), then run lea delivery on --yes")
+			fmt.Fprintln(stderr, "lea: nothing recorded: check those repositories (agents can rewrite .git/config), then run lea delivery on --yes "+digest)
 			return 1
 		}
 		var r struct{ Grants []grants.Grant }
@@ -130,6 +143,8 @@ func runDelivery(args []string, stdout, stderr io.Writer) int {
 	fmt.Fprintln(stderr, deliveryUse)
 	return 2
 }
+
+var digestRe = regexp.MustCompile(`^[0-9a-f]{16}$`)
 
 // githubOriginRe: an origin URL on github.com over https or ssh, OWNER/NAME.
 var githubOriginRe = regexp.MustCompile(`^(?:https://(?:[A-Za-z0-9._-]+@)?github\.com/|git@github\.com:|ssh://git@github\.com/)` +

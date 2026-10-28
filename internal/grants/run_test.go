@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"syscall"
 	"testing"
 	"time"
 )
@@ -277,12 +278,15 @@ func TestPinnedPRCreateBodyFile(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
+	if err := syscall.Mkfifo(filepath.Join(wt, "fifo.md"), 0o600); err != nil {
+		t.Fatal(err)
+	}
 	c := dev
 	c.Worktree = wt
 	for _, tc := range []struct {
 		file, passed string
 	}{{"docs/pr.md", "body"}, {"in.md", "body"},
-		{"out.md", ""}, {"git.md", ""}, {"dir", ""}, {"missing.md", ""}} {
+		{"out.md", ""}, {"git.md", ""}, {"dir", ""}, {"missing.md", ""}, {"fifo.md", ""}} {
 		d := Decide("Bash", bash("gh pr create --head feat/73-x --title x --body-file "+tc.file), c, []Grant{all(PRCreate)}, now, false)
 		if d.Verdict != Allow {
 			t.Fatalf("%s: %+v", tc.file, d)
@@ -294,7 +298,14 @@ func TestPinnedPRCreateBodyFile(t *testing.T) {
 			t.Fatal(err)
 		}
 		script := strings.ReplaceAll(lastWord(t, d.Command), "'"+ghPath+"'", "'"+fake+"'")
-		out, err := exec.Command(shPath, "-c", script).CombinedOutput()
+		// A FIFO must be refused, not opened: opening one blocks until a writer comes.
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		out, err := exec.CommandContext(ctx, shPath, "-c", script).CombinedOutput()
+		blocked := ctx.Err() != nil
+		cancel()
+		if blocked {
+			t.Fatalf("%s: the script blocked", tc.file)
+		}
 		got, _ := os.ReadFile(log)
 		want := ""
 		if tc.passed != "" {

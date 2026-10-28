@@ -361,7 +361,10 @@ func prCreateScript(args []string, wt, gh string) string {
 	}
 	q := shellWords([]string{wt})
 	argv := append(append(append([]string{ghPath}, args[:file]...), "-"), args[file+1:]...)
-	return "exec 3< " + shellWords([]string{wt + "/" + args[file]}) + " || exit 1\n" +
+	path := shellWords([]string{wt + "/" + args[file]})
+	// The type is checked before the open too: opening a FIFO would block until a writer comes.
+	return "[ -f " + path + " ] || { " + refuse("the body file is not a plain file") + "; }\n" +
+		"exec 3< " + path + " || exit 1\n" +
 		"r=$(" + shellWords([]string{"/usr/bin/realpath", "-e", "--", "/proc/self/fd/3"}) + ") || exit 1\n" +
 		`case "$r" in ` + q + "/.git|" + q + "/.git/*) " + refuse("the body file is in .git") + ";; " + q + "/*) ;; *) " +
 		refuse("the body file is not in the agent's worktree") + ";; esac\n" +

@@ -17,11 +17,11 @@ const Usage = `Usage:
                               start one more agent in the deck (roles: lead, dev, reviewer;
                               providers: claude, codex and those of ~/.config/lea/providers)
   lea role <agent> <role>     change an agent's role (only you can)
-  lea delivery on [--yes]|off|status
+  lea delivery on [--yes DIGEST]|off|status
                               let every agent of this lea push its own branch, open and merge
                               its PR on each GitHub repository here, without asking (standing
-                              grants; on lists new or changed pins, --yes records them; off
-                              revokes them)
+                              grants; on lists new or changed pins and their digest, --yes
+                              DIGEST records exactly those; off revokes them)
   lea shell [-- cmd...]       open a shell, or run a command, in the same lea
   lea kube refresh            mint a read-only Kubernetes token (8 h)
   lea board --md              the board: every agent's task, as markdown
