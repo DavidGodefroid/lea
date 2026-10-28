@@ -75,6 +75,8 @@ type boardItem struct {
 	Task      int64  `json:"task"`
 	Container string `json:"container"`
 	Agent     string `json:"agent"`
+	// Label is the user's display name for the agent (see agentLabel), "" when none.
+	Label     string `json:"label,omitempty"`
 	Role      string `json:"role"`
 	Parent    string `json:"parent"`
 	State     string `json:"state"`
@@ -143,6 +145,7 @@ func (d *Daemon) boardList(raw json.RawMessage) (boardView, error) {
 			Status: t.StatusText, Next: t.Next, BlockedOn: t.BlockedOn, Updated: t.Updated, Ended: t.Ended}
 		if a, ok := by[t.Agent]; ok && t.Ended == 0 {
 			it.Role, it.State, it.Repo, it.Branch, it.Subagents = a.Role, a.State, a.Repo, a.Branch, subs[t.Agent]
+			it.Label = a.Label
 			if a.Parent != "" {
 				it.Parent = shortName(a.Parent)
 			}
@@ -189,6 +192,7 @@ func (d *Daemon) boardRead(o Origin) (boardView, error) {
 	}
 	for i := range b.Items {
 		it := &b.Items[i]
+		it.Label = safeLabel(it.Label)
 		mark(&it.Title)
 		mark(&it.Status)
 		mark(&it.Next)

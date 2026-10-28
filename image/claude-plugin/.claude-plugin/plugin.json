@@ -1,6 +1,6 @@
 {
   "name": "lea",
-  "description": "lea's skills for its agents: tower-control, a lead that runs the team for you and briefs you in a few lines.",
+  "description": "lea's skills for its agents: control-tower, a lead that runs the team for you and briefs you in a few lines.",
   "version": "0.1.0",
   "author": {
     "name": "David Godefroid"

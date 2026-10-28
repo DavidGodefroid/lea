@@ -277,6 +277,12 @@ keep in view to open the console, then ask an agent about your data. `locksql va
 console account in to Vault again when its token expires. A `locksql` already installed on the
 host keeps its name; `lea locksql` then opens lea's console.
 
+The console holds the credentials, so its container is confined (in the deck too): no capability,
+no privilege gain (`no-new-privileges`), a read-only root with a small `/tmp`, at most 256
+processes and 1 GB of memory. It sees your projects directory read-only, since your agents write
+there, but for its own `.locksql` directory (its PII rules); lea makes that directory when it is
+missing and opens no console while it is a symbolic link or a file.
+
 The console can also live **in the deck**: `L` in the deck (or `lea lock open locksql [profile]`)
 opens it in a pane under the agent, with a red `LOCK` border, without taking the keyboard: click
 it to answer (ctrl+space from the deck always goes to the agent, never to the console). It serves
@@ -413,10 +419,10 @@ vllm      https://vllm.example.com/v1         key=/home/me/.config/lea/keys/vllm
   a recent vLLM.
 - A change of the providers file restarts the proxy at the next `lea`.
 
-### Tower control
+### Control tower
 
 lea brings its own Claude Code plugin, `lea`, loaded in every agent (from the image, for the
-session only: nothing is installed in your `~/.claude`). Its skill `/lea:tower-control` turns a
+session only: nothing is installed in your `~/.claude`). Its skill `/lea:control-tower` turns a
 lead into your control tower: you talk to it only, it splits your requests into tasks, starts
 `dev` and `reviewer` agents with self-contained briefs, answers their questions when it can, and
 follows them with `board_read`, and briefs you in one line per agent. Between your requests an
@@ -431,10 +437,11 @@ Needs you: palette for dark-mode
 Ask it for the `board`, the `detail` of an agent, or to `stop` one, in your own words.
 
 The tower never does the work itself, not even a `git push`: every request goes to an agent. The
-plugin enforces it with a hook: once `/lea:tower-control` runs, the session may only use lea's
+plugin enforces it with a hook: once `/lea:control-tower` runs, the session may only use lea's
 team tools (`agents_*`, `msg_*`, `board_read`, `task_update`), ask you questions and run
 `lea inbox --agent --wait`; any other tool (Bash, Edit, Read, git, gh, the web…) is denied with a
-reminder to delegate. `/lea:tower-control off` gives the session its tools back.
+reminder to delegate. `/lea:control-tower off` gives the session its tools back.
+The skill's old name, `/lea:tower-control`, still works for now.
 
 ### Grants: let every agent merge, close issues, stop finished agents
 
@@ -443,7 +450,7 @@ not reach its children, and relayed in a lea message it is rightly distrusted. A
 that decision recorded by you on the host, applied the same way to every agent it covers:
 
 ```sh
-lea grant add merge --container lea-myproj --repo api --github me/api --expires 8h  # gh pr merge N|own-branch --squash|--merge|--rebase (--delete-branch: own-branch only)
+lea grant add merge --container lea-myproj --repo api --github me/api --expires 8h  # gh pr merge N|own-branch --squash|--merge|--rebase (--delete-branch: own-branch only; the PR's head must be the agent's branch)
 lea grant add stop-finished --container lea-myproj                  # agents_stop on an idle or ended child
 lea grant add close-issue --container lea-myproj --repo api --github me/api  # gh issue close|reopen|comment N
 lea grant add delete-own-branch --container lea-myproj --repo api --github me/api  # git push origin --delete <the agent's own branch>
@@ -486,7 +493,19 @@ command lea parses (no `;`, `&&`, `|`, `$(…)`, backticks, redirections, `VAR=`
 so gh and git act on its repo), whatever is granted. A branch is an agent's own only while no other
 live agent of the lea works on it. Some calls are denied outright, grant or not: `gh pr merge
 --admin`, force-push (`-f`, `--force*`, `+refspec`, `--mirror`, `--prune`), any push to `main` or
-`master`, deleting a branch that is not the agent's own, repointing git or gh (`git remote
+`master` however its refspec spells it, a push to any branch but the agent's own (named: a bare
+`git push`, `HEAD` or `@` follows whatever is checked out), a push of every branch or tag (`--all`,
+`--branches`, `--tags`, a wildcard or a bare `:`), other git transports (`send-pack`, `http-push`,
+`remote-<helper>`, `svn`, `p4`), a push lea cannot read (an unknown option, a shell glob, a push run
+through another program, or a `git … push` in the arguments of any program but `grep`, `rg`,
+`echo`, `printf`, `gh pr|issue`), git run by `xargs`, `parallel`, `find` (or by another program without a subcommand), a git
+program, subcommand or push argument computed by the shell (`$…`, backticks; a substitution's own
+command is checked too), a program computed by the shell or run by `env`/`sudo`/… from a computed
+word, `submodule foreach`, `bisect run`, `filter-branch`, git options that run a
+program (`--upload-pack`, `--receive-pack`, `--exec`, `--extcmd`, `-O`, `rebase -x`), git options
+before the subcommand other than `-C`, `-c user.name|user.email|color.ui|core.quotepath` and display
+options, setting `GIT_*` (but `GIT_EDITOR`/`GIT_SEQUENCE_EDITOR=true|:`, `GIT_PAGER=cat`,
+`GIT_TERMINAL_PROMPT=0`), `HOME` or `XDG_CONFIG_HOME`, deleting a branch that is not the agent's own, repointing git or gh (`git remote
 set-url|add|…`, writes with `git config`, `gh repo set-default`, `GH_REPO=`/`GH_HOST=`), and
 writing a file that makes a later command run something else: Claude's settings, hooks and shell
 snapshots, git's config and hooks (`.git/config`, `.git/hooks/`, `~/.gitconfig`), the shell's
