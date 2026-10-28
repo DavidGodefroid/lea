@@ -199,6 +199,13 @@ func runDaemon(stderr io.Writer) int {
 		return 1
 	}
 	d.SetResume(launcher.ResumeSettings(os.Getenv))
+	// Same pattern for the idle stacks setting (#132).
+	_ = os.Remove(filepath.Join(host, "daemon.stacks"))
+	if err := os.WriteFile(filepath.Join(host, "daemon.stacks"), []byte(launcher.DaemonStacksStamp(os.Getenv)), 0o600); err != nil {
+		fmt.Fprintln(stderr, "lea:", clean(err.Error(), false))
+		return 1
+	}
+	d.SetStackIdle(launcher.StackIdleSetting(os.Getenv))
 	exe, err := os.Executable()
 	if err != nil {
 		fmt.Fprintln(stderr, "lea:", clean(err.Error(), false))
@@ -702,15 +709,16 @@ func runDeckOpen(args []string, stderr io.Writer) int {
 		if err := hostCallT("agents_resume_stopped", map[string]any{"container": container}, nil, agentTimeout); err != nil {
 			fmt.Fprintln(stderr, "lea: warning: the agents of the previous container were not all resumed:", clean(err.Error(), false))
 		}
-		// What the agents that are gone left in the nested Podman (#97): removed, and the
-		// containers no agent started are named.
-		var sw struct{ Notice string }
-		if err := hostCallT("agents_sweep_stacks", map[string]any{"container": container}, &sw, sweepTimeout); err != nil {
-			fmt.Fprintln(stderr, "lea: warning: the nested Podman was not swept:", clean(err.Error(), false))
-		} else if sw.Notice != "" {
-			for _, l := range strings.Split(sw.Notice, "\n") {
-				fmt.Fprintln(stderr, "lea:", clean(l, false))
-			}
+	}
+	// At every lea, fresh container or not: what the agents that are gone left in the nested
+	// Podman is removed (#97), the containers no agent started are named, and the stacks of
+	// agents idle for LEA_STACK_IDLE are stopped (#132).
+	var sw struct{ Notice string }
+	if err := hostCallT("agents_sweep_stacks", map[string]any{"container": container}, &sw, sweepTimeout); err != nil {
+		fmt.Fprintln(stderr, "lea: warning: the nested Podman was not swept:", clean(err.Error(), false))
+	} else if sw.Notice != "" {
+		for _, l := range strings.Split(sw.Notice, "\n") {
+			fmt.Fprintln(stderr, "lea:", clean(l, false))
 		}
 	}
 	if err := hostCallT("deck_ensure", map[string]any{"container": container, "workdir": workdir}, nil, agentTimeout); err != nil {

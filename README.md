@@ -617,6 +617,12 @@ was read differently in between, nothing is recorded. Once confirmed, a plain `o
 off until you turn it on, and only the host can: the daemon refuses `delivery_set` from a
 container.
 
+`lea doctor` checks it: each covered repository's `origin` still matches its pin (an origin
+rewritten since, or a repository on a forge not covered yet, is a warning: run `lea delivery on`
+again), and each forge host has credentials in lea's state (`gh auth login`, `glab auth login
+--hostname HOST`; git's credential store alone covers pushes only, a warning); without them it
+fails. It only reads.
+
 Everything in Grants above holds: an agent's own branch only, in its own worktree, every hard
 deny (no push to `main`, no force-push, no `--admin`). The calls covered:
 
@@ -730,6 +736,7 @@ read-only. The screen runs in the deck on the host: agents cannot open or drive 
 | `LEA_PROVIDER`, `LEA_MODEL` | `claude`, empty | the default provider and model of a new agent ([providers](#other-providers-codex-ollama-vllm)) |
 | `LEA_PROVIDERS` | `~/.config/lea/providers` | your OpenAI-compatible endpoints and their key files |
 | `LEA_AUTO_RESUME`, `LEA_RESUME_DELAY` | on, `60` | resume agents stopped on a usage limit, so many seconds after its reset (`0`: off) |
+| `LEA_STACK_IDLE` | `10` | minutes an agent stays idle before lea stops (not removes) the containers it started in the nested Podman (`0`: never); `lea board` lists what it freed |
 | `LEA_SOUND`, `LEA_AUTONAME` | on | the deck's sounds, automatic names (`0`: off) |
 | `LEA_SOUND_ATTENTION`, `LEA_SOUND_DONE` | freedesktop sounds | the file of each sound (`0`: that one off) |
 | `LEA_OTEL_UPSTREAM` | empty | send Claude Code usage telemetry to this OTLP collector |
@@ -896,8 +903,10 @@ checksums, and the images on `ghcr.io/davidgodefroid`.
 ## Known limitations
 
 - What an agent starts in the nested Podman (`docker`, `docker compose`, `podman`, through its own
-  Podman service) is removed when the agent ends; what you start from a deck shell is not. A new
-  container removes what the agents that are gone left and names the containers no agent
+  Podman service) is removed when the agent ends, and stopped (not removed) once the agent has
+  been idle `LEA_STACK_IDLE` minutes (10): the agent starts it again when it needs it. What you
+  start from a deck shell is neither. Every `lea` removes what the agents that are gone left,
+  stops the stacks of agents idle for that long already, and names the containers no agent
   started.
 
 - `docker compose` with its own networks does not work inside lea yet: the nested Podman's

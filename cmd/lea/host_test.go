@@ -245,6 +245,14 @@ func (c *cliAgents) ResumeStopped(ctx context.Context, ctr string) error {
 	c.rec("resume-stopped " + ctr)
 	return nil
 }
+func (c *cliAgents) ParkStack(ctx context.Context, key string) (string, error) {
+	c.rec("park " + key)
+	return "", nil
+}
+func (c *cliAgents) UnparkStack(ctx context.Context, key string) (string, error) {
+	c.rec("unpark " + key)
+	return "", nil
+}
 func (c *cliAgents) SweepStacks(ctx context.Context, ctr string) (string, error) {
 	c.rec("sweep " + ctr)
 	return c.sweep, c.sweepErr
@@ -446,7 +454,8 @@ func TestDeckOpenSpawnsTheDefaultAgentOnlyWhenNoneRuns(t *testing.T) {
 		if rc != 0 {
 			t.Fatalf("%s: rc=%d err=%q", tc.name, rc, e)
 		}
-		if ca.calls[0] != "ensure lea-a /p" {
+		// The sweep comes at every lea (#132), then the deck.
+		if len(ca.calls) < 2 || ca.calls[0] != "sweep lea-a" || ca.calls[1] != "ensure lea-a /p" {
 			t.Fatalf("%s: calls=%q", tc.name, ca.calls)
 		}
 		spawned := len(ca.reqs) == 1
@@ -471,6 +480,20 @@ func TestDeckOpenOfAFreshContainerResumesTheStoppedAgentsFirst(t *testing.T) {
 	}
 	if e != "" {
 		t.Fatalf("a sweep with nothing to say printed %q", e)
+	}
+}
+
+// A container that already runs is swept too (#132): the stacks of agents gone or idle for long
+// do not wait for a restart.
+func TestDeckOpenOfARunningContainerSweepsIt(t *testing.T) {
+	ca := &cliAgents{sweep: "kid: stopped 2 containers and 1 pod (freed 812 MiB)"}
+	api := startDaemonWith(t, ca)
+	rc, _, e := runEnv(t, map[string]string{"LEA_DAEMON_SOCK": api}, "deck-open", "--container", "lea-a", "--workdir", "/p", "--no-default")
+	if rc != 0 || e != "lea: kid: stopped 2 containers and 1 pod (freed 812 MiB)\n" {
+		t.Fatalf("rc=%d err=%q", rc, e)
+	}
+	if !reflect.DeepEqual(ca.calls, []string{"sweep lea-a", "ensure lea-a /p"}) {
+		t.Fatalf("calls=%q", ca.calls)
 	}
 }
 

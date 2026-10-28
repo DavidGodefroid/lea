@@ -108,6 +108,11 @@ type Containers interface {
 	// and containers) and its own Podman service. Sweep removes those of every agent but keep
 	// and reports what it removed and what no agent started ("" when there is nothing to say).
 	Teardown(ctx context.Context, container, name string) error
+	// Park stops, without removing them, the containers an idle agent started (#132) and says
+	// what it freed ("" when nothing of its own ran).
+	Park(ctx context.Context, container, name string) (string, error)
+	// Unpark starts again what the agent's last Park stopped.
+	Unpark(ctx context.Context, container, name string) (string, error)
 	Sweep(ctx context.Context, container string, keep []string) (string, error)
 }
 
@@ -2151,6 +2156,33 @@ func (m *Manager) teardown(ctx context.Context, container, name string) {
 	if err := m.cfg.Containers.Teardown(ctx, container, name); err != nil {
 		log.Printf("lea daemon: tear down the stack of %s: %v", key, err)
 	}
+}
+
+// ParkStack stops what an idle agent started in the nested Podman (#132): its containers hold
+// memory and CPU while the agent waits, and it starts them again when it needs them. It says
+// what it freed. An ended agent is torn down instead, never parked; a teardown in flight goes
+// first.
+func (m *Manager) ParkStack(ctx context.Context, key string) (string, error) {
+	a, err := m.spawned(key)
+	if err != nil {
+		return "", err
+	}
+	if a.State == "done" || a.State == stateStopped {
+		return "", fmt.Errorf("%s has ended", a.Name)
+	}
+	if err := m.waitTeardown(ctx, key); err != nil {
+		return "", err
+	}
+	return m.cfg.Containers.Park(ctx, a.Container, a.Name)
+}
+
+// UnparkStack starts again what ParkStack stopped: a new turn came while it stopped them.
+func (m *Manager) UnparkStack(ctx context.Context, key string) (string, error) {
+	a, err := m.spawned(key)
+	if err != nil {
+		return "", err
+	}
+	return m.cfg.Containers.Unpark(ctx, a.Container, a.Name)
 }
 
 // SweepStacks removes, in a container the launcher has just started, what the agents that are
