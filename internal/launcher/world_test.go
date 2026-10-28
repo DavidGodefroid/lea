@@ -135,7 +135,7 @@ func newWorld(t *testing.T, root string) *world {
 	write(w.data+"/lea/host/daemon.tmux", w.tmux, 0o600)
 	write(w.data+"/lea/host/daemon.approvals", "deck 60", 0o600)
 	write(w.data+"/lea/host/daemon.resume", "on 60", 0o600)
-	write(w.data+"/lea/host/daemon.stacks", "10", 0o600)
+	write(w.data+"/lea/host/daemon.stacks", "10 0 4", 0o600)
 	w.env = map[string]string{
 		"HOME": w.home, "XDG_DATA_HOME": w.data, "XDG_CONFIG_HOME": dir + "/config", "FAKE_LOG": w.log,
 		"LEA_PROJECTS_DIR": w.proj, "LEA_TMUX_BIN": w.tmux, "LEA_TMUX_BUILT": dir + "/no-built-tmux",

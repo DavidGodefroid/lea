@@ -8,7 +8,7 @@ setup() {
   cat >"$F/lea-session" <<'EOT'
 #!/bin/sh
 { printf 'lea-session pid=%s agent=%s' "$$" "$LEA_AGENT"; for a in "$@"; do printf ' [%s]' "$a"; done; printf '\n'; } >>"$FAKE_LOG"
-printf 'DOCKER_HOST=%s\nCONTAINERS_CONF_OVERRIDE=%s\n' "${DOCKER_HOST:-}" "${CONTAINERS_CONF_OVERRIDE:-}" >"$(dirname "$FAKE_LOG")/session.env"
+printf 'DOCKER_HOST=%s\nCONTAINERS_CONF_OVERRIDE=%s\ncpus=%s\n' "${DOCKER_HOST:-}" "${CONTAINERS_CONF_OVERRIDE:-}" "$(awk '/^Cpus_allowed_list/ { print $2 }' /proc/self/status)" >"$(dirname "$FAKE_LOG")/session.env"
 EOT
   chmod +x "$F/lea-session"
   export PATH="$F:$PATH"
@@ -80,6 +80,44 @@ service() { tr '\0' ' ' <"/proc/$1/cmdline" 2>/dev/null | grep -q 'unix://'; }
   grep -qxF "CONTAINERS_CONF_OVERRIDE=$LEA_AGENT_RUN_DIR/dev-1.containers.conf" "$BATS_TEST_TMPDIR/session.env"
   # The service is not the agent's child: pausing the agent never freezes it.
   ! grep -qw "$svc" /proc/"$(cat "$LEA_AGENT_RUN_DIR/dev-1.pid")"/task/*/children 2>/dev/null
+}
+
+# Each agent gets a window of LEA_AGENT_CPUS CPUs, the least shared among the live agents' (#132):
+# it and all it starts run there, so tools that size themselves from the CPUs they may use see it.
+@test "run gives the agent a CPU window, the CPUs fewest live agents share" {
+  export LEA_AGENT_CPU_LIST=0-7 LEA_AGENT_CPUS=2
+  agent dev-1
+  echo 0,1 >"$LEA_AGENT_RUN_DIR/dev-1.cpus"
+  # A window left by an agent that is gone counts for nothing.
+  echo 2,3 >"$LEA_AGENT_RUN_DIR/dev-9.cpus"
+  run "$A" run dev-2 -- x
+  [ "$status" -eq 0 ]
+  [ "$(cat "$LEA_AGENT_RUN_DIR/dev-2.cpus")" = 2,3 ]
+  agent dev-2 dev-2
+  run "$A" run dev-3 -- x
+  [ "$(cat "$LEA_AGENT_RUN_DIR/dev-3.cpus")" = 4,5 ]
+  # LEA_AGENT_CPUS=0, or a window as large as the CPUs: no window.
+  LEA_AGENT_CPUS=0 run "$A" run dev-4 -- x
+  [ ! -e "$LEA_AGENT_RUN_DIR/dev-4.cpus" ]
+  LEA_AGENT_CPUS=8 run "$A" run dev-5 -- x
+  [ ! -e "$LEA_AGENT_RUN_DIR/dev-5.cpus" ]
+}
+
+@test "windows lists the live agents' CPU windows" {
+  agent dev-1
+  echo 0-3 >"$LEA_AGENT_RUN_DIR/dev-1.cpus"
+  echo 4-7 >"$LEA_AGENT_RUN_DIR/dev-9.cpus"
+  run "$A" windows
+  [ "$status" -eq 0 ] && [ "$output" = "dev-1 0-3" ]
+}
+
+@test "run pins the agent to its window" {
+  # Pretend there are two CPUs; only CPU 0 surely exists where the test runs.
+  export LEA_AGENT_CPU_LIST=0-1 LEA_AGENT_CPUS=1
+  run "$A" run dev-1 -- x
+  [ "$status" -eq 0 ]
+  [ "$(cat "$LEA_AGENT_RUN_DIR/dev-1.cpus")" = 0 ]
+  grep -qx 'cpus=0' "$BATS_TEST_TMPDIR/session.env"
 }
 
 @test "run without Podman keeps the shared Podman service" {

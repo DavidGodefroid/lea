@@ -101,6 +101,8 @@ type boardItem struct {
 type boardView struct {
 	Items  []boardItem `json:"items"`
 	Leases []leaseView `json:"leases"`
+	// Heavy is the heavy jobs that run or wait (#132), per container.
+	Heavy []heavyView `json:"heavy"`
 }
 
 // boardList is the board (spec A13; host only): every open task with its agent, then the last
@@ -173,6 +175,7 @@ func (d *Daemon) boardList(raw json.RawMessage) (boardView, error) {
 		}
 		out.Leases = append(out.Leases, leaseView{l.ID, l.Container, shortName(l.Agent), l.Glob, l.Expires})
 	}
+	out.Heavy = d.heavyBoard(p.Container)
 	return out, nil
 }
 
@@ -208,6 +211,12 @@ func (d *Daemon) boardRead(o Origin) (boardView, error) {
 	}
 	for i := range b.Leases {
 		mark(&b.Leases[i].Glob)
+	}
+	// A heavy job's label is its agent's text.
+	for i := range b.Heavy {
+		for j := range b.Heavy[i].Running {
+			mark(&b.Heavy[i].Running[j])
+		}
 	}
 	return b, nil
 }

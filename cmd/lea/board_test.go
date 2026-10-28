@@ -112,6 +112,16 @@ func TestBoardShowsStoppedStacks(t *testing.T) {
 	}
 }
 
+// The heavy jobs that run and wait show with their container (#132).
+func TestBoardShowsHeavyJobs(t *testing.T) {
+	var out bytes.Buffer
+	renderBoard(&out, board{Heavy: []boardHeavy{{Container: "lea-a", Slots: 2, Running: []string{"dev-1 phpstan analyse"}, Queued: 3}}})
+	s := out.String()
+	if !strings.Contains(s, "### Heavy jobs (1 of 2 slots, 3 waiting)\n\n- "+mdCell("dev-1 phpstan analyse")+"\n") || strings.Contains(s, "No tasks yet.") {
+		t.Fatalf("no heavy jobs in:\n%s", s)
+	}
+}
+
 func TestBoardStateCellCountsSubagents(t *testing.T) {
 	var out bytes.Buffer
 	renderBoard(&out, board{Items: []boardItem{

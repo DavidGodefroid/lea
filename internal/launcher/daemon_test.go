@@ -338,8 +338,29 @@ func TestStackIdleSetting(t *testing.T) {
 		if got := StackIdleSetting(get); got != want {
 			t.Errorf("LEA_STACK_IDLE=%q: %v, want %v", v, got, want)
 		}
-		if got, wantStamp := DaemonStacksStamp(get), strconv.Itoa(int(want/time.Minute)); got != wantStamp {
+		if got, wantStamp := DaemonStacksStamp(get), strconv.Itoa(int(want/time.Minute))+" 0 4"; got != wantStamp {
 			t.Errorf("LEA_STACK_IDLE=%q: stamp %q, want %q", v, got, wantStamp)
+		}
+	}
+}
+
+// LEA_HEAVY_SLOTS (0: from the CPUs) and LEA_HEAVY_WORKERS (4) of the heavy jobs (#132).
+func TestHeavySettings(t *testing.T) {
+	for _, c := range []struct {
+		slots, workers string
+		ws, ww         int
+	}{{"", "", 0, 4}, {"3", "2", 3, 2}, {"0", "8", 0, 8}, {"-1", "0", 0, 4}, {"257", "300", 0, 4}, {"x", "y", 0, 4}} {
+		get := func(k string) string {
+			switch k {
+			case "LEA_HEAVY_SLOTS":
+				return c.slots
+			case "LEA_HEAVY_WORKERS":
+				return c.workers
+			}
+			return ""
+		}
+		if s, w := HeavySettings(get); s != c.ws || w != c.ww {
+			t.Errorf("%+v: %d %d", c, s, w)
 		}
 	}
 }

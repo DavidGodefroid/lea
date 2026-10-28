@@ -323,3 +323,13 @@ host_minimums() {
   LEA_CPUS=0 FAKE_DOCKER_OUT_INSPECT___FORMAT='0 17179869184' run lea_doctor
   [[ "$output" == *"ok    lea-abc limits: no limit on CPUs, 16384 MiB"* ]]
 }
+
+@test "the agents' CPU windows of each running lea container are listed (#132)" {
+  export FAKE_DOCKER_OUT_PS___FILTER=lea-abc
+  export FAKE_DOCKER_OUT_EXEC_LEA_ABC=$'dev-1 0,1,2,3\nlead-1 4,5,6,7'
+  run lea_doctor
+  [[ "$output" == *"ok    lea-abc CPU windows: dev-1 0,1,2,3, lead-1 4,5,6,7"* ]]
+  export FAKE_DOCKER_OUT_EXEC_LEA_ABC=
+  run lea_doctor
+  [[ "$output" == *"ok    lea-abc CPU windows: none"* ]]
+}

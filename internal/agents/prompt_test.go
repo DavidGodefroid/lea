@@ -25,7 +25,7 @@ func TestFirstPromptStatesTheTaskContract(t *testing.T) {
 func TestFirstPromptSaysIdleStacksStop(t *testing.T) {
 	p := firstPrompt(store.Agent{Name: "dev-1", Role: "dev"}, "", "", true)
 	if !strings.Contains(p, "lea stops the containers you started (compose stacks, pods) while you are idle") ||
-		!strings.Contains(p, "start them again before you use them") {
+		!strings.Contains(p, "start them again before you use them") || !strings.Contains(p, "through lea heavy -- <command>") {
 		t.Fatalf("no idle stacks rule in %q", p)
 	}
 }

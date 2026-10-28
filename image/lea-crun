@@ -1,0 +1,63 @@
+#!/bin/sh
+# The nested Podman's crun (containers.conf [engine.runtimes]): it runs the real crun with the same
+# arguments and pins an agent's containers to its CPU window (#132), so that tools that size
+# themselves from the CPUs they may use (nproc, PHPStan, Go, pytest-xdist...) see the window,
+# without anything on the project's side. crun resets the CPU affinity of a container's processes:
+# after `create`, the container's process (it waits for `start`) is pinned; an `exec` gets the
+# window as process.execCPUAffinity (crun 1.19 or later). A container that no agent started, or
+# anything this wrapper cannot read, goes through untouched: it never stops a container from
+# running. Not a hard limit (a process may widen its own affinity): the lea container's --cpus is.
+real=${LEA_CRUN:-/usr/bin/crun}
+dir=${LEA_AGENT_RUN_DIR:-/run/lea/agents}
+
+# window BUNDLE: the CPU window of the agent that started the container of BUNDLE, if any.
+window() {
+  agent=$(jq -r '.annotations["lea.agent"] // empty' "$1/config.json" 2>/dev/null) || return 0
+  case $agent in [abcdefghijklmnopqrstuvwxyz]*) ;; *) return 0 ;; esac
+  case $agent in *[!abcdefghijklmnopqrstuvwxyz0123456789-]*) return 0 ;; esac
+  [ "${#agent}" -le 24 ] && [ -f "$dir/$agent.cpus" ] || return 0
+  w=$(head -c 4096 "$dir/$agent.cpus" | head -n 1)
+  case $w in '' | *[!0-9,-]*) return 0 ;; esac
+  printf '%s\n' "$w"
+}
+
+# exec_affinity: crun honours process.execCPUAffinity from 1.19 on.
+exec_affinity() {
+  v=$("$real" --version 2>/dev/null | awk 'NR == 1 { print $3 }')
+  awk -v v="$v" 'BEGIN { split(v, x, "."); exit !(x[1] > 1 || (x[1] == 1 && x[2] >= 19)) }'
+}
+
+cmd='' bundle='' pidfile='' procfile='' id='' prev=''
+for a in "$@"; do
+  case $prev in --bundle | -b) bundle=$a ;; --pid-file) pidfile=$a ;; --process | -p) procfile=$a ;; esac
+  case $a in --bundle=*) bundle=${a#*=} ;; --pid-file=*) pidfile=${a#*=} ;; --process=*) procfile=${a#*=} ;; esac
+  if [ -z "$cmd" ]; then case $a in create | exec) cmd=$a ;; esac; fi
+  prev=$a
+  id=$a
+done
+
+case $cmd in
+  create)
+    "$real" "$@"
+    rc=$?
+    if [ "$rc" -eq 0 ] && [ -n "$bundle" ] && [ -n "$pidfile" ]; then
+      w=$(window "$bundle")
+      p=$(head -c 32 "$pidfile" 2>/dev/null | tr -cd 0-9)
+      if [ -n "$w" ] && [ -n "$p" ]; then taskset -a -p -c "$w" "$p" >/dev/null 2>&1 || true; fi
+    fi
+    exit "$rc"
+    ;;
+  exec)
+    if [ -n "$procfile" ] && [ -f "$procfile" ] && exec_affinity; then
+      b=$("$real" state "$id" 2>/dev/null | jq -r '.bundle // empty' 2>/dev/null)
+      w=
+      if [ -n "$b" ]; then w=$(window "$b"); fi
+      if [ -n "$w" ] && jq --arg w "$w" '.execCPUAffinity = {"initial": $w, "final": $w}' "$procfile" >"$procfile.lea" 2>/dev/null; then
+        mv -f "$procfile.lea" "$procfile" || rm -f "$procfile.lea"
+      else
+        rm -f "$procfile.lea"
+      fi
+    fi
+    ;;
+esac
+exec "$real" "$@"

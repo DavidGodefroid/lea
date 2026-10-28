@@ -27,6 +27,8 @@ LEA_PROXY_IP=172.18.0.5
 -e
 LEA_NESTED_NETWORKS=
 -e
+LEA_AGENT_CPUS=4
+-e
 XDG_RUNTIME_DIR=/run/user/$UID
 -e
 DOCKER_HOST=unix:///run/user/$UID/podman/podman.sock

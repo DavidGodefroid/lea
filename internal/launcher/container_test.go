@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -1113,5 +1114,27 @@ func TestRunningContainerGetsTheConfiguredLimits(t *testing.T) {
 	up(w)
 	if u := updates(w); len(u) != 0 {
 		t.Fatalf("updates %q, want none", u)
+	}
+}
+
+// Each agent's CPU window (#132) reaches the container: lea-agent run reads LEA_AGENT_CPUS.
+func TestRunArgsAgentCPUs(t *testing.T) {
+	for conf, want := range map[string]string{"": "4", "LEA_AGENT_CPUS=8\n": "8", "LEA_AGENT_CPUS=0\n": "0"} {
+		w := newWorld(t, repoRoot(t))
+		writeUserConf(t, w, conf)
+		args, err := w.launcher().runArgs(w.proj, "172.18.0.5")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !slices.Contains(args, "LEA_AGENT_CPUS="+want) {
+			t.Errorf("%q: no LEA_AGENT_CPUS=%s in %q", conf, want, args)
+		}
+	}
+	for _, line := range []string{"LEA_AGENT_CPUS=-1", "LEA_AGENT_CPUS=04", "LEA_AGENT_CPUS=1025", "LEA_AGENT_CPUS=two"} {
+		w := newWorld(t, repoRoot(t))
+		writeUserConf(t, w, line+"\n")
+		if _, err := LoadConfig(w.getenv, w.root, w.proj); err == nil || !strings.Contains(err.Error(), "LEA_AGENT_CPUS must be") {
+			t.Errorf("%s: err = %v", line, err)
+		}
 	}
 }

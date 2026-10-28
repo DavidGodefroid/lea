@@ -84,6 +84,14 @@ lea_doctor() {
     fi
   done
 
+  # Each running lea container's agents and their CPU windows (#132): nproc, PHPStan, Go... see
+  # that many CPUs in the agent and in its nested containers.
+  for _dctr in $(docker ps --filter "label=lea.prefix=$LEA_PREFIX" --filter label=lea.role=session --format '{{.Names}}' 2>/dev/null || true); do
+    _dwin=$(docker exec "$_dctr" lea-agent windows 2>/dev/null | tr -cd 'a-z0-9 ,\n-' | awk 'NF == 2 { printf "%s%s %s", (n++ ? ", " : ""), $1, $2 }' || true)
+    if [ -n "$_dwin" ]; then lea__ok "$_dctr CPU windows: $_dwin"
+    else lea__ok "$_dctr CPU windows: none (no agent runs, or LEA_AGENT_CPUS=0)"; fi
+  done
+
   # The domains the proxy always allows: EGRESS_ALWAYS of proxy/render-squid-conf.sh.
   case ${LEA_EGRESS_ALLOW:-} in
     '') lea__ok "egress allowlist: lea's default (forges, registries, model APIs; LEA_EGRESS_ALLOW extends it with 'default,<domain>')" ;;

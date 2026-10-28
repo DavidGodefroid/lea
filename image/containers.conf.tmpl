@@ -32,3 +32,8 @@ log_driver = "k8s-file"
 cgroup_manager = "cgroupfs"
 events_logger = "file"
 runtime = "crun"
+
+# crun is lea's wrapper of it (#132): an agent's containers run on its CPU window. Root's file, in
+# root's directory: no agent changes it.
+[engine.runtimes]
+crun = ["/usr/local/libexec/lea/lea-crun"]
