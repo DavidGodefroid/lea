@@ -299,6 +299,12 @@ const (
 	sshPath  = "/usr/bin/ssh"
 )
 
+// noConfigDir is the config dir of every pinned gh call: it never exists, and only root could
+// create it (/usr/local/share is root's, in the image and on a host). The agent's config dir
+// (GH_CONFIG_DIR, its to write) could send gh's requests to a server of its own
+// (http_unix_socket), run a pager or an alias.
+const noConfigDir = "/usr/local/share/lea/no-forge-config"
+
 // gitPins neutralise what in git's configuration would run a program or send the push elsewhere
 // during commit or push: hooks, fsmonitor, the SSH command, signing, pager, editor, askpass, and
 // every transport but https and ssh.
@@ -363,6 +369,9 @@ func Command(req Request, c Caller, g Grant) string {
 			}
 			script = prHeadCheck(req.Args[2], c.Branch, g.GitHub) + script
 		}
+		if script != "" {
+			script = ghIsolated() + script
+		}
 	case "glab":
 		if !gitlab {
 			return ""
@@ -402,6 +411,16 @@ const (
 	mkdirPath  = "/bin/mkdir"
 	cpPath     = "/bin/cp"
 )
+
+// ghIsolated is the script lines that run the rest of a pinned gh call with the token of the
+// agent's gh config (GH_TOKEN) and none of the rest of it (GH_CONFIG_DIR=noConfigDir): gh then
+// talks to the forge itself, whatever the agent wrote in its config. gh auth token reads the
+// token only (no request, no alias: auth is gh's own command).
+func ghIsolated() string {
+	return "GH_TOKEN=$(" + shellWords([]string{ghPath, "auth", "token", "--hostname", "github.com"}) + " 2>/dev/null) || GH_TOKEN=\n" +
+		`[ -n "$GH_TOKEN" ] || { ` + refuse("no GitHub token in gh's config: gh auth login") + "; }\n" +
+		"export GH_TOKEN GH_CONFIG_DIR=" + shellWords([]string{noConfigDir}) + "\n"
+}
 
 // prHeadCheck is the script lines that end the call unless the PR n names (a number or a head
 // branch) has its head on branch, in the repository gh (not a fork's branch of the same name: gh
