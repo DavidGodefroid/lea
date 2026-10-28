@@ -299,6 +299,12 @@ const (
 	sshPath  = "/usr/bin/ssh"
 )
 
+// noConfigDir is the config dir of every pinned gh call: it never exists, and only root could
+// create it (/usr/local/share is root's, in the image and on a host). The agent's config dir
+// (GH_CONFIG_DIR, its to write) could send gh's requests to a server of its own
+// (http_unix_socket), run a pager or an alias.
+const noConfigDir = "/usr/local/share/lea/no-forge-config"
+
 // gitPins neutralise what in git's configuration would run a program or send the push elsewhere
 // during commit or push: hooks, fsmonitor, the SSH command, signing, pager, editor, askpass, and
 // every transport but https and ssh.
@@ -319,6 +325,8 @@ var gitPins = []string{"core.hooksPath=/dev/null", "core.fsmonitor=false", "core
 // shell snapshot, and that would replace the call (README, grants: what they protect against).
 //
 //   - gh: the validated argv, pinned to the grant's repository with -R;
+//   - glab mr create|merge: calls on the GitLab project's API with curl, glab reading only the
+//     token (gitlabScript);
 //   - git commit: plumbing in the caller's worktree (write-tree, commit-tree, update-ref): no
 //     hook, filter, index refresh or signing runs, whatever the repository's config says;
 //   - git push: from a bare repository lea creates for the call (mktemp -d: random name, mode
@@ -363,21 +371,15 @@ func Command(req Request, c Caller, g Grant) string {
 			}
 			script = prHeadCheck(req.Args[2], c.Branch, g.GitHub) + script
 		}
+		if script != "" {
+			script = ghIsolated() + script
+		}
 	case "glab":
-		if !gitlab {
+		host, path, ok := gitlabPin(g.GitHub)
+		if !ok {
 			return ""
 		}
-		url := pinURL(g.GitHub)
-		script = shellWords(append(append([]string{glabPath}, req.Args...), "-R", url))
-		if req.Action == Merge && len(req.Args) > 2 {
-			if c.Branch == "" || !BranchName(c.Branch) || Protected(c.Branch) {
-				return ""
-			}
-			script = mrHeadCheck(req.Args[2], c.Branch, url) + script
-		}
-		if host, _, _ := gitlabPin(g.GitHub); script != "" {
-			script = glabIsolated(host) + script
-		}
+		script = gitlabScript(req, c, host, path)
 	case "git":
 		if !c.OwnWorktree || c.Worktree == "" {
 			return ""
@@ -402,6 +404,16 @@ const (
 	mkdirPath  = "/bin/mkdir"
 	cpPath     = "/bin/cp"
 )
+
+// ghIsolated is the script lines that run the rest of a pinned gh call with the token of the
+// agent's gh config (GH_TOKEN) and none of the rest of it (GH_CONFIG_DIR=noConfigDir): gh then
+// talks to the forge itself, whatever the agent wrote in its config. gh auth token reads the
+// token only (no request, no alias: auth is gh's own command).
+func ghIsolated() string {
+	return "GH_TOKEN=$(" + shellWords([]string{ghPath, "auth", "token", "--hostname", "github.com"}) + " 2>/dev/null) || GH_TOKEN=\n" +
+		`[ -n "$GH_TOKEN" ] || { ` + refuse("no GitHub token in gh's config: gh auth login") + "; }\n" +
+		"export GH_TOKEN GH_CONFIG_DIR=" + shellWords([]string{noConfigDir}) + "\n"
+}
 
 // prHeadCheck is the script lines that end the call unless the PR n names (a number or a head
 // branch) has its head on branch, in the repository gh (not a fork's branch of the same name: gh
@@ -444,31 +456,6 @@ func prCreateScript(args []string, wt, gh string) string {
 		refuse("the body file is not in the agent's worktree") + ";; esac\n" +
 		`[ -f /proc/self/fd/3 ] || { ` + refuse("the body file is not a plain file") + "; }\n" +
 		shellWords(append(argv, "-R", gh)) + " <&3"
-}
-
-// glabIsolated is the script lines that run the rest of a pinned glab call from / with the
-// token of the agent's glab config for host (GITLAB_TOKEN) and a config dir of its own (mktemp
-// -d, removed on exit): the agent's config (GLAB_CONFIG_DIR) and a repository's
-// .git/glab-cli/config.yml are its to write, and could send glab's requests to a server of its
-// own (api_host). glab config get reads the token only. Not against a hostile agent: it runs as
-// the same user and could rewrite the fresh config between the check and the merge.
-func glabIsolated(host string) string {
-	return "cd / || exit 1\nexport GLAB_CHECK_UPDATE=false GLAB_SEND_TELEMETRY=false\n" +
-		"GITLAB_TOKEN=$(" + shellWords([]string{glabPath, "config", "get", "token", "--host", host}) + " 2>/dev/null) || GITLAB_TOKEN=\n" +
-		`[ -n "$GITLAB_TOKEN" ] || { ` + refuse("no GitLab token for "+host+" in glab's config: glab auth login --hostname "+host) + "; }\n" +
-		"GLAB_CONFIG_DIR=$(" + shellWords([]string{mktempPath, "-d"}) + ") || exit 1\n" +
-		"trap " + shellWords([]string{rmPath + ` -rf -- "$GLAB_CONFIG_DIR"`}) + " EXIT\n" +
-		"export GITLAB_TOKEN GLAB_CONFIG_DIR\n"
-}
-
-// mrHeadCheck is prHeadCheck for glab: the MR n names (a number or a source branch) must come
-// from branch of the project url itself (not a fork's branch of the same name).
-func mrHeadCheck(n, branch, url string) string {
-	view := shellWords([]string{glabPath, "mr", "view", n, "-F", "json", "--jq",
-		`((.source_project_id == .target_project_id)|tostring) + " " + .source_branch`, "-R", url})
-	return "head=$(" + view + ") || exit 1\n" +
-		`if [ "$head" != ` + shellWords([]string{"true " + branch}) + " ]; then " +
-		refuse("MR "+n+" is not the agent's own branch "+branch) + "; fi\n"
 }
 
 // pins are lea's -c options for git.

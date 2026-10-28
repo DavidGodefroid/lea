@@ -449,6 +449,20 @@ team tools (`agents_*`, `msg_*`, `board_read`, `task_update`), ask you questions
 reminder to delegate. `/lea:control-tower off` gives the session its tools back.
 The skill's old name, `/lea:tower-control`, still works for now.
 
+Type `/lea:check` (or ask for a status, a "point", a "topo") for the state of the work in
+progress, in at most 10 lines: done since the last check, in progress, left, and what is blocked
+or yours to decide. A tower builds it from the board and the agents' reports, without doing any
+work; any other agent from its own task. Nothing new since the last check: one line.
+
+```
+✅ Done
+dev-1: login fix merged, CI green
+🔄 In progress
+dev-2: dark mode, tests being written
+⚠️ Blocked / to decide
+dev-2: palette, Catppuccin or Nord?
+```
+
 ### Grants: let every agent merge, close issues, stop finished agents
 
 Claude Code judges each action from its own conversation: "you may merge" told to a lead does
@@ -480,7 +494,9 @@ functions do not apply), with a fixed `PATH` and only `HOME`, `GH_CONFIG_DIR`, `
 Claude's own process has them.
 
 - gh runs as `/usr/bin/gh … -R github.com/<--github>`; every grant but stop-finished names
-  `--repo` and `--github` together.
+  `--repo` and `--github` together. It runs with the token of gh's config (`gh auth token`) and
+  none of the rest of that config, which the agent can write (it could send gh's requests to a
+  server of its own): an empty config dir no one but root can create.
 - A commit goes through plumbing in the agent's worktree (`write-tree`, `commit-tree`,
   `update-ref`): no hook, filter or signing runs. It commits the index as it is (`git add`
   first: no `-a`).
@@ -581,16 +597,19 @@ deny (no push to `main`, no force-push, no `--admin`). The calls covered:
   the agent's branch), and `git push origin --delete <own branch>`;
 - on GitLab: `glab mr create --source-branch <own branch> --title T [--description D]
   [--target-branch B] [--draft] [--remove-source-branch] [--yes]` and `glab mr merge <n>|<own
-  branch> [--squash|--rebase] [--remove-source-branch] [--yes]` (a numbered MR must come from the
-  agent's branch of the project itself, not a fork), glab run as `/usr/bin/glab … -R
-  https://HOST/PATH` from `/`, with the token of glab's config for HOST and a fresh config dir
-  of its own (the agent's config could send glab's requests elsewhere); pushes go to `https://HOST/PATH.git` with glab's
-  credential helper. A multi-line description is not covered (no file option): it takes the
-  usual path.
+  branch> [--squash] [--remove-source-branch] [--yes]` (`--rebase` is not covered). lea does not
+  run them with glab, whose config the agent can write (it could send glab's requests elsewhere):
+  glab only reads the token of its config for HOST, from `/`, and lea calls the project's API
+  (`https://HOST/api/v4`) with curl (no `.curlrc`, https only, no redirect, no proxy variable).
+  A merge first reads the MR: it must be open and come from the agent's branch of the project
+  itself, not a fork (by branch: the one open MR of that branch); the merge then names the head
+  commit it checked, so GitLab refuses it if the branch moved in between. Pushes go to
+  `https://HOST/PATH.git` with glab's credential helper. A multi-line description is not covered
+  (no file option): it takes the usual path.
 
 Branch protection on the forge (required reviews, required checks) stays the control that decides
-whether a merge goes through: delivery only removes the prompt (`glab mr merge` sets auto-merge
-by default: it merges once the pipeline passes).
+whether a merge goes through: delivery only removes the prompt (on GitLab, an MR whose pipeline is still
+running is set to merge once it passes, as `glab mr merge` does).
 
 `lea new --brief FILE` gives a new agent its first message; `--repo NAME` starts it in a
 directory of the projects directory; `--branch B` has it work in its own git worktree under

@@ -360,15 +360,15 @@ func glabMRCreate(args []string, c Caller) (Request, bool) {
 	return Request{Action: PRCreate, Target: "mr create " + src}, true
 }
 
-// glabMRMerge: glab mr merge <number>|<own branch> [--squash|--rebase] [--remove-source-branch]
-// [--yes], as ghMerge: the MR is named, its source must be the caller's branch (Command checks a
+// glabMRMerge: glab mr merge <number>|<own branch> [--squash] [--remove-source-branch] [--yes],
+// as ghMerge (--rebase, a rebase then a merge, is not covered): the MR is named, its source must be the caller's branch (Command checks a
 // numbered one), and --remove-source-branch only when it is named by that branch.
 func glabMRMerge(args []string, c Caller) (Request, bool) {
 	target := ""
 	method, del, own := false, false, false
 	for i, a := range args {
 		switch a {
-		case "--squash", "-s", "--rebase", "-r":
+		case "--squash", "-s":
 			if method {
 				return Request{}, false
 			}
