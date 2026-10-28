@@ -165,3 +165,33 @@ func TestDockerPauseAndResume(t *testing.T) {
 		t.Fatal("pause in a stopped container: no error")
 	}
 }
+
+// Unconfined lists the running agent containers of a projects directory (lea.role=session,
+// lea.projects) whose mount of the console's directory is missing or writable.
+func TestDockerConsolesUnconfined(t *testing.T) {
+	bin, log := fakeDocker(t, `case $1 in ps) printf 'c1\nc2\nc3\n' ;; inspect) printf '/lea-a false\n/lea-b \n/lea-c true\n' ;; esac`)
+	got, err := DockerConsoles{Bin: bin}.Unconfined(context.Background(), "/home/u/p", "/home/u/p/.locksql")
+	if err != nil || !reflect.DeepEqual(got, []string{"lea-b", "lea-c"}) {
+		t.Fatalf("got %q err=%v", got, err)
+	}
+	l := logged(t, log)
+	if !strings.Contains(l, "ps -q --filter label=lea.role=session --filter label=lea.projects=/home/u/p\n") ||
+		!strings.Contains(l, `inspect -f {{.Name}} {{range .Mounts}}{{if eq .Destination "/home/u/p/.locksql"}}{{.RW}}{{end}}{{end}} c1 c2 c3`) {
+		t.Fatalf("log=%q", l)
+	}
+	// No agent: nothing to inspect.
+	bin, log = fakeDocker(t, `:`)
+	if got, err := (DockerConsoles{Bin: bin}).Unconfined(context.Background(), "/home/u/p", "/home/u/p/.locksql"); err != nil || got != nil {
+		t.Fatalf("no agent: %q %v", got, err)
+	}
+	if strings.Contains(logged(t, log), "inspect") {
+		t.Fatalf("inspected nothing: %q", logged(t, log))
+	}
+	// A failure is an error, never "all confined".
+	for _, body := range []string{`exit 1`, `case $1 in ps) echo c1 ;; inspect) exit 1 ;; esac`, `case $1 in ps) echo c1 ;; esac`} {
+		bad, _ := fakeDocker(t, body)
+		if _, err := (DockerConsoles{Bin: bad}).Unconfined(context.Background(), "/home/u/p", "/home/u/p/.locksql"); err == nil {
+			t.Fatalf("%q accepted", body)
+		}
+	}
+}

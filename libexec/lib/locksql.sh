@@ -27,6 +27,23 @@ lea_locksql() {
     if [ -L "$_lk_c" ] || [ ! -d "$_lk_c" ]; then
       lea_die "$_lk_c is not a directory (a symbolic link or a file): the locksql console only writes there; remove it and retry"
     fi
+    # A symbolic link (or a fifo, a device) left in .locksql by an agent, before the agents got it
+    # read-only, would take the console's writes out of it: only regular files and directories.
+    _lk_x=$(find "$_lk_c" -mindepth 1 ! -type f ! -type d -print -quit) || lea_die "could not read $_lk_c"
+    [ -z "$_lk_x" ] || lea_die "$_lk_x is not a regular file or directory: the locksql console writes in $_lk_c; remove it and retry"
+    # An agent started before LEA_LOCKSQL=1, or before lea mounted .locksql read-only in it
+    # (locksqlDir in internal/launcher/container.go), can still swap it for a symbolic link: the
+    # console starts only when every running agent of the projects directory has that mount.
+    _lk_r=$(lea_abspath "$_lk_p") || lea_die "could not resolve $_lk_p"
+    _lk_ids=$(docker ps --filter label=lea.role=session --filter "label=lea.projects=$_lk_r" --format '{{.ID}}') ||
+      lea_die "could not list the lea agents (docker ps): the locksql console checks them first"
+    if [ -n "$_lk_ids" ]; then
+      # shellcheck disable=SC2086 # container IDs
+      _lk_m=$(docker inspect -f "{{.Name}} {{range .Mounts}}{{if eq .Destination \"$_lk_r/.locksql\"}}{{.RW}}{{end}}{{end}}" $_lk_ids) ||
+        lea_die "could not inspect the lea agents (docker inspect): the locksql console checks them first"
+      _lk_bad=$(printf '%s\n' "$_lk_m" | awk '$2 != "false" { sub("^/", "", $1); printf "%s%s", s, $1; s = " " }')
+      [ -z "$_lk_bad" ] || lea_die "$_lk_bad running without $_lk_r/.locksql read-only (started before locksql or this lea): restart the agents (lea stop, then lea; they resume) and retry"
+    fi
     # host.docker.internal is this machine, as the profile wizard offers it.
     set -- --name locksql-console --add-host=host.docker.internal:host-gateway -v "$_lk_p:$_lk_p:ro" \
       -v "$_lk_c:$_lk_c" -v locksql-run:/run/locksql "$LEA_LOCKSQL_IMAGE" console --project "$_lk_p" "$@"

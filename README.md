@@ -272,6 +272,9 @@ A profile that reads its login from HashiCorp Vault gets the vault CLI in the co
 address (`LEA_LOCKSQL_VAULT_ADDR`) and a `vault login` as the console account.
 The agents see the console's own directory, `.locksql` in your projects directory (its profiles
 and PII rules), read-only: edit it from the host, not through an agent.
+The console does not open while an agent started without that read-only mount (before locksql or
+this lea) still runs, nor while `.locksql` holds anything but regular files and directories:
+restart the agents (`lea stop`, then `lea`), remove the symbolic link it names, and retry.
 
 `lea init` also links `locksql` next to `lea`: run `locksql` (or `lea locksql`) in a terminal you
 keep in view to open the console, then ask an agent about your data. `locksql vault login` logs the
