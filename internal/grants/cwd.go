@@ -40,12 +40,28 @@ func dirProtected(cmd, cwd string) bool {
 	if strings.HasPrefix(cwd, "/") && !strings.ContainsFunc(cwd, func(r rune) bool { return r < 0x20 || r == 0x7f }) {
 		dirs, unknown = append(dirs, path.Clean(cwd)), false
 	}
-	s := scan{dotglob: strings.Contains(cmd, "dotglob") || strings.Contains(cmd, "GLOBIGNORE")}
-	return s.dirs(cmd, dirs, unknown, 0)
+	s := scan{loose: looseRe.MatchString(unquote.Replace(cmd))}
+	if s.dirs(cmd, dirs, unknown, 0) {
+		return true
+	}
+	// With extglob on (a shell snapshot may turn it on), @(…), !(…) and the like match what a
+	// star does.
+	if ext := extglobRe.ReplaceAllString(cmd, "*"); ext != cmd {
+		return s.dirs(ext, dirs, unknown, 0)
+	}
+	return false
 }
 
-// scan holds what holds for the whole command: whether a glob may match a dot file.
-type scan struct{ dotglob bool }
+// looseRe: a command that may change how the shell globs (shopt, zsh's options and qualifiers,
+// GLOBIGNORE), however spelled: its globs may match dot files and ignore case.
+var looseRe = regexp.MustCompile(`shopt|setopt|unsetopt|emulate|GLOBIGNORE|(?i:glob)|[^\s$<>|&;(]\(`)
+
+// extglobRe: an extended glob's group.
+var extglobRe = regexp.MustCompile(`[?*+@!]\([^()]*\)`)
+
+// scan holds what holds for the whole command: whether its globs may match more than bash's
+// defaults let them (loose).
+type scan struct{ loose bool }
 
 func (s scan) dirs(cmd string, dirs []string, unknown bool, depth int) bool {
 	if depth > maxDepth {
@@ -272,14 +288,17 @@ func (s scan) compMatch(g string, c comp) bool {
 	if c.re == nil {
 		return true
 	}
+	if s.loose { // nocaseglob: every component of the glob, its literal ones too
+		g = strings.ToLower(g)
+	}
 	if !strings.ContainsAny(g, "*?[]{}") {
 		return c.re.MatchString(g)
 	}
-	if strings.ContainsAny(g, "{}") { // a brace may spell anything: as wide as a star
-		g = map[bool]string{true: ".*", false: "*"}[strings.HasPrefix(g, ".")]
+	if strings.ContainsAny(g, "{}") {
+		return true // a brace may spell anything, a leading dot included
 	}
-	// Without dotglob, the shell's globs leave names that start with a dot to a literal dot.
-	if !s.dotglob && !strings.HasPrefix(g, ".") && strings.HasPrefix(c.names[0], ".") {
+	// Bash's globs leave names that start with a dot to a literal dot.
+	if !s.loose && !strings.HasPrefix(g, ".") && strings.HasPrefix(c.names[0], ".") {
 		return false
 	}
 	for _, n := range c.names {
