@@ -12,8 +12,9 @@ const (
 // request), and curl does the rest on the GitLab API. glab's config (GLAB_CONFIG_DIR, a
 // repository's .git/glab-cli/config.yml) is the agent's to write: its api_host, proxy or TLS
 // settings would send glab's requests to a server of its own, so glab never talks to the forge.
-// curl -q reads no .curlrc, env -i leaves no proxy or CA variable, --proto =https and no
-// redirect keep it on https://host. "" when the call cannot be pinned.
+// curl -q reads no .curlrc, env -i leaves no CA variable, -x is lea's proxy (Caller.Proxy:
+// CONNECT, TLS end to end), --proto =https and no redirect keep it on https://host. "" when the
+// call cannot be pinned.
 func gitlabScript(req Request, c Caller, host, path string) string {
 	if len(req.Args) < 2 || c.Branch == "" || !BranchName(c.Branch) || Protected(c.Branch) {
 		return ""
@@ -26,7 +27,7 @@ func gitlabScript(req Request, c Caller, host, path string) string {
 		"export HOME=" + shellWords([]string{noConfigDir}) + "\n" +
 		"api=" + api + "\n" +
 		// lea_api URL-LAST-ARGS...: the API's answer on stdout; on an error, it on stderr too.
-		"lea_api() { r=$(" + shellWords([]string{curlPath, "-q", "--proto", "=https", "--tlsv1.2", "--noproxy", "*", "--max-time", "60",
+		"lea_api() { r=$(" + shellWords([]string{curlPath, "-q", "--proto", "=https", "--tlsv1.2", "-x", c.Proxy, "--max-time", "60",
 		"-sS", "--fail-with-body"}) + ` -H "PRIVATE-TOKEN: $t" "$@") || { printf '%s\n' "$r" >&2; return 1; }; printf '%s\n' "$r"; }` + "\n"
 	switch req.Action {
 	case PRCreate:

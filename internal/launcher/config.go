@@ -260,12 +260,19 @@ func (c *Config) resolve(root string) error {
 // docker size for memory plus swap (or -1, swap without limit), a number of processes and threads.
 var (
 	memoryPercent = regexp.MustCompile(`^([1-9][0-9]?|100)%$`)
+	cpuCount      = regexp.MustCompile(`^([1-9][0-9]{0,3}(\.[0-9]{1,2})?|0\.[0-9]{1,2})$`)
 	dockerSize    = regexp.MustCompile(`^[1-9][0-9]{0,15}[bkmg]?$`)
 )
 
-// resolveLimits checks LEA_MEMORY (default 50%, 0: no limit), LEA_MEMORY_SWAP (empty: as
-// LEA_MEMORY, no swap) and LEA_PIDS_LIMIT (default 16384, 0: no limit).
+// resolveLimits checks LEA_CPUS (default 75%, 0: no limit), LEA_MEMORY (default 50%, 0: no
+// limit), LEA_MEMORY_SWAP (empty: as LEA_MEMORY, no swap) and LEA_PIDS_LIMIT (default 16384, 0: no
+// limit).
 func (c *Config) resolveLimits() error {
+	cpus := nonEmpty(c.Get("LEA_CPUS"), "75%")
+	if cpus != "0" && !memoryPercent.MatchString(cpus) && !cpuCount.MatchString(cpus) {
+		return fmt.Errorf("LEA_CPUS must be a share of Docker's CPUs (1%%-100%%), a number of CPUs (8, 1.5) or 0 (no limit), not '%s'", cpus)
+	}
+	c.final["LEA_CPUS"] = cpus
 	mem := nonEmpty(c.Get("LEA_MEMORY"), "50%")
 	if mem != "0" && !memoryPercent.MatchString(mem) && !dockerSize.MatchString(mem) {
 		return fmt.Errorf("LEA_MEMORY must be a share of Docker's memory (1%%-100%%), a size (8g, 512m) or 0 (no limit), not '%s'", mem)

@@ -772,17 +772,24 @@ y
   [[ "$output" == *"docker [build] [-t] [locksql:0.8.0] [--build-arg] [ALLOWED_UIDS=$(id -u)] [$LEA_LOCKSQL_REF]"* ]]
 }
 
-@test "init links locksql next to lea, takes over an older lea's, keeps a host locksql" {
+@test "init links no locksql, removes the one an older lea linked, keeps a host locksql" {
   lea_init </dev/null 2>/dev/null
-  [ "$(readlink "$LEA_BIN_DIR/locksql")" = "$LEA_ROOT/bin/locksql" ]
+  [ ! -e "$LEA_BIN_DIR/locksql" ] && [ ! -L "$LEA_BIN_DIR/locksql" ]
   old="$BATS_TEST_TMPDIR/old/bin"; mkdir -p "$old"; : >"$old/lea"; : >"$old/locksql"
   ln -sfn "$old/locksql" "$LEA_BIN_DIR/locksql"
   lea_init </dev/null 2>/dev/null
-  [ "$(readlink "$LEA_BIN_DIR/locksql")" = "$LEA_ROOT/bin/locksql" ]
-  rm "$LEA_BIN_DIR/locksql"; echo host >"$LEA_BIN_DIR/locksql"
-  run lea_init </dev/null
+  [ ! -e "$LEA_BIN_DIR/locksql" ] && [ ! -L "$LEA_BIN_DIR/locksql" ]
+  # A link into an installation lea update has since pruned dangles: removed too.
+  ln -sfn "$BATS_TEST_TMPDIR/gone/v0.1.0/bin/locksql" "$LEA_BIN_DIR/locksql"
+  lea_init </dev/null 2>/dev/null
+  [ ! -L "$LEA_BIN_DIR/locksql" ]
+  echo host >"$LEA_BIN_DIR/locksql"
+  lea_init </dev/null 2>/dev/null
   [ "$(cat "$LEA_BIN_DIR/locksql")" = host ]
-  [[ "$output" == *"$LEA_BIN_DIR/locksql exists and is not lea's locksql: left as is"* ]]
+  other="$BATS_TEST_TMPDIR/other"; mkdir -p "$other"; : >"$other/locksql"
+  rm "$LEA_BIN_DIR/locksql"; ln -s "$other/locksql" "$LEA_BIN_DIR/locksql"
+  lea_init </dev/null 2>/dev/null
+  [ "$(readlink "$LEA_BIN_DIR/locksql")" = "$other/locksql" ]
 }
 
 @test "LEA_LOCKSQL=0 links no locksql" {

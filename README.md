@@ -278,10 +278,14 @@ this lea) still runs, nor while `.locksql` holds anything but directories and re
 single name (no symbolic or hard link):
 restart the agents (`lea stop`, then `lea`), remove the entry it names, and retry.
 
-`lea init` also links `locksql` next to `lea`: run `locksql` (or `lea locksql`) in a terminal you
-keep in view to open the console, then ask an agent about your data. `locksql vault login` logs the
-console account in to Vault again when its token expires. A `locksql` already installed on the
-host keeps its name; `lea locksql` then opens lea's console.
+Run `lea locksql` in a terminal you keep in view to open the console, then ask an agent about your
+data. `lea locksql vault login` logs the console account in to Vault again when its token expires.
+lea itself puts no `locksql` command on the host (it removes the link older releases made): the
+host's `locksql` is locksql's own launcher
+([locksql's docs/launcher.md](https://github.com/DavidGodefroid/locksql/blob/main/docs/launcher.md)),
+which runs every locksql command in Docker. When it is installed, `lea locksql` hands the console
+to it, with lea's console image, the projects directory read-only but for `.locksql`, and the same
+confinement; without it, lea runs that container itself.
 
 The console holds the credentials, so its container is confined (in the deck too): no capability,
 no privilege gain (`no-new-privileges`), a read-only root with a small `/tmp`, at most 256
@@ -491,7 +495,9 @@ anything else takes the usual path. Revocation and expiry apply on the next call
 An allowed shell call never runs the agent's text: lea runs the command it parsed, rebuilt word by
 word, in a fresh `/bin/sh` under `env -i` (so the agent's variables, aliases and shell
 functions do not apply), with a fixed `PATH` and only `HOME`, `GH_CONFIG_DIR`, `SSH_AUTH_SOCK` and `LANG` as
-Claude's own process has them.
+Claude's own process has them. It reaches the forge through lea's proxy, which lea names itself
+(`HTTPS_PROXY` for gh, `http.proxy` for git, `http://lea-proxy:3128`), never through a proxy the
+agent's environment names; CONNECT keeps TLS end to end.
 
 - gh runs as `/usr/bin/gh … -R github.com/<--github>`; every grant but stop-finished names
   `--repo` and `--github` together. It runs with the token of gh's config (`gh auth token`) and
@@ -686,7 +692,7 @@ read-only. The screen runs in the deck on the host: agents cannot open or drive 
 | `LEA_INTERNAL_HOSTS` | none | private hosts the proxy may reach (format in `config/internal-hosts`) |
 | `LEA_EGRESS_ALLOW` | empty (lea's default list) | the only web domains agents may reach, comma separated (subdomains included); `default` stands for lea's list, `*` opens the web |
 | `LEA_NESTED_NETWORKS` | empty | networks your compose files expect, created at start |
-| `LEA_MEMORY`, `LEA_MEMORY_SWAP`, `LEA_PIDS_LIMIT` | `50%`, no swap, `16384` | the lea container's limits: memory (a share of Docker's, a size such as `16g`, or `0`), memory plus swap (`-1`: no limit), processes and threads (`0`: no limit) |
+| `LEA_CPUS`, `LEA_MEMORY`, `LEA_MEMORY_SWAP`, `LEA_PIDS_LIMIT` | `75%`, `50%`, no swap, `16384` | the lea container's limits: CPUs (a share of Docker's, at least 2, a number such as `8`, or `0`), memory (a share of Docker's, a size such as `16g`, or `0`), memory plus swap (`-1`: no limit), processes and threads (`0`: no limit); the next `lea` applies them to a running container |
 | `LEA_APPROVALS`, `LEA_APPROVAL_TIMEOUT` | `deck`, `60` | who answers permission requests |
 | `LEA_PROVIDER`, `LEA_MODEL` | `claude`, empty | the default provider and model of a new agent ([providers](#other-providers-codex-ollama-vllm)) |
 | `LEA_PROVIDERS` | `~/.config/lea/providers` | your OpenAI-compatible endpoints and their key files |

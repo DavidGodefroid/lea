@@ -142,7 +142,17 @@ type Caller struct {
 	// Env is the environment an allowed call runs with, and nothing else (env -i): the variables
 	// of SafeEnv, as the hook's own process (Claude's, not the agent's shell) has them.
 	Env map[string]string
+	// Proxy is the proxy every pinned call reaches the forge through, as lea set it up for the
+	// container (LeaProxy): the container's network is internal, and env -i drops the agent's
+	// HTTPS_PROXY, which lea would not vouch for anyway.
+	Proxy string
 }
+
+// LeaProxy is lea-proxy's forward proxy, as the containers of a lea reach it (the network alias
+// lea gives it on their internal network). CONNECT keeps TLS end to end.
+const LeaProxy = "http://lea-proxy:3128"
+
+var validProxy = regexp.MustCompile(`^http://[A-Za-z0-9.-]{1,253}:[0-9]{1,5}$`)
 
 // SafeEnv are the variables an allowed git or gh call keeps, each checked by safeEnvValue.
 // Everything else (GIT_*, GH_REPO, GH_HOST, tokens, LD_*, BASH_ENV…) is dropped.
@@ -307,7 +317,7 @@ const noConfigDir = "/usr/local/share/lea/no-forge-config"
 
 // gitPins neutralise what in git's configuration would run a program or send the push elsewhere
 // during commit or push: hooks, fsmonitor, the SSH command, signing, pager, editor, askpass, and
-// every transport but https and ssh.
+// every transport but https and ssh. http.proxy is lea's (pins).
 var gitPins = []string{"core.hooksPath=/dev/null", "core.fsmonitor=false", "core.sshCommand=" + sshPath,
 	"commit.gpgSign=false", "core.pager=cat", "core.editor=true", "core.askPass=/bin/false",
 	"push.recurseSubmodules=no", "protocol.allow=never", "protocol.https.allow=always", "protocol.ssh.allow=always",
@@ -315,7 +325,7 @@ var gitPins = []string{"core.hooksPath=/dev/null", "core.fsmonitor=false", "core
 	// and gh's.
 	"credential.helper=", "credential.helper=store --file=/lea/state/git/credentials",
 	"credential.helper=!/usr/bin/gh auth git-credential", "credential.helper=!/usr/bin/glab auth git-credential",
-	"http.sslVerify=true", "http.proxy=", "http.extraHeader=", "http.cookieFile=", "http.curloptResolve=",
+	"http.sslVerify=true", "http.extraHeader=", "http.cookieFile=", "http.curloptResolve=",
 	"http.sslCAInfo=/etc/ssl/certs/ca-certificates.crt", "http.sslCAPath=/etc/ssl/certs"}
 
 // Command is the command an allowed Bash call runs instead of the agent's. Claude's shell only
@@ -338,7 +348,7 @@ var gitPins = []string{"core.hooksPath=/dev/null", "core.fsmonitor=false", "core
 //
 // Every word lea builds is single-quoted. "" when the call cannot be pinned.
 func Command(req Request, c Caller, g Grant) string {
-	if !ValidPin(g.GitHub) {
+	if !ValidPin(g.GitHub) || !validProxy.MatchString(c.Proxy) {
 		return ""
 	}
 	_, _, gitlab := gitlabPin(g.GitHub)
@@ -346,7 +356,7 @@ func Command(req Request, c Caller, g Grant) string {
 	// include.path, helpers); /etc/gitconfig is the image's.
 	// GIT_CONFIG_NOSYSTEM: lea's credential store comes in as a pin (gitPins), not from it.
 	env := []string{envPath, "-i", "PATH=/usr/bin:/bin", "GIT_CONFIG_GLOBAL=/dev/null", "GIT_CONFIG_NOSYSTEM=1", "GIT_TERMINAL_PROMPT=0",
-		"GIT_EDITOR=true", "GH_PROMPT_DISABLED=1"}
+		"GIT_EDITOR=true", "GH_PROMPT_DISABLED=1", "HTTPS_PROXY=" + c.Proxy, "https_proxy=" + c.Proxy}
 	for _, k := range SafeEnv {
 		if v, ok := c.Env[k]; ok {
 			if !safeEnvValue.MatchString(v) || (k != "LANG" && !strings.HasPrefix(v, "/")) {
@@ -386,9 +396,9 @@ func Command(req Request, c Caller, g Grant) string {
 		}
 		switch req.Args[0] {
 		case "commit":
-			script = commitScript(req.Args[1:], c.Worktree)
+			script = commitScript(req.Args[1:], c.Worktree, c.Proxy)
 		case "push":
-			script = pushScript(req.Args, c.Worktree, g.GitHub)
+			script = pushScript(req.Args, c.Worktree, g.GitHub, c.Proxy)
 		}
 	}
 	if script == "" {
@@ -458,18 +468,18 @@ func prCreateScript(args []string, wt, gh string) string {
 		shellWords(append(argv, "-R", gh)) + " <&3"
 }
 
-// pins are lea's -c options for git.
-func pins() []string {
+// pins are lea's -c options for git, proxy (validProxy) its http.proxy.
+func pins(proxy string) []string {
 	var o []string
-	for _, p := range gitPins {
+	for _, p := range append(gitPins, "http.proxy="+proxy) {
 		o = append(o, "-c", p)
 	}
 	return o
 }
 
 // gitIn is git in dir with lea's pins.
-func gitIn(dir string) []string {
-	return append([]string{gitPath, "-C", dir}, pins()...)
+func gitIn(dir, proxy string) []string {
+	return append([]string{gitPath, "-C", dir}, pins(proxy)...)
 }
 
 // refuse is the script line that ends the call with lea's reason.
@@ -488,7 +498,7 @@ func configGuard(wt string) string {
 
 // commitScript commits the index with the messages of args (-m/--message; -q/--quiet) through
 // plumbing.
-func commitScript(args []string, wt string) string {
+func commitScript(args []string, wt, proxy string) string {
 	var msgs []string
 	for i := 0; i < len(args); i++ {
 		switch args[i] {
@@ -506,11 +516,11 @@ func commitScript(args []string, wt string) string {
 	if len(msgs) == 0 {
 		return ""
 	}
-	git := shellWords(gitIn(wt))
+	git := shellWords(gitIn(wt, proxy))
 	// write-tree runs on a copy of the index against an empty work tree: writing the index back
 	// re-checks racily clean entries against the work tree, through the clean filters.
 	isolated := shellWords([]string{envPath}) + ` GIT_INDEX_FILE="$tmp/index" ` + shellWords([]string{gitPath, "--git-dir"}) +
-		` "$gd" --work-tree "$tmp/w" ` + shellWords(pins())
+		` "$gd" --work-tree "$tmp/w" ` + shellWords(pins(proxy))
 	return configGuard(wt) +
 		"gd=$(" + git + " rev-parse --absolute-git-dir) || exit 1\n" +
 		"tmp=$(" + shellWords([]string{mktempPath, "-d"}) + ") || exit 1\n" +
@@ -525,13 +535,13 @@ func commitScript(args []string, wt string) string {
 
 // pushScript pushes the caller's branch (or deletes it) from a bare repository lea creates for
 // the call (pushArgs gives the URL and the ref).
-func pushScript(args []string, wt, gh string) string {
+func pushScript(args []string, wt, gh, proxy string) string {
 	pa := pushArgs(args, gh)
 	if pa == nil {
 		return ""
 	}
-	git := shellWords(gitIn(wt))
-	bare := shellWords([]string{gitPath, "--git-dir"}) + ` "$tmp" ` + shellWords(pins())
+	git := shellWords(gitIn(wt, proxy))
+	bare := shellWords([]string{gitPath, "--git-dir"}) + ` "$tmp" ` + shellWords(pins(proxy))
 	s := configGuard(wt) +
 		"common=$(" + git + " rev-parse --path-format=absolute --git-common-dir) || exit 1\n" +
 		"tmp=$(" + shellWords([]string{mktempPath, "-d"}) + ") || exit 1\n" +
