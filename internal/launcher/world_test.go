@@ -142,7 +142,9 @@ func newWorld(t *testing.T, root string) *world {
 		"LEA_CLIPBOARD": "0", "LEA_LOCK_TIMEOUT": "2", "LC_ALL": "C",
 		// Docker's memory (docker system info): 32 GiB, so the lea container gets a 16 GiB limit.
 		"FAKE_DOCKER_OUT_SYSTEM_INFO": "34359738368",
-		"PATH":                        repoRoot(t) + "/tests/fakes:" + dir + "/bin:/usr/local/bin:/usr/bin:/bin",
+		// Docker's CPUs: 16, so the lea container gets 12.
+		"FAKE_DOCKER_OUT_SYSTEM_INFO_AT____NCPU__": "16",
+		"PATH": repoRoot(t) + "/tests/fakes:" + dir + "/bin:/usr/local/bin:/usr/bin:/bin",
 	}
 	// What a daemon started with the default provider settings records.
 	write(w.data+"/lea/host/daemon.providers", DaemonProvidersStamp(stampMap{"LEA_PROVIDER": "claude",

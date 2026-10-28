@@ -218,6 +218,7 @@ func runDaemon(stderr io.Writer) int {
 			return 1
 		}
 		proxyToken = func(container, agent string) string { return lockhttp.Token(key, container, agent) }
+		d.SetGrantProxy(lockHTTPGrantProxy(key))
 		go lockHTTPSources(ctx, st, d, reg, filepath.Dir(host), nonEmptyEnv("LEA_PREFIX", "lea"))
 	}
 	// Same pattern for the LockHTTP switch: the launcher restarts a daemon started with the other.

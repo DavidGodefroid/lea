@@ -16,46 +16,42 @@ import (
 	"github.com/DavidGodefroid/lea/internal/grants"
 )
 
-const deliveryUse = "usage: lea delivery on [--yes DIGEST]|off|status"
+const deliveryUse = "usage: lea delivery on [--yes DIGEST] [--gitlab HOST]...|off|status"
 
 // runDelivery is the core form of lea delivery (lea delivery --container NAME --projects DIR
-// on [--yes DIGEST]|off|status), issue #92: the launcher names the container and the projects directory. on
-// reads, on the host and at that moment, the origin of each repository of DIR, and records
-// standing grants (no expiry) so every agent of the lea pushes its own branch, opens and merges
-// its PR there without a prompt; off revokes them. The host API only: no agent turns it on.
+// on [--yes DIGEST] [--gitlab HOST]...|off|status), issue #92: the launcher names the container and the
+// projects directory. on reads, on the host and at that moment, the origin of each repository of
+// DIR, and records standing grants (no expiry) so every agent of the lea pushes its own branch,
+// opens and merges its PR (GitHub) or MR (GitLab) there without a prompt; off revokes them. The
+// host API only: no agent turns it on. GitLab is gitlab.com, each --gitlab HOST, and the hosts
+// of the lea's GitLab pins already recorded.
 func runDelivery(args []string, stdout, stderr io.Writer) int {
 	fail := func(err error) int { fmt.Fprintln(stderr, "lea:", clean(err.Error(), false)); return 1 }
-	yes := len(args) == 7 && args[4] == "on" && args[5] == "--yes" && digestRe.MatchString(args[6])
-	if (len(args) != 5 && !yes) || args[0] != "--container" || args[2] != "--projects" || !filepath.IsAbs(args[3]) {
+	if len(args) < 5 || args[0] != "--container" || args[2] != "--projects" || !filepath.IsAbs(args[3]) {
 		fmt.Fprintln(stderr, deliveryUse)
 		return 2
 	}
 	container, proj, verb := args[1], args[3], args[4]
+	yes, confirmed := false, ""
+	gitlab := map[string]bool{"gitlab.com": true}
+	for i := 5; i < len(args); i++ {
+		switch {
+		case verb == "on" && args[i] == "--yes" && i+1 < len(args) && digestRe.MatchString(args[i+1]) && !yes:
+			yes, confirmed = true, args[i+1]
+			i++
+		case verb == "on" && args[i] == "--gitlab" && i+1 < len(args) && gitlabHostRe.MatchString(strings.ToLower(args[i+1])):
+			gitlab[strings.ToLower(args[i+1])] = true
+			i++
+		default:
+			fmt.Fprintln(stderr, deliveryUse)
+			return 2
+		}
+	}
 	switch verb {
 	case "on":
 		ents, err := os.ReadDir(proj)
 		if err != nil {
 			return fail(err)
-		}
-		type repo struct {
-			Repo   string `json:"repo"`
-			GitHub string `json:"github"`
-		}
-		repos := []repo{}
-		var skipped []string
-		for _, e := range ents {
-			if strings.HasPrefix(e.Name(), ".") || !e.IsDir() {
-				continue
-			}
-			url := repoOrigin(filepath.Join(proj, e.Name()))
-			switch gh := originGitHub(url); {
-			case url == "":
-				skipped = append(skipped, e.Name()+"  skipped: no origin")
-			case gh == "":
-				skipped = append(skipped, e.Name()+"  skipped: origin is not on github.com")
-			default:
-				repos = append(repos, repo{e.Name(), gh})
-			}
 		}
 		// An agent can write a repository's .git/config (or add a repository): a pin is recorded
 		// only once the user has seen it. Without --yes, on applies only when every pin is the
@@ -67,18 +63,45 @@ func runDelivery(args []string, stdout, stderr io.Writer) int {
 		}
 		was := map[string]string{}
 		for _, g := range cur.Grants { // newest first
-			if _, seen := was[g.Repo]; !seen && g.Container == container && g.IsStanding() {
+			if g.Container != container || !g.IsStanding() {
+				continue
+			}
+			if _, seen := was[g.Repo]; !seen {
 				was[g.Repo] = g.GitHub
+			}
+			if h, ok := strings.CutPrefix(g.GitHub, "gitlab:"); ok {
+				h, _, _ = strings.Cut(h, "/")
+				gitlab[h] = true
+			}
+		}
+		type repo struct {
+			Repo string `json:"repo"`
+			Pin  string `json:"github"`
+		}
+		repos := []repo{}
+		var skipped []string
+		for _, e := range ents {
+			if strings.HasPrefix(e.Name(), ".") || !e.IsDir() {
+				continue
+			}
+			url := repoOrigin(filepath.Join(proj, e.Name()))
+			switch pin := originPin(url, gitlab); {
+			case url == "":
+				skipped = append(skipped, e.Name()+"  skipped: no origin")
+			case pin == "":
+				skipped = append(skipped, e.Name()+"  skipped: origin is not on github.com, gitlab.com or a --gitlab host")
+			default:
+				repos = append(repos, repo{e.Name(), pin})
 			}
 		}
 		unseen := false
 		for _, x := range repos {
 			switch w, ok := was[x.Repo]; {
 			case !ok:
-				fmt.Fprintf(stderr, "lea: %s: new pin github.com/%s\n", oneLine(x.Repo, 100), oneLine(x.GitHub, 160))
+				fmt.Fprintf(stderr, "lea: %s: new pin %s\n", oneLine(x.Repo, 100), oneLine(x.Pin, 200))
 				unseen = true
-			case w != "github.com/"+x.GitHub:
-				fmt.Fprintf(stderr, "lea: %s: origin changed from %s to github.com/%s\n", oneLine(x.Repo, 100), oneLine(w, 160), oneLine(x.GitHub, 160))
+			case w != x.Pin:
+				fmt.Fprintf(stderr, "lea: %s: origin changed from %s to %s\n", oneLine(x.Repo, 100), oneLine(w, 200), oneLine(x.Pin, 200))
 				unseen = true
 			}
 		}
@@ -86,10 +109,10 @@ func runDelivery(args []string, stdout, stderr io.Writer) int {
 		// rewrote an origin or added a repository between the two commands) do not match it.
 		sum := sha256.New()
 		for _, x := range repos {
-			fmt.Fprintf(sum, "%s\x00%s\n", x.Repo, x.GitHub)
+			fmt.Fprintf(sum, "%s\x00%s\n", x.Repo, x.Pin)
 		}
 		digest := hex.EncodeToString(sum.Sum(nil))[:16]
-		if yes && args[6] != digest {
+		if yes && confirmed != digest {
 			fmt.Fprintln(stderr, "lea: nothing recorded: the pins changed since they were listed; run lea delivery on again and check them")
 			return 1
 		}
@@ -106,7 +129,7 @@ func runDelivery(args []string, stdout, stderr io.Writer) int {
 		}
 		fmt.Fprintf(stdout, "delivery is on for %s: its agents push their own branch, open and merge their PR without asking\n", oneLine(container, 64))
 		for _, x := range repos {
-			fmt.Fprintf(stdout, "  %s  github.com/%s\n", oneLine(x.Repo, 100), oneLine(x.GitHub, 160))
+			fmt.Fprintf(stdout, "  %s  %s\n", oneLine(x.Repo, 100), oneLine(x.Pin, 200))
 		}
 		for _, s := range skipped {
 			fmt.Fprintf(stdout, "  %s\n", oneLine(s, 200))
@@ -130,7 +153,7 @@ func runDelivery(args []string, stdout, stderr io.Writer) int {
 		var on []string
 		for _, g := range r.Grants {
 			if g.Container == container && g.IsStanding() && g.Active(r.Now) && g.Action == grants.CommitIdentity {
-				on = append(on, oneLine(g.Repo, 100)+" ("+oneLine(g.GitHub, 160)+")")
+				on = append(on, oneLine(g.Repo, 100)+" ("+oneLine(g.GitHub, 200)+")")
 			}
 		}
 		if len(on) == 0 {
@@ -145,6 +168,31 @@ func runDelivery(args []string, stdout, stderr io.Writer) int {
 }
 
 var digestRe = regexp.MustCompile(`^[0-9a-f]{16}$`)
+
+// gitlabHostRe: a GitLab host name (no port: pushes and glab go over https on 443).
+var gitlabHostRe = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]{0,62}[a-z0-9])?(\.[a-z0-9]([a-z0-9-]{0,62}[a-z0-9])?)+$`)
+
+// gitlabOriginRe: an origin URL over https or ssh, HOST and PROJECT/PATH.
+var gitlabOriginRe = regexp.MustCompile(`^(?:https://(?:[A-Za-z0-9._-]+@)?([A-Za-z0-9.-]+)/|git@([A-Za-z0-9.-]+):|ssh://git@([A-Za-z0-9.-]+)/)` +
+	`([A-Za-z0-9_][A-Za-z0-9._/-]{0,1000}?)(?:\.git)?/?$`)
+
+// originPin is the forge pin of an origin URL: github.com/OWNER/NAME, gitlab:HOST/PATH when its
+// host is one of gitlab, or "".
+func originPin(url string, gitlab map[string]bool) string {
+	if gh := originGitHub(url); gh != "" {
+		return "github.com/" + gh
+	}
+	m := gitlabOriginRe.FindStringSubmatch(url)
+	if m == nil {
+		return ""
+	}
+	host := strings.ToLower(m[1] + m[2] + m[3])
+	pin := "gitlab:" + host + "/" + m[4]
+	if !gitlab[host] || !grants.ValidPin(pin) {
+		return ""
+	}
+	return pin
+}
 
 // githubOriginRe: an origin URL on github.com over https or ssh, OWNER/NAME.
 var githubOriginRe = regexp.MustCompile(`^(?:https://(?:[A-Za-z0-9._-]+@)?github\.com/|git@github\.com:|ssh://git@github\.com/)` +

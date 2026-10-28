@@ -141,12 +141,11 @@ else
     die "$bindir/lea exists and is not a link: move it away, then rerun"
   fi
   ln -sfn "$dir/$version/bin/lea" "$bindir/lea"
-  # locksql starts lea's locksql console; a locksql installed on the host keeps the name.
-  if [ "$locksql" != --no-locksql ] && { [ -L "$bindir/locksql" ] || [ ! -e "$bindir/locksql" ]; }; then
-    case $(readlink "$bindir/locksql" 2>/dev/null || echo "$dir/") in
-      "$dir/"*) ln -sfn "$dir/$version/bin/locksql" "$bindir/locksql" ;;
-    esac
-  fi
+  # locksql on the host is locksql's own launcher (lea locksql delegates to it): the link an
+  # older lea made to its bin/locksql goes.
+  case $(readlink "$bindir/locksql" 2>/dev/null) in
+    "$dir/"*/bin/locksql) rm -f "$bindir/locksql" ;;
+  esac
   say "installed lea $version in $dir/$version, linked as $bindir/lea"
 fi
 case ":$PATH:" in *":$bindir:"*) ;; *) say "add $bindir to your PATH (in your shell profile) to run lea by name" ;; esac

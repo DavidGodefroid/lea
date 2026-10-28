@@ -47,7 +47,7 @@ linked() { [ "$(readlink "$LEA_BIN_DIR/lea")" = "$1/bin/lea" ]; }
   run lea_update --background </dev/null
   [ "$status" -eq 0 ]
   linked "$INST/v1.3.0"
-  [ "$(readlink "$LEA_BIN_DIR/locksql")" = "$INST/v1.3.0/bin/locksql" ]
+  [ ! -L "$LEA_BIN_DIR/locksql" ] # the link an older lea made goes: locksql is locksql's launcher
   [ "$(cat "$NOTICE")" = "v1.3.0 installed" ]
   [[ "$output" == *"lea v1.3.0 installed, active at the next lea"* ]]
   run calls

@@ -83,8 +83,9 @@ func (l *Launcher) ensureProxy(proj string) error {
 		return err
 	}
 	var lh []string
+	var gateImage string
 	if l.Cfg.LockHTTP() {
-		if lh, err = l.lockHTTPProxyArgs(); err != nil {
+		if lh, gateImage, err = l.lockHTTPProxyArgs(); err != nil {
 			return err
 		}
 	}
@@ -114,7 +115,14 @@ func (l *Launcher) ensureProxy(proj string) error {
 		}
 		// Docker writes the IDs sha256:<hex>, Podman <hex>.
 		if got == want && strings.TrimPrefix(image, "sha256:") == strings.TrimPrefix(current, "sha256:") {
+			if lh != nil {
+				return l.ensureLockHTTPGate(false, gateImage)
+			}
 			return nil
+		}
+		if lh == nil && strings.Contains(got, "^1") {
+			// LockHTTP turned off: its gate goes with the proxy it served.
+			_ = l.quiet("docker", "rm", "-f", l.lockHTTPGateName(), l.lockHTTPSignerName())
 		}
 		l.logf("restarting %s for the git SSH endpoints '%s', the egress allowlist '%s', the providers of %s, the rules %s, LockHTTP %s and the image %s",
 			name, l.Cfg.GitSSH(), allow, l.Cfg.Get("LEA_PROVIDERS"), rules, onOff(lh != nil), l.Cfg.Get("LEA_PROXY_IMAGE"))
@@ -142,7 +150,10 @@ func (l *Launcher) ensureProxy(proj string) error {
 	a = append(a, "-e", "LEA_GIT_SSH="+l.Cfg.GitSSH(), "-e", "LEA_OTEL_UPSTREAM="+l.Cfg.Get("LEA_OTEL_UPSTREAM"),
 		"-e", "LEA_EGRESS_ALLOW="+allow,
 		l.Cfg.Get("LEA_PROXY_IMAGE"))
-	return l.run("docker", a...)
+	if err := l.run("docker", a...); err != nil || lh == nil {
+		return err
+	}
+	return l.ensureLockHTTPGate(true, gateImage)
 }
 
 // proxyIP is lea__proxy_ip: the proxy's IPv4 address on network, "" when it is not attached.

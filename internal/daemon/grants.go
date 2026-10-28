@@ -107,7 +107,8 @@ func githubRepo(s string) (string, error) {
 // deliverySet is lea delivery on|off (issue #92), the host's only: off revokes the standing
 // grants of a lea; on replaces them with the delivery actions on each repository it names, with
 // the GitHub repository the host read from that repository's origin. Standing grants never expire;
-// grants the user added by hand are left alone.
+// grants the user added by hand are left alone. A repository's forge pin is github.com/OWNER/NAME
+// (OWNER/NAME accepted) or gitlab:HOST/GROUP/.../NAME (grants.ValidPin).
 func (d *Daemon) deliverySet(raw json.RawMessage) (any, error) {
 	var p struct {
 		Container string
@@ -132,6 +133,12 @@ func (d *Daemon) deliverySet(raw json.RawMessage) (any, error) {
 			return nil, fmt.Errorf("repo %q: a directory name under the projects directory, once", r.Repo)
 		}
 		seen[r.Repo] = true
+		if strings.HasPrefix(r.GitHub, "gitlab:") {
+			if !grants.ValidPin(r.GitHub) {
+				return nil, fmt.Errorf("repo %s: gitlab:HOST/GROUP/NAME of a GitLab project", r.Repo)
+			}
+			continue
+		}
 		gh, err := githubRepo(r.GitHub)
 		if err != nil {
 			return nil, fmt.Errorf("repo %s: %w", r.Repo, err)
@@ -238,6 +245,25 @@ func contains(xs []string, x string) bool {
 	return false
 }
 
+// SetGrantProxy names the proxy of the pinned calls of an agent (nil: grants.LeaProxy, the
+// default). Under LockHTTP squid is on the proxy's loopback: the calls go through the gate, with
+// the agent's own proxy password.
+func (d *Daemon) SetGrantProxy(f func(container, agent string) string) {
+	d.mu.Lock()
+	d.grantProxy = f
+	d.mu.Unlock()
+}
+
+func (d *Daemon) grantProxyFor(container, agent string) string {
+	d.mu.Lock()
+	f := d.grantProxy
+	d.mu.Unlock()
+	if f == nil {
+		return grants.LeaProxy
+	}
+	return f(container, agent)
+}
+
 // grantCaller is the calling agent as the daemon knows it: its container is the socket's, its
 // repo, branch and parents its row's, never anything the agent says. A branch another live agent
 // of the lea also works on (same repo) is nobody's own. cwd is where the tool call runs (the
@@ -251,7 +277,7 @@ func (d *Daemon) grantCaller(o Origin, me, cwd string) (grants.Caller, error) {
 		return grants.Caller{}, err
 	}
 	c := grants.Caller{Key: me, Container: o.Container, Repo: a.Repo, Branch: a.Branch, Lineage: []string{me},
-		OwnWorktree: grants.InWorktree(cwd, a.Repo, a.Name), Cwd: cwd}
+		OwnWorktree: grants.InWorktree(cwd, a.Repo, a.Name), Cwd: cwd, Proxy: d.grantProxyFor(o.Container, a.Name)}
 	if c.OwnWorktree {
 		c.Worktree = strings.TrimSuffix(cwd, "/")
 	}
