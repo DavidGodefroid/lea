@@ -7,10 +7,31 @@ lea__locksql_harden="--cap-drop ALL --security-opt no-new-privileges --read-only
 # binary of a former host install, the link an older lea made) is not it, nor a launcher that
 # cannot run the console as lea does: confined, the projects directory read-only but for
 # .locksql, under lea's container name.
+# It must also be a file only this account or root could have written: resolved through its links,
+# outside the projects directory (the agents write it) and lea's data directory, owned (and its
+# directory too) by this account or root, writable by neither group nor others.
 lea__locksql_launcher() {
   _ll=$(command -v locksql 2>/dev/null) || return 0
   case $_ll in /*) ;; *) return 0 ;; esac
+  while [ -L "$_ll" ]; do
+    _lt=$(readlink "$_ll") || return 0
+    case $_lt in /*) _ll=$_lt ;; *) _ll=$(dirname "$_ll")/$_lt ;; esac
+  done
   [ -f "$_ll" ] || return 0
+  _ld=$(CDPATH='' cd -- "$(dirname "$_ll")" 2>/dev/null && pwd -P) || return 0
+  _ll=$_ld/$(basename "$_ll")
+  for _lu in "${LEA_PROJECTS_DIR:-}" "$(lea_data_dir)"; do
+    if [ -z "$_lu" ] || [ ! -d "$_lu" ]; then continue; fi
+    _lu=$(CDPATH='' cd -- "$_lu" && pwd -P) || return 0
+    case $_ll in "$_lu"/*) return 0 ;; esac
+  done
+  _lme=$(id -u)
+  for _lf in "$_ll" "$_ld"; do
+    # shellcheck disable=SC2012 # ls -ldn: the mode and the numeric owner, portably
+    _lm=$(ls -ldn "$_lf" 2>/dev/null | awk '{ print $1, $3 }') || return 0
+    case ${_lm%% *} in ?????w* | ????????w* | '') return 0 ;; esac
+    [ "${_lm#* }" = "$_lme" ] || [ "${_lm#* }" = 0 ] || return 0
+  done
   for _lw in '^launcher_version=' '--cap-drop ALL' 'no-new-privileges' '--read-only' \
     'LOCKSQL_READONLY_PROJECT' 'LOCKSQL_CONSOLE_NAME'; do
     grep -q -e "$_lw" "$_ll" 2>/dev/null || return 0

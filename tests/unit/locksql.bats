@@ -161,6 +161,46 @@ EOT
   [[ "$output" == *"docker [run]"*"[--cap-drop] [ALL]"*"[console]"* ]]
 }
 
+# launcher_refused: the console stays lea's (no launcher call, lea's own docker run).
+launcher_refused() {
+  : >"$FAKE_LOG"
+  run lea_locksql </dev/null
+  [ "$status" -eq 0 ]
+  run calls
+  [[ "$output" != *"launcher"* ]]
+  [[ "$output" == *"docker [run]"*"[console]"* ]]
+}
+
+@test "lea locksql trusts no launcher an agent or another account could have written" {
+  fake_launcher
+  l="$BATS_TEST_TMPDIR/lbin/locksql"
+  # Writable by its group or by others, or in such a directory.
+  chmod 0775 "$l"; launcher_refused
+  chmod 0757 "$l"; launcher_refused
+  chmod 0755 "$l"; chmod 0777 "$BATS_TEST_TMPDIR/lbin"; launcher_refused
+  chmod 0755 "$BATS_TEST_TMPDIR/lbin"
+  # Owned by another account than this one or root (here: this one is someone else).
+  mkdir -p "$BATS_TEST_TMPDIR/idbin"
+  printf '#!/bin/sh\n[ "$1" = -u ] && echo 4242 && exit 0\nexec /usr/bin/id "$@"\n' >"$BATS_TEST_TMPDIR/idbin/id"
+  chmod +x "$BATS_TEST_TMPDIR/idbin/id"
+  PATH="$BATS_TEST_TMPDIR/idbin:$PATH" launcher_refused
+  # In the projects directory (the agents write it), or in lea's data directory, even through a
+  # link from a trusted directory.
+  mkdir -p "$P/bin"; cp -p "$l" "$P/bin/locksql"; rm "$l"; ln -s "$P/bin/locksql" "$l"
+  launcher_refused
+  rm "$l"; d=$(lea_data_dir)/bin; mkdir -p "$d"; cp -p "$P/bin/locksql" "$d/locksql"
+  export PATH="$d:$PATH"
+  launcher_refused
+  # The same launcher elsewhere, owned by this account, mode 0755: it gets the console.
+  export PATH="${PATH#"$d:"}"
+  cp -p "$d/locksql" "$l"
+  : >"$FAKE_LOG"
+  run lea_locksql </dev/null
+  [ "$status" -eq 0 ]
+  run calls
+  [[ "$output" == *"launcher pwd="* ]]
+}
+
 @test "lea locksql never takes another locksql on PATH for the launcher" {
   mkdir -p "$BATS_TEST_TMPDIR/obin"
   printf '#!/bin/sh\necho other >>"$FAKE_LOG"\n' >"$BATS_TEST_TMPDIR/obin/locksql"
