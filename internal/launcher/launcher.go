@@ -442,12 +442,15 @@ func (l *Launcher) lockConsole(args []string) error {
 	return nil
 }
 
-// delivery is lea delivery on [--yes DIGEST]|off|status (issue #92), through the core, which the launcher
+// delivery is lea delivery on [--yes DIGEST] [--gitlab HOST]...|off|status (issue #92), through the core, which the launcher
 // tells this projects dir's container and the directory whose repositories it covers.
 func (l *Launcher) delivery(args []string) error {
-	yes := len(args) == 3 && args[0] == "on" && args[1] == "--yes" && args[2] != ""
-	if (len(args) != 1 && !yes) || (args[0] != "on" && args[0] != "off" && args[0] != "status") {
-		l.logf("error: usage: lea delivery on [--yes DIGEST]|off|status")
+	ok := len(args) > 0 && (args[0] == "on" || (len(args) == 1 && (args[0] == "off" || args[0] == "status")))
+	for i := 1; ok && i < len(args); i += 2 {
+		ok = (args[i] == "--yes" || args[i] == "--gitlab") && i+1 < len(args) && args[i+1] != ""
+	}
+	if !ok {
+		l.logf("error: usage: lea delivery on [--yes DIGEST] [--gitlab HOST]...|off|status")
 		return exitError{2}
 	}
 	proj, err := l.projectsDir()

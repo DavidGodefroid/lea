@@ -2,6 +2,9 @@ package grants
 
 import (
 	"context"
+	"io"
+	"net"
+	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -239,7 +242,9 @@ func TestPinnedMergeChecksThePRHead(t *testing.T) {
 		dir := t.TempDir()
 		fake := filepath.Join(dir, "gh")
 		log := filepath.Join(dir, "log")
-		body := "#!/bin/sh\necho \"$*\" >> " + log + "\nif [ \"$2\" = view ]; then printf '%s\\n' '" + tc.head + "'; fi\n"
+		// The fake gh answers gh auth token, and records the token and config dir of the calls after.
+		body := "#!/bin/sh\nif [ \"$1 $2\" = 'auth token' ]; then echo tok; exit 0; fi\necho \"$GH_TOKEN|$GH_CONFIG_DIR\" >> " + log + ".env\n" +
+			"echo \"$*\" >> " + log + "\nif [ \"$2\" = view ]; then printf '%s\\n' '" + tc.head + "'; fi\n"
 		if err := os.WriteFile(fake, []byte(body), 0o755); err != nil {
 			t.Fatal(err)
 		}
@@ -247,6 +252,9 @@ func TestPinnedMergeChecksThePRHead(t *testing.T) {
 		out, err := exec.Command(shPath, "-c", script).CombinedOutput()
 		got, _ := os.ReadFile(log)
 		merged := strings.Contains(string(got), "pr merge 42 --squash -R github.com/o/lea")
+		if env, _ := os.ReadFile(log + ".env"); tc.head != "" && !strings.HasPrefix(string(env), "tok|"+noConfigDir+"\n") {
+			t.Fatalf("head %q: gh ran with %q", tc.head, env)
+		}
 		if merged != tc.merged || (err == nil) != tc.merged {
 			t.Fatalf("head %q: merged %v, err %v, out %s, calls %s", tc.head, merged, err, out, got)
 		}
@@ -294,7 +302,7 @@ func TestPinnedPRCreateBodyFile(t *testing.T) {
 		dir := t.TempDir()
 		fake := filepath.Join(dir, "gh")
 		log := filepath.Join(dir, "log")
-		if err := os.WriteFile(fake, []byte("#!/bin/sh\necho \"$*\" >> "+log+"\ncat >> "+log+"\n"), 0o755); err != nil {
+		if err := os.WriteFile(fake, []byte("#!/bin/sh\nif [ \"$1 $2\" = 'auth token' ]; then echo tok; exit 0; fi\necho \"$*\" >> "+log+"\ncat >> "+log+"\n"), 0o755); err != nil {
 			t.Fatal(err)
 		}
 		script := strings.ReplaceAll(lastWord(t, d.Command), "'"+ghPath+"'", "'"+fake+"'")
@@ -314,5 +322,137 @@ func TestPinnedPRCreateBodyFile(t *testing.T) {
 		if string(got) != want || (err == nil) != (want != "") {
 			t.Fatalf("%s: calls %q, want %q, err %v, out %s", tc.file, got, want, err, out)
 		}
+	}
+}
+
+// TestPinnedGhIgnoresTheAgentsGhConfig: GH_CONFIG_DIR is the agent's to write. A config whose
+// http_unix_socket points at a server of the agent's would answer the PR head check (then be put
+// back before the merge): every pinned gh call runs with a config dir no one can create, and the
+// token read from the agent's config, so gh only ever talks to the forge itself.
+func TestPinnedGhIgnoresTheAgentsGhConfig(t *testing.T) {
+	needTools(t)
+	if _, err := os.Stat(ghPath); err != nil {
+		t.Skipf("%s: %v", ghPath, err)
+	}
+	if _, err := os.Stat(noConfigDir); err == nil {
+		t.Fatalf("%s exists", noConfigDir)
+	}
+	dir := t.TempDir()
+	sock := filepath.Join(dir, "fake.sock")
+	l, err := net.Listen("unix", sock)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var mu sync.Mutex
+	hits := 0
+	srv := &http.Server{Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		hits++
+		mu.Unlock()
+		w.Header().Set("Content-Type", "application/json")
+		io.WriteString(w, `{"data":{"repository":{"pullRequest":{"number":42,"headRefName":"feat/73-x","isCrossRepository":false}}}}`)
+	})}
+	go srv.Serve(l)
+	t.Cleanup(func() { srv.Close() })
+	cfg := filepath.Join(dir, "gh")
+	os.MkdirAll(cfg, 0o700)
+	os.WriteFile(filepath.Join(cfg, "config.yml"), []byte("http_unix_socket: "+sock+"\n"), 0o600)
+	os.WriteFile(filepath.Join(cfg, "hosts.yml"), []byte("github.com:\n    oauth_token: lea-test-not-a-token\n    user: u\n"), 0o600)
+	c := dev
+	c.Env = map[string]string{"HOME": dir, "GH_CONFIG_DIR": cfg}
+	for _, call := range []string{"gh pr merge 42 --squash", "gh pr merge feat/73-x --squash", "gh pr create --head feat/73-x --title t --body b"} {
+		g := all(Merge)
+		if strings.Contains(call, "create") {
+			g = all(PRCreate)
+		}
+		d := Decide("Bash", bash(call), c, []Grant{g}, now, false)
+		if d.Verdict != Allow {
+			t.Fatalf("%s: %+v", call, d)
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+		out, err := exec.CommandContext(ctx, shPath, "-c", d.Command).CombinedOutput()
+		cancel()
+		mu.Lock()
+		n := hits
+		mu.Unlock()
+		// The forge refuses the made-up token (or cannot be reached): the call fails.
+		if n != 0 || err == nil || strings.Contains(string(out), "grant not applied") {
+			t.Fatalf("%s: the agent's server got %d requests, err %v, out %s", call, n, err, out)
+		}
+	}
+	// No token in the agent's config: refused before gh talks to anyone.
+	os.WriteFile(filepath.Join(cfg, "hosts.yml"), nil, 0o600)
+	d := Decide("Bash", bash("gh pr merge 42 --squash"), c, []Grant{all(Merge)}, now, false)
+	if out, err := exec.Command(shPath, "-c", d.Command).CombinedOutput(); err == nil || !strings.Contains(string(out), "no GitHub token") {
+		t.Fatalf("no token: err %v, out %s", err, out)
+	}
+}
+
+// fakeProxy records the CONNECT targets it is asked for and refuses them all.
+func fakeProxy(t *testing.T) (url string, hits func() []string) {
+	t.Helper()
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var mu sync.Mutex
+	var got []string
+	srv := &http.Server{Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		got = append(got, r.Method+" "+r.Host)
+		mu.Unlock()
+		http.Error(w, "refused by the test proxy", http.StatusForbidden)
+	})}
+	go srv.Serve(l)
+	t.Cleanup(func() { srv.Close() })
+	return "http://" + l.Addr().String(), func() []string {
+		mu.Lock()
+		defer mu.Unlock()
+		return append([]string(nil), got...)
+	}
+}
+
+// TestPinnedCallsGoThroughLeaProxy: the network of a lea container is internal, its only way out
+// lea's proxy. A pinned git push and gh call run under env -i: they reach the forge through the
+// proxy lea names (Caller.Proxy), never through one the agent's environment names.
+func TestPinnedCallsGoThroughLeaProxy(t *testing.T) {
+	root, wt, _ := fixture(t)
+	lea, leaHits := fakeProxy(t)
+	evil, evilHits := fakeProxy(t)
+	c, g := pinnedCaller(root, wt)
+	c.Proxy = lea
+	exec.Command(gitPath, "-C", wt, "branch", "feat/73-x").Run()
+	run := func(cmd string) string {
+		ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+		defer cancel()
+		x := exec.CommandContext(ctx, "/bin/bash", "-c", cmd)
+		x.Env = append(os.Environ(), "HTTPS_PROXY="+evil, "https_proxy="+evil, "HTTP_PROXY="+evil, "ALL_PROXY="+evil, "NO_PROXY=", "no_proxy=")
+		out, err := x.CombinedOutput()
+		if err == nil {
+			t.Fatalf("%s: the test proxy refuses every call, yet it succeeded: %s", cmd, out)
+		}
+		return string(out)
+	}
+	out := run(Command(Request{Prog: "git", Args: []string{"push", "origin", "feat/73-x"}}, c, g))
+	if h := leaHits(); len(h) == 0 || h[0] != "CONNECT github.com:443" {
+		t.Fatalf("git push did not go through lea's proxy: %v, out %s", h, out)
+	}
+	if _, err := os.Stat(ghPath); err != nil {
+		t.Skipf("%s: %v", ghPath, err)
+	}
+	cfg := filepath.Join(root, "gh")
+	os.MkdirAll(cfg, 0o700)
+	os.WriteFile(filepath.Join(cfg, "hosts.yml"), []byte("github.com:\n    oauth_token: lea-test-not-a-token\n    user: u\n"), 0o600)
+	c.Env = map[string]string{"HOME": root, "GH_CONFIG_DIR": cfg}
+	d := Decide("Bash", bash("gh pr merge 42 --squash"), c, []Grant{all(Merge)}, now, false)
+	if d.Verdict != Allow {
+		t.Fatalf("merge: %+v", d)
+	}
+	out = run(d.Command)
+	if h := leaHits(); len(h) < 2 || h[len(h)-1] != "CONNECT api.github.com:443" {
+		t.Fatalf("gh did not go through lea's proxy: %v, out %s", h, out)
+	}
+	if h := evilHits(); len(h) != 0 {
+		t.Fatalf("the agent's proxy got %v", h)
 	}
 }

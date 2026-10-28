@@ -135,7 +135,11 @@ func describeGrant(g grants.Grant) string {
 		s += " (every repo)"
 	}
 	if g.GitHub != "" {
-		s += " gh " + oneLine(g.GitHub, 160)
+		if strings.HasPrefix(g.GitHub, "gitlab:") {
+			s += " " + oneLine(g.GitHub, 200)
+		} else {
+			s += " gh " + oneLine(g.GitHub, 160)
+		}
 	}
 	if g.Branch != "" && g.Branch != "*" {
 		s += " branch " + oneLine(g.Branch, 128)

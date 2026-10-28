@@ -307,19 +307,13 @@ lea__update_background() {
   lea_log "background update: lea $_ub_v installed, active at the next lea; running lea containers keep their image until they stop (lea stop --all)"
 }
 
-# lea__relink DIR: points the launcher link (and the locksql link, when it leads into the same
-# installation directory) at the installation DIR. The links move by rename: they are never missing.
+# lea__relink DIR: points the launcher link at the installation DIR; it moves by rename, so it is
+# never missing. The locksql link an older lea made goes (lea__unlink_locksql).
 lea__relink() {
   _rl_bin=${LEA_BIN_DIR:-$HOME/.local/bin}
   ln -sfn "$1/bin/lea" "$_rl_bin/.lea.update.$$"
   mv -f "$_rl_bin/.lea.update.$$" "$_rl_bin/lea"
-  case $(readlink "$_rl_bin/locksql" 2>/dev/null) in
-    "$(dirname "$1")/"*)
-      if [ -e "$1/bin/locksql" ]; then
-        ln -sfn "$1/bin/locksql" "$_rl_bin/.locksql.update.$$"
-        mv -f "$_rl_bin/.locksql.update.$$" "$_rl_bin/locksql"
-      fi ;;
-  esac
+  lea__unlink_locksql "$_rl_bin"
 }
 
 # lea__older A B: release A (vX.Y.Z) is older than release B.

@@ -2,8 +2,11 @@ package launcher
 
 import (
 	"errors"
+	"fmt"
+	"math"
 	"os"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strconv"
 	"strings"
@@ -73,12 +76,49 @@ func (l *Launcher) engineMemory() int64 {
 	return 0
 }
 
-// limitArgs are the lea container's resource limits (#97): without them a pile of nested stacks
-// takes the whole host down (OOM, swap thrash) instead of being OOM-killed inside lea. A share of
-// memory is taken from the engine's memory (engineMemory); memory plus swap is the memory itself
-// unless LEA_MEMORY_SWAP says otherwise.
-func (l *Launcher) limitArgs() []string {
-	var a []string
+// hostCPUs is the CPUs this process sees, the last resort of engineCPUs (a variable for the
+// tests).
+var hostCPUs = runtime.NumCPU
+
+// engineCPUs is the number of CPUs of the container engine, 0 when unknown: Docker's {{.NCPU}} (a
+// VM's under Docker Desktop), Podman's {{.Host.CPUs}}, else the CPUs this process sees.
+func (l *Launcher) engineCPUs() int {
+	for _, f := range []string{"{{.NCPU}}", "{{.Host.CPUs}}"} {
+		out, err := l.output(false, "docker", "system", "info", "--format", f)
+		if n, perr := strconv.Atoi(strings.TrimSpace(out)); err == nil && perr == nil && n > 0 {
+			return n
+		}
+	}
+	return hostCPUs()
+}
+
+// limits are the lea container's resolved resource limits, docker flag values; "" is no limit.
+type limits struct{ cpus, mem, swap, pids string }
+
+// minCPUs is the floor of a share of CPUs (LEA_CPUS=N%): one agent's tools and its nested stack.
+const minCPUs = 2
+
+// resolvedLimits turns LEA_CPUS, LEA_MEMORY, LEA_MEMORY_SWAP and LEA_PIDS_LIMIT into the lea
+// container's limits. A share of CPUs or memory is taken from the engine's (engineCPUs,
+// engineMemory); memory plus swap is the memory itself unless LEA_MEMORY_SWAP says otherwise.
+func (l *Launcher) resolvedLimits() limits {
+	var r limits
+	cpus := l.Cfg.Get("LEA_CPUS")
+	if strings.HasSuffix(cpus, "%") {
+		pct, _ := strconv.Atoi(strings.TrimSuffix(cpus, "%"))
+		if total := l.engineCPUs(); total <= 0 {
+			l.logf("warning: Docker did not tell its CPUs; the lea container runs without a CPU limit (set LEA_CPUS to a number, 8 for example)")
+			cpus = "0"
+		} else {
+			// Hundredths of a CPU, rounded down; at least minCPUs, never more than there are.
+			c := total * pct
+			c = max(c, min(minCPUs, total)*100)
+			cpus = strconv.FormatFloat(float64(c)/100, 'f', -1, 64)
+		}
+	}
+	if cpus != "0" {
+		r.cpus = cpus
+	}
 	mem := l.Cfg.Get("LEA_MEMORY")
 	if strings.HasSuffix(mem, "%") {
 		pct, _ := strconv.ParseInt(strings.TrimSuffix(mem, "%"), 10, 64)
@@ -90,12 +130,176 @@ func (l *Launcher) limitArgs() []string {
 		}
 	}
 	if mem != "0" {
-		a = append(a, "--memory", mem, "--memory-swap", nonEmpty(l.Cfg.Get("LEA_MEMORY_SWAP"), mem))
+		r.mem, r.swap = mem, nonEmpty(l.Cfg.Get("LEA_MEMORY_SWAP"), mem)
 	}
 	if p := l.Cfg.Get("LEA_PIDS_LIMIT"); p != "0" {
-		a = append(a, "--pids-limit", p)
+		r.pids = p
+	}
+	return r
+}
+
+// args are the flags of limits r, for docker run and docker update.
+func (r limits) args() []string {
+	var a []string
+	if r.cpus != "" {
+		a = append(a, "--cpus", r.cpus)
+	}
+	if r.mem != "" {
+		a = append(a, "--memory", r.mem, "--memory-swap", r.swap)
+	}
+	if r.pids != "" {
+		a = append(a, "--pids-limit", r.pids)
 	}
 	return a
+}
+
+// limitArgs are the lea container's resource limits (#97, #132): without them a pile of nested
+// stacks takes the whole host down (OOM, swap thrash, every core busy) instead of being held
+// inside lea.
+func (l *Launcher) limitArgs() []string { return l.resolvedLimits().args() }
+
+// sizeBytes is a docker size (dockerSize: 512m, 8g, 1024) in bytes, -1 as is, 0 for "" (no
+// limit).
+func sizeBytes(s string) int64 {
+	switch s {
+	case "":
+		return 0
+	case "-1":
+		return -1
+	}
+	mult := int64(1)
+	switch s[len(s)-1] {
+	case 'b':
+		s = s[:len(s)-1]
+	case 'k':
+		mult, s = 1<<10, s[:len(s)-1]
+	case 'm':
+		mult, s = 1<<20, s[:len(s)-1]
+	case 'g':
+		mult, s = 1<<30, s[:len(s)-1]
+	}
+	n, _ := strconv.ParseInt(s, 10, 64)
+	return n * mult
+}
+
+// headroom is the share of a new memory or pids limit the usage must stay under for lea to lower
+// the limit of a running container: above it, the agents' work would be OOM-killed or fail to
+// fork.
+const headroom = 0.8
+
+// usage is a running container's memory in bytes and its number of processes, read from its own
+// cgroup (Docker and Podman give a container its cgroup namespace on cgroup v2); ok is false when
+// they cannot be read.
+func (l *Launcher) usage(name string) (mem, pids int64, ok bool) {
+	out, err := l.output(false, "docker", "exec", name, "cat", "/sys/fs/cgroup/memory.current", "/sys/fs/cgroup/pids.current")
+	f := strings.Fields(out)
+	if err != nil || len(f) != 2 {
+		return 0, 0, false
+	}
+	mem, merr := strconv.ParseInt(f[0], 10, 64)
+	pids, perr := strconv.ParseInt(f[1], 10, 64)
+	return mem, pids, merr == nil && perr == nil
+}
+
+// limitsRefused is where lea remembers the limits the engine refused for a container (rootless
+// Podman without the cpu or memory controller): the next lea neither retries nor warns again.
+func (l *Launcher) limitsRefused(name string) string { return l.Cfg.HostDir() + "/limits/" + name }
+
+// applyLimits gives a running lea container the configured limits it lacks (#132): one started
+// by an older lea, or before a limit changed, ran without them until it restarted. Docker and
+// Podman both change them in place (docker update). The CPUs only throttle: always applied. A
+// memory or pids limit is lowered only while the usage stays under headroom of it; otherwise,
+// and when the engine refuses, a warning says to restart the container (lea stop, then lea) at a
+// quiet time. A limit turned off is only taken away by a restart.
+func (l *Launcher) applyLimits(name string) {
+	out, err := l.output(false, "docker", "inspect", "--format",
+		"{{.Id}} {{.HostConfig.NanoCpus}} {{.HostConfig.Memory}} {{.HostConfig.MemorySwap}} {{.HostConfig.PidsLimit}}", name)
+	f := strings.Fields(out)
+	if err != nil || len(f) != 5 {
+		return
+	}
+	id, n := f[0], make([]int64, 4)
+	for i, v := range f[1:] {
+		if v == "<nil>" {
+			continue
+		}
+		x, err := strconv.ParseInt(v, 10, 64)
+		if err != nil {
+			return
+		}
+		n[i] = x
+	}
+	cpus, memory, swap, pidsLimit := n[0], n[1], n[2], n[3]
+	want := l.resolvedLimits()
+	var fix limits
+	if want.cpus != "" {
+		c, _ := strconv.ParseFloat(want.cpus, 64)
+		if cpus != int64(math.Round(c*1e9)) {
+			fix.cpus = want.cpus
+		}
+	}
+	wantMem, wantPids := sizeBytes(want.mem), int64(0)
+	if want.mem != "" && (memory != wantMem || swap != sizeBytes(want.swap)) {
+		fix.mem, fix.swap = want.mem, want.swap
+	}
+	if want.pids != "" {
+		wantPids, _ = strconv.ParseInt(want.pids, 10, 64)
+		if pidsLimit != wantPids {
+			fix.pids = want.pids
+		}
+	}
+	if len(fix.args()) == 0 {
+		return
+	}
+	// A limit is lowered when there was none or it was higher: only with headroom.
+	lowerMem := fix.mem != "" && (memory == 0 || memory > wantMem)
+	lowerPids := fix.pids != "" && (pidsLimit == 0 || pidsLimit > wantPids)
+	if lowerMem || lowerPids {
+		mem, pids, ok := l.usage(name)
+		var held []string
+		if lowerMem && (!ok || float64(mem) >= headroom*float64(wantMem)) {
+			if ok {
+				held = append(held, fmt.Sprintf("--memory %s (%d MiB in use)", fix.mem, mem>>20))
+			} else {
+				held = append(held, fmt.Sprintf("--memory %s (usage unknown)", fix.mem))
+			}
+			fix.mem, fix.swap = "", ""
+		}
+		if lowerPids && (!ok || float64(pids) >= headroom*float64(wantPids)) {
+			if ok {
+				held = append(held, fmt.Sprintf("--pids-limit %s (%d processes in use)", fix.pids, pids))
+			} else {
+				held = append(held, fmt.Sprintf("--pids-limit %s (usage unknown)", fix.pids))
+			}
+			fix.pids = ""
+		}
+		if len(held) > 0 {
+			l.logf("warning: the running %s keeps its limits for now: %s; run 'lea stop', then lea, at a quiet time to apply them",
+				name, strings.Join(held, ", "))
+		}
+	}
+	a := fix.args()
+	if len(a) == 0 {
+		return
+	}
+	stamp, refused := id+" "+strings.Join(a, " "), l.limitsRefused(name)
+	// The file is lea's own, below the data directory (SafePath: no symbolic link on the way).
+	safe := SafePath(l.Cfg.DataDir(), refused) == nil
+	if safe && readTrim(refused) == stamp {
+		return
+	}
+	if l.quiet("docker", append(append([]string{"update"}, a...), name)...) != nil {
+		l.logf("warning: could not apply the limits %s to the running %s; run 'lea stop', then lea, to restart it with them",
+			strings.Join(a, " "), name)
+		if safe && Mkdirs(l.Cfg.DataDir(), parentText(refused)) == nil {
+			_ = WriteFile(l.Cfg.DataDir(), refused, []byte(stamp+"\n"))
+		}
+		return
+	}
+	if safe {
+		os.Remove(refused)
+	}
+	l.logf("applied the limits %s to the running %s", strings.Join(a, " "), name)
 }
 
 // busArgs is lea_bus_args: the core binary read-only at /usr/local/bin/lea and the container's

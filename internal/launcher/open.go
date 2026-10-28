@@ -63,6 +63,8 @@ func (l *Launcher) up(proj string) (*upState, error) {
 			return nil, err
 		}
 		u.fresh = "--fresh"
+	} else {
+		l.applyLimits(u.name)
 	}
 	_ = l.busAttach(proj)
 	held = false
