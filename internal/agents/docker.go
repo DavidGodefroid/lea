@@ -102,6 +102,33 @@ func (d Docker) Stop(ctx context.Context, container, name string) error {
 	return nil
 }
 
+// Teardown removes what an ended agent started in the container's nested Podman (lea-agent
+// teardown); in a container that is not running there is nothing to remove.
+func (d Docker) Teardown(ctx context.Context, container, name string) error {
+	if !nameRe.MatchString(name) {
+		return fmt.Errorf("invalid agent name %q", name)
+	}
+	if _, err := d.agent(ctx, container, "teardown", name); err != nil {
+		return d.failed(ctx, container, err, "lea-agent teardown "+name)
+	}
+	return nil
+}
+
+// Sweep removes what the agents but keep left in the container's nested Podman (lea-agent
+// sweep) and returns its report.
+func (d Docker) Sweep(ctx context.Context, container string, keep []string) (string, error) {
+	for _, n := range keep {
+		if !nameRe.MatchString(n) {
+			return "", fmt.Errorf("invalid agent name %q", n)
+		}
+	}
+	out, err := d.agent(ctx, container, append([]string{"sweep"}, keep...)...)
+	if err != nil {
+		return "", d.failed(ctx, container, err, "lea-agent sweep")
+	}
+	return strings.TrimSpace(string(out)), nil
+}
+
 // Projects is the projects directory the launcher started the container for (its lea.projects
 // label), a clean absolute path.
 func (d Docker) Projects(ctx context.Context, container string) (string, error) {

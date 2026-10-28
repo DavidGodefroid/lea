@@ -242,6 +242,9 @@ func (c *Config) resolve(root string) error {
 			return fmt.Errorf("LEA_LOCKFILE_REF %s is refused: lockfile v0.1.0 lets a plugin escape its sandbox (v0.1.1 or later)", ref)
 		}
 	}
+	if err := c.resolveLimits(); err != nil {
+		return err
+	}
 	au := nonEmpty(c.Get("LEA_AUTOUPDATE"), "1")
 	if au != "0" && au != "1" {
 		return fmt.Errorf("LEA_AUTOUPDATE must be 1 (check for a new release every day) or 0, not '%s'", au)
@@ -250,6 +253,32 @@ func (c *Config) resolve(root string) error {
 	if sk := c.Get("LEA_AUTOUPDATE_SKIP"); sk != "" && !releaseVersion.MatchString(sk) {
 		return fmt.Errorf("LEA_AUTOUPDATE_SKIP must be empty or a release version (vX.Y.Z, set by lea rollback), not '%s'", sk)
 	}
+	return nil
+}
+
+// Resource limits of the lea container: a share of Docker's memory (N%) or a docker size, a
+// docker size for memory plus swap (or -1, swap without limit), a number of processes and threads.
+var (
+	memoryPercent = regexp.MustCompile(`^([1-9][0-9]?|100)%$`)
+	dockerSize    = regexp.MustCompile(`^[1-9][0-9]{0,15}[bkmg]?$`)
+)
+
+// resolveLimits checks LEA_MEMORY (default 50%, 0: no limit), LEA_MEMORY_SWAP (empty: as
+// LEA_MEMORY, no swap) and LEA_PIDS_LIMIT (default 16384, 0: no limit).
+func (c *Config) resolveLimits() error {
+	mem := nonEmpty(c.Get("LEA_MEMORY"), "50%")
+	if mem != "0" && !memoryPercent.MatchString(mem) && !dockerSize.MatchString(mem) {
+		return fmt.Errorf("LEA_MEMORY must be a share of Docker's memory (1%%-100%%), a size (8g, 512m) or 0 (no limit), not '%s'", mem)
+	}
+	swap := c.Get("LEA_MEMORY_SWAP")
+	if swap != "" && swap != "-1" && !dockerSize.MatchString(swap) {
+		return fmt.Errorf("LEA_MEMORY_SWAP must be empty (no swap), a size of memory plus swap (12g) or -1 (no limit), not '%s'", swap)
+	}
+	pids := nonEmpty(c.Get("LEA_PIDS_LIMIT"), "16384")
+	if _, ok := plainNumber(pids, 7); !ok && pids != "0" {
+		return fmt.Errorf("LEA_PIDS_LIMIT must be a number of processes without leading zeros or 0 (no limit), not '%s'", pids)
+	}
+	c.final["LEA_MEMORY"], c.final["LEA_MEMORY_SWAP"], c.final["LEA_PIDS_LIMIT"] = mem, swap, pids
 	return nil
 }
 

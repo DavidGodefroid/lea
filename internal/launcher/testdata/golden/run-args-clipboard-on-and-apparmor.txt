@@ -86,6 +86,12 @@ AUDIT_WRITE
 seccomp=$R/image/seccomp.json
 --security-opt
 apparmor=lea
+--memory
+16384m
+--memory-swap
+16384m
+--pids-limit
+16384
 --mount
 type=bind,src=$R/build/lea,dst=/usr/local/bin/lea,readonly
 --mount
