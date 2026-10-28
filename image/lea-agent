@@ -2,13 +2,17 @@
 # Deck agents inside lea. `run` is what abduco starts for an agent: it records the agent's pid,
 # then becomes its CLI (Claude Code, or Codex with --cli codex) through lea-session (exec keeps the pid). `ls` prints the live agents;
 # `stop` ends one; `pause` freezes one with its children (SIGSTOP), `resume` lets them continue
-# (SIGCONT). The deck's shells (s) work the same way: `shell` is what abduco starts for one (the
+# (SIGCONT). Each agent gets its own Podman service: what it starts in the nested Podman carries
+# the annotation lea.agent=NAME, `teardown` removes it when the agent ends, and `sweep` removes
+# the stacks of agents that are gone (#97). The deck's shells (s) work the same way: `shell` is what abduco starts for one (the
 # user's login shell, never an agent: no LEA_AGENT), `shells` prints the live ones and
 # `stop-shell` ends one. The host reaches this script only through `docker exec`.
 set -eu
 dir=${LEA_AGENT_RUN_DIR:-/run/lea/agents}
 shell_dir=${LEA_SHELL_RUN_DIR:-/run/lea/shells}
 wait_s=${LEA_AGENT_STOP_WAIT:-5}
+podman=${LEA_AGENT_PODMAN:-podman}
+podman_dir=${XDG_RUNTIME_DIR:-/run/user/$(id -u)}/podman
 
 valid() {
   case $1 in [abcdefghijklmnopqrstuvwxyz]*) ;; *) return 1 ;; esac
@@ -40,6 +44,7 @@ tree() {
   while [ -n "$todo" ]; do
     # shellcheck disable=SC2086 # pids, split on purpose
     set -- $todo
+    [ $# -gt 0 ] || break
     p=$1; shift; todo=$*
     printf '%s\n' "$p"
     todo="$todo $(cat /proc/"$p"/task/*/children 2>/dev/null || true)"
@@ -61,6 +66,74 @@ end() {
   kill -KILL "$1" 2>/dev/null || true
 }
 
+# service_pid NAME: prints the pid of NAME's own Podman service while it runs (a pid file left by
+# an ended service may point at a reused pid, which is not it).
+service_pid() {
+  [ -f "$dir/$1.podman.pid" ] || return 1
+  p=$(head -c 16 "$dir/$1.podman.pid" | tr -cd 0-9)
+  if [ -z "$p" ] || ! kill -0 "$p" 2>/dev/null; then return 1; fi
+  tr '\0' '\n' <"/proc/$p/cmdline" 2>/dev/null | grep -qxF "unix://$podman_dir/agent-$1.sock" || return 1
+  printf '%s\n' "$p"
+}
+
+stop_service() {
+  if p=$(service_pid "$1"); then end "$p"; fi
+  rm -f "$dir/$1.podman.pid" "$podman_dir/agent-$1.sock"
+}
+
+# start_service NAME: NAME's own Podman service, with the annotation lea.agent=NAME on every
+# container it creates; DOCKER_HOST (docker, docker compose) goes to it and podman itself reads
+# the same annotation (CONTAINERS_CONF_OVERRIDE). The service is not the agent's child (pause
+# never freezes it). Without it the agent keeps the shared service, with a warning.
+start_service() {
+  command -v "$podman" >/dev/null 2>&1 || return 0
+  conf=$dir/$1.containers.conf
+  sock=$podman_dir/agent-$1.sock
+  stop_service "$1"
+  printf '[containers]\nannotations = ["lea.agent=%s"]\n' "$1" >"$conf"
+  CONTAINERS_CONF_OVERRIDE=$conf
+  export CONTAINERS_CONF_OVERRIDE
+  mkdir -p "$podman_dir"
+  (setsid "$podman" system service --time=0 "unix://$sock" </dev/null >/dev/null 2>&1 & echo "$!" >"$dir/$1.podman.pid")
+  i=0
+  while [ ! -S "$sock" ]; do
+    i=$((i + 1))
+    if [ "$i" -gt 100 ]; then
+      echo "lea-agent: warning: the Podman service of $1 did not start; what it runs with docker is not removed when it ends" >&2
+      return 0
+    fi
+    sleep 0.1
+  done
+  DOCKER_HOST=unix://$sock
+  export DOCKER_HOST
+}
+
+# inventory: "id|pod|agent" for each container of the nested Podman (agent: its lea.agent
+# annotation, empty when no agent started it).
+inventory() {
+  command -v "$podman" >/dev/null 2>&1 || return 0
+  ids=$("$podman" ps -aq --no-trunc 2>/dev/null) || return 0
+  [ -n "$ids" ] || return 0
+  # shellcheck disable=SC2086 # ids, split on purpose
+  "$podman" container inspect --format '{{.ID}}|{{.Pod}}|{{index .Config.Annotations "lea.agent"}}' $ids 2>/dev/null || true
+}
+
+# remove LINES: removes the containers of LINES ("id|pod|agent") and their pods; prints
+# "N containers and M pods".
+remove() {
+  ids=$(printf '%s\n' "$1" | cut -d'|' -f1 | grep . || true)
+  pods=$(printf '%s\n' "$1" | cut -d'|' -f2 | grep . | sort -u || true)
+  # shellcheck disable=SC2086 # ids, split on purpose
+  if [ -n "$pods" ]; then "$podman" pod rm -f $pods >/dev/null 2>&1 || true; fi
+  # shellcheck disable=SC2086
+  if [ -n "$ids" ]; then "$podman" rm -f -v $ids >/dev/null 2>&1 || true; fi
+  nc=$(printf '%s\n' "$ids" | grep -c . || true)
+  np=$(printf '%s\n' "$pods" | grep -c . || true)
+  printf '%s container%s and %s pod%s' "$nc" "$(plural "$nc")" "$np" "$(plural "$np")"
+}
+
+plural() { [ "$1" -eq 1 ] || printf s; }
+
 case ${1:-} in
   run)
     name=${2:-}
@@ -75,6 +148,7 @@ case ${1:-} in
     if [ "${1:-}" = -- ]; then shift; fi
     mkdir -p "$dir"
     printf '%s\n' "$$" >"$dir/$name.pid"
+    start_service "$name"
     LEA_AGENT=$name
     export LEA_AGENT
     exec lea-session "--$cli" "$@"
@@ -92,6 +166,39 @@ case ${1:-} in
     valid "$name" || { echo "lea-agent: invalid agent name '$name'" >&2; exit 2; }
     if p=$(alive "$name"); then end "$p"; fi
     rm -f "$dir/$name.pid"
+    ;;
+  teardown)
+    name=${2:-}
+    valid "$name" || { echo "lea-agent: invalid agent name '$name'" >&2; exit 2; }
+    stop_service "$name"
+    rm -f "$dir/$name.containers.conf"
+    own=$(inventory | awk -F'|' -v a="$name" '$3 == a')
+    if [ -n "$own" ]; then echo "$name: removed $(remove "$own")"; fi
+    ;;
+  sweep)
+    # sweep KEEP...: the stacks and services of every agent but KEEP are removed (a new
+    # container: those agents are gone), and the containers no agent started are counted.
+    shift
+    keep=" "
+    for n in "$@"; do
+      valid "$n" || { echo "lea-agent: invalid agent name '$n'" >&2; exit 2; }
+      keep="$keep$n "
+    done
+    for f in "$dir"/*.podman.pid; do
+      [ -f "$f" ] || continue
+      n=${f##*/}; n=${n%.podman.pid}
+      case $keep in *" $n "*) ;; *) if valid "$n"; then stop_service "$n"; rm -f "$dir/$n.containers.conf"; fi ;; esac
+    done
+    all=$(inventory)
+    gone=$(printf '%s\n' "$all" | awk -F'|' -v keep="$keep" '$3 != "" && index(keep, " " $3 " ") == 0')
+    if [ -n "$gone" ]; then
+      who=$(printf '%s\n' "$gone" | cut -d'|' -f3 | sort -u | tr '\n' ' ')
+      echo "removed $(remove "$gone") of ended agents (${who% })"
+    fi
+    un=$(printf '%s\n' "$all" | awk -F'|' 'NF >= 3 && $3 == ""' | grep -c . || true)
+    if [ "$un" -gt 0 ]; then
+      echo "$un container$(plural "$un") that no agent started (a shell, or an older lea) stay in the nested Podman: podman ps -a lists them, podman pod rm -af and podman rm -af remove them"
+    fi
     ;;
   pause | resume)
     name=${2:-}
@@ -127,7 +234,7 @@ case ${1:-} in
     rm -f "$shell_dir/$name.pid"
     ;;
   *)
-    echo "usage: lea-agent run NAME [--cli claude|codex] [-- ARGS...] | ls | stop NAME | pause NAME | resume NAME | shell NAME | shells | stop-shell NAME" >&2
+    echo "usage: lea-agent run NAME [--cli claude|codex] [-- ARGS...] | ls | stop NAME | teardown NAME | sweep [KEEP...] | pause NAME | resume NAME | shell NAME | shells | stop-shell NAME" >&2
     exit 2
     ;;
 esac

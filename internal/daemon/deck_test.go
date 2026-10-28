@@ -63,6 +63,10 @@ func (f *fakeAgents) ResumeStopped(ctx context.Context, c string) error {
 	f.rec("resume-stopped " + c)
 	return nil
 }
+func (f *fakeAgents) SweepStacks(ctx context.Context, c string) (string, error) {
+	f.rec("sweep " + c)
+	return "removed 1 container and 0 pods of ended agents (dev-2)", nil
+}
 func (f *fakeAgents) Attached(ctx context.Context, c string) (bool, error) {
 	f.rec("attached " + c)
 	return !f.unattached, nil
@@ -140,6 +144,11 @@ func TestDeckMethodsReachTheManager(t *testing.T) {
 	}
 	must("agents_mark_stopped", map[string]any{"container": "lea-a", "forget": true}, nil)
 	must("agents_resume_stopped", map[string]any{"container": "lea-a"}, nil)
+	var sw struct{ Notice string }
+	must("agents_sweep_stacks", map[string]any{"container": "lea-a"}, &sw)
+	if sw.Notice != "removed 1 container and 0 pods of ended agents (dev-2)" {
+		t.Fatalf("sweep=%+v", sw)
+	}
 	must("deck_ensure", map[string]any{"container": "lea-a", "workdir": "/p"}, nil)
 	var row agents.Row
 	must("agent_new", map[string]any{"container": "lea-a", "workdir": "/p", "profile": "claude", "name": "x",
@@ -173,7 +182,7 @@ func TestDeckMethodsReachTheManager(t *testing.T) {
 	if sh.Kind != agents.KindShell || sh.Key != "shell:lea-a/sh-1" {
 		t.Fatalf("shell=%+v", sh)
 	}
-	wantCalls := []string{"mark-stopped lea-a true", "resume-stopped lea-a", "ensure lea-a /p", "new", "focus lea-a/x true", "stop lea-a/x", "remove-ended lea-a/y", "detach lea-a",
+	wantCalls := []string{"mark-stopped lea-a true", "resume-stopped lea-a", "sweep lea-a", "ensure lea-a /p", "new", "focus lea-a/x true", "stop lea-a/x", "remove-ended lea-a/y", "detach lea-a",
 		"popup lea-a/x true", "watch lea-a 3 5s", "attached lea-a", `label lea-a/x "auth work"`, "paused lea-a/x true", "shell lea-a"}
 	if !reflect.DeepEqual(fa.calls, wantCalls) {
 		t.Fatalf("calls=%q", fa.calls)
@@ -210,7 +219,7 @@ func TestStopAndResumeAreRefusedToAgents(t *testing.T) {
 	e := start(t)
 	fa := &fakeAgents{}
 	e.d.SetAgents(fa)
-	for _, m := range []string{"agents_mark_stopped", "agents_resume_stopped"} {
+	for _, m := range []string{"agents_mark_stopped", "agents_resume_stopped", "agents_sweep_stacks"} {
 		err := call(t, e.bus, "dev", m, map[string]any{"container": "lea-a", "forget": true}, nil)
 		if err == nil || !strings.Contains(err.Error(), "host only") {
 			t.Fatalf("%s from an agent: err=%v", m, err)
