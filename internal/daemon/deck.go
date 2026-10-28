@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"strings"
 	"time"
 
 	"github.com/DavidGodefroid/lea/internal/agents"
@@ -32,6 +33,11 @@ type Agents interface {
 	// SweepStacks removes, in a container the launcher has just started, what the agents that
 	// are gone left in its nested Podman, and says what it removed and what no agent started.
 	SweepStacks(ctx context.Context, container string) (string, error)
+	// ParkStack stops, without removing them, the containers an idle agent started (#132), and
+	// says what it freed.
+	ParkStack(ctx context.Context, key string) (string, error)
+	// UnparkStack starts again what ParkStack stopped (a new turn came meanwhile).
+	UnparkStack(ctx context.Context, key string) (string, error)
 	Attached(ctx context.Context, container string) (bool, error)
 	Popup(ctx context.Context, key string, compose bool) error
 	// SetLabel renames an agent for display (the deck's e); OpenShell opens a shell in the
@@ -177,7 +183,16 @@ func (d *Daemon) dispatchDeck(ctx context.Context, o Origin, req wire.Request) (
 			return nil, err
 		}
 		n, err := a.SweepStacks(ctx, p.Container)
-		return map[string]string{"notice": n}, err
+		if err != nil {
+			return map[string]string{"notice": n}, err
+		}
+		// What agents idle for long still run (a restarted daemon lost its timers) stops too.
+		lines := []string{}
+		if n != "" {
+			lines = append(lines, n)
+		}
+		lines = append(lines, d.parkIdleSince(p.Container)...)
+		return map[string]string{"notice": strings.Join(lines, "\n")}, nil
 	case "deck_attached":
 		var p struct{ Container string }
 		if err := json.Unmarshal(req.Params, &p); err != nil {
