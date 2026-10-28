@@ -2,8 +2,11 @@ package daemon
 
 import (
 	"context"
+	"errors"
 	"log"
 	"time"
+
+	"github.com/DavidGodefroid/lea/internal/agents"
 )
 
 // Idle stacks (#132): an agent's nested pods (a database, a search engine, a broker…) keep their
@@ -67,10 +70,16 @@ func (d *Daemon) forgetStackLocked(key string) {
 }
 
 // parkIdle stops the stack of an agent lea started that is still idle, and records what it
-// freed. It returns that, "" when nothing was stopped.
+// freed. It returns that, "" when nothing was stopped. An agent whose subagents still run, or
+// whose stack still works (a background job), is looked at again one delay later; one that
+// started a new turn while its stack stopped gets it started again.
 func (d *Daemon) parkIdle(key string) string {
 	d.mu.Lock()
 	a := d.agents
+	subs := 0
+	if s := d.subs[key]; s != nil {
+		subs = len(s.ids)
+	}
 	d.mu.Unlock()
 	if a == nil {
 		return ""
@@ -79,14 +88,29 @@ func (d *Daemon) parkIdle(key string) string {
 	if err != nil || ag.Profile == "" || ag.State != "idle" {
 		return ""
 	}
+	if subs > 0 {
+		d.stackActivity(key, "idle")
+		return ""
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), parkTimeout)
 	defer cancel()
 	note, err := a.ParkStack(ctx, key)
+	if errors.Is(err, agents.ErrStackBusy) {
+		d.stackActivity(key, "idle")
+		return ""
+	}
 	if err != nil {
 		log.Printf("lea daemon: stop the stack of idle %s: %v", key, err)
 		return ""
 	}
 	if note == "" {
+		return ""
+	}
+	// A new turn came while the stack stopped: it is the agent's again.
+	if ag, err := d.st.AgentByKey(key); err == nil && ag.State != "idle" {
+		if _, err := a.UnparkStack(ctx, key); err != nil {
+			log.Printf("lea daemon: start the stack of %s again: %v", key, err)
+		}
 		return ""
 	}
 	log.Printf("lea daemon: idle %s", note)

@@ -140,3 +140,19 @@ func TestParkStackStopsAnIdleAgentsStack(t *testing.T) {
 		t.Fatalf("parks %q", e.ctr.parks)
 	}
 }
+
+// UnparkStack starts again what ParkStack stopped (a new turn came meanwhile).
+func TestUnparkStack(t *testing.T) {
+	e := newEnv(t)
+	e.ensure(t, "/p")
+	e.spawn(t, "dev-1")
+	if _, err := e.m.UnparkStack(bg, C+"/dev-1"); err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(e.ctr.unparks, []string{C + "/dev-1"}) {
+		t.Fatalf("unparks %q", e.ctr.unparks)
+	}
+	if _, err := e.m.UnparkStack(bg, C+"/nobody"); err == nil {
+		t.Fatal("an unknown agent's stack is started")
+	}
+}

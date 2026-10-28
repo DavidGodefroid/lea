@@ -1,10 +1,13 @@
 package daemon
 
 import (
+	"fmt"
 	"slices"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/DavidGodefroid/lea/internal/agents"
 )
 
 // parks are the ParkStack calls the fake manager saw.
@@ -156,5 +159,82 @@ func TestIdlePromptKeepsThePendingPark(t *testing.T) {
 	e.d.mu.Unlock()
 	if n != 0 {
 		t.Fatal("a new turn left the stop pending")
+	}
+}
+
+func (f *fakeAgents) has(call string) bool {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return slices.Contains(f.calls, call)
+}
+
+// An agent idle at its prompt while its subagents (a workflow, a background agent) still run is
+// not parked: they may use the stack. Once they end, it is.
+func TestNoParkWhileSubagentsRun(t *testing.T) {
+	e := start(t)
+	fa := &fakeAgents{parkOut: "kid: stopped 1 container and 0 pods (freed 40 MiB)"}
+	e.d.SetAgents(fa)
+	spawned(t, e, "kid", "dev", "")
+	e.d.SetStackIdle(80 * time.Millisecond)
+	sub := func(event string) {
+		t.Helper()
+		if err := call(t, e.bus, "kid", "hook_event", map[string]any{"event": event, "session_id": "s1",
+			"payload": map[string]any{"agent_id": "a1"}}, nil); err != nil {
+			t.Fatal(err)
+		}
+	}
+	sub("SubagentStart")
+	hookEvent(t, e, "kid", "Stop")
+	time.Sleep(300 * time.Millisecond)
+	if p := fa.parks(); len(p) != 0 {
+		t.Fatalf("parked while a subagent runs: %q", p)
+	}
+	sub("SubagentStop")
+	waitParks(t, fa, 1)
+}
+
+// A stack still at work (lea-agent park: busy) is not stopped and nothing is recorded; lea looks
+// again one idle delay later.
+func TestABusyStackIsTriedAgain(t *testing.T) {
+	e := start(t)
+	fa := &fakeAgents{parkErr: fmt.Errorf("kid: %w", agents.ErrStackBusy)}
+	e.d.SetAgents(fa)
+	spawned(t, e, "kid", "dev", "")
+	if err := call(t, e.bus, "kid", "task_update", map[string]any{"status_text": "testing"}, nil); err != nil {
+		t.Fatal(err)
+	}
+	e.d.SetStackIdle(60 * time.Millisecond)
+	hookEvent(t, e, "kid", "Stop")
+	waitParks(t, fa, 2)
+	if s := boardStack(t, e, "kid"); s != "" {
+		t.Fatalf("board stack %q for a busy stack", s)
+	}
+}
+
+// A new turn that comes while the stack is being stopped starts it again at once: the agent is
+// at work and counts on it.
+func TestANewTurnDuringTheParkStartsTheStackAgain(t *testing.T) {
+	e := start(t)
+	hold := make(chan struct{})
+	fa := &fakeAgents{parkOut: "kid: stopped 1 container and 0 pods (freed 40 MiB)", parkHold: hold}
+	e.d.SetAgents(fa)
+	spawned(t, e, "kid", "dev", "")
+	if err := call(t, e.bus, "kid", "task_update", map[string]any{"status_text": "testing"}, nil); err != nil {
+		t.Fatal(err)
+	}
+	e.d.SetStackIdle(50 * time.Millisecond)
+	hookEvent(t, e, "kid", "Stop")
+	waitParks(t, fa, 1)
+	hookEvent(t, e, "kid", "UserPromptSubmit")
+	close(hold)
+	deadline := time.Now().Add(3 * time.Second)
+	for !fa.has("unpark lea-a/kid") {
+		if time.Now().After(deadline) {
+			t.Fatalf("not started again: %q", fa.calls)
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	if s := boardStack(t, e, "kid"); s != "" {
+		t.Fatalf("board stack %q after the stack started again", s)
 	}
 }

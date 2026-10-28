@@ -440,6 +440,14 @@ type fakeContainers struct {
 	sweepOut string        // what Sweep reports
 	parks    []string      // container/name of each Park
 	parkOut  string        // what Park reports
+	unparks  []string      // container/name of each Unpark
+}
+
+func (c *fakeContainers) Unpark(ctx context.Context, container, name string) (string, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.unparks = append(c.unparks, container+"/"+name)
+	return "", nil
 }
 
 func (c *fakeContainers) Park(ctx context.Context, container, name string) (string, error) {

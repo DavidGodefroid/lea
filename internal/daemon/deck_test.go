@@ -22,7 +22,9 @@ type fakeAgents struct {
 	newErr     error // New fails with it
 	// lockCheckErr: LockCheckRequest refuses with it; lockOpenErr: LockOpen fails with it.
 	lockCheckErr, lockOpenErr error
-	parkOut                   string // what ParkStack reports
+	parkOut                   string        // what ParkStack reports
+	parkErr                   error         // ParkStack fails with it
+	parkHold                  chan struct{} // when set, ParkStack waits for it to close
 }
 
 func (f *fakeAgents) rec(s string) { f.mu.Lock(); f.calls = append(f.calls, s); f.mu.Unlock() }
@@ -70,7 +72,20 @@ func (f *fakeAgents) SweepStacks(ctx context.Context, c string) (string, error) 
 }
 func (f *fakeAgents) ParkStack(ctx context.Context, key string) (string, error) {
 	f.rec("park " + key)
+	f.mu.Lock()
+	hold, err := f.parkHold, f.parkErr
+	f.mu.Unlock()
+	if hold != nil {
+		<-hold
+	}
+	if err != nil {
+		return "", err
+	}
 	return f.parkOut, nil
+}
+func (f *fakeAgents) UnparkStack(ctx context.Context, key string) (string, error) {
+	f.rec("unpark " + key)
+	return "", nil
 }
 func (f *fakeAgents) Attached(ctx context.Context, c string) (bool, error) {
 	f.rec("attached " + c)

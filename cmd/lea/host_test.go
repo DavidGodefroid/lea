@@ -249,6 +249,10 @@ func (c *cliAgents) ParkStack(ctx context.Context, key string) (string, error) {
 	c.rec("park " + key)
 	return "", nil
 }
+func (c *cliAgents) UnparkStack(ctx context.Context, key string) (string, error) {
+	c.rec("unpark " + key)
+	return "", nil
+}
 func (c *cliAgents) SweepStacks(ctx context.Context, ctr string) (string, error) {
 	c.rec("sweep " + ctr)
 	return c.sweep, c.sweepErr

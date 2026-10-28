@@ -111,6 +111,8 @@ type Containers interface {
 	// Park stops, without removing them, the containers an idle agent started (#132) and says
 	// what it freed ("" when nothing of its own ran).
 	Park(ctx context.Context, container, name string) (string, error)
+	// Unpark starts again what the agent's last Park stopped.
+	Unpark(ctx context.Context, container, name string) (string, error)
 	Sweep(ctx context.Context, container string, keep []string) (string, error)
 }
 
@@ -2166,6 +2168,15 @@ func (m *Manager) ParkStack(ctx context.Context, key string) (string, error) {
 		return "", err
 	}
 	return m.cfg.Containers.Park(ctx, a.Container, a.Name)
+}
+
+// UnparkStack starts again what ParkStack stopped: a new turn came while it stopped them.
+func (m *Manager) UnparkStack(ctx context.Context, key string) (string, error) {
+	a, err := m.spawned(key)
+	if err != nil {
+		return "", err
+	}
+	return m.cfg.Containers.Unpark(ctx, a.Container, a.Name)
 }
 
 // SweepStacks removes, in a container the launcher has just started, what the agents that are

@@ -36,6 +36,8 @@ type Agents interface {
 	// ParkStack stops, without removing them, the containers an idle agent started (#132), and
 	// says what it freed.
 	ParkStack(ctx context.Context, key string) (string, error)
+	// UnparkStack starts again what ParkStack stopped (a new turn came meanwhile).
+	UnparkStack(ctx context.Context, key string) (string, error)
 	Attached(ctx context.Context, container string) (bool, error)
 	Popup(ctx context.Context, key string, compose bool) error
 	// SetLabel renames an agent for display (the deck's e); OpenShell opens a shell in the

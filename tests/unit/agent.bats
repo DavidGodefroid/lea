@@ -173,17 +173,40 @@ service() { tr '\0' ' ' <"/proc/$1/cmdline" 2>/dev/null | grep -q 'unix://'; }
   printf '%s\n' i1 c1 c2 i2 c4 c5 >"$PODMAN_RUNNING"
   sleep 60 & p1=$!; sleep 60 & p2=$!; PIDS="$PIDS $p1 $p2"
   printf 'c1 %s\nc2 %s\nc4 0\n' "$p1" "$p2" >"$PODMAN_PIDS"
+  export LEA_AGENT_PARK_SAMPLE=0.3
   run "$A" park dev-1
   [ "$status" -eq 0 ]
   [[ "$output" =~ ^dev-1:\ stopped\ 3\ containers\ and\ 1\ pod\ \(freed\ [0-9]+\ MiB\)$ ]]
   grep -qxF 'podman [pod] [stop] [-t] [10] [p1]' "$PODMAN_LOG"
   grep -qxF 'podman [stop] [-t] [10] [c1] [c2] [c4]' "$PODMAN_LOG"
   ! grep -q '\[rm\]' "$PODMAN_LOG"
+  # unpark starts again what park stopped, once.
+  : >"$PODMAN_LOG"
+  run "$A" unpark dev-1
+  [ "$status" -eq 0 ] && [ "$output" = "dev-1: started 3 containers and 1 pod again" ]
+  grep -qxF 'podman [pod] [start] [p1]' "$PODMAN_LOG"
+  grep -qxF 'podman [start] [c1] [c2] [c4]' "$PODMAN_LOG"
+  run "$A" unpark dev-1
+  [ "$status" -eq 0 ] && [ -z "$output" ]
   # Nothing of its own runs: nothing stopped, nothing said.
   printf '%s\n' c5 >"$PODMAN_RUNNING"; : >"$PODMAN_LOG"
   run "$A" park dev-1
   [ "$status" -eq 0 ] && [ -z "$output" ]
   ! grep -q '\[stop\]' "$PODMAN_LOG"
+}
+
+@test "park leaves a stack that is still at work running (a background job of the agent)" {
+  fake_podman
+  export PODMAN_RUNNING="$BATS_TEST_TMPDIR/running" PODMAN_PIDS="$BATS_TEST_TMPDIR/pids" LEA_AGENT_PARK_SAMPLE=0.5
+  printf '%s\n' 'c1||dev-1|false' >"$PODMAN_DB"
+  printf '%s\n' c1 >"$PODMAN_RUNNING"
+  sh -c 'while :; do :; done' & p1=$!; PIDS="$PIDS $p1"
+  printf 'c1 %s\n' "$p1" >"$PODMAN_PIDS"
+  run "$A" park dev-1
+  [ "$status" -eq 3 ]
+  [[ "$output" == *"dev-1: stack busy ("*"% of a CPU), not stopped"* ]]
+  ! grep -q '\[stop\]' "$PODMAN_LOG"
+  [ ! -e "$LEA_AGENT_RUN_DIR/dev-1.parked" ]
 }
 
 @test "park without Podman says nothing" {
@@ -197,6 +220,8 @@ service() { tr '\0' ' ' <"/proc/$1/cmdline" 2>/dev/null | grep -q 'unix://'; }
     run "$A" teardown "$n"
     [ "$status" -eq 2 ]
     run "$A" park "$n"
+    [ "$status" -eq 2 ]
+    run "$A" unpark "$n"
     [ "$status" -eq 2 ]
     run "$A" sweep dev-1 "$n"
     [ "$status" -eq 2 ]

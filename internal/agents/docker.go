@@ -114,15 +114,35 @@ func (d Docker) Teardown(ctx context.Context, container, name string) error {
 	return nil
 }
 
+// ErrStackBusy is a park refused: the agent's stack still works (a background job of the agent).
+var ErrStackBusy = errors.New("the stack is still at work")
+
 // Park stops what an idle agent started in the container's nested Podman (lea-agent park,
-// #132), without removing it, and returns what it freed ("" when nothing of its own ran).
+// #132), without removing it, and returns what it freed ("" when nothing of its own ran). A
+// stack still at work is left running: ErrStackBusy.
 func (d Docker) Park(ctx context.Context, container, name string) (string, error) {
 	if !nameRe.MatchString(name) {
 		return "", fmt.Errorf("invalid agent name %q", name)
 	}
 	out, err := d.agent(ctx, container, "park", name)
 	if err != nil {
+		var ee *exec.ExitError
+		if errors.As(err, &ee) && ee.ExitCode() == 3 {
+			return "", fmt.Errorf("%s: %w%s", name, ErrStackBusy, stderrOf(err))
+		}
 		return "", d.failed(ctx, container, err, "lea-agent park "+name)
+	}
+	return strings.TrimSpace(string(out)), nil
+}
+
+// Unpark starts again what the last park of the agent stopped (lea-agent unpark).
+func (d Docker) Unpark(ctx context.Context, container, name string) (string, error) {
+	if !nameRe.MatchString(name) {
+		return "", fmt.Errorf("invalid agent name %q", name)
+	}
+	out, err := d.agent(ctx, container, "unpark", name)
+	if err != nil {
+		return "", d.failed(ctx, container, err, "lea-agent unpark "+name)
 	}
 	return strings.TrimSpace(string(out)), nil
 }
