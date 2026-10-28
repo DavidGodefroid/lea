@@ -55,34 +55,24 @@ lea__init_launcher() {
     mkdir -p "$_in_bd"
     ln -s "$LEA_ROOT/bin/lea" "$_in_l"
   fi
-  if [ "$LEA_LOCKSQL" = 1 ]; then lea__init_locksql_link "$_in_bd"; fi
+  lea__unlink_locksql "$_in_bd"
   case ":$PATH:" in
     *":$_in_bd:"*) ;;
     *) lea_log "$_in_bd is not on your PATH: add it in your shell profile to run lea by name" ;;
   esac
 }
 
-# DIR/locksql links to this installation's bin/locksql. The link of another lea installation (the
-# release lea update replaced) is taken over; any other file, such as a locksql installed on the
-# host, is left as is.
-lea__init_locksql_link() {
-  _il_l=$1/locksql
-  _il_t=$(readlink "$_il_l" 2>/dev/null || true)
-  if [ "$_il_t" = "$LEA_ROOT/bin/locksql" ]; then return 0; fi
-  if [ -L "$_il_l" ]; then
-    case $_il_t in
-      */bin/locksql) [ -e "${_il_t%/locksql}/lea" ] || [ ! -e "$_il_t" ] || _il_t=foreign ;;
-      *) _il_t=foreign ;;
-    esac
-  elif [ -e "$_il_l" ]; then
-    _il_t=foreign
-  fi
-  if [ "$_il_t" = foreign ]; then
-    lea_log "$_il_l exists and is not lea's locksql: left as is (lea locksql starts the console)"
-    return 0
-  fi
-  mkdir -p "$1"
-  ln -sfn "$LEA_ROOT/bin/locksql" "$_il_l"
+# lea__unlink_locksql DIR: removes DIR/locksql when it is the link an older lea made to its own
+# bin/locksql (in an installation that still holds a lea, or one lea update has since pruned):
+# locksql on the host is locksql's own launcher, which lea locksql delegates to. Any other file,
+# such as that launcher, is left as is.
+lea__unlink_locksql() {
+  _ul_l=$1/locksql
+  [ -L "$_ul_l" ] || return 0
+  _ul_t=$(readlink "$_ul_l") || return 0
+  case $_ul_t in
+    */bin/locksql) if [ -e "${_ul_t%/locksql}/lea" ] || [ ! -e "$_ul_t" ]; then rm -f "$_ul_l"; fi ;;
+  esac
 }
 
 # Asks for the projects directory (default: the current value, else the working directory),

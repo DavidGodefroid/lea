@@ -278,10 +278,14 @@ this lea) still runs, nor while `.locksql` holds anything but directories and re
 single name (no symbolic or hard link):
 restart the agents (`lea stop`, then `lea`), remove the entry it names, and retry.
 
-`lea init` also links `locksql` next to `lea`: run `locksql` (or `lea locksql`) in a terminal you
-keep in view to open the console, then ask an agent about your data. `locksql vault login` logs the
-console account in to Vault again when its token expires. A `locksql` already installed on the
-host keeps its name; `lea locksql` then opens lea's console.
+Run `lea locksql` in a terminal you keep in view to open the console, then ask an agent about your
+data. `lea locksql vault login` logs the console account in to Vault again when its token expires.
+lea itself puts no `locksql` command on the host (it removes the link older releases made): the
+host's `locksql` is locksql's own launcher
+([locksql's docs/launcher.md](https://github.com/DavidGodefroid/locksql/blob/main/docs/launcher.md)),
+which runs every locksql command in Docker. When it is installed, `lea locksql` hands the console
+to it, with lea's console image, the projects directory read-only but for `.locksql`, and the same
+confinement; without it, lea runs that container itself.
 
 The console holds the credentials, so its container is confined (in the deck too): no capability,
 no privilege gain (`no-new-privileges`), a read-only root with a small `/tmp`, at most 256
