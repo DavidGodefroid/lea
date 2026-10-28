@@ -7,12 +7,13 @@ WORKDIR /src
 COPY go.mod go.sum ./
 COPY internal/providers/ internal/providers/
 COPY internal/keyproxy/ internal/keyproxy/
+COPY internal/lockhttp/ internal/lockhttp/
 COPY cmd/lea-keyproxy/ cmd/lea-keyproxy/
 RUN CGO_ENABLED=0 GOOS=linux GOARCH=${TARGETARCH} GOFLAGS=-mod=readonly \
     go build -trimpath -ldflags "-s -w" -o /out/lea-keyproxy ./cmd/lea-keyproxy
 
 FROM alpine:3.22
-RUN apk add --no-cache squid socat openssl \
+RUN apk add --no-cache squid socat openssl setpriv \
  && tpl=$(dirname "$(find /usr/share/squid/errors -name ERR_ACCESS_DENIED | head -n1)") \
  && mkdir -p /etc/squid/lea-errors /etc/lea \
  && cp "$tpl"/* /etc/squid/lea-errors/
@@ -21,5 +22,5 @@ COPY proxy/render-squid-conf.sh proxy/sni-matches.sh proxy/entrypoint.sh /usr/lo
 COPY --from=keyproxy /out/lea-keyproxy /usr/local/bin/lea-keyproxy
 COPY config/internal-hosts /etc/lea/internal-hosts
 RUN chmod 0755 /usr/local/bin/render-squid-conf.sh /usr/local/bin/sni-matches.sh /usr/local/bin/entrypoint.sh
-EXPOSE 3128 2222 4318 4400
+EXPOSE 3128 3130 2222 4318 4400
 ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]

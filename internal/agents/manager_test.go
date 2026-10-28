@@ -1037,6 +1037,33 @@ func TestApprovalSettingsReachTheAgent(t *testing.T) {
 	}
 }
 
+func TestLockHTTPTokenReachesTheAgent(t *testing.T) {
+	for _, on := range []bool{false, true} {
+		st, err := store.Open(filepath.Join(t.TempDir(), "lea.db"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { st.Close() })
+		term := &fakeTerm{sessions: map[string]*fakeSession{}}
+		cfg := Config{Store: st, Term: term, Containers: &fakeContainers{live: map[string][]string{}},
+			LeaBin: leaBin, UID: 1000, GID: 1000, Now: func() int64 { return 1000 }}
+		if on {
+			cfg.ProxyToken = func(container, agent string) string { return "tok-" + container + "-" + agent }
+		}
+		m := NewManager(cfg)
+		if err := m.Ensure(bg, C, "/p"); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := m.New(bg, NewRequest{Container: C, Name: "a1"}); err != nil {
+			t.Fatal(err)
+		}
+		cmd := strings.Join(term.get(C).byAgent("a1").cmd, " ")
+		if got := strings.Contains(cmd, "-e LEA_PROXY_TOKEN=tok-"+C+"-a1 "); got != on {
+			t.Fatalf("LockHTTP %v: cmd=%s", on, cmd)
+		}
+	}
+}
+
 func TestSnapshotCarriesUnreadUsageAndTheOldestApproval(t *testing.T) {
 	e := newEnv(t)
 	e.ensure(t, "/p")

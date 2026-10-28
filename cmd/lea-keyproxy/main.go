@@ -12,6 +12,7 @@ import (
 	"os"
 
 	"github.com/DavidGodefroid/lea/internal/keyproxy"
+	"github.com/DavidGodefroid/lea/internal/lockhttp"
 	"github.com/DavidGodefroid/lea/internal/providers"
 )
 
@@ -29,6 +30,7 @@ func run(args []string, stderr io.Writer) error {
 	internal := fs.String("internal-hosts", "/etc/lea/internal-hosts", "the internal-hosts file")
 	listen := fs.String("listen", fmt.Sprintf(":%d", providers.ForwarderPort), "the listen address")
 	viaFlag := fs.String("via", "http://127.0.0.1:3128", "the forward proxy every upstream request goes through")
+	sources := fs.String("sources", "", "LockHTTP: the gate's sources.json, which names the calling container (with $LEA_KEYPROXY_TOKEN, the gate's password); empty: -via is plain squid")
 	routes := fs.String("routes", "/proc/net/route", "the routing table: connections on the default route's interface (the egress network) are refused; empty refuses none")
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -60,6 +62,15 @@ func run(args []string, stderr io.Writer) error {
 		return errors.New("invalid -via URL")
 	}
 	cfg := keyproxy.Config{Endpoints: eps, Via: via}
+	if *sources != "" {
+		// From the environment, never argv: ps in the proxy container would show it.
+		tok := os.Getenv("LEA_KEYPROXY_TOKEN")
+		if tok == "" {
+			return errors.New("-sources needs LEA_KEYPROXY_TOKEN")
+		}
+		os.Unsetenv("LEA_KEYPROXY_TOKEN")
+		cfg.Gate = &keyproxy.Gate{Token: tok, Source: lockhttp.NewSourcer(*sources).Source}
+	}
 	if *routes != "" {
 		cfg.Refused = keyproxy.EgressAddrs(*routes)
 	}

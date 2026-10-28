@@ -8,7 +8,8 @@ setup() {
   cat >"$F/lea-session" <<'EOT'
 #!/bin/sh
 { printf 'lea-session pid=%s agent=%s' "$$" "$LEA_AGENT"; for a in "$@"; do printf ' [%s]' "$a"; done; printf '\n'; } >>"$FAKE_LOG"
-printf 'DOCKER_HOST=%s\nCONTAINERS_CONF_OVERRIDE=%s\n' "${DOCKER_HOST:-}" "${CONTAINERS_CONF_OVERRIDE:-}" >"$(dirname "$FAKE_LOG")/session.env"
+printf 'DOCKER_HOST=%s\nCONTAINERS_CONF_OVERRIDE=%s\nHTTPS_PROXY=%s\nhttp_proxy=%s\nLEA_PROXY_TOKEN=%s\n' "${DOCKER_HOST:-}" "${CONTAINERS_CONF_OVERRIDE:-}" \
+  "${HTTPS_PROXY:-}" "${http_proxy:-}" "${LEA_PROXY_TOKEN-unset}" >"$(dirname "$FAKE_LOG")/session.env"
 EOT
   chmod +x "$F/lea-session"
   export PATH="$F:$PATH"
@@ -75,6 +76,23 @@ service() { tr '\0' ' ' <"/proc/$1/cmdline" 2>/dev/null | grep -q 'unix://'; }
   grep -qxF "CONTAINERS_CONF_OVERRIDE=$LEA_AGENT_RUN_DIR/dev-1.containers.conf" "$BATS_TEST_TMPDIR/session.env"
   # The service is not the agent's child: pausing the agent never freezes it.
   ! grep -qw "$svc" /proc/"$(cat "$LEA_AGENT_RUN_DIR/dev-1.pid")"/task/*/children 2>/dev/null
+}
+
+@test "run under LockHTTP gives the agent its own proxy password, and drops it from the environment" {
+  LEA_LOCKHTTP=1 LEA_PROXY_IP=10.89.0.2 LEA_PROXY_TOKEN=0123abcd HTTPS_PROXY=http://shell:x@10.89.0.2:3130 run "$A" run dev-1 -- x
+  [ "$status" -eq 0 ]
+  grep -qx 'HTTPS_PROXY=http://dev-1:0123abcd@10.89.0.2:3130' "$BATS_TEST_TMPDIR/session.env"
+  grep -qx 'http_proxy=http://dev-1:0123abcd@10.89.0.2:3130' "$BATS_TEST_TMPDIR/session.env"
+  grep -qx 'LEA_PROXY_TOKEN=unset' "$BATS_TEST_TMPDIR/session.env"
+}
+
+@test "run under LockHTTP without a token keeps the container's proxy; a bad token is refused" {
+  LEA_LOCKHTTP=1 LEA_PROXY_IP=10.89.0.2 HTTPS_PROXY=http://shell:x@10.89.0.2:3130 run "$A" run dev-1 -- x
+  [ "$status" -eq 0 ]
+  grep -qx 'HTTPS_PROXY=http://shell:x@10.89.0.2:3130' "$BATS_TEST_TMPDIR/session.env"
+  LEA_LOCKHTTP=1 LEA_PROXY_IP=10.89.0.2 LEA_PROXY_TOKEN='x@evil' run "$A" run dev-2 -- x
+  [ "$status" -eq 2 ]
+  [[ "$output" == *"invalid LEA_PROXY_TOKEN"* ]]
 }
 
 @test "run without Podman keeps the shared Podman service" {

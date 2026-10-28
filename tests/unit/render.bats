@@ -235,3 +235,21 @@ DEFAULT_ACL="acl egress_allow dstdomain -n .github.com .githubusercontent.com .g
   grep -q '%H' "$LEA_ROOT/proxy/errors/ERR_LEA_DOH"
   grep -q '%H' "$LEA_ROOT/proxy/errors/ERR_LEA_LITERAL"
 }
+
+@test "LEA_LOCKHTTP=1: squid on loopback only, no allowlist, the floor stays" {
+  hosts
+  LEA_LOCKHTTP=1 LEA_EGRESS_ALLOW='default,corp.example' run sh "$R" "$BATS_TEST_TMPDIR/hosts"
+  [ "$status" -eq 0 ]
+  printf '%s\n' "$output" | grep -qx 'http_port 127.0.0.1:3128'
+  [[ "$output" != *"egress_allow"* ]]
+  [[ "$output" == *"http_access deny doh_names"* ]]
+  [[ "$output" == *"http_access deny private_dst"* ]]
+  [[ "$output" == *"http_access deny ip_literal"* ]]
+}
+
+@test "LEA_LOCKHTTP unset: squid listens on every address of the proxy" {
+  hosts
+  LEA_LOCKHTTP= run sh "$R" "$BATS_TEST_TMPDIR/hosts"
+  [ "$status" -eq 0 ]
+  printf '%s\n' "$output" | grep -qx 'http_port 3128'
+}

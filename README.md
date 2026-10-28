@@ -77,7 +77,7 @@ flowchart LR
 ```
 
 **Contents:** [Quick start](#quick-start) · [The deck](#the-deck) · [Git and forges](#git-and-forges) ·
-[Databases](#databases-with-locksql) · [Queues and files](#queues-and-files-with-lockmq-and-lockfile) · [Teams of agents](#teams-of-agents) · [Commands](#commands) ·
+[Databases](#databases-with-locksql) · [Queues and files](#queues-and-files-with-lockmq-and-lockfile) · [Web requests](#web-requests-with-lockhttp) · [Teams of agents](#teams-of-agents) · [Commands](#commands) ·
 [Configure](#configure) · [Safety](#how-lea-keeps-your-machine-safe) · [FAQ](#faq) ·
 [Troubleshooting](#troubleshooting) · [Development](#development)
 
@@ -342,6 +342,29 @@ warning at start. `lea lockmq` / `lea lockfile` tell you whether the agents reac
 open the console: switch to the tool's account (prefer Wayland), then
 `lockmq console --project <projects dir> --profile <profile>`. Restart lea (`lea stop --all`,
 then `lea`) after turning one on.
+
+## Web requests, with LockHTTP
+
+[LockHTTP](https://github.com/DavidGodefroid/lockhttp) puts a human between the agents and the
+web: every outbound HTTP(S) request of an agent goes through a LockHTTP gate in lea's proxy
+container, which lets through what its policy trusts and asks you, in a `lockhttp` console on this
+host, about the rest. It is **off** by default (`LEA_LOCKHTTP=0`): lea then behaves as before.
+
+To turn it on, install lockhttp, then set it up once as its contract says
+(`docs/lea.md` in the lockhttp repository): `sudo lockhttp install --client <you> --gate-uid 10003`
+(add `--rootless` under rootless Podman), `lockhttp init --trusted "<your LEA_EGRESS_ALLOW>"` in
+the `lockhttp` account, and `lockhttp console --profile default` in that account's own login
+session. Then set `LEA_LOCKHTTP=1` in `~/.config/lea/lea.conf` and restart lea (`lea stop --all`,
+then `lea`); `lea doctor` checks each step.
+
+With it on, squid listens on the proxy's loopback only, behind the gate (its floor stays: DoH
+resolvers, IP literals and private ranges are refused; the allowlist is the gate's policy now).
+The gate runs as its own uid (10003, never root) and is the only process that reaches the
+console's socket: no agent container mounts `/run/lockhttp`. Each agent has its own proxy
+password, and the daemon tells the gate which container and agent each one belongs to
+(`sources.json`, under `~/.local/share/lea/lockhttp/`); lea-keyproxy goes through the gate too.
+`LEA_GIT_SSH` is refused (its SSH forwarders would bypass the gate: use git over HTTPS), and
+claude.ai's connectors are turned off in the agents' Claude Code (WebSearch and WebFetch stay).
 
 ## Teams of agents
 
@@ -653,6 +676,7 @@ read-only. The screen runs in the deck on the host: agents cannot open or drive 
 | `LEA_LOCKSQL_VAULT_ADDR` | asked by `lea init` | Vault address of the locksql console, for a Vault profile |
 | `LEA_LOCKMQ`, `LEA_LOCKFILE` | `0`, asked by `lea init` | let the agents reach a lockmq / lockfile console on this host |
 | `LEA_LOCKMQ_REF`, `LEA_LOCKFILE_REF` | the pinned releases | the release `lea init` installs on the host (lockfile v0.1.1 or later); `lea update` records a newer one you accept |
+| `LEA_LOCKHTTP` | `0` | send the agents' web requests through a LockHTTP gate (refuses `LEA_GIT_SSH`) |
 | `LEA_INTERNAL_HOSTS` | none | private hosts the proxy may reach (format in `config/internal-hosts`) |
 | `LEA_EGRESS_ALLOW` | empty (lea's default list) | the only web domains agents may reach, comma separated (subdomains included); `default` stands for lea's list, `*` opens the web |
 | `LEA_NESTED_NETWORKS` | empty | networks your compose files expect, created at start |

@@ -1,0 +1,1 @@
+{"version": 1, "networks": [{"local_ip": "198.51.100.5", "container": "lea-test"}], "keyproxy": {"token_sha256": ""}, "agents": []}

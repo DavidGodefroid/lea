@@ -134,6 +134,9 @@ type Config struct {
 	// open; Consoles reaches the console containers. Without them no console opens.
 	LockSpec func(tool string) (LockSpec, error)
 	Consoles Consoles
+	// ProxyToken is an agent's LockHTTP proxy password (LEA_LOCKHTTP=1), handed to lea-agent
+	// run; nil: LockHTTP is off and the agent keeps its container's proxy.
+	ProxyToken func(container, agent string) string
 }
 
 type Row struct {
@@ -386,6 +389,9 @@ func (m *Manager) paneCmd(container string, a store.Agent, args []string, attach
 		"-e", "LEA_AGENT=" + a.Name, "-e", "LEA_APPROVALS=" + m.cfg.Approvals}
 	if m.cfg.ApprovalTimeout > 0 {
 		cmd = append(cmd, "-e", "LEA_APPROVAL_TIMEOUT="+strconv.Itoa(m.cfg.ApprovalTimeout))
+	}
+	if m.cfg.ProxyToken != nil && !attach {
+		cmd = append(cmd, "-e", "LEA_PROXY_TOKEN="+m.cfg.ProxyToken(container, a.Name))
 	}
 	cmd = append(cmd, "-w", a.Workdir, container, "abduco")
 	if attach {

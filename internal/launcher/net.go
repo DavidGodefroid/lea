@@ -80,10 +80,17 @@ func (l *Launcher) ensureProxy(proj string) error {
 	if err != nil {
 		return err
 	}
+	var lh []string
+	if l.Cfg.LockHTTP() {
+		if lh, err = l.lockHTTPProxyArgs(); err != nil {
+			return err
+		}
+	}
 	if l.containerRunning(name) {
 		got, _ := l.output(false, "docker", "inspect", "--format",
 			`{{index .Config.Labels "lea.git-ssh"}}{{with index .Config.Labels "lea.egress-allow"}}|{{.}}{{end}}`+
-				`{{with index .Config.Labels "lea.providers"}}#{{.}}{{end}}{{with index .Config.Labels "lea.rules"}}@{{.}}{{end}}!{{.Image}}`, name)
+				`{{with index .Config.Labels "lea.providers"}}#{{.}}{{end}}{{with index .Config.Labels "lea.rules"}}@{{.}}{{end}}`+
+				`{{with index .Config.Labels "lea.lockhttp"}}^{{.}}{{end}}!{{.Image}}`, name)
 		got, image, _ := strings.Cut(got, "!")
 		want := l.Cfg.GitSSH()
 		if allow != "" {
@@ -95,6 +102,9 @@ func (l *Launcher) ensureProxy(proj string) error {
 		if rules != "" {
 			want += "@" + rules
 		}
+		if lh != nil {
+			want += "^1"
+		}
 		// An image that cannot be inspected (not pulled yet) leaves the labels to decide.
 		current, err := l.output(false, "docker", "image", "inspect", "-f", "{{.Id}}", l.Cfg.Get("LEA_PROXY_IMAGE"))
 		if err != nil || current == "" {
@@ -104,8 +114,8 @@ func (l *Launcher) ensureProxy(proj string) error {
 		if got == want && strings.TrimPrefix(image, "sha256:") == strings.TrimPrefix(current, "sha256:") {
 			return nil
 		}
-		l.logf("restarting %s for the git SSH endpoints '%s', the egress allowlist '%s', the providers of %s, the rules %s and the image %s",
-			name, l.Cfg.GitSSH(), allow, l.Cfg.Get("LEA_PROVIDERS"), rules, l.Cfg.Get("LEA_PROXY_IMAGE"))
+		l.logf("restarting %s for the git SSH endpoints '%s', the egress allowlist '%s', the providers of %s, the rules %s, LockHTTP %s and the image %s",
+			name, l.Cfg.GitSSH(), allow, l.Cfg.Get("LEA_PROVIDERS"), rules, onOff(lh != nil), l.Cfg.Get("LEA_PROXY_IMAGE"))
 	}
 	hosts := l.Cfg.Get("LEA_INTERNAL_HOSTS")
 	if err := noComma(hosts); err != nil {
@@ -121,8 +131,12 @@ func (l *Launcher) ensureProxy(proj string) error {
 	if rules != "" {
 		a = append(a, "--label", "lea.rules="+rules)
 	}
+	if lh != nil {
+		a = append(a, "--label", "lea.lockhttp=1")
+	}
 	a = append(a, "--mount", "type=bind,src="+hosts+",dst=/etc/lea/internal-hosts,readonly")
 	a = append(a, fw.mounts...)
+	a = append(a, lh...)
 	a = append(a, "-e", "LEA_GIT_SSH="+l.Cfg.GitSSH(), "-e", "LEA_OTEL_UPSTREAM="+l.Cfg.Get("LEA_OTEL_UPSTREAM"),
 		"-e", "LEA_EGRESS_ALLOW="+allow,
 		l.Cfg.Get("LEA_PROXY_IMAGE"))
@@ -158,4 +172,11 @@ func (l *Launcher) releaseNetwork(id string) {
 	n := l.Cfg.InternalNetwork(id)
 	_ = l.quiet("docker", "network", "disconnect", "-f", n, l.prefix()+"-proxy")
 	_ = l.quiet("docker", "network", "rm", n)
+}
+
+func onOff(on bool) string {
+	if on {
+		return "on"
+	}
+	return "off"
 }
