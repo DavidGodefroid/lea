@@ -282,19 +282,23 @@ func (l *Launcher) applyLimits(name string) {
 	if len(a) == 0 {
 		return
 	}
-	stamp := id + " " + strings.Join(a, " ")
-	if readTrim(l.limitsRefused(name)) == stamp {
+	stamp, refused := id+" "+strings.Join(a, " "), l.limitsRefused(name)
+	// The file is lea's own, below the data directory (SafePath: no symbolic link on the way).
+	safe := SafePath(l.Cfg.DataDir(), refused) == nil
+	if safe && readTrim(refused) == stamp {
 		return
 	}
 	if l.quiet("docker", append(append([]string{"update"}, a...), name)...) != nil {
 		l.logf("warning: could not apply the limits %s to the running %s; run 'lea stop', then lea, to restart it with them",
 			strings.Join(a, " "), name)
-		if Mkdirs(l.Cfg.DataDir(), parentText(l.limitsRefused(name))) == nil {
-			_ = os.WriteFile(l.limitsRefused(name), []byte(stamp+"\n"), 0o600)
+		if safe && Mkdirs(l.Cfg.DataDir(), parentText(refused)) == nil {
+			_ = WriteFile(l.Cfg.DataDir(), refused, []byte(stamp+"\n"))
 		}
 		return
 	}
-	os.Remove(l.limitsRefused(name))
+	if safe {
+		os.Remove(refused)
+	}
 	l.logf("applied the limits %s to the running %s", strings.Join(a, " "), name)
 }
 
