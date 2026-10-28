@@ -181,6 +181,8 @@ func TestDecideBash(t *testing.T) {
 		{"cd claude read docs", "cd .claude && ls", "", nil},
 		{"git -C status", "git -C /p/lea status", "", nil},
 		{"cd to repo then add", "cd /p/lea && git add internal/grants/bash.go", "", nil},
+		{"cd heredoc message", "cd /p/lea && git commit -m \"$(cat <<'EOF'\nfix hooks; config settings.json\nEOF\n)\"", "", nil},
+		{"cd claude heredoc", "cd .claude && git commit -m \"$(cat <<'EOF'\nx\nEOF\n)\" && cp x settings.json", Deny, nil},
 		// (b) quoted push targets.
 		{"quoted plus", `git push origin "+feat/73-x"`, Deny, every},
 		{"quoted main", "git push origin 'main'", Deny, every},
