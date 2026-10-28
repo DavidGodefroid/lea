@@ -55,27 +55,36 @@ func runDelivery(args []string, stdout, stderr io.Writer) int {
 				repos = append(repos, repo{e.Name(), gh})
 			}
 		}
-		// An agent can write a repository's .git/config: a pin that changed since the last on is
-		// recorded only once the user has seen it (--yes).
+		// An agent can write a repository's .git/config (or add a repository): a pin is recorded
+		// only once the user has seen it. Without --yes, on applies only when every pin is the
+		// last one recorded for that repository of this lea (active, revoked or expired);
+		// otherwise it lists the pins and records nothing.
 		var cur struct{ Grants []grants.Grant }
-		if err := hostCall("grant_list", map[string]any{}, &cur); err != nil {
+		if err := hostCall("grant_list", map[string]any{"all": true}, &cur); err != nil {
 			return fail(err)
 		}
 		was := map[string]string{}
-		for _, g := range cur.Grants {
-			if g.Container == container && g.IsStanding() {
+		for _, g := range cur.Grants { // newest first
+			if _, seen := was[g.Repo]; !seen && g.Container == container && g.IsStanding() {
 				was[g.Repo] = g.GitHub
 			}
 		}
-		changed := false
+		unseen := false
 		for _, x := range repos {
-			if w, ok := was[x.Repo]; ok && w != "github.com/"+x.GitHub {
+			switch w, ok := was[x.Repo]; {
+			case !ok:
+				fmt.Fprintf(stderr, "lea: %s: new pin github.com/%s\n", oneLine(x.Repo, 100), oneLine(x.GitHub, 160))
+				unseen = true
+			case w != "github.com/"+x.GitHub:
 				fmt.Fprintf(stderr, "lea: %s: origin changed from %s to github.com/%s\n", oneLine(x.Repo, 100), oneLine(w, 160), oneLine(x.GitHub, 160))
-				changed = true
+				unseen = true
 			}
 		}
-		if changed && !yes {
-			fmt.Fprintln(stderr, "lea: nothing recorded: check those origins (agents can rewrite .git/config), then run lea delivery on --yes")
+		if unseen && !yes {
+			for _, sk := range skipped {
+				fmt.Fprintf(stderr, "lea: %s\n", oneLine(sk, 200))
+			}
+			fmt.Fprintln(stderr, "lea: nothing recorded: check those repositories (agents can rewrite .git/config), then run lea delivery on --yes")
 			return 1
 		}
 		var r struct{ Grants []grants.Grant }

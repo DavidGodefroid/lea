@@ -108,7 +108,15 @@ func TestDeliveryCommand(t *testing.T) {
 	if d := preToolUseAs(t, bus, "dev", "Bash", push); d != "" {
 		t.Fatalf("before delivery: %q", d)
 	}
-	rc, out, e := runEnv(t, host, "delivery", "--container", "lea-a", "--projects", proj, "on")
+	// The first on only lists the pins: the user confirms them with --yes.
+	if rc, _, e := runEnv(t, host, "delivery", "--container", "lea-a", "--projects", proj, "on"); rc != 1 ||
+		!strings.Contains(e, "fixture: new pin github.com/o/fixture") || !strings.Contains(e, "lea delivery on --yes") {
+		t.Fatalf("first on: rc=%d err=%q", rc, e)
+	}
+	if d := preToolUseAs(t, bus, "dev", "Bash", push); d != "" {
+		t.Fatalf("after an unconfirmed on: %q", d)
+	}
+	rc, out, e := runEnv(t, host, "delivery", "--container", "lea-a", "--projects", proj, "on", "--yes")
 	if rc != 0 || !strings.Contains(out, "fixture  github.com/o/fixture") || !strings.Contains(out, "web  github.com/o/web") ||
 		!strings.Contains(out, "gl  skipped: origin is not on github.com") || strings.Contains(out, "hidden") || !strings.Contains(out, "plain  skipped: no origin") {
 		t.Fatalf("on: rc=%d out=%q err=%q", rc, out, e)
@@ -143,6 +151,20 @@ func TestDeliveryCommand(t *testing.T) {
 	}
 	if rc, out, _ := runEnv(t, host, "delivery", "--container", "lea-a", "--projects", proj, "off"); rc != 0 || !strings.Contains(out, "delivery is off") {
 		t.Fatalf("off: rc=%d %q", rc, out)
+	}
+	// Off forgets nothing: an origin changed while delivery was off still needs --yes, and an
+	// unchanged set applies with a plain on.
+	origin("web", "https://github.com/evil2/web.git")
+	if rc, _, e := runEnv(t, host, "delivery", "--container", "lea-a", "--projects", proj, "on"); rc != 1 ||
+		!strings.Contains(e, "web: origin changed from github.com/evil/web to github.com/evil2/web") {
+		t.Fatalf("changed while off: rc=%d err=%q", rc, e)
+	}
+	origin("web", "https://github.com/evil/web.git")
+	if rc, out, e := runEnv(t, host, "delivery", "--container", "lea-a", "--projects", proj, "on"); rc != 0 || !strings.Contains(out, "delivery is on") {
+		t.Fatalf("same pins after off: rc=%d out=%q err=%q", rc, out, e)
+	}
+	if rc, _, _ := runEnv(t, host, "delivery", "--container", "lea-a", "--projects", proj, "off"); rc != 0 {
+		t.Fatal("off again")
 	}
 	if d := preToolUseAs(t, bus, "dev", "Bash", push); d != "" {
 		t.Fatalf("after off: %q", d)

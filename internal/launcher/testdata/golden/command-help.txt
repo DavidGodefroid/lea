@@ -22,7 +22,8 @@ Usage:
   lea delivery on [--yes]|off|status
                               let every agent of this lea push its own branch, open and merge
                               its PR on each GitHub repository here, without asking (standing
-                              grants; --yes: accept origins that changed; off revokes them)
+                              grants; on lists new or changed pins, --yes records them; off
+                              revokes them)
   lea shell [-- cmd...]       open a shell, or run a command, in the same lea
   lea kube refresh            mint a read-only Kubernetes token (8 h)
   lea board --md              the board: every agent's task, as markdown

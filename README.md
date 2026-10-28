@@ -529,20 +529,23 @@ To let every agent of a lea push its own branch, open its pull request and merge
 prompt, run once, on the host, in the projects directory:
 
 ```sh
-lea delivery on      # standing grants on each repository here whose origin is on github.com
-lea delivery status  # which repositories are covered
-lea delivery off     # revoke them: agents ask as usual
+lea delivery on        # lists the GitHub repository each repository here is pinned to
+lea delivery on --yes  # records them: standing grants on each one whose origin is on github.com
+lea delivery status    # which repositories are covered
+lea delivery off       # revoke them: agents ask as usual
 ```
 
 `on` reads each repository's `origin` from its `.git/config` (as a file: no git runs on the host)
 at that moment, and records, for each one on github.com, the grants `commit-identity`,
 `pr-create`, `merge` and `delete-own-branch` for every agent of this lea, pinned to that GitHub
 repository, with no expiry (`lea grant ls` shows them as `standing`, and their uses). A repository
-added later, or an origin changed, is covered once you run `lea delivery on` again (it replaces
+added later, or an origin changed, is covered once you run `lea delivery on --yes` again (it replaces
 the standing grants; grants you added by hand stay). Agents can write a repository's
-`.git/config`: check the list `on` prints, and when an origin differs from the one already pinned
-`on` records nothing until you run `lea delivery on --yes`. Delivery is off until you turn it on, and
-only the host can: the daemon refuses `delivery_set` from a container.
+`.git/config` (or add a repository): `on` records nothing while a pin is new or differs from the
+last one recorded for that repository of this lea (revoked ones included); it lists them, you
+check them, then run `lea delivery on --yes`. Once confirmed, a plain `on` applies. Delivery is
+off until you turn it on, and only the host can: the daemon refuses `delivery_set` from a
+container.
 
 Everything in Grants above holds: an agent's own branch only, in its own worktree, every hard
 deny (no push to `main`, no force-push, no `--admin`). The calls covered:
