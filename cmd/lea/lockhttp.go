@@ -5,7 +5,6 @@ import (
 	"log"
 	"os"
 	"os/exec"
-	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -29,7 +28,7 @@ func lockHTTPSources(ctx context.Context, st *store.Store, dataDir, prefix strin
 		log.Printf("lea daemon: lockhttp: %v; sources.json is not written, the gate refuses every agent", err)
 		return
 	}
-	path := filepath.Join(lockhttp.GateDir(dataDir), "sources.json")
+	path := lockhttp.SourcesPath(dataDir)
 	t := time.NewTicker(lockHTTPEvery)
 	defer t.Stop()
 	for {

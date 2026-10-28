@@ -556,3 +556,24 @@ func TestGateNeedsTokenAndSource(t *testing.T) {
 		}
 	}
 }
+
+func TestGateRefusalIsA403(t *testing.T) {
+	t.Setenv("HTTPS_PROXY", "")
+	gate := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("X-LockHTTP-Code", "E_NO_CONSOLE")
+		http.Error(w, "no console", http.StatusForbidden)
+	}))
+	defer gate.Close()
+	base, _ := url.Parse("https://upstream.test/v1")
+	via, _ := url.Parse(gate.URL)
+	f, err := New(Config{Endpoints: []Endpoint{{Name: "tls", URL: base}}, Via: via, Log: log.New(io.Discard, "", 0),
+		Gate: &Gate{Token: "tok", Source: func(net.IP) (string, bool) { return "lea-a", true }}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	fw := httptest.NewServer(f)
+	defer fw.Close()
+	if code, _, body := raw(t, fw.URL, "GET", "/tls/models", nil); code != http.StatusForbidden || !strings.Contains(body, "LockHTTP refused") {
+		t.Errorf("refused CONNECT: %d %q", code, body)
+	}
+}

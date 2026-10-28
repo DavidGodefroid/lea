@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+
+	"github.com/DavidGodefroid/lea/internal/lockhttp"
 )
 
 // Networks and the egress proxy (ported from lib/net.sh). Each container has its own internal network
@@ -164,13 +166,28 @@ func (l *Launcher) proxyAttach(id string) (string, error) {
 	if ip == "" || strings.Trim(ip, "0123456789.") != "" || ip[0] == '.' || ip[len(ip)-1] == '.' || strings.Contains(ip, "..") {
 		return "", die("could not read the address of %s-proxy on %s (got '%s')", l.prefix(), n, ip)
 	}
+	// LockHTTP: the address may have named another container's (removed) network until the
+	// daemon's next rewrite: forget it before this container can use it.
+	l.lockHTTPForget(func(nw lockhttp.Network) bool { return nw.LocalIP == ip })
 	return ip, nil
+}
+
+// lockHTTPForget drops networks from the gate's sources.json (LEA_LOCKHTTP=1), best effort.
+func (l *Launcher) lockHTTPForget(drop func(lockhttp.Network) bool) {
+	if !l.Cfg.LockHTTP() {
+		return
+	}
+	if err := lockhttp.DropNetworks(lockhttp.SourcesPath(l.Cfg.DataDir()), drop); err != nil {
+		l.logf("warning: lockhttp: %v", err)
+	}
 }
 
 // releaseNetwork is lea_release_network: best effort, once the container is stopped.
 func (l *Launcher) releaseNetwork(id string) {
 	n := l.Cfg.InternalNetwork(id)
 	_ = l.quiet("docker", "network", "disconnect", "-f", n, l.prefix()+"-proxy")
+	c := l.prefix() + "-" + id
+	l.lockHTTPForget(func(nw lockhttp.Network) bool { return nw.Container == c })
 	_ = l.quiet("docker", "network", "rm", n)
 }
 

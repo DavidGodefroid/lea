@@ -7,6 +7,7 @@ setup() {
   lea__lockhost_root() { printf '%s' "$R"; }
   lea__lockhost_owner() { printf '%s' "$OWNER"; }
   lea__lockhttp_in_clients() { true; }
+  lea__lockhttp_self() { echo 1000; }
   printf '#!/bin/sh\n' >"$R/usr/local/bin/lockhttp"; chmod 0755 "$R/usr/local/bin/lockhttp"
   printf 'service_user = "lockhttp"\nallowed_uids = [10003]\n' >"$R/etc/lockhttp/system.toml"
   export LEA_LOCKHTTP=1 LEA_GIT_SSH= LEA_PREFIX=lea

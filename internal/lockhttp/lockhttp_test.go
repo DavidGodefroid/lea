@@ -137,3 +137,22 @@ func TestSourcerFollowsTheFile(t *testing.T) {
 		t.Fatal("another contract version is not read")
 	}
 }
+
+func TestDropNetworks(t *testing.T) {
+	p := filepath.Join(t.TempDir(), "sources.json")
+	if err := DropNetworks(p, func(Network) bool { return true }); err != nil {
+		t.Fatalf("missing file: %v", err)
+	}
+	k := bytes.Repeat([]byte{1}, 32)
+	WriteJSON(p, Build(k, []Network{{LocalIP: "10.0.0.2", Container: "lea-a"}, {LocalIP: "10.0.1.2", Container: "lea-b"}}, nil))
+	if err := DropNetworks(p, func(n Network) bool { return n.Container == "lea-a" }); err != nil {
+		t.Fatal(err)
+	}
+	s := NewSourcer(p)
+	if _, ok := s.Source(net.ParseIP("10.0.0.2")); ok {
+		t.Fatal("dropped network still names lea-a")
+	}
+	if c, _ := s.Source(net.ParseIP("10.0.1.2")); c != "lea-b" {
+		t.Fatalf("kept network: %q", c)
+	}
+}

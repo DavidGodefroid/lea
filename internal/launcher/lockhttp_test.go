@@ -1,6 +1,7 @@
 package launcher
 
 import (
+	"net"
 	"os"
 	"strings"
 	"testing"
@@ -141,5 +142,29 @@ func TestLockHTTPRootlessPodmanKeepsGroups(t *testing.T) {
 	}
 	if !w.hasCall("[--group-add] [keep-groups]") || w.hasCall("LEA_LOCKHTTP_GID") {
 		t.Fatalf("rootless Podman:\n%s", strings.Join(w.calls(), "\n"))
+	}
+}
+
+// An address the proxy had on a removed network never names the next container that gets it.
+func TestLockHTTPForgetsReleasedNetworks(t *testing.T) {
+	w, _ := lockHTTPWorld(t)
+	data := w.launcher().Cfg.DataDir()
+	key, err := lockhttp.Key(data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	p := lockhttp.SourcesPath(data)
+	lockhttp.WriteJSON(p, lockhttp.Build(key, []lockhttp.Network{{LocalIP: "10.89.1.2", Container: w.name()},
+		{LocalIP: "10.89.2.2", Container: "lea-other"}, {LocalIP: "10.89.3.2", Container: "lea-gone"}}, nil))
+	w.launcher().releaseNetwork(w.id())
+	w.env["FAKE_DOCKER_OUT_CONTAINER_INSPECT"] = "10.89.3.2"
+	if _, err := w.launcher().proxyAttach(w.id()); err != nil {
+		t.Fatal(err)
+	}
+	s := lockhttp.NewSourcer(p)
+	for ip, want := range map[string]string{"10.89.1.2": "", "10.89.2.2": "lea-other", "10.89.3.2": ""} {
+		if c, _ := s.Source(net.ParseIP(ip)); c != want {
+			t.Errorf("%s names %q, want %q", ip, c, want)
+		}
 	}
 }

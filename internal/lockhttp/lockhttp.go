@@ -251,3 +251,34 @@ func (s *Sourcer) Source(ip net.IP) (string, bool) {
 	c, ok := s.ips[ip.String()]
 	return c, ok
 }
+
+// DropNetworks removes from the sources.json at path the networks drop names, at once: the
+// launcher calls it when the proxy leaves a container's network and when it joins a new one, so
+// that an address a removed network leaves behind never names the next container that gets it
+// (the daemon rebuilds the whole file from Docker within lockHTTPEvery anyway). A missing or
+// unreadable file is left alone: the gate refuses every source without it.
+func DropNetworks(path string, drop func(Network) bool) error {
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return nil
+	}
+	var s Sources
+	if json.Unmarshal(b, &s) != nil || s.Version != Version {
+		return nil
+	}
+	kept := s.Networks[:0]
+	for _, n := range s.Networks {
+		if !drop(n) {
+			kept = append(kept, n)
+		}
+	}
+	if len(kept) == len(s.Networks) {
+		return nil
+	}
+	s.Networks = kept
+	_, err = WriteJSON(path, s)
+	return err
+}
+
+// SourcesPath is the sources.json lea writes for the gate.
+func SourcesPath(dataDir string) string { return filepath.Join(GateDir(dataDir), "sources.json") }

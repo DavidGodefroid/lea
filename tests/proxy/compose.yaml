@@ -78,9 +78,11 @@ services:
       - ./endpoints:/etc/lea/endpoints:ro
       - ./llm.key:/etc/lea/keys/llm:ro
       - ./lockhttp-gate:/etc/lockhttp-gate:ro
+    # As in lea, the egress network holds the default route (lea-keyproxy refuses it).
     networks:
-      pub:  { ipv4_address: 198.51.100.5 }
-      priv: { ipv4_address: 10.99.0.5 }
+      pub:    { ipv4_address: 198.51.100.5 }
+      priv:   { ipv4_address: 10.99.0.5 }
+      egress: { ipv4_address: 203.0.113.5 }
   client:
     image: curlimages/curl:8.11.1
     entrypoint: [ "sleep", "3600" ]

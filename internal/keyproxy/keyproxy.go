@@ -426,9 +426,19 @@ func (f *Forwarder) errorHandler(w http.ResponseWriter, r *http.Request, err err
 	case isTLS(err):
 		class = "upstream TLS error"
 	}
+	// A LockHTTP gate that refuses an https upstream answers the CONNECT 403, which the transport
+	// reports as "Forbidden": the agent learns it was refused, and where to look.
+	gateRefused := f.gate != nil && strings.HasSuffix(err.Error(), "Forbidden")
+	if gateRefused {
+		class = "refused by the LockHTTP gate"
+	}
 	f.log.Printf("%s", class)
 	if mbe != nil {
 		http.Error(w, "request body too large", http.StatusRequestEntityTooLarge)
+		return
+	}
+	if gateRefused {
+		http.Error(w, "LockHTTP refused this request: ask the user (the lockhttp console shows why)", http.StatusForbidden)
 		return
 	}
 	http.Error(w, "bad gateway", http.StatusBadGateway)
