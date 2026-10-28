@@ -13,6 +13,10 @@ func running(w *world) {
 	w.env["FAKE_DOCKER_OUT_NETWORK_INSPECT"] = "true"
 	w.env["FAKE_DOCKER_OUT_CONTAINER_INSPECT"] = "172.18.0.5"
 	w.env["FAKE_DOCKER_OUT_INSPECT__F"] = "true"
+	// The running proxy was started from this lea's rules.
+	if r := (&Launcher{Root: w.root}).proxyRules(); r != "" {
+		w.env["FAKE_DOCKER_OUT_INSPECT___FORMAT"] = "@" + r
+	}
 }
 
 func TestDeckOpenAttachesWithLeaConfig(t *testing.T) {

@@ -1,6 +1,13 @@
 package launcher
 
-import "strings"
+import (
+	"crypto/sha256"
+	"encoding/hex"
+	"os"
+	"path/filepath"
+	"sort"
+	"strings"
+)
 
 // Networks and the egress proxy (ported from lib/net.sh). Each container has its own internal network
 // (<prefix>-internal-<id>), shared only with the proxy.
@@ -35,12 +42,39 @@ func (l *Launcher) ensureNetworks(id string) error {
 	return nil
 }
 
+// proxyRules is a digest (12 hex digits) of the files the proxy renders its rules and refusal
+// pages from (the lea root's proxy/), "" when there is none: a lea whose rules changed (a new
+// default allowlist, a new refusal) replaces a proxy that an older one started.
+func (l *Launcher) proxyRules() string {
+	dir := filepath.Join(l.Root, "proxy")
+	files, _ := filepath.Glob(filepath.Join(dir, "errors", "*"))
+	files = append(files, filepath.Join(dir, "render-squid-conf.sh"), filepath.Join(dir, "sni-matches.sh"),
+		filepath.Join(dir, "entrypoint.sh"))
+	sort.Strings(files)
+	h, n := sha256.New(), 0
+	for _, f := range files {
+		b, err := os.ReadFile(f)
+		if err != nil {
+			continue
+		}
+		rel, _ := filepath.Rel(dir, f)
+		sum := sha256.Sum256(b)
+		h.Write([]byte(rel + "\x00" + hex.EncodeToString(sum[:]) + "\n"))
+		n++
+	}
+	if n == 0 {
+		return ""
+	}
+	return hex.EncodeToString(h.Sum(nil))[:12]
+}
+
 // ensureProxy is lea_ensure_proxy. A running proxy started for other git SSH endpoints (its
-// lea.git-ssh label), another egress allowlist (lea.egress-allow) or other providers' endpoints
-// (lea.providers) is replaced: its forwarders and its squid.conf are set at start. proj is the
-// projects directory being opened: no key file may sit in it.
+// lea.git-ssh label), another egress allowlist (lea.egress-allow), other providers' endpoints
+// (lea.providers) or other rules (lea.rules: proxyRules) is replaced: its forwarders and its
+// squid.conf are set at start. proj is the projects directory being opened: no key file may sit in
+// it.
 func (l *Launcher) ensureProxy(proj string) error {
-	name, allow := l.prefix()+"-proxy", l.Cfg.Get("LEA_EGRESS_ALLOW")
+	name, allow, rules := l.prefix()+"-proxy", l.Cfg.Get("LEA_EGRESS_ALLOW"), l.proxyRules()
 	fw, err := l.forwarder(proj)
 	if err != nil {
 		return err
@@ -48,7 +82,7 @@ func (l *Launcher) ensureProxy(proj string) error {
 	if l.containerRunning(name) {
 		got, _ := l.output(false, "docker", "inspect", "--format",
 			`{{index .Config.Labels "lea.git-ssh"}}{{with index .Config.Labels "lea.egress-allow"}}|{{.}}{{end}}`+
-				`{{with index .Config.Labels "lea.providers"}}#{{.}}{{end}}`, name)
+				`{{with index .Config.Labels "lea.providers"}}#{{.}}{{end}}{{with index .Config.Labels "lea.rules"}}@{{.}}{{end}}`, name)
 		want := l.Cfg.GitSSH()
 		if allow != "" {
 			want += "|" + allow
@@ -56,11 +90,14 @@ func (l *Launcher) ensureProxy(proj string) error {
 		if fw.stamp != "" {
 			want += "#" + fw.stamp
 		}
+		if rules != "" {
+			want += "@" + rules
+		}
 		if got == want {
 			return nil
 		}
-		l.logf("restarting %s for the git SSH endpoints '%s', the egress allowlist '%s' and the providers of %s",
-			name, l.Cfg.GitSSH(), allow, l.Cfg.Get("LEA_PROVIDERS"))
+		l.logf("restarting %s for the git SSH endpoints '%s', the egress allowlist '%s', the providers of %s and the rules %s",
+			name, l.Cfg.GitSSH(), allow, l.Cfg.Get("LEA_PROVIDERS"), rules)
 	}
 	hosts := l.Cfg.Get("LEA_INTERNAL_HOSTS")
 	if err := noComma(hosts); err != nil {
@@ -72,6 +109,9 @@ func (l *Launcher) ensureProxy(proj string) error {
 		"--label", "lea.egress-allow=" + allow}
 	if fw.stamp != "" {
 		a = append(a, "--label", "lea.providers="+fw.stamp)
+	}
+	if rules != "" {
+		a = append(a, "--label", "lea.rules="+rules)
 	}
 	a = append(a, "--mount", "type=bind,src="+hosts+",dst=/etc/lea/internal-hosts,readonly")
 	a = append(a, fw.mounts...)
