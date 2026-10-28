@@ -200,6 +200,15 @@ case ${1:-} in
     if [ "${1:-}" = -- ]; then shift; fi
     mkdir -p "$dir"
     printf '%s\n' "$$" >"$dir/$name.pid"
+    # LockHTTP: the agent's own proxy password (the daemon passes it); without one it keeps the
+    # container's ("shell").
+    if [ "${LEA_LOCKHTTP:-0}" = 1 ] && [ -n "${LEA_PROXY_TOKEN:-}" ]; then
+      case $LEA_PROXY_TOKEN in *[!0123456789abcdef]*) echo "lea-agent: invalid LEA_PROXY_TOKEN" >&2; exit 2 ;; esac
+      HTTP_PROXY=http://$name:$LEA_PROXY_TOKEN@$LEA_PROXY_IP:3130
+      HTTPS_PROXY=$HTTP_PROXY http_proxy=$HTTP_PROXY https_proxy=$HTTP_PROXY
+      export HTTP_PROXY HTTPS_PROXY http_proxy https_proxy
+    fi
+    unset LEA_PROXY_TOKEN
     start_service "$name"
     LEA_AGENT=$name
     export LEA_AGENT

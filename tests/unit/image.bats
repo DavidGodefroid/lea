@@ -2,7 +2,7 @@ load helpers
 setup() { setup_fakes; I="$LEA_ROOT/image"; }
 
 @test "containers.conf gives nested containers HTTPS_PROXY only" {
-  grep -q '"HTTPS_PROXY=http://@LEA_PROXY_IP@:3128"' "$I/containers.conf.tmpl"
+  grep -q '"HTTPS_PROXY=@LEA_NESTED_PROXY@"' "$I/containers.conf.tmpl"
   run grep -q '"HTTP_PROXY=' "$I/containers.conf.tmpl"
   [ "$status" -ne 0 ]
   grep -q '^http_proxy = false' "$I/containers.conf.tmpl"

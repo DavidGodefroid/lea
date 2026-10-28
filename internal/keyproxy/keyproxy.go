@@ -31,6 +31,7 @@ import (
 	"path"
 	"regexp"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/DavidGodefroid/lea/internal/providers"
@@ -123,6 +124,19 @@ type Config struct {
 	// refused: one on the proxy's egress network (the host and that network's other containers),
 	// never an agents' internal network (EgressAddrs). nil refuses none (tests).
 	Refused func(local net.IP) bool
+	// Gate is set when Via is a LockHTTP gate (LEA_LOCKHTTP=1): see Gate.
+	Gate *Gate
+}
+
+// Gate is how the forwarder speaks to a LockHTTP gate: every upstream request (and the CONNECT of
+// an https one) carries "Proxy-Authorization: Basic keyproxy:<Token>" and "X-Lea-Source: <the
+// calling container>", which the gate honours only from the loopback with that token. Source
+// names the container from the local address the agent's connection arrived on (the proxy has one
+// address per internal network); a request no container claims is refused. Each container gets
+// its own connection pool: a tunnel opened for one is never reused for another.
+type Gate struct {
+	Token  string
+	Source func(local net.IP) (container string, ok bool)
 }
 
 type keyCtx struct{}
@@ -133,6 +147,29 @@ type Forwarder struct {
 	eps     map[string]Endpoint
 	proxy   *httputil.ReverseProxy
 	log     *log.Logger
+	gate    *Gate
+	// transport builds the transport of one source container ("" without a gate); transports
+	// keeps them.
+	transport  func(container string) *http.Transport
+	mu         sync.Mutex
+	transports map[string]*http.Transport
+}
+
+type roundTripper func(*http.Request) (*http.Response, error)
+
+func (rt roundTripper) RoundTrip(r *http.Request) (*http.Response, error) { return rt(r) }
+
+// roundTrip sends the request on its source container's transport.
+func (f *Forwarder) roundTrip(r *http.Request) (*http.Response, error) {
+	rt, _ := r.Context().Value(keyCtx{}).(route)
+	f.mu.Lock()
+	tr, ok := f.transports[rt.source]
+	if !ok {
+		tr = f.transport(rt.source)
+		f.transports[rt.source] = tr
+	}
+	f.mu.Unlock()
+	return tr.RoundTrip(r)
 }
 
 // New builds the forwarder. Its transport only ever dials cfg.Via: the environment's proxy
@@ -143,28 +180,42 @@ func New(cfg Config) (*Forwarder, error) {
 		(v.Path != "" && v.Path != "/") || v.RawQuery != "" || v.Fragment != "" {
 		return nil, errors.New("the -via proxy must be http://<host>:<port>")
 	}
+	if g := cfg.Gate; g != nil && (g.Token == "" || g.Source == nil) {
+		return nil, errors.New("a gate needs a token and a source table")
+	}
 	via := *v
+	if cfg.Gate != nil {
+		via.User = url.UserPassword("keyproxy", cfg.Gate.Token)
+	}
 	viaAddr := net.JoinHostPort(via.Hostname(), via.Port())
 	dialer := &net.Dialer{Timeout: 10 * time.Second, KeepAlive: 30 * time.Second}
 	tlsConf := &tls.Config{MinVersion: tls.VersionTLS12, RootCAs: cfg.RootCAs}
-	tr := &http.Transport{
-		// Fixed: never http.ProxyFromEnvironment.
-		Proxy: http.ProxyURL(&via),
-		DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
-			// Defence in depth: the only connection the forwarder opens is to its proxy.
-			if addr != viaAddr {
-				return nil, errDirectDial
-			}
-			return dialer.DialContext(ctx, network, addr)
-		},
-		TLSClientConfig:        tlsConf,
-		ForceAttemptHTTP2:      true,
-		TLSHandshakeTimeout:    10 * time.Second,
-		IdleConnTimeout:        90 * time.Second,
-		ExpectContinueTimeout:  1 * time.Second,
-		MaxResponseHeaderBytes: MaxHeaderBytes,
+	f := &Forwarder{eps: map[string]Endpoint{}, log: cfg.Log, refused: cfg.Refused, gate: cfg.Gate,
+		transports: map[string]*http.Transport{}}
+	f.transport = func(container string) *http.Transport {
+		tr := &http.Transport{
+			// Fixed: never http.ProxyFromEnvironment.
+			Proxy: http.ProxyURL(&via),
+			DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
+				// Defence in depth: the only connection the forwarder opens is to its proxy.
+				if addr != viaAddr {
+					return nil, errDirectDial
+				}
+				return dialer.DialContext(ctx, network, addr)
+			},
+			TLSClientConfig:        tlsConf,
+			ForceAttemptHTTP2:      true,
+			TLSHandshakeTimeout:    10 * time.Second,
+			IdleConnTimeout:        90 * time.Second,
+			ExpectContinueTimeout:  1 * time.Second,
+			MaxResponseHeaderBytes: MaxHeaderBytes,
+		}
+		if container != "" {
+			// The CONNECT's Proxy-Authorization comes from via's user, as for plain requests.
+			tr.ProxyConnectHeader = http.Header{SourceHeader: {container}}
+		}
+		return tr
 	}
-	f := &Forwarder{eps: map[string]Endpoint{}, log: cfg.Log, refused: cfg.Refused}
 	if f.log == nil {
 		f.log = log.New(os.Stderr, "lea-keyproxy: ", log.LstdFlags)
 	}
@@ -176,7 +227,7 @@ func New(cfg Config) (*Forwarder, error) {
 	}
 	f.proxy = &httputil.ReverseProxy{
 		Rewrite:        f.rewrite,
-		Transport:      tr,
+		Transport:      roundTripper(f.roundTrip),
 		FlushInterval:  -1,
 		ErrorLog:       log.New(io.Discard, "", 0),
 		ModifyResponse: modifyResponse,
@@ -201,7 +252,10 @@ func Server(addr string, h http.Handler) *http.Server {
 
 // strip are the inbound headers that never reach an upstream: the agent's own credentials and
 // anything that tells the upstream about the agent's side.
-var strip = []string{"Authorization", "Proxy-Authorization", "X-Api-Key", "Api-Key", "Cookie", "Cookie2",
+// SourceHeader names the calling container to a LockHTTP gate; an agent's own is always dropped.
+const SourceHeader = "X-Lea-Source"
+
+var strip = []string{"Authorization", "Proxy-Authorization", SourceHeader, "X-Api-Key", "Api-Key", "Cookie", "Cookie2",
 	"Forwarded", "Via", "Proxy-Connection", "Connection", "Upgrade", "Keep-Alive", "Te", "Trailer", "Transfer-Encoding"}
 
 type statusWriter struct {
@@ -237,14 +291,26 @@ func (f *Forwarder) ServeHTTP(rw http.ResponseWriter, r *http.Request) {
 		}
 		f.log.Printf("%s %s %s %d %s", name, safeLog(r.Method, 10), logPath, st, time.Since(start).Round(time.Millisecond))
 	}()
-	if f.refused != nil {
-		la, _ := r.Context().Value(http.LocalAddrContextKey).(net.Addr)
-		ta, ok := la.(*net.TCPAddr)
-		if !ok || f.refused(ta.IP) {
-			// Only the agents' internal networks reach the endpoints.
-			http.Error(w, "forbidden", http.StatusForbidden)
+	la, _ := r.Context().Value(http.LocalAddrContextKey).(net.Addr)
+	ta, isTCP := la.(*net.TCPAddr)
+	if f.refused != nil && (!isTCP || f.refused(ta.IP)) {
+		// Only the agents' internal networks reach the endpoints.
+		http.Error(w, "forbidden", http.StatusForbidden)
+		return
+	}
+	source := ""
+	if f.gate != nil {
+		c, ok := "", false
+		if isTCP {
+			c, ok = f.gate.Source(ta.IP)
+		}
+		if !ok || c == "" {
+			// No lea container on that network (yet): the gate would not know whom to ask for.
+			f.log.Printf("unknown source address")
+			http.Error(w, "forbidden: unknown source", http.StatusForbidden)
 			return
 		}
+		source = c
 	}
 	raw, _, _ := strings.Cut(r.RequestURI, "?")
 	if r.Method != http.MethodGet && r.Method != http.MethodPost {
@@ -298,13 +364,14 @@ func (f *Forwarder) ServeHTTP(rw http.ResponseWriter, r *http.Request) {
 	if r.Body != nil {
 		r.Body = http.MaxBytesReader(w, r.Body, MaxBodyBytes)
 	}
-	ctx := context.WithValue(r.Context(), keyCtx{}, route{target: &target, key: key})
+	ctx := context.WithValue(r.Context(), keyCtx{}, route{target: &target, key: key, source: source})
 	f.proxy.ServeHTTP(w, r.WithContext(ctx))
 }
 
 type route struct {
 	target *url.URL
 	key    string
+	source string // the calling container, with a gate
 }
 
 func (f *Forwarder) rewrite(pr *httputil.ProxyRequest) {
@@ -323,6 +390,10 @@ func (f *Forwarder) rewrite(pr *httputil.ProxyRequest) {
 	out.Host = rt.target.Host
 	if rt.key != "" {
 		h.Set("Authorization", "Bearer "+rt.key)
+	}
+	if rt.source != "" {
+		// Read by the gate on a plain http upstream; an https one carries it on the CONNECT.
+		h.Set(SourceHeader, rt.source)
 	}
 }
 
@@ -355,9 +426,19 @@ func (f *Forwarder) errorHandler(w http.ResponseWriter, r *http.Request, err err
 	case isTLS(err):
 		class = "upstream TLS error"
 	}
+	// A LockHTTP gate that refuses an https upstream answers the CONNECT 403, which the transport
+	// reports as "Forbidden": the agent learns it was refused, and where to look.
+	gateRefused := f.gate != nil && strings.HasSuffix(err.Error(), "Forbidden")
+	if gateRefused {
+		class = "refused by the LockHTTP gate"
+	}
 	f.log.Printf("%s", class)
 	if mbe != nil {
 		http.Error(w, "request body too large", http.StatusRequestEntityTooLarge)
+		return
+	}
+	if gateRefused {
+		http.Error(w, "LockHTTP refused this request: ask the user (the lockhttp console shows why)", http.StatusForbidden)
 		return
 	}
 	http.Error(w, "bad gateway", http.StatusBadGateway)

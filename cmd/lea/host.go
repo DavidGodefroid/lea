@@ -23,6 +23,7 @@ import (
 	"github.com/DavidGodefroid/lea/internal/deck"
 	"github.com/DavidGodefroid/lea/internal/identity"
 	"github.com/DavidGodefroid/lea/internal/launcher"
+	"github.com/DavidGodefroid/lea/internal/lockhttp"
 	"github.com/DavidGodefroid/lea/internal/roles"
 	"github.com/DavidGodefroid/lea/internal/settings"
 	"github.com/DavidGodefroid/lea/internal/store"
@@ -213,6 +214,25 @@ func runDaemon(stderr io.Writer) int {
 	reg := hostProviders(os.Getenv)
 	d.SetProviders(reg)
 	d.SetDefaultProvider(os.Getenv("LEA_PROVIDER"))
+	// LockHTTP (LEA_LOCKHTTP=1): each agent gets its own proxy password, and the gate learns who
+	// holds which from sources.json, which the daemon keeps up to date.
+	var proxyToken func(container, agent string) string
+	_ = os.Remove(filepath.Join(host, "daemon.lockhttp"))
+	if os.Getenv("LEA_LOCKHTTP") == "1" {
+		key, err := lockhttp.Key(filepath.Dir(host))
+		if err != nil {
+			fmt.Fprintln(stderr, "lea:", clean(err.Error(), false))
+			return 1
+		}
+		proxyToken = func(container, agent string) string { return lockhttp.Token(key, container, agent) }
+		d.SetGrantProxy(lockHTTPGrantProxy(key))
+		go lockHTTPSources(ctx, st, filepath.Dir(host), nonEmptyEnv("LEA_PREFIX", "lea"))
+	}
+	// Same pattern for the LockHTTP switch: the launcher restarts a daemon started with the other.
+	if err := os.WriteFile(filepath.Join(host, "daemon.lockhttp"), []byte(lockHTTPStamp(os.Getenv)), 0o600); err != nil {
+		fmt.Fprintln(stderr, "lea:", clean(err.Error(), false))
+		return 1
+	}
 	m := agents.NewManager(agents.Config{
 		Store:      st,
 		Term:       agents.Tmux(tmux.Server{Socket: tmux.DefaultSocket, Conf: conf, Bin: os.Getenv("LEA_TMUX_BIN")}),
@@ -229,6 +249,7 @@ func runDaemon(stderr io.Writer) int {
 		Providers:       reg,
 		DefaultProvider: os.Getenv("LEA_PROVIDER"),
 		DefaultModel:    os.Getenv("LEA_MODEL"),
+		ProxyToken:      proxyToken,
 	})
 	d.SetAgents(m)
 	d.SweepLockRequestsLater()

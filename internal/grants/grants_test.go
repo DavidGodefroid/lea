@@ -509,6 +509,25 @@ func TestPinnedCommand(t *testing.T) {
 			t.Fatalf("env %v: %+v", bad, d)
 		}
 	}
+	// Under LockHTTP lea names the gate, with the agent's own proxy password: allowed, and nothing
+	// but an agent name and a hex token may stand before the host.
+	gated := dev
+	gated.Proxy = "http://dev-2:0123456789abcdef0123456789abcdef@lea-proxy:3130"
+	for _, call := range []string{"gh pr merge 42 --squash", "git push origin feat/73-x"} {
+		d := Decide("Bash", bash(call), gated, gs, now, false)
+		if d.Verdict != Allow || !strings.Contains(d.Command, gated.Proxy) {
+			t.Fatalf("%s through the gate: %+v", call, d)
+		}
+	}
+	for _, bad := range []string{"http://dev-2:0123456789abcdef0123456789abcdef@lea-proxy:3130/x", "http://dev-2:not-hex@lea-proxy:3130",
+		"http://Dev:0123456789abcdef0123456789abcdef@lea-proxy:3130", "http://dev-2@lea-proxy:3130", "http://a:b:c@lea-proxy:3130",
+		"http://dev-2:0123456789abcdef0123456789abcdef@@lea-proxy:3130", "https://lea-proxy:3130"} {
+		b := dev
+		b.Proxy = bad
+		if d := Decide("Bash", bash("gh pr merge 42 --squash"), b, gs, now, false); d.Command != "" {
+			t.Fatalf("proxy %q pinned: %+v", bad, d)
+		}
+	}
 	// The container's network is internal: every pinned call goes out through lea's proxy, set
 	// by lea (Caller.Proxy, from the daemon), never through one the agent's environment names.
 	sneaky := dev
