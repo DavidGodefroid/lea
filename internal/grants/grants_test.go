@@ -489,3 +489,72 @@ func TestGlob(t *testing.T) {
 		}
 	}
 }
+
+// TestPRCreate: pr-create opens a PR from the caller's own branch, gh pinned to the grant's
+// repository; a body file must be a plain file of the caller's worktree.
+func TestPRCreate(t *testing.T) {
+	gs := []Grant{all(PRCreate)}
+	cases := []struct{ name, cmd, want string }{
+		{"title body", `gh pr create --head feat/73-x --base main --title "fix: x" --body "does y"`, Allow},
+		{"short flags", `gh pr create -H feat/73-x -B main -t "fix: x" -b "does y" -d`, Allow},
+		{"body file", `gh pr create --head feat/73-x --title "fix: x" --body-file pr.md`, Allow},
+		{"body file in dir", `gh pr create --head feat/73-x --title x --body-file docs/pr.md --draft`, Allow},
+		{"no head", `gh pr create --title x --body y`, ""},
+		{"other head", `gh pr create --head feat/other --title x --body y`, ""},
+		{"head main", `gh pr create --head main --title x --body y`, ""},
+		{"no title", `gh pr create --head feat/73-x --body y`, ""},
+		{"no body", `gh pr create --head feat/73-x --title x`, ""},
+		{"body and file", `gh pr create --head feat/73-x --title x --body y --body-file f`, ""},
+		{"absolute body file", `gh pr create --head feat/73-x --title x --body-file /etc/passwd`, ""},
+		{"parent body file", `gh pr create --head feat/73-x --title x --body-file ../dev-3/notes.md`, ""},
+		{"stdin body file", `gh pr create --head feat/73-x --title x --body-file -`, ""},
+		{"git dir body file", `gh pr create --head feat/73-x --title x --body-file .git/HEAD`, ""},
+		{"repo flag", `gh pr create --head feat/73-x --title x --body y -R evil/r`, ""},
+		{"web", `gh pr create --head feat/73-x --title x --body y --web`, ""},
+		{"fill", `gh pr create --head feat/73-x --fill`, ""},
+		{"bad base", `gh pr create --head feat/73-x --base 'a b' --title x --body y`, ""},
+		{"duplicate title", `gh pr create --head feat/73-x --title x --title z --body y`, ""},
+		{"own-branch heredoc body", "gh pr create --head feat/73-x --title x --body \"$(cat <<'EOF'\ny\nEOF\n)\"", ""},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			d := Decide("Bash", bash(tc.cmd), dev, gs, now, false)
+			if d.Verdict != tc.want {
+				t.Fatalf("%q: verdict %q (%s), want %q", tc.cmd, d.Verdict, d.Reason, tc.want)
+			}
+		})
+	}
+	if d := Decide("Bash", bash(`gh pr create --head feat/73-x --title x --body y`), dev, []Grant{all(Merge)}, now, false); d.Verdict != "" {
+		t.Fatalf("merge grant covers pr create: %+v", d)
+	}
+	d := Decide("Bash", bash(`gh pr create --head feat/73-x --title "fix: x" --body y`), dev, gs, now, false)
+	if s := lastWord(t, d.Command); s != `'/usr/bin/gh' 'pr' 'create' '--head' 'feat/73-x' '--title' 'fix: x' '--body' 'y' '-R' 'github.com/o/lea'` ||
+		d.Request.Target != "github.com/o/lea pr create feat/73-x" {
+		t.Fatalf("pr create: %q %+v", s, d)
+	}
+	// A body file is opened once in the caller's worktree; gh reads that open file on its stdin,
+	// after a check that it resolves (symlinks too) to a plain file of the worktree outside .git.
+	d = Decide("Bash", bash(`gh pr create --head feat/73-x --title x --body-file docs/pr.md`), dev, gs, now, false)
+	s := lastWord(t, d.Command)
+	for _, w := range []string{"exec 3< '/p/.lea/worktrees/lea/dev-2/docs/pr.md' || exit 1",
+		`r=$('/usr/bin/realpath' '-e' '--' '/proc/self/fd/3') || exit 1`, `'--body-file' '-' '-R' 'github.com/o/lea' <&3`,
+		`case "$r" in '/p/.lea/worktrees/lea/dev-2'/.git|'/p/.lea/worktrees/lea/dev-2'/.git/*)`, `[ -f /proc/self/fd/3 ] ||`} {
+		if !strings.Contains(s, w) {
+			t.Fatalf("body file script lacks %s:\n%s", w, s)
+		}
+	}
+}
+
+// TestStanding: delivery's standing grants never expire and show as such.
+func TestStanding(t *testing.T) {
+	g := all(PRCreate)
+	g.Expires = Standing
+	if !g.Active(now) || !g.IsStanding() || all(PRCreate).IsStanding() {
+		t.Fatal("standing")
+	}
+	for _, a := range DeliveryActions {
+		if !ValidAction(a) || !NeedsGitHub(a) {
+			t.Fatalf("delivery action %q", a)
+		}
+	}
+}

@@ -1,0 +1,5 @@
+status 0
+-- calls
+core [delivery] [--container] [lea-$ID] [--projects] [$W/projects] [on] [--yes]
+-- lea
+-- stdout

@@ -169,6 +169,8 @@ func bashRequest(w []string, c Caller) (Request, bool) {
 	switch {
 	case len(w) >= 3 && w[0] == "gh" && w[1] == "pr" && w[2] == "merge":
 		r, ok = ghMerge(w[3:], c)
+	case len(w) >= 3 && w[0] == "gh" && w[1] == "pr" && w[2] == "create":
+		r, ok = ghPRCreate(w[3:], c)
 	case len(w) >= 3 && w[0] == "gh" && w[1] == "issue":
 		r, ok = ghIssue(w[2:])
 	case len(w) >= 2 && w[0] == "git" && w[1] == "commit":
@@ -253,6 +255,73 @@ func flagArgs(args []string, want bool, valued, bare map[string]bool) (string, b
 		}
 	}
 	return n, true
+}
+
+// ghPRCreate: gh pr create --head <own branch> --title T (--body B | --body-file F) [--base B]
+// [--draft]. The head is named (with -R, gh has no worktree branch to fall back on) and is the
+// caller's own; no --repo (lea pins it), no --web, --fill, --editor or reviewers. A body file is
+// a relative path inside the worktree, outside .git (Command checks where it resolves).
+func ghPRCreate(args []string, c Caller) (Request, bool) {
+	seen := map[string]bool{}
+	head := ""
+	for i := 0; i < len(args); i++ {
+		a := args[i]
+		switch a {
+		case "--draft", "-d":
+			a = "--draft"
+		case "--head", "-H", "--base", "-B", "--title", "-t", "--body", "-b", "--body-file", "-F":
+			if i+1 >= len(args) {
+				return Request{}, false
+			}
+			v := args[i+1]
+			i++
+			switch a {
+			case "--head", "-H":
+				a, head = "--head", v
+			case "--base", "-B":
+				a = "--base"
+				if !BranchName(v) {
+					return Request{}, false
+				}
+			case "--title", "-t":
+				a = "--title"
+			case "--body", "-b":
+				a = "--body"
+			default:
+				a = "--body-file"
+				if !bodyFile(v) {
+					return Request{}, false
+				}
+			}
+		default:
+			return Request{}, false
+		}
+		if seen[a] {
+			return Request{}, false
+		}
+		seen[a] = true
+	}
+	if !seen["--title"] || seen["--body"] == seen["--body-file"] || head == "" || head != c.Branch ||
+		!BranchName(head) || Protected(head) {
+		return Request{}, false
+	}
+	return Request{Action: PRCreate, Target: "pr create " + head}, true
+}
+
+var bodyFileRe = regexp.MustCompile(`^[A-Za-z0-9_][A-Za-z0-9._/-]{0,255}$`)
+
+// bodyFile says whether p is a relative path that stays inside the directory it is read from:
+// no leading - or /, no .. or . segment, not .git.
+func bodyFile(p string) bool {
+	if !bodyFileRe.MatchString(p) {
+		return false
+	}
+	for _, s := range strings.Split(p, "/") {
+		if s == "" || s == "." || s == ".." || s == ".git" {
+			return false
+		}
+	}
+	return true
 }
 
 func ghIssue(args []string) (Request, bool) {

@@ -448,6 +448,7 @@ lea grant add stop-finished --container lea-myproj                  # agents_sto
 lea grant add close-issue --container lea-myproj --repo api --github me/api  # gh issue close|reopen|comment N
 lea grant add delete-own-branch --container lea-myproj --repo api --github me/api  # git push origin --delete <the agent's own branch>
 lea grant add commit-identity --container lea-myproj --repo api --github me/api --branch 'feat/*'  # git commit -m (no --amend), git push [-u] origin <own branch>
+lea grant add pr-create --container lea-myproj --repo api --github me/api  # gh pr create --head <own branch> --title T --body B|--body-file F
 lea grant ls [--all]                                                # active grants (--all: revoked, expired) and recent uses
 lea grant revoke 3
 ```
@@ -522,6 +523,42 @@ before relying on grants, in a lea: `lea grant add commit-identity --container <
 file and run `git commit -m test`, then check that `git reflog -1` in its worktree says
 `commit (lea grant)` (a plain `git commit` writes `commit: test`); `lea grant ls` lists the use.
 
+### Let agents deliver (push, PR, merge)
+
+To let every agent of a lea push its own branch, open its pull request and merge it without a
+prompt, run once, on the host, in the projects directory:
+
+```sh
+lea delivery on      # standing grants on each repository here whose origin is on github.com
+lea delivery status  # which repositories are covered
+lea delivery off     # revoke them: agents ask as usual
+```
+
+`on` reads each repository's `origin` from its `.git/config` (as a file: no git runs on the host)
+at that moment, and records, for each one on github.com, the grants `commit-identity`,
+`pr-create`, `merge` and `delete-own-branch` for every agent of this lea, pinned to that GitHub
+repository, with no expiry (`lea grant ls` shows them as `standing`, and their uses). A repository
+added later, or an origin changed, is covered once you run `lea delivery on` again (it replaces
+the standing grants; grants you added by hand stay). Agents can write a repository's
+`.git/config`: check the list `on` prints, and when an origin differs from the one already pinned
+`on` records nothing until you run `lea delivery on --yes`. Delivery is off until you turn it on, and
+only the host can: the daemon refuses `delivery_set` from a container.
+
+Everything in Grants above holds: an agent's own branch only, in its own worktree, every hard
+deny (no push to `main`, no force-push, no `--admin`). The calls covered:
+
+- `git commit -m …`, `git push [-u] origin <own branch>`;
+- `gh pr create --head <own branch> --title T (--body B | --body-file F) [--base B] [--draft]`:
+  `--head` is required, `F` is a path relative to the agent's worktree that must resolve to a
+  plain file inside it, outside `.git` (lea opens it once and gh reads that open file; a quoted heredoc, `--body "$(cat <<'EOF' … EOF)"`, is
+  not covered: write the body to a file);
+- `gh pr merge <n>|<own branch> --squash|--merge|--rebase [--delete-branch]` (the PR's head must be
+  the agent's branch), and `git push origin --delete <own branch>`.
+
+Branch protection on the forge (required reviews, required checks) stays the control that decides
+whether a merge goes through: delivery only removes the prompt. GitLab (`glab mr`) is not covered
+yet.
+
 `lea new --brief FILE` gives a new agent its first message; `--repo NAME` starts it in a
 directory of the projects directory; `--branch B` has it work in its own git worktree under
 `<projects>/.lea/worktrees/<repo>/<agent>`.
@@ -542,6 +579,7 @@ lea config export > team.json  # your team's shared settings, as one file
 lea config import team.json  # take them on another workstation (see Configure)
 LEA_PROJECTS_DIR=~/other lea # another projects directory, for this call only
 lea grant add|ls|revoke      # let agents take an action without asking (see Grants)
+lea delivery on|off|status   # let agents push, open and merge their own PRs (see Let agents deliver)
 ```
 
 A release install updates itself: at most once a day, `lea` looks for a new release in the

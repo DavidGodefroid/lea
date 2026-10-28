@@ -378,6 +378,8 @@ func (l *Launcher) dispatch(args []string) error {
 		return l.sh(a0, rest...)
 	case "lock":
 		return l.lockConsole(rest)
+	case "delivery":
+		return l.delivery(rest)
 	case "shell":
 		if len(rest) > 0 {
 			if err := l.oldForm(rest[0]); err != nil {
@@ -435,6 +437,24 @@ func (l *Launcher) lockConsole(args []string) error {
 		return err
 	}
 	if l.coreCall(append([]string{"lock", "--container", l.Cfg.ContainerName(proj)}, args...)...) != nil {
+		return exitError{1}
+	}
+	return nil
+}
+
+// delivery is lea delivery on [--yes]|off|status (issue #92), through the core, which the launcher
+// tells this projects dir's container and the directory whose repositories it covers.
+func (l *Launcher) delivery(args []string) error {
+	yes := len(args) == 2 && args[0] == "on" && args[1] == "--yes"
+	if (len(args) != 1 && !yes) || (args[0] != "on" && args[0] != "off" && args[0] != "status") {
+		l.logf("error: usage: lea delivery on [--yes]|off|status")
+		return exitError{2}
+	}
+	proj, err := l.projectsDir()
+	if err != nil {
+		return err
+	}
+	if l.coreCall(append([]string{"delivery", "--container", l.Cfg.ContainerName(proj), "--projects", proj}, args...)...) != nil {
 		return exitError{1}
 	}
 	return nil

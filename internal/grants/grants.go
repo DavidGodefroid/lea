@@ -21,10 +21,18 @@ const (
 	CloseIssue      = "close-issue"
 	DeleteOwnBranch = "delete-own-branch"
 	CommitIdentity  = "commit-identity"
+	PRCreate        = "pr-create"
 )
 
 // Actions lists every action a grant may name, in display order.
-var Actions = []string{Merge, StopFinished, CloseIssue, DeleteOwnBranch, CommitIdentity}
+var Actions = []string{Merge, StopFinished, CloseIssue, DeleteOwnBranch, CommitIdentity, PRCreate}
+
+// DeliveryActions are the standing grants lea delivery on records for each repository: push the
+// agent's own branch, open its PR, merge it, delete the branch (issue #92).
+var DeliveryActions = []string{CommitIdentity, PRCreate, Merge, DeleteOwnBranch}
+
+// Standing is the expiry of a delivery grant: it holds until lea delivery off revokes it.
+const Standing int64 = 1 << 62
 
 // ValidAction says whether a is one of Actions.
 func ValidAction(a string) bool {
@@ -56,6 +64,9 @@ type Grant struct {
 // NeedsGitHub says whether a grant of action names its GitHub repository: every action but
 // stop-finished runs gh or git against it (gh -R, git push only to an origin that is it).
 func NeedsGitHub(action string) bool { return action != StopFinished }
+
+// IsStanding says whether g is a delivery grant (lea delivery on), with no expiry.
+func (g Grant) IsStanding() bool { return g.Expires == Standing }
 
 // Active says whether g still applies at now.
 func (g Grant) Active(now int64) bool {
@@ -284,6 +295,9 @@ func Command(req Request, c Caller, g Grant) string {
 	switch req.Prog {
 	case "gh":
 		script = shellWords(append(append([]string{ghPath}, req.Args...), "-R", g.GitHub))
+		if req.Action == PRCreate {
+			script = prCreateScript(req.Args, c.Worktree, g.GitHub)
+		}
 		if req.Action == Merge && len(req.Args) > 2 {
 			if c.Branch == "" || !BranchName(c.Branch) || Protected(c.Branch) {
 				return ""
@@ -325,6 +339,34 @@ func prHeadCheck(n, branch, gh string) string {
 	return "head=$(" + view + ") || exit 1\n" +
 		`if [ "$head" != ` + shellWords([]string{"false " + branch}) + " ]; then " +
 		refuse("PR "+n+" is not the agent's own branch "+branch) + "; fi\n"
+}
+
+// prCreateScript is gh pr create with the validated args, pinned to gh. A --body-file (a path
+// relative to the worktree, ghPRCreate) is opened once, on fd 3; the file actually opened must
+// resolve (realpath of /proc/self/fd/3) to a plain file of the worktree wt, outside .git; gh reads
+// that open file on its stdin (--body-file -): swapping the path for a symlink to lea's state or
+// a credential after the check changes nothing.
+func prCreateScript(args []string, wt, gh string) string {
+	file := -1
+	for i, a := range args {
+		if (a == "--body-file" || a == "-F") && i+1 < len(args) {
+			file = i + 1
+		}
+	}
+	if file < 0 {
+		return shellWords(append(append([]string{ghPath}, args...), "-R", gh))
+	}
+	if wt == "" || !strings.HasPrefix(wt, "/") {
+		return ""
+	}
+	q := shellWords([]string{wt})
+	argv := append(append(append([]string{ghPath}, args[:file]...), "-"), args[file+1:]...)
+	return "exec 3< " + shellWords([]string{wt + "/" + args[file]}) + " || exit 1\n" +
+		"r=$(" + shellWords([]string{"/usr/bin/realpath", "-e", "--", "/proc/self/fd/3"}) + ") || exit 1\n" +
+		`case "$r" in ` + q + "/.git|" + q + "/.git/*) " + refuse("the body file is in .git") + ";; " + q + "/*) ;; *) " +
+		refuse("the body file is not in the agent's worktree") + ";; esac\n" +
+		`[ -f /proc/self/fd/3 ] || { ` + refuse("the body file is not a plain file") + "; }\n" +
+		shellWords(append(argv, "-R", gh)) + " <&3"
 }
 
 // pins are lea's -c options for git.

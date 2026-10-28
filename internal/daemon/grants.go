@@ -61,13 +61,15 @@ func (d *Daemon) grantAdd(raw json.RawMessage) (any, error) {
 	if p.Repo == "" && grants.NeedsGitHub(p.Action) {
 		return nil, fmt.Errorf("repo: a %s grant names the repository it covers, the one --github is", p.Action)
 	}
-	switch m := grantGitHub.FindStringSubmatch(p.GitHub); {
+	switch {
 	case p.GitHub == "" && grants.NeedsGitHub(p.Action):
 		return nil, fmt.Errorf("github: a %s grant names the GitHub repository its gh and git calls are pinned to (OWNER/NAME)", p.Action)
-	case p.GitHub != "" && (m == nil || m[3] == "." || m[3] == ".."):
-		return nil, errors.New("github: OWNER/NAME of a github.com repository")
 	case p.GitHub != "":
-		p.GitHub = "github.com/" + m[2] + "/" + m[3]
+		gh, err := githubRepo(p.GitHub)
+		if err != nil {
+			return nil, err
+		}
+		p.GitHub = gh
 	}
 	if p.Agent != "" {
 		key, err := d.resolveSpawned(p.Agent, p.Container)
@@ -91,6 +93,76 @@ func (d *Daemon) grantAdd(raw json.RawMessage) (any, error) {
 	}
 	d.changed()
 	return g, nil
+}
+
+// githubRepo is s, OWNER/NAME or github.com/OWNER/NAME, as github.com/OWNER/NAME.
+func githubRepo(s string) (string, error) {
+	m := grantGitHub.FindStringSubmatch(s)
+	if m == nil || m[3] == "." || m[3] == ".." {
+		return "", errors.New("github: OWNER/NAME of a github.com repository")
+	}
+	return "github.com/" + m[2] + "/" + m[3], nil
+}
+
+// deliverySet is lea delivery on|off (issue #92), the host's only: off revokes the standing
+// grants of a lea; on replaces them with the delivery actions on each repository it names, with
+// the GitHub repository the host read from that repository's origin. Standing grants never expire;
+// grants the user added by hand are left alone.
+func (d *Daemon) deliverySet(raw json.RawMessage) (any, error) {
+	var p struct {
+		Container string
+		On        bool
+		Repos     []struct{ Repo, GitHub string }
+	}
+	if err := json.Unmarshal(raw, &p); err != nil {
+		return nil, err
+	}
+	if !containerName.MatchString(p.Container) {
+		return nil, errors.New("container: name the lea delivery applies to")
+	}
+	if !p.On && len(p.Repos) > 0 {
+		return nil, errors.New("repos: delivery off names none")
+	}
+	if len(p.Repos) > maxGrantList/len(grants.DeliveryActions) {
+		return nil, errors.New("repos: too many repositories")
+	}
+	seen := map[string]bool{}
+	for i, r := range p.Repos {
+		if !grantRepo.MatchString(r.Repo) || seen[r.Repo] {
+			return nil, fmt.Errorf("repo %q: a directory name under the projects directory, once", r.Repo)
+		}
+		seen[r.Repo] = true
+		gh, err := githubRepo(r.GitHub)
+		if err != nil {
+			return nil, fmt.Errorf("repo %s: %w", r.Repo, err)
+		}
+		p.Repos[i].GitHub = gh
+	}
+	now := d.now()
+	old, err := d.st.ActiveGrants(p.Container, now)
+	if err != nil {
+		return nil, err
+	}
+	for _, g := range old {
+		if g.IsStanding() {
+			if err := d.st.RevokeGrant(g.ID, now); err != nil && !errors.Is(err, store.ErrDecided) {
+				return nil, err
+			}
+		}
+	}
+	out := []grants.Grant{}
+	for _, r := range p.Repos {
+		for _, a := range grants.DeliveryActions {
+			g, err := d.st.AddGrant(grants.Grant{Container: p.Container, Action: a, Repo: r.Repo, GitHub: r.GitHub,
+				Created: now, Expires: grants.Standing})
+			if err != nil {
+				return nil, err
+			}
+			out = append(out, g)
+		}
+	}
+	d.changed()
+	return map[string]any{"grants": out}, nil
 }
 
 // grantRevoke ends a grant at once: its next matching call takes the normal path again.
