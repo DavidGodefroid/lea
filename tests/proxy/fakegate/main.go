@@ -29,8 +29,9 @@ func main() {
 	check := fs.Bool("check", false, "")
 	audit := fs.String("audit-dir", "", "")
 	status := fs.String("status-file", "", "")
-	fs.String("profile", "", "")
-	fs.String("sources", "", "")
+	for _, f := range []string{"profile", "sources", "credentials", "ca-cert", "signer"} {
+		fs.String(f, "", "")
+	}
 	fs.Parse(os.Args[2:])
 	if *check {
 		c, err := net.Dial("tcp", *listen)

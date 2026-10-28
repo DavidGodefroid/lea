@@ -269,7 +269,10 @@ func repoOrigin(dir string) string {
 // readPlain is the content of path, a regular file of at most 1 MiB that agents may write: a
 // symlink, a FIFO or a device is refused, not followed or waited on (O_NOFOLLOW and O_NONBLOCK,
 // even when swapped in after a Lstat).
-func readPlain(path string) ([]byte, bool) {
+func readPlain(path string) ([]byte, bool) { return readPlainMax(path, 1<<20) }
+
+// readPlainMax is readPlain with a size cap of max bytes.
+func readPlainMax(path string, max int64) ([]byte, bool) {
 	f, err := os.OpenFile(path, os.O_RDONLY|syscall.O_NOFOLLOW|syscall.O_NONBLOCK, 0)
 	if err != nil {
 		return nil, false
@@ -278,8 +281,8 @@ func readPlain(path string) ([]byte, bool) {
 	if fi, err := f.Stat(); err != nil || !fi.Mode().IsRegular() {
 		return nil, false
 	}
-	b, err := io.ReadAll(io.LimitReader(f, 1<<20+1))
-	if err != nil || len(b) > 1<<20 {
+	b, err := io.ReadAll(io.LimitReader(f, max+1))
+	if err != nil || int64(len(b)) > max {
 		return nil, false
 	}
 	return b, true

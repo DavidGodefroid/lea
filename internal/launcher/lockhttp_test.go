@@ -106,7 +106,7 @@ func TestLockHTTPProxyGetsTheGate(t *testing.T) {
 		"[type=volume,src=lea-lockhttp-audit,dst=/var/log/lockhttp]",
 		"[type=bind,src=" + lockhttp.StatusDir(data) + ",dst=/run/lockhttp-gate]",
 		"[" + image + "] [gate] [--listen] [0.0.0.0:3130] [--upstream] [http://127.0.0.1:3128] [--profile] [default] " +
-			"[--sources] [/etc/lockhttp-gate/sources.json] [--audit-dir] [/var/log/lockhttp] [--status-file] [/run/lockhttp-gate/status.json]",
+			"[--sources] [/etc/lockhttp-gate/sources.json] [--credentials] [/etc/lockhttp-gate/credentials.json] [--audit-dir] [/var/log/lockhttp] [--status-file] [/run/lockhttp-gate/status.json]",
 	} {
 		if !strings.Contains(g, want) {
 			t.Errorf("gate run lacks %s:\n%s", want, g)

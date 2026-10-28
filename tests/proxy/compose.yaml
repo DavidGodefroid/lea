@@ -105,7 +105,8 @@ services:
       - gate-audit:/var/log/lockhttp
       - gate-status:/run/lockhttp-gate
     command: [ gate, --listen, "0.0.0.0:3130", --upstream, "http://127.0.0.1:3128", --profile, default,
-               --sources, /etc/lockhttp-gate/sources.json, --audit-dir, /var/log/lockhttp,
+               --sources, /etc/lockhttp-gate/sources.json, --credentials, /etc/lockhttp-gate/credentials.json,
+               --audit-dir, /var/log/lockhttp,
                --status-file, /run/lockhttp-gate/status.json ]
   client:
     image: curlimages/curl:8.11.1

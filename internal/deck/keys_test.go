@@ -268,6 +268,27 @@ func TestTheDeckFollowsTheSoundSwitch(t *testing.T) {
 	}
 }
 
+// LockHTTP: the top border counts the container's requests waiting in the lockhttp console, and
+// says when the console is down; nothing when LockHTTP is off or all is quiet.
+func TestTheDeckShowsLockHTTPRequests(t *testing.T) {
+	m := sized(loaded(t, &fakeAPI{}, "lea-a/a", ag("a", "idle", 1)), 60, 10)
+	for _, c := range []struct {
+		h    *LockHTTP
+		want string
+	}{
+		{nil, ""},
+		{&LockHTTP{Console: "up"}, ""},
+		{&LockHTTP{Console: "up", Pending: 2}, "lockhttp 2 to approve"},
+		{&LockHTTP{Console: "down"}, "lockhttp console down"},
+	} {
+		m, _ = step(t, m, snapshotMsg{snap: Snapshot{Version: m.version + 1, Shown: "lea-a/a", Agents: []Agent{ag("a", "idle", 1)}, LockHTTP: c.h}})
+		top := viewLines(m)[0]
+		if c.want == "" && strings.Contains(top, "lockhttp") || !strings.Contains(top, c.want) {
+			t.Errorf("%+v: top %q", c.h, top)
+		}
+	}
+}
+
 // Without a sound player, S says so and calls nothing.
 func TestSWithoutASoundPlayer(t *testing.T) {
 	api := &fakeAPI{}

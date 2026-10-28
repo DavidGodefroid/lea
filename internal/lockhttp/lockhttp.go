@@ -78,6 +78,10 @@ func Key(dataDir string) ([]byte, error) {
 	if err := os.MkdirAll(Dir(dataDir), 0o700); err != nil {
 		return nil, err
 	}
+	// MkdirAll leaves a directory made earlier as it was.
+	if err := os.Chmod(Dir(dataDir), 0o700); err != nil {
+		return nil, err
+	}
 	k := make([]byte, 32)
 	if _, err := rand.Read(k); err != nil {
 		return nil, err
@@ -282,6 +286,19 @@ func DropNetworks(path string, drop func(Network) bool) error {
 	s.Networks = kept
 	_, err = WriteJSON(path, s)
 	return err
+}
+
+// Credentials is credentials.json (contract §2.4): the hashes of the secrets each container (and
+// lea-keyproxy) may send to the model APIs.
+type Credentials struct {
+	Version    int                 `json:"version"`
+	Containers map[string][]string `json:"containers"`
+	Keyproxy   []string            `json:"keyproxy"`
+}
+
+// CredentialsPath is the credentials.json lea writes for the gate.
+func CredentialsPath(dataDir string) string {
+	return filepath.Join(GateDir(dataDir), "credentials.json")
 }
 
 // SourcesPath is the sources.json lea writes for the gate.
