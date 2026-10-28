@@ -422,6 +422,11 @@ func heredocEnd(s, delim string, tabs bool) (int, bool) {
 			line = strings.TrimLeft(line, "\t")
 		}
 		at += nl + 1
+		// bash also ends a heredoc inside $(…) on "EOF)" or "EOF )": a line that only starts
+		// with the delimiter is read as the shell may read it, so not at all.
+		if line != delim && strings.HasPrefix(strings.TrimLeft(line, " \t"), delim) {
+			return 0, false
+		}
 		if line == delim {
 			m := heredocCloseRe.FindString(s[at:])
 			if m == "" {

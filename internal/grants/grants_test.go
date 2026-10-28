@@ -261,6 +261,11 @@ func TestDecideBash(t *testing.T) {
 		{"heredoc after hash", "hash -p /tmp/sh cat && git commit -m \"$(cat <<'EOF'\ngit push origin main\nEOF\n)\"", Deny, nil},
 		{"heredoc cat piped", "git commit -m \"$(cat <<'EOF' | sh\ngit push origin main\nEOF\n)\"", Deny, nil},
 		{"heredoc trailing code", "git commit -m \"$(cat <<'EOF'\nfix push\nEOF\ngit push origin main\n)\"", Deny, nil},
+		// bash ends a heredoc inside $(…) on "EOF)" too: the rest runs as code.
+		{"heredoc delim paren", "git commit -m \"$(cat <<'EOF'\nx\nEOF)\" && git push origin main\nb\nEOF\n)\"", Deny, nil},
+		{"heredoc delim space paren", "git commit -m \"$(cat <<'EOF'\nx\nEOF )\" ; git push origin main\nb\nEOF\n)\"", Deny, nil},
+		{"heredoc delim tab prefix", "git commit -m \"$(cat <<-'EOF'\npush\n\tEOF;\nEOF\n)\"", Deny, nil},
+		{"heredoc delim indented", "git commit -m \"$(cat <<'EOF'\n push\n  EOF\nEOF\n)\"", Deny, nil},
 		{"heredoc gh api", "gh api -f body=\"$(cat <<'EOF'\npush\nEOF\n)\" repos/o/r", Deny, nil},
 		{"own push with var-free dq", `git push origin "feat/73-x"`, "", nil},
 		{"find exec git", "find . -name x -exec git {} origin feat/73-x:main ;", Deny, nil},
