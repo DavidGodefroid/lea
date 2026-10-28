@@ -246,6 +246,36 @@ host_minimums() {
   [[ "$output" != *"FAIL  Docker Engine"* ]]
 }
 
+@test "versions: Podman as docker is detected and never a failure (#108)" {
+  host_minimums; printf 'podman 5.8.4\n' >>"$LEA_HOST_MINIMUMS"
+  fake_uname 7.0.0-38-generic
+  export FAKE_DOCKER_RC_VERSION___FORMAT=125 FAKE_DOCKER_OUT___VERSION_="podman version 5.8.9"
+  run lea_doctor
+  [[ "$output" == *"warn  Podman 5.8.9: lea is built for Docker Engine (minimum 29.4.2); Podman minimum 5.8.4 met"* ]]
+  [[ "$output" == *"ok    kernel 7.0.0-38-generic (ubuntu 24.04, minimum 7.0.0-38)"* ]]
+  [[ "$output" != *"FAIL  Docker Engine"* ]]
+  [[ "$output" != *"FAIL  Podman"* ]]
+  export FAKE_DOCKER_OUT___VERSION_="podman version 5.8.3"
+  run lea_doctor
+  [[ "$output" == *"warn  Podman 5.8.3: older than 5.8.4 (CVE-2026-57231): update Podman"* ]]
+  [[ "$output" != *"FAIL  Podman"* ]]
+  # Docker's CLI on Podman's Docker API names a Podman Engine component.
+  export FAKE_DOCKER_RC_VERSION___FORMAT=0 FAKE_DOCKER_OUT_VERSION___FORMAT=$'Podman Engine=5.8.9\nConmon=conmon version 2.1.13'
+  run lea_doctor
+  [[ "$output" == *"warn  Podman 5.8.9: lea is built for Docker Engine"* ]]
+}
+
+@test "lea_host_engine names the engine behind docker and its version" {
+  export FAKE_DOCKER_OUT_VERSION___FORMAT=$'Engine=29.4.2\ncontainerd=v2.1.4'
+  [ "$(lea_host_engine)" = "docker 29.4.2" ]
+  export FAKE_DOCKER_OUT_VERSION___FORMAT=$'Podman Engine=5.8.9'
+  [ "$(lea_host_engine)" = "podman 5.8.9" ]
+  export FAKE_DOCKER_OUT_VERSION___FORMAT="" FAKE_DOCKER_RC_VERSION___FORMAT=125 FAKE_DOCKER_OUT___VERSION_="podman version 5.8.9"
+  [ "$(lea_host_engine)" = "podman 5.8.9" ]
+  export FAKE_DOCKER_OUT___VERSION_="Docker version 29.4.2, build 1234567"
+  [ -z "$(lea_host_engine)" ]
+}
+
 @test "versions: the kernel release is checked against the minimum of its distribution" {
   docker_components; host_minimums
   fake_uname 7.0.0-38-generic

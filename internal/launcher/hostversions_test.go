@@ -37,6 +37,31 @@ func TestRunArgsRefuseOutdatedDockerEngine(t *testing.T) {
 	}
 }
 
+// Podman (the podman-docker shim, or Docker's CLI on Podman's API) is never refused: lea is built
+// for Docker Engine, so a Podman below its minimum only warns (#108).
+func TestRunArgsLetPodmanThrough(t *testing.T) {
+	w := newWorld(t, repoRoot(t))
+	for _, c := range []struct{ components, version, warn string }{
+		{"", "podman version 5.8.9", ""},
+		{"Podman Engine=5.8.9\nConmon=conmon version 2.1.13\nOCI Runtime (crun)=crun version 1.28", "", ""},
+		{"", "podman version 5.8.3", "lea: warning: Podman 5.8.3 is older than 5.8.4 (CVE-2026-57231)"},
+	} {
+		w.env[engineFormat] = c.components
+		w.env["FAKE_DOCKER_RC_VERSION___FORMAT"] = "0"
+		if c.components == "" {
+			w.env["FAKE_DOCKER_RC_VERSION___FORMAT"] = "125"
+		}
+		w.env["FAKE_DOCKER_OUT___VERSION_"] = c.version
+		w.errb.Reset()
+		if _, err := w.launcher().runArgs(w.proj, "172.18.0.5"); err != nil {
+			t.Errorf("%q %q: refused: %v", c.components, c.version, err)
+		}
+		if got := w.errb.String(); c.warn == "" && got != "" || !strings.Contains(got, c.warn) {
+			t.Errorf("%q %q: stderr %q, want %q", c.components, c.version, got, c.warn)
+		}
+	}
+}
+
 func TestVersionAtLeast(t *testing.T) {
 	for _, c := range []struct {
 		a, b string

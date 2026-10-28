@@ -5,6 +5,12 @@
 # docker-engine MIN: Moby 29.4.2 carries the seccomp filter fixes.
 docker-engine 29.4.2
 #
+# podman MIN: Podman 5.8.4 fixes CVE-2026-57231 (GHSA-4hq8-gpf5-8p68: an image's key-only ENV
+# passes the host's variable of that name into the container). lea is built for Docker Engine:
+# on a Podman host, below this minimum is a warning, never a refusal; Podman's bridge has no
+# gateway_mode_ipv4=isolated.
+podman 5.8.4
+#
 # kernel ID VERSION_ID MIN: the oldest kernel release (uname -r, without its flavour suffix) of
 # that distribution (/etc/os-release) that carries the fixes for CVE-2026-74753 (perf
 # use-after-free), CVE-2026-80521 (af_unix SCM_RIGHTS race) and CVE-2026-80841. Add a line only

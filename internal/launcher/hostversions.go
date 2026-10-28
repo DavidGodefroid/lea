@@ -7,8 +7,8 @@ import (
 	"strings"
 )
 
-// dockerEngineMin is the docker-engine line of config/host-minimums ("" when absent).
-func (l *Launcher) dockerEngineMin() string {
+// hostMinimum is the line of config/host-minimums for key ("docker-engine", "podman"), "" when absent.
+func (l *Launcher) hostMinimum(key string) string {
 	f, err := os.Open(l.Root + "/config/host-minimums")
 	if err != nil {
 		return ""
@@ -16,34 +16,50 @@ func (l *Launcher) dockerEngineMin() string {
 	defer f.Close()
 	s := bufio.NewScanner(f)
 	for s.Scan() {
-		if fs := strings.Fields(s.Text()); len(fs) >= 2 && fs[0] == "docker-engine" {
+		if fs := strings.Fields(s.Text()); len(fs) >= 2 && fs[0] == key {
 			return fs[1]
 		}
 	}
 	return ""
 }
 
-// checkDockerEngine refuses to start a lea container on a Docker Engine older than
-// config/host-minimums (#108), unless LEA_ALLOW_OUTDATED_HOST=1, which only warns. An engine
-// whose version is unknown (Podman, a remote API without components) is let through: lea doctor
-// reports it.
-func (l *Launcher) checkDockerEngine() error {
-	min := l.dockerEngineMin()
-	if min == "" {
-		return nil
-	}
+// hostEngine is the container engine behind docker: "docker" or "podman" with its version, ""
+// when unknown. Docker Engine names an Engine component, Podman's Docker API a "Podman Engine"
+// one; the podman-docker shim has no components but says "podman version" to docker --version.
+func (l *Launcher) hostEngine() (string, string) {
 	out, _ := l.output(false, "docker", "version", "--format", `{{range .Server.Components}}{{.Name}}={{.Version}}{{"\n"}}{{end}}`)
-	engine := ""
 	for _, line := range strings.Split(out, "\n") {
 		if v, ok := strings.CutPrefix(line, "Engine="); ok {
-			engine = strings.TrimSpace(v)
-			break
+			return "docker", strings.TrimSpace(v)
+		}
+		if v, ok := strings.CutPrefix(line, "Podman Engine="); ok {
+			return "podman", strings.TrimSpace(v)
 		}
 	}
-	if engine == "" || versionAtLeast(engine, min) {
+	out, _ = l.output(false, "docker", "--version")
+	if v, ok := strings.CutPrefix(strings.TrimSpace(out), "podman version "); ok {
+		return "podman", strings.TrimSpace(v)
+	}
+	return "", ""
+}
+
+// checkDockerEngine refuses to start a lea container on a Docker Engine older than
+// config/host-minimums (#108), unless LEA_ALLOW_OUTDATED_HOST=1, which only warns. Podman below
+// its minimum only warns: lea is built for Docker Engine, and the Podman minimum is no seccomp
+// fix. An engine whose version is unknown is let through: lea doctor reports it.
+func (l *Launcher) checkDockerEngine() error {
+	engine, v := l.hostEngine()
+	if engine == "podman" {
+		if min := l.hostMinimum("podman"); min != "" && !versionAtLeast(v, min) {
+			l.logf("warning: Podman %s is older than %s (CVE-2026-57231): update Podman", v, min)
+		}
 		return nil
 	}
-	msg := "Docker Engine " + engine + " is older than " + min + " (Moby seccomp fixes): update Docker"
+	min := l.hostMinimum("docker-engine")
+	if engine == "" || min == "" || versionAtLeast(v, min) {
+		return nil
+	}
+	msg := "Docker Engine " + v + " is older than " + min + " (Moby seccomp fixes): update Docker"
 	if l.Cfg.Get("LEA_ALLOW_OUTDATED_HOST") == "1" {
 		l.logf("warning: %s", msg)
 		return nil

@@ -108,22 +108,31 @@ lea_version_ge() {
 }
 
 # lea__doctor_host_versions: the Docker Engine (with containerd and runc) and the kernel lea's
-# containers run on, against config/host-minimums. Fails below a minimum; an engine that is not
-# Docker Engine, or a distribution without a kernel minimum, is a warning.
+# containers run on, against config/host-minimums. Fails below a minimum; Podman (lea is built for
+# Docker Engine), an unknown engine, or a distribution without a kernel minimum is a warning.
 lea__doctor_host_versions() {
   _hvf=${LEA_HOST_MINIMUMS:-$LEA_ROOT/config/host-minimums}; _hvrc=0
   _hvdmin=$(awk '$1 == "docker-engine" { print $2; exit }' "$_hvf" 2>/dev/null || true)
-  _hvc=$(docker version --format '{{range .Server.Components}}{{.Name}}={{.Version}}{{"\n"}}{{end}}' 2>/dev/null || true)
-  _hve=$(printf '%s\n' "$_hvc" | sed -n 's/^Engine=//p' | head -n 1)
-  _hvctd=$(printf '%s\n' "$_hvc" | sed -n 's/^containerd=//p' | head -n 1)
-  _hvrunc=$(printf '%s\n' "$_hvc" | sed -n 's/^runc=//p' | head -n 1)
-  if [ -z "$_hve" ]; then
-    lea__warn "Docker Engine" "version unknown (not Docker Engine?): lea needs Docker Engine ${_hvdmin:-?} or later"
-  elif [ -n "$_hvdmin" ] && ! lea_version_ge "$_hve" "$_hvdmin"; then
-    lea__fail "Docker Engine" "$_hve is older than $_hvdmin (Moby seccomp fixes): update Docker"; _hvrc=1
-  else
-    lea__ok "Docker Engine $_hve (containerd ${_hvctd:-?}, runc ${_hvrunc:-?}; minimum ${_hvdmin:-none})"
-  fi
+  _hvpmin=$(awk '$1 == "podman" { print $2; exit }' "$_hvf" 2>/dev/null || true)
+  _hveng=$(lea_host_engine); _hve=${_hveng#* }
+  case $_hveng in
+    docker\ *)
+      _hvc=$(docker version --format '{{range .Server.Components}}{{.Name}}={{.Version}}{{"\n"}}{{end}}' 2>/dev/null || true)
+      _hvctd=$(printf '%s\n' "$_hvc" | sed -n 's/^containerd=//p' | head -n 1)
+      _hvrunc=$(printf '%s\n' "$_hvc" | sed -n 's/^runc=//p' | head -n 1)
+      if [ -n "$_hvdmin" ] && ! lea_version_ge "$_hve" "$_hvdmin"; then
+        lea__fail "Docker Engine" "$_hve is older than $_hvdmin (Moby seccomp fixes): update Docker"; _hvrc=1
+      else
+        lea__ok "Docker Engine $_hve (containerd ${_hvctd:-?}, runc ${_hvrunc:-?}; minimum ${_hvdmin:-none})"
+      fi ;;
+    podman\ *)
+      if [ -n "$_hvpmin" ] && ! lea_version_ge "$_hve" "$_hvpmin"; then
+        lea__warn "Podman $_hve" "older than $_hvpmin (CVE-2026-57231): update Podman"
+      else
+        lea__warn "Podman $_hve" "lea is built for Docker Engine (minimum ${_hvdmin:-?}); Podman minimum ${_hvpmin:-none} met; its networks have no gateway_mode_ipv4=isolated"
+      fi ;;
+    *) lea__warn "Docker Engine" "version unknown (not Docker Engine?): lea needs Docker Engine ${_hvdmin:-?} or later" ;;
+  esac
 
   _hvk=$(uname -r 2>/dev/null || true)
   _hvos=${LEA_OS_RELEASE:-/etc/os-release}

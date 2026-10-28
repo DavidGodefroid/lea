@@ -668,7 +668,9 @@ so. Changes apply after `lea init` (endpoints, keys, images, locksql) or `lea st
   carry the fixes for CVE-2026-74753, CVE-2026-80521 and CVE-2026-80841; on Ubuntu, check with
   `apt changelog linux-image-$(uname -r) | grep -E 'CVE-2026-(74753|80521|80841)'`. `lea doctor`
   shows the kernel, Docker Engine, containerd and runc versions and fails below the minimums of
-  `config/host-minimums`; a distribution without a kernel minimum there gets a warning.
+  `config/host-minimums`; a distribution without a kernel minimum there gets a warning. On a
+  Podman host (`docker` is Podman), lea is not refused: `lea doctor` warns that lea is built for
+  Docker Engine, and below Podman 5.8.4 (CVE-2026-57231) the launcher warns too.
 - Work in lea, not on the host, inside the projects directory: an agent can write files your host
   tools would run. When the last session closes, lea reports changes to git hooks, risky git
   configuration, `.mcp.json` and `.claude/` settings.

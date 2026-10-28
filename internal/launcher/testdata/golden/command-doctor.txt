@@ -3,6 +3,7 @@ status 1
 docker [info]
 docker [info] [--format] [{{json .SecurityOptions}}]
 docker [version] [--format] [{{range .Server.Components}}{{.Name}}={{.Version}}{{"\n"}}{{end}}]
+docker [version] [--format] [{{range .Server.Components}}{{.Name}}={{.Version}}{{"\n"}}{{end}}]
 docker [image] [inspect] [lea:dev]
 docker [image] [inspect] [lea-proxy:dev]
 tmux [-V]
