@@ -10,7 +10,7 @@ const now = 1_000_000
 
 var dev = Caller{Key: "lea-a/dev-2", Container: "lea-a", Repo: "lea", Branch: "feat/73-x",
 	Lineage: []string{"lea-a/dev-2", "lea-a/claude-1"}, OwnWorktree: true, Worktree: "/p/.lea/worktrees/lea/dev-2", Cwd: "/p/.lea/worktrees/lea/dev-2",
-	Env: map[string]string{"HOME": "/home/u", "GH_CONFIG_DIR": "/lea/state/gh"}}
+	Env: map[string]string{"HOME": "/home/u", "GH_CONFIG_DIR": "/lea/state/gh"}, Proxy: LeaProxy}
 
 func all(action string) Grant {
 	g := Grant{ID: 7, Container: "lea-a", Action: action, Repo: "lea", Branch: "feat/*", Created: now - 10, Expires: now + 3600}
@@ -507,6 +507,30 @@ func TestPinnedCommand(t *testing.T) {
 		odd.Env = bad
 		if d := Decide("Bash", bash("git commit -m x"), odd, gs, now, false); d.Verdict != "" {
 			t.Fatalf("env %v: %+v", bad, d)
+		}
+	}
+	// The container's network is internal: every pinned call goes out through lea's proxy, set
+	// by lea (Caller.Proxy, from the daemon), never through one the agent's environment names.
+	sneaky := dev
+	sneaky.Env = map[string]string{"HOME": "/home/u", "HTTPS_PROXY": "http://evil:1", "https_proxy": "http://evil:1"}
+	for _, call := range []string{"gh pr merge 42 --squash", "git push origin feat/73-x", "git commit -m x"} {
+		d := Decide("Bash", bash(call), sneaky, gs, now, false)
+		if d.Verdict != Allow || strings.Contains(d.Command, "evil") {
+			t.Fatalf("%s: %+v", call, d)
+		}
+		if call[:2] == "gh" && !strings.Contains(d.Command, `'HTTPS_PROXY=http://lea-proxy:3128' 'https_proxy=http://lea-proxy:3128'`) {
+			t.Fatalf("%s: gh not through lea's proxy: %s", call, d.Command)
+		}
+		if s := lastWord(t, d.Command); call[:3] == "git" && (!strings.Contains(s, `'-c' 'http.proxy=http://lea-proxy:3128'`) || strings.Contains(s, `'http.proxy='`)) {
+			t.Fatalf("%s: git not through lea's proxy:\n%s", call, s)
+		}
+	}
+	// No proxy lea can vouch for: no command, no allow.
+	for _, p := range []string{"", "lea-proxy:3128", "http://lea-proxy", "http://a b:1", "http://x:1/'$(id)'", "https://lea-proxy:3128", "http://lea-proxy:3128/"} {
+		odd := dev
+		odd.Proxy = p
+		if d := Decide("Bash", bash("gh pr merge 42 --squash"), odd, gs, now, false); d.Verdict != "" {
+			t.Fatalf("proxy %q: %+v", p, d)
 		}
 	}
 	// No worktree, no git command.

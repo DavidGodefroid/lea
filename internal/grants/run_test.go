@@ -387,3 +387,72 @@ func TestPinnedGhIgnoresTheAgentsGhConfig(t *testing.T) {
 		t.Fatalf("no token: err %v, out %s", err, out)
 	}
 }
+
+// fakeProxy records the CONNECT targets it is asked for and refuses them all.
+func fakeProxy(t *testing.T) (url string, hits func() []string) {
+	t.Helper()
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var mu sync.Mutex
+	var got []string
+	srv := &http.Server{Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		got = append(got, r.Method+" "+r.Host)
+		mu.Unlock()
+		http.Error(w, "refused by the test proxy", http.StatusForbidden)
+	})}
+	go srv.Serve(l)
+	t.Cleanup(func() { srv.Close() })
+	return "http://" + l.Addr().String(), func() []string {
+		mu.Lock()
+		defer mu.Unlock()
+		return append([]string(nil), got...)
+	}
+}
+
+// TestPinnedCallsGoThroughLeaProxy: the network of a lea container is internal, its only way out
+// lea's proxy. A pinned git push and gh call run under env -i: they reach the forge through the
+// proxy lea names (Caller.Proxy), never through one the agent's environment names.
+func TestPinnedCallsGoThroughLeaProxy(t *testing.T) {
+	root, wt, _ := fixture(t)
+	lea, leaHits := fakeProxy(t)
+	evil, evilHits := fakeProxy(t)
+	c, g := pinnedCaller(root, wt)
+	c.Proxy = lea
+	exec.Command(gitPath, "-C", wt, "branch", "feat/73-x").Run()
+	run := func(cmd string) string {
+		ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+		defer cancel()
+		x := exec.CommandContext(ctx, "/bin/bash", "-c", cmd)
+		x.Env = append(os.Environ(), "HTTPS_PROXY="+evil, "https_proxy="+evil, "HTTP_PROXY="+evil, "ALL_PROXY="+evil, "NO_PROXY=", "no_proxy=")
+		out, err := x.CombinedOutput()
+		if err == nil {
+			t.Fatalf("%s: the test proxy refuses every call, yet it succeeded: %s", cmd, out)
+		}
+		return string(out)
+	}
+	out := run(Command(Request{Prog: "git", Args: []string{"push", "origin", "feat/73-x"}}, c, g))
+	if h := leaHits(); len(h) == 0 || h[0] != "CONNECT github.com:443" {
+		t.Fatalf("git push did not go through lea's proxy: %v, out %s", h, out)
+	}
+	if _, err := os.Stat(ghPath); err != nil {
+		t.Skipf("%s: %v", ghPath, err)
+	}
+	cfg := filepath.Join(root, "gh")
+	os.MkdirAll(cfg, 0o700)
+	os.WriteFile(filepath.Join(cfg, "hosts.yml"), []byte("github.com:\n    oauth_token: lea-test-not-a-token\n    user: u\n"), 0o600)
+	c.Env = map[string]string{"HOME": root, "GH_CONFIG_DIR": cfg}
+	d := Decide("Bash", bash("gh pr merge 42 --squash"), c, []Grant{all(Merge)}, now, false)
+	if d.Verdict != Allow {
+		t.Fatalf("merge: %+v", d)
+	}
+	out = run(d.Command)
+	if h := leaHits(); len(h) < 2 || h[len(h)-1] != "CONNECT api.github.com:443" {
+		t.Fatalf("gh did not go through lea's proxy: %v, out %s", h, out)
+	}
+	if h := evilHits(); len(h) != 0 {
+		t.Fatalf("the agent's proxy got %v", h)
+	}
+}
