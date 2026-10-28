@@ -29,16 +29,18 @@ setup() {
 
 @test "lea locksql refuses while a running agent lacks the read-only .locksql mount" {
   r=$(cd "$P" && pwd -P)
-  # Two agents of the projects directory: one started with the mount, one before it (no mount).
-  export FAKE_DOCKER_OUT_PS___FILTER="$(printf 'c1\nc2')"
+  # Two agents of the projects directory, or of a directory above it (its mount holds .locksql):
+  # one started with the mount, one before it (no mount). Those of other directories do not count.
+  export FAKE_DOCKER_OUT_PS___FILTER="$(printf 'c1 %s\nc0 %s/sub\nc2 %s\nc3 /elsewhere\nc4 ' "$r" "$r" "${r%/*}")"
   export FAKE_DOCKER_OUT_INSPECT__F_AT_C2="$(printf '/lea-a false\n/lea-b ')"
   run lea_locksql </dev/null
   [ "$status" -ne 0 ]
   [[ "$output" == *"lea-b"*"without $r/.locksql read-only"*"restart"* ]]
   [[ "$output" != *"lea-a"* ]]
   run calls
-  [[ "$output" == *"docker [ps] [--filter] [label=lea.role=session] [--filter] [label=lea.projects=$r] [--format] [{{.ID}}]"* ]]
+  [[ "$output" == *"docker [ps] [--filter] [label=lea.role=session] [--format] [{{.ID}} {{.Label \"lea.projects\"}}]"* ]]
   [[ "$output" == *"docker [inspect] [-f]"*"[c1] [c2]"* ]]
+  [[ "$output" != *"[c0]"* && "$output" != *"[c3]"* && "$output" != *"[c4]"* ]]
   [[ "$output" != *"docker [run]"* ]]
   # A read-write mount of it is no better.
   export FAKE_DOCKER_OUT_INSPECT__F_AT_C2="$(printf '/lea-a false\n/lea-b true')"
@@ -81,6 +83,11 @@ setup() {
   run lea_locksql </dev/null
   [ "$status" -ne 0 ]
   [[ "$output" == *"$P/.locksql/f is not a regular file or directory"* ]]
+  # A hard link: an agent writes the console's file through its other name, outside .locksql.
+  rm "$P/.locksql/f"; ln "$P/.locksql/pii/a/x.toml" "$P/x"
+  run lea_locksql </dev/null
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"$P/.locksql/pii/a/x.toml has another name (a hard link)"*"remove it"* ]]
 }
 
 @test "lea locksql removes a stopped console left behind, passes the Vault address" {

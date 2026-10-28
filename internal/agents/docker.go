@@ -203,15 +203,22 @@ func (d DockerConsoles) StopConsole(ctx context.Context, name string) error {
 	return nil
 }
 
-// Unconfined inspects the running agent containers of projects (lea.role=session, lea.projects):
-// those whose mount of dir is missing or writable. Any failure is an error, never "none".
+// Unconfined inspects the running agent containers (lea.role=session) of projects, or of a
+// projects directory above it (lea.projects), whose read-write mount holds dir: those whose mount
+// of dir is missing or writable. Any failure is an error, never "none".
 func (d DockerConsoles) Unconfined(ctx context.Context, projects, dir string) ([]string, error) {
-	out, err := exec.CommandContext(ctx, d.bin(), "ps", "-q", "--filter", "label=lea.role=session",
-		"--filter", "label=lea.projects="+projects).Output()
+	out, err := exec.CommandContext(ctx, d.bin(), "ps", "--filter", "label=lea.role=session",
+		"--format", `{{.ID}} {{.Label "lea.projects"}}`).Output()
 	if err != nil {
 		return nil, fmt.Errorf("docker ps: %w%s", err, stderrOf(err))
 	}
-	ids := strings.Fields(string(out))
+	var ids []string
+	for _, l := range strings.Split(string(out), "\n") {
+		id, p, _ := strings.Cut(l, " ")
+		if id != "" && p != "" && (p == projects || p == "/" || strings.HasPrefix(projects, p+"/")) {
+			ids = append(ids, id)
+		}
+	}
 	if len(ids) == 0 {
 		return nil, nil
 	}

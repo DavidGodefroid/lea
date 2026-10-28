@@ -569,6 +569,14 @@ func TestEnsureConsoleDir(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
+	// A hard link: an agent writes the console's file through its other name, outside it.
+	x := filepath.Join(d, "pii", "a", "x.toml")
+	if err := os.Link(x, filepath.Join(p, "x")); err != nil {
+		t.Fatal(err)
+	}
+	if err := EnsureConsoleDir(d); err == nil || !strings.Contains(err.Error(), x+" has another name (a hard link)") {
+		t.Fatalf("hard link: %v", err)
+	}
 }
 
 // An agent started before locksql, or before lea mounted the console's directory read-only in

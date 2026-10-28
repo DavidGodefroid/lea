@@ -11,6 +11,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"syscall"
 )
 
 // Lock consoles (issue #18, phases 0 and 1): the user opens a lock tool's console in a pane of
@@ -85,13 +86,24 @@ func EnsureConsoleDir(dir string) error {
 		return fmt.Errorf("%s is not a directory (a symbolic link or a file): the console only writes there; remove it and retry", dir)
 	}
 	// A symbolic link (or a fifo, a device) left in it by an agent, before the agents got it
-	// read-only, would take the console's writes out of it: only regular files and directories.
+	// read-only, would take the console's writes out of it, a hard link let the agent write in it:
+	// only regular files of a single name and directories.
 	return filepath.WalkDir(dir, func(p string, e fs.DirEntry, err error) error {
 		if err != nil {
 			return fmt.Errorf("could not read %s: %w", dir, err)
 		}
 		if !e.Type().IsRegular() && !e.IsDir() {
 			return fmt.Errorf("%s is not a regular file or directory: the console writes in %s; remove it and retry", p, dir)
+		}
+		// A hard link of a file: an agent would write it through its other name, outside.
+		if e.Type().IsRegular() {
+			fi, err := e.Info()
+			if err != nil {
+				return fmt.Errorf("could not read %s: %w", p, err)
+			}
+			if st, ok := fi.Sys().(*syscall.Stat_t); !ok || st.Nlink > 1 {
+				return fmt.Errorf("%s has another name (a hard link): the console writes in %s; remove it and retry", p, dir)
+			}
 		}
 		return nil
 	})
