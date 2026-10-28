@@ -305,3 +305,154 @@ func TestLockHTTPForgetsReleasedNetworks(t *testing.T) {
 		}
 	}
 }
+
+// mitmWorld is lockHTTPWorld with LEA_LOCKHTTP_MITM=1 and a launcher whose `ca init --dir D`
+// makes a CA, as the real one does.
+func mitmWorld(t *testing.T) (*world, string) {
+	t.Helper()
+	w, root := lockHTTPWorld(t)
+	ca := fakeLockHTTPLauncher("0.2.0", testDigest) +
+		"if [ \"$1 $2 $3\" = \"ca init --dir\" ]; then mkdir -p \"$4\" && echo cert >\"$4/ca.pem\" && echo key >\"$4/ca-key.pem\"; fi\n"
+	if err := os.WriteFile(root+"/usr/local/bin/lockhttp", []byte(ca), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeUserConf(t, w, "LEA_LOCKHTTP=1\nLEA_LOCKHTTP_MITM=1\n")
+	return w, root
+}
+
+// MITM (docs/lea.md §3): the CA is made through the launcher; its key reaches the signer's
+// container alone, through a volume a one-off root container fills (owned by signer, 0600); the
+// gate gets the certificate and the signer's socket volume; the agents trust the certificate.
+func TestLockHTTPMITM(t *testing.T) {
+	w, _ := mitmWorld(t)
+	if err := w.launcher().ensureProxy(w.proj); err != nil {
+		t.Fatal(err)
+	}
+	data := w.launcher().Cfg.DataDir()
+	ca := lockhttp.CADir(data)
+	image := "ghcr.io/davidgodefroid/lockhttp@" + testDigest
+	stamp := lockhttp.Hash("cert\n")[:12]
+	// The fake launcher's `ca init --dir` made it.
+	if b, err := os.ReadFile(ca + "/ca-key.pem"); err != nil || string(b) != "key\n" {
+		t.Errorf("no CA made through the launcher: %q %v", b, err)
+	}
+	if b, err := os.ReadFile(lockhttp.GateDir(data) + "/ca.pem"); err != nil || string(b) != "cert\n" {
+		t.Errorf("gate dir ca.pem: %q %v", b, err)
+	}
+	if _, err := os.Stat(lockhttp.GateDir(data) + "/ca-key.pem"); err == nil {
+		t.Error("the CA key is in the gate's directory")
+	}
+	var copyRun, signer, gate, proxy string
+	for _, c := range w.calls() {
+		switch {
+		case strings.HasPrefix(c, "docker [run] [--rm] [--user] [0]"):
+			copyRun = c
+		case strings.HasPrefix(c, "docker [run]") && strings.Contains(c, "[--name] [lea-lockhttp-signer]"):
+			signer = c
+		case strings.HasPrefix(c, "docker [run]") && strings.Contains(c, "[--name] [lea-lockhttp-gate]"):
+			gate = c
+		case strings.HasPrefix(c, "docker [run]") && strings.Contains(c, "[--name] [lea-proxy]"):
+			proxy = c
+		}
+	}
+	for what, wants := range map[string][]string{
+		copyRun: {"[--network] [none]", "[--entrypoint] [sh]", "[type=bind,src=" + ca + ",dst=/src,readonly]",
+			"[type=volume,src=lea-lockhttp-ca,dst=/ca]", "[" + image + "] [-c] [install -m 0600 -o signer /src/ca-key.pem /ca/ca-key.pem && install -m 0644 /src/ca.pem /ca/ca.pem]"},
+		signer: {"[--network] [none]", "[--user] [signer]", "[--cap-drop] [ALL]", "[--read-only]", "[--label] [lea.prefix=lea]",
+			"[--label] [lea.lockhttp-image=" + image + "]", "[--label] [lea.lockhttp-ca=" + stamp + "]",
+			"[type=volume,src=lea-lockhttp-ca,dst=/etc/lockhttp-ca,readonly]", "[type=volume,src=lea-lockhttp-signer,dst=/run/lockhttp-signer]",
+			"[" + image + "] [signer] [--ca-cert] [/etc/lockhttp-ca/ca.pem] [--ca-key] [/etc/lockhttp-ca/ca-key.pem] [--listen] [/run/lockhttp-signer/signer.sock] [--allow-uid] [10003]"},
+		gate: {"[type=volume,src=lea-lockhttp-signer,dst=/run/lockhttp-signer]", "[--label] [lea.lockhttp-ca=" + stamp + "]",
+			"[--ca-cert] [/etc/lockhttp-gate/ca.pem] [--signer] [/run/lockhttp-signer/signer.sock]"},
+		proxy: {"[LEA_LOCKHTTP_MITM=1]", "[--label] [lea.lockhttp=mitm-" + stamp + "]"},
+	} {
+		if what == "" {
+			t.Fatalf("a container was not run:\n%s", strings.Join(w.calls(), "\n"))
+		}
+		for _, want := range wants {
+			if !strings.Contains(what, want) {
+				t.Errorf("lacks %s:\n%s", want, what)
+			}
+		}
+	}
+	for _, c := range []string{gate, proxy} {
+		if strings.Contains(c, "lea-lockhttp-ca") || strings.Contains(c, "ca-key") || strings.Contains(c, ca) {
+			t.Errorf("the CA key's volume or directory reaches another container than the signer's:\n%s", c)
+		}
+	}
+	joined := strings.Join(lockArgs(t, w), "\n") + "\n"
+	for _, want := range []string{"type=bind,src=" + ca + "/ca.pem,dst=/etc/lea/lockhttp-ca.pem,readonly",
+		"NODE_EXTRA_CA_CERTS=/etc/lea/lockhttp-ca.pem", "REQUESTS_CA_BUNDLE=/etc/pki/tls/certs/ca-bundle.crt", "LEA_LOCKHTTP_MITM=1"} {
+		if !strings.Contains(joined, "\n"+want+"\n") {
+			t.Errorf("run args lack %s", want)
+		}
+	}
+	if strings.Contains(joined, "ca-key") {
+		t.Fatal("an agent container got the CA key")
+	}
+}
+
+// A kept proxy keeps its gate and signer while both run this image and this CA; a rotated CA
+// replaces the proxy (keyproxy reads the certificate at start), so the gate and the signer too.
+func TestLockHTTPMITMFollowsTheCA(t *testing.T) {
+	w, _ := mitmWorld(t)
+	if err := w.launcher().ensureProxy(w.proj); err != nil {
+		t.Fatal(err)
+	}
+	ca := lockhttp.CADir(w.launcher().Cfg.DataDir())
+	image := "ghcr.io/davidgodefroid/lockhttp@" + testDigest
+	stamp := lockhttp.Hash("cert\n")[:12]
+	w.env["FAKE_DOCKER_OUT_INSPECT__F"] = "true"
+	w.env["FAKE_DOCKER_OUT_INSPECT___FORMAT"] = "@" + w.launcher().proxyRules() + "^mitm-" + stamp
+	for name, c := range map[string]struct {
+		inspect string
+		replace bool
+	}{
+		"current":        {"true|2026-10-28T10:00:00Z|\ntrue|2026-10-28T10:00:01Z|" + image + " ca:" + stamp + "\ntrue|2026-10-28T09:00:00Z|" + image + " ca:" + stamp, false},
+		"signer stopped": {"true|2026-10-28T10:00:00Z|\ntrue|2026-10-28T10:00:01Z|" + image + " ca:" + stamp + "\nfalse|2026-10-28T09:00:00Z|" + image + " ca:" + stamp, true},
+		"signer absent":  {"true|2026-10-28T10:00:00Z|\ntrue|2026-10-28T10:00:01Z|" + image + " ca:" + stamp, true},
+		"gate of no CA":  {"true|2026-10-28T10:00:00Z|\ntrue|2026-10-28T10:00:01Z|" + image + "\ntrue|2026-10-28T09:00:00Z|" + image + " ca:" + stamp, true},
+	} {
+		w.env["FAKE_DOCKER_OUT_INSPECT___TYPE"] = c.inspect
+		before := len(w.calls())
+		if err := w.launcher().ensureProxy(w.proj); err != nil {
+			t.Fatal(err)
+		}
+		got := strings.Join(w.calls()[before:], "\n")
+		if strings.Contains(got, "[--name] [lea-proxy]") {
+			t.Errorf("%s: the proxy of the same CA was replaced", name)
+		}
+		if r := strings.Contains(got, "[--name] [lea-lockhttp-signer]") && strings.Contains(got, "[--name] [lea-lockhttp-gate]"); r != c.replace {
+			t.Errorf("%s: gate and signer replaced = %v:\n%s", name, r, got)
+		}
+	}
+	os.WriteFile(ca+"/ca.pem", []byte("rotated\n"), 0o644)
+	before := len(w.calls())
+	if err := w.launcher().ensureProxy(w.proj); err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.Join(w.calls()[before:], "\n"); !strings.Contains(got, "[--name] [lea-proxy]") || !strings.Contains(got, "[lea.lockhttp-ca="+lockhttp.Hash("rotated\n")[:12]+"]") {
+		t.Fatalf("a rotated CA kept the proxy:\n%s", got)
+	}
+}
+
+// MITM turned off, or LockHTTP: the signer goes with the gate.
+func TestLockHTTPMITMOffRemovesTheSigner(t *testing.T) {
+	w, _ := lockHTTPWorld(t)
+	w.env["FAKE_DOCKER_OUT_INSPECT__F"] = "true"
+	w.env["FAKE_DOCKER_OUT_INSPECT___FORMAT"] = "@" + w.launcher().proxyRules() + "^mitm-0123456789ab"
+	if err := w.launcher().ensureProxy(w.proj); err != nil {
+		t.Fatal(err)
+	}
+	if !w.hasCall("docker [rm] [-f] [lea-lockhttp-gate] [lea-lockhttp-signer]") || w.hasCall("[--name] [lea-lockhttp-signer]") {
+		t.Fatalf("MITM off:\n%s", strings.Join(w.calls(), "\n"))
+	}
+}
+
+func TestLockHTTPMITMNeedsLockHTTP(t *testing.T) {
+	w := newWorld(t, repoRoot(t))
+	writeUserConf(t, w, "LEA_LOCKHTTP_MITM=1\n")
+	if _, err := LoadConfig(w.getenv, w.root, w.proj); err == nil || !strings.Contains(err.Error(), "LEA_LOCKHTTP_MITM=1 needs LEA_LOCKHTTP=1") {
+		t.Fatalf("err = %v", err)
+	}
+}

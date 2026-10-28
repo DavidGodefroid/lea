@@ -20,6 +20,10 @@ if [ "$lockhttp" = 1 ]; then
     echo "lea-proxy: LEA_LOCKHTTP=1 needs /etc/lockhttp-gate mounted by lea" >&2
     exit 1
   fi
+  if [ "${LEA_LOCKHTTP_MITM:-0}" = 1 ] && [ ! -s /etc/lockhttp-gate/ca.pem ]; then
+    echo "lea-proxy: LEA_LOCKHTTP_MITM=1 needs the CA's certificate in /etc/lockhttp-gate/ca.pem (lea writes it)" >&2
+    exit 1
+  fi
 fi
 /usr/local/bin/render-squid-conf.sh /etc/lea/internal-hosts >/etc/squid/squid.conf
 /usr/local/bin/render-squid-conf.sh --peek /etc/lea/internal-hosts >/etc/squid/peek.conf
@@ -70,7 +74,10 @@ keyproxy_pid=''
 via=http://127.0.0.1:3128
 if [ "$lockhttp" = 1 ]; then via=http://127.0.0.1:3130; fi
 if [ -s /etc/lea/endpoints ]; then
-  if [ "$lockhttp" = 1 ]; then
+  if [ "${LEA_LOCKHTTP_MITM:-0}" = 1 ]; then
+    # The gate decrypts and re-signs with lea's CA: keyproxy trusts its certificate (never the key).
+    lea-keyproxy -endpoints /etc/lea/endpoints -listen :4400 -via "$via" -sources /etc/lockhttp-gate/sources.json -ca-cert /etc/lockhttp-gate/ca.pem &
+  elif [ "$lockhttp" = 1 ]; then
     lea-keyproxy -endpoints /etc/lea/endpoints -listen :4400 -via "$via" -sources /etc/lockhttp-gate/sources.json &
   else
     lea-keyproxy -endpoints /etc/lea/endpoints -listen :4400 -via "$via" &

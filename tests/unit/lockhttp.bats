@@ -136,3 +136,32 @@ launcher() {
   lea_load_config
   [ "$LEA_LOCKHTTP" = 1 ]
 }
+
+@test "MITM: the CA's expiry, the signer and where the CA key is are checked" {
+  export LEA_LOCKHTTP_MITM=1
+  export FAKE_DOCKER_OUT_INSPECT__F_AT_LEA_LOCKHTTP_SIGNER='true|signer|none'
+  run lea__doctor_lockhttp
+  [[ "$output" == *"warn  LockHTTP CA: none yet"* ]]
+  [[ "$output" == *"ok    LockHTTP signer listening"* ]]
+  [[ "$output" == *"ok    LockHTTP CA key in the signer's container only"* ]]
+  grep -qF 'docker [exec] [lea-lockhttp-signer] [test] [-S] [/run/lockhttp-signer/signer.sock]' "$FAKE_LOG"
+  export FAKE_DOCKER_OUT_CONTAINER_INSPECT='lea-lockhttp-ca/x;'
+  export FAKE_DOCKER_OUT_INSPECT__F_AT_LEA_LOCKHTTP_SIGNER='true|signer|bridge'
+  run lea__doctor_lockhttp
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"FAIL  LockHTTP signer: lea-lockhttp-signer is not running as signer without a network ('true|signer|bridge')"* ]]
+  [[ "$output" == *"FAIL  LockHTTP CA key: mounted in the gate or the proxy"* ]]
+  unset FAKE_DOCKER_OUT_CONTAINER_INSPECT
+  export FAKE_DOCKER_OUT_INSPECT__F_AT_LEA_LOCKHTTP_SIGNER='true|signer|none'
+  if ! command -v openssl >/dev/null; then skip "no openssl"; fi
+  ca=$(lea_data_dir)/lockhttp/ca; mkdir -p "$ca"
+  openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:P-256 -nodes -days 3 -subj /CN=t -keyout "$ca/ca-key.pem" -out "$ca/ca.pem" 2>/dev/null
+  export FAKE_DOCKER_RC_EXEC_LEA_LOCKHTTP_SIGNER_AT__RUN_LOCKHTTP_SIGNER_SIGNER_SOCK=1
+  run lea__doctor_lockhttp
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"FAIL  LockHTTP CA: expires within 7 days"* ]]
+  [[ "$output" == *"FAIL  LockHTTP signer: no socket"* ]]
+  openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:P-256 -nodes -days 90 -subj /CN=t -keyout "$ca/ca-key.pem" -out "$ca/ca.pem" 2>/dev/null
+  run lea__doctor_lockhttp
+  [[ "$output" == *"ok    LockHTTP CA valid for more than 7 days"* ]]
+}

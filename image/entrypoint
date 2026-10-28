@@ -53,6 +53,14 @@ if [ "${LEA_LOCKHTTP:-0}" = 1 ]; then
   nested_proxy=http://nested:$LEA_NESTED_PROXY_TOKEN@$LEA_PROXY_IP:3130
 fi
 sed -e "s|@LEA_NESTED_PROXY@|$nested_proxy|g" /usr/local/share/lea/containers.conf.tmpl >/etc/containers/containers.conf
+if [ "${LEA_LOCKHTTP_MITM:-0}" = 1 ]; then
+  # The LockHTTP gate decrypts HTTPS with lea's local CA: its certificate (never its key) joins
+  # the system trust store, which curl, git, Go, OpenSSL and Podman read; the launcher points
+  # Node, Python requests and pip at it too.
+  [ -s /etc/lea/lockhttp-ca.pem ] || { echo "lea: LEA_LOCKHTTP_MITM=1 needs /etc/lea/lockhttp-ca.pem (lea's launcher mounts it)" >&2; exit 1; }
+  install -m 0644 /etc/lea/lockhttp-ca.pem /etc/pki/ca-trust/source/anchors/lea-lockhttp.pem
+  update-ca-trust extract
+fi
 if [ "${LEA_LOCKHTTP:-0}" = 1 ]; then
   # LockHTTP decides every request the agents make; claude.ai's connectors would act from
   # Anthropic's side, out of its sight: off (decision D10; WebSearch and WebFetch stay).

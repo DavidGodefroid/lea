@@ -383,6 +383,16 @@ not an agent that rewrites its own login file. `LEA_GIT_SSH` and `LEA_OTEL_UPSTR
 would bypass the gate: use git over HTTPS), and claude.ai's connectors are turned off in the
 agents' Claude Code (WebSearch and WebFetch stay).
 
+`LEA_LOCKHTTP_MITM=1` (with `LEA_LOCKHTTP=1`) lets the gate decrypt HTTPS, but for the policy's
+splice hosts, so that it decides on methods, paths and bodies. lea makes a local CA on first use
+through the launcher (`lockhttp ca init`, 90 days, in `~/.local/share/lea/lockhttp/ca/`; `lea
+doctor` warns a week before it ends: `lockhttp ca init --force --dir <it>`, then `lea stop --all`
+and `lea`). Its key goes to one container only, `lea-lockhttp-signer` (the image's `signer`
+account, no network), through the volume `lea-lockhttp-ca` (key owned by `signer`, 0600); the
+signer hands leaf certificates to the gate on a socket in the volume `lea-lockhttp-signer`. The
+certificate, never the key, goes to the gate, to lea-keyproxy and into the agents' trust stores
+(system store, `NODE_EXTRA_CA_CERTS`, `REQUESTS_CA_BUNDLE`, `PIP_CERT`, `SSL_CERT_FILE`).
+
 ## Teams of agents
 
 Every agent has a role: `lead`, `dev` (the default) or `reviewer`. The first agent is a lead.

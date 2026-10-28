@@ -484,7 +484,7 @@ func (l *Launcher) runArgs(proj, pip string) ([]string, error) {
 			return nil, err
 		}
 		proxy = p
-		lh = []string{"-e", "LEA_LOCKHTTP=1", "-e", "LEA_NESTED_PROXY_TOKEN=" + nested}
+		lh = append([]string{"-e", "LEA_LOCKHTTP=1", "-e", "LEA_NESTED_PROXY_TOKEN=" + nested}, l.lockHTTPAgentCA()...)
 	}
 	if err := noComma(proj, home, st, l.Root); err != nil {
 		return nil, err

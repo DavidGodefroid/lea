@@ -100,57 +100,132 @@ func (l *Launcher) lockHTTPProxyArgs() ([]string, string, error) {
 			return nil, "", die("LEA_LOCKHTTP=1: %v", err)
 		}
 	}
-	return []string{"-e", "LEA_LOCKHTTP=1", "-e", "LEA_KEYPROXY_TOKEN=" + lockhttp.KeyproxyToken(key),
-		"--mount", "type=bind,src=" + gate + ",dst=/etc/lockhttp-gate,readonly"}, image, nil
+	a := []string{"-e", "LEA_LOCKHTTP=1", "-e", "LEA_KEYPROXY_TOKEN=" + lockhttp.KeyproxyToken(key),
+		"--mount", "type=bind,src=" + gate + ",dst=/etc/lockhttp-gate,readonly"}
+	if l.Cfg.LockHTTPMITM() {
+		ca, err := l.lockHTTPCA()
+		if err != nil {
+			return nil, "", err
+		}
+		// The certificate, never the key, next to the gate's inputs: the gate and keyproxy trust it.
+		b, err := os.ReadFile(ca + "/ca.pem")
+		if err != nil {
+			return nil, "", die("LEA_LOCKHTTP_MITM=1: %v", err)
+		}
+		p := gate + "/ca.pem"
+		if err := WriteFile(data, p, b); err != nil {
+			return nil, "", die("%v", err)
+		}
+		if err := os.Chmod(p, 0o644); err != nil {
+			return nil, "", die("%v", err)
+		}
+		a = append(a, "-e", "LEA_LOCKHTTP_MITM=1")
+	}
+	return a, image, nil
 }
 
-func (l *Launcher) lockHTTPGateName() string { return l.prefix() + "-lockhttp-gate" }
+func (l *Launcher) lockHTTPGateName() string   { return l.prefix() + "-lockhttp-gate" }
+func (l *Launcher) lockHTTPSignerName() string { return l.prefix() + "-lockhttp-signer" }
 
-// ensureLockHTTPGate runs the gate container beside the proxy (docs/lea.md, §2.1), unless fresh
-// is false and a running gate of image was started after the proxy: a gate older than the proxy
-// is in a network namespace the proxy left.
+// lockHTTPConfine is the confinement lockhttp's launcher gives its own containers.
+var lockHTTPConfine = []string{"--cap-drop", "ALL", "--security-opt", "no-new-privileges", "--read-only",
+	"--tmpfs", "/tmp:rw,nosuid,nodev,noexec,size=64m", "--pids-limit", "256", "--memory", "1g"}
+
+// ensureLockHTTPGate runs the gate container beside the proxy (docs/lea.md, §2.1), and under MITM
+// the signer (§3), unless fresh is false and they are current: a running gate of image (and CA)
+// started after the proxy, and a running signer of the same. A gate older than the proxy is in a
+// network namespace the proxy left.
 func (l *Launcher) ensureLockHTTPGate(fresh bool, image string) error {
-	proxy, name := l.prefix()+"-proxy", l.lockHTTPGateName()
+	proxy, name, signer := l.prefix()+"-proxy", l.lockHTTPGateName(), l.lockHTTPSignerName()
+	mitm, stamp := l.Cfg.LockHTTPMITM(), l.lockHTTPCAStamp()
+	want, names := image, []string{proxy, name}
+	if mitm {
+		want += " ca:" + stamp
+		names = append(names, signer)
+	}
 	if !fresh {
-		out, err := l.output(false, "docker", "inspect", "--type", "container", "-f",
-			`{{.State.Running}}|{{.State.StartedAt}}|{{index .Config.Labels "lea.lockhttp-image"}}`, proxy, name)
-		if err == nil && lockHTTPGateCurrent(out, image) {
+		out, err := l.output(false, "docker", append([]string{"inspect", "--type", "container", "-f",
+			`{{.State.Running}}|{{.State.StartedAt}}|{{index .Config.Labels "lea.lockhttp-image"}}{{with index .Config.Labels "lea.lockhttp-ca"}} ca:{{.}}{{end}}`},
+			names...)...)
+		if err == nil && lockHTTPGateCurrent(out, want, len(names)) {
 			return nil
 		}
 	}
-	_ = l.quiet("docker", "rm", "-f", name)
+	_ = l.quiet("docker", "rm", "-f", name, signer)
 	data := l.Cfg.DataDir()
-	return l.run("docker", "run", "-d", "--name", name, "--restart", "unless-stopped",
-		"--network", "container:"+proxy, "--user", "gate",
-		"--label", "lea.prefix="+l.prefix(), "--label", "lea.role=lockhttp-gate", "--label", "lea.lockhttp-image="+image,
-		// The confinement lockhttp's launcher gives its own containers.
-		"--cap-drop", "ALL", "--security-opt", "no-new-privileges", "--read-only",
-		"--tmpfs", "/tmp:rw,nosuid,nodev,noexec,size=64m", "--pids-limit", "256", "--memory", "1g",
+	labels := []string{"--label", "lea.prefix=" + l.prefix(), "--label", "lea.lockhttp-image=" + image}
+	var gateMITM, gateCA []string
+	if mitm {
+		labels = append(labels, "--label", "lea.lockhttp-ca="+stamp)
+		if err := l.lockHTTPSigner(image, labels); err != nil {
+			return err
+		}
+		gateMITM = []string{"--mount", "type=volume,src=" + l.prefix() + "-lockhttp-signer,dst=/run/lockhttp-signer"}
+		gateCA = []string{"--ca-cert", "/etc/lockhttp-gate/ca.pem", "--signer", "/run/lockhttp-signer/signer.sock"}
+	}
+	a := []string{"run", "-d", "--name", name, "--restart", "unless-stopped",
+		"--network", "container:" + proxy, "--user", "gate", "--label", "lea.role=lockhttp-gate"}
+	a = append(append(append(a, labels...), lockHTTPConfine...),
 		// The console's socket: the gate's container only, never an agent's.
 		"--mount", "type=volume,src=lockhttp-run,dst=/run/lockhttp",
 		"--mount", "type=bind,src="+lockhttp.GateDir(data)+",dst=/etc/lockhttp-gate,readonly",
 		// The audit stays in the engine's volume, the gate's own (0700 in the image).
 		"--mount", "type=volume,src="+l.prefix()+"-lockhttp-audit,dst=/var/log/lockhttp",
-		"--mount", "type=bind,src="+lockhttp.StatusDir(data)+",dst=/run/lockhttp-gate",
+		"--mount", "type=bind,src="+lockhttp.StatusDir(data)+",dst=/run/lockhttp-gate")
+	a = append(append(a, gateMITM...),
 		image, "gate", "--listen", "0.0.0.0:"+lockhttp.Port, "--upstream", "http://127.0.0.1:3128",
 		"--profile", "default", "--sources", "/etc/lockhttp-gate/sources.json",
 		// The daemon's credentials.json (§2.4): a Claude API key not of the calling container is denied.
 		"--credentials", "/etc/lockhttp-gate/credentials.json",
 		"--audit-dir", "/var/log/lockhttp", "--status-file", "/run/lockhttp-gate/status.json")
+	return l.run("docker", append(a, gateCA...)...)
 }
 
-// lockHTTPGateCurrent reads the proxy's and the gate's "<running>|<started>|<image label>" lines.
-func lockHTTPGateCurrent(out, image string) bool {
+// lockHTTPSigner hands the CA key to the signer's volume and runs the signer (docs/lea.md, §3): a
+// one-off root container of the image copies the key, owned by signer (10004) and 0600, and the
+// certificate into <prefix>-lockhttp-ca, which only the signer's container mounts; the signer,
+// without a network, serves leaf certificates to the gate's uid on a socket in
+// <prefix>-lockhttp-signer, a volume of the image's 2750 signer:lockhttp-clients directory.
+func (l *Launcher) lockHTTPSigner(image string, labels []string) error {
+	ca, vol := lockhttp.CADir(l.Cfg.DataDir()), l.prefix()+"-lockhttp-ca"
+	if err := l.run("docker", "run", "--rm", "--user", "0", "--entrypoint", "sh", "--network", "none",
+		"--mount", "type=bind,src="+ca+",dst=/src,readonly", "--mount", "type=volume,src="+vol+",dst=/ca",
+		image, "-c", "install -m 0600 -o signer /src/ca-key.pem /ca/ca-key.pem && install -m 0644 /src/ca.pem /ca/ca.pem"); err != nil {
+		return die("LEA_LOCKHTTP_MITM=1: could not hand the CA key to the signer's volume %s", vol)
+	}
+	a := []string{"run", "-d", "--name", l.lockHTTPSignerName(), "--restart", "unless-stopped",
+		"--network", "none", "--user", "signer", "--label", "lea.role=lockhttp-signer"}
+	a = append(append(append(a, labels...), lockHTTPConfine...),
+		"--mount", "type=volume,src="+vol+",dst=/etc/lockhttp-ca,readonly",
+		"--mount", "type=volume,src="+l.prefix()+"-lockhttp-signer,dst=/run/lockhttp-signer",
+		image, "signer", "--ca-cert", "/etc/lockhttp-ca/ca.pem", "--ca-key", "/etc/lockhttp-ca/ca-key.pem",
+		"--listen", "/run/lockhttp-signer/signer.sock", "--allow-uid", "10003")
+	return l.run("docker", a...)
+}
+
+// lockHTTPGateCurrent reads the "<running>|<started>|<labels>" lines of the proxy, the gate and,
+// under MITM, the signer (n lines): the gate and the signer run with labels want, the gate
+// started after the proxy.
+func lockHTTPGateCurrent(out, want string, n int) bool {
 	lines := strings.Split(strings.TrimSpace(out), "\n")
-	if len(lines) != 2 {
+	if len(lines) != n {
 		return false
 	}
-	p, g := strings.SplitN(lines[0], "|", 3), strings.SplitN(lines[1], "|", 3)
-	if len(p) != 3 || len(g) != 3 || p[0] != "true" || g[0] != "true" || g[2] != image {
-		return false
+	var f [][]string
+	for _, l := range lines {
+		x := strings.SplitN(l, "|", 3)
+		if len(x) != 3 || x[0] != "true" {
+			return false
+		}
+		f = append(f, x)
 	}
-	ps, err1 := parseStarted(p[1])
-	gs, err2 := parseStarted(g[1])
+	for _, x := range f[1:] {
+		if x[2] != want {
+			return false
+		}
+	}
+	ps, err1 := parseStarted(f[0][1])
+	gs, err2 := parseStarted(f[1][1])
 	return err1 == nil && err2 == nil && !gs.Before(ps)
 }
 
@@ -172,4 +247,59 @@ func (l *Launcher) lockHTTPAgentEnv(container, pip string) (proxy string, nested
 	}
 	return "http://" + lockhttp.ShellAgent + ":" + lockhttp.Token(key, container, lockhttp.ShellAgent) + "@" + pip + ":" + lockhttp.Port,
 		lockhttp.Token(key, container, lockhttp.NestedAgent), nil
+}
+
+// lockHTTPCA is the MITM CA's directory, made on first use through lockhttp's launcher (lockhttp
+// ca init: P-256, 90 days, files owned by the user). lea never rotates it by itself: lea doctor
+// warns a week before it ends (lockhttp ca init --force --dir <it> rotates it; then lea stop
+// --all, and lea).
+func (l *Launcher) lockHTTPCA() (string, error) {
+	dir := lockhttp.CADir(l.Cfg.DataDir())
+	if err := noComma(dir); err != nil {
+		return "", err
+	}
+	if !isRegular(dir+"/ca.pem") || !isRegular(dir+"/ca-key.pem") {
+		if err := Mkdirs(l.Cfg.DataDir(), lockhttp.Dir(l.Cfg.DataDir())); err != nil {
+			return "", die("%v", err)
+		}
+		if err := l.run(lockHTTPLauncher(), "ca", "init", "--dir", dir); err != nil {
+			return "", die("LEA_LOCKHTTP_MITM=1: lockhttp ca init --dir %s failed", dir)
+		}
+	}
+	if !isRegular(dir+"/ca.pem") || !isRegular(dir+"/ca-key.pem") {
+		return "", die("LEA_LOCKHTTP_MITM=1: no ca.pem and ca-key.pem in %s", dir)
+	}
+	return dir, nil
+}
+
+// lockHTTPCAStamp is a digest of the MITM CA's certificate (12 hex digits), "" without MITM.
+func (l *Launcher) lockHTTPCAStamp() string {
+	if !l.Cfg.LockHTTPMITM() {
+		return ""
+	}
+	b, _ := os.ReadFile(lockhttp.CADir(l.Cfg.DataDir()) + "/ca.pem")
+	return lockhttp.Hash(string(b))[:12]
+}
+
+// lockHTTPStamp is the proxy's lea.lockhttp label: "1", or under MITM "mitm-" and the CA's stamp,
+// so that a new CA restarts the proxy (keyproxy reads the certificate at start).
+func (l *Launcher) lockHTTPStamp() string {
+	if !l.Cfg.LockHTTPMITM() {
+		return "1"
+	}
+	return "mitm-" + l.lockHTTPCAStamp()
+}
+
+// lockHTTPAgentCA are the run arguments that make lea's agents trust the MITM CA: its
+// certificate only (never the key), which the entrypoint adds to the system trust store, and the
+// variables of the tools that keep their own (Node, Python requests, pip).
+func (l *Launcher) lockHTTPAgentCA() []string {
+	if !l.Cfg.LockHTTPMITM() {
+		return nil
+	}
+	const bundle = "/etc/pki/tls/certs/ca-bundle.crt"
+	return []string{"-e", "LEA_LOCKHTTP_MITM=1",
+		"--mount", "type=bind,src=" + lockhttp.CADir(l.Cfg.DataDir()) + "/ca.pem,dst=/etc/lea/lockhttp-ca.pem,readonly",
+		"-e", "NODE_EXTRA_CA_CERTS=/etc/lea/lockhttp-ca.pem", "-e", "SSL_CERT_FILE=" + bundle,
+		"-e", "REQUESTS_CA_BUNDLE=" + bundle, "-e", "PIP_CERT=" + bundle}
 }
