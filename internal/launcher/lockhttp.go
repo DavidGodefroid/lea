@@ -93,6 +93,13 @@ func (l *Launcher) lockHTTPProxyArgs() ([]string, string, error) {
 	if err := noComma(gate, status); err != nil {
 		return nil, "", err
 	}
+	// The gate exits on a missing sources.json: until the daemon writes its own, one that names no
+	// container (every agent refused, E_SOURCE_UNKNOWN) and only keyproxy's token.
+	if p := lockhttp.SourcesPath(data); !isRegular(p) {
+		if _, err := lockhttp.WriteJSON(p, lockhttp.Build(key, nil, nil)); err != nil {
+			return nil, "", die("LEA_LOCKHTTP=1: %v", err)
+		}
+	}
 	return []string{"-e", "LEA_LOCKHTTP=1", "-e", "LEA_KEYPROXY_TOKEN=" + lockhttp.KeyproxyToken(key),
 		"--mount", "type=bind,src=" + gate + ",dst=/etc/lockhttp-gate,readonly"}, image, nil
 }
