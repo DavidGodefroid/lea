@@ -743,7 +743,7 @@ func TestGitLab(t *testing.T) {
 	}
 	d = Decide("Bash", bash("glab mr merge 12 --squash -y"), dev, gs, now, false)
 	s = lastWord(t, d.Command)
-	for _, w := range []string{"iid='12'\n", `"$api/merge_requests/$iid"`, `true|opened|feat/73-x|`, `'-X' 'PUT' --data-urlencode "sha=$sha" '--data' 'squash=true' $am "$api/merge_requests/$iid/merge"`} {
+	for _, w := range []string{"iid='12'\n", `"$api/merge_requests/$iid"`, `'--arg' 'b' 'feat/73-x'`, "export HOME='/usr/local/share/lea/no-forge-config'\n", `'-X' 'PUT' --data-urlencode "sha=$sha" '--data' 'squash=true' $am "$api/merge_requests/$iid/merge"`} {
 		if !strings.Contains(s, w) {
 			t.Fatalf("numbered mr merge script lacks %s:\n%s", w, s)
 		}

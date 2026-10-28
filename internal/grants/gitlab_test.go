@@ -62,7 +62,16 @@ func gitlabRun(t *testing.T, call, token string, responses map[string]string) (s
 	}
 	script := strings.ReplaceAll(lastWord(t, d.Command), "'"+glabPath+"'", "'"+glab+"'")
 	script = strings.ReplaceAll(script, "'"+curlPath+"'", "'"+filepath.Join(dir, "curl")+"'")
-	out, err := exec.Command(shPath, "-c", script).CombinedOutput()
+	// HOME is the agent's: a ~/.jq there would be loaded into every jq program. A broken one
+	// fails any jq that reads it.
+	home := filepath.Join(dir, "home")
+	os.MkdirAll(home, 0o700)
+	if err := os.WriteFile(filepath.Join(home, ".jq"), []byte("this is not jq\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cmd := exec.Command(shPath, "-c", script)
+	cmd.Env = append(os.Environ(), "HOME="+home)
+	out, err := cmd.CombinedOutput()
 	calls, _ := os.ReadFile(log)
 	return string(out), err, string(calls)
 }
@@ -83,6 +92,7 @@ func TestPinnedGitLabMergeChecksTheMR(t *testing.T) {
 		{"closed", glMR("1", "1", "closed", glSHA, "feat/73-x"), false},
 		{"not a sha", glMR("1", "1", "opened", "HEAD", "feat/73-x"), false},
 		{"a branch with more words", glMR("1", "1", "opened", glSHA, "feat/73-x feat/73-x"), false},
+		{"a branch named after it and a sha", glMR("1", "1", "opened", glSHA, "feat/73-x|"+glSHA), false},
 		{"no MR", "", false},
 	} {
 		resp := map[string]string{merge: done}

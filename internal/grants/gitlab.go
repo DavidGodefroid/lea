@@ -22,6 +22,8 @@ func gitlabScript(req Request, c Caller, host, path string) string {
 	pre := "cd / || exit 1\nexport GLAB_CHECK_UPDATE=false GLAB_SEND_TELEMETRY=false\n" +
 		"t=$(" + shellWords([]string{glabPath, "config", "get", "token", "--host", host}) + " 2>/dev/null) || t=\n" +
 		`case "$t" in ''|*[!A-Za-z0-9_.-]*) ` + refuse("no GitLab token for "+host+" in glab's config: glab auth login --hostname "+host) + ";; esac\n" +
+		// HOME is the agent's (jq loads ~/.jq into every program): none from here on.
+		"export HOME=" + shellWords([]string{noConfigDir}) + "\n" +
 		"api=" + api + "\n" +
 		// lea_api URL-LAST-ARGS...: the API's answer on stdout; on an error, it on stderr too.
 		"lea_api() { r=$(" + shellWords([]string{curlPath, "-q", "--proto", "=https", "--tlsv1.2", "--noproxy", "*", "--max-time", "60",
@@ -92,9 +94,10 @@ func gitlabMerge(n string, args []string, branch string) string {
 			`case "$iid" in ''|*[!0-9]*) ` + refuse("no single open MR of the agent's own branch "+branch) + ";; esac\n"
 	}
 	s += "mr=$(lea_api \"$api/merge_requests/$iid\") || exit 1\n" +
-		"v=$(printf '%s\\n' \"$mr\" | " + shellWords([]string{jqPath, "-r", `"\(.source_project_id == .target_project_id)|\(.state)|\(.source_branch)|\(.sha)"`}) + ") || exit 1\n" +
-		"sha=${v##*|}\n" +
-		`case "$v" in ` + shellWords([]string{"true|opened|" + branch + "|"}) + `*) ;; *) ` + refuse("MR "+n+" is not an open MR of the agent's own branch "+branch) + ";; esac\n" +
+		// Each field compared whole in jq: the head commit, or "" when the MR is not it.
+		"sha=$(printf '%s\\n' \"$mr\" | " + shellWords([]string{jqPath, "-r", "--arg", "b", branch,
+		`if .source_project_id == .target_project_id and .state == "opened" and .source_branch == $b then .sha else "" end`}) + ") || exit 1\n" +
+		`[ -n "$sha" ] || { ` + refuse("MR "+n+" is not an open MR of the agent's own branch "+branch) + "; }\n" +
 		`case "$sha" in *[!0-9a-f]*) sha= ;; esac` + "\n" +
 		`[ "${#sha}" -eq 40 ] || [ "${#sha}" -eq 64 ] || { ` + refuse("MR "+n+" has no head commit") + "; }\n" +
 		// A pipeline still running: GitLab merges once it passes (glab's default, auto-merge).
