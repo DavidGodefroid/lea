@@ -10,7 +10,7 @@ import (
 )
 
 func running(w *world) {
-	w.env["FAKE_DOCKER_OUT_NETWORK_INSPECT"] = "true"
+	w.env["FAKE_DOCKER_OUT_NETWORK_INSPECT"] = "true isolated"
 	w.env["FAKE_DOCKER_OUT_CONTAINER_INSPECT"] = "172.18.0.5"
 	w.env["FAKE_DOCKER_OUT_INSPECT__F"] = "true"
 }

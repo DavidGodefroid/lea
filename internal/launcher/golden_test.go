@@ -240,7 +240,7 @@ func leaLines(s string) string {
 // commandSetup builds one world for one side: running container and proxy by default.
 func commandSetup(t *testing.T, root string, sc commandScenario) (*world, []string, string) {
 	w := newWorld(t, root)
-	w.env["FAKE_DOCKER_OUT_NETWORK_INSPECT"] = "true"
+	w.env["FAKE_DOCKER_OUT_NETWORK_INSPECT"] = "true isolated"
 	w.env["FAKE_DOCKER_OUT_CONTAINER_INSPECT"] = "172.18.0.5"
 	w.env["FAKE_DOCKER_OUT_INSPECT__F"] = "true"
 	for k, v := range sc.env {

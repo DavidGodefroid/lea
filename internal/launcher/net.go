@@ -21,19 +21,43 @@ func (l *Launcher) ensureNetworks(id string) error {
 			return err
 		}
 	}
-	if internal, err := l.output(false, "docker", "network", "inspect", "-f", "{{.Internal}}", inet); err == nil {
+	if info, err := l.output(false, "docker", "network", "inspect", "-f",
+		`{{.Internal}} {{index .Options "com.docker.network.bridge.gateway_mode_ipv4"}}`, inet); err == nil {
+		internal, mode, _ := strings.Cut(info, " ")
 		if internal != "true" {
 			return die("network %s exists but is not an internal network; remove it (docker network rm %s) and retry", inet, inet)
+		}
+		if mode = strings.TrimSpace(mode); mode != "isolated" {
+			if mode == "" {
+				mode = "unset"
+			}
+			if l.Cfg.Get("LEA_ALLOW_GATEWAY") != "1" {
+				return die("network %s is not isolated from the host (gateway_mode_ipv4=%s, not gateway_mode_ipv4=isolated, which needs "+
+					"Docker Engine %s or later), so lea does not start the agent on it. Remove it (lea stop --all, or docker network rm %s) "+
+					"and retry, or set LEA_ALLOW_GATEWAY=1 to accept that weaker network", inet, mode, isolatedGatewayMinDocker, inet)
+			}
+			l.logf("warning: %s has gateway_mode_ipv4=%s; LEA_ALLOW_GATEWAY=1: the agent can reach the host through its gateway "+
+				"(check with: make test-isolation)", inet, mode)
 		}
 		return nil
 	}
 	if l.quiet("docker", "network", "create", "--label", "lea.prefix="+l.prefix(), "--label", "lea.id="+id, "--internal",
 		"-o", "com.docker.network.bridge.gateway_mode_ipv4=isolated", inet) != nil {
-		l.logf("warning: Docker refused gateway_mode_ipv4=isolated; %s is created without it (check with: make test-isolation)", inet)
+		// Fail closed (#105): a plain --internal bridge gives the host an address the agent reaches.
+		if l.Cfg.Get("LEA_ALLOW_GATEWAY") != "1" {
+			return die("Docker refused gateway_mode_ipv4=isolated for %s (it needs Docker Engine %s or later): without it the "+
+				"agent can reach the host's services through the network gateway, so lea does not start it. Upgrade Docker, "+
+				"or set LEA_ALLOW_GATEWAY=1 to accept that weaker network", inet, isolatedGatewayMinDocker)
+		}
+		l.logf("warning: Docker refused gateway_mode_ipv4=isolated; LEA_ALLOW_GATEWAY=1: %s is created without it, "+
+			"the agent can reach the host through its gateway (check with: make test-isolation)", inet)
 		return l.run("docker", "network", "create", "--label", "lea.prefix="+l.prefix(), "--label", "lea.id="+id, "--internal", inet)
 	}
 	return nil
 }
+
+// isolatedGatewayMinDocker is the first Docker Engine that accepts gateway_mode_ipv4=isolated.
+const isolatedGatewayMinDocker = "28.0"
 
 // ensureProxy is lea_ensure_proxy. A running proxy started for other git SSH endpoints (its
 // lea.git-ssh label), another egress allowlist (lea.egress-allow) or other providers' endpoints

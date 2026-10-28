@@ -70,13 +70,19 @@ setup() {
   [[ "$output" != *locksql* ]]
 }
 
-@test "a non-isolated internal network is a warning" {
+@test "a non-isolated internal network is a failure, a warning with LEA_ALLOW_GATEWAY=1" {
   fake_tmux
   export FAKE_DOCKER_OUT_NETWORK_LS=lea-internal-abc
   export FAKE_DOCKER_OUT_NETWORK_INSPECT='true nat'
   run lea_doctor
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"FAIL  lea-internal-abc gateway_mode_ipv4=nat: "*"Docker Engine 28.0"* ]]
+  export FAKE_DOCKER_OUT_NETWORK_INSPECT='true '
+  run lea_doctor
+  [[ "$output" == *"FAIL  lea-internal-abc gateway_mode_ipv4=unset: "* ]]
+  LEA_ALLOW_GATEWAY=1 run lea_doctor
   [ "$status" -eq 0 ]
-  [[ "$output" == *"warn  lea-internal-abc isolated from the host"* ]]
+  [[ "$output" == *"warn  lea-internal-abc gateway_mode_ipv4=unset: "*"LEA_ALLOW_GATEWAY=1"* ]]
 }
 
 @test "an internal network that is not --internal is a failure" {
@@ -91,8 +97,8 @@ setup() {
   export FAKE_DOCKER_OUT_NETWORK_LS=$'lea-internal-abc\nlea-internal-def\nlea-egress'
   export FAKE_DOCKER_OUT_NETWORK_INSPECT='true isolated'
   run lea_doctor
-  [[ "$output" == *"ok    lea-internal-abc isolated from the host"* ]]
-  [[ "$output" == *"ok    lea-internal-def isolated from the host"* ]]
+  [[ "$output" == *"ok    lea-internal-abc gateway_mode_ipv4=isolated"* ]]
+  [[ "$output" == *"ok    lea-internal-def gateway_mode_ipv4=isolated"* ]]
   [[ "$output" != *"lea-egress"* ]]
 }
 
