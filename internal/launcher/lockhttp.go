@@ -134,6 +134,8 @@ func (l *Launcher) ensureLockHTTPGate(fresh bool, image string) error {
 		"--mount", "type=bind,src="+lockhttp.StatusDir(data)+",dst=/run/lockhttp-gate",
 		image, "gate", "--listen", "0.0.0.0:"+lockhttp.Port, "--upstream", "http://127.0.0.1:3128",
 		"--profile", "default", "--sources", "/etc/lockhttp-gate/sources.json",
+		// The daemon's credentials.json (§2.4): a Claude API key not of the calling container is denied.
+		"--credentials", "/etc/lockhttp-gate/credentials.json",
 		"--audit-dir", "/var/log/lockhttp", "--status-file", "/run/lockhttp-gate/status.json")
 }
 
