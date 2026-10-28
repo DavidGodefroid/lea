@@ -11,6 +11,7 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/DavidGodefroid/lea/internal/grants"
 	"github.com/DavidGodefroid/lea/internal/wire"
 )
 
@@ -129,5 +130,16 @@ func TestContextUnreadCountsEveryMessage(t *testing.T) {
 	}
 	if err := call(t, e.bus, "dev", "context_unread", nil, &r); err != nil || r.Count != 10 || !strings.Contains(r.Text, "10 unread") {
 		t.Fatalf("r=%+v err=%v", r, err)
+	}
+}
+
+// TestGrantCallerRoutesThroughLeaProxy: every pinned call of a grant goes out through the proxy
+// lea set up for the container (its network is internal), never one the agent names.
+func TestGrantCallerRoutesThroughLeaProxy(t *testing.T) {
+	e := start(t)
+	call(t, e.bus, "dev", "agents_list", nil, nil) // registers lea-a/dev
+	c, err := e.d.grantCaller(Origin{Container: "lea-a"}, "lea-a/dev", "")
+	if err != nil || c.Proxy != grants.LeaProxy {
+		t.Fatalf("caller proxy %q, err %v", c.Proxy, err)
 	}
 }

@@ -495,7 +495,9 @@ anything else takes the usual path. Revocation and expiry apply on the next call
 An allowed shell call never runs the agent's text: lea runs the command it parsed, rebuilt word by
 word, in a fresh `/bin/sh` under `env -i` (so the agent's variables, aliases and shell
 functions do not apply), with a fixed `PATH` and only `HOME`, `GH_CONFIG_DIR`, `SSH_AUTH_SOCK` and `LANG` as
-Claude's own process has them.
+Claude's own process has them. It reaches the forge through lea's proxy, which lea names itself
+(`HTTPS_PROXY` for gh, `http.proxy` for git, `http://lea-proxy:3128`), never through a proxy the
+agent's environment names; CONNECT keeps TLS end to end.
 
 - gh runs as `/usr/bin/gh … -R github.com/<--github>`; every grant but stop-finished names
   `--repo` and `--github` together. It runs with the token of gh's config (`gh auth token`) and
