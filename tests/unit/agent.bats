@@ -39,7 +39,7 @@ agent() {
 }
 
 # fake_podman: a fake Podman in $F/podman. Its calls go to $PODMAN_LOG; its containers are the
-# lines "id|pod|agent" of $PODMAN_DB; system service listens on its socket, as the real one.
+# lines "id|pod|agent|infra" of $PODMAN_DB; system service listens on its socket, as the real one.
 fake_podman() {
   export PODMAN_LOG="$BATS_TEST_TMPDIR/podman.log" PODMAN_DB="$BATS_TEST_TMPDIR/podman.db" LEA_AGENT_PODMAN="$F/podman"
   : >"$PODMAN_LOG"; : >"$PODMAN_DB"
@@ -103,6 +103,32 @@ service() { tr '\0' ' ' <"/proc/$1/cmdline" 2>/dev/null | grep -q 'unix://'; }
   run "$A" teardown dev-3
   [ "$status" -eq 0 ] && [ -z "$output" ]
   ! grep -q '\[rm\]' "$PODMAN_LOG"
+}
+
+@test "teardown keeps a pod that holds containers of others, and removes only the agent's own" {
+  fake_podman
+  # p1: made by a shell (its infra has no lea.agent), dev-1 ran c1 in it; p2: dev-1's own pod,
+  # with its infra container; p3: dev-1's pod that dev-2 joined.
+  printf '%s\n' 'i1|p1||true' 'c1|p1|dev-1|false' 'i2|p2|dev-1|true' 'c2|p2|dev-1|false' \
+    'i3|p3|dev-1|true' 'c3|p3|dev-1|false' 'c4|p3|dev-2|false' >"$PODMAN_DB"
+  run "$A" teardown dev-1
+  [ "$status" -eq 0 ]
+  [ "$output" = "dev-1: removed 3 containers and 1 pod" ]
+  grep -qxF 'podman [pod] [rm] [-f] [p2]' "$PODMAN_LOG"
+  grep -qxF 'podman [rm] [-f] [-v] [c1] [c2] [c3]' "$PODMAN_LOG"
+  [ "$(grep -c '\[pod\] \[rm\]' "$PODMAN_LOG")" -eq 1 ]
+}
+
+@test "sweep removes a pod only when all its containers are of ended agents" {
+  fake_podman
+  printf '%s\n' 'i1|p1||true' 'c1|p1|dev-2|false' 'i2|p2|dev-2|true' 'c2|p2|dev-3|false' \
+    'i3|p3|dev-2|true' 'c3|p3|dev-1|false' >"$PODMAN_DB"
+  run "$A" sweep dev-1
+  [ "$status" -eq 0 ]
+  grep -qxF 'podman [pod] [rm] [-f] [p2]' "$PODMAN_LOG"
+  [ "$(grep -c '\[pod\] \[rm\]' "$PODMAN_LOG")" -eq 1 ]
+  grep -qxF 'podman [rm] [-f] [-v] [c1] [c2]' "$PODMAN_LOG"
+  [[ "$output" == *"removed 2 containers and 1 pod of ended agents (dev-2 dev-3)"* ]]
 }
 
 @test "teardown spares a reused pid in the service's pid file" {

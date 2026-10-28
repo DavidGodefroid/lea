@@ -108,21 +108,25 @@ start_service() {
   export DOCKER_HOST
 }
 
-# inventory: "id|pod|agent" for each container of the nested Podman (agent: its lea.agent
-# annotation, empty when no agent started it).
+# inventory: "id|pod|agent|infra" for each container of the nested Podman (agent: its lea.agent
+# annotation, empty when no agent started it; infra: true for a pod's infra container).
 inventory() {
   command -v "$podman" >/dev/null 2>&1 || return 0
   ids=$("$podman" ps -aq --no-trunc 2>/dev/null) || return 0
   [ -n "$ids" ] || return 0
   # shellcheck disable=SC2086 # ids, split on purpose
-  "$podman" container inspect --format '{{.ID}}|{{.Pod}}|{{index .Config.Annotations "lea.agent"}}' $ids 2>/dev/null || true
+  "$podman" container inspect --format '{{.ID}}|{{.Pod}}|{{index .Config.Annotations "lea.agent"}}|{{.IsInfra}}' $ids 2>/dev/null || true
 }
 
-# remove LINES: removes the containers of LINES ("id|pod|agent") and their pods; prints
-# "N containers and M pods".
+# remove LINES ALL: removes the containers of LINES (lines of ALL, the inventory) and the pods
+# whose containers are all in LINES; a pod that also holds others' containers (a pod made by a
+# shell, joined by an agent) stays, with its infra container. Prints "N containers and M pods".
 remove() {
-  ids=$(printf '%s\n' "$1" | cut -d'|' -f1 | grep . || true)
-  pods=$(printf '%s\n' "$1" | cut -d'|' -f2 | grep . | sort -u || true)
+  ids=$(printf '%s\n' "$1" | awk -F'|' '$1 != "" && $4 != "true" { print $1 }')
+  pods=$({ printf '%s\n' "$1" | sed 's/^/S|/'; printf '%s\n' "$2" | sed 's/^/A|/'; } | awk -F'|' '
+    $1 == "S" { mine[$2] = 1; if ($3 != "") pod[$3] = 1; next }
+    $3 != "" && !($2 in mine) { other[$3] = 1 }
+    END { for (p in pod) if (!(p in other)) print p }' | sort)
   # shellcheck disable=SC2086 # ids, split on purpose
   if [ -n "$pods" ]; then "$podman" pod rm -f $pods >/dev/null 2>&1 || true; fi
   # shellcheck disable=SC2086
@@ -172,8 +176,9 @@ case ${1:-} in
     valid "$name" || { echo "lea-agent: invalid agent name '$name'" >&2; exit 2; }
     stop_service "$name"
     rm -f "$dir/$name.containers.conf"
-    own=$(inventory | awk -F'|' -v a="$name" '$3 == a')
-    if [ -n "$own" ]; then echo "$name: removed $(remove "$own")"; fi
+    all=$(inventory)
+    own=$(printf '%s\n' "$all" | awk -F'|' -v a="$name" '$3 == a')
+    if [ -n "$own" ]; then echo "$name: removed $(remove "$own" "$all")"; fi
     ;;
   sweep)
     # sweep KEEP...: the stacks and services of every agent but KEEP are removed (a new
@@ -193,9 +198,9 @@ case ${1:-} in
     gone=$(printf '%s\n' "$all" | awk -F'|' -v keep="$keep" '$3 != "" && index(keep, " " $3 " ") == 0')
     if [ -n "$gone" ]; then
       who=$(printf '%s\n' "$gone" | cut -d'|' -f3 | sort -u | tr '\n' ' ')
-      echo "removed $(remove "$gone") of ended agents (${who% })"
+      echo "removed $(remove "$gone" "$all") of ended agents (${who% })"
     fi
-    un=$(printf '%s\n' "$all" | awk -F'|' 'NF >= 3 && $3 == ""' | grep -c . || true)
+    un=$(printf '%s\n' "$all" | awk -F'|' 'NF >= 3 && $3 == "" && $4 != "true"' | grep -c . || true)
     if [ "$un" -gt 0 ]; then
       echo "$un container$(plural "$un") that no agent started (a shell, or an older lea) stay in the nested Podman: podman ps -a lists them, podman pod rm -af and podman rm -af remove them"
     fi
