@@ -375,6 +375,9 @@ func Command(req Request, c Caller, g Grant) string {
 			}
 			script = mrHeadCheck(req.Args[2], c.Branch, url) + script
 		}
+		if host, _, _ := gitlabPin(g.GitHub); script != "" {
+			script = glabIsolated(host) + script
+		}
 	case "git":
 		if !c.OwnWorktree || c.Worktree == "" {
 			return ""
@@ -441,6 +444,21 @@ func prCreateScript(args []string, wt, gh string) string {
 		refuse("the body file is not in the agent's worktree") + ";; esac\n" +
 		`[ -f /proc/self/fd/3 ] || { ` + refuse("the body file is not a plain file") + "; }\n" +
 		shellWords(append(argv, "-R", gh)) + " <&3"
+}
+
+// glabIsolated is the script lines that run the rest of a pinned glab call from / with the
+// token of the agent's glab config for host (GITLAB_TOKEN) and a config dir of its own (mktemp
+// -d, removed on exit): the agent's config (GLAB_CONFIG_DIR) and a repository's
+// .git/glab-cli/config.yml are its to write, and could send glab's requests to a server of its
+// own (api_host). glab config get reads the token only. Not against a hostile agent: it runs as
+// the same user and could rewrite the fresh config between the check and the merge.
+func glabIsolated(host string) string {
+	return "cd / || exit 1\nexport GLAB_CHECK_UPDATE=false GLAB_SEND_TELEMETRY=false\n" +
+		"GITLAB_TOKEN=$(" + shellWords([]string{glabPath, "config", "get", "token", "--host", host}) + " 2>/dev/null) || GITLAB_TOKEN=\n" +
+		`[ -n "$GITLAB_TOKEN" ] || { ` + refuse("no GitLab token for "+host+" in glab's config: glab auth login --hostname "+host) + "; }\n" +
+		"GLAB_CONFIG_DIR=$(" + shellWords([]string{mktempPath, "-d"}) + ") || exit 1\n" +
+		"trap " + shellWords([]string{rmPath + ` -rf -- "$GLAB_CONFIG_DIR"`}) + " EXIT\n" +
+		"export GITLAB_TOKEN GLAB_CONFIG_DIR\n"
 }
 
 // mrHeadCheck is prHeadCheck for glab: the MR n names (a number or a source branch) must come

@@ -728,7 +728,7 @@ func TestGitLab(t *testing.T) {
 		t.Fatalf("glab on a github grant: %+v", d)
 	}
 	d := Decide("Bash", bash(`glab mr create -s feat/73-x -t x -y`), dev, gs, now, false)
-	if s := lastWord(t, d.Command); s != `'/usr/bin/glab' 'mr' 'create' '-s' 'feat/73-x' '-t' 'x' '-y' '-R' 'https://gitlab.example.com/grp/sub/app'` ||
+	if s := lastWord(t, d.Command); s != glabIsolated("gitlab.example.com")+`'/usr/bin/glab' 'mr' 'create' '-s' 'feat/73-x' '-t' 'x' '-y' '-R' 'https://gitlab.example.com/grp/sub/app'` ||
 		d.Request.Target != "gitlab:gitlab.example.com/grp/sub/app mr create feat/73-x" || !strings.Contains(d.Command, `'GLAB_CONFIG_DIR=/lea/state/glab-cli'`) {
 		t.Fatalf("mr create: %q %+v", s, d)
 	}

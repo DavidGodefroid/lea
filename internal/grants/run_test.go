@@ -2,9 +2,13 @@ package grants
 
 import (
 	"context"
+	"io"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"sync"
 	"syscall"
@@ -334,7 +338,10 @@ func TestPinnedMRMergeChecksTheSource(t *testing.T) {
 		dir := t.TempDir()
 		fake := filepath.Join(dir, "glab")
 		log := filepath.Join(dir, "log")
-		body := "#!/bin/sh\necho \"$*\" >> " + log + "\nif [ \"$2\" = view ]; then printf '%s\\n' '" + tc.head + "'; fi\n"
+		// The fake glab answers glab config get token, and records the token, config dir and
+		// directory of the calls after.
+		body := "#!/bin/sh\nif [ \"$1 $2\" = 'config get' ]; then echo tok; exit 0; fi\necho \"$GITLAB_TOKEN|$GLAB_CONFIG_DIR|$PWD\" >> " + log + ".env\n" +
+			"echo \"$*\" >> " + log + "\nif [ \"$2\" = view ]; then printf '%s\\n' '" + tc.head + "'; fi\n"
 		if err := os.WriteFile(fake, []byte(body), 0o755); err != nil {
 			t.Fatal(err)
 		}
@@ -342,8 +349,78 @@ func TestPinnedMRMergeChecksTheSource(t *testing.T) {
 		out, err := exec.Command(shPath, "-c", script).CombinedOutput()
 		got, _ := os.ReadFile(log)
 		merged := strings.Contains(string(got), "mr merge 12 --squash -y -R https://gitlab.example.com/grp/app")
+		if env, _ := os.ReadFile(log + ".env"); tc.head != "" && !regexp.MustCompile(`^tok\|/tmp/tmp\.[A-Za-z0-9]+\|/\n`).Match(env) {
+			t.Fatalf("head %q: glab ran with %q", tc.head, env)
+		}
 		if merged != tc.merged || (err == nil) != tc.merged {
 			t.Fatalf("head %q: merged %v, err %v, out %s, calls %s", tc.head, merged, err, out, got)
 		}
+	}
+}
+
+// TestPinnedGlabIgnoresTheAgentsGlabConfig: GLAB_CONFIG_DIR, and a repository's own
+// .git/glab-cli/config.yml, are the agent's to write. A config whose api_host points at a server
+// of the agent's would answer the MR source check (then be put back before the merge): every
+// pinned glab call runs from / with a fresh config dir and the token read from the agent's
+// config, so glab only ever talks to the forge itself.
+func TestPinnedGlabIgnoresTheAgentsGlabConfig(t *testing.T) {
+	needTools(t)
+	if _, err := os.Stat(glabPath); err != nil {
+		t.Skipf("%s: %v", glabPath, err)
+	}
+	var mu sync.Mutex
+	hits := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		hits++
+		mu.Unlock()
+		w.Header().Set("Content-Type", "application/json")
+		io.WriteString(w, `{"iid":12,"source_branch":"feat/73-x","source_project_id":1,"target_project_id":1,"state":"opened"}`)
+	}))
+	t.Cleanup(srv.Close)
+	api := strings.TrimPrefix(srv.URL, "http://")
+	hijack := "hosts:\n    gitlab.example.com:\n        token: lea-test-not-a-token\n        api_host: " + api + "\n        api_protocol: http\n"
+	dir := t.TempDir()
+	cfg := filepath.Join(dir, "glab-cli")
+	os.MkdirAll(cfg, 0o700)
+	os.WriteFile(filepath.Join(cfg, "config.yml"), []byte(hijack), 0o600)
+	repo := filepath.Join(dir, "repo")
+	os.MkdirAll(filepath.Join(repo, ".git", "glab-cli"), 0o700)
+	if out, err := exec.Command(gitPath, "init", "-q", repo).CombinedOutput(); err != nil {
+		t.Fatalf("%v %s", err, out)
+	}
+	os.WriteFile(filepath.Join(repo, ".git", "glab-cli", "config.yml"), []byte(hijack), 0o600)
+	c := dev
+	c.Env = map[string]string{"HOME": dir, "GLAB_CONFIG_DIR": cfg}
+	for _, call := range []string{"glab mr merge 12 --squash -y", "glab mr merge feat/73-x --squash -y", "glab mr create -s feat/73-x -t x -y"} {
+		g := all(Merge)
+		if strings.Contains(call, "create") {
+			g = all(PRCreate)
+		}
+		g.GitHub = "gitlab:gitlab.example.com/grp/app"
+		d := Decide("Bash", bash(call), c, []Grant{g}, now, false)
+		if d.Verdict != Allow {
+			t.Fatalf("%s: %+v", call, d)
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+		cmd := exec.CommandContext(ctx, shPath, "-c", d.Command)
+		cmd.Dir = repo
+		out, err := cmd.CombinedOutput()
+		cancel()
+		mu.Lock()
+		n := hits
+		mu.Unlock()
+		// gitlab.example.com refuses the made-up token (or cannot be reached): the call fails.
+		if n != 0 || err == nil || strings.Contains(string(out), "grant not applied") {
+			t.Fatalf("%s: the agent's server got %d requests, err %v, out %s", call, n, err, out)
+		}
+	}
+	// No token in the agent's config: refused before glab talks to anyone.
+	os.WriteFile(filepath.Join(cfg, "config.yml"), []byte("hosts:\n    gitlab.example.com:\n        api_protocol: https\n"), 0o600)
+	g := all(Merge)
+	g.GitHub = "gitlab:gitlab.example.com/grp/app"
+	d := Decide("Bash", bash("glab mr merge 12 --squash -y"), c, []Grant{g}, now, false)
+	if out, err := exec.Command(shPath, "-c", d.Command).CombinedOutput(); err == nil || !strings.Contains(string(out), "no GitLab token") {
+		t.Fatalf("no token: err %v, out %s", err, out)
 	}
 }
