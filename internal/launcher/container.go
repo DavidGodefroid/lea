@@ -2,6 +2,7 @@ package launcher
 
 import (
 	"errors"
+	"fmt"
 	"math"
 	"os"
 	"path/filepath"
@@ -157,9 +158,13 @@ func (r limits) args() []string {
 // inside lea.
 func (l *Launcher) limitArgs() []string { return l.resolvedLimits().args() }
 
-// sizeBytes is a docker size (dockerSize: 512m, 8g, 1024) in bytes, or -1 as is.
+// sizeBytes is a docker size (dockerSize: 512m, 8g, 1024) in bytes, -1 as is, 0 for "" (no
+// limit).
 func sizeBytes(s string) int64 {
-	if s == "-1" {
+	switch s {
+	case "":
+		return 0
+	case "-1":
 		return -1
 	}
 	mult := int64(1)
@@ -177,20 +182,44 @@ func sizeBytes(s string) int64 {
 	return n * mult
 }
 
+// headroom is the share of a new memory or pids limit the usage must stay under for lea to lower
+// the limit of a running container: above it, the agents' work would be OOM-killed or fail to
+// fork.
+const headroom = 0.8
+
+// usage is a running container's memory in bytes and its number of processes, read from its own
+// cgroup (Docker and Podman give a container its cgroup namespace on cgroup v2); ok is false when
+// they cannot be read.
+func (l *Launcher) usage(name string) (mem, pids int64, ok bool) {
+	out, err := l.output(false, "docker", "exec", name, "cat", "/sys/fs/cgroup/memory.current", "/sys/fs/cgroup/pids.current")
+	f := strings.Fields(out)
+	if err != nil || len(f) != 2 {
+		return 0, 0, false
+	}
+	mem, merr := strconv.ParseInt(f[0], 10, 64)
+	pids, perr := strconv.ParseInt(f[1], 10, 64)
+	return mem, pids, merr == nil && perr == nil
+}
+
+// limitsRefused is where lea remembers the limits the engine refused for a container (rootless
+// Podman without the cpu or memory controller): the next lea neither retries nor warns again.
+func (l *Launcher) limitsRefused(name string) string { return l.Cfg.HostDir() + "/limits/" + name }
+
 // applyLimits gives a running lea container the configured limits it lacks (#132): one started
 // by an older lea, or before a limit changed, ran without them until it restarted. Docker and
-// Podman both change them in place (docker update); a limit turned off is only taken away by a
-// restart. When the engine refuses (rootless Podman without the cpu or memory controller), a
-// warning says how to apply them.
+// Podman both change them in place (docker update). The CPUs only throttle: always applied. A
+// memory or pids limit is lowered only while the usage stays under headroom of it; otherwise,
+// and when the engine refuses, a warning says to restart the container (lea stop, then lea) at a
+// quiet time. A limit turned off is only taken away by a restart.
 func (l *Launcher) applyLimits(name string) {
 	out, err := l.output(false, "docker", "inspect", "--format",
-		"{{.HostConfig.NanoCpus}} {{.HostConfig.Memory}} {{.HostConfig.MemorySwap}} {{.HostConfig.PidsLimit}}", name)
+		"{{.Id}} {{.HostConfig.NanoCpus}} {{.HostConfig.Memory}} {{.HostConfig.MemorySwap}} {{.HostConfig.PidsLimit}}", name)
 	f := strings.Fields(out)
-	if err != nil || len(f) != 4 {
+	if err != nil || len(f) != 5 {
 		return
 	}
-	n := make([]int64, 4)
-	for i, v := range f {
+	id, n := f[0], make([]int64, 4)
+	for i, v := range f[1:] {
 		if v == "<nil>" {
 			continue
 		}
@@ -200,29 +229,72 @@ func (l *Launcher) applyLimits(name string) {
 		}
 		n[i] = x
 	}
+	cpus, memory, swap, pidsLimit := n[0], n[1], n[2], n[3]
 	want := l.resolvedLimits()
 	var fix limits
 	if want.cpus != "" {
 		c, _ := strconv.ParseFloat(want.cpus, 64)
-		if n[0] != int64(math.Round(c*1e9)) {
+		if cpus != int64(math.Round(c*1e9)) {
 			fix.cpus = want.cpus
 		}
 	}
-	if want.mem != "" && (n[1] != sizeBytes(want.mem) || n[2] != sizeBytes(want.swap)) {
+	wantMem, wantPids := sizeBytes(want.mem), int64(0)
+	if want.mem != "" && (memory != wantMem || swap != sizeBytes(want.swap)) {
 		fix.mem, fix.swap = want.mem, want.swap
 	}
-	if want.pids != "" && strconv.FormatInt(n[3], 10) != want.pids {
-		fix.pids = want.pids
+	if want.pids != "" {
+		wantPids, _ = strconv.ParseInt(want.pids, 10, 64)
+		if pidsLimit != wantPids {
+			fix.pids = want.pids
+		}
+	}
+	if len(fix.args()) == 0 {
+		return
+	}
+	// A limit is lowered when there was none or it was higher: only with headroom.
+	lowerMem := fix.mem != "" && (memory == 0 || memory > wantMem)
+	lowerPids := fix.pids != "" && (pidsLimit == 0 || pidsLimit > wantPids)
+	if lowerMem || lowerPids {
+		mem, pids, ok := l.usage(name)
+		var held []string
+		if lowerMem && (!ok || float64(mem) >= headroom*float64(wantMem)) {
+			if ok {
+				held = append(held, fmt.Sprintf("--memory %s (%d MiB in use)", fix.mem, mem>>20))
+			} else {
+				held = append(held, fmt.Sprintf("--memory %s (usage unknown)", fix.mem))
+			}
+			fix.mem, fix.swap = "", ""
+		}
+		if lowerPids && (!ok || float64(pids) >= headroom*float64(wantPids)) {
+			if ok {
+				held = append(held, fmt.Sprintf("--pids-limit %s (%d processes in use)", fix.pids, pids))
+			} else {
+				held = append(held, fmt.Sprintf("--pids-limit %s (usage unknown)", fix.pids))
+			}
+			fix.pids = ""
+		}
+		if len(held) > 0 {
+			l.logf("warning: the running %s keeps its limits for now: %s; run 'lea stop', then lea, at a quiet time to apply them",
+				name, strings.Join(held, ", "))
+		}
 	}
 	a := fix.args()
 	if len(a) == 0 {
 		return
 	}
+	stamp := id + " " + strings.Join(a, " ")
+	if readTrim(l.limitsRefused(name)) == stamp {
+		return
+	}
 	if l.quiet("docker", append(append([]string{"update"}, a...), name)...) != nil {
 		l.logf("warning: could not apply the limits %s to the running %s; run 'lea stop', then lea, to restart it with them",
 			strings.Join(a, " "), name)
+		if Mkdirs(l.Cfg.DataDir(), parentText(l.limitsRefused(name))) == nil {
+			_ = os.WriteFile(l.limitsRefused(name), []byte(stamp+"\n"), 0o600)
+		}
 		return
 	}
+	os.Remove(l.limitsRefused(name))
 	l.logf("applied the limits %s to the running %s", strings.Join(a, " "), name)
 }
 
