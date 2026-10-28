@@ -11,6 +11,7 @@ docker [inspect] [-f] [{{.State.Running}}] [lea-proxy]
 docker [network] [ls] [--filter] [label=lea.prefix=lea] [--format] [{{.Name}}]
 docker [image] [inspect] [locksql:0.8.0]
 docker [volume] [inspect] [locksql-run]
+core [delivery] [--container] [lea-$ID] [--projects] [$W/projects] [check] [--state] [$W/data/lea/state]
 -- lea
 -- stdout
 ok    docker reachable

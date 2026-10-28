@@ -407,7 +407,7 @@ func (l *Launcher) dispatch(args []string) error {
 	case "rollback":
 		return l.sh("rollback", rest...)
 	case "doctor":
-		return l.sh("doctor")
+		return l.doctor()
 	case "config":
 		return l.config(rest)
 	default:
@@ -440,6 +440,21 @@ func (l *Launcher) lockConsole(args []string) error {
 		return exitError{1}
 	}
 	return nil
+}
+
+// doctor is lea doctor: the workstation's checks (lea-sh doctor), then, when the projects
+// directory resolves, its lea's delivery (issue #92) through the core, which reads the grants
+// from the daemon and the credentials from lea's state. The worst of the two is the status.
+func (l *Launcher) doctor() error {
+	err := l.sh("doctor")
+	proj, perr := l.projectsDir()
+	if perr != nil {
+		return err
+	}
+	if l.coreCall("delivery", "--container", l.Cfg.ContainerName(proj), "--projects", proj, "check", "--state", l.Cfg.StateDir()) != nil && err == nil {
+		return exitError{1}
+	}
+	return err
 }
 
 // delivery is lea delivery on [--yes DIGEST] [--gitlab HOST]...|off|status (issue #92), through the core, which the launcher
