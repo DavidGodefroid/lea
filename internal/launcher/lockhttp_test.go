@@ -123,6 +123,32 @@ func TestLockHTTPProxyGetsTheGate(t *testing.T) {
 	}
 }
 
+// The gate exits on a missing sources.json: the launcher writes one naming nobody before the
+// daemon's first, and never replaces the daemon's.
+func TestLockHTTPGateStartsWithSources(t *testing.T) {
+	w, _ := lockHTTPWorld(t)
+	data := w.launcher().Cfg.DataDir()
+	if err := w.launcher().ensureProxy(w.proj); err != nil {
+		t.Fatal(err)
+	}
+	p := lockhttp.SourcesPath(data)
+	b, err := os.ReadFile(p)
+	if err != nil || !strings.Contains(string(b), `"keyproxy"`) || strings.Contains(string(b), `"local_ip"`) {
+		t.Fatalf("sources.json: %s %v", b, err)
+	}
+	if fi, _ := os.Stat(p); fi.Mode().Perm() != 0o644 {
+		t.Errorf("sources.json mode %v", fi.Mode())
+	}
+	key, _ := lockhttp.Key(data)
+	lockhttp.WriteJSON(p, lockhttp.Build(key, []lockhttp.Network{{LocalIP: "10.89.1.2", Container: "lea-x"}}, nil))
+	if err := w.launcher().ensureProxy(w.proj); err != nil {
+		t.Fatal(err)
+	}
+	if b, _ := os.ReadFile(p); !strings.Contains(string(b), "10.89.1.2") {
+		t.Fatalf("the daemon's sources.json was replaced: %s", b)
+	}
+}
+
 // The gate lives in the proxy's network namespace: a proxy started again (another network
 // namespace) or another pinned image replaces it; a running gate of this image, started after the
 // proxy, is kept.

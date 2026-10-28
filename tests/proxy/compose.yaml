@@ -4,6 +4,9 @@ networks:
   priv: { internal: true, ipam: { config: [ { subnet: 10.99.0.0/24 } ] } }
   # The proxy's egress network, as in lea (not internal: the proxy's default route goes there).
   egress: { ipam: { config: [ { subnet: 203.0.113.0/24 } ] } }
+volumes:
+  gate-audit:
+  gate-status:
 x-web: &web
   image: busybox:1.37
   command: sh -c 'mkdir -p /www && echo ok >/www/index.html && httpd -p 22 -h /www && httpd -p 443 -h /www && httpd -f -p 80 -h /www'
@@ -95,8 +98,12 @@ services:
     read_only: true
     cap_drop: [ ALL ]
     security_opt: [ no-new-privileges ]
+    # Its audit and status directories are volumes, as in lea (a read-only root otherwise): they
+    # take the image's owner, gate.
     volumes:
       - ./lockhttp-gate:/etc/lockhttp-gate:ro
+      - gate-audit:/var/log/lockhttp
+      - gate-status:/run/lockhttp-gate
     command: [ gate, --listen, "0.0.0.0:3130", --upstream, "http://127.0.0.1:3128", --profile, default,
                --sources, /etc/lockhttp-gate/sources.json, --audit-dir, /var/log/lockhttp,
                --status-file, /run/lockhttp-gate/status.json ]
