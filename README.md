@@ -480,7 +480,9 @@ functions do not apply), with a fixed `PATH` and only `HOME`, `GH_CONFIG_DIR`, `
 Claude's own process has them.
 
 - gh runs as `/usr/bin/gh … -R github.com/<--github>`; every grant but stop-finished names
-  `--repo` and `--github` together.
+  `--repo` and `--github` together. It runs with the token of gh's config (`gh auth token`) and
+  none of the rest of that config, which the agent can write (it could send gh's requests to a
+  server of its own): an empty config dir no one but root can create.
 - A commit goes through plumbing in the agent's worktree (`write-tree`, `commit-tree`,
   `update-ref`): no hook, filter or signing runs. It commits the index as it is (`git add`
   first: no `-a`).
