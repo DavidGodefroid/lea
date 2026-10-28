@@ -1,11 +1,14 @@
 #!/bin/sh
 # End-to-end test of the locksql console's confinement (#101), without the locksql image: the real
-# lea locksql (libexec/lib/locksql.sh) starts a stand-in console image that checks, from inside,
-# what the console may do, while this script inspects the running container.
+# lea locksql (libexec/lib/locksql.sh) hands the console to locksql's real launcher (scripts/locksql
+# of the pinned release, from its archive checked against the sha256 image/Containerfile pins),
+# which starts a stand-in console image that checks, from inside, what the console may do, while
+# this script inspects the running container.
 #   - docker inspect: CapDrop ALL, no-new-privileges, read-only root, pids and memory limits;
 #   - inside: no effective capability, NoNewPrivs, the root and the projects directory read-only
 #     (a write gets EROFS), the console's own .locksql directory mounted read-write;
-#   - a .locksql that is a symbolic link is refused before any container starts.
+#   - a .locksql that is a symbolic link is refused before any container starts;
+#   - the launcher started it (LOCKSQL_EXPECT_DIR, the device and inode of .locksql).
 # Linux hosts with docker (or podman). Creates lea-locksql-confine-* and locksql-console only.
 set -eu
 root=$(cd "$(dirname "$0")/../.." && pwd -P)
@@ -53,15 +56,25 @@ docker build -q -t "$img" -f "$work/ctx/Containerfile" "$work/ctx" >/dev/null
 
 P=$work/projects
 mkdir "$P"
-# lea locksql as lea runs it, on this docker, with the stand-in image; the volumes of the real
-# console are not touched: the stand-in gets its own.
-sed 's/locksql-run:/lea-locksql-confine-run:/; s/locksql-home:/lea-locksql-confine-home:/' \
-  "$root/libexec/lib/locksql.sh" >"$work/locksql.sh"
+# locksql's launcher of the release image/Containerfile pins, from its archive (the sha256 pinned
+# there), in a directory of this account outside the projects directory: lea trusts it. The volumes
+# of the real console are not touched: the stand-in gets its own.
+case $(uname -m) in x86_64|amd64) arch=amd64 ;; aarch64|arm64) arch=arm64 ;; *) echo "locksql-confine: no locksql for $(uname -m)" >&2; exit 1 ;; esac
+v=$(sed -n 's/.* V=\([0-9][0-9.]*\) .*/\1/p' "$root/image/Containerfile")
+sum=$(sed -n "s/^ *$arch) sq=\([0-9a-f]\{64\}\) ;;.*/\1/p" "$root/image/Containerfile")
+a=locksql_${v}_linux_$arch.tar.gz
+curl -fsSL -o "$work/$a" "https://github.com/DavidGodefroid/locksql/releases/download/v$v/$a"
+echo "$sum  $work/$a" | sha256sum -c - >/dev/null
+tar -xzf "$work/$a" -C "$work" scripts/locksql
+mkdir -m 0755 "$work/lbin"
+sed -e "s/^launcher_version=dev\$/launcher_version=$v/" \
+  -e 's/locksql-run:/lea-locksql-confine-run:/; s/locksql-home:/lea-locksql-confine-home:/' \
+  "$work/scripts/locksql" >"$work/lbin/locksql"
+chmod 0755 "$work/lbin/locksql"
 locksql_test() {
   # shellcheck disable=SC2016 # expanded by the inner shell
-  env LEA_ROOT="$root" W="$work" LEA_PROJECTS_DIR="$P" LEA_LOCKSQL=1 LEA_LOCKSQL_IMAGE="$img" sh -c '
+  env PATH="$work/lbin:$PATH" LEA_ROOT="$root" LEA_PROJECTS_DIR="$P" LEA_LOCKSQL=1 LEA_LOCKSQL_IMAGE="$img" sh -c '
     for f in "$LEA_ROOT"/libexec/lib/*.sh; do . "$f"; done
-    . "$W/locksql.sh"
     lea_locksql' locksql
 }
 
@@ -87,6 +100,12 @@ case $got in
     ok "docker inspect: CapDrop ALL, no-new-privileges, read-only root, pids 256, memory 1g" ;;
   *) ko "docker inspect: $got" ;;
 esac
+# The launcher started it: only the launcher gives the console the device and inode of the
+# .locksql it checked.
+want=$(stat -c '%d:%i' "$P/.locksql")
+if docker inspect -f '{{range .Config.Env}}{{println .}}{{end}}' locksql-console | grep -qx "LOCKSQL_EXPECT_DIR=$want"; then
+  ok "started by locksql's launcher (LOCKSQL_EXPECT_DIR=$want)"
+else ko "started by locksql's launcher: no LOCKSQL_EXPECT_DIR=$want"; fi
 docker rm -f locksql-console >/dev/null 2>&1 || true
 wait || true
 
