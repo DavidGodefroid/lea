@@ -308,3 +308,18 @@ host_minimums() {
   ! lea_version_ge 7.0.0-37-generic 7.0.0-38 || false
   ! lea_version_ge 6.17.1 7.0.0 || false
 }
+
+@test "limits: a running lea container without CPU or memory limits is a warning (#132)" {
+  export FAKE_DOCKER_OUT_PS___FILTER=lea-abc
+  export FAKE_DOCKER_OUT_INSPECT___FORMAT='0 0'
+  run lea_doctor
+  [[ "$output" == *"warn  lea-abc limits: no CPU and memory limit: run lea in its projects directory to apply LEA_CPUS and LEA_MEMORY"* ]]
+  export FAKE_DOCKER_OUT_INSPECT___FORMAT='16500000000 0'
+  run lea_doctor
+  [[ "$output" == *"warn  lea-abc limits: no memory limit"* ]]
+  export FAKE_DOCKER_OUT_INSPECT___FORMAT='16500000000 17179869184'
+  run lea_doctor
+  [[ "$output" == *"ok    lea-abc limits: 16.5 CPUs, 16384 MiB"* ]]
+  LEA_CPUS=0 FAKE_DOCKER_OUT_INSPECT___FORMAT='0 17179869184' run lea_doctor
+  [[ "$output" == *"ok    lea-abc limits: no limit on CPUs, 16384 MiB"* ]]
+}

@@ -10,6 +10,7 @@ docker [inspect] [--format] [{{index .Config.Labels "lea.git-ssh"}}{{with index 
 docker [image] [inspect] [-f] [{{.Id}}] [lea-proxy:dev]
 docker [container] [inspect] [--format] [{{with index .NetworkSettings.Networks "lea-internal-$ID"}}{{.IPAddress}}{{end}}] [lea-proxy]
 docker [inspect] [-f] [{{.State.Running}}] [lea-$ID]
+docker [inspect] [--format] [{{.HostConfig.NanoCpus}} {{.HostConfig.Memory}} {{.HostConfig.MemorySwap}} {{.HostConfig.PidsLimit}}] [lea-$ID]
 core [attach-container] [lea-$ID]
 core [deck-open] [--container] [lea-$ID] [--workdir] [$W/projects] [--no-default]
 -- lea

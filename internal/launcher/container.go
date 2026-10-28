@@ -2,8 +2,10 @@ package launcher
 
 import (
 	"errors"
+	"math"
 	"os"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strconv"
 	"strings"
@@ -73,12 +75,49 @@ func (l *Launcher) engineMemory() int64 {
 	return 0
 }
 
-// limitArgs are the lea container's resource limits (#97): without them a pile of nested stacks
-// takes the whole host down (OOM, swap thrash) instead of being OOM-killed inside lea. A share of
-// memory is taken from the engine's memory (engineMemory); memory plus swap is the memory itself
-// unless LEA_MEMORY_SWAP says otherwise.
-func (l *Launcher) limitArgs() []string {
-	var a []string
+// hostCPUs is the CPUs this process sees, the last resort of engineCPUs (a variable for the
+// tests).
+var hostCPUs = runtime.NumCPU
+
+// engineCPUs is the number of CPUs of the container engine, 0 when unknown: Docker's {{.NCPU}} (a
+// VM's under Docker Desktop), Podman's {{.Host.CPUs}}, else the CPUs this process sees.
+func (l *Launcher) engineCPUs() int {
+	for _, f := range []string{"{{.NCPU}}", "{{.Host.CPUs}}"} {
+		out, err := l.output(false, "docker", "system", "info", "--format", f)
+		if n, perr := strconv.Atoi(strings.TrimSpace(out)); err == nil && perr == nil && n > 0 {
+			return n
+		}
+	}
+	return hostCPUs()
+}
+
+// limits are the lea container's resolved resource limits, docker flag values; "" is no limit.
+type limits struct{ cpus, mem, swap, pids string }
+
+// minCPUs is the floor of a share of CPUs (LEA_CPUS=N%): one agent's tools and its nested stack.
+const minCPUs = 2
+
+// resolvedLimits turns LEA_CPUS, LEA_MEMORY, LEA_MEMORY_SWAP and LEA_PIDS_LIMIT into the lea
+// container's limits. A share of CPUs or memory is taken from the engine's (engineCPUs,
+// engineMemory); memory plus swap is the memory itself unless LEA_MEMORY_SWAP says otherwise.
+func (l *Launcher) resolvedLimits() limits {
+	var r limits
+	cpus := l.Cfg.Get("LEA_CPUS")
+	if strings.HasSuffix(cpus, "%") {
+		pct, _ := strconv.Atoi(strings.TrimSuffix(cpus, "%"))
+		if total := l.engineCPUs(); total <= 0 {
+			l.logf("warning: Docker did not tell its CPUs; the lea container runs without a CPU limit (set LEA_CPUS to a number, 8 for example)")
+			cpus = "0"
+		} else {
+			// Hundredths of a CPU, rounded down; at least minCPUs, never more than there are.
+			c := total * pct
+			c = max(c, min(minCPUs, total)*100)
+			cpus = strconv.FormatFloat(float64(c)/100, 'f', -1, 64)
+		}
+	}
+	if cpus != "0" {
+		r.cpus = cpus
+	}
 	mem := l.Cfg.Get("LEA_MEMORY")
 	if strings.HasSuffix(mem, "%") {
 		pct, _ := strconv.ParseInt(strings.TrimSuffix(mem, "%"), 10, 64)
@@ -90,12 +129,101 @@ func (l *Launcher) limitArgs() []string {
 		}
 	}
 	if mem != "0" {
-		a = append(a, "--memory", mem, "--memory-swap", nonEmpty(l.Cfg.Get("LEA_MEMORY_SWAP"), mem))
+		r.mem, r.swap = mem, nonEmpty(l.Cfg.Get("LEA_MEMORY_SWAP"), mem)
 	}
 	if p := l.Cfg.Get("LEA_PIDS_LIMIT"); p != "0" {
-		a = append(a, "--pids-limit", p)
+		r.pids = p
+	}
+	return r
+}
+
+// args are the flags of limits r, for docker run and docker update.
+func (r limits) args() []string {
+	var a []string
+	if r.cpus != "" {
+		a = append(a, "--cpus", r.cpus)
+	}
+	if r.mem != "" {
+		a = append(a, "--memory", r.mem, "--memory-swap", r.swap)
+	}
+	if r.pids != "" {
+		a = append(a, "--pids-limit", r.pids)
 	}
 	return a
+}
+
+// limitArgs are the lea container's resource limits (#97, #132): without them a pile of nested
+// stacks takes the whole host down (OOM, swap thrash, every core busy) instead of being held
+// inside lea.
+func (l *Launcher) limitArgs() []string { return l.resolvedLimits().args() }
+
+// sizeBytes is a docker size (dockerSize: 512m, 8g, 1024) in bytes, or -1 as is.
+func sizeBytes(s string) int64 {
+	if s == "-1" {
+		return -1
+	}
+	mult := int64(1)
+	switch s[len(s)-1] {
+	case 'b':
+		s = s[:len(s)-1]
+	case 'k':
+		mult, s = 1<<10, s[:len(s)-1]
+	case 'm':
+		mult, s = 1<<20, s[:len(s)-1]
+	case 'g':
+		mult, s = 1<<30, s[:len(s)-1]
+	}
+	n, _ := strconv.ParseInt(s, 10, 64)
+	return n * mult
+}
+
+// applyLimits gives a running lea container the configured limits it lacks (#132): one started
+// by an older lea, or before a limit changed, ran without them until it restarted. Docker and
+// Podman both change them in place (docker update); a limit turned off is only taken away by a
+// restart. When the engine refuses (rootless Podman without the cpu or memory controller), a
+// warning says how to apply them.
+func (l *Launcher) applyLimits(name string) {
+	out, err := l.output(false, "docker", "inspect", "--format",
+		"{{.HostConfig.NanoCpus}} {{.HostConfig.Memory}} {{.HostConfig.MemorySwap}} {{.HostConfig.PidsLimit}}", name)
+	f := strings.Fields(out)
+	if err != nil || len(f) != 4 {
+		return
+	}
+	n := make([]int64, 4)
+	for i, v := range f {
+		if v == "<nil>" {
+			continue
+		}
+		x, err := strconv.ParseInt(v, 10, 64)
+		if err != nil {
+			return
+		}
+		n[i] = x
+	}
+	want := l.resolvedLimits()
+	var fix limits
+	if want.cpus != "" {
+		c, _ := strconv.ParseFloat(want.cpus, 64)
+		if n[0] != int64(math.Round(c*1e9)) {
+			fix.cpus = want.cpus
+		}
+	}
+	if want.mem != "" && (n[1] != sizeBytes(want.mem) || n[2] != sizeBytes(want.swap)) {
+		fix.mem, fix.swap = want.mem, want.swap
+	}
+	if want.pids != "" && strconv.FormatInt(n[3], 10) != want.pids {
+		fix.pids = want.pids
+	}
+	a := fix.args()
+	if len(a) == 0 {
+		return
+	}
+	if l.quiet("docker", append(append([]string{"update"}, a...), name)...) != nil {
+		l.logf("warning: could not apply the limits %s to the running %s; run 'lea stop', then lea, to restart it with them",
+			strings.Join(a, " "), name)
+		return
+	}
+	l.logf("applied the limits %s to the running %s", strings.Join(a, " "), name)
 }
 
 // busArgs is lea_bus_args: the core binary read-only at /usr/local/bin/lea and the container's
