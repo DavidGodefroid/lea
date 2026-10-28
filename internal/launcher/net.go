@@ -70,7 +70,8 @@ func (l *Launcher) proxyRules() string {
 
 // ensureProxy is lea_ensure_proxy. A running proxy started for other git SSH endpoints (its
 // lea.git-ssh label), another egress allowlist (lea.egress-allow), other providers' endpoints
-// (lea.providers) or other rules (lea.rules: proxyRules) is replaced: its forwarders and its
+// (lea.providers), other rules (lea.rules: proxyRules) or another image than LEA_PROXY_IMAGE is now
+// (a rebuilt or updated image: the rules it runs are copied in) is replaced: its forwarders and its
 // squid.conf are set at start. proj is the projects directory being opened: no key file may sit in
 // it.
 func (l *Launcher) ensureProxy(proj string) error {
@@ -82,7 +83,8 @@ func (l *Launcher) ensureProxy(proj string) error {
 	if l.containerRunning(name) {
 		got, _ := l.output(false, "docker", "inspect", "--format",
 			`{{index .Config.Labels "lea.git-ssh"}}{{with index .Config.Labels "lea.egress-allow"}}|{{.}}{{end}}`+
-				`{{with index .Config.Labels "lea.providers"}}#{{.}}{{end}}{{with index .Config.Labels "lea.rules"}}@{{.}}{{end}}`, name)
+				`{{with index .Config.Labels "lea.providers"}}#{{.}}{{end}}{{with index .Config.Labels "lea.rules"}}@{{.}}{{end}}!{{.Image}}`, name)
+		got, image, _ := strings.Cut(got, "!")
 		want := l.Cfg.GitSSH()
 		if allow != "" {
 			want += "|" + allow
@@ -93,11 +95,17 @@ func (l *Launcher) ensureProxy(proj string) error {
 		if rules != "" {
 			want += "@" + rules
 		}
-		if got == want {
+		// An image that cannot be inspected (not pulled yet) leaves the labels to decide.
+		current, err := l.output(false, "docker", "image", "inspect", "-f", "{{.Id}}", l.Cfg.Get("LEA_PROXY_IMAGE"))
+		if err != nil || current == "" {
+			current = image
+		}
+		// Docker writes the IDs sha256:<hex>, Podman <hex>.
+		if got == want && strings.TrimPrefix(image, "sha256:") == strings.TrimPrefix(current, "sha256:") {
 			return nil
 		}
-		l.logf("restarting %s for the git SSH endpoints '%s', the egress allowlist '%s', the providers of %s and the rules %s",
-			name, l.Cfg.GitSSH(), allow, l.Cfg.Get("LEA_PROVIDERS"), rules)
+		l.logf("restarting %s for the git SSH endpoints '%s', the egress allowlist '%s', the providers of %s, the rules %s and the image %s",
+			name, l.Cfg.GitSSH(), allow, l.Cfg.Get("LEA_PROVIDERS"), rules, l.Cfg.Get("LEA_PROXY_IMAGE"))
 	}
 	hosts := l.Cfg.Get("LEA_INTERNAL_HOSTS")
 	if err := noComma(hosts); err != nil {

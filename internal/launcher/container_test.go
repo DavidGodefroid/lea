@@ -733,3 +733,43 @@ func TestProxyRulesDigest(t *testing.T) {
 		t.Fatal("a render-squid-conf.sh change left the digest unchanged")
 	}
 }
+
+// A running proxy started from another image than LEA_PROXY_IMAGE is now (a rebuilt or updated
+// image: its rules are copied in) is replaced; when the image cannot be inspected, its labels
+// decide alone.
+func TestProxyFollowsItsImage(t *testing.T) {
+	w := newWorld(t, repoRoot(t))
+	stamp := "@" + w.launcher().proxyRules()
+	w.env["FAKE_DOCKER_OUT_INSPECT__F"] = "true"
+	w.env["FAKE_DOCKER_OUT_IMAGE_INSPECT"] = "sha256:new"
+	w.env["FAKE_DOCKER_OUT_INSPECT___FORMAT"] = stamp + "!sha256:new"
+	if err := w.launcher().ensureProxy(w.proj); err != nil {
+		t.Fatal(err)
+	}
+	if w.hasCall("docker [run]") {
+		t.Fatalf("a proxy on the current image was replaced:\n%s", strings.Join(w.calls(), "\n"))
+	}
+	// Podman writes the container's image ID without the sha256: prefix.
+	w.env["FAKE_DOCKER_OUT_INSPECT___FORMAT"] = stamp + "!new"
+	if err := w.launcher().ensureProxy(w.proj); err != nil {
+		t.Fatal(err)
+	}
+	if w.hasCall("docker [run]") {
+		t.Fatalf("a proxy on the current image, written without sha256:, was replaced:\n%s", strings.Join(w.calls(), "\n"))
+	}
+	w.env["FAKE_DOCKER_RC_IMAGE_INSPECT"] = "1"
+	w.env["FAKE_DOCKER_OUT_INSPECT___FORMAT"] = stamp + "!sha256:old"
+	if err := w.launcher().ensureProxy(w.proj); err != nil {
+		t.Fatal(err)
+	}
+	if w.hasCall("docker [run]") {
+		t.Fatalf("a proxy was replaced although its image could not be compared:\n%s", strings.Join(w.calls(), "\n"))
+	}
+	w.env["FAKE_DOCKER_RC_IMAGE_INSPECT"] = "0"
+	if err := w.launcher().ensureProxy(w.proj); err != nil {
+		t.Fatal(err)
+	}
+	if !w.hasCall("docker [run]") {
+		t.Fatalf("a proxy on an older image was kept:\n%s", strings.Join(w.calls(), "\n"))
+	}
+}
