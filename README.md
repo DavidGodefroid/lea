@@ -582,7 +582,8 @@ deny (no push to `main`, no force-push, no `--admin`). The calls covered:
   [--target-branch B] [--draft] [--remove-source-branch] [--yes]` and `glab mr merge <n>|<own
   branch> [--squash|--rebase] [--remove-source-branch] [--yes]` (a numbered MR must come from the
   agent's branch of the project itself, not a fork), glab run as `/usr/bin/glab … -R
-  https://HOST/PATH` with `GLAB_CONFIG_DIR`; pushes go to `https://HOST/PATH.git` with glab's
+  https://HOST/PATH` from `/`, with the token of glab's config for HOST and a fresh config dir
+  of its own (the agent's config could send glab's requests elsewhere); pushes go to `https://HOST/PATH.git` with glab's
   credential helper. A multi-line description is not covered (no file option): it takes the
   usual path.
 
