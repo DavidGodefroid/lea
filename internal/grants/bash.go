@@ -107,7 +107,7 @@ func hardBash(cmd string, c Caller) string {
 	if adminRe.MatchString(cmd) {
 		return "gh pr merge --admin bypasses branch protection"
 	}
-	if protectedPathRe.MatchString(cmd) {
+	if protectedPathRe.MatchString(cmd) || dirProtected(raw, c.Cwd) {
 		if w, ok := Words(raw); !ok || !readOnlyOn[w[0]] {
 			return "editing Claude's, git's, the shell's or lea's own settings from inside an agent is never allowed"
 		}
