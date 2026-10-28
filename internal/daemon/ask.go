@@ -221,7 +221,7 @@ func (d *Daemon) answer(me, target string, id int64) (answerView, bool, error) {
 	}
 	d.changed()
 	// ID: an answer ask took goes back to the inbox when the result is lost.
-	return answerView{Question: id, Answered: true, ID: m.ID, Text: bus.Wrap(m), to: me}, true, nil
+	return answerView{Question: id, Answered: true, ID: m.ID, Text: bus.Wrap(m, d.senderLabel(m.From, me)), to: me}, true, nil
 }
 
 // unreachable refuses a target that will not answer: ended or paused.
