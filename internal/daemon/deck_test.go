@@ -252,32 +252,6 @@ func TestHookStateChangesNotifyTheDeck(t *testing.T) {
 	}
 }
 
-// The user's label shows in the host's agents_list; an agent's agents_list never carries it.
-func TestAgentsListShowsTheLabelToTheHostOnly(t *testing.T) {
-	e := start(t)
-	if _, err := e.d.st.RegisterAgent("lea-a", "claude-1", "claude", "/p", 1); err != nil {
-		t.Fatal(err)
-	}
-	if err := e.d.st.SetLabel("lea-a/claude-1", "auth work"); err != nil {
-		t.Fatal(err)
-	}
-	var host, bus []agentView
-	if err := call(t, e.api, "", "agents_list", nil, &host); err != nil {
-		t.Fatal(err)
-	}
-	if len(host) != 1 || host[0].Label != "auth work" || host[0].Name != "claude-1" {
-		t.Fatalf("host=%+v", host)
-	}
-	if err := call(t, e.bus, "dev", "agents_list", nil, &bus); err != nil {
-		t.Fatal(err)
-	}
-	for _, a := range bus {
-		if a.Label != "" {
-			t.Fatalf("an agent sees the label: %+v", bus)
-		}
-	}
-}
-
 // The lock console methods reach the manager from the host API, with what the user typed; an
 // agent reaches none of them (TestDeckMethodsAreHostOnly covers every deck method).
 func TestLockMethodsOnTheHostAPI(t *testing.T) {

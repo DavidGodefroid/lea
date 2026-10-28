@@ -30,6 +30,16 @@ jobs:
         with:
           persist-credentials: false
       - run: make test-proxy
+  # The locksql console's confinement (tests/integration/locksql-confine.sh): the real lea locksql
+  # with a stand-in console image, checked from docker inspect and from inside.
+  locksql-confine:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - run: make test-locksql-confine
   # The real Codex CLI (the image's pinned version) against a fake upstream through lea-keyproxy.
   codex:
     runs-on: ubuntu-latest

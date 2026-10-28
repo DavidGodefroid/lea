@@ -75,6 +75,7 @@ func TestRealLockRequestOpensOnlyWhenTheUserSaysSo(t *testing.T) {
 		return strings.TrimSpace(string(out))
 	}
 	spec := agents.LockSpec{Enabled: true, Image: "locksql:0.8.0", AgentProfiles: []string{"prod"},
+		ConsoleDir: func(string) error { return nil },
 		ContainerName: func(p string) string {
 			if p == "/home/u/p" {
 				return C

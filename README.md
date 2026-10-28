@@ -276,6 +276,12 @@ keep in view to open the console, then ask an agent about your data. `locksql va
 console account in to Vault again when its token expires. A `locksql` already installed on the
 host keeps its name; `lea locksql` then opens lea's console.
 
+The console holds the credentials, so its container is confined (in the deck too): no capability,
+no privilege gain (`no-new-privileges`), a read-only root with a small `/tmp`, at most 256
+processes and 1 GB of memory. It sees your projects directory read-only, since your agents write
+there, but for its own `.locksql` directory (its PII rules); lea makes that directory when it is
+missing and opens no console while it is a symbolic link or a file.
+
 The console can also live **in the deck**: `L` in the deck (or `lea lock open locksql [profile]`)
 opens it in a pane under the agent, with a red `LOCK` border, without taking the keyboard: click
 it to answer (ctrl+space from the deck always goes to the agent, never to the console). It serves
@@ -412,10 +418,10 @@ vllm      https://vllm.example.com/v1         key=/home/me/.config/lea/keys/vllm
   a recent vLLM.
 - A change of the providers file restarts the proxy at the next `lea`.
 
-### Tower control
+### Control tower
 
 lea brings its own Claude Code plugin, `lea`, loaded in every agent (from the image, for the
-session only: nothing is installed in your `~/.claude`). Its skill `/lea:tower-control` turns a
+session only: nothing is installed in your `~/.claude`). Its skill `/lea:control-tower` turns a
 lead into your control tower: you talk to it only, it splits your requests into tasks, starts
 `dev` and `reviewer` agents with self-contained briefs, answers their questions when it can, and
 follows them with `board_read`, and briefs you in one line per agent. Between your requests an
@@ -430,10 +436,11 @@ Needs you: palette for dark-mode
 Ask it for the `board`, the `detail` of an agent, or to `stop` one, in your own words.
 
 The tower never does the work itself, not even a `git push`: every request goes to an agent. The
-plugin enforces it with a hook: once `/lea:tower-control` runs, the session may only use lea's
+plugin enforces it with a hook: once `/lea:control-tower` runs, the session may only use lea's
 team tools (`agents_*`, `msg_*`, `board_read`, `task_update`), ask you questions and run
 `lea inbox --agent --wait`; any other tool (Bash, Edit, Read, git, gh, the web…) is denied with a
-reminder to delegate. `/lea:tower-control off` gives the session its tools back.
+reminder to delegate. `/lea:control-tower off` gives the session its tools back.
+The skill's old name, `/lea:tower-control`, still works for now.
 
 ### Grants: let every agent merge, close issues, stop finished agents
 

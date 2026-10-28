@@ -1,4 +1,4 @@
-.PHONY: test build test-proxy test-isolation test-lockhost test-update-deps go-test go-build go-test-tmux go-get tmux-build
+.PHONY: test build test-proxy test-isolation test-lockhost test-locksql-confine test-update-deps go-test go-build go-test-tmux go-get tmux-build
 test:
 	tests/run.sh
 build:
@@ -8,6 +8,8 @@ test-proxy:
 	tests/proxy/run.sh
 test-lockhost:
 	tests/integration/lockhost.sh
+test-locksql-confine:
+	tests/integration/locksql-confine.sh
 test-update-deps:
 	tests/integration/update-deps.sh
 test-isolation:
