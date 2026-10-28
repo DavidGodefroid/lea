@@ -190,7 +190,7 @@ esac
 // other approval settings, is restarted, and the new one gets LEA_TMUX_BIN (daemon tests of the
 // retired deck.bats and core.bats).
 func TestEnsureDaemonPinsTheResolvedTmuxAndApprovals(t *testing.T) {
-	for name, record := range map[string][2]string{"tmux": {"daemon.tmux", "/old/tmux"}, "approvals": {"daemon.approvals", "pane 5"}, "resume": {"daemon.resume", "off 60"}, "lockhttp": {"daemon.lockhttp", "on"}} {
+	for name, record := range map[string][2]string{"tmux": {"daemon.tmux", "/old/tmux"}, "approvals": {"daemon.approvals", "pane 5"}, "resume": {"daemon.resume", "off 60"}, "lockhttp": {"daemon.lockhttp", "on"}, "stacks": {"daemon.stacks", "30"}} {
 		t.Run(name, func(t *testing.T) {
 			w := newWorld(t, repoRoot(t))
 			delete(w.env, "LEA_TMUX_BIN") // resolved from PATH: the world's tmux
@@ -321,5 +321,25 @@ func TestStopDaemonKeepsThePidFileWhileTheDaemonRuns(t *testing.T) {
 	l.stopDaemon()
 	if exists(pf) {
 		t.Fatal("the pid file of a gone daemon stays")
+	}
+}
+
+// LEA_STACK_IDLE: minutes an agent stays idle before lea stops its stack (#132): 10 by default
+// or when invalid, 0 (off) to 1440.
+func TestStackIdleSetting(t *testing.T) {
+	for v, want := range map[string]time.Duration{"": 10 * time.Minute, "0": 0, "3": 3 * time.Minute, "1440": 24 * time.Hour,
+		"1441": 10 * time.Minute, "-1": 10 * time.Minute, "ten": 10 * time.Minute} {
+		get := func(k string) string {
+			if k == "LEA_STACK_IDLE" {
+				return v
+			}
+			return ""
+		}
+		if got := StackIdleSetting(get); got != want {
+			t.Errorf("LEA_STACK_IDLE=%q: %v, want %v", v, got, want)
+		}
+		if got, wantStamp := DaemonStacksStamp(get), strconv.Itoa(int(want/time.Minute)); got != wantStamp {
+			t.Errorf("LEA_STACK_IDLE=%q: stamp %q, want %q", v, got, wantStamp)
+		}
 	}
 }

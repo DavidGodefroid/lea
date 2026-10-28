@@ -53,7 +53,12 @@ case "$1 $2" in
     exec python3 -c 'import socket, sys, time
 s = socket.socket(socket.AF_UNIX); s.bind(sys.argv[1][len("unix://"):]); s.listen(); time.sleep(600)' "$4" ;;
   "ps -aq") cut -d'|' -f1 "$PODMAN_DB" ;;
-  "container inspect") cat "$PODMAN_DB" ;;
+  "ps -q") cat "$PODMAN_RUNNING" 2>/dev/null || true ;;
+  "container inspect")
+    case $4 in
+      *State.Pid*) shift 4; for i in "$@"; do awk -v i="$i" '$1 == i { print $2 }' "$PODMAN_PIDS" 2>/dev/null; done ;;
+      *) cat "$PODMAN_DB" ;;
+    esac ;;
 esac
 EOT
   chmod +x "$F/podman"
@@ -174,10 +179,67 @@ service() { tr '\0' ' ' <"/proc/$1/cmdline" 2>/dev/null | grep -q 'unix://'; }
   ! grep -q '\[rm\]' "$PODMAN_LOG"
 }
 
+# Idle agents' stacks are stopped, not removed (#132): the agent starts them again when it needs
+# them; a stopped container holds no memory and no CPU.
+@test "park stops the running containers the agent started and its own pods, and says what it freed" {
+  fake_podman
+  export PODMAN_RUNNING="$BATS_TEST_TMPDIR/running" PODMAN_PIDS="$BATS_TEST_TMPDIR/pids"
+  # p1: dev-1's pod (infra i1, c1 c2); c3 dev-1 alone, stopped already; p2: a shell's pod where
+  # dev-1 ran c4; c5 is dev-2's.
+  printf '%s\n' 'i1|p1|dev-1|true' 'c1|p1|dev-1|false' 'c2|p1|dev-1|false' 'c3||dev-1|false' \
+    'i2|p2||true' 'c4|p2|dev-1|false' 'c5||dev-2|false' >"$PODMAN_DB"
+  printf '%s\n' i1 c1 c2 i2 c4 c5 >"$PODMAN_RUNNING"
+  sleep 60 & p1=$!; sleep 60 & p2=$!; PIDS="$PIDS $p1 $p2"
+  printf 'c1 %s\nc2 %s\nc4 0\n' "$p1" "$p2" >"$PODMAN_PIDS"
+  export LEA_AGENT_PARK_SAMPLE=0.3
+  run "$A" park dev-1
+  [ "$status" -eq 0 ]
+  [[ "$output" =~ ^dev-1:\ stopped\ 3\ containers\ and\ 1\ pod\ \(freed\ [0-9]+\ MiB\)$ ]]
+  grep -qxF 'podman [pod] [stop] [-t] [10] [p1]' "$PODMAN_LOG"
+  grep -qxF 'podman [stop] [-t] [10] [c1] [c2] [c4]' "$PODMAN_LOG"
+  ! grep -q '\[rm\]' "$PODMAN_LOG"
+  # unpark starts again what park stopped, once.
+  : >"$PODMAN_LOG"
+  run "$A" unpark dev-1
+  [ "$status" -eq 0 ] && [ "$output" = "dev-1: started 3 containers and 1 pod again" ]
+  grep -qxF 'podman [pod] [start] [p1]' "$PODMAN_LOG"
+  grep -qxF 'podman [start] [c1] [c2] [c4]' "$PODMAN_LOG"
+  run "$A" unpark dev-1
+  [ "$status" -eq 0 ] && [ -z "$output" ]
+  # Nothing of its own runs: nothing stopped, nothing said.
+  printf '%s\n' c5 >"$PODMAN_RUNNING"; : >"$PODMAN_LOG"
+  run "$A" park dev-1
+  [ "$status" -eq 0 ] && [ -z "$output" ]
+  ! grep -q '\[stop\]' "$PODMAN_LOG"
+}
+
+@test "park leaves a stack that is still at work running (a background job of the agent)" {
+  fake_podman
+  export PODMAN_RUNNING="$BATS_TEST_TMPDIR/running" PODMAN_PIDS="$BATS_TEST_TMPDIR/pids" LEA_AGENT_PARK_SAMPLE=0.5
+  printf '%s\n' 'c1||dev-1|false' >"$PODMAN_DB"
+  printf '%s\n' c1 >"$PODMAN_RUNNING"
+  sh -c 'while :; do :; done' & p1=$!; PIDS="$PIDS $p1"
+  printf 'c1 %s\n' "$p1" >"$PODMAN_PIDS"
+  run "$A" park dev-1
+  [ "$status" -eq 3 ]
+  [[ "$output" == *"dev-1: stack busy ("*"% of a CPU), not stopped"* ]]
+  ! grep -q '\[stop\]' "$PODMAN_LOG"
+  [ ! -e "$LEA_AGENT_RUN_DIR/dev-1.parked" ]
+}
+
+@test "park without Podman says nothing" {
+  run "$A" park dev-1
+  [ "$status" -eq 0 ] && [ -z "$output" ]
+}
+
 @test "teardown and sweep check the names" {
   fake_podman
   for n in "" Dev-1 "a b" "../x"; do
     run "$A" teardown "$n"
+    [ "$status" -eq 2 ]
+    run "$A" park "$n"
+    [ "$status" -eq 2 ]
+    run "$A" unpark "$n"
     [ "$status" -eq 2 ]
     run "$A" sweep dev-1 "$n"
     [ "$status" -eq 2 ]

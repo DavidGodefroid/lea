@@ -231,3 +231,120 @@ func TestDeliveryCommand(t *testing.T) {
 		}
 	}
 }
+
+// TestDeliveryCheck is lea doctor's part on delivery (#92): off is fine; on, each covered
+// repository's origin still matches its pin, the repositories it does not cover are named, and
+// each forge host it pushes to has credentials in lea's state. It only reads: nothing is recorded.
+func TestDeliveryCheck(t *testing.T) {
+	api, _, _ := startDaemonWithStore(t)
+	proj, state := t.TempDir(), t.TempDir()
+	origin := func(repo, url string) {
+		t.Helper()
+		if err := os.MkdirAll(filepath.Join(proj, repo, ".git"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(proj, repo, ".git", "config"), []byte("[remote \"origin\"]\n\turl = "+url+"\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	file := func(name, body string) {
+		t.Helper()
+		p := filepath.Join(state, name)
+		os.Remove(p)
+		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(p, []byte(body), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	origin("fixture", "git@github.com:o/fixture.git")
+	origin("gl", "https://gitlab.com/o/gl.git")
+	host := map[string]string{"LEA_DAEMON_SOCK": api}
+	check := func(env map[string]string) (int, string) {
+		t.Helper()
+		rc, out, e := runEnv(t, env, "delivery", "--container", "lea-a", "--projects", proj, "check", "--state", state)
+		if e != "" {
+			t.Fatalf("check wrote to stderr: %q", e)
+		}
+		return rc, out
+	}
+	// No daemon: a warning, never a failure (lea doctor runs without a lea).
+	if rc, out := check(map[string]string{"LEA_DAEMON_SOCK": filepath.Join(t.TempDir(), "none.sock")}); rc != 0 || !strings.HasPrefix(out, "warn  delivery: ") {
+		t.Fatalf("no daemon: rc=%d %q", rc, out)
+	}
+	if rc, out := check(host); rc != 0 || out != "ok    delivery: off (lea delivery on lets agents push, open and merge their own PRs)\n" {
+		t.Fatalf("off: rc=%d %q", rc, out)
+	}
+	rc, _, e := runEnv(t, host, "delivery", "--container", "lea-a", "--projects", proj, "on")
+	m := regexp.MustCompile(`--yes ([0-9a-f]{16})\b`).FindStringSubmatch(e)
+	if rc != 1 || m == nil {
+		t.Fatalf("on: rc=%d %q", rc, e)
+	}
+	if rc, out, e := runEnv(t, host, "delivery", "--container", "lea-a", "--projects", proj, "on", "--yes", m[1]); rc != 0 {
+		t.Fatalf("on --yes: rc=%d %q %q", rc, out, e)
+	}
+	// No credentials in lea's state: delivery cannot push.
+	rc, out := check(host)
+	for _, want := range []string{"ok    delivery fixture (github.com/o/fixture)\n", "ok    delivery gl (gitlab:gitlab.com/o/gl)\n",
+		"FAIL  delivery credentials github.com: none in lea's state: log in from lea (lea shell): gh auth login\n",
+		"FAIL  delivery credentials gitlab.com: none in lea's state: log in from lea (lea shell): glab auth login --hostname gitlab.com\n"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("no credentials: missing %q in %q", want, out)
+		}
+	}
+	if rc != 1 {
+		t.Errorf("no credentials: rc=%d", rc)
+	}
+	// Look-alike hosts and a symlink (to a file of an agent's choosing) are not credentials.
+	file("git/credentials", "https://u:t@github.com.evil.io\nhttps://u:t@evil.io/gitlab.com\n")
+	file("glab-cli/config.yml", "hosts:\n    gitlab.com.evil.io:\n        token: x\n")
+	os.MkdirAll(filepath.Join(state, "gh"), 0o755)
+	real := filepath.Join(t.TempDir(), "hosts.yml")
+	os.WriteFile(real, []byte("github.com:\n    oauth_token: x\n"), 0o600)
+	if err := os.Symlink(real, filepath.Join(state, "gh", "hosts.yml")); err != nil {
+		t.Fatal(err)
+	}
+	if rc, out := check(host); rc != 1 || strings.Contains(out, "ok    delivery credentials") {
+		t.Fatalf("look-alikes: rc=%d %q", rc, out)
+	}
+	// gh's login for github.com; git's store alone for gitlab.com pushes, not merge requests
+	// (pinned glab calls take the token of glab's config only); then glab's login.
+	file("gh/hosts.yml", "github.com:\n    oauth_token: x\n    user: u\n")
+	file("git/credentials", "https://u:t@gitlab.com\n")
+	rc, out = check(host)
+	if rc != 0 || !strings.Contains(out, "ok    delivery credentials github.com (gh)\n") ||
+		!strings.Contains(out, "warn  delivery credentials gitlab.com: git's store only: pushes work, merge requests need glab auth login --hostname gitlab.com\n") {
+		t.Fatalf("logged in: rc=%d %q", rc, out)
+	}
+	os.Remove(filepath.Join(state, "git", "credentials"))
+	file("glab-cli/config.yml", "git_protocol: https\nhosts:\n    gitlab.com:\n        token: x\n")
+	if rc, out := check(host); rc != 0 || !strings.Contains(out, "ok    delivery credentials gitlab.com (glab)\n") {
+		t.Fatalf("glab: rc=%d %q", rc, out)
+	}
+	// An origin rewritten since on (agents can write .git/config), one removed, and a repository
+	// on a forge that on has not covered: warnings, the pins stay as recorded.
+	origin("fixture", "https://github.com/evil/fixture.git")
+	os.Remove(filepath.Join(proj, "gl", ".git", "config"))
+	origin("new", "https://github.com/o/new.git")
+	rc, out = check(host)
+	for _, want := range []string{"warn  delivery fixture: origin is now github.com/evil/fixture, still pinned to github.com/o/fixture: run lea delivery on and check it\n",
+		"warn  delivery gl: no origin any more, still pinned to gitlab:gitlab.com/o/gl: run lea delivery on\n",
+		"warn  delivery new: not covered (github.com/o/new): run lea delivery on\n"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("drift: missing %q in %q", want, out)
+		}
+	}
+	if rc != 0 {
+		t.Errorf("drift: rc=%d", rc)
+	}
+	if rc, out, _ := runEnv(t, host, "delivery", "--container", "lea-a", "--projects", proj, "status"); rc != 0 || !strings.Contains(out, "fixture (github.com/o/fixture)") {
+		t.Fatalf("check recorded something: %q", out)
+	}
+	for _, args := range [][]string{{"check"}, {"check", "--state"}, {"check", "--state", "relative"}, {"check", "--state", state, "--yes", m[1]},
+		{"on", "--state", state}} {
+		if rc, _, _ := runEnv(t, host, append([]string{"delivery", "--container", "lea-a", "--projects", proj}, args...)...); rc != 2 {
+			t.Errorf("%v: rc=%d", args, rc)
+		}
+	}
+}

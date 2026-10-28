@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strings"
 	"syscall"
 
@@ -32,7 +33,7 @@ func runDelivery(args []string, stdout, stderr io.Writer) int {
 		return 2
 	}
 	container, proj, verb := args[1], args[3], args[4]
-	yes, confirmed := false, ""
+	yes, confirmed, state := false, "", ""
 	gitlab := map[string]bool{"gitlab.com": true}
 	for i := 5; i < len(args); i++ {
 		switch {
@@ -42,12 +43,20 @@ func runDelivery(args []string, stdout, stderr io.Writer) int {
 		case verb == "on" && args[i] == "--gitlab" && i+1 < len(args) && gitlabHostRe.MatchString(strings.ToLower(args[i+1])):
 			gitlab[strings.ToLower(args[i+1])] = true
 			i++
+		case verb == "check" && args[i] == "--state" && i+1 < len(args) && filepath.IsAbs(args[i+1]) && state == "":
+			state = args[i+1]
+			i++
 		default:
 			fmt.Fprintln(stderr, deliveryUse)
 			return 2
 		}
 	}
 	switch verb {
+	case "check":
+		if state == "" {
+			break
+		}
+		return deliveryCheck(container, proj, state, stdout)
 	case "on":
 		ents, err := os.ReadDir(proj)
 		if err != nil {
@@ -219,18 +228,8 @@ func repoOrigin(dir string) string {
 	if fi, err := os.Lstat(cfg); err != nil || !fi.Mode().IsRegular() {
 		return ""
 	}
-	// O_NOFOLLOW and O_NONBLOCK: the file swapped for a symlink or a FIFO after the Lstat is
-	// refused, not followed or waited on.
-	f, err := os.OpenFile(cfg, os.O_RDONLY|syscall.O_NOFOLLOW|syscall.O_NONBLOCK, 0)
-	if err != nil {
-		return ""
-	}
-	defer f.Close()
-	if fi, err := f.Stat(); err != nil || !fi.Mode().IsRegular() {
-		return ""
-	}
-	b, err := io.ReadAll(io.LimitReader(f, 1<<20+1))
-	if err != nil || len(b) > 1<<20 {
+	b, ok := readPlain(cfg)
+	if !ok {
 		return ""
 	}
 	var urls []string
@@ -265,4 +264,150 @@ func repoOrigin(dir string) string {
 		return ""
 	}
 	return urls[0]
+}
+
+// readPlain is the content of path, a regular file of at most 1 MiB that agents may write: a
+// symlink, a FIFO or a device is refused, not followed or waited on (O_NOFOLLOW and O_NONBLOCK,
+// even when swapped in after a Lstat).
+func readPlain(path string) ([]byte, bool) {
+	f, err := os.OpenFile(path, os.O_RDONLY|syscall.O_NOFOLLOW|syscall.O_NONBLOCK, 0)
+	if err != nil {
+		return nil, false
+	}
+	defer f.Close()
+	if fi, err := f.Stat(); err != nil || !fi.Mode().IsRegular() {
+		return nil, false
+	}
+	b, err := io.ReadAll(io.LimitReader(f, 1<<20+1))
+	if err != nil || len(b) > 1<<20 {
+		return nil, false
+	}
+	return b, true
+}
+
+// deliveryCheck is lea doctor's part on delivery (lea delivery --container NAME --projects DIR
+// check --state DIR), issue #92, in doctor's format: off is fine; on, each covered repository's
+// origin still matches its pin, the repositories on a forge it does not cover are named, and each
+// forge host it pushes to has credentials in lea's state (STATE/gh, STATE/glab-cli; git's store
+// STATE/git/credentials covers pushes only). It only reads, and fails only on missing credentials.
+func deliveryCheck(container, proj, state string, stdout io.Writer) int {
+	var r struct {
+		Grants []grants.Grant
+		Now    int64
+	}
+	if err := hostCall("grant_list", map[string]any{}, &r); err != nil {
+		fmt.Fprintf(stdout, "warn  delivery: not checked: %s\n", oneLine(clean(err.Error(), false), 200))
+		return 0
+	}
+	gitlab := map[string]bool{"gitlab.com": true}
+	pins := map[string]string{}
+	for _, g := range r.Grants {
+		if g.Container != container || !g.IsStanding() || !g.Active(r.Now) || g.Action != grants.CommitIdentity {
+			continue
+		}
+		pins[g.Repo] = g.GitHub
+		if h, ok := strings.CutPrefix(g.GitHub, "gitlab:"); ok {
+			h, _, _ = strings.Cut(h, "/")
+			gitlab[h] = true
+		}
+	}
+	if len(pins) == 0 {
+		fmt.Fprintln(stdout, "ok    delivery: off (lea delivery on lets agents push, open and merge their own PRs)")
+		return 0
+	}
+	repos := make([]string, 0, len(pins))
+	for repo := range pins {
+		repos = append(repos, repo)
+	}
+	sort.Strings(repos)
+	hosts := map[string]bool{} // forge host -> GitLab
+	for _, repo := range repos {
+		pin, name := pins[repo], oneLine(repo, 100)
+		url := repoOrigin(filepath.Join(proj, repo))
+		switch now := originPin(url, gitlab); {
+		case url == "":
+			fmt.Fprintf(stdout, "warn  delivery %s: no origin any more, still pinned to %s: run lea delivery on\n", name, oneLine(pin, 200))
+		case now != pin:
+			if now == "" {
+				now = "off any known forge"
+			}
+			fmt.Fprintf(stdout, "warn  delivery %s: origin is now %s, still pinned to %s: run lea delivery on and check it\n", name, oneLine(now, 200), oneLine(pin, 200))
+		default:
+			fmt.Fprintf(stdout, "ok    delivery %s (%s)\n", name, oneLine(pin, 200))
+		}
+		if h, ok := strings.CutPrefix(pin, "gitlab:"); ok {
+			h, _, _ = strings.Cut(h, "/")
+			hosts[h] = true
+		} else {
+			hosts["github.com"] = false
+		}
+	}
+	if ents, err := os.ReadDir(proj); err == nil {
+		for _, e := range ents {
+			if _, covered := pins[e.Name()]; covered || strings.HasPrefix(e.Name(), ".") || !e.IsDir() {
+				continue
+			}
+			if pin := originPin(repoOrigin(filepath.Join(proj, e.Name())), gitlab); pin != "" {
+				fmt.Fprintf(stdout, "warn  delivery %s: not covered (%s): run lea delivery on\n", oneLine(e.Name(), 100), oneLine(pin, 200))
+			}
+		}
+	}
+	names := make([]string, 0, len(hosts))
+	for h := range hosts {
+		names = append(names, h)
+	}
+	sort.Strings(names)
+	// Pinned gh and glab calls take the token of their own config only; pushes take git's store too.
+	rc := 0
+	for _, h := range names {
+		tool, cfg, login, what := "gh", filepath.Join(state, "gh", "hosts.yml"), "gh auth login", "PRs"
+		if hosts[h] {
+			tool, cfg, login, what = "glab", filepath.Join(state, "glab-cli", "config.yml"), "glab auth login --hostname "+h, "merge requests"
+		}
+		switch {
+		case yamlKey(cfg, h):
+			fmt.Fprintf(stdout, "ok    delivery credentials %s (%s)\n", h, tool)
+		case storeHas(filepath.Join(state, "git", "credentials"), h):
+			fmt.Fprintf(stdout, "warn  delivery credentials %s: git's store only: pushes work, %s need %s\n", h, what, login)
+		default:
+			fmt.Fprintf(stdout, "FAIL  delivery credentials %s: none in lea's state: log in from lea (lea shell): %s\n", h, login)
+			rc = 1
+		}
+	}
+	return rc
+}
+
+// yamlKey says whether the YAML file at path has the mapping key host (gh's hosts.yml keys its
+// hosts at the top level, glab's config.yml under hosts:).
+func yamlKey(path, host string) bool {
+	b, ok := readPlain(path)
+	if !ok {
+		return false
+	}
+	for _, line := range strings.Split(string(b), "\n") {
+		if strings.TrimSpace(line) == host+":" {
+			return true
+		}
+	}
+	return false
+}
+
+// storeHas says whether git's credential store at path has an entry for https://host.
+func storeHas(path, host string) bool {
+	b, ok := readPlain(path)
+	if !ok {
+		return false
+	}
+	for _, line := range strings.Split(string(b), "\n") {
+		rest, ok := strings.CutPrefix(strings.TrimSpace(line), "https://")
+		at := strings.LastIndexByte(rest, '@')
+		if !ok || at < 0 {
+			continue
+		}
+		h, _, _ := strings.Cut(rest[at+1:], "/")
+		if strings.EqualFold(h, host) {
+			return true
+		}
+	}
+	return false
 }
