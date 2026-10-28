@@ -4,11 +4,18 @@ lea__locksql_harden="--cap-drop ALL --security-opt no-new-privileges --read-only
 
 # lea__locksql_launcher: the path of locksql's own launcher on PATH (scripts/locksql of locksql,
 # which scripts/install.sh of locksql installs as locksql), or nothing. Any other locksql (the
-# binary of a former host install, the link an older lea made) is not it.
+# binary of a former host install, the link an older lea made) is not it, nor a launcher that
+# cannot run the console as lea does: confined, the projects directory read-only but for
+# .locksql, under lea's container name.
 lea__locksql_launcher() {
   _ll=$(command -v locksql 2>/dev/null) || return 0
   case $_ll in /*) ;; *) return 0 ;; esac
-  if [ -f "$_ll" ] && grep -q '^launcher_version=' "$_ll" 2>/dev/null; then printf '%s\n' "$_ll"; fi
+  [ -f "$_ll" ] || return 0
+  for _lw in '^launcher_version=' '--cap-drop ALL' 'no-new-privileges' '--read-only' \
+    'LOCKSQL_READONLY_PROJECT' 'LOCKSQL_CONSOLE_NAME'; do
+    grep -q -e "$_lw" "$_ll" 2>/dev/null || return 0
+  done
+  printf '%s\n' "$_ll"
 }
 
 # lea locksql [console flags]: the locksql console of the projects directory, in its own
@@ -66,6 +73,8 @@ lea_locksql() {
     # container name. Until a locksql release ships it, lea runs the same docker run itself.
     _lk_l=$(lea__locksql_launcher)
     if [ -n "$_lk_l" ]; then
+      # The launcher mounts the project of its working directory (the .locksql checked above); it
+      # runs nothing from there.
       cd "$_lk_p" || lea_die "could not enter $_lk_p"
       if [ -n "${LEA_LOCKSQL_VAULT_ADDR:-}" ]; then VAULT_ADDR=$LEA_LOCKSQL_VAULT_ADDR; export VAULT_ADDR; fi
       LOCKSQL_IMAGE=$LEA_LOCKSQL_IMAGE LOCKSQL_READONLY_PROJECT=1 LOCKSQL_CONSOLE_NAME=locksql-console \

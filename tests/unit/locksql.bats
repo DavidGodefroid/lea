@@ -122,7 +122,8 @@ fake_launcher() {
   mkdir -p "$BATS_TEST_TMPDIR/lbin"
   cat >"$BATS_TEST_TMPDIR/lbin/locksql" <<'EOT'
 #!/bin/sh
-# locksql: the launcher.
+# locksql: the launcher. Its console: --cap-drop ALL --security-opt no-new-privileges --read-only,
+# LOCKSQL_READONLY_PROJECT, LOCKSQL_CONSOLE_NAME.
 launcher_version=1.0.0
 { printf 'launcher pwd=%s image=%s ro=%s name=%s vault=%s' "$(pwd -P)" "${LOCKSQL_IMAGE:-}" \
     "${LOCKSQL_READONLY_PROJECT:-}" "${LOCKSQL_CONSOLE_NAME:-}" "${VAULT_ADDR:-}"
@@ -148,6 +149,16 @@ EOT
   [ "$status" -ne 0 ]
   run calls
   [[ "$output" != *"launcher"* ]]
+}
+
+@test "lea locksql keeps the console to itself with a launcher that cannot confine it" {
+  fake_launcher
+  sed -i '/--cap-drop ALL/d' "$BATS_TEST_TMPDIR/lbin/locksql"
+  run lea_locksql </dev/null
+  [ "$status" -eq 0 ]
+  run calls
+  [[ "$output" != *"launcher"* ]]
+  [[ "$output" == *"docker [run]"*"[--cap-drop] [ALL]"*"[console]"* ]]
 }
 
 @test "lea locksql never takes another locksql on PATH for the launcher" {
