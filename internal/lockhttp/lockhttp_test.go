@@ -156,3 +156,18 @@ func TestDropNetworks(t *testing.T) {
 		t.Fatalf("kept network: %q", c)
 	}
 }
+
+// A lockhttp directory made before lea's key (wider than 0700) is made private with it.
+func TestKeyMakesItsDirectoryPrivate(t *testing.T) {
+	d := t.TempDir()
+	if err := os.MkdirAll(Dir(d), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	os.Chmod(Dir(d), 0o755)
+	if _, err := Key(d); err != nil {
+		t.Fatal(err)
+	}
+	if fi, err := os.Stat(Dir(d)); err != nil || fi.Mode().Perm() != 0o700 {
+		t.Fatalf("lockhttp dir mode %v, %v", fi.Mode(), err)
+	}
+}

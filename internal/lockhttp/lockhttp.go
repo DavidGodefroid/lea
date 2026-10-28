@@ -82,6 +82,10 @@ func Key(dataDir string) ([]byte, error) {
 	if err := os.MkdirAll(Dir(dataDir), 0o700); err != nil {
 		return nil, err
 	}
+	// MkdirAll leaves a directory made earlier as it was.
+	if err := os.Chmod(Dir(dataDir), 0o700); err != nil {
+		return nil, err
+	}
 	k := make([]byte, 32)
 	if _, err := rand.Read(k); err != nil {
 		return nil, err
