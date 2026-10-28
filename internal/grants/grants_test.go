@@ -69,8 +69,8 @@ func TestDecideBash(t *testing.T) {
 		{"commit author", "git commit -m x --author 'a <b>'", "", every},
 		{"commit config", "git -c user.name=x commit -m x", "", every},
 		{"push own", "git push -u origin feat/73-x", Allow, every},
-		{"push bare", "git push", "", every},
-		{"push other branch", "git push origin feat/other", "", every},
+		{"push bare", "git push", Deny, every},
+		{"push other branch", "git push origin feat/other", Deny, every},
 		{"push main", "git push origin main", Deny, every},
 		{"push refspec main", "git push origin HEAD:main", Deny, every},
 		{"push refs main", "git push origin feat/73-x:refs/heads/main", Deny, every},
@@ -140,6 +140,156 @@ func TestDecideBash(t *testing.T) {
 		{"quoted main", "git push origin 'main'", Deny, every},
 		{"quoted refspec main", `git push origin HEAD:"main"`, Deny, every},
 		{"escaped main compound", `true; git push origin ma\in`, Deny, nil},
+		// Pushes to the default branch however the refspec spells it (a parse, not a regex).
+		{"push all", "git push --all origin", Deny, nil},
+		{"push branches", "git push --branches origin", Deny, nil},
+		{"push tags", "git push --tags origin", Deny, nil},
+		{"push heads main", "git push origin heads/main", Deny, nil},
+		{"push refs heads main", "git push origin refs/heads/main", Deny, nil},
+		{"push src refs main", "git push origin feat/73-x:heads/main", Deny, nil},
+		{"push main redirect", "git push origin main>/dev/null", Deny, nil},
+		{"push main 2>&1", "git push origin main 2>&1", Deny, nil},
+		{"push second refspec main", "git push origin feat/73-x main", Deny, nil},
+		{"push option then main", "git push -o ci.skip origin main", Deny, nil},
+		{"push matching colon", "git push origin :", Deny, nil},
+		{"push wildcard refspec", "git push origin 'refs/heads/*:refs/heads/*'", Deny, nil},
+		{"push glob", "git push origin ma?n", Deny, nil},
+		{"push brace", "git push origin {feat/73-x,main}", Deny, nil},
+		{"push delete colon main", "git push origin :main", Deny, nil},
+		{"push unknown option", "git push --repo=x origin feat/73-x", Deny, nil},
+		{"push config pin", "git -c remote.origin.push=refs/heads/main push", Deny, nil},
+		{"push git-dir", "git --git-dir=/p/lea/.git push origin HEAD", Deny, nil},
+		{"push other dir HEAD", "git -C /p/lea push origin HEAD", Deny, nil},
+		{"push cd then bare", "cd /p/lea && git push", Deny, nil},
+		{"push env prefix", "GIT_DIR=/p/lea/.git git push", Deny, nil},
+		{"push via shell", "sh -c 'git push origin main'", Deny, nil},
+		{"push via xargs", "echo main | xargs git push origin", Deny, nil},
+		{"push heredoc", "git push origin <<EOF\nmain\nEOF", Deny, nil},
+		{"push abs git main", "/usr/bin/git push origin main", Deny, nil},
+		{"push alias via -c", "git -c alias.p=push p origin main", Deny, nil},
+		{"push alias via config-env", "git --config-env=alias.p=P p origin main", Deny, nil},
+		{"push via xargs stdin", "echo push origin main | xargs git", Deny, nil},
+		{"push via env", "env git push origin main", Deny, nil},
+		{"alias from a variable", "git -c alias.p=$X p origin main", Deny, nil},
+		{"alias by GIT_CONFIG env", "GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=alias.p GIT_CONFIG_VALUE_0=$V git p origin main", Deny, nil},
+		{"pager pin", "git -c core.pager=cat log --oneline", Deny, nil},
+		{"other config pin", "git -c core.fsmonitor=/tmp/x status", Deny, nil},
+		{"push via python", `python3 -c "import os; os.system('git push origin main')"`, Deny, nil},
+		{"subtree push", "git subtree push --prefix x origin main", Deny, nil},
+		{"submodule foreach push", "git submodule foreach git push origin main", Deny, nil},
+		{"globbed program", "/usr/bin/gi? push origin main", Deny, nil},
+		{"globbed short program", "g?t push origin main", Deny, nil},
+		{"docker push", "docker push img:1", "", nil},
+		{"alias upper case", "git -c ALIAS.p=$X p origin main", Deny, nil},
+		{"alias by include", "git -c include.path=/tmp/x p origin main", Deny, nil},
+		{"alias by includeIf", "git -c includeIf.onbranch:x.path=/tmp/x p origin main", Deny, nil},
+		{"config file by env", "GIT_CONFIG_GLOBAL=/tmp/cfg git p origin main", Deny, nil},
+		{"config file by export", "export GIT_CONFIG_GLOBAL=/tmp/cfg", Deny, nil},
+		{"exec path", "git --exec-path=/tmp/x p origin main", Deny, nil},
+		{"identity pin is fine", "git -c user.name=x -c user.email=y log -1", "", nil},
+		{"mention config env is fine", "grep -n GIT_CONFIG_GLOBAL internal/grants/grants.go", "", nil},
+		{"push own HEAD", "git push -u origin HEAD", Deny, nil},
+		{"push own refspec", "git push origin HEAD:feat/73-x", "", nil},
+		{"send-pack main", "git send-pack https://github.com/o/lea.git feat/73-x:main", Deny, nil},
+		{"http-push main", "git http-push https://x/lea.git feat/73-x:main", Deny, nil},
+		{"remote helper", "git remote-ext 'sh -c x' https://x", Deny, nil},
+		{"push @", "git push origin @", Deny, nil},
+		{"push origin only", "git push origin", Deny, nil},
+		{"push to other agent", "git push origin feat/73-x:feat/other", Deny, nil},
+		{"push tag ref", "git push origin refs/tags/v1", Deny, nil},
+		{"push own full ref", "git push origin HEAD:refs/heads/feat/73-x", "", nil},
+		{"gh pr title mentions push", `gh pr create --title "fix git push" --body "no more git push origin main"`, "", nil},
+		{"log grep push", "git log --grep push", "", nil},
+		{"echo git", "echo git", "", nil},
+		{"no-pager diff", "git --no-pager diff --stat", "", nil},
+		{"xargs git add", "git ls-files -m | xargs git add", Deny, nil},
+		{"gh body with push", `gh pr comment 1 --body "run git push origin main yourself"`, "", nil},
+		{"rebase exec push", "git rebase -x 'git push origin main' HEAD~2", Deny, nil},
+		{"sudo env assignment", "sudo GIT_DIR=/tmp/r git p origin main", Deny, nil},
+		{"unlisted interpreter", `pwsh -c "git push origin main"`, Deny, nil},
+		{"deno eval", `deno eval "Deno.run({cmd:['git','push','origin','main']})"`, Deny, nil},
+		{"gh alias shell", `gh alias set p '!git push origin main'`, Deny, nil},
+		{"upload-pack program", `git ls-remote --upload-pack='sh -c "git push origin main"' .`, Deny, nil},
+		{"upload-pack file", "git fetch --upload-pack=/tmp/x.sh origin", Deny, nil},
+		{"receive-pack", "git push --receive-pack=/tmp/x origin feat/73-x", Deny, nil},
+		{"grep -O pager", "git grep -O/tmp/x.sh foo", Deny, nil},
+		{"commit message fix git push", `git commit -m "fix git push parsing"`, "", nil},
+		{"xargs -I subcommand", "echo push | xargs -I X git X origin feat/73-x:main", Deny, nil},
+		{"subst subcommand", "git $(printf pu)sh origin feat/73-x:main", Deny, nil},
+		{"backtick subcommand", "git `printf pu`sh origin feat/73-x:main", Deny, nil},
+		{"var subcommand", "git ${p}sh origin feat/73-x:main", Deny, nil},
+		{"dq var subcommand", `git "$P" origin feat/73-x:main`, Deny, nil},
+		{"subst refspec", "git push origin feat/73-x:$(printf main)", Deny, nil},
+		{"computed program", "$G $P origin feat/73-x:main", Deny, nil},
+		{"env computed program", "env $G $P origin feat/73-x:main", Deny, nil},
+		{"sh positional push", `sh -c 'git "$0" origin feat/73-x:main' push`, Deny, nil},
+		{"bash positional push", `bash -c 'git "$@"' x push origin feat/73-x:main`, Deny, nil},
+		{"push inside subst", "echo $(git push origin feat/73-x:main)", Deny, nil},
+		{"escaped push", `git pu\sh origin feat/73-x:main`, Deny, nil},
+		{"diff merge-base subst", "git diff $(git merge-base HEAD origin/main)", "", nil},
+		{"sudo xargs git", "echo push | sudo xargs -I X git X origin feat/73-x:main", Deny, nil},
+		{"xargs sh -c git", "echo push | xargs -I X sh -c 'git X origin feat/73-x:main'", Deny, nil},
+		{"quote-split script", `sh -c 'g""it pu""sh origin feat/73-x:main'`, Deny, nil},
+		{"quote-split script send-pack", `sh -c 'g""it se""nd-pack u feat/73-x:main'`, Deny, nil},
+		{"quote-split under xargs", `echo x | xargs sh -c 'g""it status'`, Deny, nil},
+		{"dq backtick escaped quote", "echo \"`g\\\"\\\"it se\\\"\\\"nd-pack u feat/73-x:main`\"", Deny, nil},
+		// send-pack: no word the escape/expansion rule of hardBash knows, only the parser sees it.
+		{"dq dollar quote swallow", `echo "$"; git send-pack u feat/73-x:main; echo "x"`, Deny, nil},
+		{"dq dollar squote", `echo "a$'"; git send-pack u feat/73-x:main; echo "'"`, Deny, nil},
+		{"locale string subst", `echo $"$(git send-pack u feat/73-x:main)"`, Deny, nil},
+		{"nested backtick", "echo `echo \\`git send-pack u feat/73-x:main\\``", Deny, nil},
+		{"find exec sh git", "find . -exec sh -c 'git add \"$1\"' _ {} ;", Deny, nil},
+		{"parallel script git", "parallel 'git {} origin feat/73-x:main' ::: push", Deny, nil},
+		{"env git no subcommand", "env git", Deny, nil},
+		{"submodule foreach", "git submodule foreach 'g=git; $g status'", Deny, nil},
+		{"bisect run", "git bisect run ./t.sh", Deny, nil},
+		{"filter-branch", "git filter-branch --tree-filter 'rm x' HEAD", Deny, nil},
+		{"subtree push", "git subtree push --prefix x origin feat/73-x", Deny, nil},
+		{"commit heredoc message", "git commit -m \"$(cat <<'EOF'\nfeat: x\nEOF\n)\"", "", nil},
+		{"commit subst message", `git commit -m "$(cat msg.txt)"`, "", nil},
+		// #96: a quoted heredoc expands nothing: its text is a message, not a command.
+		{"commit heredoc push", "git commit -m \"$(cat <<'EOF'\nfix: git push parsing\n\nrun `git push origin main` with $X\nEOF\n)\"", "", nil},
+		{"pr create heredoc push", "gh pr create --title \"fix push\" --body \"$(cat <<'EOF'\n## Summary\n- `git push origin main` no longer denied; see .claude/settings\nEOF\n)\"", "", nil},
+		{"add then commit heredoc push", "git add x && git commit -m \"$(cat <<'EOF'\nfix push\nEOF\n)\"", "", nil},
+		{"commit heredoc dq delim", "git commit -m \"$(cat <<\"EOF\"\nfix push\nEOF\n)\"", "", nil},
+		{"commit heredoc then push main", "git commit -m \"$(cat <<'EOF'\nfix push\nEOF\n)\" && git push origin main", Deny, nil},
+		{"unquoted heredoc push", "git commit -m \"$(cat <<EOF\nfix push $(git push origin main)\nEOF\n)\"", Deny, nil},
+		{"heredoc to shell", "bash -c \"$(cat <<'EOF'\ngit push origin main\nEOF\n)\"", Deny, nil},
+		{"heredoc to eval", "eval \"$(cat <<'EOF'\ngit push origin main\nEOF\n)\"", Deny, nil},
+		{"heredoc not a message", "git \"$(cat <<'EOF'\npush\nEOF\n)\" origin main", Deny, nil},
+		{"heredoc after cat function", "cat() { bash; } && git commit -m \"$(cat <<'EOF'\ngit push origin main\nEOF\n)\"", Deny, nil},
+		{"heredoc after hash", "hash -p /tmp/sh cat && git commit -m \"$(cat <<'EOF'\ngit push origin main\nEOF\n)\"", Deny, nil},
+		{"heredoc cat piped", "git commit -m \"$(cat <<'EOF' | sh\ngit push origin main\nEOF\n)\"", Deny, nil},
+		{"heredoc trailing code", "git commit -m \"$(cat <<'EOF'\nfix push\nEOF\ngit push origin main\n)\"", Deny, nil},
+		// bash ends a heredoc inside $(…) on "EOF)" too: the rest runs as code.
+		{"heredoc delim paren", "git commit -m \"$(cat <<'EOF'\nx\nEOF)\" && git push origin main\nb\nEOF\n)\"", Deny, nil},
+		{"heredoc delim space paren", "git commit -m \"$(cat <<'EOF'\nx\nEOF )\" ; git push origin main\nb\nEOF\n)\"", Deny, nil},
+		{"heredoc delim tab prefix", "git commit -m \"$(cat <<-'EOF'\npush\n\tEOF;\nEOF\n)\"", Deny, nil},
+		{"heredoc delim indented", "git commit -m \"$(cat <<'EOF'\n push\n  EOF\nEOF\n)\"", Deny, nil},
+		{"heredoc gh api", "gh api -f body=\"$(cat <<'EOF'\npush\nEOF\n)\" repos/o/r", Deny, nil},
+		{"own push with var-free dq", `git push origin "feat/73-x"`, "", nil},
+		{"find exec git", "find . -name x -exec git {} origin feat/73-x:main ;", Deny, nil},
+		{"find execdir git", "find . -execdir git add {} +", Deny, nil},
+		{"parallel git", "parallel git ::: push", Deny, nil},
+		{"worktree add push branch", "git worktree add ../x fix/grants-bash-merge-push", "", nil},
+		{"rebase on push branch", "git rebase origin/fix/grants-bash-merge-push", "", nil},
+		{"env git on push branch", "LANG=C git rebase origin/fix/grants-bash-merge-push", "", nil},
+		{"git-dir then alias", "git --git-dir .git -c alias.p=push p origin main", Deny, nil},
+		{"work-tree", "git --work-tree /tmp/x status", Deny, nil},
+		{"home config", "HOME=/tmp/h git p origin main", Deny, nil},
+		{"xdg config", "XDG_CONFIG_HOME=/tmp/x git p origin main", Deny, nil},
+		{"read config var", "read GIT_CONFIG_GLOBAL < f; git p origin main", Deny, nil},
+		{"git editor true", "GIT_EDITOR=true git rebase --continue", "", nil},
+		{"git editor colon", "GIT_SEQUENCE_EDITOR=: git rebase --continue", "", nil},
+		{"git pager cat", "GIT_PAGER=cat git log -1", "", nil},
+		{"git prompt off", "GIT_TERMINAL_PROMPT=0 git fetch origin", "", nil},
+		{"git editor program", "GIT_EDITOR=/tmp/x.sh git rebase --continue", Deny, nil},
+		{"git pager program", "GIT_PAGER=less git log -1", Deny, nil},
+		{"push own chained", "git commit -m 'push it' && git push origin feat/73-x", "", nil},
+		{"push quiet own", "git push -q -o ci.skip origin feat/73-x", "", nil},
+		{"commit mentions push main", "git commit -m 'git push origin main'", "", nil},
+		// A word holding a whole git push is checked only for programs that run it.
+		{"grep push main", "grep -rn 'git push origin main' docs", "", nil},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -196,8 +346,22 @@ func TestPinnedCommand(t *testing.T) {
 		!strings.Contains(d.Command, `'HOME=/home/u' 'GH_CONFIG_DIR=/lea/state/gh' '/bin/sh' '-c' `) || d.Request.Target != "github.com/o/lea pr of feat/73-x" {
 		t.Fatalf("merge: %+v", d)
 	}
-	if s := lastWord(t, d.Command); s != `'/usr/bin/gh' 'pr' 'merge' 'feat/73-x' '--squash' '--delete-branch' '-R' 'github.com/o/lea'` {
+	if s := lastWord(t, d.Command); !strings.Contains(s, `'/usr/bin/gh' 'pr' 'view' 'feat/73-x' '--json' 'headRefName,isCrossRepository'`) ||
+		!strings.HasSuffix(s, "\n"+`'/usr/bin/gh' 'pr' 'merge' 'feat/73-x' '--squash' '--delete-branch' '-R' 'github.com/o/lea'`) {
 		t.Fatalf("merge script %q", s)
+	}
+	// A PR named by number is merged only after gh says its head is the caller's own branch
+	// (in the grant's repository, not a fork): the grant's branch glob matched that branch.
+	d = Decide("Bash", bash("gh pr merge 42 --squash"), dev, gs, now, false)
+	s0 := lastWord(t, d.Command)
+	for _, w := range []string{`'/usr/bin/gh' 'pr' 'view' '42' '--json' 'headRefName,isCrossRepository'`, `'-R' 'github.com/o/lea') || exit 1`,
+		`[ "$head" != 'false feat/73-x' ]`, `'/usr/bin/gh' 'pr' 'merge' '42' '--squash' '-R' 'github.com/o/lea'`} {
+		if !strings.Contains(s0, w) {
+			t.Fatalf("numbered merge script lacks %s:\n%s", w, s0)
+		}
+	}
+	if strings.Index(s0, "'view'") > strings.Index(s0, "'merge'") {
+		t.Fatalf("head checked after the merge:\n%s", s0)
 	}
 	d = Decide("Bash", bash(`git commit -m "it's done"`), dev, gs, now, false)
 	s := lastWord(t, d.Command)
@@ -250,7 +414,7 @@ func TestOwnWorktreeAndBranch(t *testing.T) {
 	if d := Decide("Bash", bash("gh pr merge feat/73-x --squash -d"), shared, every, now, false); d.Verdict != "" {
 		t.Fatalf("shared branch merge+delete: %+v", d)
 	}
-	if d := Decide("Bash", bash("git push origin feat/73-x"), shared, every, now, false); d.Verdict != "" {
+	if d := Decide("Bash", bash("git push origin feat/73-x"), shared, every, now, false); d.Verdict != Deny {
 		t.Fatalf("shared branch push: %+v", d)
 	}
 	for _, tc := range []struct {

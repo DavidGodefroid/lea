@@ -53,7 +53,7 @@ EOT
   [ "$output" = "claude [--settings] [$LEA_CLAUDE_SETTINGS]" ]
 }
 
-# lea's plugin (its skills, /lea:tower-control) loads for the session only, from the image.
+# lea's plugin (its skills, /lea:control-tower) loads for the session only, from the image.
 @test "the session loads lea's Claude plugin when the image has it" {
   export LEA_CLAUDE_PLUGIN="$BATS_TEST_TMPDIR/claude-plugin"; mkdir -p "$LEA_CLAUDE_PLUGIN"
   export LEA_CLAUDE_SETTINGS="$BATS_TEST_TMPDIR/claude-settings.json"; echo '{}' >"$LEA_CLAUDE_SETTINGS"

@@ -66,11 +66,15 @@ func Words(cmd string) ([]string, bool) {
 }
 
 var (
-	adminRe  = regexp.MustCompile(`\bgh\b[\s\S]*\bmerge\b[\s\S]*--admin\b`)
-	pushRe   = regexp.MustCompile(`\bgit\b[\s\S]*\bpush\b`)
-	forceRe  = regexp.MustCompile(`\s(--force(-with-lease|-if-includes)?|--mirror|--prune|-[A-Za-z]*f[A-Za-z]*)(\s|=|$)|\s\+\S`)
-	toMainRe = regexp.MustCompile(`[\s:](refs/heads/)?(main|master)(\s|$|[;&|)])`)
-	deleteRe = regexp.MustCompile(`\s(--delete|-[A-Za-z]*d[A-Za-z]*)(\s|=|$)|\s:\S`)
+	adminRe = regexp.MustCompile(`\bgh\b[\s\S]*\bmerge\b[\s\S]*--admin\b`)
+	pushRe  = regexp.MustCompile(`\bgit\b[\s\S]*\bpush\b`)
+	// gitEnvRe: assigning a variable that hands git another configuration, repository or program,
+	// in a command lea cannot split.
+	gitEnvRe = regexp.MustCompile(`\b(GIT_\w+|HOME|XDG_CONFIG_HOME)\s*=`)
+	// gitOptRe: a git option before the subcommand, in a command lea cannot split.
+	gitOptRe = regexp.MustCompile(`\bgit\s+-`)
+	// pushWordRe: words that name a push or a git transport that writes remote refs.
+	pushWordRe = regexp.MustCompile(`\b(push|send-pack|http-push|remote-\w+)\b`)
 	// gitSub matches a git subcommand after git's own options (git -C x -c y=z config ...).
 	gitConfigRe  = regexp.MustCompile(`\bgit(\s+-\S+(\s+[^-\s]\S*)?)*\s+config\b`)
 	gitRemoteRe  = regexp.MustCompile(`\bgit(\s+-\S+(\s+[^-\s]\S*)?)*\s+remote\s+(set-url|add|rename|remove|rm|set-head|set-branches)\b`)
@@ -91,10 +95,14 @@ var (
 // hardBash returns why a shell command is a hard deny, or "". It looks at the raw text with its
 // quotes removed, so it holds for chained and quoted commands the parser rejects.
 func hardBash(cmd string, c Caller) string {
+	if lit, ok := literalHeredocs(cmd); ok {
+		cmd = lit
+	}
 	raw := cmd
 	cmd = unquote.Replace(cmd)
 	if _, ok := Words(raw); !ok && obfuscatedRe.MatchString(raw) && sensitiveRe.MatchString(cmd) {
-		return "a command with escapes or expansions that touches git, gh or protected files is never allowed: run it plainly"
+		return "a command with escapes or expansions that touches git, gh or protected files is never allowed: run it plainly " +
+			"(a message: git commit -m \"$(cat <<'EOF' … EOF)\", gh pr create --body-file <file> or git commit -F <file>)"
 	}
 	if adminRe.MatchString(cmd) {
 		return "gh pr merge --admin bypasses branch protection"
@@ -113,27 +121,7 @@ func hardBash(cmd string, c Caller) string {
 	if ghEnvRe.MatchString(cmd) {
 		return "pointing gh at another repository or host is never allowed"
 	}
-	if !pushRe.MatchString(cmd) {
-		return ""
-	}
-	if forceRe.MatchString(cmd) {
-		return "force-push (or a push that rewrites or prunes remote branches) is never allowed"
-	}
-	if toMainRe.MatchString(cmd) {
-		return "pushing to the default branch is never allowed"
-	}
-	if deleteRe.MatchString(cmd) {
-		w, ok := Words(raw)
-		if !ok {
-			return "deleting a remote branch in a compound command is never allowed"
-		}
-		for _, b := range pushDeletes(w) {
-			if c.Branch == "" || b != c.Branch || Protected(b) {
-				return "deleting a branch that is not the agent's own is never allowed"
-			}
-		}
-	}
-	return ""
+	return hardGit(raw, cmd, c)
 }
 
 // gitConfigRead says whether cmd is one plain "git config" that only reads: --get, --get-all or
@@ -166,38 +154,6 @@ func gitConfigRead(cmd string) bool {
 		return pos == 0
 	}
 	return false
-}
-
-// pushDeletes returns the branches a git push deletes ("git push origin --delete b", ":b").
-func pushDeletes(w []string) []string {
-	if len(w) < 2 || w[0] != "git" || w[1] != "push" {
-		return []string{""} // a push we cannot read deletes something unknown: never own
-	}
-	var pos, out []string
-	del := false
-	for _, x := range w[2:] {
-		switch {
-		case x == "--delete" || x == "-d":
-			del = true
-		case strings.HasPrefix(x, "-"):
-			if strings.Contains(strings.TrimLeft(x, "-"), "d") && !strings.HasPrefix(x, "--") {
-				del = true
-			}
-		default:
-			pos = append(pos, x)
-		}
-	}
-	for i, p := range pos {
-		if strings.HasPrefix(p, ":") {
-			out = append(out, p[1:])
-		} else if del && i > 0 {
-			out = append(out, p)
-		}
-	}
-	if del && len(pos) < 2 {
-		out = append(out, "")
-	}
-	return out
 }
 
 // bashRequest recognises a command a grant can cover. Every word must be one the matcher knows:
@@ -241,9 +197,11 @@ func number(s string) bool {
 
 // ghMerge: gh pr merge <number>|<own branch> [--squash|--merge|--rebase] [--delete-branch].
 // No --repo from the agent: lea pins it to the grant's repository (Command). The PR is named:
-// with -R, gh has no worktree branch to fall back on. --delete-branch deletes the PR's head
-// branch: it is accepted only when the PR is named by the caller's own branch (not a number),
-// never a protected one.
+// with -R, gh has no worktree branch to fall back on. Either way the PR merged is the caller's
+// own: the PR is merged only after gh says its head is the caller's branch, in the grant's
+// repository (Command), the branch the grant's glob matched.
+// --delete-branch deletes the PR's head branch: it is accepted only when the PR is named by the
+// caller's own branch (not a number), never a protected one.
 func ghMerge(args []string, c Caller) (Request, bool) {
 	target := ""
 	method, del, own := false, false, false
@@ -269,7 +227,7 @@ func ghMerge(args []string, c Caller) (Request, bool) {
 			}
 		}
 	}
-	if target == "" || (del && !own) {
+	if target == "" || (del && !own) || c.Branch == "" || !BranchName(c.Branch) || Protected(c.Branch) {
 		return Request{}, false
 	}
 	return Request{Action: Merge, Target: target}, true
@@ -358,4 +316,124 @@ func gitPush(args []string, c Caller) (Request, bool) {
 		return Request{Action: DeleteOwnBranch, Target: pos[1]}, true
 	}
 	return Request{Action: CommitIdentity, Target: "push " + pos[1]}, true
+}
+
+// heredocText stands, in the command hardBash judges, for the text of a quoted heredoc.
+const heredocText = "LEA_HEREDOC_TEXT"
+
+// heredocOpenRe: "$(cat <<'EOF' (or <<"EOF", <<-) and its newline, at the start of a double
+// quoted word.
+var heredocOpenRe = regexp.MustCompile(`^"\$\(cat <<(-?)(?:'(\w+)'|"(\w+)")\n`)
+
+// heredocCloseRe: what may follow the delimiter line: the substitution's end and the word's.
+var heredocCloseRe = regexp.MustCompile(`^[ \t\n]*\)"`)
+
+// textFlags are the flags whose value git commit or gh pr|issue only store as text.
+var textFlags = map[string]bool{"-m": true, "--message": true, "--body": true, "-b": true, "--title": true, "-t": true,
+	"--comment": true, "-c": true, "--subject": true}
+
+// literalHeredocs rewrites cmd for hardBash when its only expansions are messages written the
+// way Claude writes them: git commit -m "$(cat <<'EOF' … EOF)", gh pr create --body "$(…)". A
+// heredoc with a quoted delimiter expands nothing, so its text is the message, never a command:
+// each such word becomes heredocText. ok is false, and cmd is to be judged as it is, unless
+// every heredoc is the value of a text flag of git commit or gh pr|issue, in a command of plain
+// git, gh and cd words (&& alone between them): no other program could read the text as a
+// script, and none could redefine cat.
+func literalHeredocs(cmd string) (string, bool) {
+	var b strings.Builder
+	n := 0
+	for i := 0; i < len(cmd); i++ {
+		switch ch := cmd[i]; ch {
+		case '\\':
+			if i+1 < len(cmd) {
+				b.WriteByte(ch)
+				i++
+			}
+		case '\'':
+			j := strings.IndexByte(cmd[i+1:], '\'')
+			if j < 0 {
+				return "", false
+			}
+			b.WriteString(cmd[i : i+j+2])
+			i += j + 1
+			continue
+		case '"':
+			if m := heredocOpenRe.FindStringSubmatch(cmd[i:]); m != nil {
+				end, ok := heredocEnd(cmd[i+len(m[0]):], m[2]+m[3], m[1] == "-")
+				if !ok {
+					return "", false
+				}
+				b.WriteString(heredocText)
+				n++
+				i += len(m[0]) + end - 1
+				continue
+			}
+			j := i + 1
+			for ; j < len(cmd) && cmd[j] != '"'; j++ {
+				if cmd[j] == '\\' {
+					j++
+				}
+			}
+			if j >= len(cmd) {
+				return "", false
+			}
+			b.WriteString(cmd[i : j+1])
+			i = j
+			continue
+		}
+		if i < len(cmd) {
+			b.WriteByte(cmd[i])
+		}
+	}
+	out := b.String()
+	if n == 0 || strings.Count(out, heredocText) != n {
+		return "", false
+	}
+	texts := 0
+	for _, part := range strings.Split(out, "&&") {
+		w, ok := Words(strings.TrimSpace(part))
+		if !ok || (w[0] != "git" && w[0] != "gh" && w[0] != "cd") {
+			return "", false
+		}
+		msg := (w[0] == "git" && len(w) > 1 && w[1] == "commit") ||
+			(w[0] == "gh" && len(w) > 2 && (w[1] == "pr" || w[1] == "issue"))
+		for k, x := range w {
+			if x == heredocText && msg && k > 0 && textFlags[w[k-1]] {
+				texts++
+			}
+		}
+	}
+	if texts != n {
+		return "", false
+	}
+	return out, true
+}
+
+// heredocEnd returns the length of s, the text after a heredoc's first line, up to the end of
+// the substitution that holds it: the body, the delimiter line, then ) and the closing quote.
+func heredocEnd(s, delim string, tabs bool) (int, bool) {
+	for at := 0; at < len(s); {
+		nl := strings.IndexByte(s[at:], '\n')
+		if nl < 0 {
+			return 0, false
+		}
+		line := s[at : at+nl]
+		if tabs {
+			line = strings.TrimLeft(line, "\t")
+		}
+		at += nl + 1
+		// bash also ends a heredoc inside $(…) on "EOF)" or "EOF )": a line that only starts
+		// with the delimiter is read as the shell may read it, so not at all.
+		if line != delim && strings.HasPrefix(strings.TrimLeft(line, " \t"), delim) {
+			return 0, false
+		}
+		if line == delim {
+			m := heredocCloseRe.FindString(s[at:])
+			if m == "" {
+				return 0, false
+			}
+			return at + len(m), true
+		}
+	}
+	return 0, false
 }

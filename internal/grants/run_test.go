@@ -222,3 +222,32 @@ func lastWord(t *testing.T, outer string) string {
 	}
 	return string(out)
 }
+
+// TestPinnedMergeChecksThePRHead runs the numbered-merge script against a fake gh: the merge runs
+// only when gh says PR 42's head is the caller's branch, in the grant's repository.
+func TestPinnedMergeChecksThePRHead(t *testing.T) {
+	needTools(t)
+	d := Decide("Bash", bash("gh pr merge 42 --squash"), dev, []Grant{all(Merge)}, now, false)
+	if d.Verdict != Allow {
+		t.Fatalf("merge: %+v", d)
+	}
+	for _, tc := range []struct {
+		head   string
+		merged bool
+	}{{"false feat/73-x", true}, {"false feat/other", false}, {"true feat/73-x", false}, {"", false}} {
+		dir := t.TempDir()
+		fake := filepath.Join(dir, "gh")
+		log := filepath.Join(dir, "log")
+		body := "#!/bin/sh\necho \"$*\" >> " + log + "\nif [ \"$2\" = view ]; then printf '%s\\n' '" + tc.head + "'; fi\n"
+		if err := os.WriteFile(fake, []byte(body), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		script := strings.ReplaceAll(lastWord(t, d.Command), "'"+ghPath+"'", "'"+fake+"'")
+		out, err := exec.Command(shPath, "-c", script).CombinedOutput()
+		got, _ := os.ReadFile(log)
+		merged := strings.Contains(string(got), "pr merge 42 --squash -R github.com/o/lea")
+		if merged != tc.merged || (err == nil) != tc.merged {
+			t.Fatalf("head %q: merged %v, err %v, out %s, calls %s", tc.head, merged, err, out, got)
+		}
+	}
+}

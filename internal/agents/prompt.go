@@ -15,7 +15,11 @@ import (
 // repo, when set, is the repository's directory: the agent starts in the projects directory.
 func firstPrompt(a store.Agent, repo, worktree string, brief bool) string {
 	var b strings.Builder
-	fmt.Fprintf(&b, "You are the lea agent %s (role %s).", a.Name, a.Role)
+	fmt.Fprintf(&b, "You are the lea agent %s (role %s)", a.Name, a.Role)
+	if l, err := CheckLabel(a.Label); err == nil && l != "" && l == a.Label {
+		fmt.Fprintf(&b, ", shown to the user as %q", l)
+	}
+	b.WriteString(".")
 	if brief {
 		b.WriteString(" Your brief is waiting: read it now with the msg_inbox tool, then work on it.")
 	}
@@ -36,6 +40,9 @@ func firstPrompt(a store.Agent, repo, worktree string, brief bool) string {
 	}
 	b.WriteString(" Report progress with task_update: set next while something is still to happen (CI, a review, a reply)," +
 		" blocked_on when a human must act, and clear both once your work is done.")
+	// The deck shows an agent's label, the user may rename it at any time (#84).
+	b.WriteString(" When you mention an agent in text the user reads (task_update, results your lead relays), use its label from agents_list" +
+		" when it has one, looked up fresh since the user may rename it; address tools by name, never by label.")
 	if a.Parent != "" {
 		// The lead that started the agent waits for its answer: task_update alone reaches the
 		// board, never the lead's inbox.

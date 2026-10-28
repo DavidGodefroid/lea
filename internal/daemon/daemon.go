@@ -360,7 +360,8 @@ func (d *Daemon) dispatch(ctx context.Context, o Origin, req wire.Request) (any,
 type agentView struct {
 	Key  string `json:"key"`
 	Name string `json:"name"`
-	// Label is the user's display name for the agent: the host API's list only.
+	// Label is the user's display name for the agent: the host sees every one, an agent those
+	// of its own container (agentLabel).
 	Label   string `json:"label,omitempty"`
 	State   string `json:"state"`
 	Updated int64  `json:"updated"`
@@ -414,9 +415,7 @@ func (d *Daemon) agentsList(o Origin, me string) ([]agentView, error) {
 		}
 		if a.Profile != "" {
 			v.Role, v.Profile, v.Model, v.Repo, v.Branch = a.Role, a.Profile, a.Model, a.Repo, a.Branch
-			if o.Container == "" {
-				v.Label = a.Label
-			}
+			v.Label = agentLabel(a, o.Container)
 			if a.Parent != "" {
 				v.Parent = shortName(a.Parent)
 			}
@@ -578,7 +577,7 @@ func (d *Daemon) take(me string) (batch, error) {
 	ids := make([]int64, 0, len(ms))
 	size := 0
 	for _, m := range ms {
-		v := deliveredView{m.ID, m.From, m.Kind, m.Thread, bus.Wrap(m)}
+		v := deliveredView{m.ID, m.From, m.Kind, m.Thread, bus.Wrap(m, d.senderLabel(m.From, me))}
 		b, err := json.Marshal(v)
 		if err != nil {
 			return batch{}, err
@@ -668,7 +667,11 @@ func (d *Daemon) unreadNotice(me string) (map[string]any, error) {
 	for _, m := range ms {
 		if !seen[m.From] {
 			seen[m.From] = true
-			from = append(from, m.From)
+			f := m.From
+			if l := d.senderLabel(m.From, me); l != "" {
+				f += fmt.Sprintf(" (shown to the user as %q)", l)
+			}
+			from = append(from, f)
 		}
 	}
 	text := fmt.Sprintf("lea: %d unread message(s) from %s. Read them with the msg_inbox tool.",

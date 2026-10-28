@@ -1,5 +1,5 @@
 {
-  "description": "tower-control delegates: once /lea:tower-control runs, the session keeps only the team's tools.",
+  "description": "control-tower delegates: once /lea:control-tower runs, the session keeps only the team's tools.",
   "hooks": {
     "UserPromptSubmit": [
       { "hooks": [ { "type": "command", "command": "sh \"${CLAUDE_PLUGIN_ROOT}/hooks/tower-guard\" prompt" } ] }
