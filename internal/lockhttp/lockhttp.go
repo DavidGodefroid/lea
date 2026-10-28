@@ -1,6 +1,6 @@
 // Package lockhttp is lea's side of LockHTTP, the Lock Family proxy that decides each outbound
 // HTTP request of the agents (contract: https://github.com/DavidGodefroid/lockhttp/blob/main/docs/lea.md,
-// version 1). lea runs the gate in its proxy container and tells it who calls: sources.json maps
+// version 1). lea runs the gate in the proxy's network namespace and tells it who calls: sources.json maps
 // the proxy's address on each internal network to a lea container, and the hash of each proxy
 // token to the agent it was given to. Tokens are derived from a host key that never leaves the
 // host's lea data directory: the launcher (container env) and the daemon (agents, sources.json)
@@ -32,7 +32,7 @@ import (
 // Version is the contract version lea writes and reads.
 const Version = 1
 
-// Port is the gate's port in the proxy container; squid stays on 127.0.0.1:3128 behind it.
+// Port is the gate's port in the proxy's network namespace; squid stays on 127.0.0.1:3128 behind it.
 const Port = "3130"
 
 // Agent names that are not lea agents: the user's shells and anything else started in a lea
@@ -47,7 +47,7 @@ const (
 // (audit/) and its status (status/).
 func Dir(dataDir string) string { return filepath.Join(dataDir, "lockhttp") }
 
-// GateDir holds sources.json and credentials.json, mounted read-only in the proxy container at
+// GateDir holds sources.json and credentials.json, mounted read-only in the gate and proxy containers at
 // /etc/lockhttp-gate. A directory, not the files: lea replaces them by rename, which a file bind
 // mount would not see.
 func GateDir(dataDir string) string { return filepath.Join(Dir(dataDir), "gate") }

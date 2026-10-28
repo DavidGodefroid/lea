@@ -171,6 +171,10 @@ func bashRequest(w []string, c Caller) (Request, bool) {
 		r, ok = ghMerge(w[3:], c)
 	case len(w) >= 3 && w[0] == "gh" && w[1] == "pr" && w[2] == "create":
 		r, ok = ghPRCreate(w[3:], c)
+	case len(w) >= 3 && w[0] == "glab" && w[1] == "mr" && w[2] == "create":
+		r, ok = glabMRCreate(w[3:], c)
+	case len(w) >= 3 && w[0] == "glab" && w[1] == "mr" && w[2] == "merge":
+		r, ok = glabMRMerge(w[3:], c)
 	case len(w) >= 3 && w[0] == "gh" && w[1] == "issue":
 		r, ok = ghIssue(w[2:])
 	case len(w) >= 2 && w[0] == "git" && w[1] == "commit":
@@ -306,6 +310,89 @@ func ghPRCreate(args []string, c Caller) (Request, bool) {
 		return Request{}, false
 	}
 	return Request{Action: PRCreate, Target: "pr create " + head}, true
+}
+
+// glabMRCreate: glab mr create --source-branch <own branch> --title T [--description D]
+// [--target-branch B] [--draft] [--remove-source-branch] [--yes]. The source branch is named and
+// the caller's own; no --repo/--head (lea pins it), --fill, --push, --web, editor or reviewers.
+func glabMRCreate(args []string, c Caller) (Request, bool) {
+	seen := map[string]bool{}
+	src := ""
+	for i := 0; i < len(args); i++ {
+		a := args[i]
+		switch a {
+		case "--draft", "--remove-source-branch":
+		case "-y", "--yes":
+			a = "--yes"
+		case "-s", "--source-branch", "-b", "--target-branch", "-t", "--title", "-d", "--description":
+			if i+1 >= len(args) {
+				return Request{}, false
+			}
+			v := args[i+1]
+			i++
+			switch a {
+			case "-s", "--source-branch":
+				a, src = "--source-branch", v
+			case "-b", "--target-branch":
+				a = "--target-branch"
+				if !BranchName(v) {
+					return Request{}, false
+				}
+			case "-t", "--title":
+				a = "--title"
+			default:
+				a = "--description"
+				if v == "-" {
+					return Request{}, false
+				}
+			}
+		default:
+			return Request{}, false
+		}
+		if seen[a] {
+			return Request{}, false
+		}
+		seen[a] = true
+	}
+	if !seen["--title"] || src == "" || src != c.Branch || !BranchName(src) || Protected(src) {
+		return Request{}, false
+	}
+	return Request{Action: PRCreate, Target: "mr create " + src}, true
+}
+
+// glabMRMerge: glab mr merge <number>|<own branch> [--squash] [--remove-source-branch] [--yes],
+// as ghMerge (--rebase, a rebase then a merge, is not covered): the MR is named, its source must be the caller's branch (Command checks a
+// numbered one), and --remove-source-branch only when it is named by that branch.
+func glabMRMerge(args []string, c Caller) (Request, bool) {
+	target := ""
+	method, del, own := false, false, false
+	for i, a := range args {
+		switch a {
+		case "--squash", "-s":
+			if method {
+				return Request{}, false
+			}
+			method = true
+		case "--remove-source-branch", "-d":
+			del = true
+		case "--yes", "-y":
+		default:
+			switch {
+			case i != 0:
+				return Request{}, false
+			case number(a):
+				target = "mr " + a
+			case c.Branch != "" && a == c.Branch && BranchName(a) && !Protected(a):
+				target, own = "mr of "+a, true
+			default:
+				return Request{}, false
+			}
+		}
+	}
+	if target == "" || (del && !own) || c.Branch == "" || !BranchName(c.Branch) || Protected(c.Branch) {
+		return Request{}, false
+	}
+	return Request{Action: Merge, Target: target}, true
 }
 
 var bodyFileRe = regexp.MustCompile(`^[A-Za-z0-9_][A-Za-z0-9._/-]{0,255}$`)

@@ -69,6 +69,21 @@ lea_doctor() {
   done
   if [ "$_dnets" -eq 0 ]; then lea__ok "internal networks: none (each lea creates its own at start)"; fi
 
+  # The running lea containers' CPU and memory limits (#132): one started by an older lea, or
+  # before a limit changed, gets them at the next lea in its projects directory.
+  for _dctr in $(docker ps --filter "label=lea.prefix=$LEA_PREFIX" --filter label=lea.role=session --format '{{.Names}}' 2>/dev/null || true); do
+    _dlim=$(docker inspect --format '{{.HostConfig.NanoCpus}} {{.HostConfig.Memory}}' "$_dctr" 2>/dev/null || true)
+    case $_dlim in *[!0-9\ ]*|'') continue ;; esac
+    _dcpu=${_dlim%% *}; _dmem=${_dlim#* }; _dmiss=
+    if [ "$_dcpu" = 0 ] && [ "${LEA_CPUS:-75%}" != 0 ]; then _dmiss="CPU"; fi
+    if [ "$_dmem" = 0 ] && [ "${LEA_MEMORY:-50%}" != 0 ]; then _dmiss="${_dmiss:+$_dmiss and }memory"; fi
+    if [ -n "$_dmiss" ]; then
+      lea__warn "$_dctr limits" "no $_dmiss limit: run lea in its projects directory to apply LEA_CPUS and LEA_MEMORY"
+    else
+      lea__ok "$_dctr limits: $(awk -v c="$_dcpu" -v m="$_dmem" 'BEGIN { printf "%s CPUs, %s MiB", (c ? c / 1e9 : "no limit on"), (m ? int(m / 1048576) : "no limit on") }')"
+    fi
+  done
+
   # The domains the proxy always allows: EGRESS_ALWAYS of proxy/render-squid-conf.sh.
   if [ "${LEA_LOCKHTTP:-0}" = 1 ]; then
     lea__ok "egress: the LockHTTP gate decides (its policy's trusted reads replace LEA_EGRESS_ALLOW: lockhttp init --trusted)"

@@ -49,8 +49,10 @@ type Daemon struct {
 	runDir   string
 	mu       sync.Mutex
 	attached map[string]string
-	notify   map[string]chan struct{}
-	verdicts map[int64]chan string
+	// grantProxy names the proxy of an agent's pinned calls (SetGrantProxy); nil: grants.LeaProxy.
+	grantProxy func(container, agent string) string
+	notify     map[string]chan struct{}
+	verdicts   map[int64]chan string
 	// asks: the asks in flight, by asker (one each); in memory, a restart ends them.
 	asks map[string]pendingAsk
 

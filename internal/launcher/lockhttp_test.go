@@ -9,25 +9,37 @@ import (
 	"github.com/DavidGodefroid/lea/internal/lockhttp"
 )
 
-// lockHTTPWorld adds what sudo lockhttp install leaves to lockHostWorld: a root-owned
-// /usr/local/bin/lockhttp, /run/lockhttp and the lockhttp-clients group (gid 4300) with the user.
+// testDigest is the image digest the fake launcher pins.
+const testDigest = "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+
+// fakeLockHTTPLauncher is the head of lockhttp's launcher (scripts/lockhttp) as install.sh writes it.
+func fakeLockHTTPLauncher(version, digest string) string {
+	return "#!/bin/sh\n# lockhttp: the launcher.\nset -eu\n\nlauncher_version=" + version + "\nimage_digest=" + digest +
+		"\n\nrepo=\"DavidGodefroid/lockhttp\"\nregistry=\"ghcr.io/davidgodefroid/lockhttp\"\n"
+}
+
+// lockHTTPWorld adds what lockhttp's install.sh leaves to lockHostWorld: its launcher, root-owned
+// in /usr/local/bin, pinning testDigest.
 func lockHTTPWorld(t *testing.T) (*world, string) {
 	t.Helper()
 	root := lockHostWorld(t)
-	if err := os.WriteFile(root+"/usr/local/bin/lockhttp", []byte("#!/bin/sh\n"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.MkdirAll(root+"/run/lockhttp", 0o2710); err != nil {
+	if err := os.WriteFile(root+"/usr/local/bin/lockhttp", []byte(fakeLockHTTPLauncher("0.2.0", testDigest)), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	w := newWorld(t, repoRoot(t))
-	g, _ := os.ReadFile(root + "/etc/group")
-	user := w.launcher().userName()
-	if err := os.WriteFile(root+"/etc/group", append(g, []byte("lockhttp-clients:x:4300:"+user+"\n")...), 0o644); err != nil {
-		t.Fatal(err)
-	}
 	writeUserConf(t, w, "LEA_LOCKHTTP=1\n")
 	return w, root
+}
+
+// gateRuns are the docker run calls of the gate container.
+func gateRuns(w *world) []string {
+	var r []string
+	for _, c := range w.calls() {
+		if strings.HasPrefix(c, "docker [run]") && strings.Contains(c, "[lea-lockhttp-gate]") {
+			r = append(r, c)
+		}
+	}
+	return r
 }
 
 func TestLockHTTPOffByDefault(t *testing.T) {
@@ -45,8 +57,11 @@ func TestLockHTTPOffByDefault(t *testing.T) {
 	}
 }
 
+// The proxy keeps squid and keyproxy; the gate runs beside it, from the launcher's pinned image,
+// in the proxy's network namespace, as gate, with the console's socket volume and nothing else
+// of the console's.
 func TestLockHTTPProxyGetsTheGate(t *testing.T) {
-	w, root := lockHTTPWorld(t)
+	w, _ := lockHTTPWorld(t)
 	if err := w.launcher().ensureProxy(w.proj); err != nil {
 		t.Fatal(err)
 	}
@@ -55,38 +70,164 @@ func TestLockHTTPProxyGetsTheGate(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	var proxy string
+	for _, c := range w.calls() {
+		if strings.HasPrefix(c, "docker [run]") && strings.Contains(c, "[lea-proxy]") {
+			proxy = c
+		}
+	}
 	for _, want := range []string{
 		"[--label] [lea.lockhttp=1]",
 		"[LEA_LOCKHTTP=1]",
 		"[LEA_KEYPROXY_TOKEN=" + lockhttp.KeyproxyToken(key) + "]",
-		"[type=bind,src=" + root + "/usr/local/bin/lockhttp,dst=/usr/local/bin/lockhttp,readonly]",
-		"[type=bind,src=" + root + "/run/lockhttp,dst=/run/lockhttp]",
 		"[type=bind,src=" + lockhttp.GateDir(data) + ",dst=/etc/lockhttp-gate,readonly]",
-		"[type=bind,src=" + lockhttp.AuditDir(data) + ",dst=/var/log/lockhttp]",
-		"[type=bind,src=" + lockhttp.StatusDir(data) + ",dst=/run/lockhttp-gate]",
-		"[--group-add] [4300]", "[LEA_LOCKHTTP_GID=4300]",
 	} {
-		if !w.hasCall(want) {
-			t.Errorf("proxy run lacks %s:\n%s", want, strings.Join(w.calls(), "\n"))
+		if !strings.Contains(proxy, want) {
+			t.Errorf("proxy run lacks %s:\n%s", want, proxy)
 		}
 	}
-	// A running proxy without the gate is replaced; one with it is kept.
+	for _, no := range []string{"/usr/local/bin/lockhttp", "/run/lockhttp", "--group-add", "LEA_LOCKHTTP_GID", "/var/log/lockhttp"} {
+		if strings.Contains(proxy, no) {
+			t.Errorf("proxy run has %s:\n%s", no, proxy)
+		}
+	}
+	runs := gateRuns(w)
+	if len(runs) != 1 {
+		t.Fatalf("gate runs: %d\n%s", len(runs), strings.Join(w.calls(), "\n"))
+	}
+	g := runs[0]
+	image := "ghcr.io/davidgodefroid/lockhttp@" + testDigest
+	for _, want := range []string{
+		"[--network] [container:lea-proxy]", "[--user] [gate]", "[--restart] [unless-stopped]",
+		"[--label] [lea.prefix=lea]", "[--label] [lea.role=lockhttp-gate]", "[--label] [lea.lockhttp-image=" + image + "]",
+		"[--cap-drop] [ALL]", "[--security-opt] [no-new-privileges]", "[--read-only]",
+		"[type=volume,src=lockhttp-run,dst=/run/lockhttp]",
+		"[type=bind,src=" + lockhttp.GateDir(data) + ",dst=/etc/lockhttp-gate,readonly]",
+		"[type=volume,src=lea-lockhttp-audit,dst=/var/log/lockhttp]",
+		"[type=bind,src=" + lockhttp.StatusDir(data) + ",dst=/run/lockhttp-gate]",
+		"[" + image + "] [gate] [--listen] [0.0.0.0:3130] [--upstream] [http://127.0.0.1:3128] [--profile] [default] " +
+			"[--sources] [/etc/lockhttp-gate/sources.json] [--audit-dir] [/var/log/lockhttp] [--status-file] [/run/lockhttp-gate/status.json]",
+	} {
+		if !strings.Contains(g, want) {
+			t.Errorf("gate run lacks %s:\n%s", want, g)
+		}
+	}
+	for _, no := range []string{"lockhttp-home", "docker.sock", "-p", "--publish"} {
+		if strings.Contains(g, "["+no) {
+			t.Errorf("gate run has %s:\n%s", no, g)
+		}
+	}
+	// The gate (uid 10003) writes its status where lea reads it.
+	if fi, err := os.Stat(lockhttp.StatusDir(data)); err != nil || fi.Mode().Perm() != 0o777 {
+		t.Errorf("status dir: %v %v", fi, err)
+	}
+}
+
+// The gate lives in the proxy's network namespace: a proxy started again (another network
+// namespace) or another pinned image replaces it; a running gate of this image, started after the
+// proxy, is kept.
+func TestLockHTTPGateFollowsTheProxy(t *testing.T) {
+	image := "ghcr.io/davidgodefroid/lockhttp@" + testDigest
+	for name, c := range map[string]struct {
+		inspect string
+		rc      string
+		replace bool
+	}{
+		"current":          {"true|2026-10-28T10:00:00.5Z|\ntrue|2026-10-28T10:00:01Z|" + image, "", false},
+		"podman times":     {"true|2026-10-28 10:00:00.5 +0000 UTC|\ntrue|2026-10-28 10:00:01 +0000 UTC|" + image, "", false},
+		"older than proxy": {"true|2026-10-28T10:00:02Z|\ntrue|2026-10-28T10:00:01Z|" + image, "", true},
+		"other image":      {"true|2026-10-28T10:00:00Z|\ntrue|2026-10-28T10:00:01Z|ghcr.io/davidgodefroid/lockhttp@sha256:ff", "", true},
+		"stopped":          {"true|2026-10-28T10:00:00Z|\nfalse|2026-10-28T10:00:01Z|" + image, "", true},
+		"absent":           {"true|2026-10-28T10:00:00Z|", "1", true},
+		"unreadable time":  {"true|soon|\ntrue|later|" + image, "", true},
+	} {
+		w, _ := lockHTTPWorld(t)
+		// The proxy runs with the gate's label: kept.
+		w.env["FAKE_DOCKER_OUT_INSPECT__F"] = "true"
+		w.env["FAKE_DOCKER_OUT_INSPECT___FORMAT"] = "@" + w.launcher().proxyRules() + "^1"
+		w.env["FAKE_DOCKER_OUT_INSPECT___TYPE"] = c.inspect
+		if c.rc != "" {
+			w.env["FAKE_DOCKER_RC_INSPECT___TYPE"] = c.rc
+		}
+		if err := w.launcher().ensureProxy(w.proj); err != nil {
+			t.Fatal(err)
+		}
+		if w.hasCall("[lea-proxy] [--network]") || w.hasCall("[--name] [lea-proxy]") {
+			t.Errorf("%s: the proxy was replaced", name)
+		}
+		if got := len(gateRuns(w)) == 1; got != c.replace {
+			t.Errorf("%s: gate replaced = %v:\n%s", name, got, strings.Join(w.calls(), "\n"))
+		}
+		if c.replace && !w.hasCall("docker [rm] [-f] [lea-lockhttp-gate]") {
+			t.Errorf("%s: the old gate was not removed", name)
+		}
+	}
+}
+
+// A proxy started again always gets a new gate: the old one is in the old network namespace.
+func TestLockHTTPNewProxyNewGate(t *testing.T) {
+	w, _ := lockHTTPWorld(t)
 	w.env["FAKE_DOCKER_OUT_INSPECT__F"] = "true"
 	w.env["FAKE_DOCKER_OUT_INSPECT___FORMAT"] = "@" + w.launcher().proxyRules()
-	before := len(w.calls())
+	w.env["FAKE_DOCKER_OUT_INSPECT___TYPE"] = "true|2026-10-28T10:00:00Z|\ntrue|2026-10-28T10:00:01Z|ghcr.io/davidgodefroid/lockhttp@" + testDigest
 	if err := w.launcher().ensureProxy(w.proj); err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(strings.Join(w.calls()[before:], "\n"), "docker [run]") {
-		t.Fatal("a proxy without the gate was kept")
+	if len(gateRuns(w)) != 1 || !w.hasCall("docker [rm] [-f] [lea-lockhttp-gate]") {
+		t.Fatalf("a new proxy kept the old gate:\n%s", strings.Join(w.calls(), "\n"))
 	}
+}
+
+// LockHTTP turned off: the proxy restarts without the gate, and the gate goes.
+func TestLockHTTPOffRemovesTheGate(t *testing.T) {
+	w := newWorld(t, repoRoot(t))
+	w.env["FAKE_DOCKER_OUT_INSPECT__F"] = "true"
 	w.env["FAKE_DOCKER_OUT_INSPECT___FORMAT"] = "@" + w.launcher().proxyRules() + "^1"
-	before = len(w.calls())
 	if err := w.launcher().ensureProxy(w.proj); err != nil {
 		t.Fatal(err)
 	}
-	if strings.Contains(strings.Join(w.calls()[before:], "\n"), "docker [run]") {
-		t.Fatal("a proxy with the gate was replaced")
+	if !w.hasCall("docker [rm] [-f] [lea-lockhttp-gate]") || len(gateRuns(w)) != 0 {
+		t.Fatalf("LockHTTP off:\n%s", strings.Join(w.calls(), "\n"))
+	}
+}
+
+// A launcher run from a clone runs the local image lockhttp, as the launcher itself does.
+func TestLockHTTPDevLauncherRunsTheLocalImage(t *testing.T) {
+	w, root := lockHTTPWorld(t)
+	if err := os.WriteFile(root+"/usr/local/bin/lockhttp", []byte(fakeLockHTTPLauncher("dev", "")), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := w.launcher().ensureProxy(w.proj); err != nil {
+		t.Fatal(err)
+	}
+	if r := gateRuns(w); len(r) != 1 || !strings.Contains(r[0], "[lea.lockhttp-image=lockhttp] ") || !strings.Contains(r[0], " [lockhttp] [gate] ") {
+		t.Fatalf("dev launcher:\n%s", strings.Join(r, "\n"))
+	}
+}
+
+func TestLockHTTPRefusesAnUnsetHost(t *testing.T) {
+	for what, undo := range map[string]func(root string){
+		"is absent":        func(r string) { os.Remove(r + "/usr/local/bin/lockhttp") },
+		"writable by root": func(r string) { os.Chmod(r+"/usr/local/bin/lockhttp", 0o777) },
+		"no image digest": func(r string) {
+			os.WriteFile(r+"/usr/local/bin/lockhttp", []byte(fakeLockHTTPLauncher("0.2.0", "")), 0o755)
+		},
+		"not lockhttp's launcher": func(r string) {
+			os.WriteFile(r+"/usr/local/bin/lockhttp", []byte("\x7fELF\x02\x01\x01 a v0.1.0 host binary"), 0o755)
+		},
+		"image digest": func(r string) {
+			os.WriteFile(r+"/usr/local/bin/lockhttp", []byte(fakeLockHTTPLauncher("0.2.0", "sha256:$(id)")), 0o755)
+		},
+	} {
+		w, root := lockHTTPWorld(t)
+		undo(root)
+		err := w.launcher().ensureProxy(w.proj)
+		if err == nil || !strings.Contains(err.Error(), strings.TrimSpace(what)) || !strings.Contains(err.Error(), "LEA_LOCKHTTP=1") {
+			t.Errorf("%s: err = %v", what, err)
+		}
+		if w.hasCall("docker [run]") {
+			t.Errorf("%s: a container was started", what)
+		}
 	}
 }
 
@@ -112,36 +253,6 @@ func TestLockHTTPAgentsGoThroughTheGate(t *testing.T) {
 	}
 	if strings.Contains(joined, "/run/lockhttp") {
 		t.Error("an agent container got the console's socket directory")
-	}
-}
-
-func TestLockHTTPRefusesAnUnsetHost(t *testing.T) {
-	for what, undo := range map[string]func(root string){
-		"is absent":        func(r string) { os.Remove(r + "/usr/local/bin/lockhttp") },
-		"/run/lockhttp":    func(r string) { os.Remove(r + "/run/lockhttp") },
-		"lockhttp-clients": func(r string) { os.WriteFile(r+"/etc/group", []byte("root:x:0:\n"), 0o644) },
-		"writable by root": func(r string) { os.Chmod(r+"/usr/local/bin/lockhttp", 0o777) },
-	} {
-		w, root := lockHTTPWorld(t)
-		undo(root)
-		err := w.launcher().ensureProxy(w.proj)
-		if err == nil || !strings.Contains(err.Error(), what) || !strings.Contains(err.Error(), "LEA_LOCKHTTP=1") {
-			t.Errorf("%s: err = %v", what, err)
-		}
-		if w.hasCall("docker [run]") {
-			t.Errorf("%s: a proxy was started", what)
-		}
-	}
-}
-
-func TestLockHTTPRootlessPodmanKeepsGroups(t *testing.T) {
-	w, _ := lockHTTPWorld(t)
-	w.env[engineFormat] = "Podman Engine=5.8.9"
-	if err := w.launcher().ensureProxy(w.proj); err != nil {
-		t.Fatal(err)
-	}
-	if !w.hasCall("[--group-add] [keep-groups]") || w.hasCall("LEA_LOCKHTTP_GID") {
-		t.Fatalf("rootless Podman:\n%s", strings.Join(w.calls(), "\n"))
 	}
 }
 

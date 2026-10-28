@@ -182,11 +182,11 @@ func TestDelivery(t *testing.T) {
 		}
 	}
 	on := map[string]any{"container": "lea-a", "on": true, "repos": []map[string]string{{"repo": "fixture", "github": "o/fixture"},
-		{"repo": "other", "github": "github.com/o/other"}}}
+		{"repo": "other", "github": "github.com/o/other"}, {"repo": "gl", "github": "gitlab:gitlab.example.com/g/sub/gl"}}}
 	if err := call(api, "", "delivery_set", on, &r); err != nil {
 		t.Fatal(err)
 	}
-	if len(r.Grants) != 8 || r.Grants[0].Expires != 1<<62 || r.Grants[0].GitHub != "github.com/o/fixture" {
+	if len(r.Grants) != 12 || r.Grants[8].GitHub != "gitlab:gitlab.example.com/g/sub/gl" || r.Grants[0].Expires != 1<<62 || r.Grants[0].GitHub != "github.com/o/fixture" {
 		t.Fatalf("delivery on: %+v", r)
 	}
 	for _, cmd := range []string{"git push -u origin feat/x", "gh pr create --head feat/x --base main --title t --body b",
@@ -204,6 +204,8 @@ func TestDelivery(t *testing.T) {
 	// Bad input changes nothing.
 	for _, bad := range []map[string]any{{"container": "lea-a", "on": true, "repos": []map[string]string{{"repo": "../x", "github": "o/x"}}},
 		{"container": "lea-a", "on": true, "repos": []map[string]string{{"repo": "x", "github": "gitlab.com/o/x"}}},
+		{"container": "lea-a", "on": true, "repos": []map[string]string{{"repo": "x", "github": "gitlab:gitlab.com/x"}}},
+		{"container": "lea-a", "on": true, "repos": []map[string]string{{"repo": "x", "github": "gitlab:evil host/o/x"}}},
 		{"container": "", "on": true}} {
 		if err := call(api, "", "delivery_set", bad, nil); err == nil {
 			t.Fatalf("accepted %v", bad)

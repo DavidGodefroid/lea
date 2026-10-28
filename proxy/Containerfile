@@ -13,7 +13,7 @@ RUN CGO_ENABLED=0 GOOS=linux GOARCH=${TARGETARCH} GOFLAGS=-mod=readonly \
     go build -trimpath -ldflags "-s -w" -o /out/lea-keyproxy ./cmd/lea-keyproxy
 
 FROM alpine:3.22
-RUN apk add --no-cache squid socat openssl setpriv \
+RUN apk add --no-cache squid socat openssl \
  && tpl=$(dirname "$(find /usr/share/squid/errors -name ERR_ACCESS_DENIED | head -n1)") \
  && mkdir -p /etc/squid/lea-errors /etc/lea \
  && cp "$tpl"/* /etc/squid/lea-errors/

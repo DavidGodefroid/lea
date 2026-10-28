@@ -55,8 +55,9 @@ type Grant struct {
 	ID                              int64
 	Container, Action, Repo, Branch string
 	Agent                           string
-	// GitHub is the repository gh acts on, github.com/OWNER/NAME: every gh call a grant allows
-	// is pinned to it with -R (merge and close-issue grants need one).
+	// GitHub is the forge repository the grant's calls are pinned to (its pin, ValidPin):
+	// github.com/OWNER/NAME, which gh acts on (-R), or, for a delivery grant on GitLab,
+	// gitlab:HOST/GROUP/.../NAME, which glab acts on (-R https://HOST/…). git pushes go to it.
 	GitHub                    string
 	Created, Expires, Revoked int64
 }
@@ -64,6 +65,56 @@ type Grant struct {
 // NeedsGitHub says whether a grant of action names its GitHub repository: every action but
 // stop-finished runs gh or git against it (gh -R, git push only to an origin that is it).
 func NeedsGitHub(action string) bool { return action != StopFinished }
+
+var (
+	githubPinRe  = regexp.MustCompile(`^github\.com/[A-Za-z0-9][A-Za-z0-9-]{0,38}/[A-Za-z0-9._-]{1,100}$`)
+	gitlabHostRe = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]{0,62}[a-z0-9])?(\.[a-z0-9]([a-z0-9-]{0,62}[a-z0-9])?)+$`)
+	gitlabSegRe  = regexp.MustCompile(`^[A-Za-z0-9_][A-Za-z0-9._-]{0,99}$`)
+)
+
+// ValidPin says whether pin is a forge repository a grant can be pinned to: github.com/OWNER/NAME,
+// or gitlab:HOST/GROUP/.../NAME (2 to 20 path segments, none . or .., the name not ending .git).
+func ValidPin(pin string) bool {
+	if githubPinRe.MatchString(pin) {
+		n := pin[strings.LastIndexByte(pin, '/')+1:]
+		return n != "." && n != ".."
+	}
+	host, path, ok := gitlabPin(pin)
+	return ok && host != "" && path != ""
+}
+
+// gitlabPin splits a GitLab pin into its host and project path.
+func gitlabPin(pin string) (host, path string, ok bool) {
+	rest, ok := strings.CutPrefix(pin, "gitlab:")
+	if !ok {
+		return "", "", false
+	}
+	host, path, ok = strings.Cut(rest, "/")
+	if !ok || !gitlabHostRe.MatchString(host) {
+		return "", "", false
+	}
+	segs := strings.Split(path, "/")
+	if len(segs) < 2 || len(segs) > 20 || strings.HasSuffix(path, ".git") {
+		return "", "", false
+	}
+	for _, x := range segs {
+		if !gitlabSegRe.MatchString(x) || x == "." || x == ".." {
+			return "", "", false
+		}
+	}
+	return host, path, true
+}
+
+// pinURL is the https URL of a pin's repository (without .git): where git pushes, and glab's -R.
+func pinURL(pin string) string {
+	if host, path, ok := gitlabPin(pin); ok {
+		return "https://" + host + "/" + path
+	}
+	if githubPinRe.MatchString(pin) {
+		return "https://" + pin
+	}
+	return ""
+}
 
 // IsStanding says whether g is a delivery grant (lea delivery on), with no expiry.
 func (g Grant) IsStanding() bool { return g.Expires == Standing }
@@ -91,11 +142,23 @@ type Caller struct {
 	// Env is the environment an allowed call runs with, and nothing else (env -i): the variables
 	// of SafeEnv, as the hook's own process (Claude's, not the agent's shell) has them.
 	Env map[string]string
+	// Proxy is the proxy every pinned call reaches the forge through, as lea set it up for the
+	// container (LeaProxy): the container's network is internal, and env -i drops the agent's
+	// HTTPS_PROXY, which lea would not vouch for anyway.
+	Proxy string
 }
+
+// LeaProxy is lea-proxy's forward proxy, as the containers of a lea reach it (the network alias
+// lea gives it on their internal network). CONNECT keeps TLS end to end.
+const LeaProxy = "http://lea-proxy:3128"
+
+// validProxy is a proxy lea names: a host and port, after an agent's LockHTTP proxy password
+// (its name and hex token) when the gate stands in front of squid (LEA_LOCKHTTP=1).
+var validProxy = regexp.MustCompile(`^http://([a-z][a-z0-9-]{0,23}:[0-9a-f]{32}@)?[A-Za-z0-9.-]{1,253}:[0-9]{1,5}$`)
 
 // SafeEnv are the variables an allowed git or gh call keeps, each checked by safeEnvValue.
 // Everything else (GIT_*, GH_REPO, GH_HOST, tokens, LD_*, BASH_ENV…) is dropped.
-var SafeEnv = []string{"HOME", "GH_CONFIG_DIR", "SSH_AUTH_SOCK", "LANG"}
+var SafeEnv = []string{"HOME", "GH_CONFIG_DIR", "SSH_AUTH_SOCK", "LANG", "GLAB_CONFIG_DIR"}
 
 var safeEnvValue = regexp.MustCompile(`^[A-Za-z0-9/._@:+-]{1,256}$`)
 
@@ -226,7 +289,7 @@ func Decide(tool string, input json.RawMessage, c Caller, gs []Grant, now int64,
 	d := Decision{Verdict: Allow, Grant: g.ID, Request: req,
 		Reason: fmt.Sprintf("lea grant #%d (%s) recorded by the user", g.ID, g.Action)}
 	switch req.Prog {
-	case "gh":
+	case "gh", "glab":
 		d.Request.Target = g.GitHub + " " + req.Target
 		d.Command = Command(req, c, g)
 	case "git":
@@ -241,23 +304,30 @@ func Decide(tool string, input json.RawMessage, c Caller, gs []Grant, now int64,
 
 // Programs of an allowed call: absolute paths, so no PATH, alias or function lookup.
 const (
-	gitPath = "/usr/bin/git"
-	ghPath  = "/usr/bin/gh"
-	envPath = "/usr/bin/env"
-	sshPath = "/usr/bin/ssh"
+	gitPath  = "/usr/bin/git"
+	ghPath   = "/usr/bin/gh"
+	glabPath = "/usr/bin/glab"
+	envPath  = "/usr/bin/env"
+	sshPath  = "/usr/bin/ssh"
 )
+
+// noConfigDir is the config dir of every pinned gh call: it never exists, and only root could
+// create it (/usr/local/share is root's, in the image and on a host). The agent's config dir
+// (GH_CONFIG_DIR, its to write) could send gh's requests to a server of its own
+// (http_unix_socket), run a pager or an alias.
+const noConfigDir = "/usr/local/share/lea/no-forge-config"
 
 // gitPins neutralise what in git's configuration would run a program or send the push elsewhere
 // during commit or push: hooks, fsmonitor, the SSH command, signing, pager, editor, askpass, and
-// every transport but https and ssh.
+// every transport but https and ssh. http.proxy is lea's (pins).
 var gitPins = []string{"core.hooksPath=/dev/null", "core.fsmonitor=false", "core.sshCommand=" + sshPath,
 	"commit.gpgSign=false", "core.pager=cat", "core.editor=true", "core.askPass=/bin/false",
 	"push.recurseSubmodules=no", "protocol.allow=never", "protocol.https.allow=always", "protocol.ssh.allow=always",
 	// An empty helper resets the list (the repository's too); then only lea's: the image's store
 	// and gh's.
 	"credential.helper=", "credential.helper=store --file=/lea/state/git/credentials",
-	"credential.helper=!/usr/bin/gh auth git-credential",
-	"http.sslVerify=true", "http.proxy=", "http.extraHeader=", "http.cookieFile=", "http.curloptResolve=",
+	"credential.helper=!/usr/bin/gh auth git-credential", "credential.helper=!/usr/bin/glab auth git-credential",
+	"http.sslVerify=true", "http.extraHeader=", "http.cookieFile=", "http.curloptResolve=",
 	"http.sslCAInfo=/etc/ssl/certs/ca-certificates.crt", "http.sslCAPath=/etc/ssl/certs"}
 
 // Command is the command an allowed Bash call runs instead of the agent's. Claude's shell only
@@ -267,6 +337,8 @@ var gitPins = []string{"core.hooksPath=/dev/null", "core.fsmonitor=false", "core
 // shell snapshot, and that would replace the call (README, grants: what they protect against).
 //
 //   - gh: the validated argv, pinned to the grant's repository with -R;
+//   - glab mr create|merge: calls on the GitLab project's API with curl, glab reading only the
+//     token (gitlabScript);
 //   - git commit: plumbing in the caller's worktree (write-tree, commit-tree, update-ref): no
 //     hook, filter, index refresh or signing runs, whatever the repository's config says;
 //   - git push: from a bare repository lea creates for the call (mktemp -d: random name, mode
@@ -278,14 +350,15 @@ var gitPins = []string{"core.hooksPath=/dev/null", "core.fsmonitor=false", "core
 //
 // Every word lea builds is single-quoted. "" when the call cannot be pinned.
 func Command(req Request, c Caller, g Grant) string {
-	if g.GitHub == "" {
+	if !ValidPin(g.GitHub) || !validProxy.MatchString(c.Proxy) {
 		return ""
 	}
+	_, _, gitlab := gitlabPin(g.GitHub)
 	// GIT_CONFIG_GLOBAL=/dev/null: ~/.gitconfig is the agent's to write (url.insteadOf,
 	// include.path, helpers); /etc/gitconfig is the image's.
 	// GIT_CONFIG_NOSYSTEM: lea's credential store comes in as a pin (gitPins), not from it.
 	env := []string{envPath, "-i", "PATH=/usr/bin:/bin", "GIT_CONFIG_GLOBAL=/dev/null", "GIT_CONFIG_NOSYSTEM=1", "GIT_TERMINAL_PROMPT=0",
-		"GIT_EDITOR=true", "GH_PROMPT_DISABLED=1"}
+		"GIT_EDITOR=true", "GH_PROMPT_DISABLED=1", "HTTPS_PROXY=" + c.Proxy, "https_proxy=" + c.Proxy}
 	for _, k := range SafeEnv {
 		if v, ok := c.Env[k]; ok {
 			if !safeEnvValue.MatchString(v) || (k != "LANG" && !strings.HasPrefix(v, "/")) {
@@ -297,6 +370,9 @@ func Command(req Request, c Caller, g Grant) string {
 	var script string
 	switch req.Prog {
 	case "gh":
+		if gitlab {
+			return ""
+		}
 		script = shellWords(append(append([]string{ghPath}, req.Args...), "-R", g.GitHub))
 		if req.Action == PRCreate {
 			script = prCreateScript(req.Args, c.Worktree, g.GitHub)
@@ -307,15 +383,24 @@ func Command(req Request, c Caller, g Grant) string {
 			}
 			script = prHeadCheck(req.Args[2], c.Branch, g.GitHub) + script
 		}
+		if script != "" {
+			script = ghIsolated() + script
+		}
+	case "glab":
+		host, path, ok := gitlabPin(g.GitHub)
+		if !ok {
+			return ""
+		}
+		script = gitlabScript(req, c, host, path)
 	case "git":
 		if !c.OwnWorktree || c.Worktree == "" {
 			return ""
 		}
 		switch req.Args[0] {
 		case "commit":
-			script = commitScript(req.Args[1:], c.Worktree)
+			script = commitScript(req.Args[1:], c.Worktree, c.Proxy)
 		case "push":
-			script = pushScript(req.Args, c.Worktree, g.GitHub)
+			script = pushScript(req.Args, c.Worktree, g.GitHub, c.Proxy)
 		}
 	}
 	if script == "" {
@@ -331,6 +416,16 @@ const (
 	mkdirPath  = "/bin/mkdir"
 	cpPath     = "/bin/cp"
 )
+
+// ghIsolated is the script lines that run the rest of a pinned gh call with the token of the
+// agent's gh config (GH_TOKEN) and none of the rest of it (GH_CONFIG_DIR=noConfigDir): gh then
+// talks to the forge itself, whatever the agent wrote in its config. gh auth token reads the
+// token only (no request, no alias: auth is gh's own command).
+func ghIsolated() string {
+	return "GH_TOKEN=$(" + shellWords([]string{ghPath, "auth", "token", "--hostname", "github.com"}) + " 2>/dev/null) || GH_TOKEN=\n" +
+		`[ -n "$GH_TOKEN" ] || { ` + refuse("no GitHub token in gh's config: gh auth login") + "; }\n" +
+		"export GH_TOKEN GH_CONFIG_DIR=" + shellWords([]string{noConfigDir}) + "\n"
+}
 
 // prHeadCheck is the script lines that end the call unless the PR n names (a number or a head
 // branch) has its head on branch, in the repository gh (not a fork's branch of the same name: gh
@@ -375,18 +470,18 @@ func prCreateScript(args []string, wt, gh string) string {
 		shellWords(append(argv, "-R", gh)) + " <&3"
 }
 
-// pins are lea's -c options for git.
-func pins() []string {
+// pins are lea's -c options for git, proxy (validProxy) its http.proxy.
+func pins(proxy string) []string {
 	var o []string
-	for _, p := range gitPins {
+	for _, p := range append(gitPins, "http.proxy="+proxy) {
 		o = append(o, "-c", p)
 	}
 	return o
 }
 
 // gitIn is git in dir with lea's pins.
-func gitIn(dir string) []string {
-	return append([]string{gitPath, "-C", dir}, pins()...)
+func gitIn(dir, proxy string) []string {
+	return append([]string{gitPath, "-C", dir}, pins(proxy)...)
 }
 
 // refuse is the script line that ends the call with lea's reason.
@@ -405,7 +500,7 @@ func configGuard(wt string) string {
 
 // commitScript commits the index with the messages of args (-m/--message; -q/--quiet) through
 // plumbing.
-func commitScript(args []string, wt string) string {
+func commitScript(args []string, wt, proxy string) string {
 	var msgs []string
 	for i := 0; i < len(args); i++ {
 		switch args[i] {
@@ -423,11 +518,11 @@ func commitScript(args []string, wt string) string {
 	if len(msgs) == 0 {
 		return ""
 	}
-	git := shellWords(gitIn(wt))
+	git := shellWords(gitIn(wt, proxy))
 	// write-tree runs on a copy of the index against an empty work tree: writing the index back
 	// re-checks racily clean entries against the work tree, through the clean filters.
 	isolated := shellWords([]string{envPath}) + ` GIT_INDEX_FILE="$tmp/index" ` + shellWords([]string{gitPath, "--git-dir"}) +
-		` "$gd" --work-tree "$tmp/w" ` + shellWords(pins())
+		` "$gd" --work-tree "$tmp/w" ` + shellWords(pins(proxy))
 	return configGuard(wt) +
 		"gd=$(" + git + " rev-parse --absolute-git-dir) || exit 1\n" +
 		"tmp=$(" + shellWords([]string{mktempPath, "-d"}) + ") || exit 1\n" +
@@ -442,13 +537,13 @@ func commitScript(args []string, wt string) string {
 
 // pushScript pushes the caller's branch (or deletes it) from a bare repository lea creates for
 // the call (pushArgs gives the URL and the ref).
-func pushScript(args []string, wt, gh string) string {
+func pushScript(args []string, wt, gh, proxy string) string {
 	pa := pushArgs(args, gh)
 	if pa == nil {
 		return ""
 	}
-	git := shellWords(gitIn(wt))
-	bare := shellWords([]string{gitPath, "--git-dir"}) + ` "$tmp" ` + shellWords(pins())
+	git := shellWords(gitIn(wt, proxy))
+	bare := shellWords([]string{gitPath, "--git-dir"}) + ` "$tmp" ` + shellWords(pins(proxy))
 	s := configGuard(wt) +
 		"common=$(" + git + " rev-parse --path-format=absolute --git-common-dir) || exit 1\n" +
 		"tmp=$(" + shellWords([]string{mktempPath, "-d"}) + ") || exit 1\n" +
@@ -489,14 +584,14 @@ func pushArgs(args []string, gh string) []string {
 			pos = append(pos, a)
 		}
 	}
-	if len(pos) != 2 || pos[0] != "origin" || !BranchName(pos[1]) || Protected(pos[1]) || !strings.HasPrefix(gh, "github.com/") || (del && upstream) {
+	if len(pos) != 2 || pos[0] != "origin" || !BranchName(pos[1]) || Protected(pos[1]) || pinURL(gh) == "" || (del && upstream) {
 		return nil
 	}
 	mode := "push"
 	if del {
 		mode = "delete"
 	}
-	return []string{"https://" + gh + ".git", "refs/heads/" + pos[1], mode}
+	return []string{pinURL(gh) + ".git", "refs/heads/" + pos[1], mode}
 }
 
 // shellWords single-quotes every word.
