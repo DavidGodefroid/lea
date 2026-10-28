@@ -78,7 +78,8 @@ services:
       priv:   { ipv4_address: 10.99.0.5 }
       egress: { ipv4_address: 203.0.113.5 }
   # A stand-in gate (fakegate) as lea runs the real one: its own container in the proxy's network
-  # namespace, as gate (10003, in lockhttp-clients 10020), read-only, no capability.
+  # namespace, as gate (10003, primary group lockhttp-clients 10020, as in lockhttp's image),
+  # read-only, no capability.
   lockhttp-gate:
     build:
       context: ../..
@@ -89,12 +90,11 @@ services:
         RUN cd /src && go mod init fakegate && CGO_ENABLED=0 go build -o /lockhttp .
         FROM docker.io/library/alpine:3.22
         COPY --from=gate /lockhttp /usr/local/bin/lockhttp
-        RUN install -d -m 0700 -o 10003 -g 10020 /var/log/lockhttp && install -d -m 0755 -o 10003 /run/lockhttp-gate
+        RUN install -d -m 0700 -o 10003 -g 10020 /var/log/lockhttp && install -d -m 0755 -o 10003 -g 10020 /run/lockhttp-gate
         ENTRYPOINT ["lockhttp"]
     network_mode: "service:proxy-lockhttp"
     depends_on: [ proxy-lockhttp ]
-    user: "10003:10003"
-    group_add: [ "10020" ]
+    user: "10003:10020"
     read_only: true
     cap_drop: [ ALL ]
     security_opt: [ no-new-privileges ]
