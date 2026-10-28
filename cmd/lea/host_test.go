@@ -177,6 +177,8 @@ type cliAgents struct {
 	reqs      []agents.NewRequest
 	snap      agents.Snapshot
 	ensureErr error
+	sweep     string // what SweepStacks reports
+	sweepErr  error
 }
 
 func (c *cliAgents) rec(s string) { c.mu.Lock(); c.calls = append(c.calls, s); c.mu.Unlock() }
@@ -242,6 +244,10 @@ func (c *cliAgents) MarkStopped(ctx context.Context, ctr string, forget bool) er
 func (c *cliAgents) ResumeStopped(ctx context.Context, ctr string) error {
 	c.rec("resume-stopped " + ctr)
 	return nil
+}
+func (c *cliAgents) SweepStacks(ctx context.Context, ctr string) (string, error) {
+	c.rec("sweep " + ctr)
+	return c.sweep, c.sweepErr
 }
 func (c *cliAgents) Attached(ctx context.Context, ctr string) (bool, error) {
 	c.rec("attached " + ctr)
@@ -460,8 +466,28 @@ func TestDeckOpenOfAFreshContainerResumesTheStoppedAgentsFirst(t *testing.T) {
 	if rc != 0 {
 		t.Fatalf("rc=%d err=%q", rc, e)
 	}
-	if !reflect.DeepEqual(ca.calls, []string{"resume-stopped lea-a", "ensure lea-a /p"}) {
+	if !reflect.DeepEqual(ca.calls, []string{"resume-stopped lea-a", "sweep lea-a", "ensure lea-a /p"}) {
 		t.Fatalf("calls=%q", ca.calls)
+	}
+	if e != "" {
+		t.Fatalf("a sweep with nothing to say printed %q", e)
+	}
+}
+
+// A fresh container's sweep of the nested Podman says what it removed and what no agent started
+// (#97); a failed sweep is a warning, and the deck opens anyway.
+func TestDeckOpenOfAFreshContainerReportsItsSweep(t *testing.T) {
+	ca := &cliAgents{sweep: "3 containers that no agent started (a shell, or an older lea) stay in the nested Podman"}
+	api := startDaemonWith(t, ca)
+	rc, _, e := runEnv(t, map[string]string{"LEA_DAEMON_SOCK": api}, "deck-open", "--container", "lea-a", "--workdir", "/p", "--fresh", "--no-default")
+	if rc != 0 || e != "lea: 3 containers that no agent started (a shell, or an older lea) stay in the nested Podman\n" {
+		t.Fatalf("rc=%d err=%q", rc, e)
+	}
+	ca = &cliAgents{sweepErr: errors.New("lea-agent sweep failed")}
+	api = startDaemonWith(t, ca)
+	rc, _, e = runEnv(t, map[string]string{"LEA_DAEMON_SOCK": api}, "deck-open", "--container", "lea-a", "--workdir", "/p", "--fresh", "--no-default")
+	if rc != 0 || !strings.Contains(e, "warning: the nested Podman was not swept") || !strings.Contains(ca.calls[len(ca.calls)-1], "ensure") {
+		t.Fatalf("rc=%d err=%q calls=%q", rc, e, ca.calls)
 	}
 }
 

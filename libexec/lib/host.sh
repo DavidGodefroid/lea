@@ -457,3 +457,15 @@ lea_tmux_version_ok() {
 lea_core_build() {
   make -C "$LEA_ROOT" go-build >&2 || lea_log "warning: make go-build failed; run it before the next lea"
 }
+
+# lea_host_engine prints the engine behind docker and its version ("docker 29.4.2", "podman
+# 5.8.9"), nothing when unknown: Docker Engine names an Engine component, Podman's Docker API a
+# "Podman Engine" one, and the podman-docker shim has no components but says "podman version".
+lea_host_engine() {
+  _hec=$(docker version --format '{{range .Server.Components}}{{.Name}}={{.Version}}{{"\n"}}{{end}}' 2>/dev/null || true)
+  _hev=$(printf '%s\n' "$_hec" | sed -n 's/^Engine=//p' | head -n 1)
+  if [ -n "$_hev" ]; then echo "docker $_hev"; return 0; fi
+  _hev=$(printf '%s\n' "$_hec" | sed -n 's/^Podman Engine=//p' | head -n 1)
+  if [ -z "$_hev" ]; then _hev=$(docker --version 2>/dev/null | sed -n 's/^podman version //p' | head -n 1); fi
+  if [ -n "$_hev" ]; then echo "podman $_hev"; fi
+}

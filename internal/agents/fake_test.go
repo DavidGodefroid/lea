@@ -432,8 +432,38 @@ type fakeContainers struct {
 	err      error // Live fails with it (docker unreachable)
 	stopErr  error // Stop fails with it
 	projects map[string]string
-	paused   []string // container/name:pause|resume, in call order
-	pauseErr error    // Pause fails with it
+	paused   []string      // container/name:pause|resume, in call order
+	pauseErr error         // Pause fails with it
+	torn     []string      // container/name of each Teardown, in call order
+	tearHold chan struct{} // when set, Teardown waits for it to close
+	sweeps   []string      // container:keep,... of each Sweep
+	sweepOut string        // what Sweep reports
+}
+
+func (c *fakeContainers) Teardown(ctx context.Context, container, name string) error {
+	c.mu.Lock()
+	hold := c.tearHold
+	c.mu.Unlock()
+	if hold != nil {
+		<-hold
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.torn = append(c.torn, container+"/"+name)
+	return nil
+}
+
+func (c *fakeContainers) Sweep(ctx context.Context, container string, keep []string) (string, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.sweeps = append(c.sweeps, container+":"+strings.Join(keep, ","))
+	return c.sweepOut, nil
+}
+
+func (c *fakeContainers) tornDown() []string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return append([]string(nil), c.torn...)
 }
 
 func (c *fakeContainers) Pause(ctx context.Context, container, name string, paused bool) error {

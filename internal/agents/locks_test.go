@@ -3,10 +3,13 @@ package agents
 import (
 	"context"
 	"errors"
+	"os"
+	"path/filepath"
 	"reflect"
 	"slices"
 	"strings"
 	"sync"
+	"syscall"
 	"testing"
 	"time"
 )
@@ -16,6 +19,10 @@ type fakeConsoles struct {
 	state   map[string]ConsoleState
 	calls   []string
 	stopErr error
+	// unconfined: the agents Unconfined reports (unconfinedErr: its failure); dirs, what it was asked.
+	unconfined    []string
+	unconfinedErr error
+	dirs          []string
 }
 
 func (f *fakeConsoles) rec(s string) { f.calls = append(f.calls, s) }
@@ -39,6 +46,12 @@ func (f *fakeConsoles) StopConsole(ctx context.Context, name string) error {
 	delete(f.state, name)
 	return f.stopErr
 }
+func (f *fakeConsoles) Unconfined(ctx context.Context, projects, dir string) ([]string, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.dirs = append(f.dirs, projects+" "+dir)
+	return f.unconfined, f.unconfinedErr
+}
 func (f *fakeConsoles) StopConsolesOf(ctx context.Context, owner string) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -55,7 +68,10 @@ func nameOf(projects string) string {
 	return "lea-other"
 }
 
-var sqlSpec = LockSpec{Enabled: true, Image: "locksql:0.8.0", ContainerName: nameOf}
+var sqlSpec = LockSpec{Enabled: true, Image: "locksql:0.8.0", ContainerName: nameOf, ConsoleDir: okDir}
+
+// okDir is a ConsoleDir that accepts any directory without touching the disk.
+func okDir(string) error { return nil }
 
 func lockEnv(t *testing.T, spec LockSpec) (env, *fakeConsoles) {
 	t.Helper()
@@ -80,7 +96,7 @@ func lockPane(s *fakeSession, id string) *fpane {
 // deck's container; in the lock slot under the agent's slot, with a short history, closing when
 // the console exits, and without the keyboard.
 func TestLockOpenRunsTheTemplateUnderTheSlotWithoutFocus(t *testing.T) {
-	e, _ := lockEnv(t, LockSpec{Enabled: true, Image: "locksql:0.8.0", VaultAddr: "https://vault.example.com:8200", ContainerName: nameOf})
+	e, _ := lockEnv(t, LockSpec{Enabled: true, Image: "locksql:0.8.0", VaultAddr: "https://vault.example.com:8200", ContainerName: nameOf, ConsoleDir: okDir})
 	s := e.ensure(t, "/p")
 	slot := s.slot()
 	n := len(s.log)
@@ -92,9 +108,11 @@ func TestLockOpenRunsTheTemplateUnderTheSlotWithoutFocus(t *testing.T) {
 	if p == nil {
 		t.Fatalf("no lock pane: %+v", s.panes)
 	}
-	want := []string{"docker", "run", "-it", "--rm", "--log-driver", "none", "--user", "locksql", "--name", "locksql-console-prod",
+	want := []string{"docker", "run", "-it", "--rm", "--log-driver", "none", "--user", "locksql",
+		"--cap-drop", "ALL", "--security-opt", "no-new-privileges", "--read-only", "--tmpfs", "/tmp:rw,nosuid,nodev,noexec,size=64m",
+		"--pids-limit", "256", "--memory", "1g", "--name", "locksql-console-prod",
 		"--label", "lea.lock-for=" + C, "--add-host=host.docker.internal:host-gateway",
-		"-v", "/home/u/p:/home/u/p", "-v", "locksql-run:/run/locksql", "-v", "locksql-home:/home/locksql",
+		"-v", "/home/u/p:/home/u/p:ro", "-v", "/home/u/p/.locksql:/home/u/p/.locksql", "-v", "locksql-run:/run/locksql", "-v", "locksql-home:/home/locksql",
 		"-e", "VAULT_ADDR=https://vault.example.com:8200", "locksql:0.8.0", "console", "--project", "/home/u/p", "--profile", "prod"}
 	if !reflect.DeepEqual(p.cmd, want) {
 		t.Fatalf("console argv\n got %q\nwant %q", p.cmd, want)
@@ -273,6 +291,10 @@ func TestLockOpenRefusals(t *testing.T) {
 		// One daemon, several decks: a deck's console serves its own projects directory only.
 		{"another deck's projects dir", "locksql", "", sqlSpec, "is not the one of " + C, "/home/u/other"},
 		{"no container mapping", "locksql", "", LockSpec{Enabled: true, Image: "locksql:1"}, "is not the one of " + C, ""},
+		// The console's writable directory: checked by the host, or no console.
+		{"no console dir check", "locksql", "", LockSpec{Enabled: true, Image: "locksql:1", ContainerName: nameOf}, "no check of the console's directory", ""},
+		{"a console dir refused", "locksql", "", LockSpec{Enabled: true, Image: "locksql:1", ContainerName: nameOf,
+			ConsoleDir: func(d string) error { return errors.New("refused " + d) }}, "refused /home/u/p/.locksql", ""},
 	}
 	for _, c := range cases {
 		e, fc := lockEnv(t, c.spec)
@@ -477,5 +499,110 @@ func TestSnapshotCarriesTheOldestLockRequest(t *testing.T) {
 		if a.Key == k1 && a.LockAsk != nil {
 			t.Fatalf("expired request shown: %+v", a.LockAsk)
 		}
+	}
+}
+
+// The console writes only its own directory of the projects directory, which agents also write:
+// a missing one is made, a symbolic link (a bind mount follows it on the host) or a file refused.
+func TestEnsureConsoleDir(t *testing.T) {
+	p := t.TempDir()
+	d := filepath.Join(p, ".locksql")
+	if err := EnsureConsoleDir(d); err != nil {
+		t.Fatalf("missing: %v", err)
+	}
+	if fi, err := os.Lstat(d); err != nil || !fi.IsDir() {
+		t.Fatalf("not made: %v %v", fi, err)
+	}
+	if err := EnsureConsoleDir(d); err != nil {
+		t.Fatalf("existing: %v", err)
+	}
+	if err := os.Remove(d); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(t.TempDir(), d); err != nil {
+		t.Fatal(err)
+	}
+	if err := EnsureConsoleDir(d); err == nil || !strings.Contains(err.Error(), "is not a directory") {
+		t.Fatalf("symlink to a directory: %v", err)
+	}
+	if err := os.Remove(d); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(d, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := EnsureConsoleDir(d); err == nil || !strings.Contains(err.Error(), "is not a directory") {
+		t.Fatalf("file: %v", err)
+	}
+	// What an agent left in it before it got the directory read-only: regular files and
+	// directories only, at any depth (pii/).
+	if err := os.Remove(d); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(d, "pii", "a"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for _, f := range []string{"pii.toml", "pii/a/x.toml"} {
+		if err := os.WriteFile(filepath.Join(d, f), nil, 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := EnsureConsoleDir(d); err != nil {
+		t.Fatalf("regular files and directories: %v", err)
+	}
+	for _, c := range []struct {
+		name string
+		make func(string) error
+	}{
+		{"pii/a/k", func(f string) error { return os.Symlink(t.TempDir(), f) }},
+		{"pii.d", func(f string) error { return os.Symlink("/etc", f) }},
+		{"f", func(f string) error { return syscall.Mkfifo(f, 0o600) }},
+	} {
+		f := filepath.Join(d, c.name)
+		if err := c.make(f); err != nil {
+			t.Fatal(err)
+		}
+		if err := EnsureConsoleDir(d); err == nil || !strings.Contains(err.Error(), f+" is not a regular file or directory") {
+			t.Fatalf("%s: %v", c.name, err)
+		}
+		if err := os.Remove(f); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// A hard link: an agent writes the console's file through its other name, outside it.
+	x := filepath.Join(d, "pii", "a", "x.toml")
+	if err := os.Link(x, filepath.Join(p, "x")); err != nil {
+		t.Fatal(err)
+	}
+	if err := EnsureConsoleDir(d); err == nil || !strings.Contains(err.Error(), x+" has another name (a hard link)") {
+		t.Fatalf("hard link: %v", err)
+	}
+}
+
+// An agent started before locksql, or before lea mounted the console's directory read-only in
+// it, can still swap that directory for a symbolic link: no console opens while one runs.
+func TestLockOpenRefusesAnAgentWithoutTheReadOnlyDir(t *testing.T) {
+	e, fc := lockEnv(t, sqlSpec)
+	s := e.ensure(t, "/p")
+	n := len(s.panes)
+	fc.unconfined = []string{"lea-b", "lea-c"}
+	_, err := e.m.LockOpen(bg, C, "locksql", "")
+	if err == nil || !strings.Contains(err.Error(), "lea-b lea-c running without /home/u/p/.locksql read-only") ||
+		!strings.Contains(err.Error(), "restart the agents") {
+		t.Fatalf("err=%v", err)
+	}
+	if !reflect.DeepEqual(fc.dirs, []string{"/home/u/p /home/u/p/.locksql"}) {
+		t.Fatalf("asked %q", fc.dirs)
+	}
+	fc.unconfined, fc.unconfinedErr = nil, errors.New("docker ps: boom")
+	if _, err := e.m.LockOpen(bg, C, "locksql", ""); err == nil || !strings.Contains(err.Error(), "boom") {
+		t.Fatalf("a failed check: %v", err)
+	}
+	if len(s.panes) != n || len(fc.calls) != 0 {
+		t.Fatalf("a refused open did something: %d panes (was %d), consoles %q", len(s.panes), n, fc.calls)
+	}
+	fc.unconfinedErr = nil
+	if st, err := e.m.LockOpen(bg, C, "locksql", ""); err != nil || st != "opened" {
+		t.Fatalf("every agent confined: %q %v", st, err)
 	}
 }
