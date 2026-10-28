@@ -41,6 +41,7 @@ lea__doctor_lockhttp() {
   else lea__fail "lockhttp binary" "not in /usr/local/bin (root-owned): install lockhttp, then $_dh_inst"; _dh_rc=1; fi
   if [ -z "${LEA_GIT_SSH:-}" ]; then lea__ok "LockHTTP: no SSH forwarder (LEA_GIT_SSH empty)"
   else lea__fail "LockHTTP" "LEA_GIT_SSH is set: its forwarders would bypass the gate"; _dh_rc=1; fi
+  if [ -n "${LEA_OTEL_UPSTREAM:-}" ]; then lea__fail "LockHTTP" "LEA_OTEL_UPSTREAM is set: its TCP forwarder would bypass the gate"; _dh_rc=1; fi
   if [ -f "$_dh_r/etc/lockhttp/system.toml" ]; then
     if _dh_u=$(lea__lockhttp_gate_uid) && lea__lockhttp_allowed "$_dh_u"; then lea__ok "lockhttp allows the gate (uid $_dh_u)"
     else lea__fail "lockhttp allowed_uids" "/etc/lockhttp/system.toml does not allow the gate's uid ${_dh_u:-?}: $_dh_inst"; _dh_rc=1; fi

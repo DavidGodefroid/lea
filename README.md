@@ -360,11 +360,15 @@ then `lea`); `lea doctor` checks each step.
 With it on, squid listens on the proxy's loopback only, behind the gate (its floor stays: DoH
 resolvers, IP literals and private ranges are refused; the allowlist is the gate's policy now).
 The gate runs as its own uid (10003, never root) and is the only process that reaches the
-console's socket: no agent container mounts `/run/lockhttp`. Each agent has its own proxy
-password, and the daemon tells the gate which container and agent each one belongs to
-(`sources.json`, under `~/.local/share/lea/lockhttp/`); lea-keyproxy goes through the gate too.
-`LEA_GIT_SSH` is refused (its SSH forwarders would bypass the gate: use git over HTTPS), and
-claude.ai's connectors are turned off in the agents' Claude Code (WebSearch and WebFetch stay).
+console's socket: no agent container mounts `/run/lockhttp`. The gate names the calling
+container from the network the request arrives on, which no agent can forge: **the container is
+the trust boundary**. Each agent also has its own proxy password, and the daemon tells the gate
+whose it is (`sources.json`, under `~/.local/share/lea/lockhttp/`), but the agents of one
+container share a uid and can read each other's environment: that name is for the audit and the
+console's display (attribution), never a permission, and one agent can pass for another of the
+same container. lea-keyproxy goes through the gate too. `LEA_GIT_SSH` and `LEA_OTEL_UPSTREAM` are
+refused (their raw TCP forwarders would bypass the gate: use git over HTTPS), and claude.ai's
+connectors are turned off in the agents' Claude Code (WebSearch and WebFetch stay).
 
 ## Teams of agents
 
@@ -676,7 +680,7 @@ read-only. The screen runs in the deck on the host: agents cannot open or drive 
 | `LEA_LOCKSQL_VAULT_ADDR` | asked by `lea init` | Vault address of the locksql console, for a Vault profile |
 | `LEA_LOCKMQ`, `LEA_LOCKFILE` | `0`, asked by `lea init` | let the agents reach a lockmq / lockfile console on this host |
 | `LEA_LOCKMQ_REF`, `LEA_LOCKFILE_REF` | the pinned releases | the release `lea init` installs on the host (lockfile v0.1.1 or later); `lea update` records a newer one you accept |
-| `LEA_LOCKHTTP` | `0` | send the agents' web requests through a LockHTTP gate (refuses `LEA_GIT_SSH`) |
+| `LEA_LOCKHTTP` | `0` | send the agents' web requests through a LockHTTP gate (refuses `LEA_GIT_SSH` and `LEA_OTEL_UPSTREAM`) |
 | `LEA_INTERNAL_HOSTS` | none | private hosts the proxy may reach (format in `config/internal-hosts`) |
 | `LEA_EGRESS_ALLOW` | empty (lea's default list) | the only web domains agents may reach, comma separated (subdomains included); `default` stands for lea's list, `*` opens the web |
 | `LEA_NESTED_NETWORKS` | empty | networks your compose files expect, created at start |

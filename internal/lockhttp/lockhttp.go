@@ -5,6 +5,10 @@
 // token to the agent it was given to. Tokens are derived from a host key that never leaves the
 // host's lea data directory: the launcher (container env) and the daemon (agents, sources.json)
 // compute the same ones without sharing state.
+//
+// The network is the trust boundary: an agent token only attributes a request to an agent. The
+// agents of one container share a uid and can read each other's environment (and so tokens), so
+// one can pass for another of the same container, never for another container.
 package lockhttp
 
 import (

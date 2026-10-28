@@ -282,6 +282,7 @@ func TestLockHTTPSwitch(t *testing.T) {
 	for conf, want := range map[string]string{
 		"LEA_LOCKHTTP=yes\n":                          "LEA_LOCKHTTP must be 1 (agents' web egress through a LockHTTP gate) or 0, not 'yes'",
 		"LEA_LOCKHTTP=1\nLEA_GIT_SSH=github.com:22\n": "LEA_LOCKHTTP=1 refuses LEA_GIT_SSH",
+		"LEA_LOCKHTTP=1\nLEA_OTEL_UPSTREAM=otel.example:4318\n": "LEA_LOCKHTTP=1 refuses LEA_OTEL_UPSTREAM",
 	} {
 		writeUserConf(t, w, conf)
 		if _, err := LoadConfig(w.getenv, w.root, w.proj); err == nil || !strings.Contains(err.Error(), want) {
