@@ -191,6 +191,17 @@ type Snapshot struct {
 	Agents  []Row  `json:"agents"`
 	// Sound is the daemon's sound switch ("on", "off", "" when nothing plays), set by the daemon.
 	Sound string `json:"sound,omitempty"`
+	// LockHTTP is the LockHTTP gate's state for the container (LEA_LOCKHTTP=1), set by the
+	// daemon; nil when LockHTTP is off.
+	LockHTTP *LockHTTPView `json:"lockhttp,omitempty"`
+}
+
+// LockHTTPView is what the deck shows of the LockHTTP gate (D6): whether its console runs
+// ("up", "down", "" when unknown) and how many of the container's requests wait in it. A
+// notification only: requests are approved in the console, never in the deck.
+type LockHTTPView struct {
+	Console string `json:"console"`
+	Pending int    `json:"pending"`
 }
 
 type NewRequest struct {

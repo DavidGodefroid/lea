@@ -280,5 +280,18 @@ func DropNetworks(path string, drop func(Network) bool) error {
 	return err
 }
 
+// Credentials is credentials.json (contract §2.4): the hashes of the secrets each container (and
+// lea-keyproxy) may send to the model APIs.
+type Credentials struct {
+	Version    int                 `json:"version"`
+	Containers map[string][]string `json:"containers"`
+	Keyproxy   []string            `json:"keyproxy"`
+}
+
+// CredentialsPath is the credentials.json lea writes for the gate.
+func CredentialsPath(dataDir string) string {
+	return filepath.Join(GateDir(dataDir), "credentials.json")
+}
+
 // SourcesPath is the sources.json lea writes for the gate.
 func SourcesPath(dataDir string) string { return filepath.Join(GateDir(dataDir), "sources.json") }

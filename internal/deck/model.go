@@ -108,6 +108,16 @@ type Snapshot struct {
 	Agents  []Agent `json:"agents"`
 	// Sound is the daemon's sound switch: "on", "off", or "" when no sound plays on the host.
 	Sound string `json:"sound,omitempty"`
+	// LockHTTP is the LockHTTP gate's state for this container, nil when LockHTTP is off.
+	LockHTTP *LockHTTP `json:"lockhttp,omitempty"`
+}
+
+// LockHTTP is what the deck shows of the LockHTTP gate (agents.LockHTTPView): its console
+// ("up", "down", "" unknown) and the container's requests waiting there. A notification only:
+// the user approves them in the lockhttp console.
+type LockHTTP struct {
+	Console string `json:"console"`
+	Pending int    `json:"pending"`
 }
 
 // API is what the deck asks of the daemon.
@@ -212,6 +222,7 @@ type Model struct {
 	notice      func() string // the update notice (WithNotice)
 	noticeText  string        // its latest text, shown while there is no status
 	sound       string        // the daemon's sound switch (Snapshot.Sound)
+	lockhttp    *LockHTTP     // the LockHTTP gate's state (Snapshot.LockHTTP)
 	seq         int           // the latest selection; older delayed shows are dropped
 	frame       int           // the working spinner's frame
 	intro       int           // frames left of the logo's start animation (WithIntro)
@@ -485,7 +496,7 @@ func (m *Model) ask(key string) {
 // the slot, so that the row selected in its place is to be shown.
 func (m *Model) apply(s Snapshot) bool {
 	before, was := m.shown, m.selected
-	m.version, m.shown, m.sound = s.Version, s.Shown, s.Sound
+	m.version, m.shown, m.sound, m.lockhttp = s.Version, s.Shown, s.Sound, s.LockHTTP
 	for _, a := range s.Agents {
 		if a.Key == s.Shown && a.State == "done" {
 			m.seen[a.Key] = a.Updated

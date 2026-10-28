@@ -97,6 +97,8 @@ type Daemon struct {
 	resumeDelay int64
 	windows     map[string][]limitWindow
 	limitJobs   map[string]string
+	// lockhttp is the LockHTTP gate's last status (nil: LockHTTP off).
+	lockhttp *LockHTTPStatus
 }
 
 func New(st *store.Store, runDir string, now func() int64) *Daemon {

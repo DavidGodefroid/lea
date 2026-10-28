@@ -73,7 +73,8 @@ if [ "$lockhttp" = 1 ]; then
   env -u LEA_KEYPROXY_TOKEN LOCKHTTP_RUNTIME_DIR=/run \
     setpriv --reuid "$gate_uid" --regid "$gate_uid" $groups --inh-caps=-all --no-new-privs -- \
     lockhttp gate --listen 0.0.0.0:3130 --upstream http://127.0.0.1:3128 --profile "${LEA_LOCKHTTP_PROFILE:-default}" \
-    --sources /etc/lockhttp-gate/sources.json --audit-dir /var/log/lockhttp --status-file /run/lockhttp-gate/status.json &
+    --sources /etc/lockhttp-gate/sources.json --credentials /etc/lockhttp-gate/credentials.json \
+    --audit-dir /var/log/lockhttp --status-file /run/lockhttp-gate/status.json &
   gate_pid=$!
   wait_port 3130 "the LockHTTP gate"
   via=http://127.0.0.1:3130
