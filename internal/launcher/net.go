@@ -29,11 +29,21 @@ func (l *Launcher) ensureNetworks(id string) error {
 	}
 	if l.quiet("docker", "network", "create", "--label", "lea.prefix="+l.prefix(), "--label", "lea.id="+id, "--internal",
 		"-o", "com.docker.network.bridge.gateway_mode_ipv4=isolated", inet) != nil {
-		l.logf("warning: Docker refused gateway_mode_ipv4=isolated; %s is created without it (check with: make test-isolation)", inet)
+		// Fail closed (#105): a plain --internal bridge gives the host an address the agent reaches.
+		if l.Cfg.Get("LEA_ALLOW_GATEWAY") != "1" {
+			return die("Docker refused gateway_mode_ipv4=isolated for %s (it needs Docker Engine %s or later): without it the "+
+				"agent can reach the host's services through the network gateway, so lea does not start it. Upgrade Docker, "+
+				"or set LEA_ALLOW_GATEWAY=1 to accept that weaker network", inet, isolatedGatewayMinDocker)
+		}
+		l.logf("warning: Docker refused gateway_mode_ipv4=isolated; LEA_ALLOW_GATEWAY=1: %s is created without it, "+
+			"the agent can reach the host through its gateway (check with: make test-isolation)", inet)
 		return l.run("docker", "network", "create", "--label", "lea.prefix="+l.prefix(), "--label", "lea.id="+id, "--internal", inet)
 	}
 	return nil
 }
+
+// isolatedGatewayMinDocker is the first Docker Engine that accepts gateway_mode_ipv4=isolated.
+const isolatedGatewayMinDocker = "28.0"
 
 // ensureProxy is lea_ensure_proxy. A running proxy started for other git SSH endpoints (its
 // lea.git-ssh label), another egress allowlist (lea.egress-allow) or other providers' endpoints

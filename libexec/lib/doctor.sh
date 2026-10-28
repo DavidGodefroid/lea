@@ -63,8 +63,14 @@ lea_doctor() {
     _dint=${_dinfo%% *}; _dmode=${_dinfo#* }
     if [ "$_dint" = true ]; then lea__ok "$_dnet is internal"
     else lea__fail "$_dnet is internal" "not created with --internal: lea stop --all, then restart lea"; _drc=1; fi
-    if [ "$_dmode" = isolated ]; then lea__ok "$_dnet isolated from the host"
-    else lea__warn "$_dnet isolated from the host" "gateway_mode_ipv4=${_dmode:-unset}; run make test-isolation"; fi
+    # The launcher refuses a network without the isolated gateway mode unless LEA_ALLOW_GATEWAY=1 (#105).
+    _dgw="$_dnet gateway_mode_ipv4=${_dmode:-unset}"
+    if [ "$_dmode" = isolated ]; then lea__ok "$_dgw"
+    elif [ "${LEA_ALLOW_GATEWAY:-}" = 1 ]; then
+      lea__warn "$_dgw" "not isolated from the host, accepted by LEA_ALLOW_GATEWAY=1; run make test-isolation"
+    else
+      lea__fail "$_dgw" "not isolated from the host (needs Docker Engine 28.0 or later): upgrade Docker, lea stop --all, then restart lea"; _drc=1
+    fi
   done
   if [ "$_dnets" -eq 0 ]; then lea__ok "internal networks: none (each lea creates its own at start)"; fi
 

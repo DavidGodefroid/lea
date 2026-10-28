@@ -14,15 +14,42 @@ func TestInternalNetworkMustBeInternal(t *testing.T) {
 	}
 }
 
-func TestInternalNetworkFallsBackWithoutIsolatedGatewayMode(t *testing.T) {
+// Without the isolated gateway mode the host is reachable from the agent's network (#105): lea
+// refuses to start the container, unless LEA_ALLOW_GATEWAY=1 accepts the weaker network.
+func TestNoIsolatedGatewayModeFailsClosed(t *testing.T) {
 	w := newWorld(t, repoRoot(t))
+	running(w)
+	w.env["FAKE_DOCKER_OUT_INSPECT__F"] = "false"    // the agent container is not running
+	w.env["FAKE_DOCKER_OUT_NETWORK_INSPECT"] = ""    // drop running()'s "true"
+	w.env["FAKE_DOCKER_SEQ_NETWORK_INSPECT"] = "0 1" // egress exists, internal missing
+	w.env["FAKE_DOCKER_RC_NETWORK_CREATE"] = "1"     // Docker refuses gateway_mode_ipv4=isolated
+	if got := w.launcher().Main([]string{"shell"}); got == 0 {
+		t.Fatal("lea started without the isolated gateway mode")
+	}
+	for _, want := range []string{"gateway_mode_ipv4=isolated", "Docker Engine 28.0", "LEA_ALLOW_GATEWAY=1"} {
+		if !strings.Contains(w.errb.String(), want) {
+			t.Errorf("stderr lacks %q: %q", want, w.errb.String())
+		}
+	}
+	calls := strings.Join(w.calls(), "\n")
+	if strings.Contains(calls, "docker [run]") {
+		t.Fatalf("a container was started:\n%s", calls)
+	}
+	if strings.Count(calls, "[network] [create]") != 1 {
+		t.Fatalf("lea fell back to a plain internal network:\n%s", calls)
+	}
+}
+
+func TestAllowGatewayFallsBackWithoutIsolatedGatewayMode(t *testing.T) {
+	w := newWorld(t, repoRoot(t))
+	w.env["LEA_ALLOW_GATEWAY"] = "1"
 	w.env["FAKE_DOCKER_SEQ_NETWORK_INSPECT"] = "0 1" // egress exists, internal missing
 	w.env["FAKE_DOCKER_SEQ_NETWORK_CREATE"] = "1 0"  // isolated refused, plain accepted
 	l := w.launcher()
 	if err := l.ensureNetworks("abc"); err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(w.errb.String(), "Docker refused gateway_mode_ipv4=isolated") {
+	if !strings.Contains(w.errb.String(), "Docker refused gateway_mode_ipv4=isolated") || !strings.Contains(w.errb.String(), "LEA_ALLOW_GATEWAY=1") {
 		t.Fatalf("stderr %q", w.errb.String())
 	}
 	if !w.hasCall("docker [network] [create] [--label] [lea.prefix=lea] [--label] [lea.id=abc] [--internal] [lea-internal-abc]") {
