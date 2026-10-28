@@ -270,6 +270,8 @@ every lea container for it and, when your projects directory has no database pro
 you through a first one (engine, host, TLS, where the password comes from; never the password).
 A profile that reads its login from HashiCorp Vault gets the vault CLI in the console image, its
 address (`LEA_LOCKSQL_VAULT_ADDR`) and a `vault login` as the console account.
+The agents see the console's own directory, `.locksql` in your projects directory (its profiles
+and PII rules), read-only: edit it from the host, not through an agent.
 
 `lea init` also links `locksql` next to `lea`: run `locksql` (or `lea locksql`) in a terminal you
 keep in view to open the console, then ask an agent about your data. `locksql vault login` logs the
