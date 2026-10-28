@@ -59,12 +59,22 @@ tcp        0      0 :::3130                 :::*                    LISTEN'
   [[ "$output" == *"ok    lockhttp allows the gate (uid 210002)"* ]]
 }
 
-@test "the user outside lockhttp-clients and LEA_GIT_SSH set are failures" {
+@test "the user outside lockhttp-clients, LEA_GIT_SSH and LEA_OTEL_UPSTREAM set are failures" {
   lea__lockhttp_in_clients() { false; }
-  LEA_GIT_SSH=github.com:22 run lea__doctor_lockhttp
+  LEA_GIT_SSH=github.com:22 LEA_OTEL_UPSTREAM=otel.example:4318 run lea__doctor_lockhttp
   [ "$status" -eq 1 ]
   [[ "$output" == *"FAIL  lockhttp-clients: you are not in the group"* ]]
   [[ "$output" == *"FAIL  LockHTTP: LEA_GIT_SSH is set"* ]]
+  [[ "$output" == *"FAIL  LockHTTP: LEA_OTEL_UPSTREAM is set"* ]]
+}
+
+@test "the proxy entrypoint refuses LEA_GIT_SSH and LEA_OTEL_UPSTREAM under LockHTTP, before any forwarder" {
+  for v in "LEA_GIT_SSH=github.com:22" "LEA_OTEL_UPSTREAM=otel.example:4318"; do
+    run env LEA_LOCKHTTP=1 "$v" sh "$LEA_ROOT/proxy/entrypoint.sh"
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"LEA_LOCKHTTP=1 refuses ${v%%=*}"* ]]
+  done
+  ! grep -q socat "$FAKE_LOG"
 }
 
 @test "the configuration refuses LEA_LOCKHTTP=1 with LEA_GIT_SSH, and a bad value" {
@@ -73,6 +83,10 @@ tcp        0      0 :::3130                 :::*                    LISTEN'
   run lea_load_config
   [ "$status" -ne 0 ]
   [[ "$output" == *"LEA_LOCKHTTP=1 refuses LEA_GIT_SSH"* ]]
+  printf 'LEA_LOCKHTTP=1\nLEA_OTEL_UPSTREAM=otel.example:4318\n' >"$U"
+  run lea_load_config
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"LEA_LOCKHTTP=1 refuses LEA_OTEL_UPSTREAM"* ]]
   printf 'LEA_LOCKHTTP=yes\n' >"$U"
   run lea_load_config
   [ "$status" -ne 0 ]

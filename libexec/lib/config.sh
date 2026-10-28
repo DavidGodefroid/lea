@@ -58,6 +58,9 @@ lea_load_config() {
   if [ "$LEA_LOCKHTTP" = 1 ] && [ -n "$LEA_GIT_SSH" ]; then
     lea_die "LEA_LOCKHTTP=1 refuses LEA_GIT_SSH: its SSH forwarders would bypass the LockHTTP gate (use git over HTTPS, or LEA_LOCKHTTP=0)"
   fi
+  if [ "$LEA_LOCKHTTP" = 1 ] && [ -n "${LEA_OTEL_UPSTREAM:-}" ]; then
+    lea_die "LEA_LOCKHTTP=1 refuses LEA_OTEL_UPSTREAM: its TCP forwarder (port 4318) would bypass the LockHTTP gate (leave it empty, or LEA_LOCKHTTP=0)"
+  fi
   # Empty: no pinned release (config/lea.conf pins one), and lea init installs nothing.
   LEA_LOCKMQ_REF=${LEA_LOCKMQ_REF:-} LEA_LOCKFILE_REF=${LEA_LOCKFILE_REF:-}
   [ -z "$LEA_LOCKMQ_REF" ] || lea__semver "$LEA_LOCKMQ_REF" >/dev/null || lea_die "LEA_LOCKMQ_REF must be a lockmq release (vX.Y.Z), not '$LEA_LOCKMQ_REF'"
