@@ -74,6 +74,9 @@ type Caller struct {
 	// Worktree is the caller's worktree root (the hook's cwd, when OwnWorktree): every git call
 	// a grant allows runs there (git -C).
 	Worktree string
+	// Cwd is the directory the tool call runs in (the hook's cwd), wherever it is: relative
+	// paths are read from it. "" when the hook gave none.
+	Cwd string
 	// Env is the environment an allowed call runs with, and nothing else (env -i): the variables
 	// of SafeEnv, as the hook's own process (Claude's, not the agent's shell) has them.
 	Env map[string]string
@@ -152,7 +155,7 @@ func Classify(tool string, input json.RawMessage, c Caller) (hard string, req Re
 		}
 		_ = json.Unmarshal(input, &in)
 		for _, p := range []string{in.FilePath, in.NotebookPath} {
-			if protectedPath(p) {
+			if protectedPath(p) || fileProtected(p, c.Cwd) {
 				return "editing Claude's, git's, the shell's or lea's own settings from inside an agent is never allowed", Request{}, false
 			}
 		}
@@ -523,4 +526,16 @@ var protectedPathRe = regexp.MustCompile(`(^|[\s'"=:/])(` +
 // spellings count.
 func protectedPath(p string) bool {
 	return p != "" && protectedPathRe.MatchString(p)
+}
+
+// fileProtected says whether relative path p, read from cwd (the hook's), is a protected path,
+// or may be one when cwd is unknown.
+func fileProtected(p, cwd string) bool {
+	if p == "" || strings.HasPrefix(p, "/") {
+		return false
+	}
+	if !strings.HasPrefix(cwd, "/") {
+		return tail(p)
+	}
+	return protectedPath(join(cwd, p))
 }

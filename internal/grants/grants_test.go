@@ -9,7 +9,7 @@ import (
 const now = 1_000_000
 
 var dev = Caller{Key: "lea-a/dev-2", Container: "lea-a", Repo: "lea", Branch: "feat/73-x",
-	Lineage: []string{"lea-a/dev-2", "lea-a/claude-1"}, OwnWorktree: true, Worktree: "/p/.lea/worktrees/lea/dev-2",
+	Lineage: []string{"lea-a/dev-2", "lea-a/claude-1"}, OwnWorktree: true, Worktree: "/p/.lea/worktrees/lea/dev-2", Cwd: "/p/.lea/worktrees/lea/dev-2",
 	Env: map[string]string{"HOME": "/home/u", "GH_CONFIG_DIR": "/lea/state/gh"}}
 
 func all(action string) Grant {
@@ -387,6 +387,61 @@ func TestDecideScope(t *testing.T) {
 // TestPinnedCommand: an allowed call runs lea's command, built from the validated argv: absolute
 // program, scrubbed environment, git in the caller's worktree with hooks and command-running
 // settings off, gh on the grant's repository; the audit target names the repository.
+// TestProtectedCwdAndGlobs: relative words are read from the directory the call runs in (the
+// hook's cwd, which a cd in an earlier call may have moved), and a glob that may match a
+// protected path is one.
+func TestProtectedCwdAndGlobs(t *testing.T) {
+	cases := []struct {
+		name, cwd, tool, cmd string
+		want                 string
+	}{
+		{"cwd claude", "/home/u/.claude", "Bash", "cp x settings.json", Deny},
+		{"cwd claude add", "/home/u/.claude", "Bash", "git add settings.local.json", Deny},
+		{"cwd git config", "/p/lea/.git", "Bash", "echo x >> config", Deny},
+		{"cwd git hooks", "/p/lea/.git/hooks", "Bash", "chmod +x pre-push", Deny},
+		{"cwd git then cd", "/p/lea/.git", "Bash", "cd hooks && cp x pre-commit", Deny},
+		{"cwd home", "/home/u", "Bash", "echo x >> .bashrc", Deny},
+		{"cwd up", "/home/u/.claude/x", "Bash", "cp y ../settings.json", Deny},
+		{"cwd claude read", "/home/u/.claude", "Bash", "cat settings.json", ""},
+		{"cwd worktree", "/p/.lea/worktrees/lea/dev-2", "Bash", "cp x config", ""},
+		{"cwd missing", "", "Bash", "cp x settings.json", Deny},
+		{"cwd relative", "u/.claude", "Bash", "cp x hooks/pre.sh", Deny},
+		{"cwd missing harmless", "", "Bash", "go test ./...", ""},
+		{"edit relative", "/home/u/.claude", "Edit", "settings.json", Deny},
+		{"edit relative worktree", "/p/.lea/worktrees/lea/dev-2", "Edit", "internal/x.go", ""},
+		// Globs.
+		{"glob settings", "/w", "Bash", "cp x .claude/sett*.json", Deny},
+		{"glob claude dir", "/w", "Bash", "rm .clau?e/*", Deny},
+		{"glob hooks", "/w", "Bash", "cp x .git/hoo*/pre-commit", Deny},
+		{"glob class", "/w", "Bash", "cp x .git/[ch]onfig", Deny},
+		{"glob rc", "/w", "Bash", "cp x ~/.bash*", Deny},
+		{"glob brace", "/w", "Bash", "cp x .cla{u,x}de/settings.json", Deny},
+		{"glob any dir", "/w", "Bash", "cp x .*/settings.json", Deny},
+		{"glob worktree config", "/w", "Bash", "cp x .git/worktrees/*/config", Deny},
+		{"glob after cd", "/w", "Bash", "cd .claude && cp x sett*", Deny},
+		{"glob after unknown cd", "/w", "Bash", `cd "$D" && cp x sett*.json`, Deny},
+		{"glob in cwd", "/home/u/.claude", "Bash", "cp x s*.json", Deny},
+		{"glob dotglob", "/w", "Bash", "shopt -s dotglob; cp x */settings.json", Deny},
+		{"glob star no dot", "/w", "Bash", "cp x */settings.json", ""},
+		{"glob build", "/w", "Bash", "rm -rf build/*", ""},
+		{"glob out", "/w", "Bash", "rm -f *.out", ""},
+		{"glob go test", "/w", "Bash", "go test ./internal/*/...", ""},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			c := dev
+			c.Cwd = tc.cwd
+			in := bash(tc.cmd)
+			if tc.tool != "Bash" {
+				in, _ = json.Marshal(map[string]string{"file_path": tc.cmd})
+			}
+			if d := Decide(tc.tool, in, c, nil, now, false); d.Verdict != tc.want {
+				t.Fatalf("%q in %q: verdict %q (%s), want %q", tc.cmd, tc.cwd, d.Verdict, d.Reason, tc.want)
+			}
+		})
+	}
+}
+
 func TestPinnedCommand(t *testing.T) {
 	gs := []Grant{all(Merge), all(CommitIdentity)}
 	d := Decide("Bash", bash("gh pr merge feat/73-x --squash --delete-branch"), dev, gs, now, false)

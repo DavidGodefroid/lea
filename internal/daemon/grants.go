@@ -169,7 +169,7 @@ func contains(xs []string, x string) bool {
 // grantCaller is the calling agent as the daemon knows it: its container is the socket's, its
 // repo, branch and parents its row's, never anything the agent says. A branch another live agent
 // of the lea also works on (same repo) is nobody's own. cwd is where the tool call runs (the
-// hook's): it only says whether that is the caller's own worktree.
+// hook's): it says whether that is the caller's own worktree, and relative paths are read from it.
 func (d *Daemon) grantCaller(o Origin, me, cwd string) (grants.Caller, error) {
 	if o.Container == "" {
 		return grants.Caller{}, errors.New("grants apply to agents only")
@@ -179,7 +179,7 @@ func (d *Daemon) grantCaller(o Origin, me, cwd string) (grants.Caller, error) {
 		return grants.Caller{}, err
 	}
 	c := grants.Caller{Key: me, Container: o.Container, Repo: a.Repo, Branch: a.Branch, Lineage: []string{me},
-		OwnWorktree: grants.InWorktree(cwd, a.Repo, a.Name)}
+		OwnWorktree: grants.InWorktree(cwd, a.Repo, a.Name), Cwd: cwd}
 	if c.OwnWorktree {
 		c.Worktree = strings.TrimSuffix(cwd, "/")
 	}
