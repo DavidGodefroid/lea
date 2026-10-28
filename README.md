@@ -600,7 +600,8 @@ deny (no push to `main`, no force-push, no `--admin`). The calls covered:
   branch> [--squash] [--remove-source-branch] [--yes]` (`--rebase` is not covered). lea does not
   run them with glab, whose config the agent can write (it could send glab's requests elsewhere):
   glab only reads the token of its config for HOST, from `/`, and lea calls the project's API
-  (`https://HOST/api/v4`) with curl (no `.curlrc`, https only, no redirect, no proxy variable).
+  (`https://HOST/api/v4`) with curl (no `.curlrc`, https only, no redirect, no proxy variable), its answers read by jq,
+  both with no `HOME` of the agent's.
   A merge first reads the MR: it must be open and come from the agent's branch of the project
   itself, not a fork (by branch: the one open MR of that branch); the merge then names the head
   commit it checked, so GitLab refuses it if the branch moved in between. Pushes go to
