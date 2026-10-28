@@ -23,7 +23,9 @@ func (realContainers) Teardown(context.Context, string, string) error   { return
 func (realContainers) Sweep(context.Context, string, []string) (string, error) {
 	return "", nil
 }
-func (realContainers) StopShell(context.Context, string, string) error { return nil }
+func (realContainers) Park(context.Context, string, string) (string, error)   { return "", nil }
+func (realContainers) Unpark(context.Context, string, string) (string, error) { return "", nil }
+func (realContainers) StopShell(context.Context, string, string) error        { return nil }
 func (realContainers) Pause(context.Context, string, string, bool) error {
 	return nil
 }

@@ -97,6 +97,12 @@ type Daemon struct {
 	resumeDelay int64
 	windows     map[string][]limitWindow
 	limitJobs   map[string]string
+	// Idle stacks (stacks.go, #132): how long an agent stays idle before what it started in the
+	// nested Podman is stopped (0: never), the pending stop of each idle agent, and what the last
+	// one freed, for the board, until the agent works again.
+	stackIdle  time.Duration
+	parkTimers map[string]*time.Timer
+	parked     map[string]string
 }
 
 func New(st *store.Store, runDir string, now func() int64) *Daemon {
@@ -108,7 +114,8 @@ func New(st *store.Store, runDir string, now func() int64) *Daemon {
 		attached: map[string]string{}, notify: map[string]chan struct{}{},
 		verdicts: map[int64]chan string{}, asks: map[string]pendingAsk{}, blocks: map[string]int{}, stopped: map[string]bool{}, rewakes: map[string]int{}, keyMu: map[string]*sync.Mutex{}, statusPaths: map[string]string{}, named: map[string]bool{}, rang: map[string]time.Time{},
 		doneDelay: doneDelay, doneTimers: map[string]*time.Timer{},
-		resumeDelay: DefaultResumeDelay, windows: map[string][]limitWindow{}, limitJobs: map[string]string{}}
+		resumeDelay: DefaultResumeDelay, windows: map[string][]limitWindow{}, limitJobs: map[string]string{},
+		stackIdle: DefaultStackIdle, parkTimers: map[string]*time.Timer{}, parked: map[string]string{}}
 }
 
 func (d *Daemon) Serve(ctx context.Context, l net.Listener, o Origin) {
@@ -774,6 +781,12 @@ func (d *Daemon) pruneForgotten() {
 	for k := range d.limitJobs {
 		keys = append(keys, k)
 	}
+	for k := range d.parkTimers {
+		keys = append(keys, k)
+	}
+	for k := range d.parked {
+		keys = append(keys, k)
+	}
 	d.mu.Unlock()
 	for _, k := range keys {
 		if _, err := d.st.AgentByKey(k); errors.Is(err, store.ErrNotFound) {
@@ -785,6 +798,7 @@ func (d *Daemon) pruneForgotten() {
 			d.forgetSubagentsLocked(k)
 			delete(d.windows, k)
 			delete(d.limitJobs, k)
+			d.forgetStackLocked(k)
 			d.mu.Unlock()
 		}
 	}
@@ -880,6 +894,7 @@ func (d *Daemon) dispatchHooks(ctx context.Context, o Origin, me string, req wir
 			if err := d.st.SetState(me, s, p.SessionID, d.now()); err != nil {
 				return nil, err
 			}
+			d.stackActivity(me, s)
 			d.changed()
 			if waits {
 				d.sound(ctx, o.Container, SoundAttention)

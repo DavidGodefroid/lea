@@ -21,6 +21,15 @@ func TestFirstPromptStatesTheTaskContract(t *testing.T) {
 	}
 }
 
+// An agent knows lea stops its containers while it is idle (#132), and starts them again itself.
+func TestFirstPromptSaysIdleStacksStop(t *testing.T) {
+	p := firstPrompt(store.Agent{Name: "dev-1", Role: "dev"}, "", "", true)
+	if !strings.Contains(p, "lea stops the containers you started (compose stacks, pods) while you are idle") ||
+		!strings.Contains(p, "start them again before you use them") {
+		t.Fatalf("no idle stacks rule in %q", p)
+	}
+}
+
 // An agent knows its own label and the rule for names (#84): labels in text the user reads,
 // names in tool calls.
 func TestFirstPromptNamesTheLabelAndTheRule(t *testing.T) {

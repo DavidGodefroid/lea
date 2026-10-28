@@ -2,6 +2,7 @@ package agents
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -222,5 +223,39 @@ func TestDockerTeardownAndSweep(t *testing.T) {
 	bin, _ = fakeDocker(t, `case $1 in exec) exit 1 ;; inspect) echo false ;; esac`)
 	if out, err := (Docker{Bin: bin}).Sweep(ctx, "lea-a", nil); err != nil || out != "" {
 		t.Fatalf("sweep of a stopped container = %q, %v", out, err)
+	}
+}
+
+// Park stops what an idle agent started (lea-agent park, #132) and returns what it freed.
+func TestDockerPark(t *testing.T) {
+	ctx := context.Background()
+	bin, log := fakeDocker(t, `case $1 in exec) if [ "$6" = park ]; then printf 'dev-1: stopped 2 containers and 1 pod (freed 812 MiB)\n'; fi ;; esac`)
+	d := Docker{Bin: bin, UID: 1000, GID: 1000}
+	out, err := d.Park(ctx, "lea-a", "dev-1")
+	if err != nil || out != "dev-1: stopped 2 containers and 1 pod (freed 812 MiB)" {
+		t.Fatalf("park = %q, %v", out, err)
+	}
+	if !strings.Contains(logged(t, log), "exec -u 1000:1000 lea-a lea-agent park dev-1") {
+		t.Fatalf("log=%q", logged(t, log))
+	}
+	if _, err := d.Park(ctx, "lea-a", "--all"); err == nil {
+		t.Fatal("an invalid name is parked")
+	}
+	bin, _ = fakeDocker(t, `case $1 in exec) exit 1 ;; inspect) echo false ;; esac`)
+	if out, err := (Docker{Bin: bin}).Park(ctx, "lea-a", "dev-1"); err != nil || out != "" {
+		t.Fatalf("park in a stopped container = %q, %v", out, err)
+	}
+	// A stack still at work (lea-agent park exits 3) is ErrStackBusy.
+	bin, _ = fakeDocker(t, `case $1 in exec) echo 'dev-1: stack busy (40% of a CPU), not stopped' >&2; exit 3 ;; inspect) echo true ;; esac`)
+	if _, err := (Docker{Bin: bin}).Park(ctx, "lea-a", "dev-1"); !errors.Is(err, ErrStackBusy) {
+		t.Fatalf("busy park: %v", err)
+	}
+	// Unpark starts again what park stopped.
+	bin, log = fakeDocker(t, `case $1 in exec) printf 'dev-1: started 2 containers and 1 pod again\n' ;; esac`)
+	if out, err := (Docker{Bin: bin, UID: 1000, GID: 1000}).Unpark(ctx, "lea-a", "dev-1"); err != nil || out != "dev-1: started 2 containers and 1 pod again" {
+		t.Fatalf("unpark = %q, %v", out, err)
+	}
+	if !strings.Contains(logged(t, log), "exec -u 1000:1000 lea-a lea-agent unpark dev-1") {
+		t.Fatalf("log=%q", logged(t, log))
 	}
 }

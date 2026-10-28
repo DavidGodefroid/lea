@@ -40,6 +40,9 @@ func firstPrompt(a store.Agent, repo, worktree string, brief bool) string {
 	}
 	b.WriteString(" Report progress with task_update: set next while something is still to happen (CI, a review, a reply)," +
 		" blocked_on when a human must act, and clear both once your work is done.")
+	// Idle stacks (#132): what the agent started stops while it waits.
+	b.WriteString(" lea stops the containers you started (compose stacks, pods) while you are idle: start them again before you use them" +
+		" (docker compose up -d, podman start).")
 	// The deck shows an agent's label, the user may rename it at any time (#84).
 	b.WriteString(" When you mention an agent in text the user reads (task_update, results your lead relays), use its label from agents_list" +
 		" when it has one, looked up fresh since the user may rename it; address tools by name, never by label.")

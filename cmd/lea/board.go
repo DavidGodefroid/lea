@@ -21,6 +21,8 @@ type boardItem struct {
 	Question int64
 	// Subagents counts the subagents the agent still runs: its state cell says so.
 	Subagents int
+	// Stack is what lea stopped of the agent's nested containers while it was idle (#132).
+	Stack string
 }
 
 // stateCell is an item's state as the deck shows it (issue #72), with the subagents it still
@@ -161,6 +163,19 @@ func renderBoard(w io.Writer, b board) {
 				}
 				fmt.Fprintf(w, "| %s | %s | %s | %s | %s | %s | %s | %s | %s |\n", name, mdCell(it.Role), mdCell(stateCell(it)),
 					mdCell(it.Branch), mdCell(it.Title), mdCell(it.Status), mdCell(it.Next), mdCell(blocked), stamp(it.Updated))
+			}
+		}
+		var stacks []boardItem
+		for _, it := range open {
+			if it.Stack != "" {
+				stacks = append(stacks, it)
+			}
+		}
+		if len(stacks) > 0 {
+			fmt.Fprintln(w, "\n### Stacks stopped while idle")
+			fmt.Fprintln(w)
+			for _, it := range stacks {
+				fmt.Fprintf(w, "- %s\n", mdCell(it.Stack))
 			}
 		}
 		if ls := leases[c]; len(ls) > 0 {
