@@ -235,6 +235,7 @@ func TestRunArgsContents(t *testing.T) {
 		"type=bind,src=" + st + "/glab-cli,dst=/lea/state/glab-cli", "type=bind,src=" + st + "/containers,dst=/lea/state/containers",
 		"type=bind,src=" + st + "/go,dst=/lea/state/go",
 		"type=volume,src=locksql-run,dst=/run/locksql", "10000", "LEA_LOCKSQL=1", "LEA_GIT_SSH=",
+		"type=bind,src=" + w.proj + "/.locksql,dst=" + w.proj + "/.locksql,readonly",
 		"type=bind,src=" + st + "/kube,dst=" + w.home + "/.kube/lea,readonly", "KUBECONFIG=" + w.home + "/.kube/lea/config",
 		"/dev/fuse", "/dev/net/tun", "seccomp=" + repoRoot(t) + "/image/seccomp.json",
 		"type=bind,src=" + st + "/clipboard/copy,dst=/lea/clipboard/copy", "WAYLAND_DISPLAY=lea-clipboard",
@@ -771,5 +772,51 @@ func TestProxyFollowsItsImage(t *testing.T) {
 	}
 	if !w.hasCall("docker [run]") {
 		t.Fatalf("a proxy on an older image was kept:\n%s", strings.Join(w.calls(), "\n"))
+	}
+}
+
+// The locksql console's own directory is read-only for the agents: a mount point cannot be
+// removed, renamed or replaced, so no agent swaps it for a symbolic link that the console's bind
+// mount would follow on the host (#121). Made when missing; a link or a file is refused.
+func TestRunArgsLocksqlDirReadOnly(t *testing.T) {
+	w := newWorld(t, repoRoot(t))
+	d := w.proj + "/.locksql"
+	ro := "type=bind,src=" + d + ",dst=" + d + ",readonly"
+	args, err := w.launcher().runArgs(w.proj, "172.18.0.5")
+	if err != nil || !contains(args, ro) {
+		t.Fatalf("missing %q: %v", ro, err)
+	}
+	if fi, err := os.Lstat(d); err != nil || !fi.IsDir() {
+		t.Fatalf("%s not made: %v", d, err)
+	}
+	if err := os.Remove(d); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(w.home, d); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := w.launcher().runArgs(w.proj, "172.18.0.5"); err == nil || !strings.Contains(err.Error(), "is not a directory") {
+		t.Fatalf("a symbolic link: %v", err)
+	}
+	if err := os.Remove(d); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(d, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := w.launcher().runArgs(w.proj, "172.18.0.5"); err == nil || !strings.Contains(err.Error(), "is not a directory") {
+		t.Fatalf("a file: %v", err)
+	}
+	// Without locksql, no mount and nothing made.
+	if err := os.Remove(d); err != nil {
+		t.Fatal(err)
+	}
+	w.writeConf("lea.conf", "LEA_LOCKSQL=0\n")
+	args, err = w.launcher().runArgs(w.proj, "172.18.0.5")
+	if err != nil || contains(args, ro) {
+		t.Fatalf("locksql off: %v %q", err, args)
+	}
+	if _, err := os.Lstat(d); !os.IsNotExist(err) {
+		t.Fatalf("locksql off made %s: %v", d, err)
 	}
 }
