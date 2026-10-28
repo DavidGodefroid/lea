@@ -119,6 +119,24 @@ func (l *Launcher) claudeRO(sbase, src, placeholder, dst string) ([]string, erro
 	return []string{"--mount", "type=bind,src=" + src + ",dst=" + dst + ",readonly"}, nil
 }
 
+// pluginsData lays a private read-write plugins/data over the read-only ~/.claude/plugins: Claude
+// Code mkdirs each plugin's CLAUDE_PLUGIN_DATA there before running its hooks (#90). The mount point
+// must exist in the host's plugins; when lea cannot make it, it says so and the agent starts without.
+func (l *Launcher) pluginsData(src, priv, sbase string) ([]string, error) {
+	p := src + "/plugins"
+	if !isDir(p) || isSymlink(p) {
+		return nil, nil
+	}
+	if err := Mkdirs(src, p+"/data"); err != nil {
+		l.logf("no writable %s/data: %v", p, err)
+		return nil, nil
+	}
+	if err := Mkdirs(sbase, priv+"/plugins-data"); err != nil {
+		return nil, die("%v", err)
+	}
+	return []string{"--mount", "type=bind,src=" + priv + "/plugins-data,dst=" + p + "/data"}, nil
+}
+
 // claudeMounts is lea_claude_mounts: a private ~/.claude per projects dir, the allow-list of
 // host entries read-only, the project's transcripts and lea's own .claude.json.
 func (l *Launcher) claudeMounts(home, proj, st string) ([]string, error) {
@@ -146,6 +164,11 @@ func (l *Launcher) claudeMounts(home, proj, st string) ([]string, error) {
 			return nil, err
 		}
 	}
+	m, err := l.pluginsData(src, priv, sbase)
+	if err != nil {
+		return nil, err
+	}
+	a = append(a, m...)
 	// The shell's "$_src"/*.md: $_src is quoted, so HOME is never a pattern; no hidden names;
 	// byte order (dash sorts its globs with strcmp).
 	var mds []string
