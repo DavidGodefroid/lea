@@ -2,6 +2,15 @@
 # The docker run flags that confine a locksql console (lockHarden in internal/agents/locks.go).
 lea__locksql_harden="--cap-drop ALL --security-opt no-new-privileges --read-only --tmpfs /tmp:rw,nosuid,nodev,noexec,size=64m --pids-limit 256 --memory 1g"
 
+# lea__locksql_launcher: the path of locksql's own launcher on PATH (scripts/locksql of locksql,
+# which scripts/install.sh of locksql installs as locksql), or nothing. Any other locksql (the
+# binary of a former host install, the link an older lea made) is not it.
+lea__locksql_launcher() {
+  _ll=$(command -v locksql 2>/dev/null) || return 0
+  case $_ll in /*) ;; *) return 0 ;; esac
+  if [ -f "$_ll" ] && grep -q '^launcher_version=' "$_ll" 2>/dev/null; then printf '%s\n' "$_ll"; fi
+}
+
 # lea locksql [console flags]: the locksql console of the projects directory, in its own
 # container, on this terminal (keep it in view: each query of an agent waits for your approval
 # there). lea locksql vault ARGS: the vault CLI as the console account (vault login, when its
@@ -51,6 +60,16 @@ lea_locksql() {
         lea_die "could not inspect the lea agents (docker inspect): the locksql console checks them first"
       _lk_bad=$(printf '%s\n' "$_lk_m" | awk '$2 != "false" { sub("^/", "", $1); printf "%s%s", s, $1; s = " " }')
       [ -z "$_lk_bad" ] || lea_die "$_lk_bad running without $_lk_r/.locksql read-only (started before locksql or this lea): restart the agents (lea stop, then lea; they resume) and retry"
+    fi
+    # locksql's launcher runs the console as lea did: the console account, confined, the projects
+    # directory read-only but for .locksql (LOCKSQL_READONLY_PROJECT), lea's console image and
+    # container name. Until a locksql release ships it, lea runs the same docker run itself.
+    _lk_l=$(lea__locksql_launcher)
+    if [ -n "$_lk_l" ]; then
+      cd "$_lk_p" || lea_die "could not enter $_lk_p"
+      if [ -n "${LEA_LOCKSQL_VAULT_ADDR:-}" ]; then VAULT_ADDR=$LEA_LOCKSQL_VAULT_ADDR; export VAULT_ADDR; fi
+      LOCKSQL_IMAGE=$LEA_LOCKSQL_IMAGE LOCKSQL_READONLY_PROJECT=1 LOCKSQL_CONSOLE_NAME=locksql-console \
+        exec "$_lk_l" console --project "$_lk_p" "$@"
     fi
     # host.docker.internal is this machine, as the profile wizard offers it.
     set -- --name locksql-console --add-host=host.docker.internal:host-gateway -v "$_lk_p:$_lk_p:ro" \
