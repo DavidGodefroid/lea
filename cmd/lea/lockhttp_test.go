@@ -6,7 +6,9 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
+	"time"
 
 	"github.com/DavidGodefroid/lea/internal/lockhttp"
 	"github.com/DavidGodefroid/lea/internal/store"
@@ -85,5 +87,43 @@ func TestLockHTTPGrantProxy(t *testing.T) {
 	got := lockHTTPGrantProxy(key)("lea-aaaa", "dev-1")
 	if want := "http://dev-1:" + lockhttp.Token(key, "lea-aaaa", "dev-1") + "@lea-proxy:3130"; got != want {
 		t.Fatalf("got %s, want %s", got, want)
+	}
+}
+
+// The login file is in the agent's state, which the agent writes: a symlink (to /dev/zero, to
+// another container's login), a FIFO or a huge file names no credential and never blocks or
+// exhausts the daemon.
+func TestLockHTTPCredentialsReadsTheLoginSafely(t *testing.T) {
+	data := t.TempDir()
+	dir := func(id string) string {
+		d := filepath.Join(data, "state", "claude", id)
+		os.MkdirAll(d, 0o700)
+		return filepath.Join(d, ".credentials.json")
+	}
+	good := dir("good")
+	os.WriteFile(good, []byte(`{"claudeAiOauth":{"accessToken":"sk-ant-oat-good"}}`), 0o600)
+	os.Symlink(good, dir("link"))
+	os.Symlink("/dev/zero", dir("zero"))
+	if err := syscall.Mkfifo(dir("fifo"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	os.WriteFile(dir("huge"), []byte(`{"claudeAiOauth":{"accessToken":"sk-ant-oat-huge"},"x":"`+strings.Repeat("a", 70<<10)+`"}`), 0o600)
+	done := make(chan lockhttp.Credentials, 1)
+	go func() {
+		done <- lockHTTPCredentials(data, "lea", map[string]string{"lea-good": "", "lea-link": "", "lea-zero": "", "lea-fifo": "", "lea-huge": ""}, nil)
+	}()
+	var c lockhttp.Credentials
+	select {
+	case c = <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("blocked on the agent's login file")
+	}
+	if got := c.Containers["lea-good"]; len(got) != 1 || got[0] != lockhttp.Hash("sk-ant-oat-good") {
+		t.Fatalf("good: %q", got)
+	}
+	for _, n := range []string{"lea-link", "lea-zero", "lea-fifo", "lea-huge"} {
+		if got, ok := c.Containers[n]; !ok || len(got) != 0 {
+			t.Errorf("%s: %q %v", n, got, ok)
+		}
 	}
 }

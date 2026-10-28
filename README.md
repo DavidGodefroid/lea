@@ -375,7 +375,11 @@ agent also has its own proxy password, and the daemon tells the gate whose it is
 uid and can read each other's environment: that name is for the audit and the console's display
 (attribution), never a permission, and one agent can pass for another of the same container.
 lea-keyproxy goes through the gate too, and so do the forge calls of grants, with the calling
-agent's own password. `LEA_GIT_SSH` and `LEA_OTEL_UPSTREAM` are refused (their raw TCP forwarders
+agent's own password. The daemon also tells the gate which Claude login each container holds
+(`credentials.json`: hashes of the OAuth access token in its state, and of the keys lea-keyproxy
+injects); under MITM the gate denies a Claude API key that is not the caller's (`E_SECRET_EGRESS`).
+That login file is the agent's to write: the check stops a key sent from the wrong container,
+not an agent that rewrites its own login file. `LEA_GIT_SSH` and `LEA_OTEL_UPSTREAM` are refused (their raw TCP forwarders
 would bypass the gate: use git over HTTPS), and claude.ai's connectors are turned off in the
 agents' Claude Code (WebSearch and WebFetch stay).
 

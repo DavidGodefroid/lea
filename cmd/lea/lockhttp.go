@@ -95,6 +95,11 @@ func lockHTTPRunning(ps string) map[string]string {
 // login lea keeps for it (state/claude/<id>/.credentials.json, its OAuth access token, which
 // Claude Code rotates: the next pass picks the new one up), and the hashes of the providers'
 // keys lea-keyproxy injects. A container without a login gets an empty list.
+//
+// The login file is in the container's state, which its agents write: it is read without
+// following a link, without blocking, as a regular file of at most 64 KiB (readPlainMax), else
+// it names nothing. An agent can also put any accessToken there: E_SECRET_EGRESS only stops an
+// agent that sends another container's key without having tampered with its own login file.
 func lockHTTPCredentials(dataDir, prefix string, running map[string]string, reg func() (*providers.Registry, error)) lockhttp.Credentials {
 	c := lockhttp.Credentials{Version: lockhttp.Version, Containers: map[string][]string{}, Keyproxy: []string{}}
 	for name := range running {
@@ -108,8 +113,8 @@ func lockHTTPCredentials(dataDir, prefix string, running map[string]string, reg 
 				AccessToken string `json:"accessToken"`
 			} `json:"claudeAiOauth"`
 		}
-		b, err := os.ReadFile(filepath.Join(dataDir, "state", "claude", id, ".credentials.json"))
-		if err == nil && json.Unmarshal(b, &login) == nil && login.ClaudeAiOauth.AccessToken != "" {
+		b, ok := readPlainMax(filepath.Join(dataDir, "state", "claude", id, ".credentials.json"), 64<<10)
+		if ok && json.Unmarshal(b, &login) == nil && login.ClaudeAiOauth.AccessToken != "" {
 			c.Containers[name] = append(c.Containers[name], lockhttp.Hash(login.ClaudeAiOauth.AccessToken))
 		}
 	}
