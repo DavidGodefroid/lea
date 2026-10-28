@@ -161,6 +161,58 @@ EOT
   [[ "$output" == *"docker [run]"*"[--cap-drop] [ALL]"*"[console]"* ]]
 }
 
+# launcher_refused: the console stays lea's (no launcher call, lea's own docker run).
+launcher_refused() {
+  : >"$FAKE_LOG"
+  run lea_locksql </dev/null
+  [ "$status" -eq 0 ]
+  run calls
+  [[ "$output" != *"launcher"* ]]
+  [[ "$output" == *"docker [run]"*"[console]"* ]]
+}
+
+@test "lea locksql trusts no launcher an agent or another account could have written" {
+  fake_launcher
+  l="$BATS_TEST_TMPDIR/lbin/locksql"
+  # Writable by its group or by others, or in such a directory.
+  chmod 0775 "$l"; launcher_refused
+  chmod 0757 "$l"; launcher_refused
+  chmod 0755 "$l"; chmod 0777 "$BATS_TEST_TMPDIR/lbin"; launcher_refused
+  chmod 0755 "$BATS_TEST_TMPDIR/lbin"
+  # Owned by another account than this one or root (here: this one is someone else). Run as root,
+  # the file is root's, which is trusted: nothing to check then.
+  mkdir -p "$BATS_TEST_TMPDIR/idbin"
+  printf '#!/bin/sh\n[ "$1" = -u ] && echo 4242 && exit 0\nexec /usr/bin/id "$@"\n' >"$BATS_TEST_TMPDIR/idbin/id"
+  chmod +x "$BATS_TEST_TMPDIR/idbin/id"
+  if [ "$(id -u)" != 0 ]; then PATH="$BATS_TEST_TMPDIR/idbin:$PATH" launcher_refused; fi
+  # In the projects directory (the agents write it), or in lea's data directory, even through a
+  # link from a trusted directory.
+  mkdir -p "$P/bin"; cp -p "$l" "$P/bin/locksql"; rm "$l"; ln -s "$P/bin/locksql" "$l"
+  launcher_refused
+  rm "$l"; d=$(lea_data_dir)/bin; mkdir -p "$d"; cp -p "$P/bin/locksql" "$d/locksql"
+  export PATH="$d:$PATH"
+  launcher_refused
+  # In the projects directory of another running lea agent (its lea.projects label).
+  o="$BATS_TEST_TMPDIR/other-projects"; mkdir -p "$o/bin"; cp -p "$d/locksql" "$o/bin/locksql"
+  export PATH="${PATH#"$d:"}"
+  export PATH="$o/bin:$PATH" FAKE_DOCKER_OUT_PS___FILTER="c9 $o"
+  launcher_refused
+  export PATH="${PATH#"$o/bin:"}"; unset FAKE_DOCKER_OUT_PS___FILTER
+  # Under a directory, any one up to /, that its group or others may write (a sticky one, such as
+  # /tmp, is fine: nobody else can move an entry of this account there).
+  g="$BATS_TEST_TMPDIR/g"; mkdir -p "$g/sub/bin"; cp -p "$d/locksql" "$g/sub/bin/locksql"; chmod 0775 "$g"
+  export PATH="$g/sub/bin:$PATH"
+  launcher_refused
+  export PATH="${PATH#"$g/sub/bin:"}"
+  # The same launcher elsewhere, owned by this account, mode 0755: it gets the console.
+  cp -p "$d/locksql" "$l"
+  : >"$FAKE_LOG"
+  run lea_locksql </dev/null
+  [ "$status" -eq 0 ]
+  run calls
+  [[ "$output" == *"launcher pwd="* ]]
+}
+
 @test "lea locksql never takes another locksql on PATH for the launcher" {
   mkdir -p "$BATS_TEST_TMPDIR/obin"
   printf '#!/bin/sh\necho other >>"$FAKE_LOG"\n' >"$BATS_TEST_TMPDIR/obin/locksql"
