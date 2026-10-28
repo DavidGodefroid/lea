@@ -579,8 +579,14 @@ func TestCommandsMatchTheGoldenFiles(t *testing.T) {
 				"warn  kernel 7.0.0-38-generic: no known minimum for ubuntu 24.04", "FAIL  user config",
 				"core [delivery] [--container] [lea-$ID] [--projects] [$W/projects] [check] [--state]"}, absent: []string{"launcher"}},
 		// Without a projects directory there is no lea to check delivery for.
-		{name: "doctor without a projects dir", args: []string{"doctor"}, exit: 1, env: map[string]string{"LEA_PROJECTS_DIR": "$W/none"},
-			want: []string{"ok    docker reachable"}, absent: []string{"core [delivery]"}},
+		// The host versions are pinned as in doctor: the recording never depends on the machine.
+		{name: "doctor without a projects dir", args: []string{"doctor"}, exit: 1,
+			env: map[string]string{"LEA_PROJECTS_DIR": "$W/none", "LEA_OS_RELEASE": "$W/os-release"},
+			setup: func(w *world) {
+				os.WriteFile(w.dir+"/os-release", []byte("ID=ubuntu\nVERSION_ID=\"24.04\"\n"), 0o644)
+				os.WriteFile(w.dir+"/bin/uname", []byte("#!/bin/sh\necho 7.0.0-38-generic\n"), 0o755)
+			},
+			want: []string{"ok    docker reachable", "warn  kernel 7.0.0-38-generic: no known minimum for ubuntu 24.04"}, absent: []string{"core [delivery]"}},
 		// lea delivery: the core form, with this projects dir's container and the directory.
 		{name: "delivery on", args: []string{"delivery", "on"},
 			want: []string{"core [delivery] [--container] [lea-$ID] [--projects] [$W/projects] [on]"}},

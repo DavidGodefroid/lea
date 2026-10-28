@@ -15,7 +15,7 @@ docker [volume] [inspect] [locksql-run]
 -- stdout
 ok    docker reachable
 warn  Docker Engine: version unknown (not Docker Engine?)
-warn  kernel 7.0.0-38-generic: no known minimum for fedora 44 in $R/config/host-minimums: check that it has the fixes for CVE-2026-74753, CVE-2026-80521, CVE-2026-80841
+warn  kernel 7.0.0-38-generic: no known minimum for ubuntu 24.04 in $R/config/host-minimums: check that it has the fixes for CVE-2026-74753, CVE-2026-80521, CVE-2026-80841
 ok    state claude.json
 FAIL  user config: $W/config/lea/lea.conf missing: run lea init
 FAIL  projects dir: LEA_PROJECTS_DIR=$W/none is not a directory; run lea init
