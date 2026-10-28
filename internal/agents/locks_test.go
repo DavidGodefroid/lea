@@ -3,6 +3,8 @@ package agents
 import (
 	"context"
 	"errors"
+	"os"
+	"path/filepath"
 	"reflect"
 	"slices"
 	"strings"
@@ -55,7 +57,10 @@ func nameOf(projects string) string {
 	return "lea-other"
 }
 
-var sqlSpec = LockSpec{Enabled: true, Image: "locksql:0.8.0", ContainerName: nameOf}
+var sqlSpec = LockSpec{Enabled: true, Image: "locksql:0.8.0", ContainerName: nameOf, ConsoleDir: okDir}
+
+// okDir is a ConsoleDir that accepts any directory without touching the disk.
+func okDir(string) error { return nil }
 
 func lockEnv(t *testing.T, spec LockSpec) (env, *fakeConsoles) {
 	t.Helper()
@@ -80,7 +85,7 @@ func lockPane(s *fakeSession, id string) *fpane {
 // deck's container; in the lock slot under the agent's slot, with a short history, closing when
 // the console exits, and without the keyboard.
 func TestLockOpenRunsTheTemplateUnderTheSlotWithoutFocus(t *testing.T) {
-	e, _ := lockEnv(t, LockSpec{Enabled: true, Image: "locksql:0.8.0", VaultAddr: "https://vault.example.com:8200", ContainerName: nameOf})
+	e, _ := lockEnv(t, LockSpec{Enabled: true, Image: "locksql:0.8.0", VaultAddr: "https://vault.example.com:8200", ContainerName: nameOf, ConsoleDir: okDir})
 	s := e.ensure(t, "/p")
 	slot := s.slot()
 	n := len(s.log)
@@ -92,9 +97,11 @@ func TestLockOpenRunsTheTemplateUnderTheSlotWithoutFocus(t *testing.T) {
 	if p == nil {
 		t.Fatalf("no lock pane: %+v", s.panes)
 	}
-	want := []string{"docker", "run", "-it", "--rm", "--log-driver", "none", "--user", "locksql", "--name", "locksql-console-prod",
+	want := []string{"docker", "run", "-it", "--rm", "--log-driver", "none", "--user", "locksql",
+		"--cap-drop", "ALL", "--security-opt", "no-new-privileges", "--read-only", "--tmpfs", "/tmp:rw,nosuid,nodev,noexec,size=64m",
+		"--pids-limit", "256", "--memory", "1g", "--name", "locksql-console-prod",
 		"--label", "lea.lock-for=" + C, "--add-host=host.docker.internal:host-gateway",
-		"-v", "/home/u/p:/home/u/p", "-v", "locksql-run:/run/locksql", "-v", "locksql-home:/home/locksql",
+		"-v", "/home/u/p:/home/u/p:ro", "-v", "/home/u/p/.locksql:/home/u/p/.locksql", "-v", "locksql-run:/run/locksql", "-v", "locksql-home:/home/locksql",
 		"-e", "VAULT_ADDR=https://vault.example.com:8200", "locksql:0.8.0", "console", "--project", "/home/u/p", "--profile", "prod"}
 	if !reflect.DeepEqual(p.cmd, want) {
 		t.Fatalf("console argv\n got %q\nwant %q", p.cmd, want)
@@ -273,6 +280,10 @@ func TestLockOpenRefusals(t *testing.T) {
 		// One daemon, several decks: a deck's console serves its own projects directory only.
 		{"another deck's projects dir", "locksql", "", sqlSpec, "is not the one of " + C, "/home/u/other"},
 		{"no container mapping", "locksql", "", LockSpec{Enabled: true, Image: "locksql:1"}, "is not the one of " + C, ""},
+		// The console's writable directory: checked by the host, or no console.
+		{"no console dir check", "locksql", "", LockSpec{Enabled: true, Image: "locksql:1", ContainerName: nameOf}, "no check of the console's directory", ""},
+		{"a console dir refused", "locksql", "", LockSpec{Enabled: true, Image: "locksql:1", ContainerName: nameOf,
+			ConsoleDir: func(d string) error { return errors.New("refused " + d) }}, "refused /home/u/p/.locksql", ""},
 	}
 	for _, c := range cases {
 		e, fc := lockEnv(t, c.spec)
@@ -477,5 +488,39 @@ func TestSnapshotCarriesTheOldestLockRequest(t *testing.T) {
 		if a.Key == k1 && a.LockAsk != nil {
 			t.Fatalf("expired request shown: %+v", a.LockAsk)
 		}
+	}
+}
+
+// The console writes only its own directory of the projects directory, which agents also write:
+// a missing one is made, a symbolic link (a bind mount follows it on the host) or a file refused.
+func TestEnsureConsoleDir(t *testing.T) {
+	p := t.TempDir()
+	d := filepath.Join(p, ".locksql")
+	if err := EnsureConsoleDir(d); err != nil {
+		t.Fatalf("missing: %v", err)
+	}
+	if fi, err := os.Lstat(d); err != nil || !fi.IsDir() {
+		t.Fatalf("not made: %v %v", fi, err)
+	}
+	if err := EnsureConsoleDir(d); err != nil {
+		t.Fatalf("existing: %v", err)
+	}
+	if err := os.Remove(d); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(t.TempDir(), d); err != nil {
+		t.Fatal(err)
+	}
+	if err := EnsureConsoleDir(d); err == nil || !strings.Contains(err.Error(), "is not a directory") {
+		t.Fatalf("symlink to a directory: %v", err)
+	}
+	if err := os.Remove(d); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(d, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := EnsureConsoleDir(d); err == nil || !strings.Contains(err.Error(), "is not a directory") {
+		t.Fatalf("file: %v", err)
 	}
 }

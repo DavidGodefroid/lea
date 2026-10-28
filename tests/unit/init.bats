@@ -745,7 +745,7 @@ y
   run calls
   [[ "$output" == *"docker [build] [--target] [vault] [-t] [locksql:0.8.0] [--build-arg] [ALLOWED_UIDS=$(id -u)] ["*"/src]"* ]]
   [[ "$output" == *"[-e] [VAULT_ADDR=https://vault.example.com] [--entrypoint] [vault] [locksql:0.8.0] [token] [lookup]"* ]]
-  [[ "$output" == *"docker [run] [-i] [--rm] [--log-driver] [none] [--user] [locksql] [-v] [locksql-home:/home/locksql] [-e] [VAULT_ADDR=https://vault.example.com] [--entrypoint] [vault] [locksql:0.8.0] [login] [-method=oidc]"* ]]
+  [[ "$output" == *"docker [run] [-i] [--rm] [--log-driver] [none] [--user] [locksql] [--cap-drop] [ALL] [--security-opt] [no-new-privileges] [--read-only] [--tmpfs] [/tmp:rw,nosuid,nodev,noexec,size=64m] [--pids-limit] [256] [--memory] [1g] [-v] [locksql-home:/home/locksql] [-e] [VAULT_ADDR=https://vault.example.com] [--entrypoint] [vault] [locksql:0.8.0] [login] [-method=oidc]"* ]]
 }
 
 @test "without a terminal the guided locksql steps are skipped" {

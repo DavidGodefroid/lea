@@ -276,6 +276,12 @@ keep in view to open the console, then ask an agent about your data. `locksql va
 console account in to Vault again when its token expires. A `locksql` already installed on the
 host keeps its name; `lea locksql` then opens lea's console.
 
+The console holds the credentials, so its container is confined (in the deck too): no capability,
+no privilege gain (`no-new-privileges`), a read-only root with a small `/tmp`, at most 256
+processes and 1 GB of memory. It sees your projects directory read-only, since your agents write
+there, but for its own `.locksql` directory (its PII rules); lea makes that directory when it is
+missing and opens no console while it is a symbolic link or a file.
+
 The console can also live **in the deck**: `L` in the deck (or `lea lock open locksql [profile]`)
 opens it in a pane under the agent, with a red `LOCK` border, without taking the keyboard: click
 it to answer (ctrl+space from the deck always goes to the agent, never to the console). It serves
