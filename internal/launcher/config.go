@@ -35,7 +35,7 @@ var ExportedKeys = []string{
 	"LEA_OTEL_UPSTREAM", "LEA_NESTED_NETWORKS", "LEA_K8S_NAMESPACE", "LEA_INTERNAL_HOSTS", "LEA_EGRESS_ALLOW", "LEA_PROJECTS_DIR",
 	"LEA_APPROVALS", "LEA_APPROVAL_TIMEOUT", "LEA_SOUND", "LEA_SOUND_ATTENTION", "LEA_SOUND_DONE",
 	"LEA_PROVIDER", "LEA_MODEL", "LEA_PROVIDERS", "LEA_AUTO_RESUME", "LEA_RESUME_DELAY",
-	"LEA_STACK_IDLE",
+	"LEA_STACK_IDLE", "LEA_HEAVY_SLOTS", "LEA_HEAVY_WORKERS",
 }
 
 // Config is what lea_load_config gives the shell: the environment, overlaid by the assignments of
@@ -243,6 +243,9 @@ func (c *Config) resolve(root string) error {
 			return fmt.Errorf("LEA_LOCKFILE_REF %s is refused: lockfile v0.1.0 lets a plugin escape its sandbox (v0.1.1 or later)", ref)
 		}
 	}
+	if err := c.resolveAgentCPUs(); err != nil {
+		return err
+	}
 	lh := nonEmpty(c.Get("LEA_LOCKHTTP"), "0")
 	if lh != "0" && lh != "1" {
 		return fmt.Errorf("LEA_LOCKHTTP must be 1 (agents' web egress through a LockHTTP gate) or 0, not '%s'", lh)
@@ -306,6 +309,17 @@ func (c *Config) resolveLimits() error {
 		return fmt.Errorf("LEA_PIDS_LIMIT must be a number of processes without leading zeros or 0 (no limit), not '%s'", pids)
 	}
 	c.final["LEA_MEMORY"], c.final["LEA_MEMORY_SWAP"], c.final["LEA_PIDS_LIMIT"] = mem, swap, pids
+	return nil
+}
+
+// resolveAgentCPUs checks LEA_AGENT_CPUS, the CPU window of each agent (#132): a number of CPUs
+// (4 by default, at most 1024) or 0 (no window).
+func (c *Config) resolveAgentCPUs() error {
+	n := nonEmpty(c.Get("LEA_AGENT_CPUS"), "4")
+	if v, ok := plainNumber(n, 4); n != "0" && (!ok || v > 1024) {
+		return fmt.Errorf("LEA_AGENT_CPUS must be a number of CPUs (1-1024) or 0 (no window), not '%s'", n)
+	}
+	c.final["LEA_AGENT_CPUS"] = n
 	return nil
 }
 

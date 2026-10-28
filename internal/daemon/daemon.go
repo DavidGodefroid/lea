@@ -12,6 +12,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"strings"
 	"sync"
 	"time"
@@ -107,6 +108,14 @@ type Daemon struct {
 	stackIdle  time.Duration
 	parkTimers map[string]*time.Timer
 	parked     map[string]string
+	// Heavy jobs (heavy.go, #132): each container's slots, their number, the workers of one job,
+	// how long a slot lives without renewal (a test seam) and the last holder id.
+	heavy        map[string]*heavyPool
+	heavySlots   int
+	heavyWorkers int
+	heavyTTL     time.Duration
+	heavyMaxHold time.Duration
+	heavySeq     int64
 }
 
 func New(st *store.Store, runDir string, now func() int64) *Daemon {
@@ -119,7 +128,8 @@ func New(st *store.Store, runDir string, now func() int64) *Daemon {
 		verdicts: map[int64]chan string{}, asks: map[string]pendingAsk{}, blocks: map[string]int{}, stopped: map[string]bool{}, rewakes: map[string]int{}, keyMu: map[string]*sync.Mutex{}, statusPaths: map[string]string{}, named: map[string]bool{}, rang: map[string]time.Time{},
 		doneDelay: doneDelay, doneTimers: map[string]*time.Timer{},
 		resumeDelay: DefaultResumeDelay, windows: map[string][]limitWindow{}, limitJobs: map[string]string{},
-		stackIdle: DefaultStackIdle, parkTimers: map[string]*time.Timer{}, parked: map[string]string{}}
+		stackIdle: DefaultStackIdle, parkTimers: map[string]*time.Timer{}, parked: map[string]string{},
+		heavy: map[string]*heavyPool{}, heavySlots: DefaultHeavySlots(runtime.NumCPU(), DefaultHeavyWorkers), heavyWorkers: DefaultHeavyWorkers}
 }
 
 func (d *Daemon) Serve(ctx context.Context, l net.Listener, o Origin) {
@@ -310,6 +320,12 @@ func (d *Daemon) dispatch(ctx context.Context, o Origin, req wire.Request) (any,
 		return d.reply(me, p.ID, p.Status, p.Body)
 	case "msg_inbox":
 		return d.inbox(me)
+	case "heavy_acquire":
+		return d.heavyAcquire(ctx, o, me, req.Params)
+	case "heavy_release":
+		return d.heavyRelease(o, me, req.Params)
+	case "heavy_renew":
+		return d.heavyRenew(o, me, req.Params)
 	case "ask":
 		return d.ask(ctx, o, me, req.Params)
 	case "msg_wait":
@@ -561,6 +577,15 @@ type delivery interface {
 // restore puts back the messages of a delivery that never reached its reader (the client went
 // away, or the answer could not be written), and wakes whoever waits for them.
 func (d *Daemon) restore(res any) {
+	if g, ok := res.(heavyGrant); ok && g.Granted {
+		// A slot nobody will use: the next job gets it.
+		d.mu.Lock()
+		for _, p := range d.heavy {
+			d.freeLocked(p, g.ID)
+		}
+		d.mu.Unlock()
+		return
+	}
 	t, ok := res.(delivery)
 	if !ok {
 		return

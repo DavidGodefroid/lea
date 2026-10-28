@@ -498,6 +498,7 @@ func (l *Launcher) runArgs(proj, pip string) ([]string, error) {
 		"--label", "lea.prefix=" + p, "--label", "lea.role=session", "--label", "lea.projects=" + proj,
 		"-e", "LEA_UID=" + uid, "-e", "LEA_GID=" + gid, "-e", "LEA_USER=" + l.containerUser(), "-e", "HOME=" + home,
 		"-e", "LEA_PROJECTS=" + proj, "-e", "LEA_PROXY_IP=" + pip, "-e", "LEA_NESTED_NETWORKS=" + l.Cfg.Get("LEA_NESTED_NETWORKS"),
+		"-e", "LEA_AGENT_CPUS=" + l.Cfg.Get("LEA_AGENT_CPUS"),
 		"-e", "XDG_RUNTIME_DIR=/run/user/" + uid, "-e", "DOCKER_HOST=unix:///run/user/" + uid + "/podman/podman.sock",
 		"-e", "HTTP_PROXY=" + proxy, "-e", "HTTPS_PROXY=" + proxy, "-e", "http_proxy=" + proxy, "-e", "https_proxy=" + proxy,
 		"-e", "NO_PROXY=" + noProxy, "-e", "no_proxy=" + noProxy,

@@ -751,6 +751,8 @@ read-only. The screen runs in the deck on the host: agents cannot open or drive 
 | `LEA_PROVIDERS` | `~/.config/lea/providers` | your OpenAI-compatible endpoints and their key files |
 | `LEA_AUTO_RESUME`, `LEA_RESUME_DELAY` | on, `60` | resume agents stopped on a usage limit, so many seconds after its reset (`0`: off) |
 | `LEA_STACK_IDLE` | `10` | minutes an agent stays idle before lea stops (not removes) the containers it started in the nested Podman (`0`: never); `lea board` lists what it freed |
+| `LEA_AGENT_CPUS` | `4` | each agent's CPU window, the least shared CPUs: the agent, its tools and its nested containers run there, so `nproc`, PHPStan, Go… see that many CPUs (`0`: no window) |
+| `LEA_HEAVY_SLOTS`, `LEA_HEAVY_WORKERS` | `0` (¾ of the CPUs ÷ workers), `4` | heavy jobs (`lea heavy -- <command>`): how many run at once per container, and the CPUs and workers each gets |
 | `LEA_SOUND`, `LEA_AUTONAME` | on | the deck's sounds, automatic names (`0`: off) |
 | `LEA_SOUND_ATTENTION`, `LEA_SOUND_DONE` | freedesktop sounds | the file of each sound (`0`: that one off) |
 | `LEA_OTEL_UPSTREAM` | empty | send Claude Code usage telemetry to this OTLP collector |
@@ -913,6 +915,34 @@ make test-isolation   # isolation checks (needs make build and, on Linux, lea in
 
 A tag `vX.Y.Z` publishes a release: the archives for Linux and macOS (amd64, arm64), their
 checksums, and the images on `ghcr.io/davidgodefroid`.
+
+## CPUs
+
+Test suites, static analysis and builds start one worker per CPU they see. lea gives each agent a
+window of `LEA_AGENT_CPUS` CPUs (4), the ones fewest agents share. The agent, its tools and the
+containers it starts in the nested Podman run there: `nproc`, PHPStan, php-cs-fixer, Go, pytest-xdist
+and Node's `os.availableParallelism()` see that many CPUs, without anything in your projects. (lea
+runs the nested Podman's `crun` through a wrapper that pins an agent's containers, `podman exec`
+included.) Tools that count `/proc/cpuinfo` still see every CPU. The window is not a hard limit:
+the lea container's `LEA_CPUS` is. `lea doctor` lists the windows.
+
+## Heavy jobs
+
+Test suites, static analysis, builds and browsers start one worker per core of the host: a few
+agents running them at once take every core. Agents run them through `lea heavy`:
+
+```sh
+lea heavy -- vendor/bin/phpstan analyse
+lea heavy -- go test ./...
+```
+
+`lea heavy` waits for one of the container's `LEA_HEAVY_SLOTS` slots, in order, saying who holds
+them, then runs the command on `LEA_HEAVY_WORKERS` CPUs of its own (tools that count the CPUs
+they may use, such as `nproc`, see that many) with `GOMAXPROCS`, `MAKEFLAGS=-jN`,
+`CMAKE_BUILD_PARALLEL_LEVEL`, `CARGO_BUILD_JOBS`, `PYTEST_XDIST_AUTO_NUM_WORKERS` and
+`LEA_HEAVY_WORKERS` set. A slot whose job was killed frees itself within three minutes; a job holds its slot two hours at
+most. `lea board`
+lists the jobs that run and wait.
 
 ## Known limitations
 

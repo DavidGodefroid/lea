@@ -35,6 +35,9 @@ const usage = `usage: lea <command>
   approvals                  list pending approvals
   approve <id> allow|deny|always   answer an approval
   board [--md] [--container NAME]   the tasks of every agent, as markdown
+  heavy -- <command> [args...]
+                             run a test suite, an analysis, a build in one of the container's
+                             heavy slots, on its CPUs, with capped workers (inside lea)
   requests                   list the spawn requests that wait for you
   request accept <id> | request decline <id> [reason]
                              answer a spawn request
@@ -87,6 +90,8 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		return runHost(args, stdout, stderr)
 	case "grant":
 		return runGrant(args, stdout, stderr)
+	case "heavy":
+		return runHeavy(args[1:], stdin, stdout, stderr)
 	case "deck":
 		return runDeck(args[1:], stderr)
 	case "deck-open":

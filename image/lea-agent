@@ -2,7 +2,7 @@
 # Deck agents inside lea. `run` is what abduco starts for an agent: it records the agent's pid,
 # then becomes its CLI (Claude Code, or Codex with --cli codex) through lea-session (exec keeps the pid). `ls` prints the live agents;
 # `stop` ends one; `pause` freezes one with its children (SIGSTOP), `resume` lets them continue
-# (SIGCONT). Each agent gets its own Podman service: what it starts in the nested Podman carries
+# (SIGCONT). Each agent gets a CPU window (LEA_AGENT_CPUS, #132) and its own Podman service: what it starts in the nested Podman carries
 # the annotation lea.agent=NAME, `teardown` removes it when the agent ends, `park` stops it while
 # the agent is idle (#132), and `sweep` removes the stacks of agents that are gone (#97). The deck's shells (s) work the same way: `shell` is what abduco starts for one (the
 # user's login shell, never an agent: no LEA_AGENT), `shells` prints the live ones and
@@ -38,6 +38,45 @@ alive() {
   if [ -z "$p" ] || ! kill -0 "$p" 2>/dev/null; then return 1; fi
   tr '\0' '\n' <"/proc/$p/environ" 2>/dev/null | grep -qx "$v=$1" || return 1
   printf '%s\n' "$p"
+}
+
+# window NAME: the CPU window of agent NAME (#132), LEA_AGENT_CPUS CPUs (4; 0: none) of those lea
+# runs on, the ones fewest live agents' windows hold; nothing when the window would hold them all.
+# Tools that size themselves from the CPUs they may use (nproc, Go, PHPStan, pytest-xdist...) see
+# it, in the agent and in its nested containers (lea-crun).
+window() {
+  n=${LEA_AGENT_CPUS:-4}
+  case $n in '' | *[!0-9]*) n=4 ;; esac
+  [ "$n" -gt 0 ] || return 0
+  all=${LEA_AGENT_CPU_LIST:-$(awk '/^Cpus_allowed_list:/ { print $2 }' /proc/self/status)}
+  for f in "$dir"/*.cpus; do
+    [ -f "$f" ] || continue
+    a=${f##*/}; a=${a%.cpus}
+    if [ "$a" != "$1" ] && valid "$a" && alive "$a" >/dev/null; then head -c 4096 "$f"; echo; fi
+  done | awk -v all="$all" -v n="$n" '
+    # expand LIST: the CPUs of a list such as 0-3,8 into cpus[1..k]; returns k.
+    function expand(list, cpus,   k, i, parts, r, c) {
+      k = 0
+      split(list, parts, ",")
+      for (i in parts) if (parts[i] ~ /^[0-9]+(-[0-9]+)?$/) {
+        split(parts[i], r, "-"); if (r[2] == "") r[2] = r[1]
+        for (c = r[1] + 0; c <= r[2] + 0 && k < 4096; c++) cpus[++k] = c
+      }
+      return k
+    }
+    { m = expand($0, used); for (i = 1; i <= m; i++) load[used[i]]++; delete used }
+    END {
+      total = expand(all, cpu)
+      if (n >= total) exit
+      for (j = 1; j <= n; j++) {
+        best = 0
+        for (i = 1; i <= total; i++) if (!(i in taken) && (best == 0 || load[cpu[i]] + 0 < load[cpu[best]] + 0)) best = i
+        taken[best] = 1
+      }
+      out = ""
+      for (i = 1; i <= total; i++) if (i in taken) out = out (out == "" ? "" : ",") cpu[i]
+      print out
+    }'
 }
 
 # tree PID: PID and its descendants, parents first.
@@ -200,6 +239,14 @@ case ${1:-} in
     if [ "${1:-}" = -- ]; then shift; fi
     mkdir -p "$dir"
     printf '%s\n' "$$" >"$dir/$name.pid"
+    # Its CPU window (#132): the agent, its tools and its Podman service run there; lea-crun pins
+    # its nested containers to it.
+    rm -f "$dir/$name.cpus"
+    w=$(window "$name")
+    if [ -n "$w" ]; then
+      printf '%s\n' "$w" >"$dir/$name.cpus"
+      taskset -p -c "$w" "$$" >/dev/null 2>&1 || true
+    fi
     # LockHTTP: the agent's own proxy password (the daemon passes it); without one it keeps the
     # container's ("shell").
     if [ "${LEA_LOCKHTTP:-0}" = 1 ] && [ -n "${LEA_PROXY_TOKEN:-}" ]; then
@@ -213,6 +260,15 @@ case ${1:-} in
     LEA_AGENT=$name
     export LEA_AGENT
     exec lea-session "--$cli" "$@"
+    ;;
+  windows)
+    # windows: "NAME CPUS" for each live agent with a CPU window (lea doctor).
+    [ -d "$dir" ] || exit 0
+    for f in "$dir"/*.cpus; do
+      [ -f "$f" ] || continue
+      n=${f##*/}; n=${n%.cpus}
+      if valid "$n" && alive "$n" >/dev/null; then printf '%s %s\n' "$n" "$(head -c 4096 "$f" | head -n 1 | tr -cd '0-9,-')"; fi
+    done
     ;;
   ls)
     [ -d "$dir" ] || exit 0
@@ -337,7 +393,7 @@ case ${1:-} in
     rm -f "$shell_dir/$name.pid"
     ;;
   *)
-    echo "usage: lea-agent run NAME [--cli claude|codex] [-- ARGS...] | ls | stop NAME | teardown NAME | park NAME | unpark NAME | sweep [KEEP...] | pause NAME | resume NAME | shell NAME | shells | stop-shell NAME" >&2
+    echo "usage: lea-agent run NAME [--cli claude|codex] [-- ARGS...] | ls | windows | stop NAME | teardown NAME | park NAME | unpark NAME | sweep [KEEP...] | pause NAME | resume NAME | shell NAME | shells | stop-shell NAME" >&2
     exit 2
     ;;
 esac

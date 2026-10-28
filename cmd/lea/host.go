@@ -206,6 +206,7 @@ func runDaemon(stderr io.Writer) int {
 		return 1
 	}
 	d.SetStackIdle(launcher.StackIdleSetting(os.Getenv))
+	d.SetHeavy(launcher.HeavySettings(os.Getenv))
 	exe, err := os.Executable()
 	if err != nil {
 		fmt.Fprintln(stderr, "lea:", clean(err.Error(), false))

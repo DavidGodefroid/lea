@@ -66,10 +66,25 @@ func StackIdleSetting(get func(string) string) time.Duration {
 	return 10 * time.Minute
 }
 
-// DaemonStacksStamp is that setting in minutes ("10"): a daemon started with another is
-// restarted.
+// HeavySettings are the heavy jobs' slots per container (LEA_HEAVY_SLOTS, 0 or unset: three
+// quarters of the host's CPUs, LEA_HEAVY_WORKERS each; at most 256) and the workers of one job
+// (LEA_HEAVY_WORKERS, 1 to 256, 4 when unset or invalid) (#132).
+func HeavySettings(get func(string) string) (slots, workers int) {
+	workers = 4
+	if n, err := strconv.Atoi(get("LEA_HEAVY_WORKERS")); err == nil && n >= 1 && n <= 256 {
+		workers = n
+	}
+	if n, err := strconv.Atoi(get("LEA_HEAVY_SLOTS")); err == nil && n >= 0 && n <= 256 {
+		slots = n
+	}
+	return slots, workers
+}
+
+// DaemonStacksStamp is the idle stacks and heavy jobs settings as one line ("10 0 4": minutes,
+// slots, workers): a daemon started with others is restarted.
 func DaemonStacksStamp(get func(string) string) string {
-	return strconv.Itoa(int(StackIdleSetting(get) / time.Minute))
+	slots, workers := HeavySettings(get)
+	return strconv.Itoa(int(StackIdleSetting(get)/time.Minute)) + " " + strconv.Itoa(slots) + " " + strconv.Itoa(workers)
 }
 
 func readTrim(p string) string {
