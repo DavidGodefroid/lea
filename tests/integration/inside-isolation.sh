@@ -35,6 +35,7 @@ if [ -n "${SIBLING_IP:-}" ]; then
   mustnt "sibling lea unreachable directly"    curl -s --max-time 5 --noproxy '*' "http://$SIBLING_IP:8765/"
   mustnt "sibling lea refused by the proxy"    curl -sf --max-time 5 "http://$SIBLING_IP:8765/"
 fi
+mustnt "AF_ALG socket refused (seccomp)"       python3 -c 'import socket; socket.socket(38, 5, 0)'
 mustnt "host ~/.ssh absent"                     test -e "$HOME/.ssh"
 mustnt "host ~/.docker absent"                  test -e "$HOME/.docker"
 mustnt "host ~/.config/glab-cli absent"         test -e "$HOME/.config/glab-cli"

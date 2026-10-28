@@ -22,9 +22,28 @@ setup() { setup_fakes; I="$LEA_ROOT/image"; }
   [ "$(jq -r '.env.OTEL_LOG_USER_PROMPTS // "unset"' "$m")" = unset ]
 }
 
-@test "seccomp profile is the vendored containers/common v0.64.2 file" {
+@test "seccomp profile is the vendored containers/common v0.64.2 file, hardened against AF_ALG" {
   [ "$(lea_sha256_file "$I/seccomp.json")" = "$(cat "$I/seccomp.json.sha256")" ]
   [ "$(jq -r .defaultAction "$I/seccomp.json")" = SCMP_ACT_ERRNO ]
+}
+
+# CVE-2026-31431: the kernel crypto API (AF_ALG, 38) is out of reach. socketcall multiplexes
+# socket(2) behind a pointer seccomp cannot read: it is not allowed, and 32-bit x86, where libseccomp
+# turns the socket rules into socketcall rules without the family test, is not in the profile. Every
+# rule that allows socket excludes family 38 itself (a rule's conditions are ANDed, rules are ORed),
+# and family 38 gets EAFNOSUPPORT from a rule no allow rule overlaps (crun refuses overlaps: EEXIST).
+@test "seccomp profile refuses socketcall and AF_ALG sockets" {
+  f="$I/seccomp.json"
+  [ "$(jq '[.syscalls[] | select(.action == "SCMP_ACT_ALLOW" and (.names | index("socketcall")))] | length' "$f")" -eq 0 ]
+  [ "$(jq -c '[.archMap[] | select(.architecture == "SCMP_ARCH_X86_64") | .subArchitectures[]]' "$f")" = '["SCMP_ARCH_X32"]' ]
+  [ "$(jq '[.syscalls[] | select(.action == "SCMP_ACT_ALLOW" and (.names | index("socket")))] | length' "$f")" -gt 0 ]
+  [ "$(jq '[.syscalls[] | select(.action == "SCMP_ACT_ALLOW" and (.names | index("socket")))
+    | select([(.args // [])[] | select(.index == 0 and .op == "SCMP_CMP_NE" and .value == 38)] | length == 0)]
+    | length' "$f")" -eq 0 ]
+  [ "$(jq -c '[.syscalls[] | select(.names == ["socket"] and .action == "SCMP_ACT_ERRNO" and .errnoRet == 97) | .args]' "$f")" = \
+    '[[{"index":0,"value":38,"valueTwo":0,"op":"SCMP_CMP_EQ"}]]' ]
+  # Each rule compares an argument once: runc splits a rule that compares one twice into ORed rules.
+  [ "$(jq '[.syscalls[] | select((.args // []) | map(.index) | length != (unique | length))] | length' "$f")" -eq 0 ]
 }
 
 @test "Containerfile pins every version" {

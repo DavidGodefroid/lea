@@ -569,7 +569,7 @@ func TestCommandsMatchTheGoldenFiles(t *testing.T) {
 				os.WriteFile(w.dir+"/os-release", []byte("ID=ubuntu\nVERSION_ID=\"24.04\"\n"), 0o644)
 				os.WriteFile(w.dir+"/bin/uname", []byte("#!/bin/sh\necho 7.0.0-38-generic\n"), 0o755)
 			},
-			want: []string{"ok    docker reachable", "ok    Docker Engine 29.4.2 (containerd v2.1.4, runc 1.3.0; minimum 29.4.2)",
+			want: []string{"ok    docker reachable", "ok    Docker Engine 29.4.2 (containerd v2.1.4, runc 1.3.0)",
 				"warn  kernel 7.0.0-38-generic: no known minimum for ubuntu 24.04", "FAIL  user config"}, absent: []string{"launcher"}},
 		{name: "kube refresh", args: []string{"kube", "refresh"}, exit: 1, env: map[string]string{"LEA_K8S_USER": "dev"},
 			want: []string{"kubectl [config] [get-contexts]", "lea: error: no cluster issued a token"}},

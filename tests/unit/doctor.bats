@@ -214,35 +214,31 @@ docker_components() {
 }
 host_minimums() {
   export LEA_HOST_MINIMUMS="$BATS_TEST_TMPDIR/host-minimums"
-  printf '# test\ndocker-engine 29.4.2\nkernel ubuntu 24.04 7.0.0-38\n' >"$LEA_HOST_MINIMUMS"
+  printf '# test\nkernel ubuntu 24.04 7.0.0-38\n' >"$LEA_HOST_MINIMUMS"
   export LEA_OS_RELEASE="$BATS_TEST_TMPDIR/os-release"
   printf 'ID=ubuntu\nVERSION_ID="24.04"\n' >"$LEA_OS_RELEASE"
 }
 
-@test "versions: Docker Engine, containerd and runc are shown, at the minimum is ok" {
+@test "versions: Docker Engine, containerd and runc are shown" {
   docker_components
   run lea_doctor
-  [[ "$output" == *"ok    Docker Engine 29.4.2 (containerd v2.1.4, runc 1.3.0; minimum 29.4.2)"* ]]
+  [[ "$output" == *"ok    Docker Engine 29.4.2 (containerd v2.1.4, runc 1.3.0)"* ]]
   grep -q '\[version\] \[--format\]' "$FAKE_LOG"
 }
 
-@test "versions: a Docker Engine older than the minimum is a failure" {
-  export FAKE_DOCKER_OUT_VERSION___FORMAT=$'Engine=29.4.1\ncontainerd=v2.1.4\nrunc=1.3.0'
-  run lea_doctor
-  [ "$status" -eq 1 ]
-  [[ "$output" == *"FAIL  Docker Engine: 29.4.1 is older than 29.4.2 (Moby seccomp fixes): update Docker"* ]]
-  export FAKE_DOCKER_OUT_VERSION___FORMAT=$'Engine=28.10.3'
-  run lea_doctor
-  [[ "$output" == *"FAIL  Docker Engine: 28.10.3 is older than 29.4.2"* ]]
-  export FAKE_DOCKER_OUT_VERSION___FORMAT=$'Engine=29.10.0'
-  run lea_doctor
-  [[ "$output" == *"ok    Docker Engine 29.10.0"* ]]
+@test "versions: no Docker Engine version is a failure (lea runs its own seccomp profile)" {
+  for v in 29.4.1 28.10.3 29.10.0; do
+    export FAKE_DOCKER_OUT_VERSION___FORMAT="Engine=$v"
+    run lea_doctor
+    [[ "$output" == *"ok    Docker Engine $v"* ]]
+    [[ "$output" != *"FAIL  Docker Engine"* ]]
+  done
 }
 
 @test "versions: an engine that is not Docker Engine is a warning, not a failure" {
   export FAKE_DOCKER_RC_VERSION___FORMAT=125
   run lea_doctor
-  [[ "$output" == *"warn  Docker Engine: version unknown (not Docker Engine?): lea needs Docker Engine 29.4.2 or later"* ]]
+  [[ "$output" == *"warn  Docker Engine: version unknown (not Docker Engine?)"* ]]
   [[ "$output" != *"FAIL  Docker Engine"* ]]
 }
 
@@ -251,7 +247,7 @@ host_minimums() {
   fake_uname 7.0.0-38-generic
   export FAKE_DOCKER_RC_VERSION___FORMAT=125 FAKE_DOCKER_OUT___VERSION_="podman version 5.8.9"
   run lea_doctor
-  [[ "$output" == *"warn  Podman 5.8.9: lea is built for Docker Engine (minimum 29.4.2); Podman minimum 5.8.4 met"* ]]
+  [[ "$output" == *"warn  Podman 5.8.9: lea is built for Docker Engine; Podman minimum 5.8.4 met"* ]]
   [[ "$output" == *"ok    kernel 7.0.0-38-generic (ubuntu 24.04, minimum 7.0.0-38)"* ]]
   [[ "$output" != *"FAIL  Docker Engine"* ]]
   [[ "$output" != *"FAIL  Podman"* ]]
@@ -295,8 +291,9 @@ host_minimums() {
   [[ "$output" == *"warn  kernel 6.17.1-300.fc44.x86_64: no known minimum for fedora 44 in "*"host-minimums: check that it has the fixes for CVE-2026-74753, CVE-2026-80521, CVE-2026-80841"* ]]
 }
 
-@test "versions: the minimums file of the repository sets the Docker Engine minimum" {
-  grep -qx 'docker-engine 29.4.2' "$LEA_ROOT/config/host-minimums"
+@test "versions: the minimums file of the repository sets Podman's and no Docker Engine minimum" {
+  grep -qx 'podman 5.8.4' "$LEA_ROOT/config/host-minimums"
+  ! grep -q '^docker-engine' "$LEA_ROOT/config/host-minimums" || false
 }
 
 @test "lea_version_ge compares numeric fields" {

@@ -14,7 +14,7 @@ docker [volume] [inspect] [locksql-run]
 -- lea
 -- stdout
 ok    docker reachable
-ok    Docker Engine 29.4.2 (containerd v2.1.4, runc 1.3.0; minimum 29.4.2)
+ok    Docker Engine 29.4.2 (containerd v2.1.4, runc 1.3.0)
 warn  kernel 7.0.0-38-generic: no known minimum for ubuntu 24.04 in $R/config/host-minimums: check that it has the fixes for CVE-2026-74753, CVE-2026-80521, CVE-2026-80841
 ok    state claude.json
 FAIL  user config: $W/config/lea/lea.conf missing: run lea init

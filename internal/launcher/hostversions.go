@@ -7,7 +7,7 @@ import (
 	"strings"
 )
 
-// hostMinimum is the line of config/host-minimums for key ("docker-engine", "podman"), "" when absent.
+// hostMinimum is the line of config/host-minimums for key ("podman"), "" when absent.
 func (l *Launcher) hostMinimum(key string) string {
 	f, err := os.Open(l.Root + "/config/host-minimums")
 	if err != nil {
@@ -43,28 +43,17 @@ func (l *Launcher) hostEngine() (string, string) {
 	return "", ""
 }
 
-// checkDockerEngine refuses to start a lea container on a Docker Engine older than
-// config/host-minimums (#108), unless LEA_ALLOW_OUTDATED_HOST=1, which only warns. Podman below
-// its minimum only warns: lea is built for Docker Engine, and the Podman minimum is no seccomp
-// fix. An engine whose version is unknown is let through: lea doctor reports it.
-func (l *Launcher) checkDockerEngine() error {
+// checkHostEngine warns when the engine is Podman older than config/host-minimums (#108). No
+// engine is refused: lea runs its own seccomp profile (image/seccomp.json), so no Docker Engine
+// release fixes something lea relies on; lea doctor shows the versions.
+func (l *Launcher) checkHostEngine() {
 	engine, v := l.hostEngine()
-	if engine == "podman" {
-		if min := l.hostMinimum("podman"); min != "" && !versionAtLeast(v, min) {
-			l.logf("warning: Podman %s is older than %s (CVE-2026-57231): update Podman", v, min)
-		}
-		return nil
+	if engine != "podman" {
+		return
 	}
-	min := l.hostMinimum("docker-engine")
-	if engine == "" || min == "" || versionAtLeast(v, min) {
-		return nil
+	if min := l.hostMinimum("podman"); min != "" && !versionAtLeast(v, min) {
+		l.logf("warning: Podman %s is older than %s (CVE-2026-57231): update Podman", v, min)
 	}
-	msg := "Docker Engine " + v + " is older than " + min + " (Moby seccomp fixes): update Docker"
-	if l.Cfg.Get("LEA_ALLOW_OUTDATED_HOST") == "1" {
-		l.logf("warning: %s", msg)
-		return nil
-	}
-	return die("%s, or set LEA_ALLOW_OUTDATED_HOST=1 to start anyway", msg)
 }
 
 // versionAtLeast is lea_version_ge: a is b or later, comparing the digit runs field by field

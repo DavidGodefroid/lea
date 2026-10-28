@@ -96,8 +96,8 @@ projects directory). Press `n` for another agent.
 ### Requirements
 
 - Linux, macOS, or Windows with WSL2 (run lea from WSL).
-- Docker Engine 29.4.2 or later (Linux) or Docker Desktop, running, usable without `sudo`; a
-  patched host kernel (see [How lea keeps your machine safe](#how-lea-keeps-your-machine-safe)).
+- Docker Engine (Linux) or Docker Desktop, running, usable without `sudo`; a patched host
+  kernel (see [How lea keeps your machine safe](#how-lea-keeps-your-machine-safe)).
 - On macOS, tmux 3.2 or later (`brew install tmux`); the Linux release brings its own.
 - `curl`, `tar`, `ssh-keygen`.
 - A Claude subscription or API key for Claude Code.
@@ -661,14 +661,14 @@ so. Changes apply after `lea init` (endpoints, keys, images, locksql) or `lea st
 - The API keys of your providers' endpoints stay in the proxy container: no agent mounts a key
   file, and the key forwarder reaches an endpoint only through the proxy's egress rules.
 - lea never gets the Docker socket; the agents' own containers run in a rootless Podman inside
-  lea, under seccomp and, on Linux, AppArmor.
+  lea, under seccomp and, on Linux, AppArmor. lea's seccomp profile (`image/seccomp.json`, not
+  Docker's default) refuses `socketcall` and the kernel crypto API sockets (`AF_ALG`,
+  CVE-2026-31431), and 32-bit x86 programs, whose `socketcall` hides the socket family.
 - Every lea container shares the host kernel, so the host's patch level is part of the
-  containment. lea needs Docker Engine 29.4.2 or later (Moby's seccomp filter fixes) and refuses
-  to start a lea container on an older one, unless `LEA_ALLOW_OUTDATED_HOST=1`. The kernel must
-  carry the fixes for CVE-2026-74753, CVE-2026-80521 and CVE-2026-80841; on Ubuntu, check with
+  containment. The kernel must carry the fixes for CVE-2026-74753, CVE-2026-80521 and CVE-2026-80841; on Ubuntu, check with
   `apt changelog linux-image-$(uname -r) | grep -E 'CVE-2026-(74753|80521|80841)'`. `lea doctor`
-  shows the kernel, Docker Engine, containerd and runc versions and fails below the minimums of
-  `config/host-minimums`; a distribution without a kernel minimum there gets a warning. On a
+  shows the kernel, Docker Engine, containerd and runc versions and fails below the kernel minimum
+  of `config/host-minimums`; a distribution without a kernel minimum there gets a warning. On a
   Podman host (`docker` is Podman), lea is not refused: `lea doctor` warns that lea is built for
   Docker Engine, and below Podman 5.8.4 (CVE-2026-57231) the launcher warns too.
 - Work in lea, not on the host, inside the projects directory: an agent can write files your host
