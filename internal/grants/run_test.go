@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"syscall"
 	"testing"
 	"time"
 )
@@ -248,6 +249,70 @@ func TestPinnedMergeChecksThePRHead(t *testing.T) {
 		merged := strings.Contains(string(got), "pr merge 42 --squash -R github.com/o/lea")
 		if merged != tc.merged || (err == nil) != tc.merged {
 			t.Fatalf("head %q: merged %v, err %v, out %s, calls %s", tc.head, merged, err, out, got)
+		}
+	}
+}
+
+// TestPinnedPRCreateBodyFile runs the pr-create script against a fake gh: gh gets the body
+// file's content on its stdin only when it is a plain file of the worktree, outside .git.
+func TestPinnedPRCreateBodyFile(t *testing.T) {
+	needTools(t)
+	if _, err := os.Stat("/usr/bin/realpath"); err != nil {
+		t.Skip(err)
+	}
+	root := t.TempDir()
+	wt := filepath.Join(root, ".lea", "worktrees", "lea", "dev-2")
+	secret := filepath.Join(root, "secret")
+	for _, d := range []string{filepath.Join(wt, "docs"), filepath.Join(wt, ".git"), filepath.Join(wt, "dir")} {
+		if err := os.MkdirAll(d, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for p, s := range map[string]string{filepath.Join(wt, "docs", "pr.md"): "body", secret: "token", filepath.Join(wt, ".git", "x"): "x"} {
+		if err := os.WriteFile(p, []byte(s), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for l, to := range map[string]string{"out.md": secret, "git.md": filepath.Join(wt, ".git", "x"), "in.md": filepath.Join(wt, "docs", "pr.md")} {
+		if err := os.Symlink(to, filepath.Join(wt, l)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := syscall.Mkfifo(filepath.Join(wt, "fifo.md"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	c := dev
+	c.Worktree = wt
+	for _, tc := range []struct {
+		file, passed string
+	}{{"docs/pr.md", "body"}, {"in.md", "body"},
+		{"out.md", ""}, {"git.md", ""}, {"dir", ""}, {"missing.md", ""}, {"fifo.md", ""}} {
+		d := Decide("Bash", bash("gh pr create --head feat/73-x --title x --body-file "+tc.file), c, []Grant{all(PRCreate)}, now, false)
+		if d.Verdict != Allow {
+			t.Fatalf("%s: %+v", tc.file, d)
+		}
+		dir := t.TempDir()
+		fake := filepath.Join(dir, "gh")
+		log := filepath.Join(dir, "log")
+		if err := os.WriteFile(fake, []byte("#!/bin/sh\necho \"$*\" >> "+log+"\ncat >> "+log+"\n"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		script := strings.ReplaceAll(lastWord(t, d.Command), "'"+ghPath+"'", "'"+fake+"'")
+		// A FIFO must be refused, not opened: opening one blocks until a writer comes.
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		out, err := exec.CommandContext(ctx, shPath, "-c", script).CombinedOutput()
+		blocked := ctx.Err() != nil
+		cancel()
+		if blocked {
+			t.Fatalf("%s: the script blocked", tc.file)
+		}
+		got, _ := os.ReadFile(log)
+		want := ""
+		if tc.passed != "" {
+			want = "pr create --head feat/73-x --title x --body-file - -R github.com/o/lea\n" + tc.passed
+		}
+		if string(got) != want || (err == nil) != (want != "") {
+			t.Fatalf("%s: calls %q, want %q, err %v, out %s", tc.file, got, want, err, out)
 		}
 	}
 }

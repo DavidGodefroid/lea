@@ -132,11 +132,15 @@ func TestPreToolUseGrantAllowsRevokeAndHardDeny(t *testing.T) {
 
 func TestAgentsCannotWriteGrants(t *testing.T) {
 	api, bus := start(t)
-	for _, m := range []string{"grant_add", "grant_revoke", "grant_list"} {
+	for _, m := range []string{"grant_add", "grant_revoke", "grant_list", "delivery_set"} {
 		err := call(bus, "dev", m, map[string]any{"container": "lea-a", "action": "merge", "id": 1}, nil)
 		if err == nil || !strings.Contains(err.Error(), "host only") {
 			t.Fatalf("%s from an agent: %v", m, err)
 		}
+	}
+	if err := call(bus, "dev", "delivery_set", map[string]any{"container": "lea-a", "on": true,
+		"repos": []map[string]string{{"repo": "fixture", "github": "o/fixture"}}}, nil); err == nil || !strings.Contains(err.Error(), "host only") {
+		t.Fatalf("delivery_set from an agent: %v", err)
 	}
 	var gs struct{ Grants []json.RawMessage }
 	if err := call(api, "", "grant_list", nil, &gs); err != nil || len(gs.Grants) != 0 {
@@ -159,5 +163,72 @@ func TestAgentsCannotWriteGrants(t *testing.T) {
 func TestPreToolUseSilentWithoutDaemon(t *testing.T) {
 	if out := runHook("/nonexistent/bus.sock", "PreToolUse", preToolUse("gh pr merge 1 --squash"), nil); out != "" {
 		t.Fatalf("out=%q", out)
+	}
+}
+
+// TestDelivery: lea delivery on records standing grants for every repository it names, so the
+// agent pushes its branch, opens its PR and merges it with no prompt; hard denies hold; off
+// revokes them all, and on again replaces them.
+func TestDelivery(t *testing.T) {
+	api, bus, db := startDB(t)
+	registerDev(t, db)
+	var r struct {
+		Grants []struct {
+			ID      int64
+			Action  string
+			Repo    string
+			GitHub  string
+			Expires int64
+		}
+	}
+	on := map[string]any{"container": "lea-a", "on": true, "repos": []map[string]string{{"repo": "fixture", "github": "o/fixture"},
+		{"repo": "other", "github": "github.com/o/other"}}}
+	if err := call(api, "", "delivery_set", on, &r); err != nil {
+		t.Fatal(err)
+	}
+	if len(r.Grants) != 8 || r.Grants[0].Expires != 1<<62 || r.Grants[0].GitHub != "github.com/o/fixture" {
+		t.Fatalf("delivery on: %+v", r)
+	}
+	for _, cmd := range []string{"git push -u origin feat/x", "gh pr create --head feat/x --base main --title t --body b",
+		"gh pr merge 42 --squash", "gh pr merge feat/x --squash --delete-branch"} {
+		if d, reason := hookDecision(t, runHook(bus, "PreToolUse", preToolUse(cmd), nil)); d != "allow" {
+			t.Fatalf("%s: %q %q", cmd, d, reason)
+		}
+	}
+	for cmd, want := range map[string]string{"git push origin main": "deny", "git push --force origin feat/x": "deny",
+		"gh pr merge 42 --admin": "deny", "git push origin feat/y": "deny", "gh pr create --head feat/y --title t --body b": ""} {
+		if d, _ := hookDecision(t, runHook(bus, "PreToolUse", preToolUse(cmd), nil)); d != want {
+			t.Fatalf("%s: %q, want %q", cmd, d, want)
+		}
+	}
+	// Bad input changes nothing.
+	for _, bad := range []map[string]any{{"container": "lea-a", "on": true, "repos": []map[string]string{{"repo": "../x", "github": "o/x"}}},
+		{"container": "lea-a", "on": true, "repos": []map[string]string{{"repo": "x", "github": "gitlab.com/o/x"}}},
+		{"container": "", "on": true}} {
+		if err := call(api, "", "delivery_set", bad, nil); err == nil {
+			t.Fatalf("accepted %v", bad)
+		}
+	}
+	// On again replaces the standing grants: other is gone.
+	on["repos"] = []map[string]string{{"repo": "fixture", "github": "o/fixture"}}
+	if err := call(api, "", "delivery_set", on, &r); err != nil || len(r.Grants) != 4 {
+		t.Fatalf("on again: %+v %v", r, err)
+	}
+	var l struct{ Grants []struct{ Repo string } }
+	if err := call(api, "", "grant_list", nil, &l); err != nil || len(l.Grants) != 4 {
+		t.Fatalf("active after on again: %+v %v", l, err)
+	}
+	// A user grant of the same lea survives off.
+	if err := call(api, "", "grant_add", map[string]any{"container": "lea-a", "action": "stop-finished"}, nil); err != nil {
+		t.Fatal(err)
+	}
+	if err := call(api, "", "delivery_set", map[string]any{"container": "lea-a", "on": false}, &r); err != nil {
+		t.Fatal(err)
+	}
+	if err := call(api, "", "grant_list", nil, &l); err != nil || len(l.Grants) != 1 {
+		t.Fatalf("after off: %+v %v", l, err)
+	}
+	if d, _ := hookDecision(t, runHook(bus, "PreToolUse", preToolUse("gh pr merge 42 --squash"), nil)); d != "" {
+		t.Fatalf("merge after off: %q", d)
 	}
 }

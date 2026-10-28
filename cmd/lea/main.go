@@ -56,9 +56,12 @@ const usage = `usage: lea <command>
   grant add <action> --container NAME [--repo R] [--github OWNER/NAME] [--branch GLOB] [--agent NAME] [--expires 8h]
                              let every agent of a lea (or one agent's subtree) take an action
                              without asking: merge, stop-finished, close-issue,
-                             delete-own-branch, commit-identity (hard denies always hold)
+                             delete-own-branch, commit-identity, pr-create (hard denies always hold)
   grant ls [--all] | grant revoke <id>
                              list or revoke grants
+  delivery --container NAME --projects DIR on|off|status
+                             standing grants so every agent of a lea pushes its branch, opens
+                             and merges its PR on each GitHub repo of DIR (used by the launcher)
   sound [on|off]             show or switch lea's sounds (until the daemon restarts)
   hook claude <event>        Claude Code hook (inside lea)
   mcp                        MCP server for agents (inside lea)
@@ -94,6 +97,8 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		return runNew(args[1:], stdout, stderr)
 	case "lock":
 		return runLock(args[1:], stdout, stderr)
+	case "delivery":
+		return runDelivery(args[1:], stdout, stderr)
 	case "hook":
 		if len(args) == 4 && args[1] == "codex" && args[2] == "notify" {
 			hook.CodexNotify(context.Background(), args[3], os.Getenv)
