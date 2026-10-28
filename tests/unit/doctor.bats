@@ -207,3 +207,74 @@ setup() {
   run lea_doctor
   [[ "$output" == *"ok    egress allowlist: github.com,proxy.golang.org (always: anthropic.com,claude.ai,claude.com)"* ]]
 }
+
+# Host versions (#108): the kernel and the Docker Engine every lea container runs on.
+docker_components() {
+  export FAKE_DOCKER_OUT_VERSION___FORMAT=$'Engine=29.4.2\ncontainerd=v2.1.4\nrunc=1.3.0\ndocker-init=0.19.0'
+}
+host_minimums() {
+  export LEA_HOST_MINIMUMS="$BATS_TEST_TMPDIR/host-minimums"
+  printf '# test\ndocker-engine 29.4.2\nkernel ubuntu 24.04 7.0.0-38\n' >"$LEA_HOST_MINIMUMS"
+  export LEA_OS_RELEASE="$BATS_TEST_TMPDIR/os-release"
+  printf 'ID=ubuntu\nVERSION_ID="24.04"\n' >"$LEA_OS_RELEASE"
+}
+
+@test "versions: Docker Engine, containerd and runc are shown, at the minimum is ok" {
+  docker_components
+  run lea_doctor
+  [[ "$output" == *"ok    Docker Engine 29.4.2 (containerd v2.1.4, runc 1.3.0; minimum 29.4.2)"* ]]
+  grep -q '\[version\] \[--format\]' "$FAKE_LOG"
+}
+
+@test "versions: a Docker Engine older than the minimum is a failure" {
+  export FAKE_DOCKER_OUT_VERSION___FORMAT=$'Engine=29.4.1\ncontainerd=v2.1.4\nrunc=1.3.0'
+  run lea_doctor
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"FAIL  Docker Engine: 29.4.1 is older than 29.4.2 (Moby seccomp fixes): update Docker"* ]]
+  export FAKE_DOCKER_OUT_VERSION___FORMAT=$'Engine=28.10.3'
+  run lea_doctor
+  [[ "$output" == *"FAIL  Docker Engine: 28.10.3 is older than 29.4.2"* ]]
+  export FAKE_DOCKER_OUT_VERSION___FORMAT=$'Engine=29.10.0'
+  run lea_doctor
+  [[ "$output" == *"ok    Docker Engine 29.10.0"* ]]
+}
+
+@test "versions: an engine that is not Docker Engine is a warning, not a failure" {
+  export FAKE_DOCKER_RC_VERSION___FORMAT=125
+  run lea_doctor
+  [[ "$output" == *"warn  Docker Engine: version unknown (not Docker Engine?): lea needs Docker Engine 29.4.2 or later"* ]]
+  [[ "$output" != *"FAIL  Docker Engine"* ]]
+}
+
+@test "versions: the kernel release is checked against the minimum of its distribution" {
+  docker_components; host_minimums
+  fake_uname 7.0.0-38-generic
+  run lea_doctor
+  [[ "$output" == *"ok    kernel 7.0.0-38-generic (ubuntu 24.04, minimum 7.0.0-38)"* ]]
+  fake_uname 7.0.0-37-generic
+  run lea_doctor
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"FAIL  kernel: 7.0.0-37-generic is older than 7.0.0-38 for ubuntu 24.04 (CVE-2026-74753, CVE-2026-80521, CVE-2026-80841): update the host kernel"* ]]
+}
+
+@test "versions: a distribution without a known minimum is a warning" {
+  docker_components; host_minimums
+  printf 'ID=fedora\nVERSION_ID=44\n' >"$LEA_OS_RELEASE"
+  fake_uname 6.17.1-300.fc44.x86_64
+  run lea_doctor
+  [[ "$output" == *"warn  kernel 6.17.1-300.fc44.x86_64: no known minimum for fedora 44 in "*"host-minimums: check that it has the fixes for CVE-2026-74753, CVE-2026-80521, CVE-2026-80841"* ]]
+}
+
+@test "versions: the minimums file of the repository sets the Docker Engine minimum" {
+  grep -qx 'docker-engine 29.4.2' "$LEA_ROOT/config/host-minimums"
+}
+
+@test "lea_version_ge compares numeric fields" {
+  lea_version_ge 29.4.2 29.4.2
+  lea_version_ge 29.10.0 29.4.2
+  ! lea_version_ge 29.4.1 29.4.2 || false
+  lea_version_ge v2.1.4 2.1
+  lea_version_ge 7.0.0-38-generic 7.0.0-38
+  ! lea_version_ge 7.0.0-37-generic 7.0.0-38 || false
+  ! lea_version_ge 6.17.1 7.0.0 || false
+}

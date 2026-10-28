@@ -190,6 +190,9 @@ func (l *Launcher) codexMounts(home, proj, st string) ([]string, error) {
 // runArgs is lea_run_args: the docker run arguments, image last. The state directories and mount
 // points are a user-facing contract (lea init creates them in shell).
 func (l *Launcher) runArgs(proj, pip string) ([]string, error) {
+	if err := l.checkDockerEngine(); err != nil {
+		return nil, err
+	}
 	st, id, home := l.Cfg.StateDir(), ID(proj), l.Cfg.Get("HOME")
 	uid, gid := strconv.Itoa(os.Getuid()), strconv.Itoa(os.Getgid())
 	git := l.Cfg.GitSSH()

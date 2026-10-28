@@ -96,7 +96,8 @@ projects directory). Press `n` for another agent.
 ### Requirements
 
 - Linux, macOS, or Windows with WSL2 (run lea from WSL).
-- Docker Engine (Linux) or Docker Desktop, running, usable without `sudo`.
+- Docker Engine 29.4.2 or later (Linux) or Docker Desktop, running, usable without `sudo`; a
+  patched host kernel (see [How lea keeps your machine safe](#how-lea-keeps-your-machine-safe)).
 - On macOS, tmux 3.2 or later (`brew install tmux`); the Linux release brings its own.
 - `curl`, `tar`, `ssh-keygen`.
 - A Claude subscription or API key for Claude Code.
@@ -661,6 +662,13 @@ so. Changes apply after `lea init` (endpoints, keys, images, locksql) or `lea st
   file, and the key forwarder reaches an endpoint only through the proxy's egress rules.
 - lea never gets the Docker socket; the agents' own containers run in a rootless Podman inside
   lea, under seccomp and, on Linux, AppArmor.
+- Every lea container shares the host kernel, so the host's patch level is part of the
+  containment. lea needs Docker Engine 29.4.2 or later (Moby's seccomp filter fixes) and refuses
+  to start a lea container on an older one, unless `LEA_ALLOW_OUTDATED_HOST=1`. The kernel must
+  carry the fixes for CVE-2026-74753, CVE-2026-80521 and CVE-2026-80841; on Ubuntu, check with
+  `apt changelog linux-image-$(uname -r) | grep -E 'CVE-2026-(74753|80521|80841)'`. `lea doctor`
+  shows the kernel, Docker Engine, containerd and runc versions and fails below the minimums of
+  `config/host-minimums`; a distribution without a kernel minimum there gets a warning.
 - Work in lea, not on the host, inside the projects directory: an agent can write files your host
   tools would run. When the last session closes, lea reports changes to git hooks, risky git
   configuration, `.mcp.json` and `.claude/` settings.
@@ -689,8 +697,9 @@ nowhere unless you set `LEA_OTEL_UPSTREAM`.
 
 ## Troubleshooting
 
-- **Start with `lea doctor`.** It checks Docker, the images, the proxy and the internal networks, tmux,
-  the AppArmor profile, the projects directory and the configuration.
+- **Start with `lea doctor`.** It checks Docker and the host versions (kernel, Docker Engine,
+  containerd, runc), the images, the proxy and the internal networks, tmux, the AppArmor profile,
+  the projects directory and the configuration.
 - **An agent cannot reach a host.** Private and link-local addresses are refused on purpose; add
   the host to `LEA_INTERNAL_HOSTS`. With `LEA_EGRESS_ALLOW` set, add its domain there. The proxy's
   refusal page says which host it refused and why.

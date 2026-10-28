@@ -16,6 +16,7 @@ lea_doctor() {
       lea__ok "AppArmor profile lea"
     else lea__fail "AppArmor profile lea" "not loaded: run lea init"; _drc=1; fi
   fi
+  lea__doctor_host_versions || _drc=1
 
   _dfiles=claude.json
   if [ -n "$LEA_GIT_SSH" ]; then _dfiles="$_dfiles ssh/id_ed25519 ssh/known_hosts"; fi
@@ -91,4 +92,50 @@ lea_doctor() {
     lea__warn "kubernetes token" "none (optional): lea kube refresh"
   fi
   return "$_drc"
+}
+
+# The kernel fixes lea's containment relies on (config/host-minimums).
+LEA__KERNEL_CVES="CVE-2026-74753, CVE-2026-80521, CVE-2026-80841"
+
+# lea_version_ge A B: version A is B or later, field by field (digits only: v2.1.4 is 2.1.4,
+# 7.0.0-38-generic is 7.0.0.38).
+lea_version_ge() {
+  awk -v a="$1" -v b="$2" 'BEGIN {
+    sub(/^[^0-9]+/, "", a); sub(/^[^0-9]+/, "", b)
+    na = split(a, x, /[^0-9]+/); nb = split(b, y, /[^0-9]+/); n = na > nb ? na : nb
+    for (i = 1; i <= n; i++) { if (x[i] + 0 > y[i] + 0) exit 0; if (x[i] + 0 < y[i] + 0) exit 1 }
+    exit 0 }'
+}
+
+# lea__doctor_host_versions: the Docker Engine (with containerd and runc) and the kernel lea's
+# containers run on, against config/host-minimums. Fails below a minimum; an engine that is not
+# Docker Engine, or a distribution without a kernel minimum, is a warning.
+lea__doctor_host_versions() {
+  _hvf=${LEA_HOST_MINIMUMS:-$LEA_ROOT/config/host-minimums}; _hvrc=0
+  _hvdmin=$(awk '$1 == "docker-engine" { print $2; exit }' "$_hvf" 2>/dev/null || true)
+  _hvc=$(docker version --format '{{range .Server.Components}}{{.Name}}={{.Version}}{{"\n"}}{{end}}' 2>/dev/null || true)
+  _hve=$(printf '%s\n' "$_hvc" | sed -n 's/^Engine=//p' | head -n 1)
+  _hvctd=$(printf '%s\n' "$_hvc" | sed -n 's/^containerd=//p' | head -n 1)
+  _hvrunc=$(printf '%s\n' "$_hvc" | sed -n 's/^runc=//p' | head -n 1)
+  if [ -z "$_hve" ]; then
+    lea__warn "Docker Engine" "version unknown (not Docker Engine?): lea needs Docker Engine ${_hvdmin:-?} or later"
+  elif [ -n "$_hvdmin" ] && ! lea_version_ge "$_hve" "$_hvdmin"; then
+    lea__fail "Docker Engine" "$_hve is older than $_hvdmin (Moby seccomp fixes): update Docker"; _hvrc=1
+  else
+    lea__ok "Docker Engine $_hve (containerd ${_hvctd:-?}, runc ${_hvrunc:-?}; minimum ${_hvdmin:-none})"
+  fi
+
+  _hvk=$(uname -r 2>/dev/null || true)
+  _hvos=${LEA_OS_RELEASE:-/etc/os-release}
+  _hvid=$(sed -n 's/^ID=//p' "$_hvos" 2>/dev/null | tr -d '"' | head -n 1)
+  _hvver=$(sed -n 's/^VERSION_ID=//p' "$_hvos" 2>/dev/null | tr -d '"' | head -n 1)
+  _hvkmin=$(awk -v id="$_hvid" -v v="$_hvver" '$1 == "kernel" && $2 == id && $3 == v { print $4; exit }' "$_hvf" 2>/dev/null || true)
+  if [ -z "$_hvkmin" ]; then
+    lea__warn "kernel $_hvk" "no known minimum for ${_hvid:-?} ${_hvver:-?} in $_hvf: check that it has the fixes for $LEA__KERNEL_CVES"
+  elif lea_version_ge "$_hvk" "$_hvkmin"; then
+    lea__ok "kernel $_hvk ($_hvid $_hvver, minimum $_hvkmin)"
+  else
+    lea__fail "kernel" "$_hvk is older than $_hvkmin for $_hvid $_hvver ($LEA__KERNEL_CVES): update the host kernel"; _hvrc=1
+  fi
+  return "$_hvrc"
 }
