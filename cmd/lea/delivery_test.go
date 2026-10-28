@@ -38,6 +38,30 @@ func TestOriginGitHub(t *testing.T) {
 	}
 }
 
+func TestOriginPin(t *testing.T) {
+	hosts := map[string]bool{"gitlab.com": true, "git.corp.example": true}
+	for url, want := range map[string]string{
+		"https://github.com/o/api.git":                "github.com/o/api",
+		"https://gitlab.com/g/x.git":                  "gitlab:gitlab.com/g/x",
+		"git@gitlab.com:g/sub/x.git":                  "gitlab:gitlab.com/g/sub/x",
+		"ssh://git@git.corp.example/team/sub/app.git": "gitlab:git.corp.example/team/sub/app",
+		"https://me@git.corp.example/team/app":        "gitlab:git.corp.example/team/app",
+		"https://GIT.CORP.EXAMPLE/team/app.git":       "gitlab:git.corp.example/team/app",
+		"https://other.example/team/app.git":          "",
+		"https://gitlab.com/x.git":                    "",
+		"https://gitlab.com/g/../x.git":               "",
+		"https://gitlab.com:8443/g/x.git":             "",
+		"https://gitlab.com.evil.io/g/x.git":          "",
+		"http://gitlab.com/g/x.git":                   "",
+		"https://gitlab.com/g/x.git?ref=y":            "",
+		"git@git.corp.example:team/app.git\nurl = x":  "",
+	} {
+		if got := originPin(url, hosts); got != want {
+			t.Errorf("%q: %q, want %q", url, got, want)
+		}
+	}
+}
+
 func TestRepoOrigin(t *testing.T) {
 	dir := t.TempDir()
 	write := func(repo, config string) {
@@ -97,6 +121,7 @@ func TestDeliveryCommand(t *testing.T) {
 	origin("fixture", "git@github.com:o/fixture.git")
 	origin("web", "https://github.com/o/web.git")
 	origin("gl", "https://gitlab.com/o/gl.git")
+	origin("corp", "git@git.corp.example:team/sub/corp.git")
 	origin(".lea", "https://github.com/o/hidden.git")
 	if err := os.MkdirAll(filepath.Join(proj, "plain"), 0o755); err != nil {
 		t.Fatal(err)
@@ -112,9 +137,9 @@ func TestDeliveryCommand(t *testing.T) {
 	// The first on only lists the pins and their digest: the user confirms exactly those with
 	// --yes DIGEST. A pin that changed in between (an agent rewrote an origin, added a
 	// repository) makes the digest stale: nothing is recorded.
-	confirm := func() string {
+	confirm := func(flags ...string) string {
 		t.Helper()
-		rc, _, e := runEnv(t, host, "delivery", "--container", "lea-a", "--projects", proj, "on")
+		rc, _, e := runEnv(t, host, append([]string{"delivery", "--container", "lea-a", "--projects", proj, "on"}, flags...)...)
 		m := regexp.MustCompile(`lea delivery on --yes ([0-9a-f]{16})\b`).FindStringSubmatch(e)
 		if rc != 1 || m == nil {
 			t.Fatalf("on without --yes: rc=%d err=%q", rc, e)
@@ -140,9 +165,9 @@ func TestDeliveryCommand(t *testing.T) {
 	if rc, _, _ := runEnv(t, host, "delivery", "--container", "lea-a", "--projects", proj, "on", "--yes", "0000000000000000"); rc != 1 {
 		t.Fatal("a made-up digest")
 	}
-	rc, out, e := runEnv(t, host, "delivery", "--container", "lea-a", "--projects", proj, "on", "--yes", confirm())
+	rc, out, e := runEnv(t, host, "delivery", "--container", "lea-a", "--projects", proj, "on", "--yes", confirm("--gitlab", "git.corp.example"), "--gitlab", "git.corp.example")
 	if rc != 0 || !strings.Contains(out, "fixture  github.com/o/fixture") || !strings.Contains(out, "web  github.com/o/web") ||
-		!strings.Contains(out, "gl  skipped: origin is not on github.com") || strings.Contains(out, "hidden") || !strings.Contains(out, "plain  skipped: no origin") {
+		!strings.Contains(out, "gl  gitlab:gitlab.com/o/gl") || !strings.Contains(out, "corp  gitlab:git.corp.example/team/sub/corp") || strings.Contains(out, "hidden") || !strings.Contains(out, "plain  skipped: no origin") {
 		t.Fatalf("on: rc=%d out=%q err=%q", rc, out, e)
 	}
 	for _, c := range []string{"git push -u origin feat/a", "gh pr create --head feat/a --title t --body b", "gh pr merge 3 --squash"} {
@@ -154,7 +179,7 @@ func TestDeliveryCommand(t *testing.T) {
 		t.Fatalf("push main with delivery: %q", d)
 	}
 	if rc, out, _ := runEnv(t, host, "delivery", "--container", "lea-a", "--projects", proj, "status"); rc != 0 ||
-		!strings.Contains(out, "delivery is on: fixture (github.com/o/fixture), web (github.com/o/web)") {
+		!strings.Contains(out, "delivery is on: corp (gitlab:git.corp.example/team/sub/corp), fixture (github.com/o/fixture), gl (gitlab:gitlab.com/o/gl), web (github.com/o/web)") {
 		t.Fatalf("status on: rc=%d %q", rc, out)
 	}
 	if rc, out, _ := runEnv(t, host, "grant", "ls"); rc != 0 || !strings.Contains(out, "standing") || !strings.Contains(out, "pr-create in lea-a repo web") {
@@ -184,7 +209,8 @@ func TestDeliveryCommand(t *testing.T) {
 		t.Fatalf("changed while off: rc=%d err=%q", rc, e)
 	}
 	origin("web", "https://github.com/evil/web.git")
-	if rc, out, e := runEnv(t, host, "delivery", "--container", "lea-a", "--projects", proj, "on"); rc != 0 || !strings.Contains(out, "delivery is on") {
+	if rc, out, e := runEnv(t, host, "delivery", "--container", "lea-a", "--projects", proj, "on"); rc != 0 || !strings.Contains(out, "delivery is on") ||
+		!strings.Contains(out, "corp  gitlab:git.corp.example/team/sub/corp") {
 		t.Fatalf("same pins after off: rc=%d out=%q err=%q", rc, out, e)
 	}
 	if rc, _, _ := runEnv(t, host, "delivery", "--container", "lea-a", "--projects", proj, "off"); rc != 0 {
@@ -196,6 +222,9 @@ func TestDeliveryCommand(t *testing.T) {
 	for _, args := range [][]string{{"delivery", "--container", "lea-a", "--projects", proj}, {"delivery", "--container", "lea-a", "--projects", proj, "maybe"},
 		{"delivery", "--container", "lea-a", "--projects", proj, "off", "--yes"}, {"delivery", "--container", "lea-a", "--projects", proj, "on", "-y"},
 		{"delivery", "--container", "lea-a", "--projects", proj, "on", "--yes"}, {"delivery", "--container", "lea-a", "--projects", proj, "on", "--yes", "xyz"},
+		{"delivery", "--container", "lea-a", "--projects", proj, "on", "--yes", "0123456789abcdef", "--yes", "0123456789abcdef"},
+		{"delivery", "--container", "lea-a", "--projects", proj, "on", "--gitlab"}, {"delivery", "--container", "lea-a", "--projects", proj, "on", "--gitlab", "bad host"},
+		{"delivery", "--container", "lea-a", "--projects", proj, "status", "--gitlab", "x.example"},
 		{"delivery", "--container", "lea-a", "on"}, {"delivery", "--container", "lea-a", "--projects", "relative", "on"}} {
 		if rc, _, _ := runEnv(t, host, args...); rc != 2 {
 			t.Errorf("%v: rc=%d", args, rc)

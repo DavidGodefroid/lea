@@ -332,10 +332,11 @@ func isGit(w string) bool { return w == "git" || strings.HasSuffix(w, "/git") }
 var readers = map[string]bool{"grep": true, "egrep": true, "fgrep": true, "rg": true, "ag": true, "echo": true, "printf": true}
 
 // printsOnly says whether w (a program and its words) runs none of its words: a reader, or gh
-// pr/issue (titles, bodies, comments). gh alias set can define a shell alias: not a reader.
+// pr/issue or glab mr/issue (titles, bodies, comments). gh alias set can define a shell alias: not a reader.
 func printsOnly(w []string) bool {
 	b := path.Base(w[0])
-	return readers[b] || (b == "gh" && len(w) > 1 && (w[1] == "pr" || w[1] == "issue"))
+	return readers[b] || (b == "gh" && len(w) > 1 && (w[1] == "pr" || w[1] == "issue")) ||
+		(b == "glab" && len(w) > 1 && (w[1] == "mr" || w[1] == "issue"))
 }
 
 // pushWord says whether x, a whole word, is a push or a git transport that writes remote refs

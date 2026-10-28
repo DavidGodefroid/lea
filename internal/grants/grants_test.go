@@ -10,7 +10,7 @@ const now = 1_000_000
 
 var dev = Caller{Key: "lea-a/dev-2", Container: "lea-a", Repo: "lea", Branch: "feat/73-x",
 	Lineage: []string{"lea-a/dev-2", "lea-a/claude-1"}, OwnWorktree: true, Worktree: "/p/.lea/worktrees/lea/dev-2",
-	Env: map[string]string{"HOME": "/home/u", "GH_CONFIG_DIR": "/lea/state/gh"}}
+	Env: map[string]string{"HOME": "/home/u", "GH_CONFIG_DIR": "/lea/state/gh", "GLAB_CONFIG_DIR": "/lea/state/glab-cli"}}
 
 func all(action string) Grant {
 	g := Grant{ID: 7, Container: "lea-a", Action: action, Repo: "lea", Branch: "feat/*", Created: now - 10, Expires: now + 3600}
@@ -343,7 +343,7 @@ func TestPinnedCommand(t *testing.T) {
 	gs := []Grant{all(Merge), all(CommitIdentity)}
 	d := Decide("Bash", bash("gh pr merge feat/73-x --squash --delete-branch"), dev, gs, now, false)
 	if d.Verdict != Allow || !strings.HasPrefix(d.Command, `'/usr/bin/env' '-i' 'PATH=/usr/bin:/bin'`) ||
-		!strings.Contains(d.Command, `'HOME=/home/u' 'GH_CONFIG_DIR=/lea/state/gh' '/bin/sh' '-c' `) || d.Request.Target != "github.com/o/lea pr of feat/73-x" {
+		!strings.Contains(d.Command, `'HOME=/home/u' 'GH_CONFIG_DIR=/lea/state/gh' 'GLAB_CONFIG_DIR=/lea/state/glab-cli' '/bin/sh' '-c' `) || d.Request.Target != "github.com/o/lea pr of feat/73-x" {
 		t.Fatalf("merge: %+v", d)
 	}
 	if s := lastWord(t, d.Command); !strings.Contains(s, `'/usr/bin/gh' 'pr' 'view' 'feat/73-x' '--json' 'headRefName,isCrossRepository'`) ||
@@ -555,6 +555,80 @@ func TestStanding(t *testing.T) {
 	for _, a := range DeliveryActions {
 		if !ValidAction(a) || !NeedsGitHub(a) {
 			t.Fatalf("delivery action %q", a)
+		}
+	}
+}
+
+// TestGitLab: a grant pinned to a GitLab project (gitlab:HOST/PATH) covers glab mr create and
+// glab mr merge on the caller's own branch, and pushes to that project; gh is not covered by it,
+// nor glab by a GitHub grant.
+func TestGitLab(t *testing.T) {
+	gl := func(action string) Grant {
+		g := all(action)
+		g.GitHub = "gitlab:gitlab.example.com/grp/sub/app"
+		return g
+	}
+	gs := []Grant{gl(PRCreate), gl(Merge), gl(CommitIdentity), gl(DeleteOwnBranch)}
+	cases := []struct{ name, cmd, want string }{
+		{"mr create", `glab mr create -s feat/73-x -b main -t "fix: x" -d "does y" -y`, Allow},
+		{"mr create long", `glab mr create --source-branch feat/73-x --target-branch main --title x --description y --draft --yes`, Allow},
+		{"mr create no description", `glab mr create -s feat/73-x -t x -y`, Allow},
+		{"mr create remove source", `glab mr create -s feat/73-x -t x --remove-source-branch -y`, Allow},
+		{"mr create no source", `glab mr create -t x -d y -y`, ""},
+		{"mr create other source", `glab mr create -s feat/other -t x -y`, ""},
+		{"mr create no title", `glab mr create -s feat/73-x -d y -y`, ""},
+		{"mr create fill", `glab mr create -s feat/73-x --fill -y`, ""},
+		{"mr create push", `glab mr create -s feat/73-x -t x --push -y`, ""},
+		{"mr create repo", `glab mr create -s feat/73-x -t x -y -R evil/x`, ""},
+		{"mr create head repo", `glab mr create -s feat/73-x -t x -y -H evil/x`, ""},
+		{"mr create editor", `glab mr create -s feat/73-x -t x -d - -y`, ""},
+		{"mr create body mentions push", `glab mr create -s feat/73-x -t x -d "run git push origin main yourself" -y`, Allow},
+		{"mr merge numbered", `glab mr merge 12 --squash -y`, Allow},
+		{"mr merge own branch remove", `glab mr merge feat/73-x -s -d -y`, Allow},
+		{"mr merge rebase", `glab mr merge 12 -r -y`, Allow},
+		{"mr merge numbered remove", `glab mr merge 12 -d -y`, ""},
+		{"mr merge unnamed", `glab mr merge -s -y`, ""},
+		{"mr merge other branch", `glab mr merge feat/other -s -y`, ""},
+		{"mr merge sha", `glab mr merge 12 --sha abc -y`, ""},
+		{"mr merge two methods", `glab mr merge 12 -s -r -y`, ""},
+		{"push", "git push -u origin feat/73-x", Allow},
+		{"delete", "git push origin --delete feat/73-x", Allow},
+		{"gh on a gitlab grant", "gh pr merge 42 --squash", ""},
+		{"gh create on a gitlab grant", "gh pr create --head feat/73-x --title x --body y", ""},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			d := Decide("Bash", bash(tc.cmd), dev, gs, now, false)
+			if d.Verdict != tc.want {
+				t.Fatalf("%q: verdict %q (%s), want %q", tc.cmd, d.Verdict, d.Reason, tc.want)
+			}
+		})
+	}
+	if d := Decide("Bash", bash("glab mr merge 12 -s -y"), dev, []Grant{all(Merge)}, now, false); d.Verdict != "" {
+		t.Fatalf("glab on a github grant: %+v", d)
+	}
+	d := Decide("Bash", bash(`glab mr create -s feat/73-x -t x -y`), dev, gs, now, false)
+	if s := lastWord(t, d.Command); s != `'/usr/bin/glab' 'mr' 'create' '-s' 'feat/73-x' '-t' 'x' '-y' '-R' 'https://gitlab.example.com/grp/sub/app'` ||
+		d.Request.Target != "gitlab:gitlab.example.com/grp/sub/app mr create feat/73-x" || !strings.Contains(d.Command, `'GLAB_CONFIG_DIR=/lea/state/glab-cli'`) {
+		t.Fatalf("mr create: %q %+v", s, d)
+	}
+	d = Decide("Bash", bash("glab mr merge 12 --squash -y"), dev, gs, now, false)
+	s := lastWord(t, d.Command)
+	for _, w := range []string{`'/usr/bin/glab' 'mr' 'view' '12' '-F' 'json' '--jq'`, `'-R' 'https://gitlab.example.com/grp/sub/app') || exit 1`,
+		`[ "$head" != 'true feat/73-x' ]`, "\n" + `'/usr/bin/glab' 'mr' 'merge' '12' '--squash' '-y' '-R' 'https://gitlab.example.com/grp/sub/app'`} {
+		if !strings.Contains(s, w) {
+			t.Fatalf("numbered mr merge script lacks %s:\n%s", w, s)
+		}
+	}
+	d = Decide("Bash", bash("git push -u origin feat/73-x"), dev, gs, now, false)
+	if s := lastWord(t, d.Command); !strings.Contains(s, ` push 'https://gitlab.example.com/grp/sub/app.git' "$sha"':refs/heads/feat/73-x'`) {
+		t.Fatalf("gitlab push script:\n%s", s)
+	}
+	for pin, ok := range map[string]bool{"github.com/o/x": true, "gitlab:gitlab.com/g/x": true, "gitlab:h.example.com/a/b/c/d": true,
+		"gitlab:gitlab.com/x": false, "gitlab:gitlab.com/g/../x": false, "gitlab:/g/x": false, "gitlab:h_x/g/x": false,
+		"gitlab:gitlab.com/g/x.git": false, "github.com/o/x/y": false, "gitlab.com/g/x": false, "gitlab:gitlab.com/-g/x": false} {
+		if got := ValidPin(pin); got != ok {
+			t.Errorf("ValidPin(%q) = %v", pin, got)
 		}
 	}
 }

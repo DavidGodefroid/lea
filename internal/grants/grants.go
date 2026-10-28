@@ -55,8 +55,9 @@ type Grant struct {
 	ID                              int64
 	Container, Action, Repo, Branch string
 	Agent                           string
-	// GitHub is the repository gh acts on, github.com/OWNER/NAME: every gh call a grant allows
-	// is pinned to it with -R (merge and close-issue grants need one).
+	// GitHub is the forge repository the grant's calls are pinned to (its pin, ValidPin):
+	// github.com/OWNER/NAME, which gh acts on (-R), or, for a delivery grant on GitLab,
+	// gitlab:HOST/GROUP/.../NAME, which glab acts on (-R https://HOST/…). git pushes go to it.
 	GitHub                    string
 	Created, Expires, Revoked int64
 }
@@ -64,6 +65,56 @@ type Grant struct {
 // NeedsGitHub says whether a grant of action names its GitHub repository: every action but
 // stop-finished runs gh or git against it (gh -R, git push only to an origin that is it).
 func NeedsGitHub(action string) bool { return action != StopFinished }
+
+var (
+	githubPinRe  = regexp.MustCompile(`^github\.com/[A-Za-z0-9][A-Za-z0-9-]{0,38}/[A-Za-z0-9._-]{1,100}$`)
+	gitlabHostRe = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]{0,62}[a-z0-9])?(\.[a-z0-9]([a-z0-9-]{0,62}[a-z0-9])?)+$`)
+	gitlabSegRe  = regexp.MustCompile(`^[A-Za-z0-9_][A-Za-z0-9._-]{0,99}$`)
+)
+
+// ValidPin says whether pin is a forge repository a grant can be pinned to: github.com/OWNER/NAME,
+// or gitlab:HOST/GROUP/.../NAME (2 to 20 path segments, none . or .., the name not ending .git).
+func ValidPin(pin string) bool {
+	if githubPinRe.MatchString(pin) {
+		n := pin[strings.LastIndexByte(pin, '/')+1:]
+		return n != "." && n != ".."
+	}
+	host, path, ok := gitlabPin(pin)
+	return ok && host != "" && path != ""
+}
+
+// gitlabPin splits a GitLab pin into its host and project path.
+func gitlabPin(pin string) (host, path string, ok bool) {
+	rest, ok := strings.CutPrefix(pin, "gitlab:")
+	if !ok {
+		return "", "", false
+	}
+	host, path, ok = strings.Cut(rest, "/")
+	if !ok || !gitlabHostRe.MatchString(host) {
+		return "", "", false
+	}
+	segs := strings.Split(path, "/")
+	if len(segs) < 2 || len(segs) > 20 || strings.HasSuffix(path, ".git") {
+		return "", "", false
+	}
+	for _, x := range segs {
+		if !gitlabSegRe.MatchString(x) || x == "." || x == ".." {
+			return "", "", false
+		}
+	}
+	return host, path, true
+}
+
+// pinURL is the https URL of a pin's repository (without .git): where git pushes, and glab's -R.
+func pinURL(pin string) string {
+	if host, path, ok := gitlabPin(pin); ok {
+		return "https://" + host + "/" + path
+	}
+	if githubPinRe.MatchString(pin) {
+		return "https://" + pin
+	}
+	return ""
+}
 
 // IsStanding says whether g is a delivery grant (lea delivery on), with no expiry.
 func (g Grant) IsStanding() bool { return g.Expires == Standing }
@@ -92,7 +143,7 @@ type Caller struct {
 
 // SafeEnv are the variables an allowed git or gh call keeps, each checked by safeEnvValue.
 // Everything else (GIT_*, GH_REPO, GH_HOST, tokens, LD_*, BASH_ENV…) is dropped.
-var SafeEnv = []string{"HOME", "GH_CONFIG_DIR", "SSH_AUTH_SOCK", "LANG"}
+var SafeEnv = []string{"HOME", "GH_CONFIG_DIR", "SSH_AUTH_SOCK", "LANG", "GLAB_CONFIG_DIR"}
 
 var safeEnvValue = regexp.MustCompile(`^[A-Za-z0-9/._@:+-]{1,256}$`)
 
@@ -223,7 +274,7 @@ func Decide(tool string, input json.RawMessage, c Caller, gs []Grant, now int64,
 	d := Decision{Verdict: Allow, Grant: g.ID, Request: req,
 		Reason: fmt.Sprintf("lea grant #%d (%s) recorded by the user", g.ID, g.Action)}
 	switch req.Prog {
-	case "gh":
+	case "gh", "glab":
 		d.Request.Target = g.GitHub + " " + req.Target
 		d.Command = Command(req, c, g)
 	case "git":
@@ -238,10 +289,11 @@ func Decide(tool string, input json.RawMessage, c Caller, gs []Grant, now int64,
 
 // Programs of an allowed call: absolute paths, so no PATH, alias or function lookup.
 const (
-	gitPath = "/usr/bin/git"
-	ghPath  = "/usr/bin/gh"
-	envPath = "/usr/bin/env"
-	sshPath = "/usr/bin/ssh"
+	gitPath  = "/usr/bin/git"
+	ghPath   = "/usr/bin/gh"
+	glabPath = "/usr/bin/glab"
+	envPath  = "/usr/bin/env"
+	sshPath  = "/usr/bin/ssh"
 )
 
 // gitPins neutralise what in git's configuration would run a program or send the push elsewhere
@@ -253,7 +305,7 @@ var gitPins = []string{"core.hooksPath=/dev/null", "core.fsmonitor=false", "core
 	// An empty helper resets the list (the repository's too); then only lea's: the image's store
 	// and gh's.
 	"credential.helper=", "credential.helper=store --file=/lea/state/git/credentials",
-	"credential.helper=!/usr/bin/gh auth git-credential",
+	"credential.helper=!/usr/bin/gh auth git-credential", "credential.helper=!/usr/bin/glab auth git-credential",
 	"http.sslVerify=true", "http.proxy=", "http.extraHeader=", "http.cookieFile=", "http.curloptResolve=",
 	"http.sslCAInfo=/etc/ssl/certs/ca-certificates.crt", "http.sslCAPath=/etc/ssl/certs"}
 
@@ -275,9 +327,10 @@ var gitPins = []string{"core.hooksPath=/dev/null", "core.fsmonitor=false", "core
 //
 // Every word lea builds is single-quoted. "" when the call cannot be pinned.
 func Command(req Request, c Caller, g Grant) string {
-	if g.GitHub == "" {
+	if !ValidPin(g.GitHub) {
 		return ""
 	}
+	_, _, gitlab := gitlabPin(g.GitHub)
 	// GIT_CONFIG_GLOBAL=/dev/null: ~/.gitconfig is the agent's to write (url.insteadOf,
 	// include.path, helpers); /etc/gitconfig is the image's.
 	// GIT_CONFIG_NOSYSTEM: lea's credential store comes in as a pin (gitPins), not from it.
@@ -294,6 +347,9 @@ func Command(req Request, c Caller, g Grant) string {
 	var script string
 	switch req.Prog {
 	case "gh":
+		if gitlab {
+			return ""
+		}
 		script = shellWords(append(append([]string{ghPath}, req.Args...), "-R", g.GitHub))
 		if req.Action == PRCreate {
 			script = prCreateScript(req.Args, c.Worktree, g.GitHub)
@@ -303,6 +359,18 @@ func Command(req Request, c Caller, g Grant) string {
 				return ""
 			}
 			script = prHeadCheck(req.Args[2], c.Branch, g.GitHub) + script
+		}
+	case "glab":
+		if !gitlab {
+			return ""
+		}
+		url := pinURL(g.GitHub)
+		script = shellWords(append(append([]string{glabPath}, req.Args...), "-R", url))
+		if req.Action == Merge && len(req.Args) > 2 {
+			if c.Branch == "" || !BranchName(c.Branch) || Protected(c.Branch) {
+				return ""
+			}
+			script = mrHeadCheck(req.Args[2], c.Branch, url) + script
 		}
 	case "git":
 		if !c.OwnWorktree || c.Worktree == "" {
@@ -370,6 +438,16 @@ func prCreateScript(args []string, wt, gh string) string {
 		refuse("the body file is not in the agent's worktree") + ";; esac\n" +
 		`[ -f /proc/self/fd/3 ] || { ` + refuse("the body file is not a plain file") + "; }\n" +
 		shellWords(append(argv, "-R", gh)) + " <&3"
+}
+
+// mrHeadCheck is prHeadCheck for glab: the MR n names (a number or a source branch) must come
+// from branch of the project url itself (not a fork's branch of the same name).
+func mrHeadCheck(n, branch, url string) string {
+	view := shellWords([]string{glabPath, "mr", "view", n, "-F", "json", "--jq",
+		`((.source_project_id == .target_project_id)|tostring) + " " + .source_branch`, "-R", url})
+	return "head=$(" + view + ") || exit 1\n" +
+		`if [ "$head" != ` + shellWords([]string{"true " + branch}) + " ]; then " +
+		refuse("MR "+n+" is not the agent's own branch "+branch) + "; fi\n"
 }
 
 // pins are lea's -c options for git.
@@ -486,14 +564,14 @@ func pushArgs(args []string, gh string) []string {
 			pos = append(pos, a)
 		}
 	}
-	if len(pos) != 2 || pos[0] != "origin" || !BranchName(pos[1]) || Protected(pos[1]) || !strings.HasPrefix(gh, "github.com/") || (del && upstream) {
+	if len(pos) != 2 || pos[0] != "origin" || !BranchName(pos[1]) || Protected(pos[1]) || pinURL(gh) == "" || (del && upstream) {
 		return nil
 	}
 	mode := "push"
 	if del {
 		mode = "delete"
 	}
-	return []string{"https://" + gh + ".git", "refs/heads/" + pos[1], mode}
+	return []string{pinURL(gh) + ".git", "refs/heads/" + pos[1], mode}
 }
 
 // shellWords single-quotes every word.

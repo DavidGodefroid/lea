@@ -107,7 +107,8 @@ func githubRepo(s string) (string, error) {
 // deliverySet is lea delivery on|off (issue #92), the host's only: off revokes the standing
 // grants of a lea; on replaces them with the delivery actions on each repository it names, with
 // the GitHub repository the host read from that repository's origin. Standing grants never expire;
-// grants the user added by hand are left alone.
+// grants the user added by hand are left alone. A repository's forge pin is github.com/OWNER/NAME
+// (OWNER/NAME accepted) or gitlab:HOST/GROUP/.../NAME (grants.ValidPin).
 func (d *Daemon) deliverySet(raw json.RawMessage) (any, error) {
 	var p struct {
 		Container string
@@ -132,6 +133,12 @@ func (d *Daemon) deliverySet(raw json.RawMessage) (any, error) {
 			return nil, fmt.Errorf("repo %q: a directory name under the projects directory, once", r.Repo)
 		}
 		seen[r.Repo] = true
+		if strings.HasPrefix(r.GitHub, "gitlab:") {
+			if !grants.ValidPin(r.GitHub) {
+				return nil, fmt.Errorf("repo %s: gitlab:HOST/GROUP/NAME of a GitLab project", r.Repo)
+			}
+			continue
+		}
 		gh, err := githubRepo(r.GitHub)
 		if err != nil {
 			return nil, fmt.Errorf("repo %s: %w", r.Repo, err)

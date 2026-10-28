@@ -523,22 +523,24 @@ before relying on grants, in a lea: `lea grant add commit-identity --container <
 file and run `git commit -m test`, then check that `git reflog -1` in its worktree says
 `commit (lea grant)` (a plain `git commit` writes `commit: test`); `lea grant ls` lists the use.
 
-### Let agents deliver (push, PR, merge)
+### Let agents deliver (push, PR/MR, merge)
 
-To let every agent of a lea push its own branch, open its pull request and merge it without a
-prompt, run once, on the host, in the projects directory:
+To let every agent of a lea push its own branch, open its pull request (GitHub) or merge request
+(GitLab) and merge it without a prompt, run once, on the host, in the projects directory:
 
 ```sh
-lea delivery on                # lists the GitHub repository each repository here is pinned to, and their digest
-lea delivery on --yes DIGEST   # records exactly those: standing grants on each one whose origin is on github.com
+lea delivery on                # lists the forge repository each repository here is pinned to, and their digest
+lea delivery on --yes DIGEST   # records exactly those: standing grants on each one on github.com or GitLab
+lea delivery on --gitlab git.example.com  # also a self-hosted GitLab (gitlab.com is known)
 lea delivery status            # which repositories are covered
 lea delivery off               # revoke them: agents ask as usual
 ```
 
 `on` reads each repository's `origin` from its `.git/config` (as a file: no git runs on the host)
-at that moment, and records, for each one on github.com, the grants `commit-identity`,
-`pr-create`, `merge` and `delete-own-branch` for every agent of this lea, pinned to that GitHub
-repository, with no expiry (`lea grant ls` shows them as `standing`, and their uses). A repository
+at that moment, and records, for each one on github.com, gitlab.com or a `--gitlab` host (a host
+once pinned stays known), the grants `commit-identity`, `pr-create`, `merge` and
+`delete-own-branch` for every agent of this lea, pinned to that repository (`github.com/OWNER/NAME`
+or `gitlab:HOST/GROUP/…/NAME`), with no expiry (`lea grant ls` shows them as `standing`, and their uses). A repository
 added later, or an origin changed, is covered once you run `lea delivery on` again and confirm (it replaces
 the standing grants; grants you added by hand stay). Agents can write a repository's
 `.git/config` (or add a repository): `on` records nothing while a pin is new or differs from the
@@ -557,11 +559,18 @@ deny (no push to `main`, no force-push, no `--admin`). The calls covered:
   plain file inside it, outside `.git` (lea checks it is a plain file, opens it once and gh reads that open file; a quoted heredoc, `--body "$(cat <<'EOF' … EOF)"`, is
   not covered: write the body to a file);
 - `gh pr merge <n>|<own branch> --squash|--merge|--rebase [--delete-branch]` (the PR's head must be
-  the agent's branch), and `git push origin --delete <own branch>`.
+  the agent's branch), and `git push origin --delete <own branch>`;
+- on GitLab: `glab mr create --source-branch <own branch> --title T [--description D]
+  [--target-branch B] [--draft] [--remove-source-branch] [--yes]` and `glab mr merge <n>|<own
+  branch> [--squash|--rebase] [--remove-source-branch] [--yes]` (a numbered MR must come from the
+  agent's branch of the project itself, not a fork), glab run as `/usr/bin/glab … -R
+  https://HOST/PATH` with `GLAB_CONFIG_DIR`; pushes go to `https://HOST/PATH.git` with glab's
+  credential helper. A multi-line description is not covered (no file option): it takes the
+  usual path.
 
 Branch protection on the forge (required reviews, required checks) stays the control that decides
-whether a merge goes through: delivery only removes the prompt. GitLab (`glab mr`) is not covered
-yet.
+whether a merge goes through: delivery only removes the prompt (`glab mr merge` sets auto-merge
+by default: it merges once the pipeline passes).
 
 `lea new --brief FILE` gives a new agent its first message; `--repo NAME` starts it in a
 directory of the projects directory; `--branch B` has it work in its own git worktree under

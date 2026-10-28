@@ -316,3 +316,34 @@ func TestPinnedPRCreateBodyFile(t *testing.T) {
 		}
 	}
 }
+
+// TestPinnedMRMergeChecksTheSource runs the numbered glab merge script against a fake glab: the
+// merge runs only when glab says MR 12 comes from the caller's branch of the project itself.
+func TestPinnedMRMergeChecksTheSource(t *testing.T) {
+	needTools(t)
+	g := all(Merge)
+	g.GitHub = "gitlab:gitlab.example.com/grp/app"
+	d := Decide("Bash", bash("glab mr merge 12 --squash -y"), dev, []Grant{g}, now, false)
+	if d.Verdict != Allow {
+		t.Fatalf("merge: %+v", d)
+	}
+	for _, tc := range []struct {
+		head   string
+		merged bool
+	}{{"true feat/73-x", true}, {"true feat/other", false}, {"false feat/73-x", false}, {"", false}} {
+		dir := t.TempDir()
+		fake := filepath.Join(dir, "glab")
+		log := filepath.Join(dir, "log")
+		body := "#!/bin/sh\necho \"$*\" >> " + log + "\nif [ \"$2\" = view ]; then printf '%s\\n' '" + tc.head + "'; fi\n"
+		if err := os.WriteFile(fake, []byte(body), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		script := strings.ReplaceAll(lastWord(t, d.Command), "'"+glabPath+"'", "'"+fake+"'")
+		out, err := exec.Command(shPath, "-c", script).CombinedOutput()
+		got, _ := os.ReadFile(log)
+		merged := strings.Contains(string(got), "mr merge 12 --squash -y -R https://gitlab.example.com/grp/app")
+		if merged != tc.merged || (err == nil) != tc.merged {
+			t.Fatalf("head %q: merged %v, err %v, out %s, calls %s", tc.head, merged, err, out, got)
+		}
+	}
+}
