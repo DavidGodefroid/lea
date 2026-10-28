@@ -21,9 +21,23 @@ func (l *Launcher) ensureNetworks(id string) error {
 			return err
 		}
 	}
-	if internal, err := l.output(false, "docker", "network", "inspect", "-f", "{{.Internal}}", inet); err == nil {
+	if info, err := l.output(false, "docker", "network", "inspect", "-f",
+		`{{.Internal}} {{index .Options "com.docker.network.bridge.gateway_mode_ipv4"}}`, inet); err == nil {
+		internal, mode, _ := strings.Cut(info, " ")
 		if internal != "true" {
 			return die("network %s exists but is not an internal network; remove it (docker network rm %s) and retry", inet, inet)
+		}
+		if mode = strings.TrimSpace(mode); mode != "isolated" {
+			if mode == "" {
+				mode = "unset"
+			}
+			if l.Cfg.Get("LEA_ALLOW_GATEWAY") != "1" {
+				return die("network %s is not isolated from the host (gateway_mode_ipv4=%s, not gateway_mode_ipv4=isolated, which needs "+
+					"Docker Engine %s or later), so lea does not start the agent on it. Remove it (lea stop --all, or docker network rm %s) "+
+					"and retry, or set LEA_ALLOW_GATEWAY=1 to accept that weaker network", inet, mode, isolatedGatewayMinDocker, inet)
+			}
+			l.logf("warning: %s has gateway_mode_ipv4=%s; LEA_ALLOW_GATEWAY=1: the agent can reach the host through its gateway "+
+				"(check with: make test-isolation)", inet, mode)
 		}
 		return nil
 	}

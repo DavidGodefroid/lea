@@ -4,7 +4,7 @@ tmux [-V]
 core [agents]
 core [version]
 docker [network] [inspect] [lea-egress]
-docker [network] [inspect] [-f] [{{.Internal}}] [lea-internal-$ID]
+docker [network] [inspect] [-f] [{{.Internal}} {{index .Options "com.docker.network.bridge.gateway_mode_ipv4"}}] [lea-internal-$ID]
 -- lea
 lea: error: network lea-internal-$ID exists but is not an internal network; remove it (docker network rm lea-internal-$ID) and retry
 -- stdout
