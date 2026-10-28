@@ -44,6 +44,11 @@ if [ -e "$HOME/.claude/settings.json" ]; then
 fi
 if [ -d "$HOME/.claude/plugins" ]; then
   mustnt "plugins are read-only"                touch "$HOME/.claude/plugins/.lea-write-test"
+  if [ -e "$HOME/.claude/plugins/installed_plugins.json" ]; then
+    mustnt "installed_plugins.json is read-only" touch "$HOME/.claude/plugins/installed_plugins.json"
+  fi
+  # Claude Code mkdirs each plugin's CLAUDE_PLUGIN_DATA here before running its hooks (#90).
+  must   "plugins/data is writable"             sh -c 'mkdir -p "$HOME/.claude/plugins/data/lea-inline" && touch "$HOME/.claude/plugins/data/lea-inline/.lea-write-test"'
 fi
 if [ -n "${HOST_CRED_SHA:-}" ]; then
   mustnt "host Claude credentials not visible"  test "$(sha_of "$HOME/.claude/.credentials.json")" = "$HOST_CRED_SHA"
