@@ -233,12 +233,12 @@ const (
 	sshPath = "/usr/bin/ssh"
 )
 
-// gitPins neutralise what in git's configuration would run a program or send the push elsewhere
-// during commit or push: hooks, fsmonitor, the SSH command, signing, pager, editor, askpass, and
-// every transport but https and ssh.
+// gitPins neutralise what in git's configuration would run a program, send the push elsewhere
+// or push more (tags) during commit or push: hooks, fsmonitor, the SSH command, signing, pager,
+// editor, askpass, push.followTags, and every transport but https and ssh.
 var gitPins = []string{"core.hooksPath=/dev/null", "core.fsmonitor=false", "core.sshCommand=" + sshPath,
 	"commit.gpgSign=false", "core.pager=cat", "core.editor=true", "core.askPass=/bin/false",
-	"push.recurseSubmodules=no", "protocol.allow=never", "protocol.https.allow=always", "protocol.ssh.allow=always",
+	"push.recurseSubmodules=no", "push.followTags=false", "protocol.allow=never", "protocol.https.allow=always", "protocol.ssh.allow=always",
 	// An empty helper resets the list (the repository's too); then only lea's: the image's store
 	// and gh's.
 	"credential.helper=", "credential.helper=store --file=/lea/state/git/credentials",

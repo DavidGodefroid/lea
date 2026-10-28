@@ -265,7 +265,7 @@ const (
 	pushTransport = "git transports other than push (send-pack, http-push, remote-<helper>, svn, p4) are never allowed"
 	pushWild      = "a git push with an unquoted *, ?, [, {, or ~ is never allowed: the shell would choose the refs"
 	pushForce     = "force-push (or a push that rewrites or prunes remote branches) is never allowed"
-	pushEvery     = "pushing every branch or tag (--all, --branches, --tags, --mirror, --prune, a wildcard or a bare \":\") is never allowed: name the branch"
+	pushEvery     = "pushing every branch or tag (--all, --branches, --tags, --follow-tags, --mirror, --prune, a wildcard or a bare \":\") is never allowed: name the branch"
 	pushMain      = "pushing to the default branch is never allowed"
 	pushImplicit  = "a push must name the agent's branch (git push origin <branch>): a bare git push, HEAD or @ follows whatever is checked out"
 	pushOther     = "pushing to anything but the agent's own branch is never allowed"
@@ -281,7 +281,7 @@ const (
 // pushFlags are the git push options that change neither what is pushed nor where.
 var pushFlags = map[string]bool{"--set-upstream": true, "--verbose": true, "--quiet": true, "--dry-run": true, "--porcelain": true,
 	"--progress": true, "--no-progress": true, "--atomic": true, "--no-atomic": true, "--verify": true, "--no-verify": true,
-	"--ipv4": true, "--ipv6": true, "--thin": true, "--no-thin": true, "--follow-tags": true, "--no-follow-tags": true}
+	"--ipv4": true, "--ipv6": true, "--thin": true, "--no-thin": true, "--no-follow-tags": true}
 
 // safeConfig are the keys "git -c" may set from inside an agent: none runs a program, includes
 // a file or defines an alias.
@@ -600,7 +600,7 @@ func parsePush(args []string, c Caller, compound bool) string {
 		case strings.HasPrefix(a, "--push-option="), pushFlags[a]:
 		case strings.HasPrefix(a, "--force"):
 			return pushForce
-		case a == "--all" || a == "--branches" || a == "--mirror" || a == "--prune" || a == "--tags":
+		case a == "--all" || a == "--branches" || a == "--mirror" || a == "--prune" || a == "--tags" || a == "--follow-tags":
 			return pushEvery
 		case !strings.HasPrefix(a, "--"):
 			for k := 1; k < len(a); k++ {
