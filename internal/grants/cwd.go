@@ -45,19 +45,35 @@ func dirProtected(cmd, cwd string) bool {
 		return true
 	}
 	// With extglob on (a shell snapshot may turn it on), @(…), !(…) and the like match what a
-	// star does.
-	if ext := extglobRe.ReplaceAllString(cmd, "*"); ext != cmd {
-		return s.dirs(ext, dirs, unknown, 0)
+	// star does: groups are read as stars, innermost first. One left unread fails closed.
+	ext := cmd
+	for i := 0; i < maxDepth*2; i++ {
+		next := extglobRe.ReplaceAllString(ext, "*")
+		if next == ext {
+			break
+		}
+		ext = next
 	}
-	return false
+	if extglobOpenRe.MatchString(ext) {
+		return stemRe.MatchString(unquote.Replace(cmd))
+	}
+	return ext != cmd && s.dirs(ext, dirs, unknown, 0)
 }
 
 // looseRe: a command that may change how the shell globs (shopt, zsh's options and qualifiers,
-// GLOBIGNORE), however spelled: its globs may match dot files and ignore case.
-var looseRe = regexp.MustCompile(`shopt|setopt|unsetopt|emulate|GLOBIGNORE|(?i:glob)|[^\s$<>|&;(]\(`)
+// GLOBIGNORE, or a word, script or program lea cannot read), however spelled: its globs may
+// match dot files and ignore case.
+var looseRe = regexp.MustCompile("shopt|setopt|unsetopt|emulate|GLOBIGNORE|(?i:glob)|[^\\s$<>|&;(]\\(|" +
+	"\\beval\\b|\\bsource\\b|(^|[;&|(\\s])\\.\\s|[$`]")
 
-// extglobRe: an extended glob's group.
-var extglobRe = regexp.MustCompile(`[?*+@!]\([^()]*\)`)
+// extglobRe: an extended glob's group; extglobOpenRe its start.
+var (
+	extglobRe     = regexp.MustCompile(`[?*+@!]\([^()]*\)`)
+	extglobOpenRe = regexp.MustCompile(`[?*+@!]\(`)
+)
+
+// stemRe: what starts a protected path, loosely.
+var stemRe = regexp.MustCompile(`\.claude|\.git|\.config|\.(bash|zsh|profile|inputrc)|lea/state|share/lea`)
 
 // scan holds what holds for the whole command: whether its globs may match more than bash's
 // defaults let them (loose).
