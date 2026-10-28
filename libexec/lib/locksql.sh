@@ -15,7 +15,11 @@ lea__locksql_harden="--cap-drop ALL --security-opt no-new-privileges --read-only
 lea__locksql_launcher() {
   _ll=$(command -v locksql 2>/dev/null) || return 0
   case $_ll in /*) ;; *) return 0 ;; esac
+  # At most 40 links, as the kernel follows: a cycle ends there.
+  _lh=0
   while [ -L "$_ll" ]; do
+    _lh=$((_lh + 1))
+    [ "$_lh" -le 40 ] || return 0
     _lt=$(readlink "$_ll") || return 0
     case $_lt in /*) _ll=$_lt ;; *) _ll=$(dirname "$_ll")/$_lt ;; esac
   done
