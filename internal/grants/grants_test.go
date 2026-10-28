@@ -648,7 +648,7 @@ func TestPRCreate(t *testing.T) {
 		t.Fatalf("merge grant covers pr create: %+v", d)
 	}
 	d := Decide("Bash", bash(`gh pr create --head feat/73-x --title "fix: x" --body y`), dev, gs, now, false)
-	if s := lastWord(t, d.Command); s != `'/usr/bin/gh' 'pr' 'create' '--head' 'feat/73-x' '--title' 'fix: x' '--body' 'y' '-R' 'github.com/o/lea'` ||
+	if s := lastWord(t, d.Command); s != ghIsolated()+`'/usr/bin/gh' 'pr' 'create' '--head' 'feat/73-x' '--title' 'fix: x' '--body' 'y' '-R' 'github.com/o/lea'` ||
 		d.Request.Target != "github.com/o/lea pr create feat/73-x" {
 		t.Fatalf("pr create: %q %+v", s, d)
 	}
