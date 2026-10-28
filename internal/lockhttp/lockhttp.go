@@ -54,6 +54,10 @@ func AuditDir(dataDir string) string { return filepath.Join(Dir(dataDir), "audit
 // StatusDir is where the gate writes status.json, mounted at /run/lockhttp-gate.
 func StatusDir(dataDir string) string { return filepath.Join(Dir(dataDir), "status") }
 
+// CADir is the local CA of the MITM phase (lockhttp ca init): ca.pem, public, and ca-key.pem
+// (0600), which only the signer in the proxy container gets.
+func CADir(dataDir string) string { return filepath.Join(Dir(dataDir), "ca") }
+
 func keyPath(dataDir string) string { return filepath.Join(Dir(dataDir), "token.key") }
 
 // Key is the host key tokens are derived from: 32 random bytes in token.key (0600), created on

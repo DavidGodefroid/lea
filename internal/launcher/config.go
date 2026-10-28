@@ -31,7 +31,7 @@ var protectedKeys = map[string]bool{
 // core subcommands and libexec/lea-sh.
 var ExportedKeys = []string{
 	"LEA_PREFIX", "LEA_IMAGE", "LEA_PROXY_IMAGE", "LEA_GIT_SSH", "LEA_GIT_KNOWN_HOSTS", "LEA_LOCKSQL", "LEA_LOCKSQL_IMAGE", "LEA_LOCKSQL_REF", "LEA_LOCKSQL_VAULT_ADDR",
-	"LEA_LOCKMQ", "LEA_LOCKFILE", "LEA_LOCKMQ_REF", "LEA_LOCKFILE_REF", "LEA_LOCKHTTP",
+	"LEA_LOCKMQ", "LEA_LOCKFILE", "LEA_LOCKMQ_REF", "LEA_LOCKFILE_REF", "LEA_LOCKHTTP", "LEA_LOCKHTTP_MITM",
 	"LEA_OTEL_UPSTREAM", "LEA_NESTED_NETWORKS", "LEA_K8S_NAMESPACE", "LEA_INTERNAL_HOSTS", "LEA_EGRESS_ALLOW", "LEA_PROJECTS_DIR",
 	"LEA_APPROVALS", "LEA_APPROVAL_TIMEOUT", "LEA_SOUND", "LEA_SOUND_ATTENTION", "LEA_SOUND_DONE",
 	"LEA_PROVIDER", "LEA_MODEL", "LEA_PROVIDERS", "LEA_AUTO_RESUME", "LEA_RESUME_DELAY",
@@ -250,6 +250,14 @@ func (c *Config) resolve(root string) error {
 		return fmt.Errorf("LEA_LOCKHTTP=1 refuses LEA_GIT_SSH: its SSH forwarders would bypass the LockHTTP gate (use git over HTTPS, or LEA_LOCKHTTP=0)")
 	}
 	c.final["LEA_LOCKHTTP"] = lh
+	mitm := nonEmpty(c.Get("LEA_LOCKHTTP_MITM"), "0")
+	if mitm != "0" && mitm != "1" {
+		return fmt.Errorf("LEA_LOCKHTTP_MITM must be 1 (the LockHTTP gate decrypts HTTPS with a local CA) or 0, not '%s'", mitm)
+	}
+	if mitm == "1" && lh != "1" {
+		return fmt.Errorf("LEA_LOCKHTTP_MITM=1 needs LEA_LOCKHTTP=1")
+	}
+	c.final["LEA_LOCKHTTP_MITM"] = mitm
 	if err := c.resolveLimits(); err != nil {
 		return err
 	}
@@ -557,6 +565,10 @@ func (c *Config) GitSSH() string { return c.Get("LEA_GIT_SSH") }
 // LockHTTP reports whether the agents' web egress goes through a LockHTTP gate (LEA_LOCKHTTP=1;
 // off by default).
 func (c *Config) LockHTTP() bool { return c.Get("LEA_LOCKHTTP") == "1" }
+
+// LockHTTPMITM reports whether the LockHTTP gate decrypts HTTPS (LEA_LOCKHTTP_MITM=1, with
+// LEA_LOCKHTTP=1; off by default).
+func (c *Config) LockHTTPMITM() bool { return c.LockHTTP() && c.Get("LEA_LOCKHTTP_MITM") == "1" }
 
 // Locksql reports whether lea is wired for a locksql console (LEA_LOCKSQL=1, the default).
 func (c *Config) Locksql() bool { return c.Get("LEA_LOCKSQL") != "0" }

@@ -4,6 +4,7 @@
 package main
 
 import (
+	"crypto/x509"
 	"errors"
 	"flag"
 	"fmt"
@@ -31,6 +32,7 @@ func run(args []string, stderr io.Writer) error {
 	listen := fs.String("listen", fmt.Sprintf(":%d", providers.ForwarderPort), "the listen address")
 	viaFlag := fs.String("via", "http://127.0.0.1:3128", "the forward proxy every upstream request goes through")
 	sources := fs.String("sources", "", "LockHTTP: the gate's sources.json, which names the calling container (with $LEA_KEYPROXY_TOKEN, the gate's password); empty: -via is plain squid")
+	caCert := fs.String("ca-cert", "", "LockHTTP MITM: a CA certificate (PEM) to trust besides the system's: the gate's, which re-signs decrypted upstreams")
 	routes := fs.String("routes", "/proc/net/route", "the routing table: connections on the default route's interface (the egress network) are refused; empty refuses none")
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -70,6 +72,20 @@ func run(args []string, stderr io.Writer) error {
 		}
 		os.Unsetenv("LEA_KEYPROXY_TOKEN")
 		cfg.Gate = &keyproxy.Gate{Token: tok, Source: lockhttp.NewSourcer(*sources).Source}
+	}
+	if *caCert != "" {
+		pem, err := os.ReadFile(*caCert)
+		if err != nil {
+			return fmt.Errorf("-ca-cert: %w", err)
+		}
+		pool, err := x509.SystemCertPool()
+		if err != nil {
+			pool = x509.NewCertPool()
+		}
+		if !pool.AppendCertsFromPEM(pem) {
+			return errors.New("-ca-cert: no certificate in " + *caCert)
+		}
+		cfg.RootCAs = pool
 	}
 	if *routes != "" {
 		cfg.Refused = keyproxy.EgressAddrs(*routes)

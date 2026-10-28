@@ -81,3 +81,22 @@ tcp        0      0 :::3130                 :::*                    LISTEN'
   lea_load_config
   [ "$LEA_LOCKHTTP" = 1 ]
 }
+
+@test "MITM: the CA's expiry and the signer are checked" {
+  export LEA_LOCKHTTP_MITM=1
+  run lea__doctor_lockhttp
+  [[ "$output" == *"warn  LockHTTP CA: none yet"* ]]
+  [[ "$output" == *"ok    LockHTTP signer listening"* ]]
+  grep -qF 'docker [exec] [lea-proxy] [test] [-S] [/run/lockhttp-signer/signer.sock]' "$FAKE_LOG"
+  if ! command -v openssl >/dev/null; then skip "no openssl"; fi
+  ca=$(lea_data_dir)/lockhttp/ca; mkdir -p "$ca"
+  openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:P-256 -nodes -days 3 -subj /CN=t -keyout "$ca/ca-key.pem" -out "$ca/ca.pem" 2>/dev/null
+  export FAKE_DOCKER_RC_EXEC_LEA_PROXY_AT__RUN_LOCKHTTP_SIGNER_SIGNER_SOCK=1
+  run lea__doctor_lockhttp
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"FAIL  LockHTTP CA: expires within 7 days"* ]]
+  [[ "$output" == *"FAIL  LockHTTP signer"* ]]
+  openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:P-256 -nodes -days 90 -subj /CN=t -keyout "$ca/ca-key.pem" -out "$ca/ca.pem" 2>/dev/null
+  run lea__doctor_lockhttp
+  [[ "$output" == *"ok    LockHTTP CA valid for more than 7 days"* ]]
+}

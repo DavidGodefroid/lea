@@ -59,6 +59,17 @@ lea__doctor_lockhttp() {
     if [ -n "$_dh_l" ] && ! printf '%s\n' "$_dh_l" | grep -qv '^127\.0\.0\.1:3128$'; then lea__ok "squid listens on 127.0.0.1 only"
     else lea__fail "squid" "listens on '$(printf '%s' "$_dh_l" | tr '\n' ' ')', not 127.0.0.1:3128 only: lea stop --all, then lea"; _dh_rc=1; fi
   fi
+  if [ "${LEA_LOCKHTTP_MITM:-0}" = 1 ]; then
+    _dh_ca=$(lea_data_dir)/lockhttp/ca/ca.pem
+    if [ ! -f "$_dh_ca" ]; then lea__warn "LockHTTP CA" "none yet: the next lea makes it (lockhttp ca init)"
+    elif ! command -v openssl >/dev/null 2>&1; then lea__warn "LockHTTP CA" "openssl is missing: its expiry is not checked"
+    elif openssl x509 -checkend 604800 -noout -in "$_dh_ca" >/dev/null 2>&1; then lea__ok "LockHTTP CA valid for more than 7 days"
+    else lea__fail "LockHTTP CA" "expires within 7 days: lockhttp ca init --force --dir $(lea_data_dir)/lockhttp/ca, then lea stop --all, and lea"; _dh_rc=1; fi
+    if lea_container_running "$LEA_PREFIX-proxy"; then
+      if docker exec "$LEA_PREFIX-proxy" test -S /run/lockhttp-signer/signer.sock >/dev/null 2>&1; then lea__ok "LockHTTP signer listening"
+      else lea__fail "LockHTTP signer" "no socket in $LEA_PREFIX-proxy: docker logs $LEA_PREFIX-proxy"; _dh_rc=1; fi
+    fi
+  fi
   _dh_s=$(lea_data_dir)/lockhttp/status/status.json
   case $(sed -n 's/.*"console"[[:space:]]*:[[:space:]]*"\([a-z]*\)".*/\1/p' "$_dh_s" 2>/dev/null | head -n 1) in
     up) lea__ok "lockhttp console up" ;;

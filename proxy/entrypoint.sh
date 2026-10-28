@@ -5,7 +5,8 @@
 # never 0), which the agents and lea-keyproxy go through; no SSH forwarder.
 set -eu
 lockhttp=${LEA_LOCKHTTP:-0}
-gate_uid=10003
+mitm=${LEA_LOCKHTTP_MITM:-0}
+gate_uid=10003 signer_uid=10004
 if [ "$lockhttp" = 1 ]; then
   if [ -n "${LEA_GIT_SSH:-}" ]; then
     echo "lea-proxy: LEA_LOCKHTTP=1 refuses LEA_GIT_SSH: its SSH forwarders would bypass the LockHTTP gate" >&2
@@ -60,7 +61,7 @@ fi
 squid -N -f /etc/squid/squid.conf &
 squid_pid=$!
 wait_port 3128 "squid"
-gate_pid='' keyproxy_pid=''
+gate_pid='' keyproxy_pid='' signer_pid=''
 via=http://127.0.0.1:3128
 if [ "$lockhttp" = 1 ]; then
   # The gate writes its audit and status as its own uid; the console authenticates it by that uid
@@ -69,18 +70,43 @@ if [ "$lockhttp" = 1 ]; then
   mkdir -p /var/log/lockhttp /run/lockhttp-gate
   chown "$gate_uid:$gate_uid" /var/log/lockhttp /run/lockhttp-gate
   if [ -n "${LEA_LOCKHTTP_GID:-}" ]; then groups="--groups $LEA_LOCKHTTP_GID"; else groups=--keep-groups; fi
-  # shellcheck disable=SC2086 # groups, split on purpose
+  ca_args=
+  if [ "$mitm" = 1 ]; then
+    # MITM: only the signer, as its own uid, holds the CA key (a copy in a directory of its own);
+    # the gate gets leaf certificates from it and the CA certificate only.
+    if [ ! -s /etc/lockhttp-ca/ca.pem ] || [ ! -s /etc/lockhttp-ca/ca-key.pem ]; then
+      echo "lea-proxy: LEA_LOCKHTTP_MITM=1 needs the CA mounted by lea in /etc/lockhttp-ca" >&2
+      exit 1
+    fi
+    install -d -m 0700 -o "$signer_uid" -g "$signer_uid" /run/lockhttp-signer-key
+    install -m 0400 -o "$signer_uid" -g "$signer_uid" /etc/lockhttp-ca/ca-key.pem /run/lockhttp-signer-key/ca-key.pem
+    install -d -m 0755 -o "$signer_uid" -g "$signer_uid" /run/lockhttp-signer
+    env -u LEA_KEYPROXY_TOKEN setpriv --reuid "$signer_uid" --regid "$signer_uid" --clear-groups --inh-caps=-all --no-new-privs -- \
+      lockhttp signer --ca-cert /etc/lockhttp-ca/ca.pem --ca-key /run/lockhttp-signer-key/ca-key.pem \
+      --listen /run/lockhttp-signer/signer.sock --allow-uid "$gate_uid" &
+    signer_pid=$!
+    i=0
+    until [ -S /run/lockhttp-signer/signer.sock ]; do
+      i=$((i + 1))
+      if [ "$i" -gt 100 ]; then echo "lea-proxy: the LockHTTP signer did not start" >&2; exit 1; fi
+      sleep 0.1
+    done
+    ca_args="--ca-cert /etc/lockhttp-ca/ca.pem --signer /run/lockhttp-signer/signer.sock"
+  fi
+  # shellcheck disable=SC2086 # groups and ca_args, split on purpose
   env -u LEA_KEYPROXY_TOKEN LOCKHTTP_RUNTIME_DIR=/run \
     setpriv --reuid "$gate_uid" --regid "$gate_uid" $groups --inh-caps=-all --no-new-privs -- \
     lockhttp gate --listen 0.0.0.0:3130 --upstream http://127.0.0.1:3128 --profile "${LEA_LOCKHTTP_PROFILE:-default}" \
     --sources /etc/lockhttp-gate/sources.json --credentials /etc/lockhttp-gate/credentials.json \
-    --audit-dir /var/log/lockhttp --status-file /run/lockhttp-gate/status.json &
+    --audit-dir /var/log/lockhttp --status-file /run/lockhttp-gate/status.json $ca_args &
   gate_pid=$!
   wait_port 3130 "the LockHTTP gate"
   via=http://127.0.0.1:3130
 fi
 if [ -s /etc/lea/endpoints ]; then
-  if [ "$lockhttp" = 1 ]; then
+  if [ "$mitm" = 1 ]; then
+    lea-keyproxy -endpoints /etc/lea/endpoints -listen :4400 -via "$via" -sources /etc/lockhttp-gate/sources.json -ca-cert /etc/lockhttp-ca/ca.pem &
+  elif [ "$lockhttp" = 1 ]; then
     lea-keyproxy -endpoints /etc/lea/endpoints -listen :4400 -via "$via" -sources /etc/lockhttp-gate/sources.json &
   else
     lea-keyproxy -endpoints /etc/lea/endpoints -listen :4400 -via "$via" &
@@ -93,7 +119,7 @@ unset LEA_KEYPROXY_TOKEN
 # shellcheck disable=SC2317,SC2329 # invoked via trap
 stop() {
   # shellcheck disable=SC2086 # empty pids drop out
-  kill "$squid_pid" $gate_pid $keyproxy_pid 2>/dev/null || true
+  kill "$squid_pid" $gate_pid $keyproxy_pid $signer_pid 2>/dev/null || true
 }
 trap stop TERM INT
 # The container lives as long as squid: when it exits (or is stopped), so does the forwarder.
@@ -102,5 +128,5 @@ wait "$squid_pid" || status=$?
 # A trapped signal interrupts wait: wait again for squid's own exit.
 if kill -0 "$squid_pid" 2>/dev/null; then wait "$squid_pid" || status=$?; fi
 # shellcheck disable=SC2086
-kill $gate_pid $keyproxy_pid 2>/dev/null || true
+kill $gate_pid $keyproxy_pid $signer_pid 2>/dev/null || true
 exit "$status"

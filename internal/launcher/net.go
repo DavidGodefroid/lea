@@ -105,7 +105,7 @@ func (l *Launcher) ensureProxy(proj string) error {
 			want += "@" + rules
 		}
 		if lh != nil {
-			want += "^1"
+			want += "^" + l.lockHTTPStamp()
 		}
 		// An image that cannot be inspected (not pulled yet) leaves the labels to decide.
 		current, err := l.output(false, "docker", "image", "inspect", "-f", "{{.Id}}", l.Cfg.Get("LEA_PROXY_IMAGE"))
@@ -134,7 +134,7 @@ func (l *Launcher) ensureProxy(proj string) error {
 		a = append(a, "--label", "lea.rules="+rules)
 	}
 	if lh != nil {
-		a = append(a, "--label", "lea.lockhttp=1")
+		a = append(a, "--label", "lea.lockhttp="+l.lockHTTPStamp())
 	}
 	a = append(a, "--mount", "type=bind,src="+hosts+",dst=/etc/lea/internal-hosts,readonly")
 	a = append(a, fw.mounts...)

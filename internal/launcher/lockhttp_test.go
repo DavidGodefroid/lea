@@ -14,7 +14,9 @@ import (
 func lockHTTPWorld(t *testing.T) (*world, string) {
 	t.Helper()
 	root := lockHostWorld(t)
-	if err := os.WriteFile(root+"/usr/local/bin/lockhttp", []byte("#!/bin/sh\n"), 0o755); err != nil {
+	// ca init --dir D makes a CA, as the real one does.
+	ca := "#!/bin/sh\nif [ \"$1 $2 $3\" = \"ca init --dir\" ]; then mkdir -p \"$4\" && echo cert >\"$4/ca.pem\" && echo key >\"$4/ca-key.pem\"; fi\n"
+	if err := os.WriteFile(root+"/usr/local/bin/lockhttp", []byte(ca), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.MkdirAll(root+"/run/lockhttp", 0o2710); err != nil {
@@ -166,5 +168,57 @@ func TestLockHTTPForgetsReleasedNetworks(t *testing.T) {
 		if c, _ := s.Source(net.ParseIP(ip)); c != want {
 			t.Errorf("%s names %q, want %q", ip, c, want)
 		}
+	}
+}
+
+func TestLockHTTPMITM(t *testing.T) {
+	w, _ := lockHTTPWorld(t)
+	writeUserConf(t, w, "LEA_LOCKHTTP=1\nLEA_LOCKHTTP_MITM=1\n")
+	if err := w.launcher().ensureProxy(w.proj); err != nil {
+		t.Fatal(err)
+	}
+	ca := lockhttp.CADir(w.launcher().Cfg.DataDir())
+	stamp := "mitm-" + lockhttp.Hash("cert\n")[:12]
+	for _, want := range []string{"[LEA_LOCKHTTP_MITM=1]", "[type=bind,src=" + ca + ",dst=/etc/lockhttp-ca,readonly]",
+		"[--label] [lea.lockhttp=" + stamp + "]"} {
+		if !w.hasCall(want) {
+			t.Errorf("proxy run lacks %s:\n%s", want, strings.Join(w.calls(), "\n"))
+		}
+	}
+	joined := strings.Join(lockArgs(t, w), "\n") + "\n"
+	for _, want := range []string{"type=bind,src=" + ca + "/ca.pem,dst=/etc/lea/lockhttp-ca.pem,readonly",
+		"NODE_EXTRA_CA_CERTS=/etc/lea/lockhttp-ca.pem", "REQUESTS_CA_BUNDLE=/etc/pki/tls/certs/ca-bundle.crt", "LEA_LOCKHTTP_MITM=1"} {
+		if !strings.Contains(joined, "\n"+want+"\n") {
+			t.Errorf("run args lack %s", want)
+		}
+	}
+	if strings.Contains(joined, "ca-key") {
+		t.Fatal("an agent container got the CA key")
+	}
+	// A new CA restarts the proxy.
+	w.env["FAKE_DOCKER_OUT_INSPECT__F"] = "true"
+	w.env["FAKE_DOCKER_OUT_INSPECT___FORMAT"] = "@" + w.launcher().proxyRules() + "^" + stamp
+	before := len(w.calls())
+	if err := w.launcher().ensureProxy(w.proj); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(strings.Join(w.calls()[before:], "\n"), "docker [run]") {
+		t.Fatal("the proxy of the same CA was replaced")
+	}
+	os.WriteFile(ca+"/ca.pem", []byte("rotated\n"), 0o644)
+	before = len(w.calls())
+	if err := w.launcher().ensureProxy(w.proj); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(strings.Join(w.calls()[before:], "\n"), "docker [run]") {
+		t.Fatal("a rotated CA kept the proxy")
+	}
+}
+
+func TestLockHTTPMITMNeedsLockHTTP(t *testing.T) {
+	w := newWorld(t, repoRoot(t))
+	writeUserConf(t, w, "LEA_LOCKHTTP_MITM=1\n")
+	if _, err := LoadConfig(w.getenv, w.root, w.proj); err == nil || !strings.Contains(err.Error(), "LEA_LOCKHTTP_MITM=1 needs LEA_LOCKHTTP=1") {
+		t.Fatalf("err = %v", err)
 	}
 }

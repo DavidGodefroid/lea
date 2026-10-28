@@ -54,12 +54,23 @@ func (l *Launcher) lockHTTPProxyArgs() ([]string, error) {
 	if err := noComma(gate, audit, status, run, lockHTTPBin()); err != nil {
 		return nil, err
 	}
+	var mitm []string
+	if l.Cfg.LockHTTPMITM() {
+		ca, err := l.lockHTTPCA()
+		if err != nil {
+			return nil, err
+		}
+		// The whole CA directory, read-only: the entrypoint hands the key to the signer's uid
+		// alone; the gate gets the certificate only.
+		mitm = []string{"-e", "LEA_LOCKHTTP_MITM=1", "--mount", "type=bind,src=" + ca + ",dst=/etc/lockhttp-ca,readonly"}
+	}
 	a := []string{"-e", "LEA_LOCKHTTP=1", "-e", "LEA_KEYPROXY_TOKEN=" + lockhttp.KeyproxyToken(key),
 		"--mount", "type=bind,src=" + lockHTTPBin() + ",dst=/usr/local/bin/lockhttp,readonly",
 		"--mount", "type=bind,src=" + run + ",dst=/run/lockhttp",
 		"--mount", "type=bind,src=" + gate + ",dst=/etc/lockhttp-gate,readonly",
 		"--mount", "type=bind,src=" + audit + ",dst=/var/log/lockhttp",
 		"--mount", "type=bind,src=" + status + ",dst=/run/lockhttp-gate"}
+	a = append(a, mitm...)
 	if l.rootlessPodman() {
 		// crun hands the container the user's own groups, lockhttp-clients among them.
 		return append(a, "--group-add", "keep-groups"), nil
@@ -91,4 +102,50 @@ func (l *Launcher) lockHTTPAgentEnv(container, pip string) (proxy string, nested
 	}
 	return "http://" + lockhttp.ShellAgent + ":" + lockhttp.Token(key, container, lockhttp.ShellAgent) + "@" + pip + ":" + lockhttp.Port,
 		lockhttp.Token(key, container, lockhttp.NestedAgent), nil
+}
+
+// lockHTTPCA is the MITM CA's directory, made on first use with the host's lockhttp (lockhttp ca
+// init: P-256, 90 days). lea never rotates it by itself: lea doctor warns a week before it ends
+// (lockhttp ca init --force rotates it; then lea stop --all, and lea).
+func (l *Launcher) lockHTTPCA() (string, error) {
+	dir := lockhttp.CADir(l.Cfg.DataDir())
+	if err := noComma(dir); err != nil {
+		return "", err
+	}
+	if !isRegular(dir+"/ca.pem") || !isRegular(dir+"/ca-key.pem") {
+		if err := Mkdirs(l.Cfg.DataDir(), lockhttp.Dir(l.Cfg.DataDir())); err != nil {
+			return "", die("%v", err)
+		}
+		if err := l.run(lockHTTPBin(), "ca", "init", "--dir", dir); err != nil {
+			return "", die("LEA_LOCKHTTP_MITM=1: lockhttp ca init --dir %s failed", dir)
+		}
+	}
+	if !isRegular(dir+"/ca.pem") || !isRegular(dir+"/ca-key.pem") {
+		return "", die("LEA_LOCKHTTP_MITM=1: no ca.pem and ca-key.pem in %s", dir)
+	}
+	return dir, nil
+}
+
+// lockHTTPStamp is the proxy's lea.lockhttp label: "1", or under MITM "mitm-" and a digest of the
+// CA's certificate, so that a new CA restarts the proxy.
+func (l *Launcher) lockHTTPStamp() string {
+	if !l.Cfg.LockHTTPMITM() {
+		return "1"
+	}
+	b, _ := os.ReadFile(lockhttp.CADir(l.Cfg.DataDir()) + "/ca.pem")
+	return "mitm-" + lockhttp.Hash(string(b))[:12]
+}
+
+// lockHTTPAgentCA are the run arguments that make lea's agents trust the MITM CA: its
+// certificate only (never the key), which the entrypoint adds to the system trust store, and the
+// variables of the tools that keep their own (Node, Python requests, pip).
+func (l *Launcher) lockHTTPAgentCA() []string {
+	if !l.Cfg.LockHTTPMITM() {
+		return nil
+	}
+	const bundle = "/etc/pki/tls/certs/ca-bundle.crt"
+	return []string{"-e", "LEA_LOCKHTTP_MITM=1",
+		"--mount", "type=bind,src=" + lockhttp.CADir(l.Cfg.DataDir()) + "/ca.pem,dst=/etc/lea/lockhttp-ca.pem,readonly",
+		"-e", "NODE_EXTRA_CA_CERTS=/etc/lea/lockhttp-ca.pem", "-e", "SSL_CERT_FILE=" + bundle,
+		"-e", "REQUESTS_CA_BUNDLE=" + bundle, "-e", "PIP_CERT=" + bundle}
 }
