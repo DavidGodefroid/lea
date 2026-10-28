@@ -65,3 +65,10 @@ locksql_release() {
   [ -f "$FAKE_CURL_DIR/checksums.txt" ] || echo "00  locksql_0.0.0_linux_amd64.tar.gz" >"$FAKE_CURL_DIR/checksums.txt"
   [ -f "$FAKE_CURL_DIR/checksums.txt.sigstore.json" ] || echo '{}' >"$FAKE_CURL_DIR/checksums.txt.sigstore.json"
 }
+# fake_uname RELEASE: a uname, first on PATH, whose -r prints RELEASE.
+fake_uname() {
+  mkdir -p "$BATS_TEST_TMPDIR/ubin"
+  printf '#!/bin/sh\nif [ "${1:-}" = -r ]; then echo %s; else echo Linux; fi\n' "$1" >"$BATS_TEST_TMPDIR/ubin/uname"
+  chmod +x "$BATS_TEST_TMPDIR/ubin/uname"
+  case ":$PATH:" in *":$BATS_TEST_TMPDIR/ubin:"*) ;; *) export PATH="$BATS_TEST_TMPDIR/ubin:$PATH" ;; esac
+}

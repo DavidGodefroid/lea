@@ -11,7 +11,8 @@ trap cleanup EXIT
 dc up -d --build --wait >/dev/null
 fail=0
 # check NAME EXPECTED -- curl args...  EXPECTED is "<CONNECT status>/<HTTP status>" as curl reports them.
-# PROXY: the proxy under test (the one with LEA_EGRESS_ALLOW is 198.51.100.3).
+# PROXY: the proxy under test: 198.51.100.2 with LEA_EGRESS_ALLOW='*', 198.51.100.3 with an allowlist,
+# 198.51.100.4 with lea's default one.
 PROXY=198.51.100.2
 check() {
   name=$1 expected=$2; shift 3
@@ -35,6 +36,27 @@ check "internal name: plain bytes in the tunnel refused" "200/000" -- -p http://
 check "internal host refused on 22"       "403/000" -- -p http://gitlab.com:22/
 check "internal literal allowed on 443"   "200/200" -- -p http://10.99.0.82:443/
 check "internal literal refused on 80"    "000/403" -- http://10.99.0.82/
+check "open: DoH resolver refused"         "403/000" -- -p http://dns.google:443/
+check "open: DoH resolver subdomain refused" "403/000" -- -p http://mozilla.cloudflare-dns.com:443/
+check "open: doh.* name refused"           "403/000" -- -p http://doh.example.test:443/
+check "open: public IPv4 literal refused"  "403/000" -- -p http://198.51.100.80:443/
+check "open: public IPv4 literal refused over HTTP" "000/403" -- http://198.51.100.80/
+check "open: public IPv4 literal in decimal refused" "403/000" -- -p http://3325256784:443/
+check "open: public IPv6 literal refused"  "403/000" -- -p "http://[2001:db8::80]:443/"
+page=$(dc exec -T client curl -s --max-time 15 -x "http://$PROXY:3128" "http://dns.google/resolve?name=example.com" || true)
+case $page in *DNS-over-HTTPS*) echo "ok   open: the DoH refusal page says why" ;;
+  *) echo "FAIL open: DoH refusal page: $page"; fail=1 ;; esac
+PROXY=198.51.100.4
+check "default: the model API allowed"           "200/200" -- -p http://api.anthropic.com:443/
+check "default: github.com allowed"              "200/200" -- -p http://github.com:443/
+check "default: DoH resolver refused"            "403/000" -- -p http://dns.google:443/
+check "default: DoH resolver literal refused"    "403/000" -- -p http://1.1.1.1:443/
+check "default: public IPv4 literal refused"     "403/000" -- -p http://198.51.100.80:443/
+check "default: unlisted domain refused"         "403/000" -- -p http://other.test:443/
+check "default: internal host still allowed"     "200/200" -- -p http://10.99.0.82:443/
+page=$(dc exec -T client curl -s --max-time 15 -x "http://$PROXY:3128" "http://dns.google/resolve?name=example.com" || true)
+case $page in *LEA_EGRESS_ALLOW*) echo "ok   default: the DoH refusal page names LEA_EGRESS_ALLOW" ;;
+  *) echo "FAIL default: DoH refusal page: $page"; fail=1 ;; esac
 PROXY=198.51.100.3
 check "allowlist: listed domain allowed"            "200/200" -- -p http://public.test:443/
 check "allowlist: listed domain over HTTP allowed"  "000/200" -- http://public.test/

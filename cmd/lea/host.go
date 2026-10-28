@@ -43,6 +43,10 @@ func hostCallT(method string, params, result any, timeout time.Duration) error {
 
 const agentTimeout = 60 * time.Second
 
+// sweepTimeout bounds the sweep of a fresh container's nested Podman: removing a pile of stacks
+// left by a crash takes a while.
+const sweepTimeout = 5 * time.Minute
+
 func agentCall(method string, params, result any) error {
 	return callSock(identity.BusSock(os.Getenv), identity.Agent(os.Getenv), method, params, result, defaultTimeout)
 }
@@ -676,6 +680,16 @@ func runDeckOpen(args []string, stderr io.Writer) int {
 	if fresh {
 		if err := hostCallT("agents_resume_stopped", map[string]any{"container": container}, nil, agentTimeout); err != nil {
 			fmt.Fprintln(stderr, "lea: warning: the agents of the previous container were not all resumed:", clean(err.Error(), false))
+		}
+		// What the agents that are gone left in the nested Podman (#97): removed, and the
+		// containers no agent started are named.
+		var sw struct{ Notice string }
+		if err := hostCallT("agents_sweep_stacks", map[string]any{"container": container}, &sw, sweepTimeout); err != nil {
+			fmt.Fprintln(stderr, "lea: warning: the nested Podman was not swept:", clean(err.Error(), false))
+		} else if sw.Notice != "" {
+			for _, l := range strings.Split(sw.Notice, "\n") {
+				fmt.Fprintln(stderr, "lea:", clean(l, false))
+			}
 		}
 	}
 	if err := hostCallT("deck_ensure", map[string]any{"container": container, "workdir": workdir}, nil, agentTimeout); err != nil {

@@ -35,6 +35,7 @@ if [ -n "${SIBLING_IP:-}" ]; then
   mustnt "sibling lea unreachable directly"    curl -s --max-time 5 --noproxy '*' "http://$SIBLING_IP:8765/"
   mustnt "sibling lea refused by the proxy"    curl -sf --max-time 5 "http://$SIBLING_IP:8765/"
 fi
+mustnt "AF_ALG socket refused (seccomp)"       python3 -c 'import socket; socket.socket(38, 5, 0)'
 # The locksql console's own directory: read-only, and a mount point no agent can replace by a
 # symbolic link that the console's bind mount would follow on the host (#121).
 if [ "${LEA_LOCKSQL:-}" = 1 ]; then
