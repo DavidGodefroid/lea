@@ -730,13 +730,43 @@ func TestRunArgsResourceLimits(t *testing.T) {
 			t.Errorf("%+v: --memory %q --memory-swap %q --pids-limit %q, %v", c, m, s, p, err)
 		}
 	}
-	// Docker that cannot tell its memory: no memory limit, and a warning naming LEA_MEMORY.
+	// Podman has no {{.MemTotal}} (rc 125, "can't evaluate field MemTotal"): {{.Host.MemTotal}}.
+	w = newWorld(t, repoRoot(t))
+	delete(w.env, "FAKE_DOCKER_OUT_SYSTEM_INFO")
+	w.env["FAKE_DOCKER_RC_SYSTEM_INFO_AT____MEMTOTAL__"] = "125"
+	w.env["FAKE_DOCKER_OUT_SYSTEM_INFO_AT____HOST_MEMTOTAL__"] = "17179869184" // 16 GiB
+	noMeminfo(t)
+	if m, s, _, err := limits(w); err != nil || m != "8192m" || s != "8192m" {
+		t.Errorf("podman: --memory %q --memory-swap %q, %v, stderr %q", m, s, err, w.errb.String())
+	}
+	// Neither answers: the host's /proc/meminfo (Linux, where the engine runs on the host).
+	w = newWorld(t, repoRoot(t))
+	w.env["FAKE_DOCKER_RC_SYSTEM_INFO"] = "125"
+	mi := filepath.Join(t.TempDir(), "meminfo")
+	if err := os.WriteFile(mi, []byte("MemTotal:       65536000 kB\nMemFree:  1 kB\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	old := meminfoPath
+	meminfoPath = mi
+	if m, _, _, err := limits(w); err != nil || m != "32000m" {
+		t.Errorf("meminfo: --memory %q, %v, stderr %q", m, err, w.errb.String())
+	}
+	meminfoPath = old
+	// Nothing tells the memory: no memory limit, and a warning naming LEA_MEMORY.
 	w = newWorld(t, repoRoot(t))
 	w.env["FAKE_DOCKER_RC_SYSTEM_INFO"] = "1"
+	noMeminfo(t)
 	if m, _, p, err := limits(w); err != nil || m != "" || p != "16384" ||
 		!strings.Contains(w.errb.String(), "LEA_MEMORY") {
 		t.Errorf("unknown memory: --memory %q --pids-limit %q, %v, stderr %q", m, p, err, w.errb.String())
 	}
+}
+
+// noMeminfo hides the host's /proc/meminfo from limitArgs for the test.
+func noMeminfo(t *testing.T) {
+	old := meminfoPath
+	meminfoPath = filepath.Join(t.TempDir(), "no-meminfo")
+	t.Cleanup(func() { meminfoPath = old })
 }
 
 func TestResourceLimitsAreValidated(t *testing.T) {

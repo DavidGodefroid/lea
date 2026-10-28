@@ -48,18 +48,40 @@ func (l *Launcher) securityArgs() []string {
 	return a
 }
 
+// meminfoPath is the host's memory, the last resort of engineMemory (a variable for the tests).
+var meminfoPath = "/proc/meminfo"
+
+// engineMemory is the memory of the container engine in bytes, 0 when unknown: Docker's
+// {{.MemTotal}} (a VM's under Docker Desktop), Podman's {{.Host.MemTotal}} (Podman has no
+// .MemTotal), else MemTotal of /proc/meminfo, where the engine runs on the host itself (Linux).
+func (l *Launcher) engineMemory() int64 {
+	for _, f := range []string{"{{.MemTotal}}", "{{.Host.MemTotal}}"} {
+		out, err := l.output(false, "docker", "system", "info", "--format", f)
+		if n, perr := strconv.ParseInt(strings.TrimSpace(out), 10, 64); err == nil && perr == nil && n > 0 {
+			return n
+		}
+	}
+	b, _ := os.ReadFile(meminfoPath)
+	for _, line := range strings.Split(string(b), "\n") {
+		if f := strings.Fields(line); len(f) == 3 && f[0] == "MemTotal:" && f[2] == "kB" {
+			if n, err := strconv.ParseInt(f[1], 10, 64); err == nil && n > 0 {
+				return n << 10
+			}
+		}
+	}
+	return 0
+}
+
 // limitArgs are the lea container's resource limits (#97): without them a pile of nested stacks
 // takes the whole host down (OOM, swap thrash) instead of being OOM-killed inside lea. A share of
-// memory is taken from Docker's own MemTotal (a VM's under Docker Desktop); memory plus swap is the
-// memory itself unless LEA_MEMORY_SWAP says otherwise.
+// memory is taken from the engine's memory (engineMemory); memory plus swap is the memory itself
+// unless LEA_MEMORY_SWAP says otherwise.
 func (l *Launcher) limitArgs() []string {
 	var a []string
 	mem := l.Cfg.Get("LEA_MEMORY")
 	if strings.HasSuffix(mem, "%") {
 		pct, _ := strconv.ParseInt(strings.TrimSuffix(mem, "%"), 10, 64)
-		out, err := l.output(false, "docker", "system", "info", "--format", "{{.MemTotal}}")
-		total, perr := strconv.ParseInt(strings.TrimSpace(out), 10, 64)
-		if err != nil || perr != nil || total <= 0 {
+		if total := l.engineMemory(); total <= 0 {
 			l.logf("warning: Docker did not tell its memory; the lea container runs without a memory limit (set LEA_MEMORY to a size, 16g for example)")
 			mem = "0"
 		} else {
