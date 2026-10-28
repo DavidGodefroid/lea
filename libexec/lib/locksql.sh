@@ -71,10 +71,6 @@ lea_locksql() {
     shift
     set -- --entrypoint vault "$LEA_LOCKSQL_IMAGE" "$@"
   else
-    # A console that ended without --rm keeps the name: a stopped one is only in the way.
-    if [ "$(docker inspect -f '{{.State.Running}}' locksql-console 2>/dev/null)" = false ]; then
-      docker rm locksql-console >/dev/null
-    fi
     # The agents write the projects directory: the console reads it, and writes only .locksql
     # (its PII rules). A bind mount follows a symbolic link on this host, so .locksql must be a
     # directory of its own; created here when missing (docker would create it as root).
@@ -108,22 +104,19 @@ lea_locksql() {
       _lk_bad=$(printf '%s\n' "$_lk_m" | awk '$2 != "false" { sub("^/", "", $1); printf "%s%s", s, $1; s = " " }')
       [ -z "$_lk_bad" ] || lea_die "$_lk_bad running without $_lk_r/.locksql read-only (started before locksql or this lea): restart the agents (lea stop, then lea; they resume) and retry"
     fi
-    # locksql's launcher runs the console as lea did: the console account, confined, the projects
-    # directory read-only but for .locksql (LOCKSQL_READONLY_PROJECT), lea's console image and
-    # container name. Until a locksql release ships it, lea runs the same docker run itself.
+    # locksql's launcher runs the console: the console account, confined, the projects directory
+    # read-only but for .locksql (LOCKSQL_READONLY_PROJECT), lea's console image (its agents' uid
+    # allowed) and the container name of lea's deck. lea init installs it.
     _lk_l=$(lea__locksql_launcher "$(printf '%s\n' "$_lk_ps" | awk 'NF > 1 { sub(/^[^ ]+ /, ""); print }')")
-    if [ -n "$_lk_l" ]; then
-      # The launcher mounts the project of its working directory (the .locksql checked above); it
-      # runs nothing from there.
-      cd "$_lk_p" || lea_die "could not enter $_lk_p"
-      if [ -n "${LEA_LOCKSQL_VAULT_ADDR:-}" ]; then VAULT_ADDR=$LEA_LOCKSQL_VAULT_ADDR; export VAULT_ADDR; fi
-      LOCKSQL_IMAGE=$LEA_LOCKSQL_IMAGE LOCKSQL_READONLY_PROJECT=1 LOCKSQL_CONSOLE_NAME=locksql-console \
-        exec "$_lk_l" console --project "$_lk_p" "$@"
-    fi
-    # host.docker.internal is this machine, as the profile wizard offers it.
-    set -- --name locksql-console --add-host=host.docker.internal:host-gateway -v "$_lk_p:$_lk_p:ro" \
-      -v "$_lk_c:$_lk_c" -v locksql-run:/run/locksql "$LEA_LOCKSQL_IMAGE" console --project "$_lk_p" "$@"
+    [ -n "$_lk_l" ] || lea_die "no trusted locksql launcher on PATH (locksql's own, in a directory only you or root can write): lea init installs it"
+    # The launcher mounts the project of its working directory (the .locksql checked above); it
+    # runs nothing from there.
+    cd "$_lk_p" || lea_die "could not enter $_lk_p"
+    if [ -n "${LEA_LOCKSQL_VAULT_ADDR:-}" ]; then VAULT_ADDR=$LEA_LOCKSQL_VAULT_ADDR; export VAULT_ADDR; fi
+    LOCKSQL_IMAGE=$LEA_LOCKSQL_IMAGE LOCKSQL_READONLY_PROJECT=1 LOCKSQL_CONSOLE_NAME=locksql-console \
+      exec "$_lk_l" console --project "$_lk_p" "$@"
   fi
+  # The vault CLI as the console account, in lea's console image.
   if [ -n "${LEA_LOCKSQL_VAULT_ADDR:-}" ]; then set -- -e "VAULT_ADDR=$LEA_LOCKSQL_VAULT_ADDR" "$@"; fi
   _lk_t=-i
   if [ -t 0 ] && [ -t 1 ]; then _lk_t=-it; fi

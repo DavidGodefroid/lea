@@ -283,9 +283,11 @@ data. `lea locksql vault login` logs the console account in to Vault again when 
 lea itself puts no `locksql` command on the host (it removes the link older releases made): the
 host's `locksql` is locksql's own launcher
 ([locksql's docs/launcher.md](https://github.com/DavidGodefroid/locksql/blob/main/docs/launcher.md)),
-which runs every locksql command in Docker. When it is installed, `lea locksql` hands the console
-to it, with lea's console image, the projects directory read-only but for `.locksql`, and the same
-confinement; without it, lea runs that container itself.
+which runs every locksql command in Docker. `lea init` installs it, with the `install.sh` of the
+pinned locksql release (`LEA_LOCKSQL_REF`), once lea has checked that release's signature;
+`lea locksql` hands the console to it, with lea's console image, the projects directory read-only
+but for `.locksql`, and the same confinement. Without it (or with one that an agent or another
+account could have written), `lea locksql` opens no console and says to run `lea init`.
 
 The console holds the credentials, so its container is confined (in the deck too): no capability,
 no privilege gain (`no-new-privileges`), a read-only root with a small `/tmp`, at most 256

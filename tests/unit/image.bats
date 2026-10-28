@@ -51,7 +51,7 @@ setup() { setup_fakes; I="$LEA_ROOT/image"; }
   grep -q '^FROM quay.io/podman/stable:v5.8.7-immutable$' "$c"
   grep -q '^ARG CLAUDE_CODE_VERSION=2.1.296$' "$c"
   grep -q '^ARG RTK_VERSION=0.36.0$' "$c"
-  grep -q ' V=0.8.0 ' "$c"
+  grep -q ' V=0.9.0 ' "$c"
 }
 
 @test "Containerfile ships Go 1.26 by digest, staticcheck and govulncheck pinned, with Go's state in the state dir go" {
@@ -94,7 +94,9 @@ setup() { setup_fakes; I="$LEA_ROOT/image"; }
   grep -q 'useradd -r -u 10001 -U -M -s /sbin/nologin locksql' "$c"
   grep -q "'socket_dir   = \"/run/locksql\"'" "$c"
   grep -q 'A="locksql_${V}_linux_${TARGETARCH}.tar.gz"' "$c"
-  grep -q 'checksums.txt" | grep " $A\\$" | sha256sum -c' "$c"
+  # Pinned by the archive's sha256, for each architecture.
+  grep -q 'echo "$sq  $A" | sha256sum -c' "$c"
+  grep -Eq 'amd64\) sq=[0-9a-f]{64} ;;' "$c" && grep -Eq 'arm64\) sq=[0-9a-f]{64} ;;' "$c"
   grep -q 'install -d -m 2710 -o 10001 -g 10000 /run/locksql' "$c"
   ! grep -q 'LOCKSQL_REF\|COPY --from=locksql' "$c"
 }

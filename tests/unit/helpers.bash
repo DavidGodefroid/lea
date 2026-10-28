@@ -39,7 +39,9 @@ EOT
 no_tmux() { if command -v tmux >/dev/null 2>&1; then skip "tmux is installed in the test image"; fi; }
 
 # fake_git: a git that logs its calls, first on PATH: init and clone create their destination,
-# rev-parse HEAD prints $FAKE_GIT_SHA (FAKE_GIT_FETCH_RC: a failing fetch).
+# rev-parse HEAD prints $FAKE_GIT_SHA (FAKE_GIT_FETCH_RC: a failing fetch). With
+# FAKE_GIT_INSTALL_SH (a file), init puts it at scripts/install.sh of the new checkout: the
+# release's own install.sh.
 fake_git() {
   mkdir -p "$BATS_TEST_TMPDIR/gbin"
   cat >"$BATS_TEST_TMPDIR/gbin/git" <<'EOT'
@@ -47,7 +49,8 @@ fake_git() {
 { printf git; for a in "$@"; do printf ' [%s]' "$a"; done; printf '\n'; } >>"$FAKE_LOG"
 for last in "$@"; do :; done
 case " $* " in
-  *" init "*|*" clone "*) mkdir -p "$last" ;;
+  *" init "*|*" clone "*) mkdir -p "$last"
+    if [ -n "${FAKE_GIT_INSTALL_SH:-}" ]; then mkdir -p "$last/scripts"; cp "$FAKE_GIT_INSTALL_SH" "$last/scripts/install.sh"; fi ;;
   *" fetch "*) exit "${FAKE_GIT_FETCH_RC:-0}" ;;
   *" rev-parse HEAD "*) printf '%s\n' "$FAKE_GIT_SHA" ;;
 esac
