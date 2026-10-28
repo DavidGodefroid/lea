@@ -8,8 +8,10 @@ lea__locksql_harden="--cap-drop ALL --security-opt no-new-privileges --read-only
 # cannot run the console as lea does: confined, the projects directory read-only but for
 # .locksql, under lea's container name.
 # It must also be a file only this account or root could have written: resolved through its links,
-# outside the projects directory (the agents write it) and lea's data directory, owned (and its
-# directory too) by this account or root, writable by neither group nor others.
+# outside the projects directory (the agents write it), the projects directories of the running lea
+# agents (DIRS, one per line) and lea's data directory; it and every directory up to / owned by
+# this account or root and writable by neither group nor others (but for a sticky directory such
+# as /tmp, where nobody else can move an entry of this account).
 lea__locksql_launcher() {
   _ll=$(command -v locksql 2>/dev/null) || return 0
   case $_ll in /*) ;; *) return 0 ;; esac
@@ -19,18 +21,31 @@ lea__locksql_launcher() {
   done
   [ -f "$_ll" ] || return 0
   _ld=$(CDPATH='' cd -- "$(dirname "$_ll")" 2>/dev/null && pwd -P) || return 0
-  _ll=$_ld/$(basename "$_ll")
-  for _lu in "${LEA_PROJECTS_DIR:-}" "$(lea_data_dir)"; do
+  _ll=${_ld%/}/$(basename "$_ll")
+  _lx=0
+  while IFS= read -r _lu; do
     if [ -z "$_lu" ] || [ ! -d "$_lu" ]; then continue; fi
-    _lu=$(CDPATH='' cd -- "$_lu" && pwd -P) || return 0
-    case $_ll in "$_lu"/*) return 0 ;; esac
-  done
+    _lu=$(CDPATH='' cd -- "$_lu" && pwd -P) || { _lx=1; break; }
+    case $_ll in "${_lu%/}"/*) _lx=1; break ;; esac
+  done <<EOT
+${LEA_PROJECTS_DIR:-}
+$(lea_data_dir)
+${1:-}
+EOT
+  [ "$_lx" = 0 ] || return 0
   _lme=$(id -u)
-  for _lf in "$_ll" "$_ld"; do
+  _lf=$_ll
+  while :; do
     # shellcheck disable=SC2012 # ls -ldn: the mode and the numeric owner, portably
     _lm=$(ls -ldn "$_lf" 2>/dev/null | awk '{ print $1, $3 }') || return 0
-    case ${_lm%% *} in ?????w* | ????????w* | '') return 0 ;; esac
+    case ${_lm%% *} in
+      '') return 0 ;;
+      d????????[tT]) ;;
+      ?????w* | ????????w*) return 0 ;;
+    esac
     [ "${_lm#* }" = "$_lme" ] || [ "${_lm#* }" = 0 ] || return 0
+    [ "$_lf" = / ] && break
+    _lf=$(dirname "$_lf")
   done
   for _lw in '^launcher_version=' '--cap-drop ALL' 'no-new-privileges' '--read-only' \
     'LOCKSQL_READONLY_PROJECT' 'LOCKSQL_CONSOLE_NAME'; do
@@ -92,7 +107,7 @@ lea_locksql() {
     # locksql's launcher runs the console as lea did: the console account, confined, the projects
     # directory read-only but for .locksql (LOCKSQL_READONLY_PROJECT), lea's console image and
     # container name. Until a locksql release ships it, lea runs the same docker run itself.
-    _lk_l=$(lea__locksql_launcher)
+    _lk_l=$(lea__locksql_launcher "$(printf '%s\n' "$_lk_ps" | awk 'NF > 1 { sub(/^[^ ]+ /, ""); print }')")
     if [ -n "$_lk_l" ]; then
       # The launcher mounts the project of its working directory (the .locksql checked above); it
       # runs nothing from there.

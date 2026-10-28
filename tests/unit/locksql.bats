@@ -191,8 +191,19 @@ launcher_refused() {
   rm "$l"; d=$(lea_data_dir)/bin; mkdir -p "$d"; cp -p "$P/bin/locksql" "$d/locksql"
   export PATH="$d:$PATH"
   launcher_refused
-  # The same launcher elsewhere, owned by this account, mode 0755: it gets the console.
+  # In the projects directory of another running lea agent (its lea.projects label).
+  o="$BATS_TEST_TMPDIR/other-projects"; mkdir -p "$o/bin"; cp -p "$d/locksql" "$o/bin/locksql"
   export PATH="${PATH#"$d:"}"
+  export PATH="$o/bin:$PATH" FAKE_DOCKER_OUT_PS___FILTER="c9 $o"
+  launcher_refused
+  export PATH="${PATH#"$o/bin:"}"; unset FAKE_DOCKER_OUT_PS___FILTER
+  # Under a directory, any one up to /, that its group or others may write (a sticky one, such as
+  # /tmp, is fine: nobody else can move an entry of this account there).
+  g="$BATS_TEST_TMPDIR/g"; mkdir -p "$g/sub/bin"; cp -p "$d/locksql" "$g/sub/bin/locksql"; chmod 0775 "$g"
+  export PATH="$g/sub/bin:$PATH"
+  launcher_refused
+  export PATH="${PATH#"$g/sub/bin:"}"
+  # The same launcher elsewhere, owned by this account, mode 0755: it gets the console.
   cp -p "$d/locksql" "$l"
   : >"$FAKE_LOG"
   run lea_locksql </dev/null
