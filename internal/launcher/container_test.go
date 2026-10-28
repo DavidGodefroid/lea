@@ -511,7 +511,7 @@ func TestProxyFollowsTheGitSSHEndpoints(t *testing.T) {
 	w := newWorld(t, repoRoot(t))
 	writeUserConf(t, w, "LEA_GIT_SSH='github.com:22 gitlab.com:22'\n")
 	w.env["FAKE_DOCKER_OUT_INSPECT__F"] = "true"
-	w.env["FAKE_DOCKER_OUT_INSPECT___FORMAT"] = "github.com:22 gitlab.com:22"
+	w.env["FAKE_DOCKER_OUT_INSPECT___FORMAT"] = "github.com:22 gitlab.com:22@" + w.launcher().proxyRules()
 	if err := w.launcher().ensureProxy(w.proj); err != nil {
 		t.Fatal(err)
 	}
@@ -666,7 +666,7 @@ func TestProxyFollowsTheEgressAllowlist(t *testing.T) {
 	w := newWorld(t, repoRoot(t))
 	writeUserConf(t, w, "LEA_EGRESS_ALLOW=github.com,proxy.golang.org\n")
 	w.env["FAKE_DOCKER_OUT_INSPECT__F"] = "true"
-	w.env["FAKE_DOCKER_OUT_INSPECT___FORMAT"] = "|github.com,proxy.golang.org"
+	w.env["FAKE_DOCKER_OUT_INSPECT___FORMAT"] = "|github.com,proxy.golang.org@" + w.launcher().proxyRules()
 	if err := w.launcher().ensureProxy(w.proj); err != nil {
 		t.Fatal(err)
 	}
@@ -679,6 +679,99 @@ func TestProxyFollowsTheEgressAllowlist(t *testing.T) {
 	}
 	if !w.hasCall("[--label] [lea.egress-allow=github.com,proxy.golang.org]") || !w.hasCall("[LEA_EGRESS_ALLOW=github.com,proxy.golang.org]") {
 		t.Fatalf("the proxy was not restarted for the new allowlist:\n%s", strings.Join(w.calls(), "\n"))
+	}
+}
+
+// A running proxy started from other rules (lea.rules, a digest of proxy/: an older lea's
+// squid.conf, an open egress by default) is replaced; one started from the same rules is kept.
+func TestProxyFollowsItsRules(t *testing.T) {
+	w := newWorld(t, repoRoot(t))
+	rules := w.launcher().proxyRules()
+	if len(rules) != 12 {
+		t.Fatalf("proxyRules() = %q, want 12 hex digits", rules)
+	}
+	w.env["FAKE_DOCKER_OUT_INSPECT__F"] = "true"
+	w.env["FAKE_DOCKER_OUT_INSPECT___FORMAT"] = "@" + rules
+	if err := w.launcher().ensureProxy(w.proj); err != nil {
+		t.Fatal(err)
+	}
+	if w.hasCall("docker [run]") {
+		t.Fatalf("a proxy started from the same rules was replaced:\n%s", strings.Join(w.calls(), "\n"))
+	}
+	w.env["FAKE_DOCKER_OUT_INSPECT___FORMAT"] = ""
+	if err := w.launcher().ensureProxy(w.proj); err != nil {
+		t.Fatal(err)
+	}
+	if !w.hasCall("[--label] [lea.rules=" + rules + "]") {
+		t.Fatalf("a proxy started from older rules was kept:\n%s", strings.Join(w.calls(), "\n"))
+	}
+}
+
+// The digest covers the proxy's rule files: a change to one changes it; no proxy/ directory, none.
+func TestProxyRulesDigest(t *testing.T) {
+	root := t.TempDir()
+	l := &Launcher{Root: root}
+	if got := l.proxyRules(); got != "" {
+		t.Fatalf("no proxy/: proxyRules() = %q, want empty", got)
+	}
+	if err := os.MkdirAll(filepath.Join(root, "proxy", "errors"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	write := func(p, s string) {
+		if err := os.WriteFile(filepath.Join(root, "proxy", p), []byte(s), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write("render-squid-conf.sh", "a")
+	write("errors/ERR_LEA_DOH", "b")
+	first := l.proxyRules()
+	write("errors/ERR_LEA_DOH", "c")
+	if second := l.proxyRules(); second == first || second == "" {
+		t.Fatalf("an error page change left the digest at %q", second)
+	}
+	write("render-squid-conf.sh", "a2")
+	if third := l.proxyRules(); third == first {
+		t.Fatal("a render-squid-conf.sh change left the digest unchanged")
+	}
+}
+
+// A running proxy started from another image than LEA_PROXY_IMAGE is now (a rebuilt or updated
+// image: its rules are copied in) is replaced; when the image cannot be inspected, its labels
+// decide alone.
+func TestProxyFollowsItsImage(t *testing.T) {
+	w := newWorld(t, repoRoot(t))
+	stamp := "@" + w.launcher().proxyRules()
+	w.env["FAKE_DOCKER_OUT_INSPECT__F"] = "true"
+	w.env["FAKE_DOCKER_OUT_IMAGE_INSPECT"] = "sha256:new"
+	w.env["FAKE_DOCKER_OUT_INSPECT___FORMAT"] = stamp + "!sha256:new"
+	if err := w.launcher().ensureProxy(w.proj); err != nil {
+		t.Fatal(err)
+	}
+	if w.hasCall("docker [run]") {
+		t.Fatalf("a proxy on the current image was replaced:\n%s", strings.Join(w.calls(), "\n"))
+	}
+	// Podman writes the container's image ID without the sha256: prefix.
+	w.env["FAKE_DOCKER_OUT_INSPECT___FORMAT"] = stamp + "!new"
+	if err := w.launcher().ensureProxy(w.proj); err != nil {
+		t.Fatal(err)
+	}
+	if w.hasCall("docker [run]") {
+		t.Fatalf("a proxy on the current image, written without sha256:, was replaced:\n%s", strings.Join(w.calls(), "\n"))
+	}
+	w.env["FAKE_DOCKER_RC_IMAGE_INSPECT"] = "1"
+	w.env["FAKE_DOCKER_OUT_INSPECT___FORMAT"] = stamp + "!sha256:old"
+	if err := w.launcher().ensureProxy(w.proj); err != nil {
+		t.Fatal(err)
+	}
+	if w.hasCall("docker [run]") {
+		t.Fatalf("a proxy was replaced although its image could not be compared:\n%s", strings.Join(w.calls(), "\n"))
+	}
+	w.env["FAKE_DOCKER_RC_IMAGE_INSPECT"] = "0"
+	if err := w.launcher().ensureProxy(w.proj); err != nil {
+		t.Fatal(err)
+	}
+	if !w.hasCall("docker [run]") {
+		t.Fatalf("a proxy on an older image was kept:\n%s", strings.Join(w.calls(), "\n"))
 	}
 }
 

@@ -229,7 +229,16 @@ setup() { setup_fakes; load_lea; U="$HOME/.config/lea/lea.conf"; }
   [[ "$output" == *"LEA_AUTOUPDATE_SKIP must be empty or a release version (vX.Y.Z, set by lea rollback), not 'latest'"* ]]
 }
 
-@test "LEA_EGRESS_ALLOW: off by default, normalized to lower-case comma-separated names" {
+@test "LEA_EGRESS_ALLOW: '*' (open egress) is accepted alone, never with domain names" {
+  export LEA_EGRESS_ALLOW='*'
+  lea_load_config
+  [ "$LEA_EGRESS_ALLOW" = '*' ]
+  LEA_EGRESS_ALLOW='*,github.com' run lea_load_config
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"LEA_EGRESS_ALLOW: '*' opens the web to any domain and cannot be combined with domain names"* ]]
+}
+
+@test "LEA_EGRESS_ALLOW: empty by default (lea's default allowlist), normalized to lower-case comma-separated names" {
   lea_load_config
   [ -z "$LEA_EGRESS_ALLOW" ]
   export LEA_EGRESS_ALLOW='GitHub.com, api.anthropic.com  proxy.golang.org,'

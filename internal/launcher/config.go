@@ -13,6 +13,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -336,9 +337,16 @@ const maxEgressDomains = 64
 
 // egressAllow is LEA_EGRESS_ALLOW normalized as lea__check_egress_allow does: domain names
 // separated by commas or blanks, lower-cased, joined by commas. Each one also stands for its
-// subdomains; an IP literal or a wildcard is refused.
+// subdomains; an IP literal or a wildcard is refused. Empty is the proxy's default allowlist, and
+// "default" in the list stands for it; "*" alone opens the web to any domain.
 func egressAllow(v string) (string, error) {
 	names := strings.FieldsFunc(v, func(r rune) bool { return r == ',' || r == ' ' || r == '\t' || r == '\n' })
+	if slices.Contains(names, "*") {
+		if len(names) > 1 {
+			return "", fmt.Errorf("LEA_EGRESS_ALLOW: '*' opens the web to any domain and cannot be combined with domain names")
+		}
+		return "*", nil
+	}
 	if len(names) > maxEgressDomains {
 		return "", fmt.Errorf("LEA_EGRESS_ALLOW lists %d domains, at most %d", len(names), maxEgressDomains)
 	}
