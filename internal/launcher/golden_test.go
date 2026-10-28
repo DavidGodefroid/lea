@@ -224,6 +224,9 @@ func normalize(w *world, s string) string {
 	s = strings.ReplaceAll(s, Slug(w.proj), "$SLUG")
 	s = strings.ReplaceAll(s, w.dir, "$W")
 	s = strings.ReplaceAll(s, w.root, "$R")
+	if r := (&Launcher{Root: w.root}).proxyRules(); r != "" {
+		s = strings.ReplaceAll(s, r, "$RULES")
+	}
 	return strings.ReplaceAll(s, ID(w.proj), "$ID")
 }
 
@@ -243,6 +246,9 @@ func commandSetup(t *testing.T, root string, sc commandScenario) (*world, []stri
 	w.env["FAKE_DOCKER_OUT_NETWORK_INSPECT"] = "true"
 	w.env["FAKE_DOCKER_OUT_CONTAINER_INSPECT"] = "172.18.0.5"
 	w.env["FAKE_DOCKER_OUT_INSPECT__F"] = "true"
+	if r := (&Launcher{Root: w.root}).proxyRules(); r != "" {
+		w.env["FAKE_DOCKER_OUT_INSPECT___FORMAT"] = "@" + r
+	}
 	for k, v := range sc.env {
 		v = strings.ReplaceAll(strings.ReplaceAll(v, "$W", w.dir), "$ID", w.id())
 		w.env[strings.ReplaceAll(k, "$ID", fakeKey(w.id()))] = v

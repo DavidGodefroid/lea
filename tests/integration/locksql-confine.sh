@@ -91,15 +91,17 @@ docker rm -f locksql-console >/dev/null 2>&1 || true
 wait || true
 
 v() { sed -n "s/^$1=//p" "$work/out"; }
-[ "$(v capeff)" = 0000000000000000 ] && ok "no effective capability" || ko "CapEff $(v capeff)"
-[ "$(v nnp)" = 1 ] && ok "no new privileges" || ko "NoNewPrivs $(v nnp)"
-[ "$(v root-write)" = no ] && ok "the root is read-only" || ko "the root is writable"
-[ "$(v tmp-write)" = yes ] && ok "/tmp is writable" || ko "/tmp is not writable"
+# is KEY WANT WHAT: ok WHAT when the stand-in reported WANT for KEY.
+is() { if [ "$(v "$1")" = "$2" ]; then ok "$3"; else ko "$3 (got '$(v "$1")')"; fi; }
+is capeff 0000000000000000 "no effective capability"
+is nnp 1 "no new privileges"
+is root-write no "the root is read-only"
+is tmp-write yes "/tmp is writable"
 case $(v projects-write) in
   *"Read-only file system"*) ok "a write to the projects directory gets EROFS" ;;
   *) ko "a write to the projects directory: '$(v projects-write)'" ;;
 esac
-[ "$(v projects-mount)" = ro ] && ok "the projects directory is mounted read-only" || ko "projects mount '$(v projects-mount)'"
-[ "$(v locksql-mount)" = rw ] && ok ".locksql is mounted read-write" || ko ".locksql mount '$(v locksql-mount)'"
+is projects-mount ro "the projects directory is mounted read-only"
+is locksql-mount rw ".locksql is mounted read-write"
 [ ! -e "$P/lea-confine" ] || ko "a file reached the projects directory"
 exit "$fail"

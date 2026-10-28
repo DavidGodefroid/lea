@@ -271,6 +271,8 @@ every lea container for it and, when your projects directory has no database pro
 you through a first one (engine, host, TLS, where the password comes from; never the password).
 A profile that reads its login from HashiCorp Vault gets the vault CLI in the console image, its
 address (`LEA_LOCKSQL_VAULT_ADDR`) and a `vault login` as the console account.
+The agents see the console's own directory, `.locksql` in your projects directory (its profiles
+and PII rules), read-only: edit it from the host, not through an agent.
 
 `lea init` also links `locksql` next to `lea`: run `locksql` (or `lea locksql`) in a terminal you
 keep in view to open the console, then ask an agent about your data. `locksql vault login` logs the
@@ -412,9 +414,9 @@ vllm      https://vllm.example.com/v1         key=/home/me/.config/lea/keys/vllm
   network (an Ollama on your LAN, or on this machine at its Docker bridge address) must be listed
   in `LEA_INTERNAL_HOSTS` with its port, as any internal host; nothing is open by default, and
   loopback, `localhost` and link-local addresses are refused. A key goes over HTTPS only, except
-  to a host you listed there. With `LEA_EGRESS_ALLOW` set, a public endpoint's domain must be in it
-  too. The forwarder answers the agents' networks only, never the proxy's egress network (your
-  host, other containers there).
+  to a host you listed there. A public endpoint's domain must be in the egress allowlist too
+  (`LEA_EGRESS_ALLOW`: `default,<its domain>`). The forwarder answers the agents' networks only,
+  never the proxy's egress network (your host, other containers there).
 - Codex needs the endpoint to serve the Responses API (`/v1/responses`): Ollama 0.13.3 or later,
   a recent vLLM.
 - A change of the providers file restarts the proxy at the next `lea`.
@@ -606,8 +608,9 @@ read-only. The screen runs in the deck on the host: agents cannot open or drive 
 | `LEA_LOCKMQ`, `LEA_LOCKFILE` | `0`, asked by `lea init` | let the agents reach a lockmq / lockfile console on this host |
 | `LEA_LOCKMQ_REF`, `LEA_LOCKFILE_REF` | the pinned releases | the release `lea init` installs on the host (lockfile v0.1.1 or later); `lea update` records a newer one you accept |
 | `LEA_INTERNAL_HOSTS` | none | private hosts the proxy may reach (format in `config/internal-hosts`) |
-| `LEA_EGRESS_ALLOW` | empty (off) | the only web domains agents may reach, comma separated (subdomains included) |
+| `LEA_EGRESS_ALLOW` | empty (lea's default list) | the only web domains agents may reach, comma separated (subdomains included); `default` stands for lea's list, `*` opens the web |
 | `LEA_NESTED_NETWORKS` | empty | networks your compose files expect, created at start |
+| `LEA_MEMORY`, `LEA_MEMORY_SWAP`, `LEA_PIDS_LIMIT` | `50%`, no swap, `16384` | the lea container's limits: memory (a share of Docker's, a size such as `16g`, or `0`), memory plus swap (`-1`: no limit), processes and threads (`0`: no limit) |
 | `LEA_APPROVALS`, `LEA_APPROVAL_TIMEOUT` | `deck`, `60` | who answers permission requests |
 | `LEA_PROVIDER`, `LEA_MODEL` | `claude`, empty | the default provider and model of a new agent ([providers](#other-providers-codex-ollama-vllm)) |
 | `LEA_PROVIDERS` | `~/.config/lea/providers` | your OpenAI-compatible endpoints and their key files |
@@ -665,13 +668,26 @@ so. Changes apply after `lea init` (endpoints, keys, images, locksql) or `lea st
   (`settings.json`, `keybindings.json`, `hooks`, `skills`, `plugins`, `agents`, `commands`,
   `output-styles`, the top-level `*.md` files) and, with locksql, its socket volume (with lockmq or
   lockfile, their socket directory and system file, read-only). Nothing else.
-- Egress goes through a proxy: HTTPS to public hosts (plus `LEA_INTERNAL_HOSTS`), SSH only to
-  `LEA_GIT_SSH`. Private and link-local addresses are refused.
-- To restrict the web to known domains, set `LEA_EGRESS_ALLOW`, for example
-  `github.com,registry.npmjs.org,proxy.golang.org`: each domain covers its subdomains, and
-  `anthropic.com`, `claude.ai` and `claude.com` (the model API and its login) are always allowed.
+- Egress goes through a proxy: HTTPS (and plain HTTP) to an allowlist of public domains (plus
+  `LEA_INTERNAL_HOSTS`), SSH only to `LEA_GIT_SSH`. Private and link-local addresses are refused.
+- By default the allowlist is lea's own: `github.com`, `githubusercontent.com`, `ghcr.io`,
+  `gitlab.com` (git, `gh`, `glab`, release assets), `golang.org` (Go modules and checksums),
+  `registry.npmjs.org`, `registry.yarnpkg.com`, `pypi.org`, `pythonhosted.org`, `docker.io`,
+  `docker.com`, `quay.io` (images for nested builds), `fedoraproject.org`, `alpinelinux.org`
+  (their packages), `openai.com`, `chatgpt.com` (Codex), and always `anthropic.com`, `claude.ai`,
+  `claude.com` (the model API and its login). Each domain covers its subdomains. Anything else
+  (documentation sites fetched by an agent, another forge, a Fedora mirror outside
+  `fedoraproject.org`) is refused with a page naming `LEA_EGRESS_ALLOW`.
+- To add domains, set `LEA_EGRESS_ALLOW="default,corp.example,docs.example.org"` (`default` keeps
+  lea's list); without `default`, only the domains you list (and the model API) are reachable. To
+  open the web to any domain, as lea did before, set `LEA_EGRESS_ALLOW='*'` (`lea doctor` warns).
   Internal hosts are not affected. The proxy reads it at start: `lea stop --all`, then `lea`.
   `lea doctor` shows the active list.
+- Whatever `LEA_EGRESS_ALLOW` says, the proxy refuses public DNS-over-HTTPS resolvers
+  (`dns.google`, `cloudflare-dns.com`, `quad9.net`, `nextdns.io`, any `doh.*` name …), which would
+  reopen the DNS channel the internal network closes, and public IP literals (`https://1.1.1.1/`,
+  decimal or hex forms, IPv6): a public host is reached by its name. A host of your network is
+  reached by its address once listed in `LEA_INTERNAL_HOSTS`.
 - An internal host name grants that name only, not every vhost of the ingress behind it: the proxy
   peeks at the TLS handshake (no decryption) and passes a tunnel only when its SNI is the allowed
   name, so a tunnel to an internal name must be TLS with SNI. The proxy cannot see the `Host` header
@@ -723,8 +739,9 @@ nowhere unless you set `LEA_OTEL_UPSTREAM`.
   containerd, runc), the images, the proxy and the internal networks, tmux, the AppArmor profile,
   the projects directory and the configuration.
 - **An agent cannot reach a host.** Private and link-local addresses are refused on purpose; add
-  the host to `LEA_INTERNAL_HOSTS`. With `LEA_EGRESS_ALLOW` set, add its domain there. The proxy's
-  refusal page says which host it refused and why.
+  the host to `LEA_INTERNAL_HOSTS`. A public domain outside lea's default list goes in
+  `LEA_EGRESS_ALLOW` (`default,<domain>`); a public IP literal or a DNS-over-HTTPS resolver is
+  always refused. The proxy's refusal page says which host it refused and why.
 - **A change to `~/.claude` does not show.** Single files are mounted as they were at start:
   `lea stop`, then `lea`.
 - **`docker compose` fails with a network error.** Known limitation, below; `docker run` works.
@@ -762,6 +779,11 @@ A tag `vX.Y.Z` publishes a release: the archives for Linux and macOS (amd64, arm
 checksums, and the images on `ghcr.io/davidgodefroid`.
 
 ## Known limitations
+
+- What an agent starts in the nested Podman (`docker`, `docker compose`, `podman`, through its own
+  Podman service) is removed when the agent ends; what you start from a deck shell is not. A new
+  container removes what the agents that are gone left and names the containers no agent
+  started.
 
 - `docker compose` with its own networks does not work inside lea yet: the nested Podman's
   network backend needs to write `/proc/sys`, which Docker mounts read-only. `docker run` works.

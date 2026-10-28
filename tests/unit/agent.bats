@@ -8,9 +8,13 @@ setup() {
   cat >"$F/lea-session" <<'EOT'
 #!/bin/sh
 { printf 'lea-session pid=%s agent=%s' "$$" "$LEA_AGENT"; for a in "$@"; do printf ' [%s]' "$a"; done; printf '\n'; } >>"$FAKE_LOG"
+printf 'DOCKER_HOST=%s\nCONTAINERS_CONF_OVERRIDE=%s\n' "${DOCKER_HOST:-}" "${CONTAINERS_CONF_OVERRIDE:-}" >"$(dirname "$FAKE_LOG")/session.env"
 EOT
   chmod +x "$F/lea-session"
   export PATH="$F:$PATH"
+  # No Podman unless a test brings the fake one (fake_podman).
+  export LEA_AGENT_PODMAN="$F/no-podman" XDG_RUNTIME_DIR="$BATS_TEST_TMPDIR/xdg"
+  unset DOCKER_HOST CONTAINERS_CONF_OVERRIDE
   PIDS=
 }
 teardown() {
@@ -32,6 +36,135 @@ agent() {
   _ap=$!; PIDS="$PIDS $_ap"
   wait_env "$_ap" "${2:-$1}"
   mkdir -p "$LEA_AGENT_RUN_DIR"; echo "$_ap" >"$LEA_AGENT_RUN_DIR/$1.pid"
+}
+
+# fake_podman: a fake Podman in $F/podman. Its calls go to $PODMAN_LOG; its containers are the
+# lines "id|pod|agent|infra" of $PODMAN_DB; system service listens on its socket, as the real one.
+fake_podman() {
+  export PODMAN_LOG="$BATS_TEST_TMPDIR/podman.log" PODMAN_DB="$BATS_TEST_TMPDIR/podman.db" LEA_AGENT_PODMAN="$F/podman"
+  : >"$PODMAN_LOG"; : >"$PODMAN_DB"
+  cat >"$F/podman" <<'EOT'
+#!/bin/sh
+{ printf 'podman'; for a in "$@"; do printf ' [%s]' "$a"; done; printf '\n'; } >>"$PODMAN_LOG"
+case "$1 $2" in
+  "system service")
+    [ -z "${CONTAINERS_CONF_OVERRIDE:-}" ] || sed 's/^/conf: /' "$CONTAINERS_CONF_OVERRIDE" >>"$PODMAN_LOG"
+    exec python3 -c 'import socket, sys, time
+s = socket.socket(socket.AF_UNIX); s.bind(sys.argv[1][len("unix://"):]); s.listen(); time.sleep(600)' "$4" ;;
+  "ps -aq") cut -d'|' -f1 "$PODMAN_DB" ;;
+  "container inspect") cat "$PODMAN_DB" ;;
+esac
+EOT
+  chmod +x "$F/podman"
+}
+# service PID: whether PID is a running Podman service.
+service() { tr '\0' ' ' <"/proc/$1/cmdline" 2>/dev/null | grep -q 'unix://'; }
+
+@test "run starts the agent's own Podman service, whose containers carry lea.agent=NAME (#97)" {
+  fake_podman
+  run "$A" run dev-1 -- x
+  [ "$status" -eq 0 ]
+  sock="$XDG_RUNTIME_DIR/podman/agent-dev-1.sock"
+  [ -S "$sock" ]
+  svc=$(cat "$LEA_AGENT_RUN_DIR/dev-1.podman.pid"); PIDS="$PIDS $svc"
+  service "$svc"
+  grep -qxF "podman [system] [service] [--time=0] [unix://$sock]" "$PODMAN_LOG"
+  grep -qxF 'conf: annotations = ["lea.agent=dev-1"]' "$PODMAN_LOG"
+  # docker and docker compose reach that service; podman itself reads the same annotation.
+  grep -qxF "DOCKER_HOST=unix://$sock" "$BATS_TEST_TMPDIR/session.env"
+  grep -qxF "CONTAINERS_CONF_OVERRIDE=$LEA_AGENT_RUN_DIR/dev-1.containers.conf" "$BATS_TEST_TMPDIR/session.env"
+  # The service is not the agent's child: pausing the agent never freezes it.
+  ! grep -qw "$svc" /proc/"$(cat "$LEA_AGENT_RUN_DIR/dev-1.pid")"/task/*/children 2>/dev/null
+}
+
+@test "run without Podman keeps the shared Podman service" {
+  run "$A" run dev-1 -- x
+  [ "$status" -eq 0 ]
+  grep -qx 'DOCKER_HOST=' "$BATS_TEST_TMPDIR/session.env"
+  [ ! -e "$LEA_AGENT_RUN_DIR/dev-1.podman.pid" ]
+}
+
+@test "teardown stops the agent's service and removes the pods and containers it started, only those" {
+  fake_podman
+  run "$A" run dev-1 -- x
+  svc=$(cat "$LEA_AGENT_RUN_DIR/dev-1.podman.pid"); PIDS="$PIDS $svc"
+  printf '%s\n' 'c1|p1|dev-1' 'c2|p1|dev-1' 'c3||dev-1' 'c4|p2|dev-2' 'c5||' >"$PODMAN_DB"
+  : >"$PODMAN_LOG"
+  run "$A" teardown dev-1
+  [ "$status" -eq 0 ]
+  [ "$output" = "dev-1: removed 3 containers and 1 pod" ]
+  grep -qxF 'podman [pod] [rm] [-f] [p1]' "$PODMAN_LOG"
+  grep -qxF 'podman [rm] [-f] [-v] [c1] [c2] [c3]' "$PODMAN_LOG"
+  i=0; while kill -0 "$svc" 2>/dev/null && [ "$i" -lt 20 ]; do sleep 0.1; i=$((i + 1)); done
+  ! kill -0 "$svc" 2>/dev/null
+  [ ! -e "$XDG_RUNTIME_DIR/podman/agent-dev-1.sock" ] && [ ! -e "$LEA_AGENT_RUN_DIR/dev-1.podman.pid" ]
+  # Nothing of its own: nothing removed, nothing said.
+  : >"$PODMAN_LOG"
+  run "$A" teardown dev-3
+  [ "$status" -eq 0 ] && [ -z "$output" ]
+  ! grep -q '\[rm\]' "$PODMAN_LOG"
+}
+
+@test "teardown keeps a pod that holds containers of others, and removes only the agent's own" {
+  fake_podman
+  # p1: made by a shell (its infra has no lea.agent), dev-1 ran c1 in it; p2: dev-1's own pod,
+  # with its infra container; p3: dev-1's pod that dev-2 joined.
+  printf '%s\n' 'i1|p1||true' 'c1|p1|dev-1|false' 'i2|p2|dev-1|true' 'c2|p2|dev-1|false' \
+    'i3|p3|dev-1|true' 'c3|p3|dev-1|false' 'c4|p3|dev-2|false' >"$PODMAN_DB"
+  run "$A" teardown dev-1
+  [ "$status" -eq 0 ]
+  [ "$output" = "dev-1: removed 3 containers and 1 pod" ]
+  grep -qxF 'podman [pod] [rm] [-f] [p2]' "$PODMAN_LOG"
+  grep -qxF 'podman [rm] [-f] [-v] [c1] [c2] [c3]' "$PODMAN_LOG"
+  [ "$(grep -c '\[pod\] \[rm\]' "$PODMAN_LOG")" -eq 1 ]
+}
+
+@test "sweep removes a pod only when all its containers are of ended agents" {
+  fake_podman
+  printf '%s\n' 'i1|p1||true' 'c1|p1|dev-2|false' 'i2|p2|dev-2|true' 'c2|p2|dev-3|false' \
+    'i3|p3|dev-2|true' 'c3|p3|dev-1|false' >"$PODMAN_DB"
+  run "$A" sweep dev-1
+  [ "$status" -eq 0 ]
+  grep -qxF 'podman [pod] [rm] [-f] [p2]' "$PODMAN_LOG"
+  [ "$(grep -c '\[pod\] \[rm\]' "$PODMAN_LOG")" -eq 1 ]
+  grep -qxF 'podman [rm] [-f] [-v] [c1] [c2]' "$PODMAN_LOG"
+  [[ "$output" == *"removed 2 containers and 1 pod of ended agents (dev-2 dev-3)"* ]]
+}
+
+@test "teardown spares a reused pid in the service's pid file" {
+  fake_podman
+  sleep 60 & p=$!; PIDS="$PIDS $p"
+  mkdir -p "$LEA_AGENT_RUN_DIR"; echo "$p" >"$LEA_AGENT_RUN_DIR/dev-1.podman.pid"
+  run "$A" teardown dev-1
+  [ "$status" -eq 0 ]
+  kill -0 "$p"
+}
+
+@test "sweep removes the stacks of agents not kept and reports the containers no agent started" {
+  fake_podman
+  printf '%s\n' 'c1|p1|dev-1' 'c2||dev-2' 'c3|p3|dev-3' 'c4|p9|' 'c5||' >"$PODMAN_DB"
+  run "$A" sweep dev-1
+  [ "$status" -eq 0 ]
+  grep -qxF 'podman [pod] [rm] [-f] [p3]' "$PODMAN_LOG"
+  grep -qxF 'podman [rm] [-f] [-v] [c2] [c3]' "$PODMAN_LOG"
+  [[ "$output" == *"removed 2 containers and 1 pod of ended agents (dev-2 dev-3)"* ]]
+  [[ "$output" == *"2 containers that no agent started"* ]]
+  # Nothing to remove, nothing unowned: silent.
+  printf '%s\n' 'c1|p1|dev-1' >"$PODMAN_DB"; : >"$PODMAN_LOG"
+  run "$A" sweep dev-1
+  [ "$status" -eq 0 ] && [ -z "$output" ]
+  ! grep -q '\[rm\]' "$PODMAN_LOG"
+}
+
+@test "teardown and sweep check the names" {
+  fake_podman
+  for n in "" Dev-1 "a b" "../x"; do
+    run "$A" teardown "$n"
+    [ "$status" -eq 2 ]
+    run "$A" sweep dev-1 "$n"
+    [ "$status" -eq 2 ]
+  done
+  [ ! -s "$PODMAN_LOG" ]
 }
 
 @test "run records its own pid, sets LEA_AGENT and becomes lea-session --claude" {

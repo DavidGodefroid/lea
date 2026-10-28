@@ -36,6 +36,18 @@ if [ -n "${SIBLING_IP:-}" ]; then
   mustnt "sibling lea refused by the proxy"    curl -sf --max-time 5 "http://$SIBLING_IP:8765/"
 fi
 mustnt "AF_ALG socket refused (seccomp)"       python3 -c 'import socket; socket.socket(38, 5, 0)'
+# The locksql console's own directory: read-only, and a mount point no agent can replace by a
+# symbolic link that the console's bind mount would follow on the host (#121).
+if [ "${LEA_LOCKSQL:-}" = 1 ]; then
+  lk=$LEA_PROJECTS/.locksql
+  must   ".locksql is a directory"                test -d "$lk" -a ! -L "$lk"
+  mustnt ".locksql is not writable"               touch "$lk/lea-isolation"
+  mustnt ".locksql cannot be removed"             rm -rf "$lk"
+  mustnt ".locksql cannot be renamed"             mv "$lk" "$LEA_PROJECTS/.locksql-moved"
+  mustnt ".locksql cannot be replaced by a link"  sh -c 'ln -sfn /tmp "$1.new" && mv -T "$1.new" "$1"' sh "$lk"
+  rm -f "$lk.new"
+  must   ".locksql is still a directory"          test -d "$lk" -a ! -L "$lk"
+fi
 mustnt "host ~/.ssh absent"                     test -e "$HOME/.ssh"
 mustnt "host ~/.docker absent"                  test -e "$HOME/.docker"
 mustnt "host ~/.config/glab-cli absent"         test -e "$HOME/.config/glab-cli"
