@@ -114,3 +114,29 @@ func TestNewWaitsForTheTeardownOfTheEndedAgentOfThatName(t *testing.T) {
 	}
 	waitTorn(t, e.ctr, []string{C + "/dev-1"})
 }
+
+// An idle agent's stack is stopped, not removed (#132): ParkStack says what it freed. An agent
+// being torn down, ended or unknown is not parked.
+func TestParkStackStopsAnIdleAgentsStack(t *testing.T) {
+	e := newEnv(t)
+	e.ensure(t, "/p")
+	e.spawn(t, "dev-1")
+	e.ctr.parkOut = "dev-1: stopped 2 containers and 1 pod (freed 812 MiB)"
+	got, err := e.m.ParkStack(bg, C+"/dev-1")
+	if err != nil || got != e.ctr.parkOut {
+		t.Fatalf("ParkStack = %q, %v", got, err)
+	}
+	if !reflect.DeepEqual(e.ctr.parks, []string{C + "/dev-1"}) {
+		t.Fatalf("parks %q", e.ctr.parks)
+	}
+	e.st.SetState(C+"/dev-1", "done", "", 1001)
+	if _, err := e.m.ParkStack(bg, C+"/dev-1"); err == nil {
+		t.Fatal("an ended agent's stack is parked")
+	}
+	if _, err := e.m.ParkStack(bg, C+"/nobody"); err == nil {
+		t.Fatal("an unknown agent's stack is parked")
+	}
+	if len(e.ctr.parks) != 1 {
+		t.Fatalf("parks %q", e.ctr.parks)
+	}
+}

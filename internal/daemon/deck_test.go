@@ -22,6 +22,7 @@ type fakeAgents struct {
 	newErr     error // New fails with it
 	// lockCheckErr: LockCheckRequest refuses with it; lockOpenErr: LockOpen fails with it.
 	lockCheckErr, lockOpenErr error
+	parkOut                   string // what ParkStack reports
 }
 
 func (f *fakeAgents) rec(s string) { f.mu.Lock(); f.calls = append(f.calls, s); f.mu.Unlock() }
@@ -66,6 +67,10 @@ func (f *fakeAgents) ResumeStopped(ctx context.Context, c string) error {
 func (f *fakeAgents) SweepStacks(ctx context.Context, c string) (string, error) {
 	f.rec("sweep " + c)
 	return "removed 1 container and 0 pods of ended agents (dev-2)", nil
+}
+func (f *fakeAgents) ParkStack(ctx context.Context, key string) (string, error) {
+	f.rec("park " + key)
+	return f.parkOut, nil
 }
 func (f *fakeAgents) Attached(ctx context.Context, c string) (bool, error) {
 	f.rec("attached " + c)

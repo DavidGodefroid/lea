@@ -114,6 +114,19 @@ func (d Docker) Teardown(ctx context.Context, container, name string) error {
 	return nil
 }
 
+// Park stops what an idle agent started in the container's nested Podman (lea-agent park,
+// #132), without removing it, and returns what it freed ("" when nothing of its own ran).
+func (d Docker) Park(ctx context.Context, container, name string) (string, error) {
+	if !nameRe.MatchString(name) {
+		return "", fmt.Errorf("invalid agent name %q", name)
+	}
+	out, err := d.agent(ctx, container, "park", name)
+	if err != nil {
+		return "", d.failed(ctx, container, err, "lea-agent park "+name)
+	}
+	return strings.TrimSpace(string(out)), nil
+}
+
 // Sweep removes what the agents but keep left in the container's nested Podman (lea-agent
 // sweep) and returns its report.
 func (d Docker) Sweep(ctx context.Context, container string, keep []string) (string, error) {

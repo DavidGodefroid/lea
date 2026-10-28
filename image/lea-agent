@@ -3,8 +3,8 @@
 # then becomes its CLI (Claude Code, or Codex with --cli codex) through lea-session (exec keeps the pid). `ls` prints the live agents;
 # `stop` ends one; `pause` freezes one with its children (SIGSTOP), `resume` lets them continue
 # (SIGCONT). Each agent gets its own Podman service: what it starts in the nested Podman carries
-# the annotation lea.agent=NAME, `teardown` removes it when the agent ends, and `sweep` removes
-# the stacks of agents that are gone (#97). The deck's shells (s) work the same way: `shell` is what abduco starts for one (the
+# the annotation lea.agent=NAME, `teardown` removes it when the agent ends, `park` stops it while
+# the agent is idle (#132), and `sweep` removes the stacks of agents that are gone (#97). The deck's shells (s) work the same way: `shell` is what abduco starts for one (the
 # user's login shell, never an agent: no LEA_AGENT), `shells` prints the live ones and
 # `stop-shell` ends one. The host reaches this script only through `docker exec`.
 set -eu
@@ -138,6 +138,38 @@ remove() {
 
 plural() { [ "$1" -eq 1 ] || printf s; }
 
+# rss PID...: the resident memory of the PIDs and their descendants, in kB.
+rss() {
+  for p in "$@"; do
+    [ "$p" -gt 0 ] 2>/dev/null || continue
+    for q in $(tree "$p"); do sed -n 's/^VmRSS:[[:space:]]*\([0-9]*\) kB$/\1/p' "/proc/$q/status" 2>/dev/null; done
+  done | awk '{ s += $1 } END { print s + 0 }'
+}
+
+# halt LINES ALL: stops the running containers of LINES (lines of ALL, the inventory) and the pods
+# whose containers are all in LINES, like remove but nothing is removed: the agent starts them
+# again. Prints "N containers and M pods (freed X MiB)", nothing when none of them runs.
+halt() {
+  running=" $("$podman" ps -q --no-trunc 2>/dev/null | tr '\n' ' ')"
+  ids=$(printf '%s\n' "$1" | awk -F'|' -v r="$running" '$1 != "" && $4 != "true" && index(r, " " $1 " ") { print $1 }')
+  [ -n "$ids" ] || return 0
+  pods=$({ printf '%s\n' "$1" | sed 's/^/S|/'; printf '%s\n' "$2" | sed 's/^/A|/'; } | awk -F'|' '
+    $1 == "S" { mine[$2] = 1; if ($3 != "") pod[$3] = 1; next }
+    $3 != "" && !($2 in mine) { other[$3] = 1 }
+    END { for (p in pod) if (!(p in other)) print p }' | sort)
+  # shellcheck disable=SC2086 # ids, split on purpose
+  cpids=$("$podman" container inspect --format '{{.State.Pid}}' $ids 2>/dev/null || true)
+  # shellcheck disable=SC2086 # pids, split on purpose
+  kb=$(rss $cpids)
+  # shellcheck disable=SC2086
+  if [ -n "$pods" ]; then "$podman" pod stop -t 10 $pods >/dev/null 2>&1 || true; fi
+  # shellcheck disable=SC2086
+  "$podman" stop -t 10 $ids >/dev/null 2>&1 || true
+  nc=$(printf '%s\n' "$ids" | grep -c . || true)
+  np=$(printf '%s\n' "$pods" | grep -c . || true)
+  printf '%s container%s and %s pod%s (freed %s MiB)' "$nc" "$(plural "$nc")" "$np" "$(plural "$np")" "$((kb / 1024))"
+}
+
 case ${1:-} in
   run)
     name=${2:-}
@@ -179,6 +211,15 @@ case ${1:-} in
     all=$(inventory)
     own=$(printf '%s\n' "$all" | awk -F'|' -v a="$name" '$3 == a')
     if [ -n "$own" ]; then echo "$name: removed $(remove "$own" "$all")"; fi
+    ;;
+  park)
+    # park NAME: the agent is idle (#132): what it started stops, and stays, for it to start again.
+    name=${2:-}
+    valid "$name" || { echo "lea-agent: invalid agent name '$name'" >&2; exit 2; }
+    command -v "$podman" >/dev/null 2>&1 || exit 0
+    all=$(inventory)
+    own=$(printf '%s\n' "$all" | awk -F'|' -v a="$name" '$3 == a')
+    [ -z "$own" ] || { h=$(halt "$own" "$all"); [ -z "$h" ] || echo "$name: stopped $h"; }
     ;;
   sweep)
     # sweep KEEP...: the stacks and services of every agent but KEEP are removed (a new
@@ -239,7 +280,7 @@ case ${1:-} in
     rm -f "$shell_dir/$name.pid"
     ;;
   *)
-    echo "usage: lea-agent run NAME [--cli claude|codex] [-- ARGS...] | ls | stop NAME | teardown NAME | sweep [KEEP...] | pause NAME | resume NAME | shell NAME | shells | stop-shell NAME" >&2
+    echo "usage: lea-agent run NAME [--cli claude|codex] [-- ARGS...] | ls | stop NAME | teardown NAME | park NAME | sweep [KEEP...] | pause NAME | resume NAME | shell NAME | shells | stop-shell NAME" >&2
     exit 2
     ;;
 esac

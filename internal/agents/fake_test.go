@@ -438,6 +438,15 @@ type fakeContainers struct {
 	tearHold chan struct{} // when set, Teardown waits for it to close
 	sweeps   []string      // container:keep,... of each Sweep
 	sweepOut string        // what Sweep reports
+	parks    []string      // container/name of each Park
+	parkOut  string        // what Park reports
+}
+
+func (c *fakeContainers) Park(ctx context.Context, container, name string) (string, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.parks = append(c.parks, container+"/"+name)
+	return c.parkOut, nil
 }
 
 func (c *fakeContainers) Teardown(ctx context.Context, container, name string) error {

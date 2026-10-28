@@ -93,6 +93,9 @@ type boardItem struct {
 	// in flight. Both are the daemon's, never an agent's text.
 	WaitsOn  string `json:"waits_on,omitempty"`
 	Question int64  `json:"question,omitempty"`
+	// Stack is what lea stopped of the agent's nested containers while it was idle (#132), the
+	// daemon's text, until the agent works again.
+	Stack string `json:"stack,omitempty"`
 }
 
 type boardView struct {
@@ -135,6 +138,10 @@ func (d *Daemon) boardList(raw json.RawMessage) (boardView, error) {
 	for k, v := range d.asks {
 		asks[k] = v
 	}
+	parked := make(map[string]string, len(d.parked))
+	for k, v := range d.parked {
+		parked[k] = v
+	}
 	d.mu.Unlock()
 	out := boardView{Items: []boardItem{}, Leases: []leaseView{}}
 	for i, t := range ts {
@@ -152,6 +159,7 @@ func (d *Daemon) boardList(raw json.RawMessage) (boardView, error) {
 			if q, ok := asks[t.Agent]; ok {
 				it.WaitsOn, it.Question = q.target, q.id
 			}
+			it.Stack = parked[t.Agent]
 		}
 		out.Items = append(out.Items, it)
 	}

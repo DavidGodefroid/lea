@@ -48,6 +48,21 @@ func DaemonResumeStamp(get func(string) string) string {
 	return mode + " " + strconv.FormatInt(delay, 10)
 }
 
+// StackIdleSetting is how long an agent stays idle before lea stops what it started in the nested
+// Podman (#132): LEA_STACK_IDLE minutes, 0 (off) to 1440, 10 when unset or invalid.
+func StackIdleSetting(get func(string) string) time.Duration {
+	if n, err := strconv.Atoi(get("LEA_STACK_IDLE")); err == nil && n >= 0 && n <= 1440 {
+		return time.Duration(n) * time.Minute
+	}
+	return 10 * time.Minute
+}
+
+// DaemonStacksStamp is that setting in minutes ("10"): a daemon started with another is
+// restarted.
+func DaemonStacksStamp(get func(string) string) string {
+	return strconv.Itoa(int(StackIdleSetting(get) / time.Minute))
+}
+
 func readTrim(p string) string {
 	b, _ := os.ReadFile(p)
 	return strings.TrimRight(string(b), "\n")
@@ -67,7 +82,8 @@ func (l *Launcher) ensureDaemon() error {
 		ver, _ := l.output(false, l.Core, "version")
 		if (tb == "" || readTrim(host+"/daemon.tmux") == tb) && readTrim(host+"/daemon.version") == ver &&
 			readTrim(host+"/daemon.approvals") == appr && readTrim(host+"/daemon.providers") == l.providersStamp() &&
-			readTrim(host+"/daemon.resume") == DaemonResumeStamp(l.Cfg.Get) {
+			readTrim(host+"/daemon.resume") == DaemonResumeStamp(l.Cfg.Get) &&
+			readTrim(host+"/daemon.stacks") == DaemonStacksStamp(l.Cfg.Get) {
 			return nil
 		}
 		l.stopDaemon()
