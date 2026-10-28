@@ -70,6 +70,8 @@ LEA_LOCKSQL=1
 10000
 --mount
 type=volume,src=locksql-run,dst=/run/locksql
+--mount
+type=bind,src=$W/projects/.locksql,dst=$W/projects/.locksql,readonly
 --cap-drop
 NET_RAW
 --cap-drop
