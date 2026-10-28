@@ -11,7 +11,7 @@ docker [inspect] [-f] [{{.State.Running}}] [lea-proxy]
 docker [network] [ls] [--filter] [label=lea.prefix=lea] [--format] [{{.Name}}]
 docker [ps] [--filter] [label=lea.prefix=lea] [--filter] [label=lea.role=session] [--format] [{{.Names}}]
 docker [ps] [--filter] [label=lea.prefix=lea] [--filter] [label=lea.role=session] [--format] [{{.Names}}]
-docker [image] [inspect] [locksql:0.8.0]
+docker [image] [inspect] [locksql:0.9.0]
 docker [volume] [inspect] [locksql-run]
 core [delivery] [--container] [lea-$ID] [--projects] [$W/projects] [check] [--state] [$W/data/lea/state]
 -- lea
@@ -29,6 +29,6 @@ ok    proxy running
 ok    internal networks: none (each lea creates its own at start)
 ok    egress allowlist: lea's default (forges, registries, model APIs; LEA_EGRESS_ALLOW extends it with 'default,<domain>')
 ok    telemetry: off (LEA_OTEL_UPSTREAM)
-ok    locksql image locksql:0.8.0
+ok    locksql image locksql:0.9.0
 ok    locksql-run volume
 warn  kubernetes token: none (optional): lea kube refresh
