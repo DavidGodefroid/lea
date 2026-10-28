@@ -245,6 +245,25 @@ func contains(xs []string, x string) bool {
 	return false
 }
 
+// SetGrantProxy names the proxy of the pinned calls of an agent (nil: grants.LeaProxy, the
+// default). Under LockHTTP squid is on the proxy's loopback: the calls go through the gate, with
+// the agent's own proxy password.
+func (d *Daemon) SetGrantProxy(f func(container, agent string) string) {
+	d.mu.Lock()
+	d.grantProxy = f
+	d.mu.Unlock()
+}
+
+func (d *Daemon) grantProxyFor(container, agent string) string {
+	d.mu.Lock()
+	f := d.grantProxy
+	d.mu.Unlock()
+	if f == nil {
+		return grants.LeaProxy
+	}
+	return f(container, agent)
+}
+
 // grantCaller is the calling agent as the daemon knows it: its container is the socket's, its
 // repo, branch and parents its row's, never anything the agent says. A branch another live agent
 // of the lea also works on (same repo) is nobody's own. cwd is where the tool call runs (the
@@ -258,7 +277,7 @@ func (d *Daemon) grantCaller(o Origin, me, cwd string) (grants.Caller, error) {
 		return grants.Caller{}, err
 	}
 	c := grants.Caller{Key: me, Container: o.Container, Repo: a.Repo, Branch: a.Branch, Lineage: []string{me},
-		OwnWorktree: grants.InWorktree(cwd, a.Repo, a.Name), Cwd: cwd, Proxy: grants.LeaProxy}
+		OwnWorktree: grants.InWorktree(cwd, a.Repo, a.Name), Cwd: cwd, Proxy: d.grantProxyFor(o.Container, a.Name)}
 	if c.OwnWorktree {
 		c.Worktree = strings.TrimSuffix(cwd, "/")
 	}

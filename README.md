@@ -350,29 +350,34 @@ then `lea`) after turning one on.
 ## Web requests, with LockHTTP
 
 [LockHTTP](https://github.com/DavidGodefroid/lockhttp) puts a human between the agents and the
-web: every outbound HTTP(S) request of an agent goes through a LockHTTP gate in lea's proxy
-container, which lets through what its policy trusts and asks you, in a `lockhttp` console on this
-host, about the rest. It is **off** by default (`LEA_LOCKHTTP=0`): lea then behaves as before.
+web: every outbound HTTP(S) request of an agent goes through a LockHTTP gate beside lea's proxy,
+which lets through what its policy trusts and asks you, in a `lockhttp` console, about the rest.
+It is **off** by default (`LEA_LOCKHTTP=0`): lea then behaves as before.
 
-To turn it on, install lockhttp, then set it up once as its contract says
-(`docs/lea.md` in the lockhttp repository): `sudo lockhttp install --client <you> --gate-uid 10003`
-(add `--rootless` under rootless Podman), `lockhttp init --trusted "<your LEA_EGRESS_ALLOW>"` in
-the `lockhttp` account, and `lockhttp console --profile default` in that account's own login
-session. Then set `LEA_LOCKHTTP=1` in `~/.config/lea/lea.conf` and restart lea (`lea stop --all`,
-then `lea`); `lea doctor` checks each step.
+LockHTTP runs in Docker only (`docs/docker.md` in the lockhttp repository). To turn it on,
+install lockhttp's launcher (its `scripts/install.sh`, which checks the release's signatures and
+pins its image by digest), write the policy once with `lockhttp init --trusted "<your
+LEA_EGRESS_ALLOW>"`, and start `lockhttp console` in a terminal you keep in view. Then set
+`LEA_LOCKHTTP=1` in `~/.config/lea/lea.conf` and restart lea (`lea stop --all`, then `lea`);
+`lea doctor` checks each step. Nothing else on the host: no account, group or socket directory.
 
 With it on, squid listens on the proxy's loopback only, behind the gate (its floor stays: DoH
 resolvers, IP literals and private ranges are refused; the allowlist is the gate's policy now).
-The gate runs as its own uid (10003, never root) and is the only process that reaches the
-console's socket: no agent container mounts `/run/lockhttp`. The gate names the calling
-container from the network the request arrives on, which no agent can forge: **the container is
-the trust boundary**. Each agent also has its own proxy password, and the daemon tells the gate
-whose it is (`sources.json`, under `~/.local/share/lea/lockhttp/`), but the agents of one
-container share a uid and can read each other's environment: that name is for the audit and the
-console's display (attribution), never a permission, and one agent can pass for another of the
-same container. lea-keyproxy goes through the gate too. `LEA_GIT_SSH` and `LEA_OTEL_UPSTREAM` are
-refused (their raw TCP forwarders would bypass the gate: use git over HTTPS), and claude.ai's
-connectors are turned off in the agents' Claude Code (WebSearch and WebFetch stay).
+lea runs the gate as a container of its own, `lea-lockhttp-gate`, in the proxy's network
+namespace, from the image the launcher pins (never a tag), as the image's `gate` account (never
+root), without capabilities, on a read-only root; it is the only container with the console's
+socket volume (`lockhttp-run`): no agent container gets it. Its audit stays in the volume
+`lea-lockhttp-audit`, its status (for the deck) in `~/.local/share/lea/lockhttp/status/`. A proxy
+started again gets a new gate. The gate names the calling container from the network the
+request arrives on, which no agent can forge: **the container is the trust boundary**. Each
+agent also has its own proxy password, and the daemon tells the gate whose it is
+(`sources.json`, under `~/.local/share/lea/lockhttp/`), but the agents of one container share a
+uid and can read each other's environment: that name is for the audit and the console's display
+(attribution), never a permission, and one agent can pass for another of the same container.
+lea-keyproxy goes through the gate too, and so do the forge calls of grants, with the calling
+agent's own password. `LEA_GIT_SSH` and `LEA_OTEL_UPSTREAM` are refused (their raw TCP forwarders
+would bypass the gate: use git over HTTPS), and claude.ai's connectors are turned off in the
+agents' Claude Code (WebSearch and WebFetch stay).
 
 ## Teams of agents
 

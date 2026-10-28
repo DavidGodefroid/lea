@@ -58,21 +58,12 @@ services:
     networks:
       pub:  { ipv4_address: 198.51.100.4 }
       priv: { ipv4_address: 10.99.0.4 }
-  # The proxy under LockHTTP, with a stand-in gate (fakegate): squid behind it on the loopback.
+  # The proxy under LockHTTP: squid behind the gate on the loopback.
   proxy-lockhttp:
-    build:
-      context: ../..
-      dockerfile_inline: |
-        ARG GO_IMAGE=docker.io/library/golang:1.26.9
-        FROM $${GO_IMAGE} AS gate
-        COPY tests/proxy/fakegate/main.go /src/main.go
-        RUN cd /src && go mod init fakegate && CGO_ENABLED=0 go build -o /lockhttp .
-        FROM lea-proxy:dev
-        COPY --from=gate /lockhttp /usr/local/bin/lockhttp
+    image: lea-proxy:dev
     dns: [ 198.51.100.53 ]
     # The allowlist must be off: the gate decides.
-    environment: { LEA_LOCKHTTP: "1", LEA_EGRESS_ALLOW: "public.test", LEA_KEYPROXY_TOKEN: "tok", LEA_LOCKHTTP_GID: "4300" }
-    tmpfs: [ /run/lockhttp ]
+    environment: { LEA_LOCKHTTP: "1", LEA_EGRESS_ALLOW: "public.test", LEA_KEYPROXY_TOKEN: "tok" }
     volumes:
       - ./internal-hosts:/etc/lea/internal-hosts:ro
       - ./endpoints:/etc/lea/endpoints:ro
@@ -83,6 +74,32 @@ services:
       pub:    { ipv4_address: 198.51.100.5 }
       priv:   { ipv4_address: 10.99.0.5 }
       egress: { ipv4_address: 203.0.113.5 }
+  # A stand-in gate (fakegate) as lea runs the real one: its own container in the proxy's network
+  # namespace, as gate (10003, in lockhttp-clients 10020), read-only, no capability.
+  lockhttp-gate:
+    build:
+      context: ../..
+      dockerfile_inline: |
+        ARG GO_IMAGE=docker.io/library/golang:1.26.9
+        FROM $${GO_IMAGE} AS gate
+        COPY tests/proxy/fakegate/main.go /src/main.go
+        RUN cd /src && go mod init fakegate && CGO_ENABLED=0 go build -o /lockhttp .
+        FROM docker.io/library/alpine:3.22
+        COPY --from=gate /lockhttp /usr/local/bin/lockhttp
+        RUN install -d -m 0700 -o 10003 -g 10020 /var/log/lockhttp && install -d -m 0755 -o 10003 /run/lockhttp-gate
+        ENTRYPOINT ["lockhttp"]
+    network_mode: "service:proxy-lockhttp"
+    depends_on: [ proxy-lockhttp ]
+    user: "10003:10003"
+    group_add: [ "10020" ]
+    read_only: true
+    cap_drop: [ ALL ]
+    security_opt: [ no-new-privileges ]
+    volumes:
+      - ./lockhttp-gate:/etc/lockhttp-gate:ro
+    command: [ gate, --listen, "0.0.0.0:3130", --upstream, "http://127.0.0.1:3128", --profile, default,
+               --sources, /etc/lockhttp-gate/sources.json, --audit-dir, /var/log/lockhttp,
+               --status-file, /run/lockhttp-gate/status.json ]
   client:
     image: curlimages/curl:8.11.1
     entrypoint: [ "sleep", "3600" ]

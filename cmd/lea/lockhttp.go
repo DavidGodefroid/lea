@@ -110,6 +110,15 @@ func lockHTTPBuild(key []byte, prefix, nets, ps string, agents []store.Agent) lo
 	return lockhttp.Build(key, ns, as)
 }
 
+// lockHTTPGrantProxy names the proxy of an agent's pinned grant calls under LockHTTP: the gate on
+// lea-proxy, with the agent's own proxy password (the one its HTTPS_PROXY holds): squid is on the
+// proxy's loopback only.
+func lockHTTPGrantProxy(key []byte) func(container, agent string) string {
+	return func(container, agent string) string {
+		return "http://" + agent + ":" + lockhttp.Token(key, container, agent) + "@lea-proxy:" + lockhttp.Port
+	}
+}
+
 // lockHTTPStamp is the daemon's LockHTTP switch as the launcher compares it (launcher.DaemonLockHTTPStamp).
 func lockHTTPStamp(getenv func(string) string) string { return launcher.DaemonLockHTTPStamp(getenv) }
 

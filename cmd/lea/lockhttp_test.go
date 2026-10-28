@@ -37,3 +37,14 @@ func TestLockHTTPBuildNamesOnlyRunningContainersOnTheirOwnNetwork(t *testing.T) 
 		t.Fatalf("agents %s, want %s", got, want)
 	}
 }
+
+// The pinned calls of a grant reach the gate as the agent itself: its name and its own token,
+// the one the agent's HTTPS_PROXY holds, on lea-proxy's gate port; and the result passes the
+// grants' proxy check.
+func TestLockHTTPGrantProxy(t *testing.T) {
+	key := bytes.Repeat([]byte{9}, 32)
+	got := lockHTTPGrantProxy(key)("lea-aaaa", "dev-1")
+	if want := "http://dev-1:" + lockhttp.Token(key, "lea-aaaa", "dev-1") + "@lea-proxy:3130"; got != want {
+		t.Fatalf("got %s, want %s", got, want)
+	}
+}
