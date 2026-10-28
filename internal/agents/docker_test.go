@@ -166,6 +166,36 @@ func TestDockerPauseAndResume(t *testing.T) {
 	}
 }
 
+// Unconfined lists the running agent containers (lea.role=session) of a projects directory or of
+// one above it (lea.projects: its mount holds dir) whose mount of dir is missing or writable.
+func TestDockerConsolesUnconfined(t *testing.T) {
+	bin, log := fakeDocker(t, `case $1 in ps) printf 'c1 /home/u/p\nc0 /home/u/p/sub\nc2 /home/u\nc5 /home/u/pp\nc3 /\nc4 \n' ;; inspect) printf '/lea-a false\n/lea-b \n/lea-c true\n' ;; esac`)
+	got, err := DockerConsoles{Bin: bin}.Unconfined(context.Background(), "/home/u/p", "/home/u/p/.locksql")
+	if err != nil || !reflect.DeepEqual(got, []string{"lea-b", "lea-c"}) {
+		t.Fatalf("got %q err=%v", got, err)
+	}
+	l := logged(t, log)
+	if !strings.Contains(l, `ps --filter label=lea.role=session --format {{.ID}} {{.Label "lea.projects"}}`+"\n") ||
+		!strings.Contains(l, `inspect -f {{.Name}} {{range .Mounts}}{{if eq .Destination "/home/u/p/.locksql"}}{{.RW}}{{end}}{{end}} c1 c2 c3`+"\n") {
+		t.Fatalf("log=%q", l)
+	}
+	// No agent of it: nothing to inspect.
+	bin, log = fakeDocker(t, `case $1 in ps) echo 'c0 /home/u/p/sub' ;; esac`)
+	if got, err := (DockerConsoles{Bin: bin}).Unconfined(context.Background(), "/home/u/p", "/home/u/p/.locksql"); err != nil || got != nil {
+		t.Fatalf("no agent: %q %v", got, err)
+	}
+	if strings.Contains(logged(t, log), "inspect") {
+		t.Fatalf("inspected nothing: %q", logged(t, log))
+	}
+	// A failure is an error, never "all confined".
+	for _, body := range []string{`exit 1`, `case $1 in ps) echo c1 /home/u/p ;; inspect) exit 1 ;; esac`, `case $1 in ps) echo c1 /home/u/p ;; esac`} {
+		bad, _ := fakeDocker(t, body)
+		if _, err := (DockerConsoles{Bin: bad}).Unconfined(context.Background(), "/home/u/p", "/home/u/p/.locksql"); err == nil {
+			t.Fatalf("%q accepted", body)
+		}
+	}
+}
+
 func TestDockerTeardownAndSweep(t *testing.T) {
 	ctx := context.Background()
 	bin, log := fakeDocker(t, `case $1 in exec) if [ "$6" = sweep ]; then printf 'removed 1 container and 0 pods of ended agents (dev-2)\n'; fi ;; esac`)

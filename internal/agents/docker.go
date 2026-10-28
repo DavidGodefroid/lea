@@ -230,6 +230,47 @@ func (d DockerConsoles) StopConsole(ctx context.Context, name string) error {
 	return nil
 }
 
+// Unconfined inspects the running agent containers (lea.role=session) of projects, or of a
+// projects directory above it (lea.projects), whose read-write mount holds dir: those whose mount
+// of dir is missing or writable. Any failure is an error, never "none".
+func (d DockerConsoles) Unconfined(ctx context.Context, projects, dir string) ([]string, error) {
+	out, err := exec.CommandContext(ctx, d.bin(), "ps", "--filter", "label=lea.role=session",
+		"--format", `{{.ID}} {{.Label "lea.projects"}}`).Output()
+	if err != nil {
+		return nil, fmt.Errorf("docker ps: %w%s", err, stderrOf(err))
+	}
+	var ids []string
+	for _, l := range strings.Split(string(out), "\n") {
+		id, p, _ := strings.Cut(l, " ")
+		if id != "" && p != "" && (p == projects || p == "/" || strings.HasPrefix(projects, p+"/")) {
+			ids = append(ids, id)
+		}
+	}
+	if len(ids) == 0 {
+		return nil, nil
+	}
+	f := `{{.Name}} {{range .Mounts}}{{if eq .Destination "` + dir + `"}}{{.RW}}{{end}}{{end}}`
+	out, err = exec.CommandContext(ctx, d.bin(), append([]string{"inspect", "-f", f}, ids...)...).Output()
+	if err != nil {
+		return nil, fmt.Errorf("docker inspect: %w%s", err, stderrOf(err))
+	}
+	lines := strings.Split(strings.TrimRight(string(out), "\n"), "\n")
+	if len(lines) != len(ids) {
+		return nil, fmt.Errorf("docker inspect: %d lines for %d containers", len(lines), len(ids))
+	}
+	var bad []string
+	for _, l := range lines {
+		name, rw, _ := strings.Cut(l, " ")
+		if name == "" {
+			return nil, fmt.Errorf("docker inspect: unexpected line %q", l)
+		}
+		if rw != "false" {
+			bad = append(bad, strings.TrimPrefix(name, "/"))
+		}
+	}
+	return bad, nil
+}
+
 func (d DockerConsoles) StopConsolesOf(ctx context.Context, owner string) error {
 	out, err := exec.CommandContext(ctx, d.bin(), "ps", "-q", "--filter", "label="+lockOwnerLabel+"="+owner).Output()
 	if err != nil {
