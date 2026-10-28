@@ -210,3 +210,101 @@ setup() {
   run lea_doctor
   [[ "$output" == *"ok    egress allowlist: github.com,proxy.golang.org (always: anthropic.com,claude.ai,claude.com)"* ]]
 }
+
+# Host versions (#108): the kernel and the Docker Engine every lea container runs on.
+docker_components() {
+  export FAKE_DOCKER_OUT_VERSION___FORMAT=$'Engine=29.4.2\ncontainerd=v2.1.4\nrunc=1.3.0\ndocker-init=0.19.0'
+}
+host_minimums() {
+  export LEA_HOST_MINIMUMS="$BATS_TEST_TMPDIR/host-minimums"
+  printf '# test\nkernel ubuntu 24.04 7.0.0-38\n' >"$LEA_HOST_MINIMUMS"
+  export LEA_OS_RELEASE="$BATS_TEST_TMPDIR/os-release"
+  printf 'ID=ubuntu\nVERSION_ID="24.04"\n' >"$LEA_OS_RELEASE"
+}
+
+@test "versions: Docker Engine, containerd and runc are shown" {
+  docker_components
+  run lea_doctor
+  [[ "$output" == *"ok    Docker Engine 29.4.2 (containerd v2.1.4, runc 1.3.0)"* ]]
+  grep -q '\[version\] \[--format\]' "$FAKE_LOG"
+}
+
+@test "versions: no Docker Engine version is a failure (lea runs its own seccomp profile)" {
+  for v in 29.4.1 28.10.3 29.10.0; do
+    export FAKE_DOCKER_OUT_VERSION___FORMAT="Engine=$v"
+    run lea_doctor
+    [[ "$output" == *"ok    Docker Engine $v"* ]]
+    [[ "$output" != *"FAIL  Docker Engine"* ]]
+  done
+}
+
+@test "versions: an engine that is not Docker Engine is a warning, not a failure" {
+  export FAKE_DOCKER_RC_VERSION___FORMAT=125
+  run lea_doctor
+  [[ "$output" == *"warn  Docker Engine: version unknown (not Docker Engine?)"* ]]
+  [[ "$output" != *"FAIL  Docker Engine"* ]]
+}
+
+@test "versions: Podman as docker is detected and never a failure (#108)" {
+  host_minimums; printf 'podman 5.8.4\n' >>"$LEA_HOST_MINIMUMS"
+  fake_uname 7.0.0-38-generic
+  export FAKE_DOCKER_RC_VERSION___FORMAT=125 FAKE_DOCKER_OUT___VERSION_="podman version 5.8.9"
+  run lea_doctor
+  [[ "$output" == *"warn  Podman 5.8.9: lea is built for Docker Engine; Podman minimum 5.8.4 met"* ]]
+  [[ "$output" == *"ok    kernel 7.0.0-38-generic (ubuntu 24.04, minimum 7.0.0-38)"* ]]
+  [[ "$output" != *"FAIL  Docker Engine"* ]]
+  [[ "$output" != *"FAIL  Podman"* ]]
+  export FAKE_DOCKER_OUT___VERSION_="podman version 5.8.3"
+  run lea_doctor
+  [[ "$output" == *"warn  Podman 5.8.3: older than 5.8.4 (CVE-2026-57231): update Podman"* ]]
+  [[ "$output" != *"FAIL  Podman"* ]]
+  # Docker's CLI on Podman's Docker API names a Podman Engine component.
+  export FAKE_DOCKER_RC_VERSION___FORMAT=0 FAKE_DOCKER_OUT_VERSION___FORMAT=$'Podman Engine=5.8.9\nConmon=conmon version 2.1.13'
+  run lea_doctor
+  [[ "$output" == *"warn  Podman 5.8.9: lea is built for Docker Engine"* ]]
+}
+
+@test "lea_host_engine names the engine behind docker and its version" {
+  export FAKE_DOCKER_OUT_VERSION___FORMAT=$'Engine=29.4.2\ncontainerd=v2.1.4'
+  [ "$(lea_host_engine)" = "docker 29.4.2" ]
+  export FAKE_DOCKER_OUT_VERSION___FORMAT=$'Podman Engine=5.8.9'
+  [ "$(lea_host_engine)" = "podman 5.8.9" ]
+  export FAKE_DOCKER_OUT_VERSION___FORMAT="" FAKE_DOCKER_RC_VERSION___FORMAT=125 FAKE_DOCKER_OUT___VERSION_="podman version 5.8.9"
+  [ "$(lea_host_engine)" = "podman 5.8.9" ]
+  export FAKE_DOCKER_OUT___VERSION_="Docker version 29.4.2, build 1234567"
+  [ -z "$(lea_host_engine)" ]
+}
+
+@test "versions: the kernel release is checked against the minimum of its distribution" {
+  docker_components; host_minimums
+  fake_uname 7.0.0-38-generic
+  run lea_doctor
+  [[ "$output" == *"ok    kernel 7.0.0-38-generic (ubuntu 24.04, minimum 7.0.0-38)"* ]]
+  fake_uname 7.0.0-37-generic
+  run lea_doctor
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"FAIL  kernel: 7.0.0-37-generic is older than 7.0.0-38 for ubuntu 24.04 (CVE-2026-74753, CVE-2026-80521, CVE-2026-80841): update the host kernel"* ]]
+}
+
+@test "versions: a distribution without a known minimum is a warning" {
+  docker_components; host_minimums
+  printf 'ID=fedora\nVERSION_ID=44\n' >"$LEA_OS_RELEASE"
+  fake_uname 6.17.1-300.fc44.x86_64
+  run lea_doctor
+  [[ "$output" == *"warn  kernel 6.17.1-300.fc44.x86_64: no known minimum for fedora 44 in "*"host-minimums: check that it has the fixes for CVE-2026-74753, CVE-2026-80521, CVE-2026-80841"* ]]
+}
+
+@test "versions: the minimums file of the repository sets Podman's and no Docker Engine minimum" {
+  grep -qx 'podman 5.8.4' "$LEA_ROOT/config/host-minimums"
+  ! grep -q '^docker-engine' "$LEA_ROOT/config/host-minimums" || false
+}
+
+@test "lea_version_ge compares numeric fields" {
+  lea_version_ge 29.4.2 29.4.2
+  lea_version_ge 29.10.0 29.4.2
+  ! lea_version_ge 29.4.1 29.4.2 || false
+  lea_version_ge v2.1.4 2.1
+  lea_version_ge 7.0.0-38-generic 7.0.0-38
+  ! lea_version_ge 7.0.0-37-generic 7.0.0-38 || false
+  ! lea_version_ge 6.17.1 7.0.0 || false
+}

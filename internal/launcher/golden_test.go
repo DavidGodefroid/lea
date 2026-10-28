@@ -568,8 +568,15 @@ func TestCommandsMatchTheGoldenFiles(t *testing.T) {
 		{name: "rollback outside a release install", args: []string{"rollback"}, exit: 1,
 			want: []string{"lea: error: lea rollback is for a release install"}, absent: []string{"ln", "curl"}},
 		{name: "rollback takes no argument", args: []string{"rollback", "now"}, exit: 2, absent: []string{"lea:"}},
+		// The host versions are pinned: a fixed uname -r and os-release, and Docker's components.
 		{name: "doctor", args: []string{"doctor"}, exit: 1,
-			want: []string{"ok    docker reachable", "FAIL  user config"}, absent: []string{"launcher"}},
+			env: map[string]string{"LEA_OS_RELEASE": "$W/os-release", "FAKE_DOCKER_OUT_VERSION___FORMAT": "Engine=29.4.2\ncontainerd=v2.1.4\nrunc=1.3.0"},
+			setup: func(w *world) {
+				os.WriteFile(w.dir+"/os-release", []byte("ID=ubuntu\nVERSION_ID=\"24.04\"\n"), 0o644)
+				os.WriteFile(w.dir+"/bin/uname", []byte("#!/bin/sh\necho 7.0.0-38-generic\n"), 0o755)
+			},
+			want: []string{"ok    docker reachable", "ok    Docker Engine 29.4.2 (containerd v2.1.4, runc 1.3.0)",
+				"warn  kernel 7.0.0-38-generic: no known minimum for ubuntu 24.04", "FAIL  user config"}, absent: []string{"launcher"}},
 		{name: "kube refresh", args: []string{"kube", "refresh"}, exit: 1, env: map[string]string{"LEA_K8S_USER": "dev"},
 			want: []string{"kubectl [config] [get-contexts]", "lea: error: no cluster issued a token"}},
 		{name: "init without a terminal", args: []string{"init"}, want: []string{"lea: ready. Run: lea"}, absent: []string{"ssh-keygen"}},

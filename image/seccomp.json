@@ -6,7 +6,6 @@
 		{
 			"architecture": "SCMP_ARCH_X86_64",
 			"subArchitectures": [
-				"SCMP_ARCH_X86",
 				"SCMP_ARCH_X32"
 			]
 		},
@@ -418,7 +417,6 @@
 				"signalfd4",
 				"sigprocmask",
 				"sigreturn",
-				"socketcall",
 				"socketpair",
 				"splice",
 				"stat",
@@ -990,6 +988,25 @@
 			"names": [
 				"socket"
 			],
+			"action": "SCMP_ACT_ERRNO",
+			"args": [
+				{
+					"index": 0,
+					"value": 38,
+					"valueTwo": 0,
+					"op": "SCMP_CMP_EQ"
+				}
+			],
+			"comment": "lea: no AF_ALG (CVE-2026-31431)",
+			"includes": {},
+			"excludes": {},
+			"errnoRet": 97,
+			"errno": "EAFNOSUPPORT"
+		},
+		{
+			"names": [
+				"socket"
+			],
 			"action": "SCMP_ACT_ALLOW",
 			"args": [
 				{
@@ -997,9 +1014,15 @@
 					"value": 9,
 					"valueTwo": 0,
 					"op": "SCMP_CMP_NE"
+				},
+				{
+					"index": 0,
+					"value": 38,
+					"valueTwo": 0,
+					"op": "SCMP_CMP_NE"
 				}
 			],
-			"comment": "",
+			"comment": "lea: no AF_ALG (CVE-2026-31431)",
 			"includes": {},
 			"excludes": {
 				"caps": [
@@ -1015,47 +1038,12 @@
 			"args": [
 				{
 					"index": 0,
-					"value": 16,
+					"value": 38,
 					"valueTwo": 0,
 					"op": "SCMP_CMP_NE"
 				}
 			],
-			"comment": "",
-			"includes": {},
-			"excludes": {
-				"caps": [
-					"CAP_AUDIT_WRITE"
-				]
-			}
-		},
-		{
-			"names": [
-				"socket"
-			],
-			"action": "SCMP_ACT_ALLOW",
-			"args": [
-				{
-					"index": 2,
-					"value": 9,
-					"valueTwo": 0,
-					"op": "SCMP_CMP_NE"
-				}
-			],
-			"comment": "",
-			"includes": {},
-			"excludes": {
-				"caps": [
-					"CAP_AUDIT_WRITE"
-				]
-			}
-		},
-		{
-			"names": [
-				"socket"
-			],
-			"action": "SCMP_ACT_ALLOW",
-			"args": null,
-			"comment": "",
+			"comment": "lea: no AF_ALG (CVE-2026-31431)",
 			"includes": {
 				"caps": [
 					"CAP_AUDIT_WRITE"

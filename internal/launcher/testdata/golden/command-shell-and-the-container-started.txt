@@ -9,6 +9,8 @@ docker [inspect] [--format] [{{index .Config.Labels "lea.git-ssh"}}{{with index 
 docker [image] [inspect] [-f] [{{.Id}}] [lea-proxy:dev]
 docker [container] [inspect] [--format] [{{with index .NetworkSettings.Networks "lea-internal-$ID"}}{{.IPAddress}}{{end}}] [lea-proxy]
 docker [inspect] [-f] [{{.State.Running}}] [lea-$ID]
+docker [version] [--format] [{{range .Server.Components}}{{.Name}}={{.Version}}{{"\n"}}{{end}}]
+docker [--version]
 docker [info] [--format] [{{json .SecurityOptions}}]
 docker [system] [info] [--format] [{{.MemTotal}}]
 docker [rm] [-f] [lea-$ID]

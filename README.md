@@ -96,7 +96,8 @@ projects directory). Press `n` for another agent.
 ### Requirements
 
 - Linux, macOS, or Windows with WSL2 (run lea from WSL).
-- Docker Engine (Linux) or Docker Desktop, running, usable without `sudo`.
+- Docker Engine (Linux) or Docker Desktop, running, usable without `sudo`; a patched host
+  kernel (see [How lea keeps your machine safe](#how-lea-keeps-your-machine-safe)).
 - On macOS, tmux 3.2 or later (`brew install tmux`); the Linux release brings its own.
 - `curl`, `tar`, `ssh-keygen`.
 - A Claude subscription or API key for Claude Code.
@@ -695,7 +696,17 @@ so. Changes apply after `lea init` (endpoints, keys, images, locksql) or `lea st
 - The API keys of your providers' endpoints stay in the proxy container: no agent mounts a key
   file, and the key forwarder reaches an endpoint only through the proxy's egress rules.
 - lea never gets the Docker socket; the agents' own containers run in a rootless Podman inside
-  lea, under seccomp and, on Linux, AppArmor.
+  lea, under seccomp and, on Linux, AppArmor. lea's seccomp profile (`image/seccomp.json`, not
+  Docker's default) refuses `socketcall` and the kernel crypto API sockets (`AF_ALG`,
+  CVE-2026-31431). 32-bit x86 (i386) programs do not run in lea: their `socketcall` hides the
+  socket family from seccomp, so the profile leaves that architecture out.
+- Every lea container shares the host kernel, so the host's patch level is part of the
+  containment. The kernel must carry the fixes for CVE-2026-74753, CVE-2026-80521 and CVE-2026-80841; on Ubuntu, check with
+  `apt changelog linux-image-$(uname -r) | grep -E 'CVE-2026-(74753|80521|80841)'`. `lea doctor`
+  shows the kernel, Docker Engine, containerd and runc versions and fails below the kernel minimum
+  of `config/host-minimums`; a distribution without a kernel minimum there gets a warning. On a
+  Podman host (`docker` is Podman), lea is not refused: `lea doctor` warns that lea is built for
+  Docker Engine, and below Podman 5.8.4 (CVE-2026-57231) the launcher warns too.
 - Work in lea, not on the host, inside the projects directory: an agent can write files your host
   tools would run. When the last session closes, lea reports changes to git hooks, risky git
   configuration, `.mcp.json` and `.claude/` settings.
@@ -724,8 +735,9 @@ nowhere unless you set `LEA_OTEL_UPSTREAM`.
 
 ## Troubleshooting
 
-- **Start with `lea doctor`.** It checks Docker, the images, the proxy and the internal networks, tmux,
-  the AppArmor profile, the projects directory and the configuration.
+- **Start with `lea doctor`.** It checks Docker and the host versions (kernel, Docker Engine,
+  containerd, runc), the images, the proxy and the internal networks, tmux, the AppArmor profile,
+  the projects directory and the configuration.
 - **An agent cannot reach a host.** Private and link-local addresses are refused on purpose; add
   the host to `LEA_INTERNAL_HOSTS`. A public domain outside lea's default list goes in
   `LEA_EGRESS_ALLOW` (`default,<domain>`); a public IP literal or a DNS-over-HTTPS resolver is
