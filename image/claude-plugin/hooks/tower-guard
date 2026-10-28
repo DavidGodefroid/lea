@@ -1,8 +1,9 @@
 #!/bin/sh
-# Keeps a control tower to its job (skill tower-control): once the session runs the skill, every
+# Keeps a control tower to its job (skill control-tower): once the session runs the skill, every
 # tool but the team's is denied, so the tower delegates the work instead of doing it.
 # Usage: tower-guard prompt|tool, with Claude Code's hook JSON on stdin.
-#   prompt: "/lea:tower-control" turns the guard on for this session, "/lea:tower-control off" off.
+#   prompt: "/lea:control-tower" turns the guard on for this session, "/lea:control-tower off" off.
+#           The old name tower-control still works as an alias, for a transition period.
 #   tool:   when the guard is on, denies every tool outside the allowed list below.
 set -u
 in=$(cat)
@@ -24,8 +25,9 @@ prompt)
   # The first line only: the command, not text pasted after it.
   p=$(printf '%s\n' "$p" | sed -n '1{s/^[[:space:]]*//;s/[[:space:]]*$//;p;}')
   case $p in
-  "/lea:tower-control off" | "/tower-control off") rm -f "$mark" ;;
-  "/lea:tower-control" | "/lea:tower-control "* | "/tower-control" | "/tower-control "*) on ;;
+  "/lea:control-tower off" | "/control-tower off" | "/lea:tower-control off" | "/tower-control off") rm -f "$mark" ;;
+  "/lea:control-tower" | "/lea:control-tower "* | "/control-tower" | "/control-tower "* | \
+    "/lea:tower-control" | "/lea:tower-control "* | "/tower-control" | "/tower-control "*) on ;;
   esac
   exit 0
   ;;
@@ -37,7 +39,7 @@ tool=$(printf '%s' "$in" | jq -r '.tool_name // empty')
 # The model can load the skill itself (the Skill tool): that turns the guard on as well.
 if [ "$tool" = Skill ]; then
   case $(printf '%s' "$in" | jq -r '.tool_input.skill // empty') in
-  lea:tower-control | tower-control) on ;;
+  lea:control-tower | control-tower | lea:tower-control | tower-control) on ;;
   esac
   exit 0
 fi
@@ -61,4 +63,4 @@ Bash)
   esac
   ;;
 esac
-deny "tower-control: you are the control tower, you do not act yourself. Give this to an agent: agents_spawn a new one, or msg_send the agent already on this subject. Your tools: agents_spawn, agents_list, agents_stop, msg_send, msg_reply, msg_inbox, msg_wait, board_read, task_update, questions to the user, and the Bash job 'lea inbox --agent --wait'. The user leaves tower mode with '/lea:tower-control off'."
+deny "control-tower: you are the control tower, you do not act yourself. Give this to an agent: agents_spawn a new one, or msg_send the agent already on this subject. Your tools: agents_spawn, agents_list, agents_stop, msg_send, msg_reply, msg_inbox, msg_wait, board_read, task_update, questions to the user, and the Bash job 'lea inbox --agent --wait'. The user leaves tower mode with '/lea:control-tower off'."

@@ -25,7 +25,7 @@ tool() {
 }
 
 @test "in tower mode only the team's tools pass" {
-  prompt "/lea:tower-control"
+  prompt "/lea:control-tower"
   for t in mcp__lea__agents_spawn mcp__lea__agents_list mcp__lea__msg_send mcp__lea__msg_reply mcp__lea__msg_inbox \
            mcp__lea__board_read mcp__lea__task_update AskUserQuestion ToolSearch; do
     [ "$(tool "$t")" = allow ]
@@ -36,7 +36,7 @@ tool() {
 }
 
 @test "in tower mode Bash runs only the inbox wait" {
-  prompt "/lea:tower-control"
+  prompt "/lea:control-tower"
   [ "$(tool Bash '{"command":"lea inbox --agent --wait"}')" = allow ]
   [ "$(tool Bash '{"command":"lea inbox --agent --wait 3600"}')" = allow ]
   for c in "git push" "gh pr create" "git clone x" "lea inbox --agent --wait 60; git push" \
@@ -47,34 +47,72 @@ tool() {
 }
 
 @test "the denial tells the tower to delegate" {
-  prompt "/lea:tower-control"
+  prompt "/lea:control-tower"
   out=$(jq -n '{session_id: "s1", tool_name: "Bash", tool_input: {command: "git push"}}' | sh "$G" tool)
   printf '%s' "$out" | jq -r .hookSpecificOutput.permissionDecisionReason | grep -q 'Give this to an agent'
 }
 
 @test "loading the skill through the Skill tool turns tower mode on, off turns it off" {
-  [ "$(tool Skill '{"skill":"lea:tower-control"}')" = allow ]
+  [ "$(tool Skill '{"skill":"lea:control-tower"}')" = allow ]
   [ "$(tool Edit)" = deny ]
-  prompt "/lea:tower-control off"
+  prompt "/lea:control-tower off"
   [ "$(tool Edit)" = allow ]
 }
 
 @test "tower mode belongs to its session only" {
-  prompt "/lea:tower-control"
+  prompt "/lea:control-tower"
   out=$(jq -n '{session_id: "s2", tool_name: "Edit", tool_input: {}}' | sh "$G" tool)
   [ -z "$out" ]
 }
 
 @test "a prompt that only mentions the skill does not turn tower mode on" {
-  prompt "explain what /lea:tower-control does"
+  prompt "explain what /lea:control-tower does"
   [ "$(tool Edit)" = allow ]
 }
 
 @test "the skill states the hard rule, one task per agent and its anti-pattern" {
-  k="$P/skills/tower-control/SKILL.md"
+  k="$P/skills/control-tower/SKILL.md"
   grep -q '^## The hard rule: you never act, you delegate$' "$k"
   grep -q '^| Allowed | Forbidden |$' "$k"
   grep -q '^Anti-pattern, never do this:$' "$k"
   grep -q '^## One agent, one task$' "$k"
-  grep -q '/lea:tower-control off' "$k"
+  grep -q '/lea:control-tower off' "$k"
+}
+
+@test "the denial names the way out, /lea:control-tower off" {
+  prompt "/lea:control-tower"
+  out=$(jq -n '{session_id: "s1", tool_name: "Edit", tool_input: {}}' | sh "$G" tool)
+  printf '%s' "$out" | jq -r .hookSpecificOutput.permissionDecisionReason | grep -q "'/lea:control-tower off'"
+}
+
+@test "the short names /control-tower and Skill control-tower work too" {
+  prompt "/control-tower"
+  [ "$(tool Edit)" = deny ]
+  prompt "/control-tower off"
+  [ "$(tool Edit)" = allow ]
+  [ "$(tool Skill '{"skill":"control-tower"}')" = allow ]
+  [ "$(tool Edit)" = deny ]
+}
+
+# The old name stays an alias for a transition period.
+@test "the old name tower-control still turns tower mode on and off" {
+  for on in "/lea:tower-control" "/tower-control"; do
+    prompt "$on"
+    [ "$(tool Edit)" = deny ]
+    prompt "$on off"
+    [ "$(tool Edit)" = allow ]
+  done
+  for k in lea:tower-control tower-control; do
+    [ "$(tool Skill "$(jq -n --arg k "$k" '{skill: $k}')")" = allow ]
+    [ "$(tool Edit)" = deny ]
+    prompt "/lea:control-tower off"
+  done
+  [ "$(tool Edit)" = allow ]
+}
+
+@test "the old skill name is a stub that hands over to control-tower" {
+  k="$P/skills/tower-control/SKILL.md"
+  grep -q '^name: tower-control$' "$k"
+  grep -q '^description: Deprecated name of control-tower' "$k"
+  grep -q 'lea:control-tower' "$k"
 }
