@@ -213,6 +213,19 @@ launcher_refused() {
   [[ "$output" == *"launcher pwd="* ]]
 }
 
+@test "lea locksql gives up on a launcher behind a cycle of links" {
+  mkdir -p "$BATS_TEST_TMPDIR/cbin"
+  ln -s "$BATS_TEST_TMPDIR/cbin/b" "$BATS_TEST_TMPDIR/cbin/locksql"
+  ln -s "$BATS_TEST_TMPDIR/cbin/locksql" "$BATS_TEST_TMPDIR/cbin/b"
+  export PATH="$BATS_TEST_TMPDIR/cbin:$PATH"
+  # command -v finds no such locksql: it could only meet the cycle after a link changed under it.
+  run timeout 20 sh -c '. "$1"/libexec/lib/common.sh; . "$1"/libexec/lib/locksql.sh
+    cyc=$2/locksql; command() { printf "%s\n" "$cyc"; }
+    lea__locksql_launcher; echo "end:$?"' _ "$LEA_ROOT" "$BATS_TEST_TMPDIR/cbin"
+  [ "$status" -eq 0 ]
+  [ "$output" = "end:0" ]
+}
+
 @test "lea locksql never takes another locksql on PATH for the launcher" {
   mkdir -p "$BATS_TEST_TMPDIR/obin"
   printf '#!/bin/sh\necho other >>"$FAKE_LOG"\n' >"$BATS_TEST_TMPDIR/obin/locksql"
