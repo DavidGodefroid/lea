@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"os"
 	"regexp"
 	"strconv"
 	"strings"
@@ -57,6 +58,31 @@ type LockSpec struct {
 	// Projects is the console's --project: the deck's projects directory, which LockOpen takes
 	// from the deck's container (its lea.projects label), never from the daemon's environment.
 	Projects string
+	// ConsoleDir makes ready the one directory of the projects directory the console writes
+	// (<projects>/.<tool>), or refuses it (EnsureConsoleDir). nil: no console opens.
+	ConsoleDir func(dir string) error
+}
+
+// lockHarden confines a console, which holds the database credentials: no capability, no
+// privilege gain, a read-only root with a small /tmp, bounded processes and memory (as
+// lea__locksql_harden in libexec/lib/locksql.sh).
+var lockHarden = []string{"--cap-drop", "ALL", "--security-opt", "no-new-privileges", "--read-only",
+	"--tmpfs", "/tmp:rw,nosuid,nodev,noexec,size=64m", "--pids-limit", "256", "--memory", "1g"}
+
+// lockConsoleDir is the directory of the projects directory a tool's console writes: the rest is
+// mounted read-only in the console, since the agents write it.
+func lockConsoleDir(tool, projects string) string { return projects + "/." + tool }
+
+// EnsureConsoleDir makes dir when it is missing and refuses anything but a directory: a bind
+// mount follows a symbolic link on the host, which an agent could point anywhere.
+func EnsureConsoleDir(dir string) error {
+	if err := os.Mkdir(dir, 0o755); err != nil && !errors.Is(err, os.ErrExist) {
+		return fmt.Errorf("could not create %s: %w", dir, err)
+	}
+	if fi, err := os.Lstat(dir); err != nil || !fi.IsDir() {
+		return fmt.Errorf("%s is not a directory (a symbolic link or a file): the console only writes there; remove it and retry", dir)
+	}
+	return nil
 }
 
 // ConsoleState is what the container runtime knows of a console container.
@@ -134,14 +160,16 @@ func hasControl(s string) bool {
 	return false
 }
 
-// lockCmd is a console's pane: the fixed template of `lea locksql`, with no log driver (with a
+// lockCmd is a console's pane: the fixed template of `lea locksql`, confined (lockHarden, the
+// projects directory read-only but for the console's own directory), with no log driver (with a
 // tty, docker's json-file log would keep every screen for docker logs), labelled with the lea
 // container whose deck opened it. Never a console flag: --auto, --allow-unmask, --show-results
 // and the like stay the user's to type in a terminal of their own (lea locksql).
 func (m *Manager) lockCmd(container, tool, profile, name string, s LockSpec) []string {
-	cmd := []string{m.cfg.Docker, "run", "-it", "--rm", "--log-driver", "none", "--user", tool, "--name", name,
-		"--label", lockOwnerLabel + "=" + container, "--add-host=host.docker.internal:host-gateway",
-		"-v", s.Projects + ":" + s.Projects, "-v", tool + "-run:/run/" + tool, "-v", tool + "-home:/home/" + tool}
+	cmd := append([]string{m.cfg.Docker, "run", "-it", "--rm", "--log-driver", "none", "--user", tool}, lockHarden...)
+	dir := lockConsoleDir(tool, s.Projects)
+	cmd = append(cmd, "--name", name, "--label", lockOwnerLabel+"="+container, "--add-host=host.docker.internal:host-gateway",
+		"-v", s.Projects+":"+s.Projects+":ro", "-v", dir+":"+dir, "-v", tool+"-run:/run/"+tool, "-v", tool+"-home:/home/"+tool)
 	if s.VaultAddr != "" {
 		cmd = append(cmd, "-e", "VAULT_ADDR="+s.VaultAddr)
 	}
@@ -193,6 +221,12 @@ func (m *Manager) LockOpen(ctx context.Context, container, tool, profile string)
 		return "", fmt.Errorf("the projects directory %s is not the one of %s: no console opens for it", spec.Projects, container)
 	}
 	if err := checkSpec(tool, spec); err != nil {
+		return "", err
+	}
+	if spec.ConsoleDir == nil {
+		return "", fmt.Errorf("no check of the console's directory for %s: no console opens", tool)
+	}
+	if err := spec.ConsoleDir(lockConsoleDir(tool, spec.Projects)); err != nil {
 		return "", err
 	}
 	ps, err := listPanes(ctx, s, container)
