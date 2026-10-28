@@ -682,7 +682,8 @@ so. Changes apply after `lea init` (endpoints, keys, images, locksql) or `lea st
 - lea never gets the Docker socket; the agents' own containers run in a rootless Podman inside
   lea, under seccomp and, on Linux, AppArmor. lea's seccomp profile (`image/seccomp.json`, not
   Docker's default) refuses `socketcall` and the kernel crypto API sockets (`AF_ALG`,
-  CVE-2026-31431), and 32-bit x86 programs, whose `socketcall` hides the socket family.
+  CVE-2026-31431). 32-bit x86 (i386) programs do not run in lea: their `socketcall` hides the
+  socket family from seccomp, so the profile leaves that architecture out.
 - Every lea container shares the host kernel, so the host's patch level is part of the
   containment. The kernel must carry the fixes for CVE-2026-74753, CVE-2026-80521 and CVE-2026-80841; on Ubuntu, check with
   `apt changelog linux-image-$(uname -r) | grep -E 'CVE-2026-(74753|80521|80841)'`. `lea doctor`
