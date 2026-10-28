@@ -66,11 +66,15 @@ func Words(cmd string) ([]string, bool) {
 }
 
 var (
-	adminRe  = regexp.MustCompile(`\bgh\b[\s\S]*\bmerge\b[\s\S]*--admin\b`)
-	pushRe   = regexp.MustCompile(`\bgit\b[\s\S]*\bpush\b`)
-	forceRe  = regexp.MustCompile(`\s(--force(-with-lease|-if-includes)?|--mirror|--prune|-[A-Za-z]*f[A-Za-z]*)(\s|=|$)|\s\+\S`)
-	toMainRe = regexp.MustCompile(`[\s:](refs/heads/)?(main|master)(\s|$|[;&|)])`)
-	deleteRe = regexp.MustCompile(`\s(--delete|-[A-Za-z]*d[A-Za-z]*)(\s|=|$)|\s:\S`)
+	adminRe = regexp.MustCompile(`\bgh\b[\s\S]*\bmerge\b[\s\S]*--admin\b`)
+	pushRe  = regexp.MustCompile(`\bgit\b[\s\S]*\bpush\b`)
+	// gitEnvRe: assigning a variable that hands git another configuration, repository or program,
+	// in a command lea cannot split.
+	gitEnvRe = regexp.MustCompile(`\b(GIT_\w+|HOME|XDG_CONFIG_HOME)\s*=`)
+	// gitOptRe: a git option before the subcommand, in a command lea cannot split.
+	gitOptRe = regexp.MustCompile(`\bgit\s+-`)
+	// pushWordRe: words that name a push or a git transport that writes remote refs.
+	pushWordRe = regexp.MustCompile(`\b(push|send-pack|http-push|remote-\w+)\b`)
 	// gitSub matches a git subcommand after git's own options (git -C x -c y=z config ...).
 	gitConfigRe  = regexp.MustCompile(`\bgit(\s+-\S+(\s+[^-\s]\S*)?)*\s+config\b`)
 	gitRemoteRe  = regexp.MustCompile(`\bgit(\s+-\S+(\s+[^-\s]\S*)?)*\s+remote\s+(set-url|add|rename|remove|rm|set-head|set-branches)\b`)
@@ -113,27 +117,7 @@ func hardBash(cmd string, c Caller) string {
 	if ghEnvRe.MatchString(cmd) {
 		return "pointing gh at another repository or host is never allowed"
 	}
-	if !pushRe.MatchString(cmd) {
-		return ""
-	}
-	if forceRe.MatchString(cmd) {
-		return "force-push (or a push that rewrites or prunes remote branches) is never allowed"
-	}
-	if toMainRe.MatchString(cmd) {
-		return "pushing to the default branch is never allowed"
-	}
-	if deleteRe.MatchString(cmd) {
-		w, ok := Words(raw)
-		if !ok {
-			return "deleting a remote branch in a compound command is never allowed"
-		}
-		for _, b := range pushDeletes(w) {
-			if c.Branch == "" || b != c.Branch || Protected(b) {
-				return "deleting a branch that is not the agent's own is never allowed"
-			}
-		}
-	}
-	return ""
+	return hardGit(raw, cmd, c)
 }
 
 // gitConfigRead says whether cmd is one plain "git config" that only reads: --get, --get-all or
@@ -166,38 +150,6 @@ func gitConfigRead(cmd string) bool {
 		return pos == 0
 	}
 	return false
-}
-
-// pushDeletes returns the branches a git push deletes ("git push origin --delete b", ":b").
-func pushDeletes(w []string) []string {
-	if len(w) < 2 || w[0] != "git" || w[1] != "push" {
-		return []string{""} // a push we cannot read deletes something unknown: never own
-	}
-	var pos, out []string
-	del := false
-	for _, x := range w[2:] {
-		switch {
-		case x == "--delete" || x == "-d":
-			del = true
-		case strings.HasPrefix(x, "-"):
-			if strings.Contains(strings.TrimLeft(x, "-"), "d") && !strings.HasPrefix(x, "--") {
-				del = true
-			}
-		default:
-			pos = append(pos, x)
-		}
-	}
-	for i, p := range pos {
-		if strings.HasPrefix(p, ":") {
-			out = append(out, p[1:])
-		} else if del && i > 0 {
-			out = append(out, p)
-		}
-	}
-	if del && len(pos) < 2 {
-		out = append(out, "")
-	}
-	return out
 }
 
 // bashRequest recognises a command a grant can cover. Every word must be one the matcher knows:
@@ -241,9 +193,11 @@ func number(s string) bool {
 
 // ghMerge: gh pr merge <number>|<own branch> [--squash|--merge|--rebase] [--delete-branch].
 // No --repo from the agent: lea pins it to the grant's repository (Command). The PR is named:
-// with -R, gh has no worktree branch to fall back on. --delete-branch deletes the PR's head
-// branch: it is accepted only when the PR is named by the caller's own branch (not a number),
-// never a protected one.
+// with -R, gh has no worktree branch to fall back on. Either way the PR merged is the caller's
+// own: the PR is merged only after gh says its head is the caller's branch, in the grant's
+// repository (Command), the branch the grant's glob matched.
+// --delete-branch deletes the PR's head branch: it is accepted only when the PR is named by the
+// caller's own branch (not a number), never a protected one.
 func ghMerge(args []string, c Caller) (Request, bool) {
 	target := ""
 	method, del, own := false, false, false
@@ -269,7 +223,7 @@ func ghMerge(args []string, c Caller) (Request, bool) {
 			}
 		}
 	}
-	if target == "" || (del && !own) {
+	if target == "" || (del && !own) || c.Branch == "" || !BranchName(c.Branch) || Protected(c.Branch) {
 		return Request{}, false
 	}
 	return Request{Action: Merge, Target: target}, true

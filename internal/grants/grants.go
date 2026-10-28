@@ -284,6 +284,12 @@ func Command(req Request, c Caller, g Grant) string {
 	switch req.Prog {
 	case "gh":
 		script = shellWords(append(append([]string{ghPath}, req.Args...), "-R", g.GitHub))
+		if req.Action == Merge && len(req.Args) > 2 {
+			if c.Branch == "" || !BranchName(c.Branch) || Protected(c.Branch) {
+				return ""
+			}
+			script = prHeadCheck(req.Args[2], c.Branch, g.GitHub) + script
+		}
 	case "git":
 		if !c.OwnWorktree || c.Worktree == "" {
 			return ""
@@ -308,6 +314,18 @@ const (
 	mkdirPath  = "/bin/mkdir"
 	cpPath     = "/bin/cp"
 )
+
+// prHeadCheck is the script lines that end the call unless the PR n names (a number or a head
+// branch) has its head on branch, in the repository gh (not a fork's branch of the same name: gh
+// finds a PR by its head's name, whatever its owner). A PR's head branch never changes once
+// opened.
+func prHeadCheck(n, branch, gh string) string {
+	view := shellWords([]string{ghPath, "pr", "view", n, "--json", "headRefName,isCrossRepository",
+		"--jq", `(.isCrossRepository|tostring) + " " + .headRefName`, "-R", gh})
+	return "head=$(" + view + ") || exit 1\n" +
+		`if [ "$head" != ` + shellWords([]string{"false " + branch}) + " ]; then " +
+		refuse("PR "+n+" is not the agent's own branch "+branch) + "; fi\n"
+}
 
 // pins are lea's -c options for git.
 func pins() []string {
