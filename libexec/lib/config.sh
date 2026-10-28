@@ -78,13 +78,15 @@ lea_load_config() {
 }
 
 # lea__check_egress_allow: LEA_EGRESS_ALLOW lists at most 64 domain names, separated by commas or
-# blanks (each one also stands for its subdomains; no IP literal, no wildcard). Empty: no
-# allowlist. Normalized to lower-case names joined by commas.
+# blanks (each one also stands for its subdomains; no IP literal, no wildcard). Empty: the proxy's
+# default allowlist, which "default" in the list stands for; "*" alone: any domain. Normalized to
+# lower-case names joined by commas.
 lea__check_egress_allow() {
   _ce_n=0 _ce_out=
   set -f
   for _ce_d in $(printf '%s' "${LEA_EGRESS_ALLOW:-}" | tr ',' ' '); do
     _ce_n=$((_ce_n + 1))
+    if [ "$_ce_d" = '*' ]; then _ce_out="$_ce_out,*"; continue; fi
     case $_ce_d in
       *[!ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789.-]*|.*|*.|*..*) _ce_bad=1 ;;
       *[!0-9.]*) _ce_bad= ;;
@@ -96,6 +98,10 @@ lea__check_egress_allow() {
     _ce_out="$_ce_out,$(printf '%s' "$_ce_d" | tr '[:upper:]' '[:lower:]')"
   done
   set +f
+  case ,${_ce_out#,}, in
+    ,\*,) ;;
+    *,\*,*) lea_die "LEA_EGRESS_ALLOW: '*' opens the web to any domain and cannot be combined with domain names" ;;
+  esac
   [ "$_ce_n" -le 64 ] || lea_die "LEA_EGRESS_ALLOW lists $_ce_n domains, at most 64"
   LEA_EGRESS_ALLOW=${_ce_out#,}
 }

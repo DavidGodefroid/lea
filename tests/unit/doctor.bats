@@ -200,9 +200,12 @@ setup() {
   [[ "$output" == *'FAIL  configuration: /x/lea.conf line 2: only $HOME and ${HOME} are read'* ]]
 }
 
-@test "the egress allowlist is reported off by default, with its domains when set" {
+@test "the egress allowlist is lea's default when unset, a warning when open, its domains when set" {
   run lea_doctor
-  [[ "$output" == *"ok    egress allowlist: off, any web destination (LEA_EGRESS_ALLOW)"* ]]
+  [[ "$output" == *"ok    egress allowlist: lea's default (forges, registries, model APIs; LEA_EGRESS_ALLOW extends it with 'default,<domain>')"* ]]
+  export LEA_EGRESS_ALLOW='*'
+  run lea_doctor
+  [[ "$output" == *"warn  egress allowlist: off (LEA_EGRESS_ALLOW='*'): agents reach any public web domain; only DoH resolvers and IP literals are refused"* ]]
   export LEA_EGRESS_ALLOW=github.com,proxy.golang.org
   run lea_doctor
   [[ "$output" == *"ok    egress allowlist: github.com,proxy.golang.org (always: anthropic.com,claude.ai,claude.com)"* ]]

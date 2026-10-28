@@ -235,6 +235,7 @@ func TestRunArgsContents(t *testing.T) {
 		"type=bind,src=" + st + "/glab-cli,dst=/lea/state/glab-cli", "type=bind,src=" + st + "/containers,dst=/lea/state/containers",
 		"type=bind,src=" + st + "/go,dst=/lea/state/go",
 		"type=volume,src=locksql-run,dst=/run/locksql", "10000", "LEA_LOCKSQL=1", "LEA_GIT_SSH=",
+		"type=bind,src=" + w.proj + "/.locksql,dst=" + w.proj + "/.locksql,readonly",
 		"type=bind,src=" + st + "/kube,dst=" + w.home + "/.kube/lea,readonly", "KUBECONFIG=" + w.home + "/.kube/lea/config",
 		"/dev/fuse", "/dev/net/tun", "seccomp=" + repoRoot(t) + "/image/seccomp.json",
 		"type=bind,src=" + st + "/clipboard/copy,dst=/lea/clipboard/copy", "WAYLAND_DISPLAY=lea-clipboard",
@@ -514,7 +515,7 @@ func TestProxyFollowsTheGitSSHEndpoints(t *testing.T) {
 	w := newWorld(t, repoRoot(t))
 	writeUserConf(t, w, "LEA_GIT_SSH='github.com:22 gitlab.com:22'\n")
 	w.env["FAKE_DOCKER_OUT_INSPECT__F"] = "true"
-	w.env["FAKE_DOCKER_OUT_INSPECT___FORMAT"] = "github.com:22 gitlab.com:22"
+	w.env["FAKE_DOCKER_OUT_INSPECT___FORMAT"] = "github.com:22 gitlab.com:22@" + w.launcher().proxyRules()
 	if err := w.launcher().ensureProxy(w.proj); err != nil {
 		t.Fatal(err)
 	}
@@ -669,7 +670,7 @@ func TestProxyFollowsTheEgressAllowlist(t *testing.T) {
 	w := newWorld(t, repoRoot(t))
 	writeUserConf(t, w, "LEA_EGRESS_ALLOW=github.com,proxy.golang.org\n")
 	w.env["FAKE_DOCKER_OUT_INSPECT__F"] = "true"
-	w.env["FAKE_DOCKER_OUT_INSPECT___FORMAT"] = "|github.com,proxy.golang.org"
+	w.env["FAKE_DOCKER_OUT_INSPECT___FORMAT"] = "|github.com,proxy.golang.org@" + w.launcher().proxyRules()
 	if err := w.launcher().ensureProxy(w.proj); err != nil {
 		t.Fatal(err)
 	}
@@ -778,5 +779,144 @@ func TestResourceLimitsAreValidated(t *testing.T) {
 		if _, err := LoadConfig(w.getenv, w.root, w.proj); err == nil || !strings.Contains(err.Error(), key+" must be") {
 			t.Errorf("%s: err = %v", line, err)
 		}
+	}
+}
+
+// A running proxy started from other rules (lea.rules, a digest of proxy/: an older lea's
+// squid.conf, an open egress by default) is replaced; one started from the same rules is kept.
+func TestProxyFollowsItsRules(t *testing.T) {
+	w := newWorld(t, repoRoot(t))
+	rules := w.launcher().proxyRules()
+	if len(rules) != 12 {
+		t.Fatalf("proxyRules() = %q, want 12 hex digits", rules)
+	}
+	w.env["FAKE_DOCKER_OUT_INSPECT__F"] = "true"
+	w.env["FAKE_DOCKER_OUT_INSPECT___FORMAT"] = "@" + rules
+	if err := w.launcher().ensureProxy(w.proj); err != nil {
+		t.Fatal(err)
+	}
+	if w.hasCall("docker [run]") {
+		t.Fatalf("a proxy started from the same rules was replaced:\n%s", strings.Join(w.calls(), "\n"))
+	}
+	w.env["FAKE_DOCKER_OUT_INSPECT___FORMAT"] = ""
+	if err := w.launcher().ensureProxy(w.proj); err != nil {
+		t.Fatal(err)
+	}
+	if !w.hasCall("[--label] [lea.rules=" + rules + "]") {
+		t.Fatalf("a proxy started from older rules was kept:\n%s", strings.Join(w.calls(), "\n"))
+	}
+}
+
+// The digest covers the proxy's rule files: a change to one changes it; no proxy/ directory, none.
+func TestProxyRulesDigest(t *testing.T) {
+	root := t.TempDir()
+	l := &Launcher{Root: root}
+	if got := l.proxyRules(); got != "" {
+		t.Fatalf("no proxy/: proxyRules() = %q, want empty", got)
+	}
+	if err := os.MkdirAll(filepath.Join(root, "proxy", "errors"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	write := func(p, s string) {
+		if err := os.WriteFile(filepath.Join(root, "proxy", p), []byte(s), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write("render-squid-conf.sh", "a")
+	write("errors/ERR_LEA_DOH", "b")
+	first := l.proxyRules()
+	write("errors/ERR_LEA_DOH", "c")
+	if second := l.proxyRules(); second == first || second == "" {
+		t.Fatalf("an error page change left the digest at %q", second)
+	}
+	write("render-squid-conf.sh", "a2")
+	if third := l.proxyRules(); third == first {
+		t.Fatal("a render-squid-conf.sh change left the digest unchanged")
+	}
+}
+
+// A running proxy started from another image than LEA_PROXY_IMAGE is now (a rebuilt or updated
+// image: its rules are copied in) is replaced; when the image cannot be inspected, its labels
+// decide alone.
+func TestProxyFollowsItsImage(t *testing.T) {
+	w := newWorld(t, repoRoot(t))
+	stamp := "@" + w.launcher().proxyRules()
+	w.env["FAKE_DOCKER_OUT_INSPECT__F"] = "true"
+	w.env["FAKE_DOCKER_OUT_IMAGE_INSPECT"] = "sha256:new"
+	w.env["FAKE_DOCKER_OUT_INSPECT___FORMAT"] = stamp + "!sha256:new"
+	if err := w.launcher().ensureProxy(w.proj); err != nil {
+		t.Fatal(err)
+	}
+	if w.hasCall("docker [run]") {
+		t.Fatalf("a proxy on the current image was replaced:\n%s", strings.Join(w.calls(), "\n"))
+	}
+	// Podman writes the container's image ID without the sha256: prefix.
+	w.env["FAKE_DOCKER_OUT_INSPECT___FORMAT"] = stamp + "!new"
+	if err := w.launcher().ensureProxy(w.proj); err != nil {
+		t.Fatal(err)
+	}
+	if w.hasCall("docker [run]") {
+		t.Fatalf("a proxy on the current image, written without sha256:, was replaced:\n%s", strings.Join(w.calls(), "\n"))
+	}
+	w.env["FAKE_DOCKER_RC_IMAGE_INSPECT"] = "1"
+	w.env["FAKE_DOCKER_OUT_INSPECT___FORMAT"] = stamp + "!sha256:old"
+	if err := w.launcher().ensureProxy(w.proj); err != nil {
+		t.Fatal(err)
+	}
+	if w.hasCall("docker [run]") {
+		t.Fatalf("a proxy was replaced although its image could not be compared:\n%s", strings.Join(w.calls(), "\n"))
+	}
+	w.env["FAKE_DOCKER_RC_IMAGE_INSPECT"] = "0"
+	if err := w.launcher().ensureProxy(w.proj); err != nil {
+		t.Fatal(err)
+	}
+	if !w.hasCall("docker [run]") {
+		t.Fatalf("a proxy on an older image was kept:\n%s", strings.Join(w.calls(), "\n"))
+	}
+}
+
+// The locksql console's own directory is read-only for the agents: a mount point cannot be
+// removed, renamed or replaced, so no agent swaps it for a symbolic link that the console's bind
+// mount would follow on the host (#121). Made when missing; a link or a file is refused.
+func TestRunArgsLocksqlDirReadOnly(t *testing.T) {
+	w := newWorld(t, repoRoot(t))
+	d := w.proj + "/.locksql"
+	ro := "type=bind,src=" + d + ",dst=" + d + ",readonly"
+	args, err := w.launcher().runArgs(w.proj, "172.18.0.5")
+	if err != nil || !contains(args, ro) {
+		t.Fatalf("missing %q: %v", ro, err)
+	}
+	if fi, err := os.Lstat(d); err != nil || !fi.IsDir() {
+		t.Fatalf("%s not made: %v", d, err)
+	}
+	if err := os.Remove(d); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(w.home, d); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := w.launcher().runArgs(w.proj, "172.18.0.5"); err == nil || !strings.Contains(err.Error(), "is not a directory") {
+		t.Fatalf("a symbolic link: %v", err)
+	}
+	if err := os.Remove(d); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(d, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := w.launcher().runArgs(w.proj, "172.18.0.5"); err == nil || !strings.Contains(err.Error(), "is not a directory") {
+		t.Fatalf("a file: %v", err)
+	}
+	// Without locksql, no mount and nothing made.
+	if err := os.Remove(d); err != nil {
+		t.Fatal(err)
+	}
+	w.writeConf("lea.conf", "LEA_LOCKSQL=0\n")
+	args, err = w.launcher().runArgs(w.proj, "172.18.0.5")
+	if err != nil || contains(args, ro) {
+		t.Fatalf("locksql off: %v %q", err, args)
+	}
+	if _, err := os.Lstat(d); !os.IsNotExist(err) {
+		t.Fatalf("locksql off made %s: %v", d, err)
 	}
 }

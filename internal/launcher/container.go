@@ -1,6 +1,7 @@
 package launcher
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"sort"
@@ -297,8 +298,14 @@ func (l *Launcher) runArgs(proj, pip string) ([]string, error) {
 		"--mount", "type=bind,src=" + st + "/kube,dst=" + home + "/.kube/lea,readonly",
 		"--mount", "type=volume,src=" + p + "-podman-" + id + ",dst=/lea/podman"}
 	if l.Cfg.Locksql() {
-		// The locksql console's socket volume, and its client group (locksql-clients).
-		a = append(a, "-e", "LEA_LOCKSQL=1", "--group-add", "10000", "--mount", "type=volume,src=locksql-run,dst=/run/locksql")
+		// The locksql console's socket volume, and its client group (locksql-clients). Its own
+		// directory read-only (locksqlDir).
+		d, err := locksqlDir(proj)
+		if err != nil {
+			return nil, err
+		}
+		a = append(a, "-e", "LEA_LOCKSQL=1", "--group-add", "10000", "--mount", "type=volume,src=locksql-run,dst=/run/locksql",
+			"--mount", "type=bind,src="+d+",dst="+d+",readonly")
 	}
 	// lockmq and lockfile: only the socket of a console on the host (lockhost.go).
 	a = append(a, l.lockHostArgs()...)
@@ -409,4 +416,19 @@ func IsTerminal(x any) bool {
 		return false
 	}
 	return term.IsTerminal(f.Fd())
+}
+
+// locksqlDir is the locksql console's own directory of the projects directory (<proj>/.locksql:
+// its config and PII rules), made when missing. The agents get it read-only: a mount point cannot
+// be removed, renamed or replaced, so no agent swaps it for a symbolic link, which the console's
+// read-write bind mount of it would follow on this host (#121). A link or a file is refused.
+func locksqlDir(proj string) (string, error) {
+	d := proj + "/.locksql"
+	if err := os.Mkdir(d, 0o755); err != nil && !errors.Is(err, os.ErrExist) {
+		return "", die("could not create %s: %v", d, err)
+	}
+	if fi, err := os.Lstat(d); err != nil || !fi.IsDir() {
+		return "", die("%s is not a directory (a symbolic link or a file): the locksql console only writes there; remove it and retry", d)
+	}
+	return d, nil
 }
