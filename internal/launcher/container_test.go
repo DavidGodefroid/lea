@@ -248,7 +248,11 @@ func TestRunArgsContents(t *testing.T) {
 		if a == "--network" {
 			n++
 		}
-		for _, bad := range []string{"--net=host", "--network=host", "--pid", "--ipc", "--privileged", "docker.sock", "--userns", "--uts",
+		// --pid and --pid=host share the host's pids; --pids-limit only caps lea's own.
+		if a == "--pid" || strings.HasPrefix(a, "--pid=") {
+			t.Errorf("argument %q", a)
+		}
+		for _, bad := range []string{"--net=host", "--network=host", "--ipc", "--privileged", "docker.sock", "--userns", "--uts",
 			"src=" + st + ",", "dst=/lea/state,", "src=" + st + "/clipboard,", "dst=" + w.home + "/.kube/config", "apparmor=lea"} {
 			if strings.Contains(a, bad) {
 				t.Errorf("%q in %q", bad, a)
@@ -614,5 +618,71 @@ func TestProxyFollowsTheEgressAllowlist(t *testing.T) {
 	}
 	if !w.hasCall("[--label] [lea.egress-allow=github.com,proxy.golang.org]") || !w.hasCall("[LEA_EGRESS_ALLOW=github.com,proxy.golang.org]") {
 		t.Fatalf("the proxy was not restarted for the new allowlist:\n%s", strings.Join(w.calls(), "\n"))
+	}
+}
+
+// argAfter is the value that follows flag in args, and whether flag is there.
+func argAfter(args []string, flag string) (string, bool) {
+	for i, a := range args {
+		if a == flag && i+1 < len(args) {
+			return args[i+1], true
+		}
+	}
+	return "", false
+}
+
+// The lea container has memory, swap and pids limits by default (half of Docker's memory, no
+// swap beyond it), so that a runaway nested stack is OOM-killed inside lea instead of freezing
+// the host (#97); each one is configurable, and 0 turns it off.
+func TestRunArgsResourceLimits(t *testing.T) {
+	limits := func(w *world) (mem, swap, pids string, err error) {
+		args, err := w.launcher().runArgs(w.proj, "172.18.0.5")
+		mem, _ = argAfter(args, "--memory")
+		swap, _ = argAfter(args, "--memory-swap")
+		pids, _ = argAfter(args, "--pids-limit")
+		if len(args) > 0 && args[len(args)-1] != "lea:dev" {
+			t.Errorf("the image is not last: %q", args[len(args)-1])
+		}
+		return
+	}
+	w := newWorld(t, repoRoot(t))
+	w.env["FAKE_DOCKER_OUT_SYSTEM_INFO"] = "34359738368" // 32 GiB
+	if m, s, p, err := limits(w); err != nil || m != "16384m" || s != "16384m" || p != "16384" {
+		t.Errorf("defaults: --memory %q --memory-swap %q --pids-limit %q, %v", m, s, p, err)
+	}
+	if b, _ := os.ReadFile(w.log); !strings.Contains(string(b), "docker [system] [info] [--format] [{{.MemTotal}}]") {
+		t.Error("the host memory is not asked from Docker")
+	}
+	for _, c := range []struct{ mem, swap, pids, wm, ws, wp string }{
+		{"25%", "", "", "8192m", "8192m", "16384"},
+		{"8g", "12g", "4096", "8g", "12g", "4096"},
+		{"8g", "-1", "0", "8g", "-1", ""},
+		{"0", "4g", "", "", "", "16384"},
+	} {
+		w := newWorld(t, repoRoot(t))
+		w.env["FAKE_DOCKER_OUT_SYSTEM_INFO"] = "34359738368"
+		writeUserConf(t, w, "LEA_MEMORY="+c.mem+"\nLEA_MEMORY_SWAP="+c.swap+"\nLEA_PIDS_LIMIT="+c.pids+"\n")
+		if m, s, p, err := limits(w); err != nil || m != c.wm || s != c.ws || p != c.wp {
+			t.Errorf("%+v: --memory %q --memory-swap %q --pids-limit %q, %v", c, m, s, p, err)
+		}
+	}
+	// Docker that cannot tell its memory: no memory limit, and a warning naming LEA_MEMORY.
+	w = newWorld(t, repoRoot(t))
+	w.env["FAKE_DOCKER_RC_SYSTEM_INFO"] = "1"
+	if m, _, p, err := limits(w); err != nil || m != "" || p != "16384" ||
+		!strings.Contains(w.errb.String(), "LEA_MEMORY") {
+		t.Errorf("unknown memory: --memory %q --pids-limit %q, %v, stderr %q", m, p, err, w.errb.String())
+	}
+}
+
+func TestResourceLimitsAreValidated(t *testing.T) {
+	for _, line := range []string{"LEA_MEMORY=0%", "LEA_MEMORY=101%", "LEA_MEMORY=lots", "LEA_MEMORY=-1", "LEA_MEMORY=08g",
+		"LEA_MEMORY_SWAP=2t", "LEA_MEMORY_SWAP=50%", "LEA_PIDS_LIMIT=-5", "LEA_PIDS_LIMIT=12k", "LEA_PIDS_LIMIT=010"} {
+		w := newWorld(t, repoRoot(t))
+		writeUserConf(t, w, line+"\n")
+		key, _, _ := strings.Cut(line, "=")
+		if _, err := LoadConfig(w.getenv, w.root, w.proj); err == nil || !strings.Contains(err.Error(), key+" must be") {
+			t.Errorf("%s: err = %v", line, err)
+		}
 	}
 }

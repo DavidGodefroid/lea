@@ -139,7 +139,9 @@ func newWorld(t *testing.T, root string) *world {
 		"HOME": w.home, "XDG_DATA_HOME": w.data, "XDG_CONFIG_HOME": dir + "/config", "FAKE_LOG": w.log,
 		"LEA_PROJECTS_DIR": w.proj, "LEA_TMUX_BIN": w.tmux, "LEA_TMUX_BUILT": dir + "/no-built-tmux",
 		"LEA_CLIPBOARD": "0", "LEA_LOCK_TIMEOUT": "2", "LC_ALL": "C",
-		"PATH": repoRoot(t) + "/tests/fakes:" + dir + "/bin:/usr/local/bin:/usr/bin:/bin",
+		// Docker's memory (docker system info): 32 GiB, so the lea container gets a 16 GiB limit.
+		"FAKE_DOCKER_OUT_SYSTEM_INFO": "34359738368",
+		"PATH":                        repoRoot(t) + "/tests/fakes:" + dir + "/bin:/usr/local/bin:/usr/bin:/bin",
 	}
 	// What a daemon started with the default provider settings records.
 	write(w.data+"/lea/host/daemon.providers", DaemonProvidersStamp(stampMap{"LEA_PROVIDER": "claude",

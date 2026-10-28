@@ -48,6 +48,33 @@ func (l *Launcher) securityArgs() []string {
 	return a
 }
 
+// limitArgs are the lea container's resource limits (#97): without them a pile of nested stacks
+// takes the whole host down (OOM, swap thrash) instead of being OOM-killed inside lea. A share of
+// memory is taken from Docker's own MemTotal (a VM's under Docker Desktop); memory plus swap is the
+// memory itself unless LEA_MEMORY_SWAP says otherwise.
+func (l *Launcher) limitArgs() []string {
+	var a []string
+	mem := l.Cfg.Get("LEA_MEMORY")
+	if strings.HasSuffix(mem, "%") {
+		pct, _ := strconv.ParseInt(strings.TrimSuffix(mem, "%"), 10, 64)
+		out, err := l.output(false, "docker", "system", "info", "--format", "{{.MemTotal}}")
+		total, perr := strconv.ParseInt(strings.TrimSpace(out), 10, 64)
+		if err != nil || perr != nil || total <= 0 {
+			l.logf("warning: Docker did not tell its memory; the lea container runs without a memory limit (set LEA_MEMORY to a size, 16g for example)")
+			mem = "0"
+		} else {
+			mem = strconv.FormatInt(total*pct/100>>20, 10) + "m"
+		}
+	}
+	if mem != "0" {
+		a = append(a, "--memory", mem, "--memory-swap", nonEmpty(l.Cfg.Get("LEA_MEMORY_SWAP"), mem))
+	}
+	if p := l.Cfg.Get("LEA_PIDS_LIMIT"); p != "0" {
+		a = append(a, "--pids-limit", p)
+	}
+	return a
+}
+
 // busArgs is lea_bus_args: the core binary read-only at /usr/local/bin/lea and the container's
 // own bus directory at /run/lea/bus. The daemon's API socket is never mounted.
 func (l *Launcher) busArgs(proj string) ([]string, error) {
@@ -231,6 +258,7 @@ func (l *Launcher) runArgs(proj, pip string) ([]string, error) {
 	// lockmq and lockfile: only the socket of a console on the host (lockhost.go).
 	a = append(a, l.lockHostArgs()...)
 	a = append(a, l.securityArgs()...)
+	a = append(a, l.limitArgs()...)
 	for _, part := range []func() ([]string, error){
 		func() ([]string, error) { return l.busArgs(proj) },
 		l.clipboardArgs,
