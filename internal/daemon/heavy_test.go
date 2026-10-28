@@ -206,3 +206,22 @@ func TestBoardShowsHeavyJobs(t *testing.T) {
 		t.Fatalf("board heavy=%+v", b.Heavy)
 	}
 }
+
+// A job holds its slot at most heavyMaxHold, renewals included: the renewal past it frees the
+// slot for the next job of the container.
+func TestHeavySlotHoldIsCapped(t *testing.T) {
+	e := start(t)
+	e.d.SetHeavy(1, 4)
+	e.d.heavyMaxHold = 200 * time.Millisecond
+	a := acquire(t, e, "dev-1", "phpstan", 1)
+	if err := call(t, e.bus, "dev-1", "heavy_renew", map[string]any{"id": a.ID}, nil); err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(250 * time.Millisecond)
+	if err := call(t, e.bus, "dev-1", "heavy_renew", map[string]any{"id": a.ID}, nil); err == nil || !strings.Contains(err.Error(), "the most a job may") {
+		t.Fatalf("renewal past the cap: %v", err)
+	}
+	if r := acquire(t, e, "dev-2", "x", 0); !r.Granted {
+		t.Fatalf("the slot is not free: %+v", r)
+	}
+}

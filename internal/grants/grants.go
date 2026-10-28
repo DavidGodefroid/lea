@@ -152,7 +152,9 @@ type Caller struct {
 // lea gives it on their internal network). CONNECT keeps TLS end to end.
 const LeaProxy = "http://lea-proxy:3128"
 
-var validProxy = regexp.MustCompile(`^http://[A-Za-z0-9.-]{1,253}:[0-9]{1,5}$`)
+// validProxy is a proxy lea names: a host and port, after an agent's LockHTTP proxy password
+// (its name and hex token) when the gate stands in front of squid (LEA_LOCKHTTP=1).
+var validProxy = regexp.MustCompile(`^http://([a-z][a-z0-9-]{0,23}:[0-9a-f]{32}@)?[A-Za-z0-9.-]{1,253}:[0-9]{1,5}$`)
 
 // SafeEnv are the variables an allowed git or gh call keeps, each checked by safeEnvValue.
 // Everything else (GIT_*, GH_REPO, GH_HOST, tokens, LD_*, BASH_ENV…) is dropped.

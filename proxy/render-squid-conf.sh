@@ -9,6 +9,9 @@
 # refused: a tunnel to them would reopen the DNS channel the internal network closes, or bypass
 # the allowlist.
 #
+# LEA_LOCKHTTP=1: a LockHTTP gate on :3130 decides the web destinations and is the only client of
+# squid, which then listens on 127.0.0.1 only and drops its allowlist (the floor above stays).
+#
 # An internal name usually sits behind a shared ingress that routes TLS on SNI and Host, so the main
 # squid hands an allowed CONNECT to an internal name to a second, loopback squid (--peek; nothing
 # when there is no internal name). That one peeks at the ClientHello, never decrypts, and splices
@@ -72,7 +75,12 @@ acls=$(mktemp)
 trap 'rm -f "$acls"' EXIT
 set -f
 egress=
-if [ "${LEA_EGRESS_ALLOW:-}" != '*' ]; then egress=$(egress_domains) || exit 1; fi
+listen=3128
+if [ "${LEA_LOCKHTTP:-0}" = 1 ]; then
+  listen=127.0.0.1:3128
+elif [ "${LEA_EGRESS_ALLOW:-}" != '*' ]; then
+  egress=$(egress_domains) || exit 1
+fi
 n=0
 names=0
 lineno=0
@@ -132,8 +140,8 @@ CONF
   exit 0
 fi
 
+echo "http_port $listen"
 cat <<'CONF'
-http_port 3128
 visible_hostname lea-proxy
 cache deny all
 cache_mem 0 MB

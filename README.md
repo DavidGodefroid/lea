@@ -77,7 +77,7 @@ flowchart LR
 ```
 
 **Contents:** [Quick start](#quick-start) · [The deck](#the-deck) · [Git and forges](#git-and-forges) ·
-[Databases](#databases-with-locksql) · [Queues and files](#queues-and-files-with-lockmq-and-lockfile) · [Teams of agents](#teams-of-agents) · [Commands](#commands) ·
+[Databases](#databases-with-locksql) · [Queues and files](#queues-and-files-with-lockmq-and-lockfile) · [Web requests](#web-requests-with-lockhttp) · [Teams of agents](#teams-of-agents) · [Commands](#commands) ·
 [Configure](#configure) · [Safety](#how-lea-keeps-your-machine-safe) · [FAQ](#faq) ·
 [Troubleshooting](#troubleshooting) · [Development](#development)
 
@@ -346,6 +346,38 @@ warning at start. `lea lockmq` / `lea lockfile` tell you whether the agents reac
 open the console: switch to the tool's account (prefer Wayland), then
 `lockmq console --project <projects dir> --profile <profile>`. Restart lea (`lea stop --all`,
 then `lea`) after turning one on.
+
+## Web requests, with LockHTTP
+
+[LockHTTP](https://github.com/DavidGodefroid/lockhttp) puts a human between the agents and the
+web: every outbound HTTP(S) request of an agent goes through a LockHTTP gate beside lea's proxy,
+which lets through what its policy trusts and asks you, in a `lockhttp` console, about the rest.
+It is **off** by default (`LEA_LOCKHTTP=0`): lea then behaves as before.
+
+LockHTTP runs in Docker only (`docs/docker.md` in the lockhttp repository). To turn it on,
+install lockhttp's launcher (its `scripts/install.sh`, which checks the release's signatures and
+pins its image by digest), write the policy once with `lockhttp init --trusted "<your
+LEA_EGRESS_ALLOW>"`, and start `lockhttp console` in a terminal you keep in view. Then set
+`LEA_LOCKHTTP=1` in `~/.config/lea/lea.conf` and restart lea (`lea stop --all`, then `lea`);
+`lea doctor` checks each step. Nothing else on the host: no account, group or socket directory.
+
+With it on, squid listens on the proxy's loopback only, behind the gate (its floor stays: DoH
+resolvers, IP literals and private ranges are refused; the allowlist is the gate's policy now).
+lea runs the gate as a container of its own, `lea-lockhttp-gate`, in the proxy's network
+namespace, from the image the launcher pins (never a tag), as the image's `gate` account (never
+root), without capabilities, on a read-only root; it is the only container with the console's
+socket volume (`lockhttp-run`): no agent container gets it. Its audit stays in the volume
+`lea-lockhttp-audit`, its status (for the deck) in `~/.local/share/lea/lockhttp/status/`. A proxy
+started again gets a new gate. The gate names the calling container from the network the
+request arrives on, which no agent can forge: **the container is the trust boundary**. Each
+agent also has its own proxy password, and the daemon tells the gate whose it is
+(`sources.json`, under `~/.local/share/lea/lockhttp/`), but the agents of one container share a
+uid and can read each other's environment: that name is for the audit and the console's display
+(attribution), never a permission, and one agent can pass for another of the same container.
+lea-keyproxy goes through the gate too, and so do the forge calls of grants, with the calling
+agent's own password. `LEA_GIT_SSH` and `LEA_OTEL_UPSTREAM` are refused (their raw TCP forwarders
+would bypass the gate: use git over HTTPS), and claude.ai's connectors are turned off in the
+agents' Claude Code (WebSearch and WebFetch stay).
 
 ## Teams of agents
 
@@ -695,6 +727,7 @@ read-only. The screen runs in the deck on the host: agents cannot open or drive 
 | `LEA_LOCKSQL_VAULT_ADDR` | asked by `lea init` | Vault address of the locksql console, for a Vault profile |
 | `LEA_LOCKMQ`, `LEA_LOCKFILE` | `0`, asked by `lea init` | let the agents reach a lockmq / lockfile console on this host |
 | `LEA_LOCKMQ_REF`, `LEA_LOCKFILE_REF` | the pinned releases | the release `lea init` installs on the host (lockfile v0.1.1 or later); `lea update` records a newer one you accept |
+| `LEA_LOCKHTTP` | `0` | send the agents' web requests through a LockHTTP gate (refuses `LEA_GIT_SSH` and `LEA_OTEL_UPSTREAM`) |
 | `LEA_INTERNAL_HOSTS` | none | private hosts the proxy may reach (format in `config/internal-hosts`) |
 | `LEA_EGRESS_ALLOW` | empty (lea's default list) | the only web domains agents may reach, comma separated (subdomains included); `default` stands for lea's list, `*` opens the web |
 | `LEA_NESTED_NETWORKS` | empty | networks your compose files expect, created at start |
@@ -893,7 +926,8 @@ lea heavy -- go test ./...
 them, then runs the command on `LEA_HEAVY_WORKERS` CPUs of its own (tools that count the CPUs
 they may use, such as `nproc`, see that many) with `GOMAXPROCS`, `MAKEFLAGS=-jN`,
 `CMAKE_BUILD_PARALLEL_LEVEL`, `CARGO_BUILD_JOBS`, `PYTEST_XDIST_AUTO_NUM_WORKERS` and
-`LEA_HEAVY_WORKERS` set. A slot whose job was killed frees itself within three minutes. `lea board`
+`LEA_HEAVY_WORKERS` set. A slot whose job was killed frees itself within three minutes; a job holds its slot two hours at
+most. `lea board`
 lists the jobs that run and wait.
 
 ## Known limitations

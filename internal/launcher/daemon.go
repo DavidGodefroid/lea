@@ -48,6 +48,15 @@ func DaemonResumeStamp(get func(string) string) string {
 	return mode + " " + strconv.FormatInt(delay, 10)
 }
 
+// DaemonLockHTTPStamp is the LockHTTP switch as the daemon records it ("on" or "off"): a daemon
+// started with the other is restarted (it hands the agents their proxy passwords).
+func DaemonLockHTTPStamp(get func(string) string) string {
+	if get("LEA_LOCKHTTP") == "1" {
+		return "on"
+	}
+	return "off"
+}
+
 // StackIdleSetting is how long an agent stays idle before lea stops what it started in the nested
 // Podman (#132): LEA_STACK_IDLE minutes, 0 (off) to 1440, 10 when unset or invalid.
 func StackIdleSetting(get func(string) string) time.Duration {
@@ -98,6 +107,7 @@ func (l *Launcher) ensureDaemon() error {
 		if (tb == "" || readTrim(host+"/daemon.tmux") == tb) && readTrim(host+"/daemon.version") == ver &&
 			readTrim(host+"/daemon.approvals") == appr && readTrim(host+"/daemon.providers") == l.providersStamp() &&
 			readTrim(host+"/daemon.resume") == DaemonResumeStamp(l.Cfg.Get) &&
+			readTrim(host+"/daemon.lockhttp") == DaemonLockHTTPStamp(l.Cfg.Get) &&
 			readTrim(host+"/daemon.stacks") == DaemonStacksStamp(l.Cfg.Get) {
 			return nil
 		}

@@ -476,6 +476,16 @@ func (l *Launcher) runArgs(proj, pip string) ([]string, error) {
 	}
 	proxy := "http://" + pip + ":3128"
 	noProxy := "localhost,127.0.0.1,::1,lea-proxy," + pip
+	var lh []string
+	if l.Cfg.LockHTTP() {
+		// The gate, on the same address; lea-keyproxy (4400) is still reached directly.
+		p, nested, err := l.lockHTTPAgentEnv(l.Cfg.ContainerName(proj), pip)
+		if err != nil {
+			return nil, err
+		}
+		proxy = p
+		lh = []string{"-e", "LEA_LOCKHTTP=1", "-e", "LEA_NESTED_PROXY_TOKEN=" + nested}
+	}
 	if err := noComma(proj, home, st, l.Root); err != nil {
 		return nil, err
 	}
@@ -513,6 +523,7 @@ func (l *Launcher) runArgs(proj, pip string) ([]string, error) {
 		a = append(a, "-e", "LEA_LOCKSQL=1", "--group-add", "10000", "--mount", "type=volume,src=locksql-run,dst=/run/locksql",
 			"--mount", "type=bind,src="+d+",dst="+d+",readonly")
 	}
+	a = append(a, lh...)
 	// lockmq and lockfile: only the socket of a console on the host (lockhost.go).
 	a = append(a, l.lockHostArgs()...)
 	a = append(a, l.securityArgs()...)

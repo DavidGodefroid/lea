@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"bytes"
 	"crypto/x509"
+	"encoding/base64"
 	"io"
 	"log"
 	"net"
@@ -25,6 +26,7 @@ type fwdProxy struct {
 	*httptest.Server
 	mu   sync.Mutex
 	seen []string
+	auth []string // Proxy-Authorization|X-Lea-Source of each request
 }
 
 func newFwdProxy(t *testing.T) *fwdProxy {
@@ -32,6 +34,7 @@ func newFwdProxy(t *testing.T) *fwdProxy {
 	p.Server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		p.mu.Lock()
 		p.seen = append(p.seen, r.Method+" "+r.RequestURI)
+		p.auth = append(p.auth, r.Header.Get("Proxy-Authorization")+"|"+strings.Join(r.Header.Values(SourceHeader), ","))
 		p.mu.Unlock()
 		if r.Method == http.MethodConnect {
 			up, err := net.Dial("tcp", r.Host)
@@ -69,6 +72,12 @@ func newFwdProxy(t *testing.T) *fwdProxy {
 	}))
 	t.Cleanup(p.Close)
 	return p
+}
+
+func (p *fwdProxy) headers() []string {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return append([]string(nil), p.auth...)
 }
 
 func (p *fwdProxy) carried() []string {
@@ -478,4 +487,93 @@ func certPool(s *httptest.Server) *x509.CertPool {
 	pool := x509.NewCertPool()
 	pool.AddCert(s.Certificate())
 	return pool
+}
+
+func TestGateCarriesTokenAndSource(t *testing.T) {
+	t.Setenv("HTTPS_PROXY", "")
+	p := newFwdProxy(t)
+	plain := newEcho(t)
+	tlsUp := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { _, _ = io.WriteString(w, "ok") }))
+	defer tlsUp.Close()
+	plainBase, _ := url.Parse(plain.URL + "/v1")
+	tlsBase, _ := url.Parse(tlsUp.URL + "/v1")
+	via, _ := url.Parse(p.URL)
+	source := "lea-a"
+	var mu sync.Mutex
+	f, err := New(Config{Endpoints: []Endpoint{{Name: "plain", URL: plainBase}, {Name: "tls", URL: tlsBase}}, Via: via,
+		RootCAs: certPool(tlsUp), Log: log.New(io.Discard, "", 0),
+		Gate: &Gate{Token: "tok", Source: func(ip net.IP) (string, bool) {
+			mu.Lock()
+			defer mu.Unlock()
+			return source, ip.IsLoopback() && source != ""
+		}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	fw := httptest.NewServer(f)
+	defer fw.Close()
+	auth := "Basic " + base64.StdEncoding.EncodeToString([]byte("keyproxy:tok"))
+	forged := map[string]string{SourceHeader: "lea-evil", "Proxy-Authorization": "Basic Zm9vOmJhcg=="}
+	if code, _, _ := raw(t, fw.URL, "GET", "/plain/models", forged); code != 200 {
+		t.Fatalf("plain: %d", code)
+	}
+	if req, _ := plain.request(); req.Header.Get(SourceHeader) != "lea-a" {
+		t.Errorf("upstream saw source %q", req.Header.Get(SourceHeader))
+	}
+	if code, _, body := raw(t, fw.URL, "GET", "/tls/models", forged); code != 200 || body != "ok" {
+		t.Fatalf("tls: %d %q", code, body)
+	}
+	mu.Lock()
+	source = "lea-b"
+	mu.Unlock()
+	if code, _, _ := raw(t, fw.URL, "GET", "/tls/models", nil); code != 200 {
+		t.Fatalf("tls lea-b: %d", code)
+	}
+	got := p.headers()
+	want := []string{auth + "|lea-a", auth + "|lea-a", auth + "|lea-b"}
+	if strings.Join(got, "\n") != strings.Join(want, "\n") {
+		t.Errorf("proxy saw %q, want %q (carried %q)", got, want, p.carried())
+	}
+	if c := p.carried(); len(c) != 3 || !strings.HasPrefix(c[2], "CONNECT ") {
+		t.Errorf("lea-b must open its own tunnel: %q", c)
+	}
+	mu.Lock()
+	source = ""
+	mu.Unlock()
+	if code, _, body := raw(t, fw.URL, "GET", "/tls/models", nil); code != http.StatusForbidden || !strings.Contains(body, "unknown source") {
+		t.Errorf("unknown source: %d %q", code, body)
+	}
+	if len(p.carried()) != 3 {
+		t.Errorf("an unknown source reached the gate: %q", p.carried())
+	}
+}
+
+func TestGateNeedsTokenAndSource(t *testing.T) {
+	via, _ := url.Parse("http://127.0.0.1:3130")
+	for _, g := range []*Gate{{Token: "t"}, {Source: func(net.IP) (string, bool) { return "", false }}} {
+		if _, err := New(Config{Via: via, Gate: g}); err == nil {
+			t.Errorf("gate %+v accepted", g)
+		}
+	}
+}
+
+func TestGateRefusalIsA403(t *testing.T) {
+	t.Setenv("HTTPS_PROXY", "")
+	gate := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("X-LockHTTP-Code", "E_NO_CONSOLE")
+		http.Error(w, "no console", http.StatusForbidden)
+	}))
+	defer gate.Close()
+	base, _ := url.Parse("https://upstream.test/v1")
+	via, _ := url.Parse(gate.URL)
+	f, err := New(Config{Endpoints: []Endpoint{{Name: "tls", URL: base}}, Via: via, Log: log.New(io.Discard, "", 0),
+		Gate: &Gate{Token: "tok", Source: func(net.IP) (string, bool) { return "lea-a", true }}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	fw := httptest.NewServer(f)
+	defer fw.Close()
+	if code, _, body := raw(t, fw.URL, "GET", "/tls/models", nil); code != http.StatusForbidden || !strings.Contains(body, "LockHTTP refused") {
+		t.Errorf("refused CONNECT: %d %q", code, body)
+	}
 }

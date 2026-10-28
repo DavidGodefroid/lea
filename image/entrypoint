@@ -43,7 +43,24 @@ for d in "$HOME/.config" "$HOME/.kube"; do
   if [ -d "$d" ]; then chown "$LEA_UID:$LEA_GID" "$d"; fi
 done
 
-sed -e "s/@LEA_PROXY_IP@/$LEA_PROXY_IP/g" /usr/local/share/lea/containers.conf.tmpl >/etc/containers/containers.conf
+case $LEA_PROXY_IP in ''|*[!0123456789.]*) echo "lea: invalid LEA_PROXY_IP" >&2; exit 1 ;; esac
+nested_proxy=http://$LEA_PROXY_IP:3128
+if [ "${LEA_LOCKHTTP:-0}" = 1 ]; then
+  # LockHTTP: the nested Podman's containers go through the gate as "nested".
+  case ${LEA_NESTED_PROXY_TOKEN:-} in ''|*[!0123456789abcdef]*)
+    echo "lea: LEA_LOCKHTTP=1 needs LEA_NESTED_PROXY_TOKEN (lea's launcher sets it)" >&2; exit 1 ;;
+  esac
+  nested_proxy=http://nested:$LEA_NESTED_PROXY_TOKEN@$LEA_PROXY_IP:3130
+fi
+sed -e "s|@LEA_NESTED_PROXY@|$nested_proxy|g" /usr/local/share/lea/containers.conf.tmpl >/etc/containers/containers.conf
+if [ "${LEA_LOCKHTTP:-0}" = 1 ]; then
+  # LockHTTP decides every request the agents make; claude.ai's connectors would act from
+  # Anthropic's side, out of its sight: off (decision D10; WebSearch and WebFetch stay).
+  m=/etc/claude-code/managed-settings.json
+  jq '.env.ENABLE_CLAUDEAI_MCP_SERVERS = "false"' "$m" >"$m.new"
+  chmod 0644 "$m.new"
+  mv "$m.new" "$m"
+fi
 # Each git SSH endpoint goes to its forwarder on the proxy (port 2222 + its index), by IP so that
 # nested containers (GIT_SSH_COMMAND -F /run/lea/ssh_config) reach it too.
 {

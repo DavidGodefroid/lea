@@ -143,3 +143,18 @@ func TestGrantCallerRoutesThroughLeaProxy(t *testing.T) {
 		t.Fatalf("caller proxy %q, err %v", c.Proxy, err)
 	}
 }
+
+// TestGrantCallerRoutesThroughTheGate: under LockHTTP (SetGrantProxy) squid is out of the
+// containers' reach; every pinned call goes through the gate with the calling agent's own token,
+// derived from the socket's container and the agent's row, never from anything the agent says.
+func TestGrantCallerRoutesThroughTheGate(t *testing.T) {
+	e := start(t)
+	e.d.SetGrantProxy(func(container, agent string) string {
+		return "http://" + agent + ":0123456789abcdef0123456789abcdef@lea-proxy:3130#" + container
+	})
+	call(t, e.bus, "dev", "agents_list", nil, nil) // registers lea-a/dev
+	c, err := e.d.grantCaller(Origin{Container: "lea-a"}, "lea-a/dev", "")
+	if err != nil || c.Proxy != "http://dev:0123456789abcdef0123456789abcdef@lea-proxy:3130#lea-a" {
+		t.Fatalf("caller proxy %q, err %v", c.Proxy, err)
+	}
+}

@@ -21,12 +21,15 @@ const (
 	// DefaultHeavyWorkers is how many workers (CPUs) one heavy job gets (LEA_HEAVY_WORKERS).
 	DefaultHeavyWorkers = 4
 	// heavyRenew is how often lea heavy renews its slot; heavyTTL, how long a slot lives without.
-	heavyRenew       = time.Minute
-	defaultHeavyTTL  = 3 * heavyRenew
-	maxHeavyWait     = 600
-	maxHeavyLabel    = 80
-	maxHeavyQueue    = 64
-	heavyPollRecheck = 5 * time.Second
+	heavyRenew      = time.Minute
+	defaultHeavyTTL = 3 * heavyRenew
+	maxHeavyWait    = 600
+	maxHeavyLabel   = 80
+	maxHeavyQueue   = 64
+	// defaultHeavyMaxHold caps how long one job holds a slot, renewals included: an agent cannot
+	// keep one for ever from the others of its container.
+	defaultHeavyMaxHold = 2 * time.Hour
+	heavyPollRecheck    = 5 * time.Second
 )
 
 // DefaultHeavySlots is the slots of a host with cpus CPUs: three quarters of them, workers each,
@@ -44,6 +47,7 @@ type heavyHolder struct {
 	label   string
 	slot    int
 	expires time.Time
+	since   time.Time
 }
 
 type heavyWaiter struct {
@@ -123,7 +127,7 @@ func (d *Daemon) holdLocked(agent, label string, i int) *heavyHolder {
 	if ttl <= 0 {
 		ttl = defaultHeavyTTL
 	}
-	return &heavyHolder{id: d.heavySeq, agent: agent, label: label, slot: i, expires: time.Now().Add(ttl)}
+	return &heavyHolder{id: d.heavySeq, agent: agent, label: label, slot: i, expires: time.Now().Add(ttl), since: time.Now()}
 }
 
 // busyLocked names the holders in slot order: "agent label" for the host's board, the agent alone
@@ -288,6 +292,14 @@ func (d *Daemon) heavyRenew(o Origin, me string, raw json.RawMessage) (any, erro
 	ttl := d.heavyTTL
 	if ttl <= 0 {
 		ttl = defaultHeavyTTL
+	}
+	hold := d.heavyMaxHold
+	if hold <= 0 {
+		hold = defaultHeavyMaxHold
+	}
+	if time.Since(h.since) >= hold {
+		d.freeLocked(d.heavy[o.Container], id)
+		return nil, fmt.Errorf("heavy slot %d held for %s, the most a job may: freed for the next one", id, hold)
 	}
 	h.expires = time.Now().Add(ttl)
 	return struct{}{}, nil

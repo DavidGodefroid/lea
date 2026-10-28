@@ -1,7 +1,26 @@
 #!/bin/sh
 # lea-proxy: renders squid.conf from the mounted internal-hosts, starts the TCP forwarders, runs squid
 # and, when the launcher mounted an endpoints file, the key forwarder lea-keyproxy (port 4400).
+# LEA_LOCKHTTP=1: squid listens on the loopback only, behind a LockHTTP gate on :3130, which the
+# agents and lea-keyproxy go through; no SSH or OTel forwarder. The gate is a container of its own
+# that lea runs in this container's network namespace (lockhttp's docs/lea.md).
 set -eu
+lockhttp=${LEA_LOCKHTTP:-0}
+if [ "$lockhttp" = 1 ]; then
+  # Raw TCP forwarders would be a way out the gate never sees.
+  if [ -n "${LEA_GIT_SSH:-}" ]; then
+    echo "lea-proxy: LEA_LOCKHTTP=1 refuses LEA_GIT_SSH: its SSH forwarders would bypass the LockHTTP gate" >&2
+    exit 1
+  fi
+  if [ -n "${LEA_OTEL_UPSTREAM:-}" ]; then
+    echo "lea-proxy: LEA_LOCKHTTP=1 refuses LEA_OTEL_UPSTREAM: its TCP forwarder would bypass the LockHTTP gate" >&2
+    exit 1
+  fi
+  if [ ! -d /etc/lockhttp-gate ]; then
+    echo "lea-proxy: LEA_LOCKHTTP=1 needs /etc/lockhttp-gate mounted by lea" >&2
+    exit 1
+  fi
+fi
 /usr/local/bin/render-squid-conf.sh /etc/lea/internal-hosts >/etc/squid/squid.conf
 /usr/local/bin/render-squid-conf.sh --peek /etc/lea/internal-hosts >/etc/squid/peek.conf
 squid -k parse -f /etc/squid/squid.conf
@@ -38,23 +57,40 @@ if [ -s /etc/squid/peek.conf ]; then
   wait_port 3129 "the peek squid"
 fi
 if [ ! -s /etc/lea/endpoints ]; then
+  unset LEA_KEYPROXY_TOKEN
   exec squid -N -f /etc/squid/squid.conf
 fi
-# The key forwarder reaches every upstream through the main squid: it starts once squid listens.
+# The key forwarder reaches every upstream through the main squid, or through the gate, which
+# reaches squid: it starts once squid listens. The gate may start later: until then, the key
+# forwarder's requests fail (closed).
 squid -N -f /etc/squid/squid.conf &
 squid_pid=$!
 wait_port 3128 "squid"
-lea-keyproxy -endpoints /etc/lea/endpoints -listen :4400 -via http://127.0.0.1:3128 &
-keyproxy_pid=$!
-# An invalid endpoints file fails the container: no agent is left with a silent port 4400.
-wait_port 4400 "lea-keyproxy"
+keyproxy_pid=''
+via=http://127.0.0.1:3128
+if [ "$lockhttp" = 1 ]; then via=http://127.0.0.1:3130; fi
+if [ -s /etc/lea/endpoints ]; then
+  if [ "$lockhttp" = 1 ]; then
+    lea-keyproxy -endpoints /etc/lea/endpoints -listen :4400 -via "$via" -sources /etc/lockhttp-gate/sources.json &
+  else
+    lea-keyproxy -endpoints /etc/lea/endpoints -listen :4400 -via "$via" &
+  fi
+  keyproxy_pid=$!
+  # An invalid endpoints file fails the container: no agent is left with a silent port 4400.
+  wait_port 4400 "lea-keyproxy"
+fi
+unset LEA_KEYPROXY_TOKEN
 # shellcheck disable=SC2317,SC2329 # invoked via trap
-stop() { kill "$squid_pid" "$keyproxy_pid" 2>/dev/null || true; }
+stop() {
+  # shellcheck disable=SC2086 # empty pids drop out
+  kill "$squid_pid" $keyproxy_pid 2>/dev/null || true
+}
 trap stop TERM INT
 # The container lives as long as squid: when it exits (or is stopped), so does the forwarder.
 status=0
 wait "$squid_pid" || status=$?
 # A trapped signal interrupts wait: wait again for squid's own exit.
 if kill -0 "$squid_pid" 2>/dev/null; then wait "$squid_pid" || status=$?; fi
-kill "$keyproxy_pid" 2>/dev/null || true
+# shellcheck disable=SC2086
+kill $keyproxy_pid 2>/dev/null || true
 exit "$status"

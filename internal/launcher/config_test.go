@@ -265,3 +265,28 @@ func TestLocksqlAgentProfiles(t *testing.T) {
 		t.Fatal("LEA_LOCKSQL_AGENT_PROFILES is shareable")
 	}
 }
+
+func TestLockHTTPSwitch(t *testing.T) {
+	w := newWorld(t, repoRoot(t))
+	for file, want := range map[string]bool{"": false, "LEA_LOCKHTTP=0\n": false, "LEA_LOCKHTTP=1\n": true} {
+		writeUserConf(t, w, file)
+		c, err := LoadConfig(w.getenv, w.root, w.proj)
+		if err != nil || c.LockHTTP() != want {
+			t.Errorf("%q: %v, LockHTTP %v, want %v", file, err, c.LockHTTP(), want)
+			continue
+		}
+		if env := strings.Join(c.Environ(nil), "\n") + "\n"; !strings.Contains(env, "\nLEA_LOCKHTTP=") {
+			t.Errorf("%q: Environ lacks LEA_LOCKHTTP", file)
+		}
+	}
+	for conf, want := range map[string]string{
+		"LEA_LOCKHTTP=yes\n":                                    "LEA_LOCKHTTP must be 1 (agents' web egress through a LockHTTP gate) or 0, not 'yes'",
+		"LEA_LOCKHTTP=1\nLEA_GIT_SSH=github.com:22\n":           "LEA_LOCKHTTP=1 refuses LEA_GIT_SSH",
+		"LEA_LOCKHTTP=1\nLEA_OTEL_UPSTREAM=otel.example:4318\n": "LEA_LOCKHTTP=1 refuses LEA_OTEL_UPSTREAM",
+	} {
+		writeUserConf(t, w, conf)
+		if _, err := LoadConfig(w.getenv, w.root, w.proj); err == nil || !strings.Contains(err.Error(), want) {
+			t.Errorf("%q: err = %v, want %q", conf, err, want)
+		}
+	}
+}

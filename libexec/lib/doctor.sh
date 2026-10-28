@@ -93,11 +93,13 @@ lea_doctor() {
   done
 
   # The domains the proxy always allows: EGRESS_ALWAYS of proxy/render-squid-conf.sh.
-  case ${LEA_EGRESS_ALLOW:-} in
+  if [ "${LEA_LOCKHTTP:-0}" = 1 ]; then
+    lea__ok "egress: the LockHTTP gate decides (its policy's trusted reads replace LEA_EGRESS_ALLOW: lockhttp init --trusted)"
+  else case ${LEA_EGRESS_ALLOW:-} in
     '') lea__ok "egress allowlist: lea's default (forges, registries, model APIs; LEA_EGRESS_ALLOW extends it with 'default,<domain>')" ;;
     '*') lea__warn "egress allowlist" "off (LEA_EGRESS_ALLOW='*'): agents reach any public web domain; only DoH resolvers and IP literals are refused" ;;
     *) lea__ok "egress allowlist: $LEA_EGRESS_ALLOW (always: anthropic.com,claude.ai,claude.com)" ;;
-  esac
+  esac; fi
 
   if [ -n "$LEA_OTEL_UPSTREAM" ]; then lea__ok "telemetry upstream $LEA_OTEL_UPSTREAM"
   else lea__ok "telemetry: off (LEA_OTEL_UPSTREAM)"; fi
@@ -110,6 +112,7 @@ lea_doctor() {
   fi
   lea__doctor_lockhost lockmq
   lea__doctor_lockhost lockfile
+  lea__doctor_lockhttp || _drc=1
 
   if [ -f "$_dds/kube/config" ]; then
     if [ -n "$(find "$_dds/kube/config" -mmin -480 2>/dev/null)" ]; then lea__ok "kubernetes token"

@@ -31,7 +31,7 @@ var protectedKeys = map[string]bool{
 // core subcommands and libexec/lea-sh.
 var ExportedKeys = []string{
 	"LEA_PREFIX", "LEA_IMAGE", "LEA_PROXY_IMAGE", "LEA_GIT_SSH", "LEA_GIT_KNOWN_HOSTS", "LEA_LOCKSQL", "LEA_LOCKSQL_IMAGE", "LEA_LOCKSQL_REF", "LEA_LOCKSQL_VAULT_ADDR",
-	"LEA_LOCKMQ", "LEA_LOCKFILE", "LEA_LOCKMQ_REF", "LEA_LOCKFILE_REF",
+	"LEA_LOCKMQ", "LEA_LOCKFILE", "LEA_LOCKMQ_REF", "LEA_LOCKFILE_REF", "LEA_LOCKHTTP",
 	"LEA_OTEL_UPSTREAM", "LEA_NESTED_NETWORKS", "LEA_K8S_NAMESPACE", "LEA_INTERNAL_HOSTS", "LEA_EGRESS_ALLOW", "LEA_PROJECTS_DIR",
 	"LEA_APPROVALS", "LEA_APPROVAL_TIMEOUT", "LEA_SOUND", "LEA_SOUND_ATTENTION", "LEA_SOUND_DONE",
 	"LEA_PROVIDER", "LEA_MODEL", "LEA_PROVIDERS", "LEA_AUTO_RESUME", "LEA_RESUME_DELAY",
@@ -246,6 +246,17 @@ func (c *Config) resolve(root string) error {
 	if err := c.resolveAgentCPUs(); err != nil {
 		return err
 	}
+	lh := nonEmpty(c.Get("LEA_LOCKHTTP"), "0")
+	if lh != "0" && lh != "1" {
+		return fmt.Errorf("LEA_LOCKHTTP must be 1 (agents' web egress through a LockHTTP gate) or 0, not '%s'", lh)
+	}
+	if lh == "1" && c.Get("LEA_GIT_SSH") != "" {
+		return fmt.Errorf("LEA_LOCKHTTP=1 refuses LEA_GIT_SSH: its SSH forwarders would bypass the LockHTTP gate (use git over HTTPS, or LEA_LOCKHTTP=0)")
+	}
+	if lh == "1" && c.Get("LEA_OTEL_UPSTREAM") != "" {
+		return fmt.Errorf("LEA_LOCKHTTP=1 refuses LEA_OTEL_UPSTREAM: its TCP forwarder (port 4318) would bypass the LockHTTP gate (leave it empty, or LEA_LOCKHTTP=0)")
+	}
+	c.final["LEA_LOCKHTTP"] = lh
 	if err := c.resolveLimits(); err != nil {
 		return err
 	}
@@ -567,6 +578,10 @@ func expandHome(s, home string) (string, error) {
 
 // GitSSH is LEA_GIT_SSH: the git SSH endpoints, space separated ("" when git uses HTTPS only).
 func (c *Config) GitSSH() string { return c.Get("LEA_GIT_SSH") }
+
+// LockHTTP reports whether the agents' web egress goes through a LockHTTP gate (LEA_LOCKHTTP=1;
+// off by default).
+func (c *Config) LockHTTP() bool { return c.Get("LEA_LOCKHTTP") == "1" }
 
 // Locksql reports whether lea is wired for a locksql console (LEA_LOCKSQL=1, the default).
 func (c *Config) Locksql() bool { return c.Get("LEA_LOCKSQL") != "0" }
