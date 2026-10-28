@@ -2,14 +2,19 @@
 # lea-proxy: renders squid.conf from the mounted internal-hosts, starts the TCP forwarders, runs squid
 # and, when the launcher mounted an endpoints file, the key forwarder lea-keyproxy (port 4400).
 # LEA_LOCKHTTP=1: squid listens on the loopback only, behind a LockHTTP gate on :3130 (its own uid,
-# never 0), which the agents and lea-keyproxy go through; no SSH forwarder.
+# never 0), which the agents and lea-keyproxy go through; no SSH or OTel forwarder.
 set -eu
 lockhttp=${LEA_LOCKHTTP:-0}
 mitm=${LEA_LOCKHTTP_MITM:-0}
 gate_uid=10003 signer_uid=10004
 if [ "$lockhttp" = 1 ]; then
+  # Raw TCP forwarders would be a way out the gate never sees.
   if [ -n "${LEA_GIT_SSH:-}" ]; then
     echo "lea-proxy: LEA_LOCKHTTP=1 refuses LEA_GIT_SSH: its SSH forwarders would bypass the LockHTTP gate" >&2
+    exit 1
+  fi
+  if [ -n "${LEA_OTEL_UPSTREAM:-}" ]; then
+    echo "lea-proxy: LEA_LOCKHTTP=1 refuses LEA_OTEL_UPSTREAM: its TCP forwarder would bypass the LockHTTP gate" >&2
     exit 1
   fi
   if [ ! -x /usr/local/bin/lockhttp ] || [ ! -d /run/lockhttp ] || [ ! -d /etc/lockhttp-gate ]; then

@@ -58,6 +58,9 @@ lea_load_config() {
   if [ "$LEA_LOCKHTTP" = 1 ] && [ -n "$LEA_GIT_SSH" ]; then
     lea_die "LEA_LOCKHTTP=1 refuses LEA_GIT_SSH: its SSH forwarders would bypass the LockHTTP gate (use git over HTTPS, or LEA_LOCKHTTP=0)"
   fi
+  if [ "$LEA_LOCKHTTP" = 1 ] && [ -n "${LEA_OTEL_UPSTREAM:-}" ]; then
+    lea_die "LEA_LOCKHTTP=1 refuses LEA_OTEL_UPSTREAM: its TCP forwarder (port 4318) would bypass the LockHTTP gate (leave it empty, or LEA_LOCKHTTP=0)"
+  fi
   LEA_LOCKHTTP_MITM=${LEA_LOCKHTTP_MITM:-0}
   case $LEA_LOCKHTTP_MITM in 0|1) ;; *) lea_die "LEA_LOCKHTTP_MITM must be 1 (the LockHTTP gate decrypts HTTPS with a local CA) or 0, not '$LEA_LOCKHTTP_MITM'" ;; esac
   if [ "$LEA_LOCKHTTP_MITM" = 1 ] && [ "$LEA_LOCKHTTP" != 1 ]; then lea_die "LEA_LOCKHTTP_MITM=1 needs LEA_LOCKHTTP=1"; fi

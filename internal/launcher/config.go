@@ -249,6 +249,9 @@ func (c *Config) resolve(root string) error {
 	if lh == "1" && c.Get("LEA_GIT_SSH") != "" {
 		return fmt.Errorf("LEA_LOCKHTTP=1 refuses LEA_GIT_SSH: its SSH forwarders would bypass the LockHTTP gate (use git over HTTPS, or LEA_LOCKHTTP=0)")
 	}
+	if lh == "1" && c.Get("LEA_OTEL_UPSTREAM") != "" {
+		return fmt.Errorf("LEA_LOCKHTTP=1 refuses LEA_OTEL_UPSTREAM: its TCP forwarder (port 4318) would bypass the LockHTTP gate (leave it empty, or LEA_LOCKHTTP=0)")
+	}
 	c.final["LEA_LOCKHTTP"] = lh
 	mitm := nonEmpty(c.Get("LEA_LOCKHTTP_MITM"), "0")
 	if mitm != "0" && mitm != "1" {
