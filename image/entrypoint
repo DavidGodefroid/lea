@@ -27,6 +27,11 @@ if [ "${LEA_LOCKFILE:-0}" = 1 ]; then lock_host lockfile "${LEA_LOCKFILE_UID:-}"
 grep -q "^$user:" /etc/subuid || echo "$user:200000:65536" >>/etc/subuid
 grep -q "^$user:" /etc/subgid || echo "$user:200000:65536" >>/etc/subgid
 
+# Runtime state of a previous boot: /run is the container's writable layer, so a docker start
+# after a host crash or reboot finds it again. Podman refuses to run on its stale boot ID (#97),
+# a stale socket would pass for the new service's, and agent and shell pid files name dead
+# processes. The bus directory (/run/lea/bus) is a bind mount and stays.
+rm -rf "/run/user/$LEA_UID" /run/lea/agents /run/lea/shells /run/lea/ready
 install -d -m 0700 -o "$LEA_UID" -g "$LEA_GID" "/run/user/$LEA_UID"
 install -d -m 0755 -o "$LEA_UID" -g "$LEA_GID" /run/lea
 chown "$LEA_UID:$LEA_GID" /lea/podman

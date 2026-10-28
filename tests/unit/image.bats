@@ -284,3 +284,26 @@ lea_sha256_file() { sha256sum "$1" | cut -d' ' -f1; }
   done
   jq -e '.hooks.PermissionRequest[0].hooks[0].timeout >= 610' "$f" >/dev/null
 }
+
+# reset_runtime ROOT: the entrypoint's runtime-dir block, with /run under ROOT.
+reset_runtime() {
+  sed -n '/^# Runtime state of a previous boot/,/^install -d -m 0755 -o "\$LEA_UID" -g "\$LEA_GID" \/run\/lea$/p' "$I/entrypoint" |
+    sed "s|/run/|$1/run/|g" >"$BATS_TEST_TMPDIR/runtime.sh"
+  grep -q 'rm -rf' "$BATS_TEST_TMPDIR/runtime.sh"
+  LEA_UID=$(id -u) LEA_GID=$(id -g) sh -eu "$BATS_TEST_TMPDIR/runtime.sh"
+}
+
+@test "a docker start after a reboot clears the previous boot's Podman runtime state (#97)" {
+  r=$BATS_TEST_TMPDIR/root u=$(id -u)
+  # What a crash leaves in the container's writable layer: Podman's cached boot ID, its tmp dir,
+  # a socket path the new service's wait would take for its own, stale agent and shell pid files.
+  mkdir -p "$r/run/user/$u/containers" "$r/run/user/$u/libpod/tmp" "$r/run/user/$u/podman" "$r/run/lea/agents" "$r/run/lea/shells" "$r/run/lea/bus"
+  echo stale-boot-id >"$r/run/user/$u/libpod/tmp/alive"
+  touch "$r/run/user/$u/podman/podman.sock" "$r/run/lea/agents/dev-1.pid" "$r/run/lea/shells/sh-1.pid" "$r/run/lea/ready" "$r/run/lea/bus/keep"
+  reset_runtime "$r"
+  [ -d "$r/run/user/$u" ] && [ "$(stat -c %a "$r/run/user/$u")" = 700 ]
+  [ -z "$(ls -A "$r/run/user/$u")" ]
+  [ ! -e "$r/run/lea/agents" ] && [ ! -e "$r/run/lea/shells" ] && [ ! -e "$r/run/lea/ready" ]
+  # The bus directory is the daemon's bind mount: never touched.
+  [ -f "$r/run/lea/bus/keep" ]
+}
