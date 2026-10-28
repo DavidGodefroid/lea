@@ -236,3 +236,54 @@ func TestPinnedGitLabIgnoresTheAgentsGlabConfig(t *testing.T) {
 		}
 	}
 }
+
+// TestPinnedGitLabGoesThroughLeaProxy: the pinned curl calls reach GitLab through the proxy lea
+// names (curl -x Caller.Proxy), never through one the agent's environment names.
+func TestPinnedGitLabGoesThroughLeaProxy(t *testing.T) {
+	needTools(t)
+	for _, p := range []string{glabPath, curlPath, jqPath} {
+		if _, err := os.Stat(p); err != nil {
+			t.Skipf("%s: %v", p, err)
+		}
+	}
+	lea, leaHits := fakeProxy(t)
+	evil, evilHits := fakeProxy(t)
+	dir := t.TempDir()
+	cfg := filepath.Join(dir, "glab-cli")
+	os.MkdirAll(cfg, 0o700)
+	os.WriteFile(filepath.Join(cfg, "config.yml"), []byte("hosts:\n    gitlab.example.com:\n        token: lea-test-not-a-token\n"), 0o600)
+	c := dev
+	c.Env = map[string]string{"HOME": dir, "GLAB_CONFIG_DIR": cfg}
+	c.Proxy = lea
+	if d := Decide("Bash", bash("glab mr merge 12 --squash -y"), dev, []Grant{glGrant(Merge)}, now, false); !strings.Contains(lastWord(t, d.Command), `'-x' 'http://lea-proxy:3128'`) ||
+		strings.Contains(d.Command, "noproxy") {
+		t.Fatalf("curl not through lea's proxy: %s", d.Command)
+	}
+	for _, call := range []string{"glab mr merge 12 --squash -y", "glab mr create -s feat/73-x -t x -y"} {
+		g := glGrant(Merge)
+		if strings.Contains(call, "create") {
+			g = glGrant(PRCreate)
+		}
+		d := Decide("Bash", bash(call), c, []Grant{g}, now, false)
+		if d.Verdict != Allow {
+			t.Fatalf("%s: %+v", call, d)
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+		cmd := exec.CommandContext(ctx, shPath, "-c", d.Command)
+		cmd.Env = append(os.Environ(), "HTTPS_PROXY="+evil, "https_proxy="+evil, "ALL_PROXY="+evil, "NO_PROXY=", "no_proxy=")
+		out, err := cmd.CombinedOutput()
+		cancel()
+		if h := leaHits(); err == nil || len(h) == 0 || h[len(h)-1] != "CONNECT gitlab.example.com:443" {
+			t.Fatalf("%s: not through lea's proxy: %v, err %v, out %s", call, h, err, out)
+		}
+	}
+	if h := evilHits(); len(h) != 0 {
+		t.Fatalf("the agent's proxy got %v", h)
+	}
+}
+
+func glGrant(action string) Grant {
+	g := all(action)
+	g.GitHub = "gitlab:gitlab.example.com/grp/app"
+	return g
+}

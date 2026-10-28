@@ -9,6 +9,7 @@ docker [image] [inspect] [lea-proxy:dev]
 tmux [-V]
 docker [inspect] [-f] [{{.State.Running}}] [lea-proxy]
 docker [network] [ls] [--filter] [label=lea.prefix=lea] [--format] [{{.Name}}]
+docker [ps] [--filter] [label=lea.prefix=lea] [--filter] [label=lea.role=session] [--format] [{{.Names}}]
 docker [image] [inspect] [locksql:0.8.0]
 docker [volume] [inspect] [locksql-run]
 -- lea
