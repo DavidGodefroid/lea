@@ -449,6 +449,20 @@ team tools (`agents_*`, `msg_*`, `board_read`, `task_update`), ask you questions
 reminder to delegate. `/lea:control-tower off` gives the session its tools back.
 The skill's old name, `/lea:tower-control`, still works for now.
 
+Type `/lea:check` (or ask for a status, a "point", a "topo") for the state of the work in
+progress, in at most 10 lines: done since the last check, in progress, left, and what is blocked
+or yours to decide. A tower builds it from the board and the agents' reports, without doing any
+work; any other agent from its own task. Nothing new since the last check: one line.
+
+```
+✅ Done
+dev-1: login fix merged, CI green
+🔄 In progress
+dev-2: dark mode, tests being written
+⚠️ Blocked / to decide
+dev-2: palette, Catppuccin or Nord?
+```
+
 ### Grants: let every agent merge, close issues, stop finished agents
 
 Claude Code judges each action from its own conversation: "you may merge" told to a lead does
