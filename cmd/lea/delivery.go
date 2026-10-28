@@ -288,8 +288,8 @@ func readPlain(path string) ([]byte, bool) {
 // deliveryCheck is lea doctor's part on delivery (lea delivery --container NAME --projects DIR
 // check --state DIR), issue #92, in doctor's format: off is fine; on, each covered repository's
 // origin still matches its pin, the repositories on a forge it does not cover are named, and each
-// forge host it pushes to has credentials in lea's state (STATE/gh, STATE/glab-cli, git's store
-// STATE/git/credentials). It only reads, and fails only on missing credentials.
+// forge host it pushes to has credentials in lea's state (STATE/gh, STATE/glab-cli; git's store
+// STATE/git/credentials covers pushes only). It only reads, and fails only on missing credentials.
 func deliveryCheck(container, proj, state string, stdout io.Writer) int {
 	var r struct {
 		Grants []grants.Grant
@@ -357,23 +357,22 @@ func deliveryCheck(container, proj, state string, stdout io.Writer) int {
 		names = append(names, h)
 	}
 	sort.Strings(names)
+	// Pinned gh and glab calls take the token of their own config only; pushes take git's store too.
 	rc := 0
 	for _, h := range names {
-		tool, login := "gh", "gh auth login"
+		tool, cfg, login, what := "gh", filepath.Join(state, "gh", "hosts.yml"), "gh auth login", "PRs"
 		if hosts[h] {
-			tool, login = "glab", "glab auth login --hostname "+h
+			tool, cfg, login, what = "glab", filepath.Join(state, "glab-cli", "config.yml"), "glab auth login --hostname "+h, "merge requests"
 		}
 		switch {
-		case !hosts[h] && yamlKey(filepath.Join(state, "gh", "hosts.yml"), h):
-		case hosts[h] && yamlKey(filepath.Join(state, "glab-cli", "config.yml"), h):
+		case yamlKey(cfg, h):
+			fmt.Fprintf(stdout, "ok    delivery credentials %s (%s)\n", h, tool)
 		case storeHas(filepath.Join(state, "git", "credentials"), h):
-			tool = "git store"
+			fmt.Fprintf(stdout, "warn  delivery credentials %s: git's store only: pushes work, %s need %s\n", h, what, login)
 		default:
 			fmt.Fprintf(stdout, "FAIL  delivery credentials %s: none in lea's state: log in from lea (lea shell): %s\n", h, login)
 			rc = 1
-			continue
 		}
-		fmt.Fprintf(stdout, "ok    delivery credentials %s (%s)\n", h, tool)
 	}
 	return rc
 }

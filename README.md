@@ -566,7 +566,8 @@ container.
 `lea doctor` checks it: each covered repository's `origin` still matches its pin (an origin
 rewritten since, or a repository on a forge not covered yet, is a warning: run `lea delivery on`
 again), and each forge host has credentials in lea's state (`gh auth login`, `glab auth login
---hostname HOST`, or git's credential store); without them it fails. It only reads.
+--hostname HOST`; git's credential store alone covers pushes only, a warning); without them it
+fails. It only reads.
 
 Everything in Grants above holds: an agent's own branch only, in its own worktree, every hard
 deny (no push to `main`, no force-push, no `--admin`). The calls covered:

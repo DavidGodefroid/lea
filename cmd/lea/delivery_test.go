@@ -308,11 +308,13 @@ func TestDeliveryCheck(t *testing.T) {
 	if rc, out := check(host); rc != 1 || strings.Contains(out, "ok    delivery credentials") {
 		t.Fatalf("look-alikes: rc=%d %q", rc, out)
 	}
-	// gh's login for github.com, git's store for gitlab.com; or glab's login.
+	// gh's login for github.com; git's store alone for gitlab.com pushes, not merge requests
+	// (pinned glab calls take the token of glab's config only); then glab's login.
 	file("gh/hosts.yml", "github.com:\n    oauth_token: x\n    user: u\n")
 	file("git/credentials", "https://u:t@gitlab.com\n")
 	rc, out = check(host)
-	if rc != 0 || !strings.Contains(out, "ok    delivery credentials github.com (gh)\n") || !strings.Contains(out, "ok    delivery credentials gitlab.com (git store)\n") {
+	if rc != 0 || !strings.Contains(out, "ok    delivery credentials github.com (gh)\n") ||
+		!strings.Contains(out, "warn  delivery credentials gitlab.com: git's store only: pushes work, merge requests need glab auth login --hostname gitlab.com\n") {
 		t.Fatalf("logged in: rc=%d %q", rc, out)
 	}
 	os.Remove(filepath.Join(state, "git", "credentials"))
