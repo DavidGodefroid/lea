@@ -190,13 +190,15 @@ func TestSoundKeysReachTheDaemon(t *testing.T) {
 	}
 }
 
-// LEA_EGRESS_ALLOW is off by default; set, it is normalized to lower-case comma-separated domain
+// LEA_EGRESS_ALLOW is empty by default (the proxy's default allowlist); '*' opens it; set, it is normalized to lower-case comma-separated domain
 // names, validated as lea_load_config does.
 func TestEgressAllow(t *testing.T) {
 	w := newWorld(t, repoRoot(t))
 	for file, want := range map[string]string{
 		"": "",
 		"LEA_EGRESS_ALLOW='GitHub.com, api.anthropic.com  proxy.golang.org,'\n": "github.com,api.anthropic.com,proxy.golang.org",
+		"LEA_EGRESS_ALLOW='*'\n":                    "*",
+		"LEA_EGRESS_ALLOW='default,corp.example'\n": "default,corp.example",
 	} {
 		writeUserConf(t, w, file)
 		c, err := LoadConfig(w.getenv, w.root, w.proj)
@@ -214,6 +216,11 @@ func TestEgressAllow(t *testing.T) {
 		if _, err := LoadConfig(w.getenv, w.root, w.proj); err == nil || !strings.Contains(err.Error(), want) {
 			t.Errorf("%q: err = %v", bad, err)
 		}
+	}
+	writeUserConf(t, w, "LEA_EGRESS_ALLOW='*,github.com'\n")
+	if _, err := LoadConfig(w.getenv, w.root, w.proj); err == nil ||
+		!strings.Contains(err.Error(), "LEA_EGRESS_ALLOW: '*' opens the web to any domain and cannot be combined with domain names") {
+		t.Errorf("'*,github.com': err = %v", err)
 	}
 	v := ""
 	for n := 1; n <= 65; n++ {

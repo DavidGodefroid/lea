@@ -235,6 +235,7 @@ func TestRunArgsContents(t *testing.T) {
 		"type=bind,src=" + st + "/glab-cli,dst=/lea/state/glab-cli", "type=bind,src=" + st + "/containers,dst=/lea/state/containers",
 		"type=bind,src=" + st + "/go,dst=/lea/state/go",
 		"type=volume,src=locksql-run,dst=/run/locksql", "10000", "LEA_LOCKSQL=1", "LEA_GIT_SSH=",
+		"type=bind,src=" + w.proj + "/.locksql,dst=" + w.proj + "/.locksql,readonly",
 		"type=bind,src=" + st + "/kube,dst=" + w.home + "/.kube/lea,readonly", "KUBECONFIG=" + w.home + "/.kube/lea/config",
 		"/dev/fuse", "/dev/net/tun", "seccomp=" + repoRoot(t) + "/image/seccomp.json",
 		"type=bind,src=" + st + "/clipboard/copy,dst=/lea/clipboard/copy", "WAYLAND_DISPLAY=lea-clipboard",
@@ -248,7 +249,11 @@ func TestRunArgsContents(t *testing.T) {
 		if a == "--network" {
 			n++
 		}
-		for _, bad := range []string{"--net=host", "--network=host", "--pid", "--ipc", "--privileged", "docker.sock", "--userns", "--uts",
+		// --pid and --pid=host share the host's pids; --pids-limit only caps lea's own.
+		if a == "--pid" || strings.HasPrefix(a, "--pid=") {
+			t.Errorf("argument %q", a)
+		}
+		for _, bad := range []string{"--net=host", "--network=host", "--ipc", "--privileged", "docker.sock", "--userns", "--uts",
 			"src=" + st + ",", "dst=/lea/state,", "src=" + st + "/clipboard,", "dst=" + w.home + "/.kube/config", "apparmor=lea"} {
 			if strings.Contains(a, bad) {
 				t.Errorf("%q in %q", bad, a)
@@ -510,7 +515,7 @@ func TestProxyFollowsTheGitSSHEndpoints(t *testing.T) {
 	w := newWorld(t, repoRoot(t))
 	writeUserConf(t, w, "LEA_GIT_SSH='github.com:22 gitlab.com:22'\n")
 	w.env["FAKE_DOCKER_OUT_INSPECT__F"] = "true"
-	w.env["FAKE_DOCKER_OUT_INSPECT___FORMAT"] = "github.com:22 gitlab.com:22"
+	w.env["FAKE_DOCKER_OUT_INSPECT___FORMAT"] = "github.com:22 gitlab.com:22@" + w.launcher().proxyRules()
 	if err := w.launcher().ensureProxy(w.proj); err != nil {
 		t.Fatal(err)
 	}
@@ -665,7 +670,7 @@ func TestProxyFollowsTheEgressAllowlist(t *testing.T) {
 	w := newWorld(t, repoRoot(t))
 	writeUserConf(t, w, "LEA_EGRESS_ALLOW=github.com,proxy.golang.org\n")
 	w.env["FAKE_DOCKER_OUT_INSPECT__F"] = "true"
-	w.env["FAKE_DOCKER_OUT_INSPECT___FORMAT"] = "|github.com,proxy.golang.org"
+	w.env["FAKE_DOCKER_OUT_INSPECT___FORMAT"] = "|github.com,proxy.golang.org@" + w.launcher().proxyRules()
 	if err := w.launcher().ensureProxy(w.proj); err != nil {
 		t.Fatal(err)
 	}
@@ -678,5 +683,240 @@ func TestProxyFollowsTheEgressAllowlist(t *testing.T) {
 	}
 	if !w.hasCall("[--label] [lea.egress-allow=github.com,proxy.golang.org]") || !w.hasCall("[LEA_EGRESS_ALLOW=github.com,proxy.golang.org]") {
 		t.Fatalf("the proxy was not restarted for the new allowlist:\n%s", strings.Join(w.calls(), "\n"))
+	}
+}
+
+// argAfter is the value that follows flag in args, and whether flag is there.
+func argAfter(args []string, flag string) (string, bool) {
+	for i, a := range args {
+		if a == flag && i+1 < len(args) {
+			return args[i+1], true
+		}
+	}
+	return "", false
+}
+
+// The lea container has memory, swap and pids limits by default (half of Docker's memory, no
+// swap beyond it), so that a runaway nested stack is OOM-killed inside lea instead of freezing
+// the host (#97); each one is configurable, and 0 turns it off.
+func TestRunArgsResourceLimits(t *testing.T) {
+	limits := func(w *world) (mem, swap, pids string, err error) {
+		args, err := w.launcher().runArgs(w.proj, "172.18.0.5")
+		mem, _ = argAfter(args, "--memory")
+		swap, _ = argAfter(args, "--memory-swap")
+		pids, _ = argAfter(args, "--pids-limit")
+		if len(args) > 0 && args[len(args)-1] != "lea:dev" {
+			t.Errorf("the image is not last: %q", args[len(args)-1])
+		}
+		return
+	}
+	w := newWorld(t, repoRoot(t))
+	w.env["FAKE_DOCKER_OUT_SYSTEM_INFO"] = "34359738368" // 32 GiB
+	if m, s, p, err := limits(w); err != nil || m != "16384m" || s != "16384m" || p != "16384" {
+		t.Errorf("defaults: --memory %q --memory-swap %q --pids-limit %q, %v", m, s, p, err)
+	}
+	if b, _ := os.ReadFile(w.log); !strings.Contains(string(b), "docker [system] [info] [--format] [{{.MemTotal}}]") {
+		t.Error("the host memory is not asked from Docker")
+	}
+	for _, c := range []struct{ mem, swap, pids, wm, ws, wp string }{
+		{"25%", "", "", "8192m", "8192m", "16384"},
+		{"8g", "12g", "4096", "8g", "12g", "4096"},
+		{"8g", "-1", "0", "8g", "-1", ""},
+		{"0", "4g", "", "", "", "16384"},
+	} {
+		w := newWorld(t, repoRoot(t))
+		w.env["FAKE_DOCKER_OUT_SYSTEM_INFO"] = "34359738368"
+		writeUserConf(t, w, "LEA_MEMORY="+c.mem+"\nLEA_MEMORY_SWAP="+c.swap+"\nLEA_PIDS_LIMIT="+c.pids+"\n")
+		if m, s, p, err := limits(w); err != nil || m != c.wm || s != c.ws || p != c.wp {
+			t.Errorf("%+v: --memory %q --memory-swap %q --pids-limit %q, %v", c, m, s, p, err)
+		}
+	}
+	// Podman has no {{.MemTotal}} (rc 125, "can't evaluate field MemTotal"): {{.Host.MemTotal}}.
+	w = newWorld(t, repoRoot(t))
+	delete(w.env, "FAKE_DOCKER_OUT_SYSTEM_INFO")
+	w.env["FAKE_DOCKER_RC_SYSTEM_INFO_AT____MEMTOTAL__"] = "125"
+	w.env["FAKE_DOCKER_OUT_SYSTEM_INFO_AT____HOST_MEMTOTAL__"] = "17179869184" // 16 GiB
+	noMeminfo(t)
+	if m, s, _, err := limits(w); err != nil || m != "8192m" || s != "8192m" {
+		t.Errorf("podman: --memory %q --memory-swap %q, %v, stderr %q", m, s, err, w.errb.String())
+	}
+	// Neither answers: the host's /proc/meminfo (Linux, where the engine runs on the host).
+	w = newWorld(t, repoRoot(t))
+	w.env["FAKE_DOCKER_RC_SYSTEM_INFO"] = "125"
+	mi := filepath.Join(t.TempDir(), "meminfo")
+	if err := os.WriteFile(mi, []byte("MemTotal:       65536000 kB\nMemFree:  1 kB\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	old := meminfoPath
+	meminfoPath = mi
+	if m, _, _, err := limits(w); err != nil || m != "32000m" {
+		t.Errorf("meminfo: --memory %q, %v, stderr %q", m, err, w.errb.String())
+	}
+	meminfoPath = old
+	// Nothing tells the memory: no memory limit, and a warning naming LEA_MEMORY.
+	w = newWorld(t, repoRoot(t))
+	w.env["FAKE_DOCKER_RC_SYSTEM_INFO"] = "1"
+	noMeminfo(t)
+	if m, _, p, err := limits(w); err != nil || m != "" || p != "16384" ||
+		!strings.Contains(w.errb.String(), "LEA_MEMORY") {
+		t.Errorf("unknown memory: --memory %q --pids-limit %q, %v, stderr %q", m, p, err, w.errb.String())
+	}
+}
+
+// noMeminfo hides the host's /proc/meminfo from limitArgs for the test.
+func noMeminfo(t *testing.T) {
+	old := meminfoPath
+	meminfoPath = filepath.Join(t.TempDir(), "no-meminfo")
+	t.Cleanup(func() { meminfoPath = old })
+}
+
+func TestResourceLimitsAreValidated(t *testing.T) {
+	for _, line := range []string{"LEA_MEMORY=0%", "LEA_MEMORY=101%", "LEA_MEMORY=lots", "LEA_MEMORY=-1", "LEA_MEMORY=08g",
+		"LEA_MEMORY_SWAP=2t", "LEA_MEMORY_SWAP=50%", "LEA_PIDS_LIMIT=-5", "LEA_PIDS_LIMIT=12k", "LEA_PIDS_LIMIT=010"} {
+		w := newWorld(t, repoRoot(t))
+		writeUserConf(t, w, line+"\n")
+		key, _, _ := strings.Cut(line, "=")
+		if _, err := LoadConfig(w.getenv, w.root, w.proj); err == nil || !strings.Contains(err.Error(), key+" must be") {
+			t.Errorf("%s: err = %v", line, err)
+		}
+	}
+}
+
+// A running proxy started from other rules (lea.rules, a digest of proxy/: an older lea's
+// squid.conf, an open egress by default) is replaced; one started from the same rules is kept.
+func TestProxyFollowsItsRules(t *testing.T) {
+	w := newWorld(t, repoRoot(t))
+	rules := w.launcher().proxyRules()
+	if len(rules) != 12 {
+		t.Fatalf("proxyRules() = %q, want 12 hex digits", rules)
+	}
+	w.env["FAKE_DOCKER_OUT_INSPECT__F"] = "true"
+	w.env["FAKE_DOCKER_OUT_INSPECT___FORMAT"] = "@" + rules
+	if err := w.launcher().ensureProxy(w.proj); err != nil {
+		t.Fatal(err)
+	}
+	if w.hasCall("docker [run]") {
+		t.Fatalf("a proxy started from the same rules was replaced:\n%s", strings.Join(w.calls(), "\n"))
+	}
+	w.env["FAKE_DOCKER_OUT_INSPECT___FORMAT"] = ""
+	if err := w.launcher().ensureProxy(w.proj); err != nil {
+		t.Fatal(err)
+	}
+	if !w.hasCall("[--label] [lea.rules=" + rules + "]") {
+		t.Fatalf("a proxy started from older rules was kept:\n%s", strings.Join(w.calls(), "\n"))
+	}
+}
+
+// The digest covers the proxy's rule files: a change to one changes it; no proxy/ directory, none.
+func TestProxyRulesDigest(t *testing.T) {
+	root := t.TempDir()
+	l := &Launcher{Root: root}
+	if got := l.proxyRules(); got != "" {
+		t.Fatalf("no proxy/: proxyRules() = %q, want empty", got)
+	}
+	if err := os.MkdirAll(filepath.Join(root, "proxy", "errors"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	write := func(p, s string) {
+		if err := os.WriteFile(filepath.Join(root, "proxy", p), []byte(s), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write("render-squid-conf.sh", "a")
+	write("errors/ERR_LEA_DOH", "b")
+	first := l.proxyRules()
+	write("errors/ERR_LEA_DOH", "c")
+	if second := l.proxyRules(); second == first || second == "" {
+		t.Fatalf("an error page change left the digest at %q", second)
+	}
+	write("render-squid-conf.sh", "a2")
+	if third := l.proxyRules(); third == first {
+		t.Fatal("a render-squid-conf.sh change left the digest unchanged")
+	}
+}
+
+// A running proxy started from another image than LEA_PROXY_IMAGE is now (a rebuilt or updated
+// image: its rules are copied in) is replaced; when the image cannot be inspected, its labels
+// decide alone.
+func TestProxyFollowsItsImage(t *testing.T) {
+	w := newWorld(t, repoRoot(t))
+	stamp := "@" + w.launcher().proxyRules()
+	w.env["FAKE_DOCKER_OUT_INSPECT__F"] = "true"
+	w.env["FAKE_DOCKER_OUT_IMAGE_INSPECT"] = "sha256:new"
+	w.env["FAKE_DOCKER_OUT_INSPECT___FORMAT"] = stamp + "!sha256:new"
+	if err := w.launcher().ensureProxy(w.proj); err != nil {
+		t.Fatal(err)
+	}
+	if w.hasCall("docker [run]") {
+		t.Fatalf("a proxy on the current image was replaced:\n%s", strings.Join(w.calls(), "\n"))
+	}
+	// Podman writes the container's image ID without the sha256: prefix.
+	w.env["FAKE_DOCKER_OUT_INSPECT___FORMAT"] = stamp + "!new"
+	if err := w.launcher().ensureProxy(w.proj); err != nil {
+		t.Fatal(err)
+	}
+	if w.hasCall("docker [run]") {
+		t.Fatalf("a proxy on the current image, written without sha256:, was replaced:\n%s", strings.Join(w.calls(), "\n"))
+	}
+	w.env["FAKE_DOCKER_RC_IMAGE_INSPECT"] = "1"
+	w.env["FAKE_DOCKER_OUT_INSPECT___FORMAT"] = stamp + "!sha256:old"
+	if err := w.launcher().ensureProxy(w.proj); err != nil {
+		t.Fatal(err)
+	}
+	if w.hasCall("docker [run]") {
+		t.Fatalf("a proxy was replaced although its image could not be compared:\n%s", strings.Join(w.calls(), "\n"))
+	}
+	w.env["FAKE_DOCKER_RC_IMAGE_INSPECT"] = "0"
+	if err := w.launcher().ensureProxy(w.proj); err != nil {
+		t.Fatal(err)
+	}
+	if !w.hasCall("docker [run]") {
+		t.Fatalf("a proxy on an older image was kept:\n%s", strings.Join(w.calls(), "\n"))
+	}
+}
+
+// The locksql console's own directory is read-only for the agents: a mount point cannot be
+// removed, renamed or replaced, so no agent swaps it for a symbolic link that the console's bind
+// mount would follow on the host (#121). Made when missing; a link or a file is refused.
+func TestRunArgsLocksqlDirReadOnly(t *testing.T) {
+	w := newWorld(t, repoRoot(t))
+	d := w.proj + "/.locksql"
+	ro := "type=bind,src=" + d + ",dst=" + d + ",readonly"
+	args, err := w.launcher().runArgs(w.proj, "172.18.0.5")
+	if err != nil || !contains(args, ro) {
+		t.Fatalf("missing %q: %v", ro, err)
+	}
+	if fi, err := os.Lstat(d); err != nil || !fi.IsDir() {
+		t.Fatalf("%s not made: %v", d, err)
+	}
+	if err := os.Remove(d); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(w.home, d); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := w.launcher().runArgs(w.proj, "172.18.0.5"); err == nil || !strings.Contains(err.Error(), "is not a directory") {
+		t.Fatalf("a symbolic link: %v", err)
+	}
+	if err := os.Remove(d); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(d, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := w.launcher().runArgs(w.proj, "172.18.0.5"); err == nil || !strings.Contains(err.Error(), "is not a directory") {
+		t.Fatalf("a file: %v", err)
+	}
+	// Without locksql, no mount and nothing made.
+	if err := os.Remove(d); err != nil {
+		t.Fatal(err)
+	}
+	w.writeConf("lea.conf", "LEA_LOCKSQL=0\n")
+	args, err = w.launcher().runArgs(w.proj, "172.18.0.5")
+	if err != nil || contains(args, ro) {
+		t.Fatalf("locksql off: %v %q", err, args)
+	}
+	if _, err := os.Lstat(d); !os.IsNotExist(err) {
+		t.Fatalf("locksql off made %s: %v", d, err)
 	}
 }

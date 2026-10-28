@@ -19,7 +19,11 @@ type realContainers struct{}
 func (realContainers) Live(context.Context, string) ([]string, error)   { return nil, nil }
 func (realContainers) Stop(context.Context, string, string) error       { return nil }
 func (realContainers) Shells(context.Context, string) ([]string, error) { return nil, nil }
-func (realContainers) StopShell(context.Context, string, string) error  { return nil }
+func (realContainers) Teardown(context.Context, string, string) error   { return nil }
+func (realContainers) Sweep(context.Context, string, []string) (string, error) {
+	return "", nil
+}
+func (realContainers) StopShell(context.Context, string, string) error { return nil }
 func (realContainers) Pause(context.Context, string, string, bool) error {
 	return nil
 }
@@ -71,6 +75,7 @@ func TestRealLockRequestOpensOnlyWhenTheUserSaysSo(t *testing.T) {
 		return strings.TrimSpace(string(out))
 	}
 	spec := agents.LockSpec{Enabled: true, Image: "locksql:0.8.0", AgentProfiles: []string{"prod"},
+		ConsoleDir: func(string) error { return nil },
 		ContainerName: func(p string) string {
 			if p == "/home/u/p" {
 				return C

@@ -80,7 +80,7 @@ func lockSpec(exe string) func(tool string) (agents.LockSpec, error) {
 			}
 			return agents.LockSpec{Enabled: cfg.Locksql(), Image: cfg.Get("LEA_LOCKSQL_IMAGE"),
 				VaultAddr: cfg.Get("LEA_LOCKSQL_VAULT_ADDR"), ContainerName: lockContainerName(cfg),
-				AgentProfiles: ps}, nil
+				AgentProfiles: ps, ConsoleDir: agents.EnsureConsoleDir}, nil
 		}
 		return agents.LockSpec{}, fmt.Errorf("no lock console for %q", tool)
 	}

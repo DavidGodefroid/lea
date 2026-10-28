@@ -31,7 +31,8 @@ services:
   proxy:
     image: lea-proxy:dev
     dns: [ 198.51.100.53 ]
-    environment: { LEA_GIT_SSH: "gitlab.com:22 forge.test:443" }
+    # '*': no allowlist, the DoH and IP-literal refusals only.
+    environment: { LEA_GIT_SSH: "gitlab.com:22 forge.test:443", LEA_EGRESS_ALLOW: "*" }
     volumes:
       - ./internal-hosts:/etc/lea/internal-hosts:ro
       - ./endpoints:/etc/lea/endpoints:ro
@@ -49,6 +50,14 @@ services:
     networks:
       pub:  { ipv4_address: 198.51.100.3 }
       priv: { ipv4_address: 10.99.0.3 }
+  # The same proxy with lea's default allowlist (LEA_EGRESS_ALLOW unset).
+  proxy-default:
+    image: lea-proxy:dev
+    dns: [ 198.51.100.53 ]
+    volumes: [ "./internal-hosts:/etc/lea/internal-hosts:ro" ]
+    networks:
+      pub:  { ipv4_address: 198.51.100.4 }
+      priv: { ipv4_address: 10.99.0.4 }
   client:
     image: curlimages/curl:8.11.1
     entrypoint: [ "sleep", "3600" ]

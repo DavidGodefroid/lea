@@ -18,3 +18,6 @@ on the WSL filesystem) before relying on lea there.
 11. In Claude Code: `/plugin` lists the same plugins as on the host, and the output style is the same.
 12. Against a local OTel collector (set `LEA_OTEL_UPSTREAM` to an address the proxy can reach): the backend shows `plugin_loaded` and `hook_registered` events whose resource carries `service.name=lea`.
 13. Plant a hook (`echo '#!/bin/sh' > <repo>/.git/hooks/pre-push`) inside lea, close the last session: the launcher prints the WARNING with the path.
+14. `docker inspect -f '{{.HostConfig.Memory}} {{.HostConfig.MemorySwap}} {{.HostConfig.PidsLimit}}' lea-<id>` on the host prints half of Docker's memory (twice: no swap) and 16384.
+15. Have an agent run `docker compose up -d` and `podman pod create x && podman run -d --pod x <image> sleep 600`, then end it (`/exit`, or x in the deck): from `lea shell`, `podman ps -a --filter name=<its project>` and `podman pod ps` no longer list them.
+16. Simulated reboot: `docker kill lea-<id>`, then `docker start lea-<id>`: the container becomes ready (`docker exec lea-<id> test -e /run/lea/ready`) and `docker exec -u $(id -u) lea-<id> podman ps` works. Then `lea`: a container left by an older lea is reported ("containers that no agent started").

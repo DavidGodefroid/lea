@@ -9,8 +9,22 @@ setup() {
   run lea_locksql --profile uat </dev/null
   [ "$status" -eq 0 ]
   run calls
-  [[ "$output" == *"docker [run] [-i] [--rm] [--log-driver] [none] [--user] [locksql] [-v] [locksql-home:/home/locksql] [--name] [locksql-console] [--add-host=host.docker.internal:host-gateway] [-v] [$P:$P] [-v] [locksql-run:/run/locksql] [locksql:0.8.0] [console] [--project] [$P] [--profile] [uat]"* ]]
+  [[ "$output" == *"docker [run] [-i] [--rm] [--log-driver] [none] [--user] [locksql] [--cap-drop] [ALL] [--security-opt] [no-new-privileges] [--read-only] [--tmpfs] [/tmp:rw,nosuid,nodev,noexec,size=64m] [--pids-limit] [256] [--memory] [1g] [-v] [locksql-home:/home/locksql] [--name] [locksql-console] [--add-host=host.docker.internal:host-gateway] [-v] [$P:$P:ro] [-v] [$P/.locksql:$P/.locksql] [-v] [locksql-run:/run/locksql] [locksql:0.8.0] [console] [--project] [$P] [--profile] [uat]"* ]]
   [[ "$output" != *"docker [rm]"* ]]
+  [ -d "$P/.locksql" ] && [ ! -L "$P/.locksql" ]
+}
+
+@test "lea locksql refuses a .locksql that is not a directory of the projects directory" {
+  ln -s "$HOME" "$P/.locksql"
+  run lea_locksql </dev/null
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"$P/.locksql is not a directory"* ]]
+  run calls
+  [[ "$output" != *"docker [run]"* ]]
+  rm "$P/.locksql"; : >"$P/.locksql"
+  run lea_locksql </dev/null
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"$P/.locksql is not a directory"* ]]
 }
 
 @test "lea locksql removes a stopped console left behind, passes the Vault address" {
@@ -23,7 +37,7 @@ setup() {
 @test "lea locksql vault runs the vault CLI as the console account" {
   lea_locksql vault login -method=oidc </dev/null
   run calls
-  [[ "$output" == *"docker [run] [-i] [--rm] [--log-driver] [none] [--user] [locksql] [-v] [locksql-home:/home/locksql] [--entrypoint] [vault] [locksql:0.8.0] [login] [-method=oidc]"* ]]
+  [[ "$output" == *"docker [run] [-i] [--rm] [--log-driver] [none] [--user] [locksql] [--cap-drop] [ALL] [--security-opt] [no-new-privileges] [--read-only] [--tmpfs] [/tmp:rw,nosuid,nodev,noexec,size=64m] [--pids-limit] [256] [--memory] [1g] [-v] [locksql-home:/home/locksql] [--entrypoint] [vault] [locksql:0.8.0] [login] [-method=oidc]"* ]]
 }
 
 @test "lea locksql refuses without locksql, a projects directory or the image" {
