@@ -591,16 +591,19 @@ deny (no push to `main`, no force-push, no `--admin`). The calls covered:
   the agent's branch), and `git push origin --delete <own branch>`;
 - on GitLab: `glab mr create --source-branch <own branch> --title T [--description D]
   [--target-branch B] [--draft] [--remove-source-branch] [--yes]` and `glab mr merge <n>|<own
-  branch> [--squash|--rebase] [--remove-source-branch] [--yes]` (a numbered MR must come from the
-  agent's branch of the project itself, not a fork), glab run as `/usr/bin/glab … -R
-  https://HOST/PATH` from `/`, with the token of glab's config for HOST and a fresh config dir
-  of its own (the agent's config could send glab's requests elsewhere); pushes go to `https://HOST/PATH.git` with glab's
-  credential helper. A multi-line description is not covered (no file option): it takes the
-  usual path.
+  branch> [--squash] [--remove-source-branch] [--yes]` (`--rebase` is not covered). lea does not
+  run them with glab, whose config the agent can write (it could send glab's requests elsewhere):
+  glab only reads the token of its config for HOST, from `/`, and lea calls the project's API
+  (`https://HOST/api/v4`) with curl (no `.curlrc`, https only, no redirect, no proxy variable).
+  A merge first reads the MR: it must be open and come from the agent's branch of the project
+  itself, not a fork (by branch: the one open MR of that branch); the merge then names the head
+  commit it checked, so GitLab refuses it if the branch moved in between. Pushes go to
+  `https://HOST/PATH.git` with glab's credential helper. A multi-line description is not covered
+  (no file option): it takes the usual path.
 
 Branch protection on the forge (required reviews, required checks) stays the control that decides
-whether a merge goes through: delivery only removes the prompt (`glab mr merge` sets auto-merge
-by default: it merges once the pipeline passes).
+whether a merge goes through: delivery only removes the prompt (on GitLab, an MR whose pipeline is still
+running is set to merge once it passes, as `glab mr merge` does).
 
 `lea new --brief FILE` gives a new agent its first message; `--repo NAME` starts it in a
 directory of the projects directory; `--branch B` has it work in its own git worktree under

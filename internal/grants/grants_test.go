@@ -705,7 +705,8 @@ func TestGitLab(t *testing.T) {
 		{"mr create body mentions push", `glab mr create -s feat/73-x -t x -d "run git push origin main yourself" -y`, Allow},
 		{"mr merge numbered", `glab mr merge 12 --squash -y`, Allow},
 		{"mr merge own branch remove", `glab mr merge feat/73-x -s -d -y`, Allow},
-		{"mr merge rebase", `glab mr merge 12 -r -y`, Allow},
+		{"mr merge rebase", `glab mr merge 12 -r -y`, ""},
+		{"mr merge rebase long", `glab mr merge 12 --rebase -y`, ""},
 		{"mr merge numbered remove", `glab mr merge 12 -d -y`, ""},
 		{"mr merge unnamed", `glab mr merge -s -y`, ""},
 		{"mr merge other branch", `glab mr merge feat/other -s -y`, ""},
@@ -727,15 +728,22 @@ func TestGitLab(t *testing.T) {
 	if d := Decide("Bash", bash("glab mr merge 12 -s -y"), dev, []Grant{all(Merge)}, now, false); d.Verdict != "" {
 		t.Fatalf("glab on a github grant: %+v", d)
 	}
+	// glab only reads the token; curl talks to the project's API (gitlab_test.go runs them).
 	d := Decide("Bash", bash(`glab mr create -s feat/73-x -t x -y`), dev, gs, now, false)
-	if s := lastWord(t, d.Command); s != glabIsolated("gitlab.example.com")+`'/usr/bin/glab' 'mr' 'create' '-s' 'feat/73-x' '-t' 'x' '-y' '-R' 'https://gitlab.example.com/grp/sub/app'` ||
-		d.Request.Target != "gitlab:gitlab.example.com/grp/sub/app mr create feat/73-x" || !strings.Contains(d.Command, `'GLAB_CONFIG_DIR=/lea/state/glab-cli'`) {
+	s := lastWord(t, d.Command)
+	for _, w := range []string{"cd / || exit 1\n", `'/usr/bin/glab' 'config' 'get' 'token' '--host' 'gitlab.example.com'`,
+		"api='https://gitlab.example.com/api/v4/projects/grp%2Fsub%2Fapp'\n", `'/usr/bin/curl' '-q' '--proto' '=https'`,
+		`'--data-urlencode' 'source_branch=feat/73-x'`, `'--data-urlencode' 'title=x'`} {
+		if !strings.Contains(s, w) {
+			t.Fatalf("mr create script lacks %s:\n%s", w, s)
+		}
+	}
+	if d.Request.Target != "gitlab:gitlab.example.com/grp/sub/app mr create feat/73-x" || strings.Contains(s, "-R") || strings.Contains(s, "'mr'") {
 		t.Fatalf("mr create: %q %+v", s, d)
 	}
 	d = Decide("Bash", bash("glab mr merge 12 --squash -y"), dev, gs, now, false)
-	s := lastWord(t, d.Command)
-	for _, w := range []string{`'/usr/bin/glab' 'mr' 'view' '12' '-F' 'json' '--jq'`, `'-R' 'https://gitlab.example.com/grp/sub/app') || exit 1`,
-		`[ "$head" != 'true feat/73-x' ]`, "\n" + `'/usr/bin/glab' 'mr' 'merge' '12' '--squash' '-y' '-R' 'https://gitlab.example.com/grp/sub/app'`} {
+	s = lastWord(t, d.Command)
+	for _, w := range []string{"iid='12'\n", `"$api/merge_requests/$iid"`, `true|opened|feat/73-x|`, `'-X' 'PUT' --data-urlencode "sha=$sha" '--data' 'squash=true' $am "$api/merge_requests/$iid/merge"`} {
 		if !strings.Contains(s, w) {
 			t.Fatalf("numbered mr merge script lacks %s:\n%s", w, s)
 		}
