@@ -179,11 +179,12 @@ launcher_refused() {
   chmod 0757 "$l"; launcher_refused
   chmod 0755 "$l"; chmod 0777 "$BATS_TEST_TMPDIR/lbin"; launcher_refused
   chmod 0755 "$BATS_TEST_TMPDIR/lbin"
-  # Owned by another account than this one or root (here: this one is someone else).
+  # Owned by another account than this one or root (here: this one is someone else). Run as root,
+  # the file is root's, which is trusted: nothing to check then.
   mkdir -p "$BATS_TEST_TMPDIR/idbin"
   printf '#!/bin/sh\n[ "$1" = -u ] && echo 4242 && exit 0\nexec /usr/bin/id "$@"\n' >"$BATS_TEST_TMPDIR/idbin/id"
   chmod +x "$BATS_TEST_TMPDIR/idbin/id"
-  PATH="$BATS_TEST_TMPDIR/idbin:$PATH" launcher_refused
+  if [ "$(id -u)" != 0 ]; then PATH="$BATS_TEST_TMPDIR/idbin:$PATH" launcher_refused; fi
   # In the projects directory (the agents write it), or in lea's data directory, even through a
   # link from a trusted directory.
   mkdir -p "$P/bin"; cp -p "$l" "$P/bin/locksql"; rm "$l"; ln -s "$P/bin/locksql" "$l"
