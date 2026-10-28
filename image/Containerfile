@@ -42,6 +42,8 @@ RUN case "$TARGETARCH" in \
  && tar -xzf "$asset" -C /usr/local/bin rtk \
  && rm -f "$asset" checksums.txt
 # locksql client of a console in its own container (shared volume locksql-run on /run/locksql).
+# The archive is pinned by its sha256 in the release's checksums.txt, whose Sigstore signature by
+# locksql's release workflow at that tag was checked when the pin was set (config/lea.conf).
 # The client reads the root-owned system.toml for the socket dir and refuses a socket not served by
 # the uid of the local account "locksql" (10001). /run/locksql has the console image's owner and
 # mode, so an empty locksql-run volume first mounted here is initialised as the console expects.
@@ -49,10 +51,14 @@ RUN useradd -r -u 10001 -U -M -s /sbin/nologin locksql \
  && install -d -m 0755 /etc/locksql \
  && printf '%s\n' 'service_user = "locksql"' 'client_group = "locksql-clients"' 'socket_dir   = "/run/locksql"' 'x11          = "refuse"' > /etc/locksql/system.toml \
  && chmod 0644 /etc/locksql/system.toml \
- && case "$TARGETARCH" in amd64|arm64) ;; *) echo "unsupported architecture: $TARGETARCH" >&2; exit 1 ;; esac \
- && cd /tmp && V=0.8.0 && A="locksql_${V}_linux_${TARGETARCH}.tar.gz" \
+ && case "$TARGETARCH" in \
+      amd64) sq=3a9af5dd9a3cd495a099da8bde5173dd3e291e1ec14d518fb018c8f5d6d28ec2 ;; \
+      arm64) sq=f0cf293121b8a499577657b59bfed8163127c031e63cff0db8cdb98621181ba2 ;; \
+      *) echo "unsupported architecture: $TARGETARCH" >&2; exit 1 ;; \
+    esac \
+ && cd /tmp && V=0.9.0 && A="locksql_${V}_linux_${TARGETARCH}.tar.gz" \
  && curl -fsSLO "https://github.com/DavidGodefroid/locksql/releases/download/v$V/$A" \
- && curl -fsSL "https://github.com/DavidGodefroid/locksql/releases/download/v$V/checksums.txt" | grep " $A\$" | sha256sum -c \
+ && echo "$sq  $A" | sha256sum -c \
  && tar -xzf "$A" locksql && install -m 0755 -o root -g root locksql /usr/local/bin/locksql \
  && rm -f locksql "$A"
 # lockmq and lockfile clients of a console on the host (lea mounts /etc/<tool>/system.toml and

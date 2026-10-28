@@ -186,8 +186,32 @@ lea__locksql_build() {
   lea_log "locksql $_lsb_r: signature verified (commit $_lsb_sha); building $_lsb_i${1:+ with the vault CLI}"
   docker build "$@" -t "$_lsb_i" --build-arg "ALLOWED_UIDS=$(id -u)" "$_lsb_tmp/src" >&2
   _lsb_rc=$?
+  if [ "$_lsb_rc" = 0 ]; then lea__locksql_install_launcher "$_lsb_tmp/src" "$_lsb_r" "$_lsb_co"; fi
   rm -rf "$_lsb_tmp"
   return "$_lsb_rc"
+}
+
+# lea__locksql_install_launcher SRC TAG COSIGN: installs locksql's launcher, which lea locksql hands
+# the console to, with the install.sh of SRC, the source of the release TAG whose signature
+# lea__locksql_build just verified. That script checks the release's signatures itself (COSIGN on
+# its PATH), pins the release's images by digest and installs the launcher in /usr/local/bin (sudo
+# when needed). A trusted launcher of that release already on PATH is left as is. Its failure
+# leaves the console image: lea locksql then says to run lea init again.
+lea__locksql_install_launcher() {
+  _lil=$(lea__locksql_launcher)
+  if [ -n "$_lil" ] && grep -qx "launcher_version=${2#v}" "$_lil" 2>/dev/null; then return 0; fi
+  if [ ! -f "$1/scripts/install.sh" ]; then
+    lea_log "locksql $2 ships no launcher: lea locksql needs a release that does (v0.9.0 or later)"
+    return 0
+  fi
+  lea_log "locksql $2: installing its launcher (its own install.sh: signatures checked, sudo for /usr/local/bin)"
+  # lea__cosign's own copy (a path) when none is on PATH.
+  _lip=$PATH
+  case $3 in */*) _lip=$(dirname "$3"):$PATH ;; esac
+  if ! PATH=$_lip LOCKSQL_VERSION=$2 sh "$1/scripts/install.sh" >&2; then
+    lea_log "warning: could not install locksql's launcher: lea locksql needs it (rerun lea init)"
+  fi
+  return 0
 }
 
 # The locksql configuration of the projects directory, read by the console.

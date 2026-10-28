@@ -3,14 +3,16 @@ setup() {
   setup_fakes; load_lea
   P="$BATS_TEST_TMPDIR/projects"; mkdir -p "$P"
   export LEA_PROJECTS_DIR="$P"
+  fake_launcher
 }
 
-@test "lea locksql starts the console of the projects directory in its container" {
+@test "lea locksql hands the console of the projects directory to locksql's launcher" {
   run lea_locksql --profile uat </dev/null
   [ "$status" -eq 0 ]
+  r=$(cd "$P" && pwd -P)
   run calls
-  [[ "$output" == *"docker [run] [-i] [--rm] [--log-driver] [none] [--user] [locksql] [--cap-drop] [ALL] [--security-opt] [no-new-privileges] [--read-only] [--tmpfs] [/tmp:rw,nosuid,nodev,noexec,size=64m] [--pids-limit] [256] [--memory] [1g] [-v] [locksql-home:/home/locksql] [--name] [locksql-console] [--add-host=host.docker.internal:host-gateway] [-v] [$P:$P:ro] [-v] [$P/.locksql:$P/.locksql] [-v] [locksql-run:/run/locksql] [locksql:0.8.0] [console] [--project] [$P] [--profile] [uat]"* ]]
-  [[ "$output" != *"docker [rm]"* ]]
+  [[ "$output" == *"launcher pwd=$r image=locksql:0.9.0 ro=1 name=locksql-console vault= [console] [--project] [$P] [--profile] [uat]"* ]]
+  [[ "$output" != *"docker [run]"* && "$output" != *"docker [rm]"* ]]
   [ -d "$P/.locksql" ] && [ ! -L "$P/.locksql" ]
 }
 
@@ -29,6 +31,9 @@ setup() {
 
 @test "lea locksql refuses while a running agent lacks the read-only .locksql mount" {
   r=$(cd "$P" && pwd -P)
+  # An agent of the directory above the projects one: the launcher may not sit in it.
+  lb=$(mktemp -d "$BATS_RUN_TMPDIR/lbin.XXXXXX"); mv "$BATS_TEST_TMPDIR/lbin/locksql" "$lb/"
+  export PATH="$lb:$PATH"
   # Two agents of the projects directory, or of a directory above it (its mount holds .locksql):
   # one started with the mount, one before it (no mount). Those of other directories do not count.
   export FAKE_DOCKER_OUT_PS___FILTER="$(printf 'c1 %s\nc0 %s/sub\nc2 %s\nc3 /elsewhere\nc4 ' "$r" "$r" "${r%/*}")"
@@ -52,7 +57,7 @@ setup() {
   run lea_locksql </dev/null
   [ "$status" -eq 0 ]
   run calls
-  [[ "$output" == *"docker [run]"*"[console]"* ]]
+  [[ "$output" == *"launcher pwd="*"[console]"* ]]
 }
 
 @test "lea locksql refuses when it cannot list the agents" {
@@ -90,17 +95,10 @@ setup() {
   [[ "$output" == *"$P/.locksql/pii/a/x.toml has another name (a hard link)"*"remove it"* ]]
 }
 
-@test "lea locksql removes a stopped console left behind, passes the Vault address" {
-  export FAKE_DOCKER_OUT_INSPECT__F_AT_LOCKSQL_CONSOLE=false LEA_LOCKSQL_VAULT_ADDR=https://vault.example.com
-  lea_locksql </dev/null
-  run calls
-  [[ "$output" == *"docker [rm] [locksql-console]"*"[-e] [VAULT_ADDR=https://vault.example.com] [--name] [locksql-console]"* ]]
-}
-
 @test "lea locksql vault runs the vault CLI as the console account" {
   lea_locksql vault login -method=oidc </dev/null
   run calls
-  [[ "$output" == *"docker [run] [-i] [--rm] [--log-driver] [none] [--user] [locksql] [--cap-drop] [ALL] [--security-opt] [no-new-privileges] [--read-only] [--tmpfs] [/tmp:rw,nosuid,nodev,noexec,size=64m] [--pids-limit] [256] [--memory] [1g] [-v] [locksql-home:/home/locksql] [--entrypoint] [vault] [locksql:0.8.0] [login] [-method=oidc]"* ]]
+  [[ "$output" == *"docker [run] [-i] [--rm] [--log-driver] [none] [--user] [locksql] [--cap-drop] [ALL] [--security-opt] [no-new-privileges] [--read-only] [--tmpfs] [/tmp:rw,nosuid,nodev,noexec,size=64m] [--pids-limit] [256] [--memory] [1g] [-v] [locksql-home:/home/locksql] [--entrypoint] [vault] [locksql:0.9.0] [login] [-method=oidc]"* ]]
 }
 
 @test "lea locksql refuses without locksql, a projects directory or the image" {
@@ -108,8 +106,15 @@ setup() {
   [[ "$output" == *"locksql is off (LEA_LOCKSQL=0)"* ]]
   LEA_PROJECTS_DIR= run lea_locksql
   [[ "$output" == *"no projects directory: run lea init"* ]]
-  FAKE_DOCKER_RC_IMAGE_INSPECT_AT_LOCKSQL_0_8_0=1 run lea_locksql
-  [[ "$output" == *"no locksql console image locksql:0.8.0: run lea init"* ]]
+  FAKE_DOCKER_RC_IMAGE_INSPECT_AT_LOCKSQL_0_9_0=1 run lea_locksql
+  [[ "$output" == *"no locksql console image locksql:0.9.0: run lea init"* ]]
+  # Without locksql's launcher there is no console: lea init installs it.
+  rm "$BATS_TEST_TMPDIR/lbin/locksql"
+  run lea_locksql </dev/null
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"no trusted locksql launcher on PATH"*"lea init"* ]]
+  run calls
+  [[ "$output" != *"docker [run]"* ]]
 }
 
 @test "lea ships no locksql command: the host's locksql is locksql's own launcher" {
@@ -134,14 +139,13 @@ EOT
 }
 
 @test "lea locksql delegates the console to locksql's launcher, after its own checks" {
-  fake_launcher
   export LEA_LOCKSQL_VAULT_ADDR=https://vault.example.com
   run lea_locksql --profile uat </dev/null
   [ "$status" -eq 0 ]
   r=$(cd "$P" && pwd -P)
   run calls
   [[ "$output" == *"docker [ps] [--filter] [label=lea.role=session]"* ]]
-  [[ "$output" == *"launcher pwd=$r image=locksql:0.8.0 ro=1 name=locksql-console vault=https://vault.example.com [console] [--project] [$P] [--profile] [uat]"* ]]
+  [[ "$output" == *"launcher pwd=$r image=locksql:0.9.0 ro=1 name=locksql-console vault=https://vault.example.com [console] [--project] [$P] [--profile] [uat]"* ]]
   [[ "$output" != *"docker [run]"* ]]
   # Its checks still stop it first.
   : >"$FAKE_LOG"; ln -s "$HOME/.ssh" "$P/.locksql/k"
@@ -151,28 +155,22 @@ EOT
   [[ "$output" != *"launcher"* ]]
 }
 
-@test "lea locksql keeps the console to itself with a launcher that cannot confine it" {
-  fake_launcher
-  sed -i '/--cap-drop ALL/d' "$BATS_TEST_TMPDIR/lbin/locksql"
-  run lea_locksql </dev/null
-  [ "$status" -eq 0 ]
-  run calls
-  [[ "$output" != *"launcher"* ]]
-  [[ "$output" == *"docker [run]"*"[--cap-drop] [ALL]"*"[console]"* ]]
-}
-
-# launcher_refused: the console stays lea's (no launcher call, lea's own docker run).
+# launcher_refused: no console (no launcher call, no docker run of lea's), and lea says why.
 launcher_refused() {
   : >"$FAKE_LOG"
   run lea_locksql </dev/null
-  [ "$status" -eq 0 ]
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"no trusted locksql launcher on PATH"* ]]
   run calls
-  [[ "$output" != *"launcher"* ]]
-  [[ "$output" == *"docker [run]"*"[console]"* ]]
+  [[ "$output" != *"launcher pwd"* && "$output" != *"docker [run]"* ]]
+}
+
+@test "lea locksql opens no console with a launcher that cannot confine it" {
+  sed -i '/--cap-drop ALL/d' "$BATS_TEST_TMPDIR/lbin/locksql"
+  launcher_refused
 }
 
 @test "lea locksql trusts no launcher an agent or another account could have written" {
-  fake_launcher
   l="$BATS_TEST_TMPDIR/lbin/locksql"
   # Writable by its group or by others, or in such a directory.
   chmod 0775 "$l"; launcher_refused
@@ -231,9 +229,7 @@ launcher_refused() {
   printf '#!/bin/sh\necho other >>"$FAKE_LOG"\n' >"$BATS_TEST_TMPDIR/obin/locksql"
   chmod +x "$BATS_TEST_TMPDIR/obin/locksql"
   export PATH="$BATS_TEST_TMPDIR/obin:$PATH"
-  run lea_locksql </dev/null
-  [ "$status" -eq 0 ]
+  launcher_refused
   run calls
   [[ "$output" != *"other"* ]]
-  [[ "$output" == *"docker [run]"*"[console]"* ]]
 }
