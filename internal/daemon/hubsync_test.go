@@ -3,6 +3,7 @@ package daemon
 import (
 	"context"
 	"encoding/json"
+	"io"
 	"net"
 	"net/http"
 	"path/filepath"
@@ -25,6 +26,11 @@ type fakeHub struct {
 	states map[string]string // instance/id → state
 	calls  []string
 	fail   bool
+	// queue is GET /v1/queue's tickets (lockhub's QueueItem); decided the bodies POSTed to
+	// /v1/tickets/{instance}/{id}/decide, answered with decideStatus (0: 200).
+	queue        []map[string]any
+	decided      []string
+	decideStatus int
 }
 
 type fakeDecision struct{ ticket, instance, decision, reason string }
@@ -54,6 +60,25 @@ func (h *fakeHub) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")
+	if r.URL.Path == "/v1/queue" {
+		q := h.queue
+		if q == nil {
+			q = []map[string]any{}
+		}
+		json.NewEncoder(w).Encode(map[string]any{"tickets": q, "version": len(h.calls)})
+		return
+	}
+	if r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/decide") {
+		b, _ := io.ReadAll(r.Body)
+		h.decided = append(h.decided, strings.TrimPrefix(r.URL.Path, "/v1/tickets/")+" "+string(b))
+		if h.decideStatus != 0 {
+			w.WriteHeader(h.decideStatus)
+			json.NewEncoder(w).Encode(map[string]any{"error": map[string]string{"code": "x", "message": "no"}})
+			return
+		}
+		json.NewEncoder(w).Encode(map[string]any{"decision": map[string]any{"decision": "approved"}})
+		return
+	}
 	if strings.HasPrefix(r.URL.Path, "/v1/tickets/") {
 		st, ok := h.states[strings.TrimPrefix(r.URL.Path, "/v1/tickets/")]
 		if !ok {
@@ -273,6 +298,12 @@ func (stubFacade) Decided(ctx context.Context, since int64) ([]HubDecided, int64
 func (stubFacade) TicketState(ctx context.Context, instance, ticket string) (string, error) {
 	return "pending", nil
 }
+
+func (stubFacade) Queue(ctx context.Context, since uint64, wait int) ([]HubTicket, uint64, error) {
+	return nil, since, nil
+}
+
+func (stubFacade) Decide(ctx context.Context, instance, id string, v HubVerdict) error { return nil }
 
 // A cold-suspended agent is not told on its inbox: its wait stays undelivered, and waking it tells
 // it the decision in its resume prompt (#163).

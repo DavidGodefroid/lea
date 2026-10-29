@@ -132,6 +132,10 @@ type Daemon struct {
 	// hub); hubSyncMu keeps one sync at a time.
 	hubFacade HubFacade
 	hubSyncMu sync.Mutex
+	// hubQueue is the hub's queue as the decks show it, hubLocks the Locks it counted (hubdeck.go,
+	// #158).
+	hubQueue []hubEntry
+	hubLocks map[string]bool
 	// pressClock is the pressure's clock (nil: time.Now), a test seam.
 	pressClock func() time.Time
 	// Shedding (shed.go, #132): its thresholds, each container's state, and whether pauses or

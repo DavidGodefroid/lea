@@ -227,6 +227,8 @@ func runDaemon(stderr io.Writer) int {
 	if sock := hubFacadeSocket(os.Getenv); sock != "" {
 		d.SetHubFacade(daemon.SocketFacade{Path: sock})
 		go d.RunHubSync(ctx)
+		// The deck shows the hub's pending tickets on their agents and answers them (#158).
+		go d.RunHubQueue(ctx)
 	}
 	exe, err := os.Executable()
 	if err != nil {

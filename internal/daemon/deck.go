@@ -68,6 +68,7 @@ var deckMethods = map[string]bool{
 	"deck_attached": true, "deck_popup": true, "agent_label": true, "shell_open": true,
 	"shell_split": true, "agent_pause": true,
 	"lock_open": true, "lock_close": true, "lock_list": true, "lock_request_decide": true,
+	"hub_decide": true,
 }
 
 func (d *Daemon) SetAgents(a Agents) {
@@ -258,6 +259,8 @@ func (d *Daemon) dispatchDeck(ctx context.Context, o Origin, req wire.Request) (
 		return map[string]string{"status": st}, err
 	case "lock_request_decide":
 		return d.lockRequestDecide(ctx, a, req.Params)
+	case "hub_decide":
+		return ok, d.hubDecide(ctx, req.Params)
 	case "lock_list":
 		var p struct{ Container string }
 		if err := json.Unmarshal(req.Params, &p); err != nil {
@@ -280,6 +283,7 @@ func (d *Daemon) dispatchDeck(ctx context.Context, o Origin, req wire.Request) (
 		// The deck shows the user's sound switch beside the agents.
 		snap.Sound = d.soundState()
 		snap.Locks = d.lockViews(p.Container)
+		d.addHubCards(&snap)
 		snap.Pressure = d.deckPressure(p.Container)
 		return snap, err
 	}
