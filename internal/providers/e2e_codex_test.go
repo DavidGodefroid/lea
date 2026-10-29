@@ -38,7 +38,7 @@ while time.time() < end:
             break
         if not d:
             break
-        sys.stdout.buffer.write(d)
+        sys.stdout.buffer.write(d); sys.stdout.buffer.flush()
         if b'\x1b[6n' in d:
             os.write(fd, b'\x1b[1;1R')
 os.kill(pid, signal.SIGKILL)
@@ -348,8 +348,9 @@ func TestCodexLockCallOutlivesTheDefaultToolTimeout(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(strings.Join(argv, " "), "mcp_servers.locksql.tool_timeout_sec=1500") {
-		t.Fatalf("no tool timeout in %q", argv)
+	if j := strings.Join(argv, " "); !strings.Contains(j, "mcp_servers.locksql.tool_timeout_sec=1500") ||
+		!strings.Contains(j, `mcp_servers.locksql.default_tools_approval_mode="approve"`) {
+		t.Fatalf("no tool timeout or approval mode in %q", argv)
 	}
 	cmd := exec.Command("python3", append([]string{"-I", "-c", ptyRun, strconv.Itoa(wait + 60), codex}, argv...)...)
 	cmd.Dir = wd
