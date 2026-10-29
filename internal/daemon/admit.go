@@ -112,6 +112,10 @@ func (d *Daemon) overLocked(container string) string {
 func (d *Daemon) admitLocked(container string) error {
 	why := d.overLocked(container)
 	if why == "" {
+		// The resume lane goes first: a spawn does not start before the resumes that wait.
+		if n := d.resumesQueuedLocked(container); n > 0 {
+			return fmt.Errorf("%d resumes wait to start in %s: retry later, or pass queue: true to start it after them", n, container)
+		}
 		return nil
 	}
 	busy := 0
@@ -157,14 +161,16 @@ func (d *Daemon) queueSpawn(lead string, nr agents.NewRequest, req *store.SpawnR
 }
 
 // takeQueuedLocked drops the queued spawns that waited queuedSpawnTTL and takes the first one the
-// pressure now lets through, nil when none. Callers hold d.mu.
-func (d *Daemon) takeQueuedLocked() (start *queuedSpawn, dropped []*queuedSpawn) {
+// pressure now lets through, nil when none, or a resume the pressure lets through before any
+// spawn. Callers hold d.mu.
+func (d *Daemon) takeQueuedLocked() (resume *queuedResume, start *queuedSpawn, dropped []*queuedSpawn) {
+	resume = d.takeResumeLocked()
 	keep := d.spawnQueue[:0]
 	for _, s := range d.spawnQueue {
 		switch {
 		case time.Since(s.at) > queuedSpawnTTL:
 			dropped = append(dropped, s)
-		case start == nil && d.admitLocked(s.nr.Container) == nil:
+		case start == nil && resume == nil && d.admitLocked(s.nr.Container) == nil:
 			start = s
 		default:
 			keep = append(keep, s)
@@ -172,21 +178,22 @@ func (d *Daemon) takeQueuedLocked() (start *queuedSpawn, dropped []*queuedSpawn)
 	}
 	clear(d.spawnQueue[len(keep):])
 	d.spawnQueue = keep
-	return start, dropped
+	return resume, start, dropped
 }
 
-// startQueued starts at most one queued spawn per sample, and never while another starts: one
-// calm sample lets a single agent in, the next sample sees what it costs. The start runs beside
-// the sampler, which keeps sampling meanwhile. Each lead hears of its own spawns.
+// startQueued starts at most one queued resume or spawn per sample, and never while another
+// starts: one calm sample lets a single agent in, the next sample sees what it costs. The start
+// runs beside the sampler, which keeps sampling meanwhile. Each lead hears of its own spawns.
 func (d *Daemon) startQueued(ctx context.Context) {
 	d.mu.Lock()
 	var q *queuedSpawn
+	var r *queuedResume
 	var dropped []*queuedSpawn
 	if !d.queueStarting {
-		q, dropped = d.takeQueuedLocked()
+		r, q, dropped = d.takeQueuedLocked()
 	}
 	a := d.agents
-	if q != nil {
+	if q != nil || r != nil {
 		d.queueStarting = true
 	}
 	d.mu.Unlock()
@@ -194,7 +201,7 @@ func (d *Daemon) startQueued(ctx context.Context) {
 		// A spawn request it answered stays pending: the lead may accept it again.
 		d.post("user", s.lead, "result", fmt.Sprintf("[status: fail] queued spawn #%d dropped: the pressure did not fall within %s. Retry later or stop an agent.", s.id, queuedSpawnTTL), 0)
 	}
-	if q == nil {
+	if q == nil && r == nil {
 		return
 	}
 	go func() {
@@ -203,6 +210,10 @@ func (d *Daemon) startQueued(ctx context.Context) {
 			d.queueStarting = false
 			d.mu.Unlock()
 		}()
+		if r != nil {
+			d.startResume(a, r)
+			return
+		}
 		d.startOne(ctx, a, q)
 	}()
 }
@@ -261,6 +272,7 @@ type Gauge struct {
 	Slots   int     `json:"slots"`
 	Queued  int     `json:"queued"`
 	Spawns  int     `json:"spawns_queued,omitempty"`
+	Resumes int     `json:"resumes_queued,omitempty"`
 	Over    string  `json:"over,omitempty"`
 }
 
@@ -289,6 +301,9 @@ func (g Gauge) Line() string {
 			h += fmt.Sprintf(" (+%d queued)", g.Queued)
 		}
 		p = append(p, h)
+		if g.Resumes > 0 {
+			p = append(p, fmt.Sprintf("%d resumes queued", g.Resumes))
+		}
 		if g.Spawns > 0 {
 			p = append(p, fmt.Sprintf("%d spawns queued", g.Spawns))
 		}
@@ -358,6 +373,7 @@ func (d *Daemon) gaugeOfLocked(scope string, r Reading, host bool) Gauge {
 				g.Spawns++
 			}
 		}
+		g.Resumes = d.resumesQueuedLocked(scope)
 	}
 	return g
 }

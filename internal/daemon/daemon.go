@@ -122,8 +122,8 @@ type Daemon struct {
 	heavyMaxHold time.Duration
 	heavySeq     int64
 	// Pressure (pressure.go, admit.go, #132): what samples it, the admission thresholds, the last
-	// sample of the host and of each container and when it was taken, and the spawns queued
-	// until the pressure falls.
+	// sample of the host and of each container and when it was taken, and the spawns and the
+	// resumes queued until the pressure falls.
 	pressSrc      PressureSource
 	thresholds    Thresholds
 	pressHost     Reading
@@ -131,6 +131,7 @@ type Daemon struct {
 	pressAt       time.Time
 	spawnQueue    []*queuedSpawn
 	spawnSeq      int64
+	resumeQueue   []*queuedResume
 	queueStarting bool
 }
 

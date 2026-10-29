@@ -718,8 +718,12 @@ func runDeckOpen(args []string, stderr io.Writer) int {
 	// start again first (their conversations resumed), and its ended ones are forgotten; a
 	// failure leaves them shown as done.
 	if fresh {
-		if err := hostCallT("agents_resume_stopped", map[string]any{"container": container}, nil, agentTimeout); err != nil {
+		var rs struct{ Notice string }
+		if err := hostCallT("agents_resume_stopped", map[string]any{"container": container}, &rs, agentTimeout); err != nil {
 			fmt.Fprintln(stderr, "lea: warning: the agents of the previous container were not all resumed:", clean(err.Error(), false))
+		} else if rs.Notice != "" {
+			// Under pressure the resume waits in the admission's resume lane (#162).
+			fmt.Fprintln(stderr, "lea:", clean(rs.Notice, false))
 		}
 	}
 	// At every lea, fresh container or not: what the agents that are gone left in the nested

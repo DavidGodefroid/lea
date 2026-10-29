@@ -178,9 +178,8 @@ func (d *Daemon) dispatchDeck(ctx context.Context, o Origin, req wire.Request) (
 		if err := json.Unmarshal(req.Params, &p); err != nil {
 			return nil, err
 		}
-		err := a.ResumeStopped(ctx, p.Container)
-		d.pruneForgotten()
-		return ok, err
+		n, err := d.resumeStopped(ctx, a, p.Container)
+		return map[string]string{"notice": n}, err
 	case "agents_sweep_stacks":
 		var p struct{ Container string }
 		if err := json.Unmarshal(req.Params, &p); err != nil {
