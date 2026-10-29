@@ -38,6 +38,10 @@ type Agents interface {
 	ParkStack(ctx context.Context, key string) (string, error)
 	// UnparkStack starts again what ParkStack stopped (a new turn came meanwhile).
 	UnparkStack(ctx context.Context, key string) (string, error)
+	// SoftStop stops a suspended agent whose keepalive ended, keeping its session;
+	// ResumeSuspended starts it again with prompt as its next turn (#161).
+	SoftStop(ctx context.Context, key string) error
+	ResumeSuspended(ctx context.Context, key, prompt string) error
 	Attached(ctx context.Context, container string) (bool, error)
 	Popup(ctx context.Context, key string, compose bool) error
 	// SetLabel renames an agent for display (the deck's e); OpenShell opens a shell in the
@@ -193,6 +197,7 @@ func (d *Daemon) dispatchDeck(ctx context.Context, o Origin, req wire.Request) (
 			lines = append(lines, n)
 		}
 		lines = append(lines, d.parkIdleSince(p.Container)...)
+		d.suspendedSince(p.Container)
 		return map[string]string{"notice": strings.Join(lines, "\n")}, nil
 	case "deck_attached":
 		var p struct{ Container string }

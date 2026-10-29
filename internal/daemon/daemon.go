@@ -109,6 +109,10 @@ type Daemon struct {
 	stackIdle  time.Duration
 	parkTimers map[string]*time.Timer
 	parked     map[string]string
+	// Suspended agents (suspend.go, #161): how long a suspended agent's process runs, and the
+	// pending soft stop of each one.
+	keepalive  time.Duration
+	keepTimers map[string]*time.Timer
 	// Heavy jobs (heavy.go, #132): each container's slots, their number, the workers of one job,
 	// how long a slot lives without renewal (a test seam) and the last holder id.
 	heavy        map[string]*heavyPool
@@ -156,6 +160,7 @@ func New(st *store.Store, runDir string, now func() int64) *Daemon {
 		doneDelay: doneDelay, doneTimers: map[string]*time.Timer{},
 		resumeDelay: DefaultResumeDelay, windows: map[string][]limitWindow{}, limitJobs: map[string]string{},
 		stackIdle: DefaultStackIdle, parkTimers: map[string]*time.Timer{}, parked: map[string]string{},
+		keepalive: DefaultKeepalive, keepTimers: map[string]*time.Timer{},
 		heavy: map[string]*heavyPool{}, heavySlots: DefaultHeavySlots(runtime.NumCPU(), DefaultHeavyWorkers), heavyWorkers: DefaultHeavyWorkers}
 }
 
@@ -534,6 +539,7 @@ func (d *Daemon) send(from, to, body, kind string, replyTo int64) (sentView, err
 		return sentView{}, err
 	}
 	d.wake(dest)
+	d.wakeSuspended(dest)
 	d.changed()
 	return sentView{m.ID, m.Thread}, nil
 }
@@ -843,6 +849,9 @@ func (d *Daemon) pruneForgotten() {
 	for k := range d.parked {
 		keys = append(keys, k)
 	}
+	for k := range d.keepTimers {
+		keys = append(keys, k)
+	}
 	d.mu.Unlock()
 	for _, k := range keys {
 		if _, err := d.st.AgentByKey(k); errors.Is(err, store.ErrNotFound) {
@@ -855,6 +864,7 @@ func (d *Daemon) pruneForgotten() {
 			delete(d.windows, k)
 			delete(d.limitJobs, k)
 			d.forgetStackLocked(k)
+			d.forgetKeepaliveLocked(k)
 			d.mu.Unlock()
 		}
 	}
@@ -882,6 +892,13 @@ func (d *Daemon) dispatchHooks(ctx context.Context, o Origin, me string, req wir
 			// An agent lea stop marked stopped ends with its container: it is not done, and the
 			// next container resumes it, a pending usage-limit resume included (#83).
 			if a, err := d.st.AgentByKey(me); err == nil && a.State == "stopped" {
+				return struct{}{}, nil
+			}
+		}
+		if !wakeEvents[p.Event] {
+			// A suspended agent stays so until it works again (suspend.go): a soft stop's
+			// SessionEnd, lea's own PostToolUse beside the suspending hook, idle_prompt.
+			if a, err := d.st.AgentByKey(me); err == nil && store.Suspended(a.State) {
 				return struct{}{}, nil
 			}
 		}
@@ -951,6 +968,7 @@ func (d *Daemon) dispatchHooks(ctx context.Context, o Origin, me string, req wir
 				return nil, err
 			}
 			d.stackActivity(me, s)
+			d.keepActivity(me, s)
 			d.changed()
 			if waits {
 				d.sound(ctx, o.Container, SoundAttention)

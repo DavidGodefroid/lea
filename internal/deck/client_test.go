@@ -51,6 +51,8 @@ func (r *recAgents) ResumeStopped(ctx context.Context, c string) error         {
 func (r *recAgents) SweepStacks(ctx context.Context, c string) (string, error) { return "", nil }
 func (r *recAgents) ParkStack(ctx context.Context, k string) (string, error)   { return "", nil }
 func (r *recAgents) UnparkStack(ctx context.Context, k string) (string, error) { return "", nil }
+func (r *recAgents) SoftStop(ctx context.Context, k string) error              { return nil }
+func (r *recAgents) ResumeSuspended(ctx context.Context, k, p string) error    { return nil }
 func (r *recAgents) Changed()                                                  {}
 func (r *recAgents) SetLabel(ctx context.Context, k, label string) error {
 	r.calls = append(r.calls, "label "+k+" "+label)

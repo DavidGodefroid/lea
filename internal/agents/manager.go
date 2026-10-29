@@ -1001,8 +1001,9 @@ func (m *Manager) reconcile(ctx context.Context, container string, s Session) er
 			}
 			id := p.ID
 			m.later(redrawDelay, func() { m.redrawAfterReattach(container, id) })
-		case !isLive[a.Name] && (!has || p.Dead) && a.State != "done" && a.State != stateStopped:
+		case !isLive[a.Name] && (!has || p.Dead) && a.State != "done" && a.State != stateStopped && !store.Suspended(a.State):
 			// A stopped agent is not done: its container is gone, and the next one starts it again.
+			// A suspended one waits for a decision or a message, which resumes it (SoftStop).
 			if err := m.cfg.Store.SetState(a.Key, "done", "", m.cfg.Now()); err != nil {
 				return err
 			}
@@ -2014,7 +2015,8 @@ const stateStopped = "stopped"
 
 // MarkStopped records that the container is about to stop (lea stop): its spawned agents that
 // have not ended become stopped, so the next container starts them again; with forget, they are
-// forgotten for good instead (lea stop --forget). Agents a hook registered only are left alone.
+// forgotten for good instead (lea stop --forget). A suspended agent becomes suspended_cold: its
+// decision resumes it. Agents a hook registered only are left alone.
 func (m *Manager) MarkStopped(ctx context.Context, container string, forget bool) error {
 	if !containerRe.MatchString(container) {
 		return fmt.Errorf("invalid container name %q", container)
@@ -2031,6 +2033,9 @@ func (m *Manager) MarkStopped(ctx context.Context, container string, forget bool
 		switch {
 		case forget:
 			err = m.cfg.Store.ForgetAgent(a.Key)
+		case store.Suspended(a.State):
+			// Still waiting for its decision: the stop ends its process, its session stays.
+			err = m.cfg.Store.SetState(a.Key, store.StateSuspendedCold, "", m.cfg.Now())
 		case a.State != "done" && a.State != stateStopped:
 			err = m.cfg.Store.SetState(a.Key, stateStopped, "", m.cfg.Now())
 		}
@@ -2066,6 +2071,14 @@ func (m *Manager) ResumeStopped(ctx context.Context, container string) error {
 	for _, a := range as {
 		switch {
 		case slices.Contains(live, a.Name):
+		case store.Suspended(a.State):
+			// Resumed by its decision or a message (ResumeSuspended), not by the restart. A warm
+			// one lost its process with the old container.
+			if a.State == store.StateSuspendedWarm {
+				if err := m.cfg.Store.SetState(a.Key, store.StateSuspendedCold, "", m.cfg.Now()); err != nil {
+					return err
+				}
+			}
 		case a.State == "done":
 			if err := m.cfg.Store.ForgetAgent(a.Key); err != nil {
 				return err
@@ -2103,6 +2116,19 @@ func (m *Manager) ResumeStopped(ctx context.Context, container string) error {
 
 // restart starts a stopped agent's pane again (ResumeStopped), parked. Callers hold m.mu.
 func (m *Manager) restart(ctx context.Context, s Session, container string, a store.Agent) error {
+	// The session id comes from the agent's own hooks: only a UUID reaches the command line,
+	// never a value that could pass for a flag (--resume takes an optional one).
+	session := ""
+	if sessionRe.MatchString(a.SessionID) {
+		session = a.SessionID
+	}
+	return m.restartWith(ctx, s, container, a, session, "")
+}
+
+// restartWith starts an agent's pane again, parked: with session, it resumes that session, and
+// wake, when not empty, is its next turn's prompt; without one, it starts as it first did (its
+// first prompt included). Callers hold m.mu.
+func (m *Manager) restartWith(ctx context.Context, s Session, container string, a store.Agent, session, wake string) error {
 	reg, err := m.registry()
 	if err != nil {
 		return err
@@ -2111,15 +2137,14 @@ func (m *Manager) restart(ctx context.Context, s Session, container string, a st
 	if err != nil {
 		return err
 	}
-	// The session id comes from the agent's own hooks: only a UUID reaches the command line,
-	// never a value that could pass for a flag (--resume takes an optional one).
-	session := ""
-	if sessionRe.MatchString(a.SessionID) {
-		session = a.SessionID
-	}
 	args, err := launchArgs(prov, a, session, a.Args, a.Prompt)
 	if err != nil {
 		return err
+	}
+	if session != "" && wake != "" {
+		// After the user's arguments, as a first prompt would be: Argv never passes the first
+		// prompt with a session (the agent had it already).
+		args = append(args, wake)
 	}
 	if err := checkWorkdir(a.Workdir); err != nil {
 		return err

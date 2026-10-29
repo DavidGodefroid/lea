@@ -20,7 +20,9 @@ var rewakeGrace = budget
 // Rewake is `lea hook claude Rewake`, the Stop hook Claude Code runs in the background
 // (asyncRewake): it waits for a message to the agent while its turn is over, then exits 2 with the
 // unread notice, and Claude Code wakes the model with it. A lead hears its children, a child the
-// answer to its question, without the user typing. It exits 0, waking nobody, when it times out,
+// answer to its question, without the user typing. It also runs after each Lock MCP call
+// (PostToolUse): a turn suspended on a pending Lock decision ends with no Stop (#161), and this
+// job is what a message or the decision wakes. It exits 0, waking nobody, when it times out,
 // when a newer rewake job of the same agent supersedes it, or when the bus is unreachable.
 func Rewake(ctx context.Context, stdin io.Reader, stderr io.Writer, getenv func(string) string) int {
 	c := caller{identity.BusSock(getenv), identity.Agent(getenv)}

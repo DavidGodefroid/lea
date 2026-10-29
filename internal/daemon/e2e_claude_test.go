@@ -50,6 +50,8 @@ os.kill(pid, signal.SIGKILL)
 type claudeE2E struct {
 	t       *testing.T
 	st      *store.Store
+	d       *Daemon
+	api     string
 	mu      sync.Mutex
 	limited bool
 	bodies  []string
@@ -129,6 +131,7 @@ func newClaudeE2E(t *testing.T) *claudeE2E {
 	if err != nil {
 		t.Fatal(err)
 	}
+	e.d, e.api = d, filepath.Join(dir, "d.sock")
 
 	// lea's own Claude settings, with this build of lea and without the telemetry.
 	raw, err := os.ReadFile("../../image/claude-settings.json")
@@ -265,4 +268,76 @@ func TestClaudeResumesAfterAContainerRestart(t *testing.T) {
 	e.until("the resumed session", 45, func(b store.Agent) bool { return b.State == "idle" && b.LimitUntil > 0 })
 	e.until("the resume", 60, func(b store.Agent) bool { return b.LimitUntil == 0 && b.LimitTries == 0 && b.State == "idle" })
 	e.resumedWithLeasText()
+}
+
+// e2eAgents stands for the agent manager in the suspension e2e (#161): SoftStop ends the real
+// Claude, ResumeSuspended starts it again on its session with the prompt, as the manager does in
+// the agent's pane.
+type e2eAgents struct {
+	fakeAgents
+	e    *claudeE2E
+	kill func()
+}
+
+func (f *e2eAgents) SoftStop(ctx context.Context, key string) error {
+	if a, err := f.e.st.AgentByKey(key); err != nil || a.State != store.StateSuspendedWarm {
+		return fmt.Errorf("%s: not warm", key)
+	}
+	if err := f.e.st.SetState(key, store.StateSuspendedCold, "", time.Now().Unix()); err != nil {
+		return err
+	}
+	f.kill()
+	return nil
+}
+
+func (f *e2eAgents) ResumeSuspended(ctx context.Context, key, prompt string) error {
+	a, err := f.e.st.AgentByKey(key)
+	if err != nil || a.State != store.StateSuspendedCold {
+		return fmt.Errorf("%s: not cold", key)
+	}
+	if err := f.e.st.SetState(key, "unknown", "", time.Now().Unix()); err != nil {
+		return err
+	}
+	f.kill = f.e.run("--resume", a.SessionID, prompt)
+	return nil
+}
+
+// A suspended agent (#161) whose keepalive ends is stopped, its session kept; a message to it
+// then resumes the real Claude on that session with lea's unread notice as its next turn, and the
+// turn runs to its end: a suspended lead still hears its children.
+func TestClaudeSuspendedAgentIsResumedByAMessage(t *testing.T) {
+	e := newClaudeE2E(t)
+	e.setLimited(false)
+	fa := &e2eAgents{e: e}
+	fa.kill = e.run("say hi")
+	e.d.SetAgents(fa)
+	a := e.until("the first turn", 45, func(a store.Agent) bool {
+		ps, _ := e.st.EventPayloads(a.Key, "Stop")
+		return a.State == "idle" && len(a.SessionID) == 36 && len(ps) > 0
+	})
+	e.d.SetKeepalive(2 * time.Second)
+	if err := e.d.suspend(a.Key); err != nil {
+		t.Fatal(err)
+	}
+	e.until("the soft stop", 30, func(b store.Agent) bool { return b.State == store.StateSuspendedCold })
+	time.Sleep(2 * time.Second) // the stopped Claude's SessionEnd leaves the agent cold
+	if b := e.until("still cold", 1, func(store.Agent) bool { return true }); b.State != store.StateSuspendedCold || b.SessionID != a.SessionID {
+		t.Fatalf("after the soft stop: %+v", b)
+	}
+	e.mu.Lock()
+	before := len(e.bodies)
+	e.mu.Unlock()
+	if err := call(t, e.api, "", "msg_send", map[string]any{"to": "dev", "body": "child done", "kind": "result"}, nil); err != nil {
+		t.Fatal(err)
+	}
+	e.until("the resumed turn", 60, func(b store.Agent) bool {
+		e.mu.Lock()
+		defer e.mu.Unlock()
+		return b.State == "idle" && len(e.bodies) > before
+	})
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if !strings.Contains(strings.Join(e.bodies[before:], "\n"), "unread message(s) from user") {
+		t.Fatalf("the resumed turn lacks the unread notice:\n%.2000s", strings.Join(e.bodies[before:], "\n"))
+	}
 }
