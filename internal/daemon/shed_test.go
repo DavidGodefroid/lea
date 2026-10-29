@@ -2,6 +2,7 @@ package daemon
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -86,23 +87,38 @@ func (s *shedEnv) tick(t *testing.T, d time.Duration, r Reading) {
 	t.Fatal("shedding still in flight")
 }
 
-func critical() Reading {
+func critical() Reading { return critAt(98) }
+
+func critAt(pct float64) Reading {
 	r := calm()
-	r.MemUsed, r.MemMax = 23<<30+512<<20, 24<<30 // 97.9 %
+	r.MemMax = 24 << 30
+	r.MemUsed = int64(pct / 100 * float64(r.MemMax))
 	return r
 }
 
-// Sustained critical memory pauses one agent per Shed.After: idle first, then the newest dev,
-// reviewers after devs; never the lead, never a heavy slot holder. Calm for Shed.Resume resumes
-// them, the last paused first. Each agent's lead hears it.
+func (s *shedEnv) calls() string {
+	s.sa.fakeAgents.mu.Lock()
+	defer s.sa.fakeAgents.mu.Unlock()
+	return strings.Join(s.sa.fakeAgents.calls, ", ")
+}
+
+// Sustained critical memory pauses one agent per Shed.After, while each pause makes the reading
+// better, up to half the agents it may pause: idle first, then the newest dev, reviewers after
+// devs; never the lead, never a heavy slot holder. Memory being critical, each one's nested
+// containers are stopped first. Calm for Shed.Resume resumes them, the last paused first, and
+// starts their containers again. Each agent's lead hears it.
 func TestShedPausesTheLowestPriorityAgentAndResumesLIFO(t *testing.T) {
 	s := newShedEnv(t)
+	s.sa.parkOut = "dev: stopped 1 container and 0 pods (freed 900 MiB)"
 	boss := reg(t, s.env, "boss", "lead", "", 1)
 	rev := reg(t, s.env, "rev", "reviewer", boss, 5)
 	old := reg(t, s.env, "old", "dev", boss, 2)
 	young := reg(t, s.env, "young", "dev", boss, 4)
 	idle := reg(t, s.env, "idle", "dev", boss, 3)
 	holder := reg(t, s.env, "holder", "dev", boss, 6)
+	for i := 0; i < 4; i++ { // older reviewers: the other half
+		reg(t, s.env, fmt.Sprintf("rev%d", i), "reviewer", boss, 1)
+	}
 	for _, k := range []string{boss, rev, old, young, holder} {
 		s.d.st.SetState(k, "working", "", 7)
 	}
@@ -110,19 +126,22 @@ func TestShedPausesTheLowestPriorityAgentAndResumesLIFO(t *testing.T) {
 	if a := acquire(t, s.env, "holder", "phpunit", 1); !a.Granted {
 		t.Fatal("no slot")
 	}
-	s.tick(t, time.Second, critical())
-	s.tick(t, 20*time.Second, critical())
+	s.tick(t, time.Second, critAt(99))
+	s.tick(t, 20*time.Second, critAt(99))
 	if l := s.sa.log(); l != "" {
 		t.Fatalf("paused before Shed.After: %s", l)
 	}
-	s.tick(t, 10*time.Second, critical())
-	s.tick(t, 30*time.Second, critical())
-	s.tick(t, 30*time.Second, critical())
-	s.tick(t, 30*time.Second, critical())
-	s.tick(t, 30*time.Second, critical()) // nothing left but the lead and the holder
+	s.tick(t, 10*time.Second, critAt(99))
+	s.tick(t, 30*time.Second, critAt(98.4))
+	s.tick(t, 30*time.Second, critAt(97.6))
+	s.tick(t, 30*time.Second, critAt(96.6))
+	s.tick(t, 30*time.Second, critAt(95.6)) // better again, but half the 8 agents are paused
 	want := "pause " + idle + ", pause " + young + ", pause " + old + ", pause " + rev
 	if l := s.sa.log(); l != want {
 		t.Fatalf("paused %s, want %s", l, want)
+	}
+	if c := s.calls(); !strings.Contains(c, "park "+idle) || !strings.Contains(c, "park "+rev) {
+		t.Fatalf("no stack stopped first: %s", c)
 	}
 	if err := call(t, s.bus, "young", "task_update", map[string]any{"status_text": "fixing"}, nil); err != nil {
 		t.Fatal(err)
@@ -144,7 +163,7 @@ func TestShedPausesTheLowestPriorityAgentAndResumesLIFO(t *testing.T) {
 	if err := call(t, s.bus, "boss", "msg_inbox", nil, &ms); err != nil {
 		t.Fatal(err)
 	}
-	if len(ms) != 4 || !strings.Contains(ms[0].Text, "lea paused idle, its nested containers included, under pressure (container memory 98%") {
+	if len(ms) != 4 || !strings.Contains(ms[0].Text, "lea paused idle, its nested containers included, under pressure (container memory 99%") {
 		t.Fatalf("inbox=%+v", ms)
 	}
 	// Over the admission thresholds but not critical: nothing moves.
@@ -165,12 +184,55 @@ func TestShedPausesTheLowestPriorityAgentAndResumesLIFO(t *testing.T) {
 	if l := s.sa.log(); l != want+", resume "+rev+", resume "+old {
 		t.Fatalf("log %s", l)
 	}
-	// The user resumed young meanwhile: lea leaves it, and goes on with idle.
+	// The user resumed young meanwhile: lea starts its stack only, and goes on with idle.
 	s.d.st.SetPaused(young, false)
 	s.tick(t, 60*time.Second, calm())
 	s.tick(t, 60*time.Second, calm())
 	if l := s.sa.log(); l != want+", resume "+rev+", resume "+old+", resume "+idle {
 		t.Fatalf("log %s", l)
+	}
+	for _, k := range []string{rev, old, young, idle} {
+		if c := s.calls(); !strings.Contains(c, "unpark "+k) {
+			t.Fatalf("the stack of %s not started again: %s", k, c)
+		}
+	}
+}
+
+// A pause that does not make the reading better is the last one: what weighs is elsewhere.
+func TestShedStopsWhenAPauseDoesNotHelp(t *testing.T) {
+	s := newShedEnv(t)
+	boss := reg(t, s.env, "boss", "lead", "", 1)
+	for i := 0; i < 6; i++ {
+		reg(t, s.env, fmt.Sprintf("dev%d", i), "dev", boss, int64(2+i))
+	}
+	s.tick(t, time.Second, critAt(98))
+	for i := 0; i < 5; i++ {
+		s.tick(t, 30*time.Second, critAt(98))
+	}
+	if l := s.sa.log(); l != "pause lea-a/dev5" {
+		t.Fatalf("log %s", l)
+	}
+}
+
+// A reading that swings between critical and merely over the admission thresholds still sheds:
+// the critical time goes on. CPU being critical, no stack is stopped.
+func TestShedThroughASwingingReading(t *testing.T) {
+	s := newShedEnv(t)
+	boss := reg(t, s.env, "boss", "lead", "", 1)
+	reg(t, s.env, "a", "dev", boss, 2)
+	reg(t, s.env, "b", "dev", boss, 3)
+	cpu := calm()
+	cpu.CPUPSI = 85
+	over := calm()
+	over.CPUPSI = 50
+	s.tick(t, time.Second, cpu)
+	s.tick(t, 15*time.Second, over)
+	s.tick(t, 15*time.Second, cpu)
+	if l := s.sa.log(); l != "pause lea-a/b" {
+		t.Fatalf("log %s", l)
+	}
+	if c := s.calls(); strings.Contains(c, "park ") {
+		t.Fatalf("a stack stopped on cpu: %s", c)
 	}
 }
 

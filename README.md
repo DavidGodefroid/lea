@@ -965,9 +965,13 @@ that run keep theirs, new ones wait.
 
 When a container (or the host) stays critical for `LEA_SHED_AFTER` seconds (30: memory at 95 % of
 the limit, memory PSI 30 %, or cpu PSI 80 %), lea pauses its lowest-priority agent together with
-the containers it started in the nested Podman (SIGSTOP: the nested Podman has no cgroup freezer),
-one every `LEA_SHED_AFTER`: idle agents first, then the newest dev, reviewers after devs, never a
-lead and never an agent that holds a heavy slot. Its lead gets a message, and `lea board` lists it
+the containers it started in the nested Podman (SIGSTOP: the nested Podman has no cgroup freezer).
+A frozen process keeps its memory, so when memory is what is critical lea first stops those
+containers, and starts them again when it resumes the agent. It pauses another one every
+`LEA_SHED_AFTER` only while each pause makes the reading better, and at most half the agents it
+may pause: no cascade when what weighs is elsewhere. Idle agents go first, then the newest dev,
+reviewers after devs; never a lead, never an agent that holds a heavy slot. A busy agent is paused
+only once no idle one is left: it carries on where it stopped when resumed. Its lead gets a message, and `lea board` lists it
 under "Paused under pressure". Once the pressure stays under the admission thresholds for
 `LEA_SHED_RESUME` seconds (60), lea resumes them one by one, the last paused first; one you
 resumed yourself (the deck's p) is left alone. The list survives a daemon restart.
