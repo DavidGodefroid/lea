@@ -196,9 +196,9 @@ type Snapshot struct {
 	Agents  []Row  `json:"agents"`
 	// Sound is the daemon's sound switch ("on", "off", "" when nothing plays), set by the daemon.
 	Sound string `json:"sound,omitempty"`
-	// LockHTTP is the LockHTTP gate's state for the container (LEA_LOCKHTTP=1), set by the
-	// daemon; nil when LockHTTP is off.
-	LockHTTP *LockHTTPView `json:"lockhttp,omitempty"`
+	// Locks is each Lock's approvals state for the container (#153), set by the daemon; none
+	// when lea knows of no Lock's approvals.
+	Locks []LockView `json:"locks,omitempty"`
 	// Pressure is the container's pressure gauge (#132, P2), set by the daemon; nil without a
 	// recent sample.
 	Pressure *PressureView `json:"pressure,omitempty"`
@@ -212,10 +212,11 @@ type PressureView struct {
 	Over  string `json:"over,omitempty"`
 }
 
-// LockHTTPView is what the deck shows of the LockHTTP gate (D6): whether its console runs
-// ("up", "down", "" when unknown) and how many of the container's requests wait in it. A
-// notification only: requests are approved in the console, never in the deck.
-type LockHTTPView struct {
+// LockView is what the deck shows of one Lock's approvals (D6, #153): its name, whether its
+// console runs ("up", "down", "" when unknown) and how many of the container's requests wait
+// there. A notification only: requests are approved in the Lock's console (or the hub's facade).
+type LockView struct {
+	Lock    string `json:"lock"`
 	Console string `json:"console"`
 	Pending int    `json:"pending"`
 }

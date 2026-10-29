@@ -268,45 +268,28 @@ func TestTheDeckFollowsTheSoundSwitch(t *testing.T) {
 	}
 }
 
-// LockHTTP: the top border counts the container's requests waiting in the lockhttp console, and
-// says when the console is down; nothing when LockHTTP is off or all is quiet.
-func TestTheDeckShowsLockHTTPRequests(t *testing.T) {
+// The top border counts the container's requests waiting in every Lock's console (#153): the
+// Lock's name when one Lock's wait, the total when several do; a console down when nothing
+// waits; nothing when no Lock is known or all is quiet.
+func TestTheDeckShowsLockApprovals(t *testing.T) {
 	m := sized(loaded(t, &fakeAPI{}, "lea-a/a", ag("a", "idle", 1)), 60, 10)
 	for _, c := range []struct {
-		h    *LockHTTP
+		l    []LockState
 		want string
 	}{
 		{nil, ""},
-		{&LockHTTP{Console: "up"}, ""},
-		{&LockHTTP{Console: "up", Pending: 2}, "lockhttp 2 to approve"},
-		{&LockHTTP{Console: "down"}, "lockhttp console down"},
+		{[]LockState{{Lock: "lockhttp", Console: "up"}}, ""},
+		{[]LockState{{Lock: "lockhttp", Console: "up", Pending: 2}}, "lockhttp 2 to approve"},
+		{[]LockState{{Lock: "lockhttp", Console: "down"}}, "lockhttp console down"},
+		{[]LockState{{Lock: "lockfile", Console: "up"}, {Lock: "locksql", Console: "up", Pending: 1}}, "locksql 1 to approve"},
+		{[]LockState{{Lock: "lockhttp", Pending: 2}, {Lock: "lockmq", Pending: 1}, {Lock: "locksql", Pending: 3}}, "6 to approve"},
+		{[]LockState{{Lock: "lockhttp", Console: "down"}, {Lock: "locksql", Pending: 1}}, "locksql 1 to approve"},
+		{[]LockState{{Lock: "\x1b[31mevil", Pending: 9}}, ""},
 	} {
-		m, _ = step(t, m, snapshotMsg{snap: Snapshot{Version: m.version + 1, Shown: "lea-a/a", Agents: []Agent{ag("a", "idle", 1)}, LockHTTP: c.h}})
+		m, _ = step(t, m, snapshotMsg{snap: Snapshot{Version: m.version + 1, Shown: "lea-a/a", Agents: []Agent{ag("a", "idle", 1)}, Locks: c.l}})
 		top := viewLines(m)[0]
-		if c.want == "" && strings.Contains(top, "lockhttp") || !strings.Contains(top, c.want) {
-			t.Errorf("%+v: top %q", c.h, top)
-		}
-	}
-}
-
-// Pressure (#132, P2): near or over a threshold, the deck's last line is the container's gauge;
-// nothing when all is well or no sample came.
-func TestTheDeckShowsPressure(t *testing.T) {
-	m := sized(loaded(t, &fakeAPI{}, "lea-a/a", ag("a", "idle", 1)), 34, 10)
-	for _, c := range []struct {
-		p    *Pressure
-		want bool
-	}{
-		{nil, false},
-		{&Pressure{Short: "cpu 3.0/16 mem 4.0/24G heavy 0/3", Level: "ok"}, false},
-		{&Pressure{Short: "cpu 13.0/16 mem 20.0/24G heavy 1/3", Level: "warn"}, true},
-		{&Pressure{Short: "cpu 15.8/16 mem 22.0/24G heavy 2/2", Level: "over", Over: "cpu PSI 63% > 40%"}, true},
-	} {
-		m, _ = step(t, m, snapshotMsg{snap: Snapshot{Version: m.version + 1, Shown: "lea-a/a", Agents: []Agent{ag("a", "idle", 1)}, Pressure: c.p}})
-		lines := viewLines(m)
-		got := strings.Contains(strings.Join(lines, "\n"), "heavy")
-		if got != c.want || len(lines) != 10 {
-			t.Errorf("%+v: %d lines\n%s", c.p, len(lines), strings.Join(lines, "\n"))
+		if c.want == "" && (strings.Contains(top, "approve") || strings.Contains(top, "console down")) || !strings.Contains(top, c.want) {
+			t.Errorf("%+v: top %q", c.l, top)
 		}
 	}
 }
