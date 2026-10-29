@@ -571,8 +571,12 @@ so gh and git act on its repo), whatever is granted. A branch is an agent's own 
 live agent of the lea works on it. Some calls are denied outright, grant or not: `gh pr merge
 --admin`, force-push (`-f`, `--force*`, `+refspec`, `--mirror`, `--prune`), any push to `main` or
 `master` however its refspec spells it, a push to any branch but the agent's own (named: a bare
-`git push`, `HEAD` or `@` follows whatever is checked out), a push of every branch or tag (`--all`,
-`--branches`, `--tags`, a wildcard or a bare `:`), other git transports (`send-pack`, `http-push`,
+`git push`, `HEAD` or `@` follows whatever is checked out), a refspec whose destination git would
+infer (`<src>:<branch>` with neither side `refs/heads/…`: a tag's source makes `refs/tags/<branch>`),
+a bare `git push origin <branch>` where the repository it runs in has no local branch of that name
+or a tag of it (lea reads its refs; after a command that may change them, `refs/heads/<branch>`
+only), a push of every branch or tag (`--all`,
+`--branches`, `--tags`, `--follow-tags`, a wildcard or a bare `:`), other git transports (`send-pack`, `http-push`,
 `remote-<helper>`, `svn`, `p4`), a push lea cannot read (an unknown option, a shell glob, a push run
 through another program, or a `git … push` in the arguments of any program but `grep`, `rg`,
 `echo`, `printf`, `gh pr|issue`), git run by `xargs`, `parallel`, `find` (or by another program without a subcommand), a git

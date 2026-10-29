@@ -2,6 +2,7 @@ package main
 
 import (
 	"os"
+	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -131,8 +132,20 @@ func TestDeliveryCommand(t *testing.T) {
 		t.Fatalf("status before: rc=%d %q", rc, out)
 	}
 	push := cmd("git push -u origin feat/a")
-	if d := preToolUseAs(t, bus, "dev", "Bash", push); d != "" {
+	// A push no grant covers runs as written: lea reads the worktree's refs (grants.RawPush).
+	wt := filepath.Join(proj, ".lea", "worktrees", "fixture", "dev")
+	for _, args := range [][]string{{"init", "-q", "-b", "feat/a", wt}, {"-C", wt, "commit", "-q", "--allow-empty", "-m", "x"}} {
+		g := exec.Command("git", args...)
+		g.Env = append(os.Environ(), "GIT_CONFIG_GLOBAL=/dev/null", "GIT_AUTHOR_NAME=t", "GIT_AUTHOR_EMAIL=t@t", "GIT_COMMITTER_NAME=t", "GIT_COMMITTER_EMAIL=t@t")
+		if out, err := g.CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v %s", args, err, out)
+		}
+	}
+	if d := preToolUseIn(t, bus, "dev", "Bash", push, wt); d != "" {
 		t.Fatalf("before delivery: %q", d)
+	}
+	if d := preToolUseAs(t, bus, "dev", "Bash", push); d != "deny" {
+		t.Fatalf("before delivery, a worktree lea cannot read: %q", d)
 	}
 	// The first on only lists the pins and their digest: the user confirms exactly those with
 	// --yes DIGEST. A pin that changed in between (an agent rewrote an origin, added a
@@ -150,7 +163,7 @@ func TestDeliveryCommand(t *testing.T) {
 		t.Fatalf("first on: rc=%d err=%q", rc, e)
 	}
 	digest := confirm()
-	if d := preToolUseAs(t, bus, "dev", "Bash", push); d != "" {
+	if d := preToolUseIn(t, bus, "dev", "Bash", push, wt); d != "" {
 		t.Fatalf("after an unconfirmed on: %q", d)
 	}
 	origin("web", "https://github.com/swap/web.git")
@@ -158,7 +171,7 @@ func TestDeliveryCommand(t *testing.T) {
 		!strings.Contains(e, "the pins changed since they were listed") {
 		t.Fatalf("stale digest: rc=%d err=%q", rc, e)
 	}
-	if d := preToolUseAs(t, bus, "dev", "Bash", push); d != "" {
+	if d := preToolUseIn(t, bus, "dev", "Bash", push, wt); d != "" {
 		t.Fatalf("after a stale digest: %q", d)
 	}
 	origin("web", "https://github.com/o/web.git")
@@ -216,7 +229,7 @@ func TestDeliveryCommand(t *testing.T) {
 	if rc, _, _ := runEnv(t, host, "delivery", "--container", "lea-a", "--projects", proj, "off"); rc != 0 {
 		t.Fatal("off again")
 	}
-	if d := preToolUseAs(t, bus, "dev", "Bash", push); d != "" {
+	if d := preToolUseIn(t, bus, "dev", "Bash", push, wt); d != "" {
 		t.Fatalf("after off: %q", d)
 	}
 	for _, args := range [][]string{{"delivery", "--container", "lea-a", "--projects", proj}, {"delivery", "--container", "lea-a", "--projects", proj, "maybe"},

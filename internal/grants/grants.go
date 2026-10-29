@@ -317,12 +317,13 @@ const (
 // (http_unix_socket), run a pager or an alias.
 const noConfigDir = "/usr/local/share/lea/no-forge-config"
 
-// gitPins neutralise what in git's configuration would run a program or send the push elsewhere
-// during commit or push: hooks, fsmonitor, the SSH command, signing, pager, editor, askpass, and
-// every transport but https and ssh. http.proxy is lea's (pins).
+// gitPins neutralise what in git's configuration would run a program, send the push elsewhere
+// or push more (tags) during commit or push: hooks, fsmonitor, the SSH command, signing, pager,
+// editor, askpass, push.followTags, and every transport but https and ssh. http.proxy is lea's
+// (pins).
 var gitPins = []string{"core.hooksPath=/dev/null", "core.fsmonitor=false", "core.sshCommand=" + sshPath,
 	"commit.gpgSign=false", "core.pager=cat", "core.editor=true", "core.askPass=/bin/false",
-	"push.recurseSubmodules=no", "protocol.allow=never", "protocol.https.allow=always", "protocol.ssh.allow=always",
+	"push.recurseSubmodules=no", "push.followTags=false", "protocol.allow=never", "protocol.https.allow=always", "protocol.ssh.allow=always",
 	// An empty helper resets the list (the repository's too); then only lea's: the image's store
 	// and gh's.
 	"credential.helper=", "credential.helper=store --file=/lea/state/git/credentials",

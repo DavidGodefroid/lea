@@ -274,18 +274,19 @@ func closing(cmd string, j int, open, close byte) (int, bool) {
 
 // Reasons of hardGit.
 const (
-	pushUnread    = "a git push lea cannot read (heredoc, process substitution, odd quoting) is never allowed: run it plainly"
-	pushIndirect  = "a git push run through another program, a shell or with variables before it is never allowed: run git push plainly"
-	pushTransport = "git transports other than push (send-pack, http-push, remote-<helper>, svn, p4) are never allowed"
-	pushWild      = "a git push with an unquoted *, ?, [, {, or ~ is never allowed: the shell would choose the refs"
-	pushForce     = "force-push (or a push that rewrites or prunes remote branches) is never allowed"
-	pushEvery     = "pushing every branch or tag (--all, --branches, --tags, --mirror, --prune, a wildcard or a bare \":\") is never allowed: name the branch"
-	pushMain      = "pushing to the default branch is never allowed"
-	pushImplicit  = "a push must name the agent's branch (git push origin <branch>): a bare git push, HEAD or @ follows whatever is checked out"
-	pushOther     = "pushing to anything but the agent's own branch is never allowed"
-	pushDelete    = "deleting a branch that is not the agent's own is never allowed"
-	pushDeleteAnd = "deleting a remote branch in a compound command is never allowed"
-	gitGlobal     = "git options before the subcommand other than -C, -c user.name|user.email|color.ui|core.quotepath and display options are never allowed: " +
+	pushUnread      = "a git push lea cannot read (heredoc, process substitution, odd quoting) is never allowed: run it plainly"
+	pushIndirect    = "a git push run through another program, a shell or with variables before it is never allowed: run git push plainly"
+	pushTransport   = "git transports other than push (send-pack, http-push, remote-<helper>, svn, p4) are never allowed"
+	pushWild        = "a git push with an unquoted *, ?, [, {, or ~ is never allowed: the shell would choose the refs"
+	pushForce       = "force-push (or a push that rewrites or prunes remote branches) is never allowed"
+	pushEvery       = "pushing every branch or tag (--all, --branches, --tags, --follow-tags, --mirror, --prune, a wildcard or a bare \":\") is never allowed: name the branch"
+	pushMain        = "pushing to the default branch is never allowed"
+	pushImplicit    = "a push must name the agent's branch (git push origin <branch>): a bare git push, HEAD or @ follows whatever is checked out"
+	pushOther       = "pushing to anything but the agent's own branch is never allowed"
+	pushUnqualified = "a push refspec must name the branch in full (git push origin refs/heads/<branch> or <src>:refs/heads/<branch>): git makes an unqualified destination a tag when the source is one"
+	pushDelete      = "deleting a branch that is not the agent's own is never allowed"
+	pushDeleteAnd   = "deleting a remote branch in a compound command is never allowed"
+	gitGlobal       = "git options before the subcommand other than -C, -c user.name|user.email|color.ui|core.quotepath and display options are never allowed: " +
 		"a configuration, an alias or another repository could make any subcommand a push"
 	gitBuilt    = "git run by xargs, parallel, find (or with no subcommand by another program) is never allowed: they build its words, lea cannot read them"
 	gitComputed = "a git program, subcommand or push argument computed by the shell ($…, `…`) is never allowed: write it out"
@@ -295,7 +296,7 @@ const (
 // pushFlags are the git push options that change neither what is pushed nor where.
 var pushFlags = map[string]bool{"--set-upstream": true, "--verbose": true, "--quiet": true, "--dry-run": true, "--porcelain": true,
 	"--progress": true, "--no-progress": true, "--atomic": true, "--no-atomic": true, "--verify": true, "--no-verify": true,
-	"--ipv4": true, "--ipv6": true, "--thin": true, "--no-thin": true, "--follow-tags": true, "--no-follow-tags": true}
+	"--ipv4": true, "--ipv6": true, "--thin": true, "--no-thin": true, "--no-follow-tags": true}
 
 // safeConfig are the keys "git -c" may set from inside an agent: none runs a program, includes
 // a file or defines an alias.
@@ -615,7 +616,7 @@ func parsePush(args []string, c Caller, compound bool) string {
 		case strings.HasPrefix(a, "--push-option="), pushFlags[a]:
 		case strings.HasPrefix(a, "--force"):
 			return pushForce
-		case a == "--all" || a == "--branches" || a == "--mirror" || a == "--prune" || a == "--tags":
+		case a == "--all" || a == "--branches" || a == "--mirror" || a == "--prune" || a == "--tags" || a == "--follow-tags":
 			return pushEvery
 		case !strings.HasPrefix(a, "--"):
 			for k := 1; k < len(a); k++ {
@@ -683,6 +684,15 @@ func parsePush(args []string, c Caller, compound bool) string {
 		}
 		if strings.HasPrefix(dst, "refs/") && !strings.HasPrefix(dst, "refs/heads/") {
 			return pushOther
+		}
+		// A destination git has to infer takes its kind from the source: a tag's (v1, HEAD
+		// pointing at refs/tags/v1) makes refs/tags/<dst>. Only refs/heads/ on either side
+		// says it is a branch; a bare <branch> is checked against the repository (RawPushes).
+		if colon && !strings.HasPrefix(dst, "refs/heads/") && !strings.HasPrefix(src, "refs/heads/") {
+			return pushUnqualified
+		}
+		if !colon && strings.HasPrefix(dst, "heads/") {
+			return pushUnqualified
 		}
 		b := branchOf(dst)
 		if Protected(b) {

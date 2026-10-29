@@ -354,6 +354,12 @@ func (d *Daemon) grantCheck(o Origin, me string, raw json.RawMessage) (any, erro
 	}
 	finished := p.Tool == grants.StopTool && d.finishedChild(o, me, p.Input)
 	dec := grants.Decide(p.Tool, p.Input, c, gs, now, finished)
+	if dec.Verdict == "" {
+		// A push no grant rewrote runs as the agent wrote it: its bare branch must not be a tag.
+		if why := grants.RawPush(p.Tool, p.Input, c); why != "" {
+			dec = grants.Decision{Verdict: grants.Deny, Reason: "lea hard deny: " + why}
+		}
+	}
 	if dec.Verdict == grants.Allow {
 		if err := d.st.AddGrantUse(store.GrantUse{Grant: dec.Grant, Agent: me, Action: dec.Request.Action,
 			Target: capText(dec.Request.Target, 200), At: now}); err != nil {
