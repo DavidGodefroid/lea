@@ -55,6 +55,16 @@ func (r *Registry) Resolve(provider, model, defProvider, defModel string) (Provi
 	return p, model, nil
 }
 
+// LeaApprovedTools are lea's own MCP tools Codex runs without asking: lea's control plane
+// (messages, board, leases, requests the user or a lead answers). LeaPromptedTools start or stop
+// agents: they keep Codex's prompt, as a Claude agent keeps its own (a grant may answer it).
+var (
+	LeaApprovedTools = []string{"agents_list", "agents_request_spawn", "ask", "board_read", "grants_list",
+		"lease_acquire", "lease_release", "lock_request", "msg_inbox", "msg_reply", "msg_send", "msg_wait",
+		"providers_list", "task_update"}
+	LeaPromptedTools = []string{"agents_spawn", "agents_stop"}
+)
+
 // Argv is what an agent's CLI runs with, after `lea-agent run <agent> --cli <CLI> --`: the
 // provider's own flags, model, the user's arguments (lea new -- ...), then the session to resume
 // (a UUID, else nothing) or else the first prompt. Every value lea puts into a Codex -c option is
@@ -90,15 +100,16 @@ func (p Provider) Argv(agent, workdir, model, session string, user []string, pro
 			a = append(a, "resume", session)
 		}
 		// The sandbox and approvals of Codex itself, in the agent's pane: writes in the
-		// workspace, asks for anything else (lea's container stays the outer boundary). lea's own
-		// tools need no approval in Codex: they are lea's control plane, not the workspace.
+		// workspace, asks for anything else (lea's container stays the outer boundary).
 		a = append(a, "--sandbox", "workspace-write", "--ask-for-approval", "on-request",
 			"-c", "check_for_update_on_startup=false",
 			"-c", `mcp_servers.lea.command="`+LeaBin+`"`,
 			"-c", `mcp_servers.lea.args=["mcp"]`,
 			"-c", `mcp_servers.lea.env.LEA_AGENT="`+agent+`"`,
-			"-c", `mcp_servers.lea.default_tools_approval_mode="approve"`,
 			"-c", `notify=["`+LeaBin+`","hook","codex","notify"]`)
+		for _, t := range LeaApprovedTools {
+			a = append(a, "-c", `mcp_servers.lea.tools.`+t+`.approval_mode="approve"`)
+		}
 		if trustable(workdir) {
 			a = append(a, "-c", `projects."`+workdir+`".trust_level="untrusted"`)
 		}
