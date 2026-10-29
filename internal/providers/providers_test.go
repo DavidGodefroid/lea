@@ -272,12 +272,19 @@ func TestArgvCodex(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// lea's tools run without Codex's prompt, but agents_spawn and agents_stop: they start and
+	// stop agents, and keep the prompt a Claude agent gets (where a grant may answer it).
 	want := []string{"--sandbox", "workspace-write", "--ask-for-approval", "on-request",
 		"-c", "check_for_update_on_startup=false",
 		"-c", `mcp_servers.lea.command="/usr/local/bin/lea"`, "-c", `mcp_servers.lea.args=["mcp"]`,
-		"-c", `mcp_servers.lea.env.LEA_AGENT="dev-1"`, "-c", `mcp_servers.lea.default_tools_approval_mode="approve"`, "-c", `notify=["/usr/local/bin/lea","hook","codex","notify"]`,
-		"-c", `projects."/home/u/projects".trust_level="untrusted"`,
-		"--model", "gpt-5.1-codex", "read your brief"}
+		"-c", `mcp_servers.lea.env.LEA_AGENT="dev-1"`, "-c", `notify=["/usr/local/bin/lea","hook","codex","notify"]`}
+	for _, tool := range []string{"agents_list", "agents_request_spawn", "ask", "board_read", "grants_list",
+		"lease_acquire", "lease_release", "lock_request", "msg_inbox", "msg_reply", "msg_send", "msg_wait",
+		"providers_list", "task_update"} {
+		want = append(want, "-c", `mcp_servers.lea.tools.`+tool+`.approval_mode="approve"`)
+	}
+	want = append(want, "-c", `projects."/home/u/projects".trust_level="untrusted"`,
+		"--model", "gpt-5.1-codex", "read your brief")
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("got  %q\nwant %q", got, want)
 	}
