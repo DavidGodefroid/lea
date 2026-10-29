@@ -60,6 +60,9 @@ type claudeE2E struct {
 	env     []string
 	sf      string
 	out     strings.Builder
+	// toolUse, when set, is the tool the fake model calls first: a request that offers it and
+	// carries no tool result yet is answered with a call to it.
+	toolUse string
 }
 
 func newClaudeE2E(t *testing.T) *claudeE2E {
@@ -98,6 +101,24 @@ func newClaudeE2E(t *testing.T) *claudeE2E {
 			return
 		}
 		w.Header().Set("Content-Type", "text/event-stream")
+		e.mu.Lock()
+		tool := e.toolUse
+		e.mu.Unlock()
+		if tool != "" && strings.Contains(string(b), `"`+tool+`"`) && !strings.Contains(string(b), `"tool_result"`) {
+			for _, ev := range []string{
+				`{"type":"message_start","message":{"id":"msg_t","type":"message","role":"assistant","model":"claude-e2e","content":[],"stop_reason":null,"stop_sequence":null,"usage":{"input_tokens":1,"output_tokens":1}}}`,
+				`{"type":"content_block_start","index":0,"content_block":{"type":"tool_use","id":"toolu_e2e1","name":"` + tool + `","input":{}}}`,
+				`{"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"{}"}}`,
+				`{"type":"content_block_stop","index":0}`,
+				`{"type":"message_delta","delta":{"stop_reason":"tool_use","stop_sequence":null},"usage":{"output_tokens":2}}`,
+				`{"type":"message_stop"}`,
+			} {
+				var ev2 struct{ Type string }
+				_ = json.Unmarshal([]byte(ev), &ev2)
+				io.WriteString(w, "event: "+ev2.Type+"\ndata: "+ev+"\n\n")
+			}
+			return
+		}
 		for _, ev := range []string{
 			`{"type":"message_start","message":{"id":"msg_1","type":"message","role":"assistant","model":"claude-e2e","content":[],"stop_reason":null,"stop_sequence":null,"usage":{"input_tokens":1,"output_tokens":1}}}`,
 			`{"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}`,
@@ -379,5 +400,63 @@ func TestClaudeSuspendedAgentIsResumedByADecision(t *testing.T) {
 	defer e.mu.Unlock()
 	if !strings.Contains(strings.Join(e.bodies[before:], "\n"), "approved: call its run again with ticket="+testTicket) {
 		t.Fatalf("the resumed turn lacks the decision:\n%.2000s", strings.Join(e.bodies[before:], "\n"))
+	}
+}
+
+// lockStub is a Lock's MCP server (stdio) whose run answers pending, as lockkit's mcpkit.PendingOn
+// does: the fixed text and the structured content.
+const lockStub = `
+import json, sys
+for line in sys.stdin:
+    m = json.loads(line)
+    mid, meth = m.get("id"), m.get("method")
+    def send(r):
+        sys.stdout.write(json.dumps({"jsonrpc": "2.0", "id": mid, "result": r}) + "\n"); sys.stdout.flush()
+    if meth == "initialize":
+        send({"protocolVersion": m["params"].get("protocolVersion", "2025-06-18"), "capabilities": {"tools": {}},
+              "serverInfo": {"name": "lockstub", "version": "0"}})
+    elif meth == "tools/list":
+        send({"tools": [{"name": "run", "description": "Run a plan", "inputSchema": {"type": "object", "properties": {}}}]})
+    elif meth == "tools/call":
+        sc = {"status": "pending", "ticket": sys.argv[1], "lock": "locksql", "instance": "crm-prod"}
+        send({"content": [{"type": "text", "text": "Pending human approval: ticket " + sys.argv[1] +
+              " on locksql. Do not retry. End your turn; you will be told when it is decided."}], "structuredContent": sc})
+    elif mid is not None:
+        send({})
+`
+
+// A real Claude whose Lock call answers pending is suspended by lea's hook: the wait is recorded,
+// the agent is suspended_warm, and the turn ends on the tool result, the model not asked again
+// (#160).
+func TestClaudePendingLockCallSuspendsTheAgent(t *testing.T) {
+	e := newClaudeE2E(t)
+	e.setLimited(false)
+	if _, err := e.st.Register(store.NewAgent{Container: "lea-a", Name: "dev", Profile: "claude", Workdir: e.wd, Role: "dev"}, store.Caps{}, 1); err != nil {
+		t.Fatal(err)
+	}
+	e.d.SetKeepalive(time.Hour)
+	stub := filepath.Join(t.TempDir(), "lockstub.py")
+	os.WriteFile(stub, []byte(lockStub), 0o600)
+	mcp, _ := json.Marshal(map[string]any{"mcpServers": map[string]any{
+		"lockstub": map[string]any{"type": "stdio", "command": "python3", "args": []string{"-I", stub, testTicket}}}})
+	e.mu.Lock()
+	e.toolUse = "mcp__lockstub__run"
+	e.mu.Unlock()
+	e.run("run the plan", "--mcp-config", string(mcp), "--strict-mcp-config", "--allowedTools=mcp__lockstub__run")
+	a := e.until("the suspension", 60, func(a store.Agent) bool { return a.State == store.StateSuspendedWarm })
+	ws, err := e.st.PendingHubWaits(a.Key)
+	if err != nil || len(ws) != 1 || ws[0].Ticket != testTicket || ws[0].Lock != "locksql" || ws[0].Instance != "crm-prod" {
+		t.Fatalf("waits %+v %v", ws, err)
+	}
+	time.Sleep(3 * time.Second)
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	for _, b := range e.bodies {
+		if strings.Contains(b, `"tool_result"`) {
+			t.Fatalf("the model was asked again after the pending result:\n%.2000s", b)
+		}
+	}
+	if b := e.until("still suspended", 1, func(store.Agent) bool { return true }); b.State != store.StateSuspendedWarm {
+		t.Fatalf("state %s after the turn", b.State)
 	}
 }

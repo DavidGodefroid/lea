@@ -1064,6 +1064,37 @@ func TestLockHTTPTokenReachesTheAgent(t *testing.T) {
 	}
 }
 
+func TestRequesterTokenReachesTheAgent(t *testing.T) {
+	st, err := store.Open(filepath.Join(t.TempDir(), "lea.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { st.Close() })
+	term := &fakeTerm{sessions: map[string]*fakeSession{}}
+	key := []byte("0123456789abcdef0123456789abcdef")
+	cfg := Config{Store: st, Term: term, Containers: &fakeContainers{live: map[string][]string{}},
+		LeaBin: leaBin, UID: 1000, GID: 1000, Now: func() int64 { return 1000 },
+		RequesterToken: func(container, agent string) string { return RequesterToken(key, container, agent) }}
+	m := NewManager(cfg)
+	if err := m.Ensure(bg, C, "/p"); err != nil {
+		t.Fatal(err)
+	}
+	for _, n := range []string{"a1", "a2"} {
+		if _, err := m.New(bg, NewRequest{Container: C, Name: n}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	t1, t2 := RequesterToken(key, C, "a1"), RequesterToken(key, C, "a2")
+	if t1 == t2 || len(t1) != 32 || t1 != RequesterToken(key, C, "a1") || t1 == RequesterToken([]byte("another key, 32 bytes long......"), C, "a1") {
+		t.Fatalf("tokens %q %q", t1, t2)
+	}
+	for n, tok := range map[string]string{"a1": t1, "a2": t2} {
+		if cmd := strings.Join(term.get(C).byAgent(n).cmd, " "); !strings.Contains(cmd, "-e LEA_AGENT_TOKEN="+tok+" ") {
+			t.Fatalf("%s: cmd=%s", n, cmd)
+		}
+	}
+}
+
 func TestSnapshotCarriesUnreadUsageAndTheOldestApproval(t *testing.T) {
 	e := newEnv(t)
 	e.ensure(t, "/p")

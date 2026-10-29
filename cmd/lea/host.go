@@ -230,12 +230,14 @@ func runDaemon(stderr io.Writer) int {
 	// holds which from sources.json, which the daemon keeps up to date.
 	var proxyToken func(container, agent string) string
 	_ = os.Remove(filepath.Join(host, "daemon.lockhttp"))
+	// The host key also gives each agent its requester token for the Locks (#160).
+	key, err := lockhttp.Key(filepath.Dir(host))
+	if err != nil {
+		fmt.Fprintln(stderr, "lea:", clean(err.Error(), false))
+		return 1
+	}
+	requesterToken := func(container, agent string) string { return agents.RequesterToken(key, container, agent) }
 	if os.Getenv("LEA_LOCKHTTP") == "1" {
-		key, err := lockhttp.Key(filepath.Dir(host))
-		if err != nil {
-			fmt.Fprintln(stderr, "lea:", clean(err.Error(), false))
-			return 1
-		}
 		proxyToken = func(container, agent string) string { return lockhttp.Token(key, container, agent) }
 		d.SetGrantProxy(lockHTTPGrantProxy(key))
 		go lockHTTPSources(ctx, st, d, reg, filepath.Dir(host), nonEmptyEnv("LEA_PREFIX", "lea"))
@@ -262,6 +264,7 @@ func runDaemon(stderr io.Writer) int {
 		DefaultProvider: os.Getenv("LEA_PROVIDER"),
 		DefaultModel:    os.Getenv("LEA_MODEL"),
 		ProxyToken:      proxyToken,
+		RequesterToken:  requesterToken,
 	})
 	d.SetAgents(m)
 	d.SweepLockRequestsLater()
