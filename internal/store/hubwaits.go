@@ -42,7 +42,7 @@ var (
 // HubWait is one agent's wait on a hub ticket.
 type HubWait struct {
 	Agent, Ticket, Lock, Instance string
-	Created, DecidedAt           int64
+	Created, DecidedAt            int64
 	// Decision is "" while pending; Reason is the hub's (denied, withdrawn).
 	Decision, Reason string
 	// Delivered is when the decision reached the agent (0: not yet).
