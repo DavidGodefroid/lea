@@ -25,6 +25,8 @@ if [ "$lockhttp" = 1 ]; then
     exit 1
   fi
 fi
+# /etc/squid/{squid.conf,peek.conf,lea-peek.pem} link into /run/lea-proxy (a read-only root).
+mkdir -p /run/lea-proxy
 /usr/local/bin/render-squid-conf.sh /etc/lea/internal-hosts >/etc/squid/squid.conf
 /usr/local/bin/render-squid-conf.sh --peek /etc/lea/internal-hosts >/etc/squid/peek.conf
 squid -k parse -f /etc/squid/squid.conf
@@ -32,13 +34,21 @@ squid -k parse -f /etc/squid/squid.conf
 chmod a+w /dev/stdout /dev/stderr 2>/dev/null || true
 # One SSH forwarder per git endpoint of LEA_GIT_SSH, in order: port 2222, 2223 ... (the lea
 # container's ssh configuration sends each host to its port).
+# as_fwd/as_keyproxy CMD...: exec CMD as the forwarders' own user, never root (no-new-privileges:
+# no way back). lea-keyproxy keeps DAC_READ_SEARCH only, to read the key files whatever their owner
+# (the user's, mounted read-only). Run in the background, the subshell becomes CMD: $! is its pid.
+as_fwd() { exec setpriv --reuid=lea-fwd --regid=lea-fwd --clear-groups --inh-caps=-all -- "$@"; }
+as_keyproxy() {
+  exec setpriv --reuid=lea-keyproxy --regid=lea-keyproxy --clear-groups --inh-caps=-all,+dac_read_search \
+    --ambient-caps=+dac_read_search -- "$@"
+}
 port=2222
 for ep in ${LEA_GIT_SSH:-}; do
-  socat TCP-LISTEN:$port,fork,reuseaddr "TCP:$ep" &
+  as_fwd socat TCP-LISTEN:$port,fork,reuseaddr "TCP:$ep" &
   port=$((port + 1))
 done
 if [ -n "${LEA_OTEL_UPSTREAM:-}" ]; then
-  socat TCP-LISTEN:4318,fork,reuseaddr "TCP:${LEA_OTEL_UPSTREAM}" &
+  as_fwd socat TCP-LISTEN:4318,fork,reuseaddr "TCP:${LEA_OTEL_UPSTREAM}" &
 fi
 # wait_port PORT WHAT: wait until 127.0.0.1:PORT accepts connections, or fail the container.
 wait_port() {
@@ -76,11 +86,11 @@ if [ "$lockhttp" = 1 ]; then via=http://127.0.0.1:3130; fi
 if [ -s /etc/lea/endpoints ]; then
   if [ "${LEA_LOCKHTTP_MITM:-0}" = 1 ]; then
     # The gate decrypts and re-signs with lea's CA: keyproxy trusts its certificate (never the key).
-    lea-keyproxy -endpoints /etc/lea/endpoints -listen :4400 -via "$via" -sources /etc/lockhttp-gate/sources.json -ca-cert /etc/lockhttp-gate/ca.pem &
+    as_keyproxy lea-keyproxy -endpoints /etc/lea/endpoints -listen :4400 -via "$via" -sources /etc/lockhttp-gate/sources.json -ca-cert /etc/lockhttp-gate/ca.pem &
   elif [ "$lockhttp" = 1 ]; then
-    lea-keyproxy -endpoints /etc/lea/endpoints -listen :4400 -via "$via" -sources /etc/lockhttp-gate/sources.json &
+    as_keyproxy lea-keyproxy -endpoints /etc/lea/endpoints -listen :4400 -via "$via" -sources /etc/lockhttp-gate/sources.json &
   else
-    lea-keyproxy -endpoints /etc/lea/endpoints -listen :4400 -via "$via" &
+    as_keyproxy lea-keyproxy -endpoints /etc/lea/endpoints -listen :4400 -via "$via" &
   fi
   keyproxy_pid=$!
   # An invalid endpoints file fails the container: no agent is left with a silent port 4400.
