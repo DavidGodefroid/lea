@@ -77,22 +77,33 @@ func (d *Daemon) samplePressure(ctx context.Context) {
 	host, scopes := src.Sample(ctx, cs)
 	d.mu.Lock()
 	before := d.gaugesLocked()
-	d.pressHost, d.pressScopes, d.pressAt = host, scopes, time.Now()
+	now := d.pnow()
+	d.pressHost, d.pressScopes, d.pressAt = host, scopes, now
 	for _, p := range d.heavy {
 		d.tidyLocked(p)
 	}
 	after := d.gaugesLocked()
+	acts := d.shedStepLocked(now)
 	d.mu.Unlock()
+	d.shedNow(acts)
 	d.startQueued(ctx)
 	if fmt.Sprint(before) != fmt.Sprint(after) {
 		d.changed()
 	}
 }
 
+// pnow is the pressure's clock (a test seam: pressClock).
+func (d *Daemon) pnow() time.Time {
+	if d.pressClock != nil {
+		return d.pressClock()
+	}
+	return time.Now()
+}
+
 // overLocked is why the container (and the host) are under pressure, "" when they are not or no
 // recent sample says so. Callers hold d.mu.
 func (d *Daemon) overLocked(container string) string {
-	if d.pressSrc == nil || d.pressAt.IsZero() || time.Since(d.pressAt) > pressureStale {
+	if d.pressSrc == nil || d.pressAt.IsZero() || d.pnow().Sub(d.pressAt) > pressureStale {
 		return ""
 	}
 	var parts []string
@@ -365,7 +376,7 @@ func (d *Daemon) gaugeOfLocked(scope string, r Reading, host bool) Gauge {
 // gaugesLocked is the host's gauge, then each sampled container's; nil without a recent sample.
 // Callers hold d.mu.
 func (d *Daemon) gaugesLocked() []Gauge {
-	if d.pressSrc == nil || d.pressAt.IsZero() || time.Since(d.pressAt) > pressureStale {
+	if d.pressSrc == nil || d.pressAt.IsZero() || d.pnow().Sub(d.pressAt) > pressureStale {
 		return nil
 	}
 	out := []Gauge{d.gaugeOfLocked("host", d.pressHost, true)}

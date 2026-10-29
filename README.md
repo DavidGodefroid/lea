@@ -756,6 +756,7 @@ read-only. The screen runs in the deck on the host: agents cannot open or drive 
 | `LEA_AGENT_CPUS` | `4` | each agent's CPU window, the least shared CPUs: the agent, its tools and its nested containers run there, so `nproc`, PHPStan, Go… see that many CPUs (`0`: no window) |
 | `LEA_HEAVY_SLOTS`, `LEA_HEAVY_WORKERS` | `0` (¾ of the CPUs ÷ workers), `4` | heavy jobs (`lea heavy -- <command>`): how many run at once per container, and the CPUs and workers each gets |
 | `LEA_ADMIT_CPU_PSI`, `LEA_ADMIT_MEM_PCT`, `LEA_ADMIT_MEM_PSI`, `LEA_ADMIT_IO_PSI`, `LEA_ADMIT_LOAD` | `40`, `85`, `10`, `40`, `2` | [host pressure](#host-pressure) above which new agents wait: PSI in percent, memory in percent of the lea container's limit (the host's from 90 %), the host's load per CPU (`0`: that one off) |
+| `LEA_SHED_MEM_PCT`, `LEA_SHED_MEM_PSI`, `LEA_SHED_CPU_PSI`, `LEA_SHED_AFTER`, `LEA_SHED_RESUME` | `95`, `30`, `80`, `30`, `60` | [host pressure](#host-pressure) that pauses the lowest-priority agent once it lasts `LEA_SHED_AFTER` seconds (`0`: never), resumed after `LEA_SHED_RESUME` seconds of calm |
 | `LEA_SOUND`, `LEA_AUTONAME` | on | the deck's sounds, automatic names (`0`: off) |
 | `LEA_SOUND_ATTENTION`, `LEA_SOUND_DONE` | freedesktop sounds | the file of each sound (`0`: that one off) |
 | `LEA_OTEL_UPSTREAM` | empty | send Claude Code usage telemetry to this OTLP collector |
@@ -961,6 +962,18 @@ message when it starts; one calm sample starts one queued agent at most. The que
 daemon's memory: a daemon restart drops it without a message. `agents_request_spawn` is not
 refused: a request starts nothing, the lead's `agents_spawn` is the gate. Meanwhile each container gets half its heavy slots (at least one): jobs
 that run keep theirs, new ones wait.
+
+When a container (or the host) stays critical for `LEA_SHED_AFTER` seconds (30: memory at 95 % of
+the limit, memory PSI 30 %, or cpu PSI 80 %), lea pauses its lowest-priority agent together with
+the containers it started in the nested Podman (SIGSTOP: the nested Podman has no cgroup freezer),
+one every `LEA_SHED_AFTER`: idle agents first, then the newest dev, reviewers after devs, never a
+lead and never an agent that holds a heavy slot. Its lead gets a message, and `lea board` lists it
+under "Paused under pressure". Once the pressure stays under the admission thresholds for
+`LEA_SHED_RESUME` seconds (60), lea resumes them one by one, the last paused first; one you
+resumed yourself (the deck's p) is left alone. The list survives a daemon restart.
+
+`lea doctor` checks that PSI is readable, that each running lea container's cgroup is, and that
+the shedding thresholds sit above the admission ones.
 
 `lea board` shows the host's gauge and each container's
 (`CPU 14.8/16 · PSI 22% · mem 18.1/24.0 GiB · heavy 3/4 (+2 queued)`); the deck shows the
