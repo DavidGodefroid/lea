@@ -115,7 +115,7 @@ func TestNewSpawnsClaudeUnderAbducoAndShowsIt(t *testing.T) {
 	r := e.spawn(t, "", "--resume")
 	want := Row{Key: C + "/claude-1", Name: "claude-1", Profile: "claude", State: "unknown", Workdir: "/home/u/p/it's here", Updated: 1000,
 		Created: 1000, Role: "dev", CtxPct: -1, CostUSD: -1}
-	if r != want {
+	if !reflect.DeepEqual(r, want) {
 		t.Fatalf("row=%+v", r)
 	}
 	p := s.byAgent("claude-1")
@@ -138,7 +138,7 @@ func TestNewSpawnsClaudeUnderAbducoAndShowsIt(t *testing.T) {
 		}
 	}
 	snap, err := e.m.Watch(bg, C, 0, time.Second)
-	if err != nil || snap.Shown != r.Key || len(snap.Agents) != 1 || snap.Agents[0] != want {
+	if err != nil || snap.Shown != r.Key || len(snap.Agents) != 1 || !reflect.DeepEqual(snap.Agents[0], want) {
 		t.Fatalf("snapshot=%+v err=%v", snap, err)
 	}
 }

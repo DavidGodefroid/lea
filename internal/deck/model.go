@@ -48,6 +48,8 @@ type Agent struct {
 	Approval *Approval `json:"approval,omitempty"`
 	// LockAsk: the agent asks the user to open a lock console (agents.LockAsk).
 	LockAsk *LockAsk `json:"lock_ask,omitempty"`
+	// Hub: the Lock Family hub's pending tickets for the agent, oldest first (agents.HubCard).
+	Hub []HubCard `json:"hub,omitempty"`
 	// Paused: the user froze the agent (p); it continues where it stopped on resume.
 	Paused bool `json:"paused,omitempty"`
 	// Subagents counts the subagents the agent still runs (agents.Row.Subagents).
@@ -123,6 +125,24 @@ type Pressure struct {
 	Over  string `json:"over,omitempty"`
 }
 
+// HubCard is one of the hub's pending tickets for an agent (agents.HubCard, #158): the deck
+// answers the oldest (a approves, d denies); a production one needs its Retype typed first.
+// Verified: the agent's own wait names it; else the agent claims it (shown "unverified").
+type HubCard struct {
+	ID         string   `json:"id"`
+	Instance   string   `json:"instance"`
+	Lock       string   `json:"lock"`
+	Risk       string   `json:"risk"`
+	Production bool     `json:"production,omitempty"`
+	Retype     string   `json:"retype,omitempty"`
+	Verified   bool     `json:"verified,omitempty"`
+	Header     string   `json:"header,omitempty"`
+	Note       string   `json:"note,omitempty"`
+	Body       []string `json:"body,omitempty"`
+	Warnings   []string `json:"warnings,omitempty"`
+	Expires    int64    `json:"expires,omitempty"`
+}
+
 // LockState is what the deck shows of one Lock's approvals (agents.LockView): its name, its
 // console ("up", "down", "" unknown) and the container's requests waiting there. A notification
 // only: the user approves them in the Lock's console (or the hub's facade).
@@ -159,6 +179,8 @@ type API interface {
 	LockOpen(ctx context.Context, container, tool string) (string, error)
 	// LockDecide answers an agent's lock request: open opens the console it names, as L would.
 	LockDecide(ctx context.Context, container string, id int64, open bool) (string, error)
+	// HubDecide answers one of the hub's tickets for an agent of container (the hub card's a or d).
+	HubDecide(ctx context.Context, container, instance, id string, approved bool, retype string) error
 }
 
 // isShell reports whether a row is a shell.
@@ -257,7 +279,13 @@ type Model struct {
 	ticking     bool        // a frame tick is pending
 	// lockSince is when each lock request's card came into view (by request id): O answers it
 	// only lockAskDelay later, so a key meant for something else never opens a console.
-	lockSince     map[int64]time.Time
+	lockSince map[int64]time.Time
+	// hubSince is the same for the hub's tickets (by instance/id); hubFor the ticket whose name
+	// the field (hubDraft) takes before approving it; hubFull shows the Lock's whole screen.
+	hubSince      map[string]time.Time
+	hubFor        string
+	hubDraft      []rune
+	hubFull       bool
 	width, height int
 }
 
@@ -445,6 +473,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.editFor != "" {
 			return m.editKey(msg)
 		}
+		if m.hubFor != "" {
+			return m.hubKey(msg)
+		}
 		if m.menuFor != "" {
 			return m.menuKey(msg.String())
 		}
@@ -534,6 +565,23 @@ func (m *Model) apply(s Snapshot) bool {
 		}
 	}
 	m.lockSince = since
+	hubSince := map[string]time.Time{}
+	for _, a := range m.agents {
+		if h := hubTicket(a); h != nil {
+			ref := h.Instance + "/" + h.ID
+			if t, ok := m.hubSince[ref]; ok {
+				hubSince[ref] = t
+			} else {
+				hubSince[ref] = m.now()
+			}
+		}
+	}
+	if m.hubFor != "" {
+		if _, ok := hubSince[m.hubFor]; !ok {
+			m.hubFor, m.hubDraft = "", nil // decided elsewhere, or gone
+		}
+	}
+	m.hubSince = hubSince
 	// An agent shown from elsewhere (lea new in another terminal, another deck client) takes
 	// the selection, so the row under the cursor is the one in the slot. A show this deck asked
 	// for does not: the cursor may already have moved on.
@@ -773,8 +821,20 @@ func (m Model) key(k string) (tea.Model, tea.Cmd) {
 		return m, nil
 	case "O":
 		return m.answerLock(true)
+	case "v":
+		if a := m.selectedAgent(); a != nil && hubTicket(*a) != nil {
+			m.hubFull = !m.hubFull
+		}
+		return m, nil
 	case "a", "d", "A":
 		a := m.selectedAgent()
+		if a != nil && hubTicket(*a) != nil {
+			if k == "A" {
+				m.status = "a approves this ticket, d denies it"
+				return m, nil
+			}
+			return m.answerHub(k == "a")
+		}
 		if a != nil && a.Approval == nil && a.LockAsk != nil {
 			if k == "d" {
 				return m.answerLock(false)
@@ -873,7 +933,7 @@ func rank(a Agent, seen map[string]int64) int {
 		return 6
 	case a.Paused: // frozen by the user: it neither needs them nor works
 		return 4
-	case shownState(a) == "blocked" || a.LockAsk != nil:
+	case shownState(a) == "blocked" || a.LockAsk != nil || len(a.Hub) > 0:
 		return 0
 	case a.State == "done" && seen[a.Key] != a.Updated:
 		return 1
@@ -910,6 +970,8 @@ func (m Model) label(a Agent) string {
 		return "paused"
 	case a.LockAsk != nil && a.Approval == nil:
 		return "asks for a console"
+	case hubTicket(a) != nil:
+		return "Lock ticket"
 	case a.State == "blocked" && a.Approval == nil:
 		return "see terminal" // the agent's own dialog asks: the deck has no card for it
 	case a.State == "blocked":
@@ -1011,4 +1073,72 @@ func providersPrompt(names []string) string {
 		fmt.Fprintf(&b, " %d %s", i+1, n)
 	}
 	return b.String()
+}
+
+// hubTicket is the hub ticket a's card shows: its oldest, when no approval or lock request comes
+// first; nil when none.
+func hubTicket(a Agent) *HubCard {
+	if a.Approval != nil || a.LockAsk != nil || len(a.Hub) == 0 {
+		return nil
+	}
+	return &a.Hub[0]
+}
+
+// answerHub answers the selected agent's hub ticket: approve (a) or deny (d). Approving a
+// production ticket opens the field for its name first. Within lockAskDelay of the card coming
+// into view, the key does nothing.
+func (m Model) answerHub(approve bool) (tea.Model, tea.Cmd) {
+	a := m.selectedAgent()
+	if a == nil || hubTicket(*a) == nil {
+		return m, nil
+	}
+	h := *hubTicket(*a)
+	ref := h.Instance + "/" + h.ID
+	if t, ok := m.hubSince[ref]; !ok || m.now().Sub(t) < lockAskDelay {
+		m.status = "read the " + clean(h.Lock) + " ticket first"
+		return m, nil
+	}
+	if approve && h.Production && h.Retype != "" {
+		m.hubFor, m.hubDraft, m.status = ref, nil, ""
+		return m, nil
+	}
+	return m, m.decideHub(h, approve, "")
+}
+
+func (m Model) decideHub(h HubCard, approve bool, retype string) tea.Cmd {
+	api, c := m.api, m.container
+	return m.call(func(ctx context.Context) error { return api.HubDecide(ctx, c, h.Instance, h.ID, approve, retype) })
+}
+
+// hubKey is a key typed in the field of a production ticket's name: enter approves with it, esc
+// cancels; every other key is text.
+func (m Model) hubKey(k tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch s := k.String(); {
+	case s == "esc" || s == "ctrl+c":
+		m.hubFor, m.hubDraft = "", nil
+	case s == "enter":
+		ref, typed := m.hubFor, string(m.hubDraft)
+		m.hubFor, m.hubDraft = "", nil
+		a := m.selectedAgent()
+		if a == nil || hubTicket(*a) == nil || hubTicket(*a).Instance+"/"+hubTicket(*a).ID != ref {
+			m.status = "the ticket changed: answer it again"
+			return m, nil
+		}
+		return m, m.decideHub(*hubTicket(*a), true, typed)
+	case s == "backspace":
+		if len(m.hubDraft) > 0 {
+			m.hubDraft = m.hubDraft[:len(m.hubDraft)-1]
+		}
+	case s == "ctrl+u":
+		m.hubDraft = nil
+	case k.Type == tea.KeySpace:
+		m.hubDraft = append(m.hubDraft, ' ')
+	case k.Type == tea.KeyRunes:
+		for _, r := range k.Runes {
+			if !textsafe.Unsafe(r) && len(m.hubDraft) < 128 {
+				m.hubDraft = append(m.hubDraft, r)
+			}
+		}
+	}
+	return m, nil
 }

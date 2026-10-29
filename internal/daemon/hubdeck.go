@@ -297,19 +297,22 @@ func (d *Daemon) showHub(ctx context.Context, entries []hubEntry, console string
 	d.changed()
 }
 
-// claimedAgent is the agent a ticket's requester claims: the one with that session, else the only
-// live agent of that name; "" when none (or more than one) is.
+// claimedAgent is the agent a ticket's requester claims: the live one with that session, else the
+// only live agent of that name; "" when none (or more than one) is. The requester is what an
+// agent told its Lock, any agent could claim another: the deck shows such a ticket "unverified",
+// and the Lock's own screen says what it would do.
 func claimedAgent(all []store.Agent, t HubTicket) string {
+	live := func(a store.Agent) bool { return a.State != "done" && a.State != "stopped" }
 	if t.Session != "" {
 		for _, a := range all {
-			if a.SessionID == t.Session {
+			if a.SessionID == t.Session && live(a) {
 				return a.Key
 			}
 		}
 	}
 	found := ""
 	for _, a := range all {
-		if t.Agent == "" || a.Name != t.Agent || a.State == "done" || a.State == "stopped" {
+		if t.Agent == "" || a.Name != t.Agent || !live(a) {
 			continue
 		}
 		if found != "" {

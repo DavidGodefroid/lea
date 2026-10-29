@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/DavidGodefroid/lea/internal/agents"
+	"github.com/DavidGodefroid/lea/internal/deck"
 )
 
 const ticketB, ticketC = "01JB0000000000000000000002", "01JB0000000000000000000003"
@@ -142,5 +143,46 @@ func TestHubDecideFromTheDeck(t *testing.T) {
 	}
 	if !deckMethods["hub_decide"] {
 		t.Fatal("hub_decide is not host-only")
+	}
+}
+
+// End to end (#158): a ticket in the hub's queue reaches the deck's snapshot on the agent that
+// waits on it, the deck's client approves it through the daemon to the facade socket, and the
+// card and the Lock's count go once the queue no longer holds it.
+func TestHubTicketApprovedFromTheDeck(t *testing.T) {
+	h := &fakeHub{queue: []map[string]any{queued(ticketA, "crm", "locksql", "dev-1", "", false, "")}}
+	e, dev, _ := hubEnv(t, h)
+	e.d.SetAgents(&fakeAgents{rows: []agents.Row{{Key: dev, Name: "dev-1"}}})
+	e.d.st.AddHubWait(dev, ticketA, "locksql", "crm", 1)
+	if _, err := e.d.pollHubQueue(e.ctx, 0); err != nil {
+		t.Fatal(err)
+	}
+	c := deck.Client{Sock: e.api}
+	snap, err := c.Watch(e.ctx, "lea-a", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(snap.Agents) != 1 || len(snap.Agents[0].Hub) != 1 || snap.Agents[0].Hub[0].ID != ticketA || !snap.Agents[0].Hub[0].Verified {
+		t.Fatalf("snapshot %+v", snap.Agents)
+	}
+	if len(snap.Locks) != 1 || snap.Locks[0].Lock != "locksql" || snap.Locks[0].Pending != 1 {
+		t.Fatalf("locks %+v", snap.Locks)
+	}
+	card := snap.Agents[0].Hub[0]
+	if err := c.HubDecide(e.ctx, "lea-a", card.Instance, card.ID, true, ""); err != nil {
+		t.Fatal(err)
+	}
+	h.mu.Lock()
+	got := h.decided
+	h.queue = nil // the hub took the decision
+	h.mu.Unlock()
+	if len(got) != 1 || !strings.Contains(got[0], `"approved":true`) || !strings.Contains(got[0], `"facade":"deck"`) {
+		t.Fatalf("decided %q", got)
+	}
+	if _, err := e.d.pollHubQueue(e.ctx, 0); err != nil {
+		t.Fatal(err)
+	}
+	if snap, err = c.Watch(e.ctx, "lea-a", 0); err != nil || len(snap.Agents[0].Hub) != 0 || snap.Locks[0].Pending != 0 {
+		t.Fatalf("after: %v %+v %+v", err, snap.Agents, snap.Locks)
 	}
 }
