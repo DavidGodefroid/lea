@@ -14,7 +14,12 @@ import (
 // and returns the permission decision it prints ("" when none).
 func preToolUseAs(t *testing.T, bus, agent, tool string, input any) string {
 	t.Helper()
-	cwd := "/p/.lea/worktrees/fixture/" + agent
+	return preToolUseIn(t, bus, agent, tool, input, "/p/.lea/worktrees/fixture/"+agent)
+}
+
+// preToolUseIn is preToolUseAs with the hook's cwd.
+func preToolUseIn(t *testing.T, bus, agent, tool string, input any, cwd string) string {
+	t.Helper()
 	t.Setenv("LEA_BUS_SOCK", bus)
 	t.Setenv("LEA_AGENT", agent)
 	b, _ := json.Marshal(map[string]any{"session_id": "s", "hook_event_name": "PreToolUse", "tool_name": tool, "tool_input": input, "cwd": cwd})
