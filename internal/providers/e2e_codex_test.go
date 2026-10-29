@@ -284,7 +284,23 @@ func TestCodexLockCallOutlivesTheDefaultToolTimeout(t *testing.T) {
 	key := filepath.Join(dir, "key")
 	os.WriteFile(key, []byte("sk-e2e-secret\n"), 0o600)
 	upURL, _ := url.Parse(up.URL + "/v1")
-	f, err := keyproxy.New(keyproxy.Config{Endpoints: []keyproxy.Endpoint{{Name: "llm", URL: upURL, KeyFile: key}}})
+	fwd := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		r.RequestURI = ""
+		res, err := http.DefaultTransport.RoundTrip(r)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadGateway)
+			return
+		}
+		defer res.Body.Close()
+		for k, v := range res.Header {
+			w.Header()[k] = v
+		}
+		w.WriteHeader(res.StatusCode)
+		io.Copy(w, res.Body)
+	}))
+	defer fwd.Close()
+	viaURL, _ := url.Parse(fwd.URL)
+	f, err := keyproxy.New(keyproxy.Config{Endpoints: []keyproxy.Endpoint{{Name: "llm", URL: upURL, KeyFile: key}}, Via: viaURL})
 	if err != nil {
 		t.Fatal(err)
 	}
