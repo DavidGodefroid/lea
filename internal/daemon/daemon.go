@@ -128,6 +128,10 @@ type Daemon struct {
 	spawnQueue    []*queuedSpawn
 	spawnSeq      int64
 	queueStarting bool
+	// hubFacade is where lea reads the Lock Family hub's decisions (hubsync.go, #164; nil: no
+	// hub); hubSyncMu keeps one sync at a time.
+	hubFacade HubFacade
+	hubSyncMu sync.Mutex
 	// pressClock is the pressure's clock (nil: time.Now), a test seam.
 	pressClock func() time.Time
 	// Shedding (shed.go, #132): its thresholds, each container's state, and whether pauses or
