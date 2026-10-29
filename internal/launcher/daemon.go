@@ -87,6 +87,37 @@ func DaemonStacksStamp(get func(string) string) string {
 	return strconv.Itoa(int(StackIdleSetting(get)/time.Minute)) + " " + strconv.Itoa(slots) + " " + strconv.Itoa(workers)
 }
 
+// Admission thresholds (#132, P2), each 0 (off) to its maximum, the default when unset or
+// invalid: LEA_ADMIT_CPU_PSI (cpu PSI, percent, 40), LEA_ADMIT_MEM_PCT (memory in use, percent of
+// the lea container's limit, 85), LEA_ADMIT_MEM_PSI (memory PSI, 10), LEA_ADMIT_IO_PSI (io PSI,
+// 40), LEA_ADMIT_LOAD (host load per CPU, 2).
+var admitKeys = []struct {
+	key      string
+	def, max float64
+}{{"LEA_ADMIT_CPU_PSI", 40, 100}, {"LEA_ADMIT_MEM_PCT", 85, 100}, {"LEA_ADMIT_MEM_PSI", 10, 100}, {"LEA_ADMIT_IO_PSI", 40, 100}, {"LEA_ADMIT_LOAD", 2, 64}}
+
+// AdmitSettings are the admission thresholds in admitKeys' order.
+func AdmitSettings(get func(string) string) []float64 {
+	out := make([]float64, len(admitKeys))
+	for i, k := range admitKeys {
+		out[i] = k.def
+		if v, err := strconv.ParseFloat(strings.TrimSpace(get(k.key)), 64); err == nil && v >= 0 && v <= k.max {
+			out[i] = v
+		}
+	}
+	return out
+}
+
+// DaemonAdmitStamp is the admission thresholds as one line ("40 85 10 40 2"): a daemon started
+// with others is restarted.
+func DaemonAdmitStamp(get func(string) string) string {
+	var p []string
+	for _, v := range AdmitSettings(get) {
+		p = append(p, strconv.FormatFloat(v, 'f', -1, 64))
+	}
+	return strings.Join(p, " ")
+}
+
 func readTrim(p string) string {
 	b, _ := os.ReadFile(p)
 	return strings.TrimRight(string(b), "\n")
@@ -108,7 +139,8 @@ func (l *Launcher) ensureDaemon() error {
 			readTrim(host+"/daemon.approvals") == appr && readTrim(host+"/daemon.providers") == l.providersStamp() &&
 			readTrim(host+"/daemon.resume") == DaemonResumeStamp(l.Cfg.Get) &&
 			readTrim(host+"/daemon.lockhttp") == DaemonLockHTTPStamp(l.Cfg.Get) &&
-			readTrim(host+"/daemon.stacks") == DaemonStacksStamp(l.Cfg.Get) {
+			readTrim(host+"/daemon.stacks") == DaemonStacksStamp(l.Cfg.Get) &&
+			readTrim(host+"/daemon.admit") == DaemonAdmitStamp(l.Cfg.Get) {
 			return nil
 		}
 		l.stopDaemon()

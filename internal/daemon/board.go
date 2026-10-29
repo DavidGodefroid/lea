@@ -103,6 +103,8 @@ type boardView struct {
 	Leases []leaseView `json:"leases"`
 	// Heavy is the heavy jobs that run or wait (#132), per container.
 	Heavy []heavyView `json:"heavy"`
+	// Pressure is the host's gauge, then each container's (#132, P2), none without a recent sample.
+	Pressure []Gauge `json:"pressure,omitempty"`
 }
 
 // boardList is the board (spec A13; host only): every open task with its agent, then the last
@@ -176,6 +178,7 @@ func (d *Daemon) boardList(raw json.RawMessage) (boardView, error) {
 		out.Leases = append(out.Leases, leaseView{l.ID, l.Container, shortName(l.Agent), l.Glob, l.Expires})
 	}
 	out.Heavy = d.heavyBoard(p.Container)
+	out.Pressure = d.gauges(p.Container)
 	return out, nil
 }
 

@@ -7,6 +7,8 @@ import (
 	"strings"
 	"time"
 	"unicode"
+
+	"github.com/DavidGodefroid/lea/internal/daemon"
 )
 
 // boardItem is one task of the board (the daemon's board_list).
@@ -50,7 +52,12 @@ type board struct {
 	Leases []boardLease `json:"leases"`
 	// Heavy is each container's heavy jobs that run or wait (#132).
 	Heavy []boardHeavy `json:"heavy"`
+	// Pressure is the host's gauge, then each container's (#132, P2).
+	Pressure []boardGauge `json:"pressure"`
 }
+
+// boardGauge is one scope's pressure (daemon.Gauge): the daemon's text and numbers only.
+type boardGauge = daemon.Gauge
 
 type boardHeavy struct {
 	Container string
@@ -126,6 +133,14 @@ type boardLease struct {
 // leases, then the last ended tasks.
 func renderBoard(w io.Writer, b board) {
 	fmt.Fprintln(w, "# lea board")
+	gauges := map[string]boardGauge{}
+	for _, g := range b.Pressure {
+		if g.Scope == "host" {
+			fmt.Fprintf(w, "\nHost: %s%s\n", mdCell(g.Line()), gaugeLevel(g))
+		} else {
+			gauges[g.Scope] = g
+		}
+	}
 	if len(b.Items) == 0 && len(b.Leases) == 0 && len(b.Heavy) == 0 {
 		fmt.Fprintln(w, "\nNo tasks yet.")
 		return
@@ -154,6 +169,9 @@ func renderBoard(w io.Writer, b board) {
 	sort.Strings(cs)
 	for _, c := range cs {
 		fmt.Fprintf(w, "\n## %s\n", mdCell(c))
+		if g, ok := gauges[c]; ok {
+			fmt.Fprintf(w, "\nPressure: %s%s\n", mdCell(g.Line()), gaugeLevel(g))
+		}
 		var open, ended []boardItem
 		for _, it := range items[c] {
 			if it.Ended == 0 {
@@ -212,4 +230,16 @@ func renderBoard(w io.Writer, b board) {
 			}
 		}
 	}
+}
+
+// gaugeLevel is what follows a gauge's line: nothing when all is well, else its level and, over a
+// threshold, which ones.
+func gaugeLevel(g boardGauge) string {
+	switch g.Level {
+	case "warn":
+		return " (near a threshold)"
+	case "over":
+		return " (under pressure: " + mdCell(g.Over) + "; new agents wait, heavy slots halved)"
+	}
+	return ""
 }

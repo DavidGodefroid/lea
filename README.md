@@ -755,6 +755,7 @@ read-only. The screen runs in the deck on the host: agents cannot open or drive 
 | `LEA_STACK_IDLE` | `10` | minutes an agent stays idle before lea stops (not removes) the containers it started in the nested Podman (`0`: never); `lea board` lists what it freed |
 | `LEA_AGENT_CPUS` | `4` | each agent's CPU window, the least shared CPUs: the agent, its tools and its nested containers run there, so `nproc`, PHPStan, Go… see that many CPUs (`0`: no window) |
 | `LEA_HEAVY_SLOTS`, `LEA_HEAVY_WORKERS` | `0` (¾ of the CPUs ÷ workers), `4` | heavy jobs (`lea heavy -- <command>`): how many run at once per container, and the CPUs and workers each gets |
+| `LEA_ADMIT_CPU_PSI`, `LEA_ADMIT_MEM_PCT`, `LEA_ADMIT_MEM_PSI`, `LEA_ADMIT_IO_PSI`, `LEA_ADMIT_LOAD` | `40`, `85`, `10`, `40`, `2` | [host pressure](#host-pressure) above which new agents wait: PSI in percent, memory in percent of the lea container's limit (the host's from 90 %), the host's load per CPU (`0`: that one off) |
 | `LEA_SOUND`, `LEA_AUTONAME` | on | the deck's sounds, automatic names (`0`: off) |
 | `LEA_SOUND_ATTENTION`, `LEA_SOUND_DONE` | freedesktop sounds | the file of each sound (`0`: that one off) |
 | `LEA_OTEL_UPSTREAM` | empty | send Claude Code usage telemetry to this OTLP collector |
@@ -945,6 +946,23 @@ they may use, such as `nproc`, see that many) with `GOMAXPROCS`, `MAKEFLAGS=-jN`
 `LEA_HEAVY_WORKERS` set. A slot whose job was killed frees itself within three minutes; a job holds its slot two hours at
 most. `lea board`
 lists the jobs that run and wait.
+
+## Host pressure
+
+The lea daemon samples the host and each lea container every 5 seconds: PSI (`cpu some`,
+`memory full`, `io full`, avg10), the memory in use against the container's limit (page cache the
+kernel drops first left out), and the host's load. It reads `/proc` and the container's cgroup v2,
+found from its process, so it works the same with Docker and rootless Podman.
+
+Above a threshold a lead's `agents_spawn` is refused with the reason, for example
+`under pressure (container cpu PSI 63% > 40%, memory 92% of 24.0 GiB > 85%); 14 agents run, 2 heavy
+slots busy`. With `queue: true` the spawn waits instead, up to 30 minutes, and the lead gets a
+message when it starts. Meanwhile each container gets half its heavy slots (at least one): jobs
+that run keep theirs, new ones wait.
+
+`lea board` shows the host's gauge and each container's
+(`CPU 14.8/16 · PSI 22% · mem 18.1/24.0 GiB · heavy 3/4 (+2 queued)`); the deck shows the
+container's on its last line, amber near a threshold, red over one.
 
 ## Known limitations
 

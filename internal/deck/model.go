@@ -110,6 +110,16 @@ type Snapshot struct {
 	Sound string `json:"sound,omitempty"`
 	// LockHTTP is the LockHTTP gate's state for this container, nil when LockHTTP is off.
 	LockHTTP *LockHTTP `json:"lockhttp,omitempty"`
+	// Pressure is the container's pressure gauge (agents.PressureView), nil without a sample.
+	Pressure *Pressure `json:"pressure,omitempty"`
+}
+
+// Pressure is what the deck shows of the pressure (#132, P2): a short gauge of the container
+// and the worse level of it and the host: ok, warn (near a threshold), over (new agents wait).
+type Pressure struct {
+	Short string `json:"short"`
+	Level string `json:"level"`
+	Over  string `json:"over,omitempty"`
 }
 
 // LockHTTP is what the deck shows of the LockHTTP gate (agents.LockHTTPView): its console
@@ -223,6 +233,7 @@ type Model struct {
 	noticeText  string        // its latest text, shown while there is no status
 	sound       string        // the daemon's sound switch (Snapshot.Sound)
 	lockhttp    *LockHTTP     // the LockHTTP gate's state (Snapshot.LockHTTP)
+	pressure    *Pressure     // the container's pressure gauge (Snapshot.Pressure)
 	seq         int           // the latest selection; older delayed shows are dropped
 	frame       int           // the working spinner's frame
 	intro       int           // frames left of the logo's start animation (WithIntro)
@@ -496,7 +507,7 @@ func (m *Model) ask(key string) {
 // the slot, so that the row selected in its place is to be shown.
 func (m *Model) apply(s Snapshot) bool {
 	before, was := m.shown, m.selected
-	m.version, m.shown, m.sound, m.lockhttp = s.Version, s.Shown, s.Sound, s.LockHTTP
+	m.version, m.shown, m.sound, m.lockhttp, m.pressure = s.Version, s.Shown, s.Sound, s.LockHTTP, s.Pressure
 	for _, a := range s.Agents {
 		if a.Key == s.Shown && a.State == "done" {
 			m.seen[a.Key] = a.Updated

@@ -57,8 +57,9 @@ type heavyWaiter struct {
 
 // heavyPool is one container's slots: holders[i] holds slot i (nil: free), queue waits in order.
 type heavyPool struct {
-	holders []*heavyHolder
-	queue   []*heavyWaiter
+	container string
+	holders   []*heavyHolder
+	queue     []*heavyWaiter
 }
 
 // heavyGrant is heavy_acquire's answer: a slot, or (Granted false) who holds them and how many
@@ -91,7 +92,7 @@ func (d *Daemon) SetHeavy(slots, workers int) {
 func (d *Daemon) poolLocked(container string) *heavyPool {
 	p := d.heavy[container]
 	if p == nil {
-		p = &heavyPool{}
+		p = &heavyPool{container: container}
 		d.heavy[container] = p
 	}
 	for len(p.holders) < d.heavySlots {
@@ -100,22 +101,28 @@ func (d *Daemon) poolLocked(container string) *heavyPool {
 	return p
 }
 
-// tidyLocked frees the expired slots and gives the free ones to the jobs that wait, in order.
-// Callers hold d.mu.
+// tidyLocked frees the expired slots and gives the free ones to the jobs that wait, in order,
+// while fewer jobs run than the pressure allows (heavySlotsLocked). Callers hold d.mu.
 func (d *Daemon) tidyLocked(p *heavyPool) {
 	now := time.Now()
+	busy := 0
 	for i, h := range p.holders {
 		if h != nil && now.After(h.expires) {
 			p.holders[i] = nil
 		}
+		if p.holders[i] != nil {
+			busy++
+		}
 	}
-	for i := 0; i < d.heavySlots && i < len(p.holders) && len(p.queue) > 0; i++ {
+	allowed := d.heavySlotsLocked(p.container)
+	for i := 0; i < d.heavySlots && i < len(p.holders) && len(p.queue) > 0 && busy < allowed; i++ {
 		if p.holders[i] != nil {
 			continue
 		}
 		w := p.queue[0]
 		p.queue = p.queue[1:]
 		p.holders[i] = d.holdLocked(w.agent, w.label, i)
+		busy++
 		w.got <- p.holders[i]
 	}
 }
@@ -327,7 +334,7 @@ func (d *Daemon) heavyBoard(container string) []heavyView {
 		if len(b) == 0 && len(p.queue) == 0 {
 			continue
 		}
-		out = append(out, heavyView{Container: c, Slots: d.heavySlots, Running: b, Queued: len(p.queue)})
+		out = append(out, heavyView{Container: c, Slots: d.heavySlotsLocked(c), Running: b, Queued: len(p.queue)})
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Container < out[j].Container })
 	return out

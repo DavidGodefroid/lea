@@ -207,6 +207,17 @@ func runDaemon(stderr io.Writer) int {
 	}
 	d.SetStackIdle(launcher.StackIdleSetting(os.Getenv))
 	d.SetHeavy(launcher.HeavySettings(os.Getenv))
+	// Same pattern for the admission thresholds (#132, P2): the daemon samples the host and each
+	// lea container, and refuses or queues new agents under pressure.
+	_ = os.Remove(filepath.Join(host, "daemon.admit"))
+	if err := os.WriteFile(filepath.Join(host, "daemon.admit"), []byte(launcher.DaemonAdmitStamp(os.Getenv)), 0o600); err != nil {
+		fmt.Fprintln(stderr, "lea:", clean(err.Error(), false))
+		return 1
+	}
+	if a := launcher.AdmitSettings(os.Getenv); len(a) == 5 {
+		d.SetPressure(&daemon.HostPressure{}, daemon.Thresholds{CPUPSI: a[0], MemPct: a[1], MemPSI: a[2], IOPSI: a[3], Load: a[4]})
+		go d.RunPressure(ctx)
+	}
 	exe, err := os.Executable()
 	if err != nil {
 		fmt.Fprintln(stderr, "lea:", clean(err.Error(), false))
