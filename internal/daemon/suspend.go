@@ -23,10 +23,12 @@ const DefaultKeepalive = 5 * time.Minute
 const suspendTimeout = 2 * time.Minute
 
 // wakeEvents are the hooks that end a suspension: the agent works again (a decision or a message
-// woke it, or the user typed). Every other hook leaves a suspended agent as it is: Claude fires no
-// Stop after the suspending hook (spike #154) but lea's own PostToolUse, Notification idle_prompt
-// and the SessionEnd of a soft stop still come.
-var wakeEvents = map[string]bool{"UserPromptSubmit": true, "PreToolUse": true, "PermissionRequest": true}
+// woke it, or the user typed), or a turn it was woken for ended (Claude fires no Stop after the
+// suspending hook, spike #154, so a Stop is a later turn's). Every other hook leaves a suspended
+// agent as it is: lea's own PostToolUse beside the suspending hook, Notification idle_prompt and
+// the SessionEnd of a soft stop still come.
+var wakeEvents = map[string]bool{"UserPromptSubmit": true, "PreToolUse": true, "PermissionRequest": true,
+	"Stop": true, "StopFailure": true}
 
 // SetKeepalive is how long a suspended agent's process runs before lea stops it; 0 stops it at once.
 func (d *Daemon) SetKeepalive(k time.Duration) {

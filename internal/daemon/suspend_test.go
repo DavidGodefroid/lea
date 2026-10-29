@@ -67,7 +67,6 @@ func TestASuspendedAgentIsSoftStoppedAfterItsKeepalive(t *testing.T) {
 		"payload": map[string]any{"notification_type": "idle_prompt"}}, nil); err != nil {
 		t.Fatal(err)
 	}
-	hookEvent(t, e, "kid", "Stop")
 	if s := agentState(t, e, kid); s != store.StateSuspendedWarm {
 		t.Fatalf("state %s, want %s", s, store.StateSuspendedWarm)
 	}
@@ -91,6 +90,25 @@ func TestAWokenAgentKeepsRunning(t *testing.T) {
 	hookEvent(t, e, "kid", "UserPromptSubmit")
 	if s := agentState(t, e, kid); s != "working" {
 		t.Fatalf("state %s after a new turn, want working", s)
+	}
+	time.Sleep(300 * time.Millisecond)
+	noCall(t, fa, "softstop")
+}
+
+// A Stop while warm ends a turn the agent was woken for, even one with no tool call: it is idle,
+// not stopped by its keepalive.
+func TestAStopEndsTheSuspension(t *testing.T) {
+	e := start(t)
+	fa := &fakeAgents{st: e.d.st}
+	e.d.SetAgents(fa)
+	kid := spawned(t, e, "kid", "dev", "")
+	e.d.SetKeepalive(100 * time.Millisecond)
+	if err := e.d.suspend(kid); err != nil {
+		t.Fatal(err)
+	}
+	hookEvent(t, e, "kid", "Stop")
+	if s := agentState(t, e, kid); s != "idle" {
+		t.Fatalf("state %s after a Stop, want idle", s)
 	}
 	time.Sleep(300 * time.Millisecond)
 	noCall(t, fa, "softstop")
