@@ -513,6 +513,13 @@ func (l *Launcher) runArgs(proj, pip string) ([]string, error) {
 		"--mount", "type=bind,src=" + st + "/go,dst=/lea/state/go",
 		"--mount", "type=bind,src=" + st + "/kube,dst=" + home + "/.kube/lea,readonly",
 		"--mount", "type=volume,src=" + p + "-podman-" + id + ",dst=/lea/podman"}
+	// The Lock Family's directory (hub config, public keys, routing) read-only, as locksqlDir:
+	// an agent may read it, never change what the locks and the hub trust.
+	lf, err := lockfamilyDir(proj)
+	if err != nil {
+		return nil, err
+	}
+	a = append(a, "--mount", "type=bind,src="+lf+",dst="+lf+",readonly")
 	if l.Cfg.Locksql() {
 		// The locksql console's socket volume, and its client group (locksql-clients). Its own
 		// directory read-only (locksqlDir).
@@ -640,12 +647,25 @@ func IsTerminal(x any) bool {
 // be removed, renamed or replaced, so no agent swaps it for a symbolic link, which the console's
 // read-write bind mount of it would follow on this host (#121). A link or a file is refused.
 func locksqlDir(proj string) (string, error) {
-	d := proj + "/.locksql"
+	return roDir(proj+"/.locksql", "the locksql console only writes there")
+}
+
+// lockfamilyDir is the Lock Family's directory of the projects directory (<proj>/.lockfamily: the
+// hub's config, the locks' public keys, the routing), made by lea, owned by the user on the host,
+// when missing. The agents get it read-only, so none rewrites what the locks and the hub trust
+// (the hub plan's I11); a link or a file is refused, as for locksqlDir.
+func lockfamilyDir(proj string) (string, error) {
+	return roDir(proj+"/.lockfamily", "lock up writes there, on the host only")
+}
+
+// roDir makes d when missing and refuses a d that is not a directory of its own; why says who
+// writes there.
+func roDir(d, why string) (string, error) {
 	if err := os.Mkdir(d, 0o755); err != nil && !errors.Is(err, os.ErrExist) {
 		return "", die("could not create %s: %v", d, err)
 	}
 	if fi, err := os.Lstat(d); err != nil || !fi.IsDir() {
-		return "", die("%s is not a directory (a symbolic link or a file): the locksql console only writes there; remove it and retry", d)
+		return "", die("%s is not a directory (a symbolic link or a file): %s; remove it and retry", d, why)
 	}
 	return d, nil
 }

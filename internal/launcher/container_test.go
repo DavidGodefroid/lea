@@ -8,6 +8,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"syscall"
 	"testing"
 )
 
@@ -876,6 +877,42 @@ func TestProxyFollowsItsImage(t *testing.T) {
 	}
 }
 
+// The Lock Family's directory is read-only for the agents, whatever Lock is on: none rewrites the
+// hub's config, the locks' keys or the routing (hub plan I11). lea makes it, owned by the user on
+// the host, when missing; a link or a file is refused.
+func TestRunArgsLockfamilyDirReadOnly(t *testing.T) {
+	w := newWorld(t, repoRoot(t))
+	w.writeConf("lea.conf", "LEA_LOCKSQL=0\n")
+	d := w.proj + "/.lockfamily"
+	ro := "type=bind,src=" + d + ",dst=" + d + ",readonly"
+	args, err := w.launcher().runArgs(w.proj, "172.18.0.5")
+	if err != nil || !contains(args, ro) {
+		t.Fatalf("missing %q: %v", ro, err)
+	}
+	fi, err := os.Lstat(d)
+	if err != nil || !fi.IsDir() || fi.Mode().Perm() != 0o755&^currentUmask() {
+		t.Fatalf("%s not made: %v %v", d, fi, err)
+	}
+	if err := os.WriteFile(d+"/lockfamily.yaml", []byte("hub: {}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := w.launcher().runArgs(w.proj, "172.18.0.5"); err != nil {
+		t.Fatalf("an existing directory: %v", err)
+	}
+	if b, err := os.ReadFile(d + "/lockfamily.yaml"); err != nil || string(b) != "hub: {}\n" {
+		t.Fatalf("its content changed: %q %v", b, err)
+	}
+	if err := os.RemoveAll(d); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(w.home, d); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := w.launcher().runArgs(w.proj, "172.18.0.5"); err == nil || !strings.Contains(err.Error(), "is not a directory") {
+		t.Fatalf("a symbolic link: %v", err)
+	}
+}
+
 // The locksql console's own directory is read-only for the agents: a mount point cannot be
 // removed, renamed or replaced, so no agent swaps it for a symbolic link that the console's bind
 // mount would follow on the host (#121). Made when missing; a link or a file is refused.
@@ -1137,4 +1174,11 @@ func TestRunArgsAgentCPUs(t *testing.T) {
 			t.Errorf("%s: err = %v", line, err)
 		}
 	}
+}
+
+// currentUmask is the process's umask (os.Mkdir applies it).
+func currentUmask() os.FileMode {
+	m := syscall.Umask(0)
+	syscall.Umask(m)
+	return os.FileMode(m)
 }

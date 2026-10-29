@@ -66,6 +66,8 @@ type=bind,src=$W/data/lea/state/go,dst=/lea/state/go
 type=bind,src=$W/data/lea/state/kube,dst=$W/home/.kube/lea,readonly
 --mount
 type=volume,src=lea-podman-$ID,dst=/lea/podman
+--mount
+type=bind,src=$W/projects/.lockfamily,dst=$W/projects/.lockfamily,readonly
 -e
 LEA_LOCKSQL=1
 --group-add

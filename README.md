@@ -813,6 +813,9 @@ so. Changes apply after `lea init` (endpoints, keys, images, locksql) or `lea st
   (`settings.json`, `keybindings.json`, `hooks`, `skills`, `plugins`, `agents`, `commands`,
   `output-styles`, the top-level `*.md` files) and, with locksql, its socket volume (with lockmq or
   lockfile, their socket directory and system file, read-only). Nothing else.
+- `.lockfamily` in the projects directory (the Lock Family hub's config, the locks' public keys,
+  the routing) is read-only in the container: lea makes it, owned by you on the host, when it is
+  missing, and refuses to start when it is a symbolic link or a file.
 - Egress goes through a proxy: HTTPS (and plain HTTP) to an allowlist of public domains (plus
   `LEA_INTERNAL_HOSTS`), SSH only to `LEA_GIT_SSH`. Private and link-local addresses are refused.
 - By default the allowlist is lea's own: `github.com`, `githubusercontent.com`, `ghcr.io`,
