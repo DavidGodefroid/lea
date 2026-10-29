@@ -957,7 +957,9 @@ found from its process, so it works the same with Docker and rootless Podman.
 Above a threshold a lead's `agents_spawn` is refused with the reason, for example
 `under pressure (container cpu PSI 63% > 40%, memory 92% of 24.0 GiB > 85%); 14 agents run, 2 heavy
 slots busy`. With `queue: true` the spawn waits instead, up to 30 minutes, and the lead gets a
-message when it starts. Meanwhile each container gets half its heavy slots (at least one): jobs
+message when it starts; one calm sample starts one queued agent at most. The queue lives in the
+daemon's memory: a daemon restart drops it without a message. `agents_request_spawn` is not
+refused: a request starts nothing, the lead's `agents_spawn` is the gate. Meanwhile each container gets half its heavy slots (at least one): jobs
 that run keep theirs, new ones wait.
 
 `lea board` shows the host's gauge and each container's

@@ -2,6 +2,7 @@ package daemon
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log"
 	"sort"
@@ -9,6 +10,7 @@ import (
 	"time"
 
 	"github.com/DavidGodefroid/lea/internal/agents"
+	"github.com/DavidGodefroid/lea/internal/roles"
 	"github.com/DavidGodefroid/lea/internal/store"
 )
 
@@ -154,45 +156,94 @@ func (d *Daemon) queueSpawn(lead string, nr agents.NewRequest, req *store.SpawnR
 	return d.spawnSeq, nil
 }
 
-// startQueued starts, in order, the queued spawns the pressure now lets through, and gives up on
-// those that waited queuedSpawnTTL. Each lead hears of its own.
-func (d *Daemon) startQueued(ctx context.Context) {
-	for {
-		d.mu.Lock()
-		var q *queuedSpawn
-		expired := false
-		for i, s := range d.spawnQueue {
-			if time.Since(s.at) > queuedSpawnTTL {
-				q, expired = s, true
-			} else if d.admitLocked(s.nr.Container) == nil {
-				q = s
-			} else {
-				continue
-			}
-			d.spawnQueue = append(d.spawnQueue[:i:i], d.spawnQueue[i+1:]...)
-			break
+// takeQueuedLocked drops the queued spawns that waited queuedSpawnTTL and takes the first one the
+// pressure now lets through, nil when none. Callers hold d.mu.
+func (d *Daemon) takeQueuedLocked() (start *queuedSpawn, dropped []*queuedSpawn) {
+	keep := d.spawnQueue[:0]
+	for _, s := range d.spawnQueue {
+		switch {
+		case time.Since(s.at) > queuedSpawnTTL:
+			dropped = append(dropped, s)
+		case start == nil && d.admitLocked(s.nr.Container) == nil:
+			start = s
+		default:
+			keep = append(keep, s)
 		}
-		a := d.agents
-		d.mu.Unlock()
-		if q == nil {
-			return
-		}
-		if expired || a == nil {
-			// A spawn request it answered stays pending: the lead may accept it again.
-			d.post("user", q.lead, "result", fmt.Sprintf("[status: fail] queued spawn #%d dropped: the pressure did not fall within %s. Retry later or stop an agent.", q.id, queuedSpawnTTL), 0)
-			continue
-		}
-		sctx, cancel := context.WithTimeout(ctx, queuedStart)
-		row, err := d.startSpawn(sctx, a, q.lead, q.nr, q.req)
-		cancel()
-		if err != nil {
-			log.Printf("lea daemon: queued spawn #%d of %s: %v", q.id, q.lead, err)
-			d.post("user", q.lead, "result", fmt.Sprintf("[status: fail] queued spawn #%d did not start: %v", q.id, err), 0)
-			continue
-		}
-		d.post("user", q.lead, "result", fmt.Sprintf("[status: ok] queued spawn #%d started: %s (role %s).", q.id, row.Name, row.Role), 0)
-		d.changed()
 	}
+	clear(d.spawnQueue[len(keep):])
+	d.spawnQueue = keep
+	return start, dropped
+}
+
+// startQueued starts at most one queued spawn per sample, and never while another starts: one
+// calm sample lets a single agent in, the next sample sees what it costs. The start runs beside
+// the sampler, which keeps sampling meanwhile. Each lead hears of its own spawns.
+func (d *Daemon) startQueued(ctx context.Context) {
+	d.mu.Lock()
+	var q *queuedSpawn
+	var dropped []*queuedSpawn
+	if !d.queueStarting {
+		q, dropped = d.takeQueuedLocked()
+	}
+	a := d.agents
+	if q != nil {
+		d.queueStarting = true
+	}
+	d.mu.Unlock()
+	for _, s := range dropped {
+		// A spawn request it answered stays pending: the lead may accept it again.
+		d.post("user", s.lead, "result", fmt.Sprintf("[status: fail] queued spawn #%d dropped: the pressure did not fall within %s. Retry later or stop an agent.", s.id, queuedSpawnTTL), 0)
+	}
+	if q == nil {
+		return
+	}
+	go func() {
+		defer func() {
+			d.mu.Lock()
+			d.queueStarting = false
+			d.mu.Unlock()
+		}()
+		d.startOne(ctx, a, q)
+	}()
+}
+
+// startOne starts a queued spawn its lead may still ask for.
+func (d *Daemon) startOne(ctx context.Context, a Agents, q *queuedSpawn) {
+	if a == nil {
+		return
+	}
+	// The lead may have ended or changed meanwhile: it must still be allowed this spawn.
+	if err := d.mayStillSpawn(q); err != nil {
+		log.Printf("lea daemon: queued spawn #%d of %s dropped: %v", q.id, q.lead, err)
+		return
+	}
+	sctx, cancel := context.WithTimeout(ctx, queuedStart)
+	row, err := d.startSpawn(sctx, a, q.lead, q.nr, q.req)
+	cancel()
+	if err != nil {
+		log.Printf("lea daemon: queued spawn #%d of %s: %v", q.id, q.lead, err)
+		d.post("user", q.lead, "result", fmt.Sprintf("[status: fail] queued spawn #%d did not start: %v", q.id, err), 0)
+		return
+	}
+	d.post("user", q.lead, "result", fmt.Sprintf("[status: ok] queued spawn #%d started: %s (role %s).", q.id, row.Name, row.Role), 0)
+	d.changed()
+}
+
+// mayStillSpawn checks again, when a queued spawn starts, what agentsSpawn checked when it was
+// queued: the lead still runs in that container and may give that role.
+func (d *Daemon) mayStillSpawn(q *queuedSpawn) error {
+	caller, err := d.spawnedCaller(Origin{Container: q.nr.Container}, q.lead, "agents_spawn")
+	if err != nil {
+		return err
+	}
+	if caller.Container != q.nr.Container {
+		return errors.New("the lead is in another container")
+	}
+	cr, err := roles.Get(caller.Role)
+	if err != nil {
+		return err
+	}
+	return roles.CanGive(cr, q.nr.Role)
 }
 
 // Gauge is one scope's pressure as the deck and the board show it.

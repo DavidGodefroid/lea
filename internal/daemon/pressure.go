@@ -174,9 +174,18 @@ type HostPressure struct {
 	Now func() time.Time
 
 	mu   sync.Mutex
-	pids map[string]int
+	pids map[string]pidAt
 	prev map[string]cpuMark
 }
+
+// pidAt is a container's pid and when docker inspect said so; pidRefresh asks again, so that a
+// container restarted under a reused pid is not read in another cgroup for long.
+type pidAt struct {
+	pid int
+	at  time.Time
+}
+
+const pidRefresh = time.Minute
 
 func (h *HostPressure) dirs() (string, string) {
 	proc, cg := h.Proc, h.Cgroup
@@ -201,7 +210,7 @@ func (h *HostPressure) Sample(ctx context.Context, containers []string) (Reading
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	if h.pids == nil {
-		h.pids, h.prev = map[string]int{}, map[string]cpuMark{}
+		h.pids, h.prev = map[string]pidAt{}, map[string]cpuMark{}
 	}
 	proc, _ := h.dirs()
 	host := h.readHost(proc)
@@ -319,13 +328,14 @@ func (h *HostPressure) readCgroup(c, dir string) Reading {
 func (h *HostPressure) cgroupOf(ctx context.Context, c string) (string, error) {
 	proc, cg := h.dirs()
 	for try := 0; try < 2; try++ {
-		pid, ok := h.pids[c]
-		if !ok || try > 0 {
+		e, ok := h.pids[c]
+		pid := e.pid
+		if !ok || try > 0 || h.now().Sub(e.at) >= pidRefresh {
 			var err error
 			if pid, err = h.pid(ctx, c); err != nil {
 				return "", err
 			}
-			h.pids[c] = pid
+			h.pids[c] = pidAt{pid: pid, at: h.now()}
 		}
 		b, err := os.ReadFile(filepath.Join(proc, strconv.Itoa(pid), "cgroup"))
 		if err != nil {

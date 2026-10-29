@@ -29,6 +29,33 @@ func (f *fakePressure) Sample(ctx context.Context, cs []string) (Reading, map[st
 	return f.host, f.scopes
 }
 
+// settle waits until no queued spawn is starting.
+func settle(t *testing.T, e env) {
+	t.Helper()
+	for i := 0; i < 200; i++ {
+		e.d.mu.Lock()
+		busy := e.d.queueStarting
+		e.d.mu.Unlock()
+		if !busy {
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatal("a queued spawn is still starting")
+}
+
+func newCount(fa *fakeAgents) int {
+	fa.mu.Lock()
+	defer fa.mu.Unlock()
+	n := 0
+	for _, c := range fa.calls {
+		if c == "new" {
+			n++
+		}
+	}
+	return n
+}
+
 func calm() Reading {
 	return Reading{CPUPSI: 2, MemPSI: 0, IOPSI: 0, MemUsed: 4 << 30, MemMax: 32 << 30, CPUs: 22, CPUUsed: 3, Load1: 4}
 }
@@ -152,6 +179,7 @@ func TestAgentsSpawnQueuedStartsWhenPressureFalls(t *testing.T) {
 	}
 	fp.set(calm(), map[string]Reading{"lea-a": calm()})
 	e.d.samplePressure(e.ctx)
+	settle(t, e)
 	if !newCalled(fa) || fa.req.Brief != "fix the cart" || fa.req.Parent != boss {
 		t.Fatalf("calls=%q req=%+v", fa.calls, fa.req)
 	}
@@ -323,6 +351,11 @@ func TestHostPressureSample(t *testing.T) {
 	if pids != 2 { // lea-a once (then cached), lea-gone once
 		t.Fatalf("%d pid lookups", pids)
 	}
+	now = now.Add(pidRefresh)
+	h.Sample(context.Background(), []string{"lea-a"})
+	if pids != 3 { // the cached pid is asked again after pidRefresh
+		t.Fatalf("%d pid lookups", pids)
+	}
 }
 
 func sprintf2(f, a, b string) string {
@@ -364,5 +397,104 @@ func TestDeckAndBoardPressure(t *testing.T) {
 	}
 	if len(b.Pressure) != 2 || b.Pressure[0].Scope != "host" || b.Pressure[0].Level != "over" || b.Pressure[1].Scope != "lea-a" {
 		t.Fatalf("board: %+v", b.Pressure)
+	}
+}
+
+// A queued spawn whose lead ended meanwhile never starts: the lead's authority is checked again.
+func TestQueuedSpawnOfAnEndedLeadIsDropped(t *testing.T) {
+	e := start(t)
+	fa := &fakeAgents{}
+	e.d.SetAgents(fa)
+	boss := spawned(t, e, "boss", "lead", "")
+	fp := withPressure(t, e)
+	fp.set(calm(), pressured())
+	e.d.samplePressure(e.ctx)
+	if err := call(t, e.bus, "boss", "agents_spawn", map[string]any{"brief": "x", "queue": true}, nil); err != nil {
+		t.Fatal(err)
+	}
+	e.d.st.SetState(boss, "done", "", 2)
+	fp.set(calm(), map[string]Reading{"lea-a": calm()})
+	e.d.samplePressure(e.ctx)
+	settle(t, e)
+	e.d.mu.Lock()
+	left := len(e.d.spawnQueue)
+	e.d.mu.Unlock()
+	if newCalled(fa) || left != 0 {
+		t.Fatalf("calls=%q queue=%d", fa.calls, left)
+	}
+}
+
+// One calm sample lets one queued spawn in, never the whole queue: the next sample sees what it
+// costs. Leads' queues are served in order.
+func TestQueuedSpawnsStartOnePerSample(t *testing.T) {
+	e := start(t)
+	fa := &fakeAgents{}
+	e.d.SetAgents(fa)
+	spawned(t, e, "boss", "lead", "")
+	spawned(t, e, "boss2", "lead", "")
+	fp := withPressure(t, e)
+	fp.set(calm(), pressured())
+	e.d.samplePressure(e.ctx)
+	for i, lead := range []string{"boss", "boss2", "boss", "boss2"} {
+		e.d.rates = rates{}
+		if err := call(t, e.bus, lead, "agents_spawn", map[string]any{"brief": "x", "queue": true}, nil); err != nil {
+			t.Fatal(i, err)
+		}
+	}
+	fp.set(calm(), map[string]Reading{"lea-a": calm()})
+	for want := 1; want <= 4; want++ {
+		e.d.samplePressure(e.ctx)
+		settle(t, e)
+		if n := newCount(fa); n != want {
+			t.Fatalf("after %d calm samples: %d started", want, n)
+		}
+	}
+}
+
+// A queued start that takes long runs beside the sampler: sampling goes on, the pressure still
+// refuses spawns meanwhile, and no second queued spawn starts before the first one ends.
+func TestQueuedStartDoesNotStopTheSampler(t *testing.T) {
+	e := start(t)
+	hold := make(chan struct{})
+	fa := &fakeAgents{newHold: hold}
+	e.d.SetAgents(fa)
+	spawned(t, e, "boss", "lead", "")
+	fp := withPressure(t, e)
+	fp.set(calm(), pressured())
+	e.d.samplePressure(e.ctx)
+	for i := 0; i < 2; i++ {
+		e.d.rates = rates{}
+		if err := call(t, e.bus, "boss", "agents_spawn", map[string]any{"brief": "x", "queue": true}, nil); err != nil {
+			t.Fatal(err)
+		}
+	}
+	fp.set(calm(), map[string]Reading{"lea-a": calm()})
+	done := make(chan struct{})
+	go func() { e.d.samplePressure(e.ctx); close(done) }()
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("samplePressure waits for the queued start")
+	}
+	for newCount(fa) == 0 {
+		time.Sleep(10 * time.Millisecond)
+	}
+	fp.set(calm(), pressured())
+	e.d.samplePressure(e.ctx) // a fresh sample while the start is in flight
+	e.d.rates = rates{}
+	if err := call(t, e.bus, "boss", "agents_spawn", map[string]any{"brief": "x"}, nil); err == nil || !strings.Contains(err.Error(), "under pressure") {
+		t.Fatalf("err=%v", err)
+	}
+	fp.set(calm(), map[string]Reading{"lea-a": calm()})
+	e.d.samplePressure(e.ctx)
+	if n := newCount(fa); n != 1 {
+		t.Fatalf("%d started while one was in flight", n)
+	}
+	close(hold)
+	settle(t, e)
+	e.d.samplePressure(e.ctx)
+	settle(t, e)
+	if n := newCount(fa); n != 2 {
+		t.Fatalf("%d started", n)
 	}
 }

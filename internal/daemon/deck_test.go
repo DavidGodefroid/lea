@@ -25,6 +25,7 @@ type fakeAgents struct {
 	parkOut                   string        // what ParkStack reports
 	parkErr                   error         // ParkStack fails with it
 	parkHold                  chan struct{} // when set, ParkStack waits for it to close
+	newHold                   chan struct{} // when set, New waits for it to close
 }
 
 func (f *fakeAgents) rec(s string) { f.mu.Lock(); f.calls = append(f.calls, s); f.mu.Unlock() }
@@ -36,9 +37,12 @@ func (f *fakeAgents) Ensure(ctx context.Context, c, w string) error {
 func (f *fakeAgents) New(ctx context.Context, r agents.NewRequest) (agents.Row, error) {
 	f.mu.Lock()
 	f.req = r
-	err := f.newErr
+	err, hold := f.newErr, f.newHold
 	f.mu.Unlock()
 	f.rec("new")
+	if hold != nil {
+		<-hold
+	}
 	if err != nil {
 		return agents.Row{}, err
 	}
