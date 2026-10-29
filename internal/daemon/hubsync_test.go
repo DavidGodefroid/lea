@@ -273,3 +273,36 @@ func (stubFacade) Decided(ctx context.Context, since int64) ([]HubDecided, int64
 func (stubFacade) TicketState(ctx context.Context, instance, ticket string) (string, error) {
 	return "pending", nil
 }
+
+// A cold-suspended agent is not told on its inbox: its wait stays undelivered, and waking it tells
+// it the decision in its resume prompt (#163).
+func TestHubDecisionWaitsForAColdSuspendedAgent(t *testing.T) {
+	e := start(t)
+	dev := spawned(t, e, "dev-1", "dev", "")
+	e.d.st.AddHubWait(dev, ticketA, "lockmq", "rabbit", 1)
+	if _, err := e.d.st.DecideHubWaits(ticketA, "rabbit", store.DecisionDenied, "no", 2); err != nil {
+		t.Fatal(err)
+	}
+	if err := e.d.st.SetState(dev, store.StateSuspendedCold, "", 3); err != nil {
+		t.Fatal(err)
+	}
+	e.d.SetHubFacade(stubFacade{})
+	if err := e.d.syncHub(e.ctx); err != nil {
+		t.Fatal(err)
+	}
+	if ms := inbox(t, e, "dev-1"); len(ms) != 0 {
+		t.Fatalf("a cold-suspended agent was told: %+v", ms)
+	}
+	if ws, _ := e.d.st.UndeliveredAllHubWaits(); len(ws) != 1 {
+		t.Fatalf("undelivered %+v", ws)
+	}
+	if err := e.d.st.SetState(dev, "working", "", 4); err != nil {
+		t.Fatal(err)
+	}
+	if err := e.d.syncHub(e.ctx); err != nil {
+		t.Fatal(err)
+	}
+	if ms := inbox(t, e, "dev-1"); len(ms) != 1 || !strings.Contains(ms[0].Text, "denied: no") {
+		t.Fatalf("inbox %+v", ms)
+	}
+}

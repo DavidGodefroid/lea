@@ -229,6 +229,11 @@ func (d *Daemon) deliverHubDecisions() error {
 		return err
 	}
 	for _, w := range ws {
+		// A cold-suspended agent reads no inbox: its wait stays undelivered until it wakes, and the
+		// resume prompt tells it the decision (#163).
+		if a, err := d.st.AgentByKey(w.Agent); err == nil && a.State == store.StateSuspendedCold {
+			continue
+		}
 		if err := d.st.MarkHubWaitDelivered(w.Agent, w.Ticket, d.now()); err != nil {
 			if errors.Is(err, store.ErrNotFound) {
 				continue // delivered meanwhile
