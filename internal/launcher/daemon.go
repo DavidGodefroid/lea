@@ -48,6 +48,45 @@ func DaemonResumeStamp(get func(string) string) string {
 	return mode + " " + strconv.FormatInt(delay, 10)
 }
 
+// DaemonLockHTTPStamp is the LockHTTP switch as the daemon records it ("on" or "off"): a daemon
+// started with the other is restarted (it hands the agents their proxy passwords).
+func DaemonLockHTTPStamp(get func(string) string) string {
+	if get("LEA_LOCKHTTP") == "1" {
+		return "on"
+	}
+	return "off"
+}
+
+// StackIdleSetting is how long an agent stays idle before lea stops what it started in the nested
+// Podman (#132): LEA_STACK_IDLE minutes, 0 (off) to 1440, 10 when unset or invalid.
+func StackIdleSetting(get func(string) string) time.Duration {
+	if n, err := strconv.Atoi(get("LEA_STACK_IDLE")); err == nil && n >= 0 && n <= 1440 {
+		return time.Duration(n) * time.Minute
+	}
+	return 10 * time.Minute
+}
+
+// HeavySettings are the heavy jobs' slots per container (LEA_HEAVY_SLOTS, 0 or unset: three
+// quarters of the host's CPUs, LEA_HEAVY_WORKERS each; at most 256) and the workers of one job
+// (LEA_HEAVY_WORKERS, 1 to 256, 4 when unset or invalid) (#132).
+func HeavySettings(get func(string) string) (slots, workers int) {
+	workers = 4
+	if n, err := strconv.Atoi(get("LEA_HEAVY_WORKERS")); err == nil && n >= 1 && n <= 256 {
+		workers = n
+	}
+	if n, err := strconv.Atoi(get("LEA_HEAVY_SLOTS")); err == nil && n >= 0 && n <= 256 {
+		slots = n
+	}
+	return slots, workers
+}
+
+// DaemonStacksStamp is the idle stacks and heavy jobs settings as one line ("10 0 4": minutes,
+// slots, workers): a daemon started with others is restarted.
+func DaemonStacksStamp(get func(string) string) string {
+	slots, workers := HeavySettings(get)
+	return strconv.Itoa(int(StackIdleSetting(get)/time.Minute)) + " " + strconv.Itoa(slots) + " " + strconv.Itoa(workers)
+}
+
 func readTrim(p string) string {
 	b, _ := os.ReadFile(p)
 	return strings.TrimRight(string(b), "\n")
@@ -67,7 +106,9 @@ func (l *Launcher) ensureDaemon() error {
 		ver, _ := l.output(false, l.Core, "version")
 		if (tb == "" || readTrim(host+"/daemon.tmux") == tb) && readTrim(host+"/daemon.version") == ver &&
 			readTrim(host+"/daemon.approvals") == appr && readTrim(host+"/daemon.providers") == l.providersStamp() &&
-			readTrim(host+"/daemon.resume") == DaemonResumeStamp(l.Cfg.Get) {
+			readTrim(host+"/daemon.resume") == DaemonResumeStamp(l.Cfg.Get) &&
+			readTrim(host+"/daemon.lockhttp") == DaemonLockHTTPStamp(l.Cfg.Get) &&
+			readTrim(host+"/daemon.stacks") == DaemonStacksStamp(l.Cfg.Get) {
 			return nil
 		}
 		l.stopDaemon()

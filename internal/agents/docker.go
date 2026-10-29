@@ -102,6 +102,66 @@ func (d Docker) Stop(ctx context.Context, container, name string) error {
 	return nil
 }
 
+// Teardown removes what an ended agent started in the container's nested Podman (lea-agent
+// teardown); in a container that is not running there is nothing to remove.
+func (d Docker) Teardown(ctx context.Context, container, name string) error {
+	if !nameRe.MatchString(name) {
+		return fmt.Errorf("invalid agent name %q", name)
+	}
+	if _, err := d.agent(ctx, container, "teardown", name); err != nil {
+		return d.failed(ctx, container, err, "lea-agent teardown "+name)
+	}
+	return nil
+}
+
+// ErrStackBusy is a park refused: the agent's stack still works (a background job of the agent).
+var ErrStackBusy = errors.New("the stack is still at work")
+
+// Park stops what an idle agent started in the container's nested Podman (lea-agent park,
+// #132), without removing it, and returns what it freed ("" when nothing of its own ran). A
+// stack still at work is left running: ErrStackBusy.
+func (d Docker) Park(ctx context.Context, container, name string) (string, error) {
+	if !nameRe.MatchString(name) {
+		return "", fmt.Errorf("invalid agent name %q", name)
+	}
+	out, err := d.agent(ctx, container, "park", name)
+	if err != nil {
+		var ee *exec.ExitError
+		if errors.As(err, &ee) && ee.ExitCode() == 3 {
+			return "", fmt.Errorf("%s: %w%s", name, ErrStackBusy, stderrOf(err))
+		}
+		return "", d.failed(ctx, container, err, "lea-agent park "+name)
+	}
+	return strings.TrimSpace(string(out)), nil
+}
+
+// Unpark starts again what the last park of the agent stopped (lea-agent unpark).
+func (d Docker) Unpark(ctx context.Context, container, name string) (string, error) {
+	if !nameRe.MatchString(name) {
+		return "", fmt.Errorf("invalid agent name %q", name)
+	}
+	out, err := d.agent(ctx, container, "unpark", name)
+	if err != nil {
+		return "", d.failed(ctx, container, err, "lea-agent unpark "+name)
+	}
+	return strings.TrimSpace(string(out)), nil
+}
+
+// Sweep removes what the agents but keep left in the container's nested Podman (lea-agent
+// sweep) and returns its report.
+func (d Docker) Sweep(ctx context.Context, container string, keep []string) (string, error) {
+	for _, n := range keep {
+		if !nameRe.MatchString(n) {
+			return "", fmt.Errorf("invalid agent name %q", n)
+		}
+	}
+	out, err := d.agent(ctx, container, append([]string{"sweep"}, keep...)...)
+	if err != nil {
+		return "", d.failed(ctx, container, err, "lea-agent sweep")
+	}
+	return strings.TrimSpace(string(out)), nil
+}
+
 // Projects is the projects directory the launcher started the container for (its lea.projects
 // label), a clean absolute path.
 func (d Docker) Projects(ctx context.Context, container string) (string, error) {
@@ -201,6 +261,47 @@ func (d DockerConsoles) StopConsole(ctx context.Context, name string) error {
 		return fmt.Errorf("docker stop %s: %w: %s", name, err, strings.TrimSpace(string(out)))
 	}
 	return nil
+}
+
+// Unconfined inspects the running agent containers (lea.role=session) of projects, or of a
+// projects directory above it (lea.projects), whose read-write mount holds dir: those whose mount
+// of dir is missing or writable. Any failure is an error, never "none".
+func (d DockerConsoles) Unconfined(ctx context.Context, projects, dir string) ([]string, error) {
+	out, err := exec.CommandContext(ctx, d.bin(), "ps", "--filter", "label=lea.role=session",
+		"--format", `{{.ID}} {{.Label "lea.projects"}}`).Output()
+	if err != nil {
+		return nil, fmt.Errorf("docker ps: %w%s", err, stderrOf(err))
+	}
+	var ids []string
+	for _, l := range strings.Split(string(out), "\n") {
+		id, p, _ := strings.Cut(l, " ")
+		if id != "" && p != "" && (p == projects || p == "/" || strings.HasPrefix(projects, p+"/")) {
+			ids = append(ids, id)
+		}
+	}
+	if len(ids) == 0 {
+		return nil, nil
+	}
+	f := `{{.Name}} {{range .Mounts}}{{if eq .Destination "` + dir + `"}}{{.RW}}{{end}}{{end}}`
+	out, err = exec.CommandContext(ctx, d.bin(), append([]string{"inspect", "-f", f}, ids...)...).Output()
+	if err != nil {
+		return nil, fmt.Errorf("docker inspect: %w%s", err, stderrOf(err))
+	}
+	lines := strings.Split(strings.TrimRight(string(out), "\n"), "\n")
+	if len(lines) != len(ids) {
+		return nil, fmt.Errorf("docker inspect: %d lines for %d containers", len(lines), len(ids))
+	}
+	var bad []string
+	for _, l := range lines {
+		name, rw, _ := strings.Cut(l, " ")
+		if name == "" {
+			return nil, fmt.Errorf("docker inspect: unexpected line %q", l)
+		}
+		if rw != "false" {
+			bad = append(bad, strings.TrimPrefix(name, "/"))
+		}
+	}
+	return bad, nil
 }
 
 func (d DockerConsoles) StopConsolesOf(ctx context.Context, owner string) error {

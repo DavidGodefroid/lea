@@ -19,7 +19,13 @@ type realContainers struct{}
 func (realContainers) Live(context.Context, string) ([]string, error)   { return nil, nil }
 func (realContainers) Stop(context.Context, string, string) error       { return nil }
 func (realContainers) Shells(context.Context, string) ([]string, error) { return nil, nil }
-func (realContainers) StopShell(context.Context, string, string) error  { return nil }
+func (realContainers) Teardown(context.Context, string, string) error   { return nil }
+func (realContainers) Sweep(context.Context, string, []string) (string, error) {
+	return "", nil
+}
+func (realContainers) Park(context.Context, string, string) (string, error)   { return "", nil }
+func (realContainers) Unpark(context.Context, string, string) (string, error) { return "", nil }
+func (realContainers) StopShell(context.Context, string, string) error        { return nil }
 func (realContainers) Pause(context.Context, string, string, bool) error {
 	return nil
 }
@@ -34,6 +40,9 @@ func (noConsoles) ConsoleState(context.Context, string) (agents.ConsoleState, er
 func (noConsoles) RemoveConsole(context.Context, string) error  { return nil }
 func (noConsoles) StopConsole(context.Context, string) error    { return nil }
 func (noConsoles) StopConsolesOf(context.Context, string) error { return nil }
+func (noConsoles) Unconfined(context.Context, string, string) ([]string, error) {
+	return nil, nil
+}
 
 // TestRealLockRequestOpensOnlyWhenTheUserSaysSo runs the whole path against a real tmux server,
 // with a stand-in for docker run: an agent asks over its bus; nothing opens, no console runs; the

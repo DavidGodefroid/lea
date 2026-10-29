@@ -9,8 +9,8 @@ import (
 const now = 1_000_000
 
 var dev = Caller{Key: "lea-a/dev-2", Container: "lea-a", Repo: "lea", Branch: "feat/73-x",
-	Lineage: []string{"lea-a/dev-2", "lea-a/claude-1"}, OwnWorktree: true, Worktree: "/p/.lea/worktrees/lea/dev-2",
-	Env: map[string]string{"HOME": "/home/u", "GH_CONFIG_DIR": "/lea/state/gh"}}
+	Lineage: []string{"lea-a/dev-2", "lea-a/claude-1"}, OwnWorktree: true, Worktree: "/p/.lea/worktrees/lea/dev-2", Cwd: "/p/.lea/worktrees/lea/dev-2",
+	Env: map[string]string{"HOME": "/home/u", "GH_CONFIG_DIR": "/lea/state/gh", "GLAB_CONFIG_DIR": "/lea/state/glab-cli"}, Proxy: LeaProxy}
 
 func all(action string) Grant {
 	g := Grant{ID: 7, Container: "lea-a", Action: action, Repo: "lea", Branch: "feat/*", Created: now - 10, Expires: now + 3600}
@@ -135,6 +135,54 @@ func TestDecideBash(t *testing.T) {
 		{"relative settings", "cp x .claude/settings.json", Deny, nil},
 		{"quoted settings", `cp x ".claude/settings.local.json"`, Deny, nil},
 		{"single-quoted settings", "cp x '.claude/settings.json'", Deny, nil},
+		{"dot segment settings", "cp x .claude/./settings.json", Deny, nil},
+		{"double slash hooks", "cp x .git//hooks/pre-commit", Deny, nil},
+		// (a') relative to the directory a cd, pushd or -C moves to.
+		{"cd then add", "cd .claude && git add settings.json", Deny, nil},
+		{"cd semicolon", "cd .claude; cp x settings.local.json", Deny, nil},
+		{"cd or", "cd .claude || true; cp x settings.json", Deny, nil},
+		{"cd twice", "cd .git && cd hooks && cp x pre-commit", Deny, nil},
+		{"cd dir slash", "cd .git/ && sed -i s/a/b/ config", Deny, nil},
+		{"cd up", "cd internal && cp x ../.claude/settings.json", Deny, nil},
+		{"cd up from inside", "cd .claude/x && cp y ../settings.json", Deny, nil},
+		{"cd abs", "cd /home/u/.claude && cp x settings.json", Deny, nil},
+		{"cd home", "cd ~/.claude && cp x settings.json", Deny, nil},
+		{"cd bare home", "cd && cd .claude && cp x settings.json", Deny, nil},
+		{"cd -P", "cd -P .claude && cp x settings.json", Deny, nil},
+		{"cd redirect", "cd .claude && echo {} > settings.json", Deny, nil},
+		{"cd subshell", "(cd .claude && cp x settings.json)", Deny, nil},
+		{"cd pipeline", "true | cd .git; echo x >> config", Deny, nil},
+		{"cd newline", "cd .git\nchmod +x hooks/pre-push", Deny, nil},
+		{"pushd", "pushd .claude && cp x hooks/pre.sh", Deny, nil},
+		{"git -C add", "git -C .claude add settings.json", Deny, nil},
+		{"git -C checkout", "git -C .git checkout -- config", Deny, nil},
+		{"git -C twice", "git -C .claude -C hooks status x", Deny, nil},
+		{"git work-tree", "git --work-tree=.claude checkout HEAD -- settings.json", Deny, nil},
+		{"git work-tree spaced", "git --work-tree .claude checkout HEAD -- settings.json", Deny, nil},
+		{"git git-dir", "git --git-dir .git add hooks/pre-commit", Deny, nil},
+		{"env chdir", "env --chdir=.claude cp x settings.json", Deny, nil},
+		{"tar -C", "tar -C .claude -xf a.tar settings.json", Deny, nil},
+		{"shell script", "bash -c 'cd .claude && cp x settings.json'", Deny, nil},
+		{"inner substitution", "echo $(cd .claude && cp x settings.json)", Deny, nil},
+		// What cannot be resolved fails closed.
+		{"cd variable", `cd "$D" && cp x settings.json`, Deny, nil},
+		{"cd substitution", "cd $(dirname x) && cp x settings.json", Deny, nil},
+		{"cd dash", "cd - && cp x settings.json", Deny, nil},
+		{"cd glob", "cd .cl* && cp x settings.json", Deny, nil},
+		{"cd tilde user", "cd ~u/.claude && cp x settings.json", Deny, nil},
+		{"popd", "popd && echo x >> config", Deny, nil},
+		{"git -C variable", "git -C $D add hooks/pre-commit", Deny, nil},
+		{"CDPATH", "CDPATH=/home/u/.claude cd hooks && cp x pre.sh", Deny, nil},
+		{"cd variable unrelated", `cd "$D" && go test ./...`, "", nil},
+		{"cd toplevel", `cd "$(git rev-parse --show-toplevel)" && go test ./internal/grants/`, "", nil},
+		{"cd dash config dir", "cd - && go test ./config/... ./internal/config/...", "", nil},
+		// Plain cds that reach nothing protected are left alone.
+		{"cd test", "cd internal/grants && go test ./...", "", nil},
+		{"cd claude read docs", "cd .claude && ls", "", nil},
+		{"git -C status", "git -C /p/lea status", "", nil},
+		{"cd to repo then add", "cd /p/lea && git add internal/grants/bash.go", "", nil},
+		{"cd heredoc message", "cd /p/lea && git commit -m \"$(cat <<'EOF'\nfix hooks; config settings.json\nEOF\n)\"", "", nil},
+		{"cd claude heredoc", "cd .claude && git commit -m \"$(cat <<'EOF'\nx\nEOF\n)\" && cp x settings.json", Deny, nil},
 		// (b) quoted push targets.
 		{"quoted plus", `git push origin "+feat/73-x"`, Deny, every},
 		{"quoted main", "git push origin 'main'", Deny, every},
@@ -348,11 +396,83 @@ func TestDecideScope(t *testing.T) {
 // TestPinnedCommand: an allowed call runs lea's command, built from the validated argv: absolute
 // program, scrubbed environment, git in the caller's worktree with hooks and command-running
 // settings off, gh on the grant's repository; the audit target names the repository.
+// TestProtectedCwdAndGlobs: relative words are read from the directory the call runs in (the
+// hook's cwd, which a cd in an earlier call may have moved), and a glob that may match a
+// protected path is one.
+func TestProtectedCwdAndGlobs(t *testing.T) {
+	cases := []struct {
+		name, cwd, tool, cmd string
+		want                 string
+	}{
+		{"cwd claude", "/home/u/.claude", "Bash", "cp x settings.json", Deny},
+		{"cwd claude add", "/home/u/.claude", "Bash", "git add settings.local.json", Deny},
+		{"cwd git config", "/p/lea/.git", "Bash", "echo x >> config", Deny},
+		{"cwd git hooks", "/p/lea/.git/hooks", "Bash", "chmod +x pre-push", Deny},
+		{"cwd git then cd", "/p/lea/.git", "Bash", "cd hooks && cp x pre-commit", Deny},
+		{"cwd home", "/home/u", "Bash", "echo x >> .bashrc", Deny},
+		{"cwd up", "/home/u/.claude/x", "Bash", "cp y ../settings.json", Deny},
+		{"cwd claude read", "/home/u/.claude", "Bash", "cat settings.json", ""},
+		{"cwd worktree", "/p/.lea/worktrees/lea/dev-2", "Bash", "cp x config", ""},
+		{"cwd missing", "", "Bash", "cp x settings.json", Deny},
+		{"cwd relative", "u/.claude", "Bash", "cp x hooks/pre.sh", Deny},
+		{"cwd missing harmless", "", "Bash", "go test ./...", ""},
+		{"edit relative", "/home/u/.claude", "Edit", "settings.json", Deny},
+		{"edit relative worktree", "/p/.lea/worktrees/lea/dev-2", "Edit", "internal/x.go", ""},
+		// Globs.
+		{"glob settings", "/w", "Bash", "cp x .claude/sett*.json", Deny},
+		{"glob claude dir", "/w", "Bash", "rm .clau?e/*", Deny},
+		{"glob hooks", "/w", "Bash", "cp x .git/hoo*/pre-commit", Deny},
+		{"glob class", "/w", "Bash", "cp x .git/[ch]onfig", Deny},
+		{"glob rc", "/w", "Bash", "cp x ~/.bash*", Deny},
+		{"glob brace", "/w", "Bash", "cp x .cla{u,x}de/settings.json", Deny},
+		{"glob any dir", "/w", "Bash", "cp x .*/settings.json", Deny},
+		{"glob worktree config", "/w", "Bash", "cp x .git/worktrees/*/config", Deny},
+		{"glob after cd", "/w", "Bash", "cd .claude && cp x sett*", Deny},
+		{"glob after unknown cd", "/w", "Bash", `cd "$D" && cp x sett*.json`, Deny},
+		{"glob in cwd", "/home/u/.claude", "Bash", "cp x s*.json", Deny},
+		{"glob dotglob", "/w", "Bash", "shopt -s dotglob; cp x */settings.json", Deny},
+		{"glob brace no dot", "/w", "Bash", "cp x {.claude,x}/settings.json", Deny},
+		{"glob dotglob escaped", "/w", "Bash", `shopt -s dot\glob; cp x */settings.json`, Deny},
+		{"glob dotglob quoted", "/w", "Bash", `shopt -s "dot"glob; cp x */settings.json`, Deny},
+		{"glob shopt computed", "/w", "Bash", `shopt -s $(echo x); cp x */settings.json`, Deny},
+		{"glob GLOBIGNORE", "/w", "Bash", "GLOBIGNORE=x; cp x */settings.json", Deny},
+		{"glob nocaseglob", "/w", "Bash", "shopt -s nocaseglob; cp x .CLAUDE/SETTINGS.jso?", Deny},
+		{"glob nocase class", "/w", "Bash", "shopt -s nocaseglob; cp x .[C]laude/settings.json", Deny},
+		{"glob zsh setopt", "/w", "Bash", "setopt globdots; cp x */settings.json", Deny},
+		{"glob zsh qualifier", "/w", "Bash", "cp x */settings.json(D)", Deny},
+		{"extglob", "/w", "Bash", "cp x .claude/@(settings).json", Deny},
+		{"extglob negated", "/w", "Bash", "cp x .git/!(x)", Deny},
+		{"extglob nested", "/w", "Bash", "cp x .claude/@(@(settings)).json", Deny},
+		{"extglob quoted group", "/w", "Bash", "cp x .claude/@('settings').json", Deny},
+		{"glob shopt computed program", "/w", "Bash", "$(printf sh%sopt '') -s dotg$(echo l)ob; cp x */settings.json", Deny},
+		{"glob shopt eval", "/w", "Bash", "eval x; cp x */settings.json", Deny},
+		{"glob shopt sourced", "/w", "Bash", "source x; cp x */settings.json", Deny},
+		{"glob shopt dot sourced", "/w", "Bash", ". ./x; cp x */settings.json", Deny},
+		{"glob star no dot", "/w", "Bash", "cp x */settings.json", ""},
+		{"glob build", "/w", "Bash", "rm -rf build/*", ""},
+		{"glob out", "/w", "Bash", "rm -f *.out", ""},
+		{"glob go test", "/w", "Bash", "go test ./internal/*/...", ""},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			c := dev
+			c.Cwd = tc.cwd
+			in := bash(tc.cmd)
+			if tc.tool != "Bash" {
+				in, _ = json.Marshal(map[string]string{"file_path": tc.cmd})
+			}
+			if d := Decide(tc.tool, in, c, nil, now, false); d.Verdict != tc.want {
+				t.Fatalf("%q in %q: verdict %q (%s), want %q", tc.cmd, tc.cwd, d.Verdict, d.Reason, tc.want)
+			}
+		})
+	}
+}
+
 func TestPinnedCommand(t *testing.T) {
 	gs := []Grant{all(Merge), all(CommitIdentity)}
 	d := Decide("Bash", bash("gh pr merge feat/73-x --squash --delete-branch"), dev, gs, now, false)
 	if d.Verdict != Allow || !strings.HasPrefix(d.Command, `'/usr/bin/env' '-i' 'PATH=/usr/bin:/bin'`) ||
-		!strings.Contains(d.Command, `'HOME=/home/u' 'GH_CONFIG_DIR=/lea/state/gh' '/bin/sh' '-c' `) || d.Request.Target != "github.com/o/lea pr of feat/73-x" {
+		!strings.Contains(d.Command, `'HOME=/home/u' 'GH_CONFIG_DIR=/lea/state/gh' 'GLAB_CONFIG_DIR=/lea/state/glab-cli' '/bin/sh' '-c' `) || d.Request.Target != "github.com/o/lea pr of feat/73-x" {
 		t.Fatalf("merge: %+v", d)
 	}
 	if s := lastWord(t, d.Command); !strings.Contains(s, `'/usr/bin/gh' 'pr' 'view' 'feat/73-x' '--json' 'headRefName,isCrossRepository'`) ||
@@ -396,6 +516,49 @@ func TestPinnedCommand(t *testing.T) {
 		odd.Env = bad
 		if d := Decide("Bash", bash("git commit -m x"), odd, gs, now, false); d.Verdict != "" {
 			t.Fatalf("env %v: %+v", bad, d)
+		}
+	}
+	// Under LockHTTP lea names the gate, with the agent's own proxy password: allowed, and nothing
+	// but an agent name and a hex token may stand before the host.
+	gated := dev
+	gated.Proxy = "http://dev-2:0123456789abcdef0123456789abcdef@lea-proxy:3130"
+	for _, call := range []string{"gh pr merge 42 --squash", "git push origin feat/73-x"} {
+		d := Decide("Bash", bash(call), gated, gs, now, false)
+		if d.Verdict != Allow || !strings.Contains(d.Command, gated.Proxy) {
+			t.Fatalf("%s through the gate: %+v", call, d)
+		}
+	}
+	for _, bad := range []string{"http://dev-2:0123456789abcdef0123456789abcdef@lea-proxy:3130/x", "http://dev-2:not-hex@lea-proxy:3130",
+		"http://Dev:0123456789abcdef0123456789abcdef@lea-proxy:3130", "http://dev-2@lea-proxy:3130", "http://a:b:c@lea-proxy:3130",
+		"http://dev-2:0123456789abcdef0123456789abcdef@@lea-proxy:3130", "https://lea-proxy:3130"} {
+		b := dev
+		b.Proxy = bad
+		if d := Decide("Bash", bash("gh pr merge 42 --squash"), b, gs, now, false); d.Command != "" {
+			t.Fatalf("proxy %q pinned: %+v", bad, d)
+		}
+	}
+	// The container's network is internal: every pinned call goes out through lea's proxy, set
+	// by lea (Caller.Proxy, from the daemon), never through one the agent's environment names.
+	sneaky := dev
+	sneaky.Env = map[string]string{"HOME": "/home/u", "HTTPS_PROXY": "http://evil:1", "https_proxy": "http://evil:1"}
+	for _, call := range []string{"gh pr merge 42 --squash", "git push origin feat/73-x", "git commit -m x"} {
+		d := Decide("Bash", bash(call), sneaky, gs, now, false)
+		if d.Verdict != Allow || strings.Contains(d.Command, "evil") {
+			t.Fatalf("%s: %+v", call, d)
+		}
+		if call[:2] == "gh" && !strings.Contains(d.Command, `'HTTPS_PROXY=http://lea-proxy:3128' 'https_proxy=http://lea-proxy:3128'`) {
+			t.Fatalf("%s: gh not through lea's proxy: %s", call, d.Command)
+		}
+		if s := lastWord(t, d.Command); call[:3] == "git" && (!strings.Contains(s, `'-c' 'http.proxy=http://lea-proxy:3128'`) || strings.Contains(s, `'http.proxy='`)) {
+			t.Fatalf("%s: git not through lea's proxy:\n%s", call, s)
+		}
+	}
+	// No proxy lea can vouch for: no command, no allow.
+	for _, p := range []string{"", "lea-proxy:3128", "http://lea-proxy", "http://a b:1", "http://x:1/'$(id)'", "https://lea-proxy:3128", "http://lea-proxy:3128/"} {
+		odd := dev
+		odd.Proxy = p
+		if d := Decide("Bash", bash("gh pr merge 42 --squash"), odd, gs, now, false); d.Verdict != "" {
+			t.Fatalf("proxy %q: %+v", p, d)
 		}
 	}
 	// No worktree, no git command.
@@ -495,6 +658,157 @@ func TestGlob(t *testing.T) {
 		{"feat/*/x", "feat/a/b/x", true}, {"main", "main", true}, {"main", "mainx", false}, {"a*b*c", "axc", false}} {
 		if Glob(tc.p, tc.s) != tc.ok {
 			t.Fatalf("Glob(%q, %q) != %v", tc.p, tc.s, tc.ok)
+		}
+	}
+}
+
+// TestPRCreate: pr-create opens a PR from the caller's own branch, gh pinned to the grant's
+// repository; a body file must be a plain file of the caller's worktree.
+func TestPRCreate(t *testing.T) {
+	gs := []Grant{all(PRCreate)}
+	cases := []struct{ name, cmd, want string }{
+		{"title body", `gh pr create --head feat/73-x --base main --title "fix: x" --body "does y"`, Allow},
+		{"short flags", `gh pr create -H feat/73-x -B main -t "fix: x" -b "does y" -d`, Allow},
+		{"body file", `gh pr create --head feat/73-x --title "fix: x" --body-file pr.md`, Allow},
+		{"body file in dir", `gh pr create --head feat/73-x --title x --body-file docs/pr.md --draft`, Allow},
+		{"no head", `gh pr create --title x --body y`, ""},
+		{"other head", `gh pr create --head feat/other --title x --body y`, ""},
+		{"head main", `gh pr create --head main --title x --body y`, ""},
+		{"no title", `gh pr create --head feat/73-x --body y`, ""},
+		{"no body", `gh pr create --head feat/73-x --title x`, ""},
+		{"body and file", `gh pr create --head feat/73-x --title x --body y --body-file f`, ""},
+		{"absolute body file", `gh pr create --head feat/73-x --title x --body-file /etc/passwd`, ""},
+		{"parent body file", `gh pr create --head feat/73-x --title x --body-file ../dev-3/notes.md`, ""},
+		{"stdin body file", `gh pr create --head feat/73-x --title x --body-file -`, ""},
+		{"git dir body file", `gh pr create --head feat/73-x --title x --body-file .git/HEAD`, ""},
+		{"repo flag", `gh pr create --head feat/73-x --title x --body y -R evil/r`, ""},
+		{"web", `gh pr create --head feat/73-x --title x --body y --web`, ""},
+		{"fill", `gh pr create --head feat/73-x --fill`, ""},
+		{"bad base", `gh pr create --head feat/73-x --base 'a b' --title x --body y`, ""},
+		{"duplicate title", `gh pr create --head feat/73-x --title x --title z --body y`, ""},
+		{"own-branch heredoc body", "gh pr create --head feat/73-x --title x --body \"$(cat <<'EOF'\ny\nEOF\n)\"", ""},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			d := Decide("Bash", bash(tc.cmd), dev, gs, now, false)
+			if d.Verdict != tc.want {
+				t.Fatalf("%q: verdict %q (%s), want %q", tc.cmd, d.Verdict, d.Reason, tc.want)
+			}
+		})
+	}
+	if d := Decide("Bash", bash(`gh pr create --head feat/73-x --title x --body y`), dev, []Grant{all(Merge)}, now, false); d.Verdict != "" {
+		t.Fatalf("merge grant covers pr create: %+v", d)
+	}
+	d := Decide("Bash", bash(`gh pr create --head feat/73-x --title "fix: x" --body y`), dev, gs, now, false)
+	if s := lastWord(t, d.Command); s != ghIsolated()+`'/usr/bin/gh' 'pr' 'create' '--head' 'feat/73-x' '--title' 'fix: x' '--body' 'y' '-R' 'github.com/o/lea'` ||
+		d.Request.Target != "github.com/o/lea pr create feat/73-x" {
+		t.Fatalf("pr create: %q %+v", s, d)
+	}
+	// A body file is opened once in the caller's worktree; gh reads that open file on its stdin,
+	// after a check that it resolves (symlinks too) to a plain file of the worktree outside .git.
+	d = Decide("Bash", bash(`gh pr create --head feat/73-x --title x --body-file docs/pr.md`), dev, gs, now, false)
+	s := lastWord(t, d.Command)
+	for _, w := range []string{"[ -f '/p/.lea/worktrees/lea/dev-2/docs/pr.md' ] || {", "exec 3< '/p/.lea/worktrees/lea/dev-2/docs/pr.md' || exit 1",
+		`r=$('/usr/bin/realpath' '-e' '--' '/proc/self/fd/3') || exit 1`, `'--body-file' '-' '-R' 'github.com/o/lea' <&3`,
+		`case "$r" in '/p/.lea/worktrees/lea/dev-2'/.git|'/p/.lea/worktrees/lea/dev-2'/.git/*)`, `[ -f /proc/self/fd/3 ] ||`} {
+		if !strings.Contains(s, w) {
+			t.Fatalf("body file script lacks %s:\n%s", w, s)
+		}
+	}
+}
+
+// TestStanding: delivery's standing grants never expire and show as such.
+func TestStanding(t *testing.T) {
+	g := all(PRCreate)
+	g.Expires = Standing
+	if !g.Active(now) || !g.IsStanding() || all(PRCreate).IsStanding() {
+		t.Fatal("standing")
+	}
+	for _, a := range DeliveryActions {
+		if !ValidAction(a) || !NeedsGitHub(a) {
+			t.Fatalf("delivery action %q", a)
+		}
+	}
+}
+
+// TestGitLab: a grant pinned to a GitLab project (gitlab:HOST/PATH) covers glab mr create and
+// glab mr merge on the caller's own branch, and pushes to that project; gh is not covered by it,
+// nor glab by a GitHub grant.
+func TestGitLab(t *testing.T) {
+	gl := func(action string) Grant {
+		g := all(action)
+		g.GitHub = "gitlab:gitlab.example.com/grp/sub/app"
+		return g
+	}
+	gs := []Grant{gl(PRCreate), gl(Merge), gl(CommitIdentity), gl(DeleteOwnBranch)}
+	cases := []struct{ name, cmd, want string }{
+		{"mr create", `glab mr create -s feat/73-x -b main -t "fix: x" -d "does y" -y`, Allow},
+		{"mr create long", `glab mr create --source-branch feat/73-x --target-branch main --title x --description y --draft --yes`, Allow},
+		{"mr create no description", `glab mr create -s feat/73-x -t x -y`, Allow},
+		{"mr create remove source", `glab mr create -s feat/73-x -t x --remove-source-branch -y`, Allow},
+		{"mr create no source", `glab mr create -t x -d y -y`, ""},
+		{"mr create other source", `glab mr create -s feat/other -t x -y`, ""},
+		{"mr create no title", `glab mr create -s feat/73-x -d y -y`, ""},
+		{"mr create fill", `glab mr create -s feat/73-x --fill -y`, ""},
+		{"mr create push", `glab mr create -s feat/73-x -t x --push -y`, ""},
+		{"mr create repo", `glab mr create -s feat/73-x -t x -y -R evil/x`, ""},
+		{"mr create head repo", `glab mr create -s feat/73-x -t x -y -H evil/x`, ""},
+		{"mr create editor", `glab mr create -s feat/73-x -t x -d - -y`, ""},
+		{"mr create body mentions push", `glab mr create -s feat/73-x -t x -d "run git push origin main yourself" -y`, Allow},
+		{"mr merge numbered", `glab mr merge 12 --squash -y`, Allow},
+		{"mr merge own branch remove", `glab mr merge feat/73-x -s -d -y`, Allow},
+		{"mr merge rebase", `glab mr merge 12 -r -y`, ""},
+		{"mr merge rebase long", `glab mr merge 12 --rebase -y`, ""},
+		{"mr merge numbered remove", `glab mr merge 12 -d -y`, ""},
+		{"mr merge unnamed", `glab mr merge -s -y`, ""},
+		{"mr merge other branch", `glab mr merge feat/other -s -y`, ""},
+		{"mr merge sha", `glab mr merge 12 --sha abc -y`, ""},
+		{"mr merge two methods", `glab mr merge 12 -s -r -y`, ""},
+		{"push", "git push -u origin feat/73-x", Allow},
+		{"delete", "git push origin --delete feat/73-x", Allow},
+		{"gh on a gitlab grant", "gh pr merge 42 --squash", ""},
+		{"gh create on a gitlab grant", "gh pr create --head feat/73-x --title x --body y", ""},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			d := Decide("Bash", bash(tc.cmd), dev, gs, now, false)
+			if d.Verdict != tc.want {
+				t.Fatalf("%q: verdict %q (%s), want %q", tc.cmd, d.Verdict, d.Reason, tc.want)
+			}
+		})
+	}
+	if d := Decide("Bash", bash("glab mr merge 12 -s -y"), dev, []Grant{all(Merge)}, now, false); d.Verdict != "" {
+		t.Fatalf("glab on a github grant: %+v", d)
+	}
+	// glab only reads the token; curl talks to the project's API (gitlab_test.go runs them).
+	d := Decide("Bash", bash(`glab mr create -s feat/73-x -t x -y`), dev, gs, now, false)
+	s := lastWord(t, d.Command)
+	for _, w := range []string{"cd / || exit 1\n", `'/usr/bin/glab' 'config' 'get' 'token' '--host' 'gitlab.example.com'`,
+		"api='https://gitlab.example.com/api/v4/projects/grp%2Fsub%2Fapp'\n", `'/usr/bin/curl' '-q' '--proto' '=https'`,
+		`'--data-urlencode' 'source_branch=feat/73-x'`, `'--data-urlencode' 'title=x'`} {
+		if !strings.Contains(s, w) {
+			t.Fatalf("mr create script lacks %s:\n%s", w, s)
+		}
+	}
+	if d.Request.Target != "gitlab:gitlab.example.com/grp/sub/app mr create feat/73-x" || strings.Contains(s, "-R") || strings.Contains(s, "'mr'") {
+		t.Fatalf("mr create: %q %+v", s, d)
+	}
+	d = Decide("Bash", bash("glab mr merge 12 --squash -y"), dev, gs, now, false)
+	s = lastWord(t, d.Command)
+	for _, w := range []string{"iid='12'\n", `"$api/merge_requests/$iid"`, `'--arg' 'b' 'feat/73-x'`, "export HOME='/usr/local/share/lea/no-forge-config'\n", `'-X' 'PUT' --data-urlencode "sha=$sha" '--data' 'squash=true' $am "$api/merge_requests/$iid/merge"`} {
+		if !strings.Contains(s, w) {
+			t.Fatalf("numbered mr merge script lacks %s:\n%s", w, s)
+		}
+	}
+	d = Decide("Bash", bash("git push -u origin feat/73-x"), dev, gs, now, false)
+	if s := lastWord(t, d.Command); !strings.Contains(s, ` push 'https://gitlab.example.com/grp/sub/app.git' "$sha"':refs/heads/feat/73-x'`) {
+		t.Fatalf("gitlab push script:\n%s", s)
+	}
+	for pin, ok := range map[string]bool{"github.com/o/x": true, "gitlab:gitlab.com/g/x": true, "gitlab:h.example.com/a/b/c/d": true,
+		"gitlab:gitlab.com/x": false, "gitlab:gitlab.com/g/../x": false, "gitlab:/g/x": false, "gitlab:h_x/g/x": false,
+		"gitlab:gitlab.com/g/x.git": false, "github.com/o/x/y": false, "gitlab.com/g/x": false, "gitlab:gitlab.com/-g/x": false} {
+		if got := ValidPin(pin); got != ok {
+			t.Errorf("ValidPin(%q) = %v", pin, got)
 		}
 	}
 }

@@ -1,5 +1,6 @@
-# make go-test-tmux: the Go tests with a real tmux, for internal/tmux's TestReal*.
+# make go-test-tmux: the Go tests with a real tmux, for internal/tmux's TestReal*, and the forge
+# CLIs (gh, glab, jq) the pinned grant calls run, for internal/grants' TestPinned*.
 FROM golang:1.26
 RUN apt-get update \
- && apt-get install -y --no-install-recommends tmux \
+ && apt-get install -y --no-install-recommends tmux gh glab jq \
  && rm -rf /var/lib/apt/lists/*

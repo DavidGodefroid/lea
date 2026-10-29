@@ -53,6 +53,17 @@ lea_load_config() {
   case $LEA_LOCKMQ in 0|1) ;; *) lea_die "LEA_LOCKMQ must be 1 (reach a lockmq console on this host) or 0, not '$LEA_LOCKMQ'" ;; esac
   LEA_LOCKFILE=${LEA_LOCKFILE:-0}
   case $LEA_LOCKFILE in 0|1) ;; *) lea_die "LEA_LOCKFILE must be 1 (reach a lockfile console on this host) or 0, not '$LEA_LOCKFILE'" ;; esac
+  LEA_LOCKHTTP=${LEA_LOCKHTTP:-0}
+  case $LEA_LOCKHTTP in 0|1) ;; *) lea_die "LEA_LOCKHTTP must be 1 (agents' web egress through a LockHTTP gate) or 0, not '$LEA_LOCKHTTP'" ;; esac
+  if [ "$LEA_LOCKHTTP" = 1 ] && [ -n "$LEA_GIT_SSH" ]; then
+    lea_die "LEA_LOCKHTTP=1 refuses LEA_GIT_SSH: its SSH forwarders would bypass the LockHTTP gate (use git over HTTPS, or LEA_LOCKHTTP=0)"
+  fi
+  if [ "$LEA_LOCKHTTP" = 1 ] && [ -n "${LEA_OTEL_UPSTREAM:-}" ]; then
+    lea_die "LEA_LOCKHTTP=1 refuses LEA_OTEL_UPSTREAM: its TCP forwarder (port 4318) would bypass the LockHTTP gate (leave it empty, or LEA_LOCKHTTP=0)"
+  fi
+  LEA_LOCKHTTP_MITM=${LEA_LOCKHTTP_MITM:-0}
+  case $LEA_LOCKHTTP_MITM in 0|1) ;; *) lea_die "LEA_LOCKHTTP_MITM must be 1 (the LockHTTP gate decrypts HTTPS with a local CA) or 0, not '$LEA_LOCKHTTP_MITM'" ;; esac
+  if [ "$LEA_LOCKHTTP_MITM" = 1 ] && [ "$LEA_LOCKHTTP" != 1 ]; then lea_die "LEA_LOCKHTTP_MITM=1 needs LEA_LOCKHTTP=1"; fi
   # Empty: no pinned release (config/lea.conf pins one), and lea init installs nothing.
   LEA_LOCKMQ_REF=${LEA_LOCKMQ_REF:-} LEA_LOCKFILE_REF=${LEA_LOCKFILE_REF:-}
   [ -z "$LEA_LOCKMQ_REF" ] || lea__semver "$LEA_LOCKMQ_REF" >/dev/null || lea_die "LEA_LOCKMQ_REF must be a lockmq release (vX.Y.Z), not '$LEA_LOCKMQ_REF'"
@@ -72,19 +83,21 @@ lea_load_config() {
   fi
   unset LEA_GITLAB_SSH LEA_GITLAB_KNOWN_HOSTS LEA_REGISTRY
   export LEA_PREFIX LEA_IMAGE LEA_PROXY_IMAGE LEA_GIT_SSH LEA_GIT_KNOWN_HOSTS LEA_LOCKSQL LEA_LOCKSQL_IMAGE LEA_LOCKSQL_REF LEA_LOCKSQL_VAULT_ADDR \
-    LEA_LOCKMQ LEA_LOCKFILE LEA_LOCKMQ_REF LEA_LOCKFILE_REF \
+    LEA_LOCKMQ LEA_LOCKFILE LEA_LOCKMQ_REF LEA_LOCKFILE_REF LEA_LOCKHTTP LEA_LOCKHTTP_MITM \
     LEA_OTEL_UPSTREAM LEA_NESTED_NETWORKS LEA_K8S_NAMESPACE LEA_INTERNAL_HOSTS LEA_EGRESS_ALLOW LEA_PROJECTS_DIR \
     LEA_APPROVALS LEA_APPROVAL_TIMEOUT LEA_SOUND LEA_SOUND_ATTENTION LEA_SOUND_DONE
 }
 
 # lea__check_egress_allow: LEA_EGRESS_ALLOW lists at most 64 domain names, separated by commas or
-# blanks (each one also stands for its subdomains; no IP literal, no wildcard). Empty: no
-# allowlist. Normalized to lower-case names joined by commas.
+# blanks (each one also stands for its subdomains; no IP literal, no wildcard). Empty: the proxy's
+# default allowlist, which "default" in the list stands for; "*" alone: any domain. Normalized to
+# lower-case names joined by commas.
 lea__check_egress_allow() {
   _ce_n=0 _ce_out=
   set -f
   for _ce_d in $(printf '%s' "${LEA_EGRESS_ALLOW:-}" | tr ',' ' '); do
     _ce_n=$((_ce_n + 1))
+    if [ "$_ce_d" = '*' ]; then _ce_out="$_ce_out,*"; continue; fi
     case $_ce_d in
       *[!ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789.-]*|.*|*.|*..*) _ce_bad=1 ;;
       *[!0-9.]*) _ce_bad= ;;
@@ -96,6 +109,10 @@ lea__check_egress_allow() {
     _ce_out="$_ce_out,$(printf '%s' "$_ce_d" | tr '[:upper:]' '[:lower:]')"
   done
   set +f
+  case ,${_ce_out#,}, in
+    ,\*,) ;;
+    *,\*,*) lea_die "LEA_EGRESS_ALLOW: '*' opens the web to any domain and cannot be combined with domain names" ;;
+  esac
   [ "$_ce_n" -le 64 ] || lea_die "LEA_EGRESS_ALLOW lists $_ce_n domains, at most 64"
   LEA_EGRESS_ALLOW=${_ce_out#,}
 }

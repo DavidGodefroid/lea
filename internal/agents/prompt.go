@@ -40,6 +40,12 @@ func firstPrompt(a store.Agent, repo, worktree string, brief bool) string {
 	}
 	b.WriteString(" Report progress with task_update: set next while something is still to happen (CI, a review, a reply)," +
 		" blocked_on when a human must act, and clear both once your work is done.")
+	// Idle stacks (#132): what the agent started stops while it waits.
+	b.WriteString(" lea stops the containers you started (compose stacks, pods) while you are idle: start them again before you use them" +
+		" (docker compose up -d, podman start).")
+	// Heavy jobs (#132): the container's slots hold the host's CPUs.
+	b.WriteString(" Run test suites, static analysis, builds and browsers through lea heavy -- <command>: it waits for a free slot" +
+		" and caps the command's CPUs and workers.")
 	// The deck shows an agent's label, the user may rename it at any time (#84).
 	b.WriteString(" When you mention an agent in text the user reads (task_update, results your lead relays), use its label from agents_list" +
 		" when it has one, looked up fresh since the user may rename it; address tools by name, never by label.")

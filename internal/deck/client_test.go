@@ -45,10 +45,13 @@ func (r *recAgents) Watch(ctx context.Context, c string, since int64, to time.Du
 	return agents.Snapshot{Version: since + 1, Shown: "lea-a/claude-1",
 		Agents: []agents.Row{{Key: "lea-a/claude-1", Name: "claude-1", Profile: "claude", State: "idle", Workdir: "/p", Updated: 5}}}, nil
 }
-func (r *recAgents) Attached(ctx context.Context, c string) (bool, error)    { return false, nil }
-func (r *recAgents) MarkStopped(ctx context.Context, c string, f bool) error { return nil }
-func (r *recAgents) ResumeStopped(ctx context.Context, c string) error       { return nil }
-func (r *recAgents) Changed()                                                {}
+func (r *recAgents) Attached(ctx context.Context, c string) (bool, error)      { return false, nil }
+func (r *recAgents) MarkStopped(ctx context.Context, c string, f bool) error   { return nil }
+func (r *recAgents) ResumeStopped(ctx context.Context, c string) error         { return nil }
+func (r *recAgents) SweepStacks(ctx context.Context, c string) (string, error) { return "", nil }
+func (r *recAgents) ParkStack(ctx context.Context, k string) (string, error)   { return "", nil }
+func (r *recAgents) UnparkStack(ctx context.Context, k string) (string, error) { return "", nil }
+func (r *recAgents) Changed()                                                  {}
 func (r *recAgents) SetLabel(ctx context.Context, k, label string) error {
 	r.calls = append(r.calls, "label "+k+" "+label)
 	return nil

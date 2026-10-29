@@ -177,6 +177,8 @@ type cliAgents struct {
 	reqs      []agents.NewRequest
 	snap      agents.Snapshot
 	ensureErr error
+	sweep     string // what SweepStacks reports
+	sweepErr  error
 }
 
 func (c *cliAgents) rec(s string) { c.mu.Lock(); c.calls = append(c.calls, s); c.mu.Unlock() }
@@ -242,6 +244,18 @@ func (c *cliAgents) MarkStopped(ctx context.Context, ctr string, forget bool) er
 func (c *cliAgents) ResumeStopped(ctx context.Context, ctr string) error {
 	c.rec("resume-stopped " + ctr)
 	return nil
+}
+func (c *cliAgents) ParkStack(ctx context.Context, key string) (string, error) {
+	c.rec("park " + key)
+	return "", nil
+}
+func (c *cliAgents) UnparkStack(ctx context.Context, key string) (string, error) {
+	c.rec("unpark " + key)
+	return "", nil
+}
+func (c *cliAgents) SweepStacks(ctx context.Context, ctr string) (string, error) {
+	c.rec("sweep " + ctr)
+	return c.sweep, c.sweepErr
 }
 func (c *cliAgents) Attached(ctx context.Context, ctr string) (bool, error) {
 	c.rec("attached " + ctr)
@@ -440,7 +454,8 @@ func TestDeckOpenSpawnsTheDefaultAgentOnlyWhenNoneRuns(t *testing.T) {
 		if rc != 0 {
 			t.Fatalf("%s: rc=%d err=%q", tc.name, rc, e)
 		}
-		if ca.calls[0] != "ensure lea-a /p" {
+		// The sweep comes at every lea (#132), then the deck.
+		if len(ca.calls) < 2 || ca.calls[0] != "sweep lea-a" || ca.calls[1] != "ensure lea-a /p" {
 			t.Fatalf("%s: calls=%q", tc.name, ca.calls)
 		}
 		spawned := len(ca.reqs) == 1
@@ -460,8 +475,42 @@ func TestDeckOpenOfAFreshContainerResumesTheStoppedAgentsFirst(t *testing.T) {
 	if rc != 0 {
 		t.Fatalf("rc=%d err=%q", rc, e)
 	}
-	if !reflect.DeepEqual(ca.calls, []string{"resume-stopped lea-a", "ensure lea-a /p"}) {
+	if !reflect.DeepEqual(ca.calls, []string{"resume-stopped lea-a", "sweep lea-a", "ensure lea-a /p"}) {
 		t.Fatalf("calls=%q", ca.calls)
+	}
+	if e != "" {
+		t.Fatalf("a sweep with nothing to say printed %q", e)
+	}
+}
+
+// A container that already runs is swept too (#132): the stacks of agents gone or idle for long
+// do not wait for a restart.
+func TestDeckOpenOfARunningContainerSweepsIt(t *testing.T) {
+	ca := &cliAgents{sweep: "kid: stopped 2 containers and 1 pod (freed 812 MiB)"}
+	api := startDaemonWith(t, ca)
+	rc, _, e := runEnv(t, map[string]string{"LEA_DAEMON_SOCK": api}, "deck-open", "--container", "lea-a", "--workdir", "/p", "--no-default")
+	if rc != 0 || e != "lea: kid: stopped 2 containers and 1 pod (freed 812 MiB)\n" {
+		t.Fatalf("rc=%d err=%q", rc, e)
+	}
+	if !reflect.DeepEqual(ca.calls, []string{"sweep lea-a", "ensure lea-a /p"}) {
+		t.Fatalf("calls=%q", ca.calls)
+	}
+}
+
+// A fresh container's sweep of the nested Podman says what it removed and what no agent started
+// (#97); a failed sweep is a warning, and the deck opens anyway.
+func TestDeckOpenOfAFreshContainerReportsItsSweep(t *testing.T) {
+	ca := &cliAgents{sweep: "3 containers that no agent started (a shell, or an older lea) stay in the nested Podman"}
+	api := startDaemonWith(t, ca)
+	rc, _, e := runEnv(t, map[string]string{"LEA_DAEMON_SOCK": api}, "deck-open", "--container", "lea-a", "--workdir", "/p", "--fresh", "--no-default")
+	if rc != 0 || e != "lea: 3 containers that no agent started (a shell, or an older lea) stay in the nested Podman\n" {
+		t.Fatalf("rc=%d err=%q", rc, e)
+	}
+	ca = &cliAgents{sweepErr: errors.New("lea-agent sweep failed")}
+	api = startDaemonWith(t, ca)
+	rc, _, e = runEnv(t, map[string]string{"LEA_DAEMON_SOCK": api}, "deck-open", "--container", "lea-a", "--workdir", "/p", "--fresh", "--no-default")
+	if rc != 0 || !strings.Contains(e, "warning: the nested Podman was not swept") || !strings.Contains(ca.calls[len(ca.calls)-1], "ensure") {
+		t.Fatalf("rc=%d err=%q calls=%q", rc, e, ca.calls)
 	}
 }
 

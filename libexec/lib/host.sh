@@ -307,19 +307,13 @@ lea__update_background() {
   lea_log "background update: lea $_ub_v installed, active at the next lea; running lea containers keep their image until they stop (lea stop --all)"
 }
 
-# lea__relink DIR: points the launcher link (and the locksql link, when it leads into the same
-# installation directory) at the installation DIR. The links move by rename: they are never missing.
+# lea__relink DIR: points the launcher link at the installation DIR; it moves by rename, so it is
+# never missing. The locksql link an older lea made goes (lea__unlink_locksql).
 lea__relink() {
   _rl_bin=${LEA_BIN_DIR:-$HOME/.local/bin}
   ln -sfn "$1/bin/lea" "$_rl_bin/.lea.update.$$"
   mv -f "$_rl_bin/.lea.update.$$" "$_rl_bin/lea"
-  case $(readlink "$_rl_bin/locksql" 2>/dev/null) in
-    "$(dirname "$1")/"*)
-      if [ -e "$1/bin/locksql" ]; then
-        ln -sfn "$1/bin/locksql" "$_rl_bin/.locksql.update.$$"
-        mv -f "$_rl_bin/.locksql.update.$$" "$_rl_bin/locksql"
-      fi ;;
-  esac
+  lea__unlink_locksql "$_rl_bin"
 }
 
 # lea__older A B: release A (vX.Y.Z) is older than release B.
@@ -456,4 +450,16 @@ lea_tmux_version_ok() {
 # daemon follow the source). Never fatal.
 lea_core_build() {
   make -C "$LEA_ROOT" go-build >&2 || lea_log "warning: make go-build failed; run it before the next lea"
+}
+
+# lea_host_engine prints the engine behind docker and its version ("docker 29.4.2", "podman
+# 5.8.9"), nothing when unknown: Docker Engine names an Engine component, Podman's Docker API a
+# "Podman Engine" one, and the podman-docker shim has no components but says "podman version".
+lea_host_engine() {
+  _hec=$(docker version --format '{{range .Server.Components}}{{.Name}}={{.Version}}{{"\n"}}{{end}}' 2>/dev/null || true)
+  _hev=$(printf '%s\n' "$_hec" | sed -n 's/^Engine=//p' | head -n 1)
+  if [ -n "$_hev" ]; then echo "docker $_hev"; return 0; fi
+  _hev=$(printf '%s\n' "$_hec" | sed -n 's/^Podman Engine=//p' | head -n 1)
+  if [ -z "$_hev" ]; then _hev=$(docker --version 2>/dev/null | sed -n 's/^podman version //p' | head -n 1); fi
+  if [ -n "$_hev" ]; then echo "podman $_hev"; fi
 }

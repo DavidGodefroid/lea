@@ -7,11 +7,12 @@
 # are left out on purpose: they serve root Podman, and nested containers need their own network
 # namespaces (pasta, compose networks).
 [containers]
-# Only HTTPS goes through the proxy: plain HTTP between compose services must stay direct.
+# Only HTTPS goes through the proxy: plain HTTP between compose services must stay direct. The
+# entrypoint writes the proxy: squid (:3128), or the LockHTTP gate (:3130) with the nested token.
 http_proxy = false
 env = [
-  "HTTPS_PROXY=http://@LEA_PROXY_IP@:3128",
-  "https_proxy=http://@LEA_PROXY_IP@:3128",
+  "HTTPS_PROXY=@LEA_NESTED_PROXY@",
+  "https_proxy=@LEA_NESTED_PROXY@",
   "NO_PROXY=localhost,127.0.0.1,::1",
   "no_proxy=localhost,127.0.0.1,::1",
   "SSH_AUTH_SOCK=/run/lea/ssh-agent.sock",
@@ -32,3 +33,8 @@ log_driver = "k8s-file"
 cgroup_manager = "cgroupfs"
 events_logger = "file"
 runtime = "crun"
+
+# crun is lea's wrapper of it (#132): an agent's containers run on its CPU window. Root's file, in
+# root's directory: no agent changes it.
+[engine.runtimes]
+crun = ["/usr/local/libexec/lea/lea-crun"]

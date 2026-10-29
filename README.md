@@ -77,7 +77,7 @@ flowchart LR
 ```
 
 **Contents:** [Quick start](#quick-start) · [The deck](#the-deck) · [Git and forges](#git-and-forges) ·
-[Databases](#databases-with-locksql) · [Queues and files](#queues-and-files-with-lockmq-and-lockfile) · [Teams of agents](#teams-of-agents) · [Commands](#commands) ·
+[Databases](#databases-with-locksql) · [Queues and files](#queues-and-files-with-lockmq-and-lockfile) · [Web requests](#web-requests-with-lockhttp) · [Teams of agents](#teams-of-agents) · [Commands](#commands) ·
 [Configure](#configure) · [Safety](#how-lea-keeps-your-machine-safe) · [FAQ](#faq) ·
 [Troubleshooting](#troubleshooting) · [Development](#development)
 
@@ -96,7 +96,8 @@ projects directory). Press `n` for another agent.
 ### Requirements
 
 - Linux, macOS, or Windows with WSL2 (run lea from WSL).
-- Docker Engine (Linux) or Docker Desktop, running, usable without `sudo`.
+- Docker Engine (Linux) or Docker Desktop, running, usable without `sudo`; a patched host
+  kernel (see [How lea keeps your machine safe](#how-lea-keeps-your-machine-safe)).
 - On macOS, tmux 3.2 or later (`brew install tmux`); the Linux release brings its own.
 - `curl`, `tar`, `ssh-keygen`.
 - A Claude subscription or API key for Claude Code.
@@ -272,11 +273,21 @@ A profile that reads its login from HashiCorp Vault gets the vault CLI in the co
 address (`LEA_LOCKSQL_VAULT_ADDR`) and a `vault login` as the console account.
 The agents see the console's own directory, `.locksql` in your projects directory (its profiles
 and PII rules), read-only: edit it from the host, not through an agent.
+The console does not open while an agent started without that read-only mount (before locksql or
+this lea) still runs, nor while `.locksql` holds anything but directories and regular files of a
+single name (no symbolic or hard link):
+restart the agents (`lea stop`, then `lea`), remove the entry it names, and retry.
 
-`lea init` also links `locksql` next to `lea`: run `locksql` (or `lea locksql`) in a terminal you
-keep in view to open the console, then ask an agent about your data. `locksql vault login` logs the
-console account in to Vault again when its token expires. A `locksql` already installed on the
-host keeps its name; `lea locksql` then opens lea's console.
+Run `lea locksql` in a terminal you keep in view to open the console, then ask an agent about your
+data. `lea locksql vault login` logs the console account in to Vault again when its token expires.
+lea itself puts no `locksql` command on the host (it removes the link older releases made): the
+host's `locksql` is locksql's own launcher
+([locksql's docs/launcher.md](https://github.com/DavidGodefroid/locksql/blob/main/docs/launcher.md)),
+which runs every locksql command in Docker. `lea init` installs it, with the `install.sh` of the
+pinned locksql release (`LEA_LOCKSQL_REF`), once lea has checked that release's signature;
+`lea locksql` hands the console to it, with lea's console image, the projects directory read-only
+but for `.locksql`, and the same confinement. Without it (or with one that an agent or another
+account could have written), `lea locksql` opens no console and says to run `lea init`.
 
 The console holds the credentials, so its container is confined (in the deck too): no capability,
 no privilege gain (`no-new-privileges`), a read-only root with a small `/tmp`, at most 256
@@ -337,6 +348,52 @@ warning at start. `lea lockmq` / `lea lockfile` tell you whether the agents reac
 open the console: switch to the tool's account (prefer Wayland), then
 `lockmq console --project <projects dir> --profile <profile>`. Restart lea (`lea stop --all`,
 then `lea`) after turning one on.
+
+## Web requests, with LockHTTP
+
+[LockHTTP](https://github.com/DavidGodefroid/lockhttp) puts a human between the agents and the
+web: every outbound HTTP(S) request of an agent goes through a LockHTTP gate beside lea's proxy,
+which lets through what its policy trusts and asks you, in a `lockhttp` console, about the rest.
+It is **off** by default (`LEA_LOCKHTTP=0`): lea then behaves as before.
+
+LockHTTP runs in Docker only (`docs/docker.md` in the lockhttp repository). To turn it on,
+install lockhttp's launcher (its `scripts/install.sh`, which checks the release's signatures and
+pins its image by digest), write the policy once with `lockhttp init --trusted "<your
+LEA_EGRESS_ALLOW>"`, and start `lockhttp console` in a terminal you keep in view. Then set
+`LEA_LOCKHTTP=1` in `~/.config/lea/lea.conf` and restart lea (`lea stop --all`, then `lea`);
+`lea doctor` checks each step. Nothing else on the host: no account, group or socket directory.
+
+With it on, squid listens on the proxy's loopback only, behind the gate (its floor stays: DoH
+resolvers, IP literals and private ranges are refused; the allowlist is the gate's policy now).
+lea runs the gate as a container of its own, `lea-lockhttp-gate`, in the proxy's network
+namespace, from the image the launcher pins (never a tag), as the image's `gate` account (never
+root), without capabilities, on a read-only root; it is the only container with the console's
+socket volume (`lockhttp-run`): no agent container gets it. Its audit stays in the volume
+`lea-lockhttp-audit`, its status (for the deck) in `~/.local/share/lea/lockhttp/status/`. A proxy
+started again gets a new gate. The gate names the calling container from the network the
+request arrives on, which no agent can forge: **the container is the trust boundary**. Each
+agent also has its own proxy password, and the daemon tells the gate whose it is
+(`sources.json`, under `~/.local/share/lea/lockhttp/`), but the agents of one container share a
+uid and can read each other's environment: that name is for the audit and the console's display
+(attribution), never a permission, and one agent can pass for another of the same container.
+lea-keyproxy goes through the gate too, and so do the forge calls of grants, with the calling
+agent's own password. The daemon also tells the gate which Claude login each container holds
+(`credentials.json`: hashes of the OAuth access token in its state, and of the keys lea-keyproxy
+injects); under MITM the gate denies a Claude API key that is not the caller's (`E_SECRET_EGRESS`).
+That login file is the agent's to write: the check stops a key sent from the wrong container,
+not an agent that rewrites its own login file. `LEA_GIT_SSH` and `LEA_OTEL_UPSTREAM` are refused (their raw TCP forwarders
+would bypass the gate: use git over HTTPS), and claude.ai's connectors are turned off in the
+agents' Claude Code (WebSearch and WebFetch stay).
+
+`LEA_LOCKHTTP_MITM=1` (with `LEA_LOCKHTTP=1`) lets the gate decrypt HTTPS, but for the policy's
+splice hosts, so that it decides on methods, paths and bodies. lea makes a local CA on first use
+through the launcher (`lockhttp ca init`, 90 days, in `~/.local/share/lea/lockhttp/ca/`; `lea
+doctor` warns a week before it ends: `lockhttp ca init --force --dir <it>`, then `lea stop --all`
+and `lea`). Its key goes to one container only, `lea-lockhttp-signer` (the image's `signer`
+account, no network), through the volume `lea-lockhttp-ca` (key owned by `signer`, 0600); the
+signer hands leaf certificates to the gate on a socket in the volume `lea-lockhttp-signer`. The
+certificate, never the key, goes to the gate, to lea-keyproxy and into the agents' trust stores
+(system store, `NODE_EXTRA_CA_CERTS`, `REQUESTS_CA_BUNDLE`, `PIP_CERT`, `SSL_CERT_FILE`).
 
 ## Teams of agents
 
@@ -413,9 +470,9 @@ vllm      https://vllm.example.com/v1         key=/home/me/.config/lea/keys/vllm
   network (an Ollama on your LAN, or on this machine at its Docker bridge address) must be listed
   in `LEA_INTERNAL_HOSTS` with its port, as any internal host; nothing is open by default, and
   loopback, `localhost` and link-local addresses are refused. A key goes over HTTPS only, except
-  to a host you listed there. With `LEA_EGRESS_ALLOW` set, a public endpoint's domain must be in it
-  too. The forwarder answers the agents' networks only, never the proxy's egress network (your
-  host, other containers there).
+  to a host you listed there. A public endpoint's domain must be in the egress allowlist too
+  (`LEA_EGRESS_ALLOW`: `default,<its domain>`). The forwarder answers the agents' networks only,
+  never the proxy's egress network (your host, other containers there).
 - Codex needs the endpoint to serve the Responses API (`/v1/responses`): Ollama 0.13.3 or later,
   a recent vLLM.
 - A change of the providers file restarts the proxy at the next `lea`.
@@ -444,6 +501,20 @@ team tools (`agents_*`, `msg_*`, `board_read`, `task_update`), ask you questions
 reminder to delegate. `/lea:control-tower off` gives the session its tools back.
 The skill's old name, `/lea:tower-control`, still works for now.
 
+Type `/lea:check` (or ask for a status, a "point", a "topo") for the state of the work in
+progress, in at most 10 lines: done since the last check, in progress, left, and what is blocked
+or yours to decide. A tower builds it from the board and the agents' reports, without doing any
+work; any other agent from its own task. Nothing new since the last check: one line.
+
+```
+✅ Done
+dev-1: login fix merged, CI green
+🔄 In progress
+dev-2: dark mode, tests being written
+⚠️ Blocked / to decide
+dev-2: palette, Catppuccin or Nord?
+```
+
 ### Grants: let every agent merge, close issues, stop finished agents
 
 Claude Code judges each action from its own conversation: "you may merge" told to a lead does
@@ -456,6 +527,7 @@ lea grant add stop-finished --container lea-myproj                  # agents_sto
 lea grant add close-issue --container lea-myproj --repo api --github me/api  # gh issue close|reopen|comment N
 lea grant add delete-own-branch --container lea-myproj --repo api --github me/api  # git push origin --delete <the agent's own branch>
 lea grant add commit-identity --container lea-myproj --repo api --github me/api --branch 'feat/*'  # git commit -m (no --amend), git push [-u] origin <own branch>
+lea grant add pr-create --container lea-myproj --repo api --github me/api  # gh pr create --head <own branch> --title T --body B|--body-file F
 lea grant ls [--all]                                                # active grants (--all: revoked, expired) and recent uses
 lea grant revoke 3
 ```
@@ -471,10 +543,14 @@ anything else takes the usual path. Revocation and expiry apply on the next call
 An allowed shell call never runs the agent's text: lea runs the command it parsed, rebuilt word by
 word, in a fresh `/bin/sh` under `env -i` (so the agent's variables, aliases and shell
 functions do not apply), with a fixed `PATH` and only `HOME`, `GH_CONFIG_DIR`, `SSH_AUTH_SOCK` and `LANG` as
-Claude's own process has them.
+Claude's own process has them. It reaches the forge through lea's proxy, which lea names itself
+(`HTTPS_PROXY` for gh, `http.proxy` for git, `http://lea-proxy:3128`), never through a proxy the
+agent's environment names; CONNECT keeps TLS end to end.
 
 - gh runs as `/usr/bin/gh … -R github.com/<--github>`; every grant but stop-finished names
-  `--repo` and `--github` together.
+  `--repo` and `--github` together. It runs with the token of gh's config (`gh auth token`) and
+  none of the rest of that config, which the agent can write (it could send gh's requests to a
+  server of its own): an empty config dir no one but root can create.
 - A commit goes through plumbing in the agent's worktree (`write-tree`, `commit-tree`,
   `update-ref`): no hook, filter or signing runs. It commits the index as it is (`git add`
   first: no `-a`).
@@ -530,6 +606,66 @@ before relying on grants, in a lea: `lea grant add commit-identity --container <
 file and run `git commit -m test`, then check that `git reflog -1` in its worktree says
 `commit (lea grant)` (a plain `git commit` writes `commit: test`); `lea grant ls` lists the use.
 
+### Let agents deliver (push, PR/MR, merge)
+
+To let every agent of a lea push its own branch, open its pull request (GitHub) or merge request
+(GitLab) and merge it without a prompt, run once, on the host, in the projects directory:
+
+```sh
+lea delivery on                # lists the forge repository each repository here is pinned to, and their digest
+lea delivery on --yes DIGEST   # records exactly those: standing grants on each one on github.com or GitLab
+lea delivery on --gitlab git.example.com  # also a self-hosted GitLab (gitlab.com is known)
+lea delivery status            # which repositories are covered
+lea delivery off               # revoke them: agents ask as usual
+```
+
+`on` reads each repository's `origin` from its `.git/config` (as a file: no git runs on the host)
+at that moment, and records, for each one on github.com, gitlab.com or a `--gitlab` host (a host
+once pinned stays known), the grants `commit-identity`, `pr-create`, `merge` and
+`delete-own-branch` for every agent of this lea, pinned to that repository (`github.com/OWNER/NAME`
+or `gitlab:HOST/GROUP/…/NAME`), with no expiry (`lea grant ls` shows them as `standing`, and their uses). A repository
+added later, or an origin changed, is covered once you run `lea delivery on` again and confirm (it replaces
+the standing grants; grants you added by hand stay). Agents can write a repository's
+`.git/config` (or add a repository): `on` records nothing while a pin is new or differs from the
+last one recorded for that repository of this lea (revoked ones included); it lists them, you
+check them, then run `lea delivery on --yes DIGEST` with the digest it printed: if any pin
+was read differently in between, nothing is recorded. Once confirmed, a plain `on` applies. Delivery is
+off until you turn it on, and only the host can: the daemon refuses `delivery_set` from a
+container.
+
+`lea doctor` checks it: each covered repository's `origin` still matches its pin (an origin
+rewritten since, or a repository on a forge not covered yet, is a warning: run `lea delivery on`
+again), and each forge host has credentials in lea's state (`gh auth login`, `glab auth login
+--hostname HOST`; git's credential store alone covers pushes only, a warning); without them it
+fails. It only reads.
+
+Everything in Grants above holds: an agent's own branch only, in its own worktree, every hard
+deny (no push to `main`, no force-push, no `--admin`). The calls covered:
+
+- `git commit -m …`, `git push [-u] origin <own branch>`;
+- `gh pr create --head <own branch> --title T (--body B | --body-file F) [--base B] [--draft]`:
+  `--head` is required, `F` is a path relative to the agent's worktree that must resolve to a
+  plain file inside it, outside `.git` (lea checks it is a plain file, opens it once and gh reads that open file; a quoted heredoc, `--body "$(cat <<'EOF' … EOF)"`, is
+  not covered: write the body to a file);
+- `gh pr merge <n>|<own branch> --squash|--merge|--rebase [--delete-branch]` (the PR's head must be
+  the agent's branch), and `git push origin --delete <own branch>`;
+- on GitLab: `glab mr create --source-branch <own branch> --title T [--description D]
+  [--target-branch B] [--draft] [--remove-source-branch] [--yes]` and `glab mr merge <n>|<own
+  branch> [--squash] [--remove-source-branch] [--yes]` (`--rebase` is not covered). lea does not
+  run them with glab, whose config the agent can write (it could send glab's requests elsewhere):
+  glab only reads the token of its config for HOST, from `/`, and lea calls the project's API
+  (`https://HOST/api/v4`) with curl (no `.curlrc`, https only, no redirect, no proxy variable), its answers read by jq,
+  both with no `HOME` of the agent's.
+  A merge first reads the MR: it must be open and come from the agent's branch of the project
+  itself, not a fork (by branch: the one open MR of that branch); the merge then names the head
+  commit it checked, so GitLab refuses it if the branch moved in between. Pushes go to
+  `https://HOST/PATH.git` with glab's credential helper. A multi-line description is not covered
+  (no file option): it takes the usual path.
+
+Branch protection on the forge (required reviews, required checks) stays the control that decides
+whether a merge goes through: delivery only removes the prompt (on GitLab, an MR whose pipeline is still
+running is set to merge once it passes, as `glab mr merge` does).
+
 `lea new --brief FILE` gives a new agent its first message; `--repo NAME` starts it in a
 directory of the projects directory; `--branch B` has it work in its own git worktree under
 `<projects>/.lea/worktrees/<repo>/<agent>`.
@@ -550,6 +686,7 @@ lea config export > team.json  # your team's shared settings, as one file
 lea config import team.json  # take them on another workstation (see Configure)
 LEA_PROJECTS_DIR=~/other lea # another projects directory, for this call only
 lea grant add|ls|revoke      # let agents take an action without asking (see Grants)
+lea delivery on|off|status   # let agents push, open and merge their own PRs (see Let agents deliver)
 ```
 
 A release install updates itself: at most once a day, `lea` looks for a new release in the
@@ -606,13 +743,18 @@ read-only. The screen runs in the deck on the host: agents cannot open or drive 
 | `LEA_LOCKSQL_VAULT_ADDR` | asked by `lea init` | Vault address of the locksql console, for a Vault profile |
 | `LEA_LOCKMQ`, `LEA_LOCKFILE` | `0`, asked by `lea init` | let the agents reach a lockmq / lockfile console on this host |
 | `LEA_LOCKMQ_REF`, `LEA_LOCKFILE_REF` | the pinned releases | the release `lea init` installs on the host (lockfile v0.1.1 or later); `lea update` records a newer one you accept |
+| `LEA_LOCKHTTP` | `0` | send the agents' web requests through a LockHTTP gate (refuses `LEA_GIT_SSH` and `LEA_OTEL_UPSTREAM`) |
 | `LEA_INTERNAL_HOSTS` | none | private hosts the proxy may reach (format in `config/internal-hosts`) |
-| `LEA_EGRESS_ALLOW` | empty (off) | the only web domains agents may reach, comma separated (subdomains included) |
+| `LEA_EGRESS_ALLOW` | empty (lea's default list) | the only web domains agents may reach, comma separated (subdomains included); `default` stands for lea's list, `*` opens the web |
 | `LEA_NESTED_NETWORKS` | empty | networks your compose files expect, created at start |
+| `LEA_CPUS`, `LEA_MEMORY`, `LEA_MEMORY_SWAP`, `LEA_PIDS_LIMIT` | `75%`, `50%`, no swap, `16384` | the lea container's limits: CPUs (a share of Docker's, at least 2, a number such as `8`, or `0`), memory (a share of Docker's, a size such as `16g`, or `0`), memory plus swap (`-1`: no limit), processes and threads (`0`: no limit); the next `lea` applies them to a running container |
 | `LEA_APPROVALS`, `LEA_APPROVAL_TIMEOUT` | `deck`, `60` | who answers permission requests |
 | `LEA_PROVIDER`, `LEA_MODEL` | `claude`, empty | the default provider and model of a new agent ([providers](#other-providers-codex-ollama-vllm)) |
 | `LEA_PROVIDERS` | `~/.config/lea/providers` | your OpenAI-compatible endpoints and their key files |
 | `LEA_AUTO_RESUME`, `LEA_RESUME_DELAY` | on, `60` | resume agents stopped on a usage limit, so many seconds after its reset (`0`: off) |
+| `LEA_STACK_IDLE` | `10` | minutes an agent stays idle before lea stops (not removes) the containers it started in the nested Podman (`0`: never); `lea board` lists what it freed |
+| `LEA_AGENT_CPUS` | `4` | each agent's CPU window, the least shared CPUs: the agent, its tools and its nested containers run there, so `nproc`, PHPStan, Go… see that many CPUs (`0`: no window) |
+| `LEA_HEAVY_SLOTS`, `LEA_HEAVY_WORKERS` | `0` (¾ of the CPUs ÷ workers), `4` | heavy jobs (`lea heavy -- <command>`): how many run at once per container, and the CPUs and workers each gets |
 | `LEA_SOUND`, `LEA_AUTONAME` | on | the deck's sounds, automatic names (`0`: off) |
 | `LEA_SOUND_ATTENTION`, `LEA_SOUND_DONE` | freedesktop sounds | the file of each sound (`0`: that one off) |
 | `LEA_OTEL_UPSTREAM` | empty | send Claude Code usage telemetry to this OTLP collector |
@@ -666,13 +808,26 @@ so. Changes apply after `lea init` (endpoints, keys, images, locksql) or `lea st
   (`settings.json`, `keybindings.json`, `hooks`, `skills`, `plugins`, `agents`, `commands`,
   `output-styles`, the top-level `*.md` files) and, with locksql, its socket volume (with lockmq or
   lockfile, their socket directory and system file, read-only). Nothing else.
-- Egress goes through a proxy: HTTPS to public hosts (plus `LEA_INTERNAL_HOSTS`), SSH only to
-  `LEA_GIT_SSH`. Private and link-local addresses are refused.
-- To restrict the web to known domains, set `LEA_EGRESS_ALLOW`, for example
-  `github.com,registry.npmjs.org,proxy.golang.org`: each domain covers its subdomains, and
-  `anthropic.com`, `claude.ai` and `claude.com` (the model API and its login) are always allowed.
+- Egress goes through a proxy: HTTPS (and plain HTTP) to an allowlist of public domains (plus
+  `LEA_INTERNAL_HOSTS`), SSH only to `LEA_GIT_SSH`. Private and link-local addresses are refused.
+- By default the allowlist is lea's own: `github.com`, `githubusercontent.com`, `ghcr.io`,
+  `gitlab.com` (git, `gh`, `glab`, release assets), `golang.org` (Go modules and checksums),
+  `registry.npmjs.org`, `registry.yarnpkg.com`, `pypi.org`, `pythonhosted.org`, `docker.io`,
+  `docker.com`, `quay.io` (images for nested builds), `fedoraproject.org`, `alpinelinux.org`
+  (their packages), `openai.com`, `chatgpt.com` (Codex), and always `anthropic.com`, `claude.ai`,
+  `claude.com` (the model API and its login). Each domain covers its subdomains. Anything else
+  (documentation sites fetched by an agent, another forge, a Fedora mirror outside
+  `fedoraproject.org`) is refused with a page naming `LEA_EGRESS_ALLOW`.
+- To add domains, set `LEA_EGRESS_ALLOW="default,corp.example,docs.example.org"` (`default` keeps
+  lea's list); without `default`, only the domains you list (and the model API) are reachable. To
+  open the web to any domain, as lea did before, set `LEA_EGRESS_ALLOW='*'` (`lea doctor` warns).
   Internal hosts are not affected. The proxy reads it at start: `lea stop --all`, then `lea`.
   `lea doctor` shows the active list.
+- Whatever `LEA_EGRESS_ALLOW` says, the proxy refuses public DNS-over-HTTPS resolvers
+  (`dns.google`, `cloudflare-dns.com`, `quad9.net`, `nextdns.io`, any `doh.*` name …), which would
+  reopen the DNS channel the internal network closes, and public IP literals (`https://1.1.1.1/`,
+  decimal or hex forms, IPv6): a public host is reached by its name. A host of your network is
+  reached by its address once listed in `LEA_INTERNAL_HOSTS`.
 - An internal host name grants that name only, not every vhost of the ingress behind it: the proxy
   peeks at the TLS handshake (no decryption) and passes a tunnel only when its SNI is the allowed
   name, so a tunnel to an internal name must be TLS with SNI. The proxy cannot see the `Host` header
@@ -681,7 +836,17 @@ so. Changes apply after `lea init` (endpoints, keys, images, locksql) or `lea st
 - The API keys of your providers' endpoints stay in the proxy container: no agent mounts a key
   file, and the key forwarder reaches an endpoint only through the proxy's egress rules.
 - lea never gets the Docker socket; the agents' own containers run in a rootless Podman inside
-  lea, under seccomp and, on Linux, AppArmor.
+  lea, under seccomp and, on Linux, AppArmor. lea's seccomp profile (`image/seccomp.json`, not
+  Docker's default) refuses `socketcall` and the kernel crypto API sockets (`AF_ALG`,
+  CVE-2026-31431). 32-bit x86 (i386) programs do not run in lea: their `socketcall` hides the
+  socket family from seccomp, so the profile leaves that architecture out.
+- Every lea container shares the host kernel, so the host's patch level is part of the
+  containment. The kernel must carry the fixes for CVE-2026-74753, CVE-2026-80521 and CVE-2026-80841; on Ubuntu, check with
+  `apt changelog linux-image-$(uname -r) | grep -E 'CVE-2026-(74753|80521|80841)'`. `lea doctor`
+  shows the kernel, Docker Engine, containerd and runc versions and fails below the kernel minimum
+  of `config/host-minimums`; a distribution without a kernel minimum there gets a warning. On a
+  Podman host (`docker` is Podman), lea is not refused: `lea doctor` warns that lea is built for
+  Docker Engine, and below Podman 5.8.4 (CVE-2026-57231) the launcher warns too.
 - Work in lea, not on the host, inside the projects directory: an agent can write files your host
   tools would run. When the last session closes, lea reports changes to git hooks, risky git
   configuration, `.mcp.json` and `.claude/` settings.
@@ -710,11 +875,13 @@ nowhere unless you set `LEA_OTEL_UPSTREAM`.
 
 ## Troubleshooting
 
-- **Start with `lea doctor`.** It checks Docker, the images, the proxy and the internal networks, tmux,
-  the AppArmor profile, the projects directory and the configuration.
+- **Start with `lea doctor`.** It checks Docker and the host versions (kernel, Docker Engine,
+  containerd, runc), the images, the proxy and the internal networks, tmux, the AppArmor profile,
+  the projects directory and the configuration.
 - **An agent cannot reach a host.** Private and link-local addresses are refused on purpose; add
-  the host to `LEA_INTERNAL_HOSTS`. With `LEA_EGRESS_ALLOW` set, add its domain there. The proxy's
-  refusal page says which host it refused and why.
+  the host to `LEA_INTERNAL_HOSTS`. A public domain outside lea's default list goes in
+  `LEA_EGRESS_ALLOW` (`default,<domain>`); a public IP literal or a DNS-over-HTTPS resolver is
+  always refused. The proxy's refusal page says which host it refused and why.
 - **A change to `~/.claude` does not show.** Single files are mounted as they were at start:
   `lea stop`, then `lea`.
 - **`docker compose` fails with a network error.** Known limitation, below; `docker run` works.
@@ -751,7 +918,42 @@ make test-isolation   # isolation checks (needs make build and, on Linux, lea in
 A tag `vX.Y.Z` publishes a release: the archives for Linux and macOS (amd64, arm64), their
 checksums, and the images on `ghcr.io/davidgodefroid`.
 
+## CPUs
+
+Test suites, static analysis and builds start one worker per CPU they see. lea gives each agent a
+window of `LEA_AGENT_CPUS` CPUs (4), the ones fewest agents share. The agent, its tools and the
+containers it starts in the nested Podman run there: `nproc`, PHPStan, php-cs-fixer, Go, pytest-xdist
+and Node's `os.availableParallelism()` see that many CPUs, without anything in your projects. (lea
+runs the nested Podman's `crun` through a wrapper that pins an agent's containers, `podman exec`
+included.) Tools that count `/proc/cpuinfo` still see every CPU. The window is not a hard limit:
+the lea container's `LEA_CPUS` is. `lea doctor` lists the windows.
+
+## Heavy jobs
+
+Test suites, static analysis, builds and browsers start one worker per core of the host: a few
+agents running them at once take every core. Agents run them through `lea heavy`:
+
+```sh
+lea heavy -- vendor/bin/phpstan analyse
+lea heavy -- go test ./...
+```
+
+`lea heavy` waits for one of the container's `LEA_HEAVY_SLOTS` slots, in order, saying who holds
+them, then runs the command on `LEA_HEAVY_WORKERS` CPUs of its own (tools that count the CPUs
+they may use, such as `nproc`, see that many) with `GOMAXPROCS`, `MAKEFLAGS=-jN`,
+`CMAKE_BUILD_PARALLEL_LEVEL`, `CARGO_BUILD_JOBS`, `PYTEST_XDIST_AUTO_NUM_WORKERS` and
+`LEA_HEAVY_WORKERS` set. A slot whose job was killed frees itself within three minutes; a job holds its slot two hours at
+most. `lea board`
+lists the jobs that run and wait.
+
 ## Known limitations
+
+- What an agent starts in the nested Podman (`docker`, `docker compose`, `podman`, through its own
+  Podman service) is removed when the agent ends, and stopped (not removed) once the agent has
+  been idle `LEA_STACK_IDLE` minutes (10): the agent starts it again when it needs it. What you
+  start from a deck shell is neither. Every `lea` removes what the agents that are gone left,
+  stops the stacks of agents idle for that long already, and names the containers no agent
+  started.
 
 - `docker compose` with its own networks does not work inside lea yet: the nested Podman's
   network backend needs to write `/proc/sys`, which Docker mounts read-only. `docker run` works.

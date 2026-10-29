@@ -91,6 +91,37 @@ func TestBoardShowsLeases(t *testing.T) {
 	}
 }
 
+// What lea stopped of an idle agent's stack is listed with the container (#132).
+func TestBoardShowsStoppedStacks(t *testing.T) {
+	var out bytes.Buffer
+	renderBoard(&out, board{Items: []boardItem{
+		{Task: 1, Container: "lea-a", Agent: "kid", State: "idle", Stack: "kid: stopped 2 containers and 1 pod (freed 812 MiB) at 14:03"},
+		{Task: 2, Container: "lea-a", Agent: "busy", State: "working"},
+	}})
+	s := out.String()
+	if !strings.Contains(s, "### Stacks stopped while idle\n\n- "+mdCell("kid: stopped 2 containers and 1 pod (freed 812 MiB) at 14:03")+"\n") {
+		t.Fatalf("no stopped stack in:\n%s", s)
+	}
+	if strings.Count(s, "\n- ") != 1 {
+		t.Fatalf("another item listed:\n%s", s)
+	}
+	out.Reset()
+	renderBoard(&out, board{Items: []boardItem{{Task: 2, Container: "lea-a", Agent: "busy", State: "working"}}})
+	if strings.Contains(out.String(), "Stacks stopped") {
+		t.Fatalf("an empty section:\n%s", out.String())
+	}
+}
+
+// The heavy jobs that run and wait show with their container (#132).
+func TestBoardShowsHeavyJobs(t *testing.T) {
+	var out bytes.Buffer
+	renderBoard(&out, board{Heavy: []boardHeavy{{Container: "lea-a", Slots: 2, Running: []string{"dev-1 phpstan analyse"}, Queued: 3}}})
+	s := out.String()
+	if !strings.Contains(s, "### Heavy jobs (1 of 2 slots, 3 waiting)\n\n- "+mdCell("dev-1 phpstan analyse")+"\n") || strings.Contains(s, "No tasks yet.") {
+		t.Fatalf("no heavy jobs in:\n%s", s)
+	}
+}
+
 func TestBoardStateCellCountsSubagents(t *testing.T) {
 	var out bytes.Buffer
 	renderBoard(&out, board{Items: []boardItem{

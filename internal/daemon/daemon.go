@@ -12,6 +12,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"strings"
 	"sync"
 	"time"
@@ -49,8 +50,10 @@ type Daemon struct {
 	runDir   string
 	mu       sync.Mutex
 	attached map[string]string
-	notify   map[string]chan struct{}
-	verdicts map[int64]chan string
+	// grantProxy names the proxy of an agent's pinned calls (SetGrantProxy); nil: grants.LeaProxy.
+	grantProxy func(container, agent string) string
+	notify     map[string]chan struct{}
+	verdicts   map[int64]chan string
 	// asks: the asks in flight, by asker (one each); in memory, a restart ends them.
 	asks map[string]pendingAsk
 
@@ -97,6 +100,22 @@ type Daemon struct {
 	resumeDelay int64
 	windows     map[string][]limitWindow
 	limitJobs   map[string]string
+	// lockhttp is the LockHTTP gate's last status (nil: LockHTTP off).
+	lockhttp *LockHTTPStatus
+	// Idle stacks (stacks.go, #132): how long an agent stays idle before what it started in the
+	// nested Podman is stopped (0: never), the pending stop of each idle agent, and what the last
+	// one freed, for the board, until the agent works again.
+	stackIdle  time.Duration
+	parkTimers map[string]*time.Timer
+	parked     map[string]string
+	// Heavy jobs (heavy.go, #132): each container's slots, their number, the workers of one job,
+	// how long a slot lives without renewal (a test seam) and the last holder id.
+	heavy        map[string]*heavyPool
+	heavySlots   int
+	heavyWorkers int
+	heavyTTL     time.Duration
+	heavyMaxHold time.Duration
+	heavySeq     int64
 }
 
 func New(st *store.Store, runDir string, now func() int64) *Daemon {
@@ -108,7 +127,9 @@ func New(st *store.Store, runDir string, now func() int64) *Daemon {
 		attached: map[string]string{}, notify: map[string]chan struct{}{},
 		verdicts: map[int64]chan string{}, asks: map[string]pendingAsk{}, blocks: map[string]int{}, stopped: map[string]bool{}, rewakes: map[string]int{}, keyMu: map[string]*sync.Mutex{}, statusPaths: map[string]string{}, named: map[string]bool{}, rang: map[string]time.Time{},
 		doneDelay: doneDelay, doneTimers: map[string]*time.Timer{},
-		resumeDelay: DefaultResumeDelay, windows: map[string][]limitWindow{}, limitJobs: map[string]string{}}
+		resumeDelay: DefaultResumeDelay, windows: map[string][]limitWindow{}, limitJobs: map[string]string{},
+		stackIdle: DefaultStackIdle, parkTimers: map[string]*time.Timer{}, parked: map[string]string{},
+		heavy: map[string]*heavyPool{}, heavySlots: DefaultHeavySlots(runtime.NumCPU(), DefaultHeavyWorkers), heavyWorkers: DefaultHeavyWorkers}
 }
 
 func (d *Daemon) Serve(ctx context.Context, l net.Listener, o Origin) {
@@ -257,7 +278,8 @@ func (d *Daemon) dispatch(ctx context.Context, o Origin, req wire.Request) (any,
 	}
 	if req.Method == "container_attach" || req.Method == "approval_decide" || req.Method == "approval_list" ||
 		req.Method == "thread_list" || req.Method == "agent_role" || req.Method == "request_list" || req.Method == "request_decide" || req.Method == "board_list" ||
-		req.Method == "sound" || req.Method == "grant_add" || req.Method == "grant_revoke" || req.Method == "grant_list" {
+		req.Method == "sound" || req.Method == "grant_add" || req.Method == "grant_revoke" || req.Method == "grant_list" ||
+		req.Method == "delivery_set" {
 		if o.Container != "" {
 			return nil, fmt.Errorf("%s: host only", req.Method)
 		}
@@ -298,6 +320,12 @@ func (d *Daemon) dispatch(ctx context.Context, o Origin, req wire.Request) (any,
 		return d.reply(me, p.ID, p.Status, p.Body)
 	case "msg_inbox":
 		return d.inbox(me)
+	case "heavy_acquire":
+		return d.heavyAcquire(ctx, o, me, req.Params)
+	case "heavy_release":
+		return d.heavyRelease(o, me, req.Params)
+	case "heavy_renew":
+		return d.heavyRenew(o, me, req.Params)
 	case "ask":
 		return d.ask(ctx, o, me, req.Params)
 	case "msg_wait":
@@ -549,6 +577,15 @@ type delivery interface {
 // restore puts back the messages of a delivery that never reached its reader (the client went
 // away, or the answer could not be written), and wakes whoever waits for them.
 func (d *Daemon) restore(res any) {
+	if g, ok := res.(heavyGrant); ok && g.Granted {
+		// A slot nobody will use: the next job gets it.
+		d.mu.Lock()
+		for _, p := range d.heavy {
+			d.freeLocked(p, g.ID)
+		}
+		d.mu.Unlock()
+		return
+	}
 	t, ok := res.(delivery)
 	if !ok {
 		return
@@ -773,6 +810,12 @@ func (d *Daemon) pruneForgotten() {
 	for k := range d.limitJobs {
 		keys = append(keys, k)
 	}
+	for k := range d.parkTimers {
+		keys = append(keys, k)
+	}
+	for k := range d.parked {
+		keys = append(keys, k)
+	}
 	d.mu.Unlock()
 	for _, k := range keys {
 		if _, err := d.st.AgentByKey(k); errors.Is(err, store.ErrNotFound) {
@@ -784,6 +827,7 @@ func (d *Daemon) pruneForgotten() {
 			d.forgetSubagentsLocked(k)
 			delete(d.windows, k)
 			delete(d.limitJobs, k)
+			d.forgetStackLocked(k)
 			d.mu.Unlock()
 		}
 	}
@@ -879,6 +923,7 @@ func (d *Daemon) dispatchHooks(ctx context.Context, o Origin, me string, req wir
 			if err := d.st.SetState(me, s, p.SessionID, d.now()); err != nil {
 				return nil, err
 			}
+			d.stackActivity(me, s)
 			d.changed()
 			if waits {
 				d.sound(ctx, o.Container, SoundAttention)
@@ -1084,6 +1129,8 @@ func (d *Daemon) dispatchHooks(ctx context.Context, o Origin, me string, req wir
 		return d.grantRevoke(req.Params)
 	case "grant_list":
 		return d.grantList(req.Params)
+	case "delivery_set":
+		return d.deliverySet(req.Params)
 	case "grants_list":
 		return d.grantsMine(o, me)
 	case "grant_check":

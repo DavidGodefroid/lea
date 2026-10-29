@@ -58,13 +58,13 @@ setup() {
 }
 
 @test "locksql: its image and volume are checked with LEA_LOCKSQL=1, never with 0" {
-  export FAKE_DOCKER_RC_IMAGE_INSPECT_AT_LOCKSQL_0_8_0=1 FAKE_DOCKER_RC_VOLUME_INSPECT=1
+  export FAKE_DOCKER_RC_IMAGE_INSPECT_AT_LOCKSQL_0_9_0=1 FAKE_DOCKER_RC_VOLUME_INSPECT=1
   run lea_doctor
-  [[ "$output" == *"warn  locksql image: locksql:0.8.0 absent: run lea init (or set LEA_LOCKSQL=0)"* ]]
+  [[ "$output" == *"warn  locksql image: locksql:0.9.0 absent: run lea init (or set LEA_LOCKSQL=0)"* ]]
   [[ "$output" == *"warn  locksql-run volume"* ]]
-  unset FAKE_DOCKER_RC_IMAGE_INSPECT_AT_LOCKSQL_0_8_0 FAKE_DOCKER_RC_VOLUME_INSPECT
+  unset FAKE_DOCKER_RC_IMAGE_INSPECT_AT_LOCKSQL_0_9_0 FAKE_DOCKER_RC_VOLUME_INSPECT
   run lea_doctor
-  [[ "$output" == *"ok    locksql image locksql:0.8.0"* ]]
+  [[ "$output" == *"ok    locksql image locksql:0.9.0"* ]]
   [[ "$output" == *"ok    locksql-run volume"* ]]
   LEA_LOCKSQL=0 run lea_doctor
   [[ "$output" != *locksql* ]]
@@ -200,10 +200,136 @@ setup() {
   [[ "$output" == *'FAIL  configuration: /x/lea.conf line 2: only $HOME and ${HOME} are read'* ]]
 }
 
-@test "the egress allowlist is reported off by default, with its domains when set" {
+@test "the egress allowlist is lea's default when unset, a warning when open, its domains when set" {
   run lea_doctor
-  [[ "$output" == *"ok    egress allowlist: off, any web destination (LEA_EGRESS_ALLOW)"* ]]
+  [[ "$output" == *"ok    egress allowlist: lea's default (forges, registries, model APIs; LEA_EGRESS_ALLOW extends it with 'default,<domain>')"* ]]
+  export LEA_EGRESS_ALLOW='*'
+  run lea_doctor
+  [[ "$output" == *"warn  egress allowlist: off (LEA_EGRESS_ALLOW='*'): agents reach any public web domain; only DoH resolvers and IP literals are refused"* ]]
   export LEA_EGRESS_ALLOW=github.com,proxy.golang.org
   run lea_doctor
   [[ "$output" == *"ok    egress allowlist: github.com,proxy.golang.org (always: anthropic.com,claude.ai,claude.com)"* ]]
+}
+
+# Host versions (#108): the kernel and the Docker Engine every lea container runs on.
+docker_components() {
+  export FAKE_DOCKER_OUT_VERSION___FORMAT=$'Engine=29.4.2\ncontainerd=v2.1.4\nrunc=1.3.0\ndocker-init=0.19.0'
+}
+host_minimums() {
+  export LEA_HOST_MINIMUMS="$BATS_TEST_TMPDIR/host-minimums"
+  printf '# test\nkernel ubuntu 24.04 7.0.0-38\n' >"$LEA_HOST_MINIMUMS"
+  export LEA_OS_RELEASE="$BATS_TEST_TMPDIR/os-release"
+  printf 'ID=ubuntu\nVERSION_ID="24.04"\n' >"$LEA_OS_RELEASE"
+}
+
+@test "versions: Docker Engine, containerd and runc are shown" {
+  docker_components
+  run lea_doctor
+  [[ "$output" == *"ok    Docker Engine 29.4.2 (containerd v2.1.4, runc 1.3.0)"* ]]
+  grep -q '\[version\] \[--format\]' "$FAKE_LOG"
+}
+
+@test "versions: no Docker Engine version is a failure (lea runs its own seccomp profile)" {
+  for v in 29.4.1 28.10.3 29.10.0; do
+    export FAKE_DOCKER_OUT_VERSION___FORMAT="Engine=$v"
+    run lea_doctor
+    [[ "$output" == *"ok    Docker Engine $v"* ]]
+    [[ "$output" != *"FAIL  Docker Engine"* ]]
+  done
+}
+
+@test "versions: an engine that is not Docker Engine is a warning, not a failure" {
+  export FAKE_DOCKER_RC_VERSION___FORMAT=125
+  run lea_doctor
+  [[ "$output" == *"warn  Docker Engine: version unknown (not Docker Engine?)"* ]]
+  [[ "$output" != *"FAIL  Docker Engine"* ]]
+}
+
+@test "versions: Podman as docker is detected and never a failure (#108)" {
+  host_minimums; printf 'podman 5.8.4\n' >>"$LEA_HOST_MINIMUMS"
+  fake_uname 7.0.0-38-generic
+  export FAKE_DOCKER_RC_VERSION___FORMAT=125 FAKE_DOCKER_OUT___VERSION_="podman version 5.8.9"
+  run lea_doctor
+  [[ "$output" == *"warn  Podman 5.8.9: lea is built for Docker Engine; Podman minimum 5.8.4 met"* ]]
+  [[ "$output" == *"ok    kernel 7.0.0-38-generic (ubuntu 24.04, minimum 7.0.0-38)"* ]]
+  [[ "$output" != *"FAIL  Docker Engine"* ]]
+  [[ "$output" != *"FAIL  Podman"* ]]
+  export FAKE_DOCKER_OUT___VERSION_="podman version 5.8.3"
+  run lea_doctor
+  [[ "$output" == *"warn  Podman 5.8.3: older than 5.8.4 (CVE-2026-57231): update Podman"* ]]
+  [[ "$output" != *"FAIL  Podman"* ]]
+  # Docker's CLI on Podman's Docker API names a Podman Engine component.
+  export FAKE_DOCKER_RC_VERSION___FORMAT=0 FAKE_DOCKER_OUT_VERSION___FORMAT=$'Podman Engine=5.8.9\nConmon=conmon version 2.1.13'
+  run lea_doctor
+  [[ "$output" == *"warn  Podman 5.8.9: lea is built for Docker Engine"* ]]
+}
+
+@test "lea_host_engine names the engine behind docker and its version" {
+  export FAKE_DOCKER_OUT_VERSION___FORMAT=$'Engine=29.4.2\ncontainerd=v2.1.4'
+  [ "$(lea_host_engine)" = "docker 29.4.2" ]
+  export FAKE_DOCKER_OUT_VERSION___FORMAT=$'Podman Engine=5.8.9'
+  [ "$(lea_host_engine)" = "podman 5.8.9" ]
+  export FAKE_DOCKER_OUT_VERSION___FORMAT="" FAKE_DOCKER_RC_VERSION___FORMAT=125 FAKE_DOCKER_OUT___VERSION_="podman version 5.8.9"
+  [ "$(lea_host_engine)" = "podman 5.8.9" ]
+  export FAKE_DOCKER_OUT___VERSION_="Docker version 29.4.2, build 1234567"
+  [ -z "$(lea_host_engine)" ]
+}
+
+@test "versions: the kernel release is checked against the minimum of its distribution" {
+  docker_components; host_minimums
+  fake_uname 7.0.0-38-generic
+  run lea_doctor
+  [[ "$output" == *"ok    kernel 7.0.0-38-generic (ubuntu 24.04, minimum 7.0.0-38)"* ]]
+  fake_uname 7.0.0-37-generic
+  run lea_doctor
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"FAIL  kernel: 7.0.0-37-generic is older than 7.0.0-38 for ubuntu 24.04 (CVE-2026-74753, CVE-2026-80521, CVE-2026-80841): update the host kernel"* ]]
+}
+
+@test "versions: a distribution without a known minimum is a warning" {
+  docker_components; host_minimums
+  printf 'ID=fedora\nVERSION_ID=44\n' >"$LEA_OS_RELEASE"
+  fake_uname 6.17.1-300.fc44.x86_64
+  run lea_doctor
+  [[ "$output" == *"warn  kernel 6.17.1-300.fc44.x86_64: no known minimum for fedora 44 in "*"host-minimums: check that it has the fixes for CVE-2026-74753, CVE-2026-80521, CVE-2026-80841"* ]]
+}
+
+@test "versions: the minimums file of the repository sets Podman's and no Docker Engine minimum" {
+  grep -qx 'podman 5.8.4' "$LEA_ROOT/config/host-minimums"
+  ! grep -q '^docker-engine' "$LEA_ROOT/config/host-minimums" || false
+}
+
+@test "lea_version_ge compares numeric fields" {
+  lea_version_ge 29.4.2 29.4.2
+  lea_version_ge 29.10.0 29.4.2
+  ! lea_version_ge 29.4.1 29.4.2 || false
+  lea_version_ge v2.1.4 2.1
+  lea_version_ge 7.0.0-38-generic 7.0.0-38
+  ! lea_version_ge 7.0.0-37-generic 7.0.0-38 || false
+  ! lea_version_ge 6.17.1 7.0.0 || false
+}
+
+@test "limits: a running lea container without CPU or memory limits is a warning (#132)" {
+  export FAKE_DOCKER_OUT_PS___FILTER=lea-abc
+  export FAKE_DOCKER_OUT_INSPECT___FORMAT='0 0'
+  run lea_doctor
+  [[ "$output" == *"warn  lea-abc limits: no CPU and memory limit: run lea in its projects directory to apply LEA_CPUS and LEA_MEMORY"* ]]
+  export FAKE_DOCKER_OUT_INSPECT___FORMAT='16500000000 0'
+  run lea_doctor
+  [[ "$output" == *"warn  lea-abc limits: no memory limit"* ]]
+  export FAKE_DOCKER_OUT_INSPECT___FORMAT='16500000000 17179869184'
+  run lea_doctor
+  [[ "$output" == *"ok    lea-abc limits: 16.5 CPUs, 16384 MiB"* ]]
+  LEA_CPUS=0 FAKE_DOCKER_OUT_INSPECT___FORMAT='0 17179869184' run lea_doctor
+  [[ "$output" == *"ok    lea-abc limits: no limit on CPUs, 16384 MiB"* ]]
+}
+
+@test "the agents' CPU windows of each running lea container are listed (#132)" {
+  export FAKE_DOCKER_OUT_PS___FILTER=lea-abc
+  export FAKE_DOCKER_OUT_EXEC_LEA_ABC=$'dev-1 0,1,2,3\nlead-1 4,5,6,7'
+  run lea_doctor
+  [[ "$output" == *"ok    lea-abc CPU windows: dev-1 0,1,2,3, lead-1 4,5,6,7"* ]]
+  export FAKE_DOCKER_OUT_EXEC_LEA_ABC=
+  run lea_doctor
+  [[ "$output" == *"ok    lea-abc CPU windows: none"* ]]
 }

@@ -23,6 +23,7 @@ import (
 	"github.com/DavidGodefroid/lea/internal/deck"
 	"github.com/DavidGodefroid/lea/internal/identity"
 	"github.com/DavidGodefroid/lea/internal/launcher"
+	"github.com/DavidGodefroid/lea/internal/lockhttp"
 	"github.com/DavidGodefroid/lea/internal/roles"
 	"github.com/DavidGodefroid/lea/internal/settings"
 	"github.com/DavidGodefroid/lea/internal/store"
@@ -42,6 +43,10 @@ func hostCallT(method string, params, result any, timeout time.Duration) error {
 }
 
 const agentTimeout = 60 * time.Second
+
+// sweepTimeout bounds the sweep of a fresh container's nested Podman: removing a pile of stacks
+// left by a crash takes a while.
+const sweepTimeout = 5 * time.Minute
 
 func agentCall(method string, params, result any) error {
 	return callSock(identity.BusSock(os.Getenv), identity.Agent(os.Getenv), method, params, result, defaultTimeout)
@@ -194,6 +199,14 @@ func runDaemon(stderr io.Writer) int {
 		return 1
 	}
 	d.SetResume(launcher.ResumeSettings(os.Getenv))
+	// Same pattern for the idle stacks setting (#132).
+	_ = os.Remove(filepath.Join(host, "daemon.stacks"))
+	if err := os.WriteFile(filepath.Join(host, "daemon.stacks"), []byte(launcher.DaemonStacksStamp(os.Getenv)), 0o600); err != nil {
+		fmt.Fprintln(stderr, "lea:", clean(err.Error(), false))
+		return 1
+	}
+	d.SetStackIdle(launcher.StackIdleSetting(os.Getenv))
+	d.SetHeavy(launcher.HeavySettings(os.Getenv))
 	exe, err := os.Executable()
 	if err != nil {
 		fmt.Fprintln(stderr, "lea:", clean(err.Error(), false))
@@ -202,6 +215,25 @@ func runDaemon(stderr io.Writer) int {
 	reg := hostProviders(os.Getenv)
 	d.SetProviders(reg)
 	d.SetDefaultProvider(os.Getenv("LEA_PROVIDER"))
+	// LockHTTP (LEA_LOCKHTTP=1): each agent gets its own proxy password, and the gate learns who
+	// holds which from sources.json, which the daemon keeps up to date.
+	var proxyToken func(container, agent string) string
+	_ = os.Remove(filepath.Join(host, "daemon.lockhttp"))
+	if os.Getenv("LEA_LOCKHTTP") == "1" {
+		key, err := lockhttp.Key(filepath.Dir(host))
+		if err != nil {
+			fmt.Fprintln(stderr, "lea:", clean(err.Error(), false))
+			return 1
+		}
+		proxyToken = func(container, agent string) string { return lockhttp.Token(key, container, agent) }
+		d.SetGrantProxy(lockHTTPGrantProxy(key))
+		go lockHTTPSources(ctx, st, d, reg, filepath.Dir(host), nonEmptyEnv("LEA_PREFIX", "lea"))
+	}
+	// Same pattern for the LockHTTP switch: the launcher restarts a daemon started with the other.
+	if err := os.WriteFile(filepath.Join(host, "daemon.lockhttp"), []byte(lockHTTPStamp(os.Getenv)), 0o600); err != nil {
+		fmt.Fprintln(stderr, "lea:", clean(err.Error(), false))
+		return 1
+	}
 	m := agents.NewManager(agents.Config{
 		Store:      st,
 		Term:       agents.Tmux(tmux.Server{Socket: tmux.DefaultSocket, Conf: conf, Bin: os.Getenv("LEA_TMUX_BIN")}),
@@ -218,6 +250,7 @@ func runDaemon(stderr io.Writer) int {
 		Providers:       reg,
 		DefaultProvider: os.Getenv("LEA_PROVIDER"),
 		DefaultModel:    os.Getenv("LEA_MODEL"),
+		ProxyToken:      proxyToken,
 	})
 	d.SetAgents(m)
 	d.SweepLockRequestsLater()
@@ -676,6 +709,17 @@ func runDeckOpen(args []string, stderr io.Writer) int {
 	if fresh {
 		if err := hostCallT("agents_resume_stopped", map[string]any{"container": container}, nil, agentTimeout); err != nil {
 			fmt.Fprintln(stderr, "lea: warning: the agents of the previous container were not all resumed:", clean(err.Error(), false))
+		}
+	}
+	// At every lea, fresh container or not: what the agents that are gone left in the nested
+	// Podman is removed (#97), the containers no agent started are named, and the stacks of
+	// agents idle for LEA_STACK_IDLE are stopped (#132).
+	var sw struct{ Notice string }
+	if err := hostCallT("agents_sweep_stacks", map[string]any{"container": container}, &sw, sweepTimeout); err != nil {
+		fmt.Fprintln(stderr, "lea: warning: the nested Podman was not swept:", clean(err.Error(), false))
+	} else if sw.Notice != "" {
+		for _, l := range strings.Split(sw.Notice, "\n") {
+			fmt.Fprintln(stderr, "lea:", clean(l, false))
 		}
 	}
 	if err := hostCallT("deck_ensure", map[string]any{"container": container, "workdir": workdir}, nil, agentTimeout); err != nil {

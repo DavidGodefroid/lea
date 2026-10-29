@@ -21,7 +21,7 @@ linked() { [ "$(readlink "$LEA_BIN_DIR/lea")" = "$1/bin/lea" ]; }
   run lea_rollback
   [ "$status" -eq 0 ]
   linked "$INST/v1.2.2"
-  [ "$(readlink "$LEA_BIN_DIR/locksql")" = "$INST/v1.2.2/bin/locksql" ]
+  [ ! -L "$LEA_BIN_DIR/locksql" ] # the link an older lea made goes: locksql is locksql's launcher
   grep -qx "LEA_AUTOUPDATE_SKIP='v1.2.3'" "$U"
   grep -qx "LEA_PROJECTS_DIR='/p'" "$U"
   [ ! -e "$NOTICE" ]

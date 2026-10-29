@@ -15,7 +15,7 @@ const grantUsage = `usage: lea grant add <action> --container NAME [--repo R] [-
        (merge and close-issue need --github: every gh call they allow is pinned to it)
        lea grant ls [--all]
        lea grant revoke <id>
-actions: ` + "merge, stop-finished, close-issue, delete-own-branch, commit-identity"
+actions: ` + "merge, stop-finished, close-issue, delete-own-branch, commit-identity, pr-create"
 
 // runGrant is lea grant: the user's only channel to record, list and revoke grants (issue #73).
 // It talks to the host API, which no container can reach.
@@ -96,6 +96,8 @@ func runGrant(args []string, stdout, stderr io.Writer) int {
 					state = "revoked"
 				case g.Expires <= r.Now:
 					state = "expired"
+				case g.IsStanding():
+					state = "standing"
 				}
 				fmt.Fprintf(tw, "#%d\t%s\t%s\n", g.ID, state, describeGrant(g))
 			}
@@ -133,13 +135,20 @@ func describeGrant(g grants.Grant) string {
 		s += " (every repo)"
 	}
 	if g.GitHub != "" {
-		s += " gh " + oneLine(g.GitHub, 160)
+		if strings.HasPrefix(g.GitHub, "gitlab:") {
+			s += " " + oneLine(g.GitHub, 200)
+		} else {
+			s += " gh " + oneLine(g.GitHub, 160)
+		}
 	}
 	if g.Branch != "" && g.Branch != "*" {
 		s += " branch " + oneLine(g.Branch, 128)
 	}
 	if g.Agent != "" {
 		s += " for " + oneLine(g.Agent, 129) + " and its children"
+	}
+	if g.IsStanding() {
+		return s + " (lea delivery: until lea delivery off)"
 	}
 	return s + " until " + stamp(g.Expires)
 }

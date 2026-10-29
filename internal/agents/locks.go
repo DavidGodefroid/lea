@@ -4,11 +4,14 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io/fs"
 	"log"
 	"os"
+	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
+	"syscall"
 )
 
 // Lock consoles (issue #18, phases 0 and 1): the user opens a lock tool's console in a pane of
@@ -82,7 +85,28 @@ func EnsureConsoleDir(dir string) error {
 	if fi, err := os.Lstat(dir); err != nil || !fi.IsDir() {
 		return fmt.Errorf("%s is not a directory (a symbolic link or a file): the console only writes there; remove it and retry", dir)
 	}
-	return nil
+	// A symbolic link (or a fifo, a device) left in it by an agent, before the agents got it
+	// read-only, would take the console's writes out of it, a hard link let the agent write in it:
+	// only regular files of a single name and directories.
+	return filepath.WalkDir(dir, func(p string, e fs.DirEntry, err error) error {
+		if err != nil {
+			return fmt.Errorf("could not read %s: %w", dir, err)
+		}
+		if !e.Type().IsRegular() && !e.IsDir() {
+			return fmt.Errorf("%s is not a regular file or directory: the console writes in %s; remove it and retry", p, dir)
+		}
+		// A hard link of a file: an agent would write it through its other name, outside.
+		if e.Type().IsRegular() {
+			fi, err := e.Info()
+			if err != nil {
+				return fmt.Errorf("could not read %s: %w", p, err)
+			}
+			if st, ok := fi.Sys().(*syscall.Stat_t); !ok || st.Nlink > 1 {
+				return fmt.Errorf("%s has another name (a hard link): the console writes in %s; remove it and retry", p, dir)
+			}
+		}
+		return nil
+	})
 }
 
 // ConsoleState is what the container runtime knows of a console container.
@@ -100,6 +124,9 @@ type Consoles interface {
 	StopConsole(ctx context.Context, name string) error
 	// StopConsolesOf stops every console container a deck of owner opened.
 	StopConsolesOf(ctx context.Context, owner string) error
+	// Unconfined names the running agent containers of projects without dir mounted read-only:
+	// started before locksql or before lea mounted it so, they can still swap it for a link.
+	Unconfined(ctx context.Context, projects, dir string) ([]string, error)
 }
 
 // LockRow is one console of a deck.
@@ -226,8 +253,15 @@ func (m *Manager) LockOpen(ctx context.Context, container, tool, profile string)
 	if spec.ConsoleDir == nil {
 		return "", fmt.Errorf("no check of the console's directory for %s: no console opens", tool)
 	}
-	if err := spec.ConsoleDir(lockConsoleDir(tool, spec.Projects)); err != nil {
+	dir := lockConsoleDir(tool, spec.Projects)
+	if err := spec.ConsoleDir(dir); err != nil {
 		return "", err
+	}
+	if bad, err := m.cfg.Consoles.Unconfined(ctx, spec.Projects, dir); err != nil {
+		return "", err
+	} else if len(bad) > 0 {
+		return "", fmt.Errorf("%s running without %s read-only (started before %s or this lea): restart the agents (lea stop, then lea; they resume) and retry",
+			strings.Join(bad, " "), dir, tool)
 	}
 	ps, err := listPanes(ctx, s, container)
 	if err != nil {

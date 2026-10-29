@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"strings"
 	"time"
 
 	"github.com/DavidGodefroid/lea/internal/agents"
@@ -29,6 +30,14 @@ type Agents interface {
 	// launcher has just started.
 	MarkStopped(ctx context.Context, container string, forget bool) error
 	ResumeStopped(ctx context.Context, container string) error
+	// SweepStacks removes, in a container the launcher has just started, what the agents that
+	// are gone left in its nested Podman, and says what it removed and what no agent started.
+	SweepStacks(ctx context.Context, container string) (string, error)
+	// ParkStack stops, without removing them, the containers an idle agent started (#132), and
+	// says what it freed.
+	ParkStack(ctx context.Context, key string) (string, error)
+	// UnparkStack starts again what ParkStack stopped (a new turn came meanwhile).
+	UnparkStack(ctx context.Context, key string) (string, error)
 	Attached(ctx context.Context, container string) (bool, error)
 	Popup(ctx context.Context, key string, compose bool) error
 	// SetLabel renames an agent for display (the deck's e); OpenShell opens a shell in the
@@ -55,8 +64,8 @@ type Agents interface {
 var deckMethods = map[string]bool{
 	"deck_ensure": true, "agent_new": true, "agent_focus": true,
 	"agent_stop": true, "deck_detach": true, "agents_watch": true, "agents_mark_stopped": true,
-	"agents_resume_stopped": true,
-	"deck_attached":         true, "deck_popup": true, "agent_label": true, "shell_open": true,
+	"agents_resume_stopped": true, "agents_sweep_stacks": true,
+	"deck_attached": true, "deck_popup": true, "agent_label": true, "shell_open": true,
 	"shell_split": true, "agent_pause": true,
 	"lock_open": true, "lock_close": true, "lock_list": true, "lock_request_decide": true,
 }
@@ -168,6 +177,22 @@ func (d *Daemon) dispatchDeck(ctx context.Context, o Origin, req wire.Request) (
 		err := a.ResumeStopped(ctx, p.Container)
 		d.pruneForgotten()
 		return ok, err
+	case "agents_sweep_stacks":
+		var p struct{ Container string }
+		if err := json.Unmarshal(req.Params, &p); err != nil {
+			return nil, err
+		}
+		n, err := a.SweepStacks(ctx, p.Container)
+		if err != nil {
+			return map[string]string{"notice": n}, err
+		}
+		// What agents idle for long still run (a restarted daemon lost its timers) stops too.
+		lines := []string{}
+		if n != "" {
+			lines = append(lines, n)
+		}
+		lines = append(lines, d.parkIdleSince(p.Container)...)
+		return map[string]string{"notice": strings.Join(lines, "\n")}, nil
 	case "deck_attached":
 		var p struct{ Container string }
 		if err := json.Unmarshal(req.Params, &p); err != nil {
@@ -254,6 +279,7 @@ func (d *Daemon) dispatchDeck(ctx context.Context, o Origin, req wire.Request) (
 		snap, err := a.Watch(ctx, p.Container, p.Since, time.Duration(p.TimeoutS)*time.Second)
 		// The deck shows the user's sound switch beside the agents.
 		snap.Sound = d.soundState()
+		snap.LockHTTP = d.lockHTTPView(p.Container)
 		return snap, err
 	}
 	return nil, fmt.Errorf("unknown method %q", req.Method)

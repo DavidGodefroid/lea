@@ -104,6 +104,16 @@ type Containers interface {
 	StopShell(ctx context.Context, container, name string) error
 	// Pause freezes an agent's processes (paused) or lets them continue where they stopped.
 	Pause(ctx context.Context, container, name string, paused bool) error
+	// Teardown removes what an ended agent started in the container's nested Podman (its pods
+	// and containers) and its own Podman service. Sweep removes those of every agent but keep
+	// and reports what it removed and what no agent started ("" when there is nothing to say).
+	Teardown(ctx context.Context, container, name string) error
+	// Park stops, without removing them, the containers an idle agent started (#132) and says
+	// what it freed ("" when nothing of its own ran).
+	Park(ctx context.Context, container, name string) (string, error)
+	// Unpark starts again what the agent's last Park stopped.
+	Unpark(ctx context.Context, container, name string) (string, error)
+	Sweep(ctx context.Context, container string, keep []string) (string, error)
 }
 
 type Config struct {
@@ -129,6 +139,9 @@ type Config struct {
 	// open; Consoles reaches the console containers. Without them no console opens.
 	LockSpec func(tool string) (LockSpec, error)
 	Consoles Consoles
+	// ProxyToken is an agent's LockHTTP proxy password (LEA_LOCKHTTP=1), handed to lea-agent
+	// run; nil: LockHTTP is off and the agent keeps its container's proxy.
+	ProxyToken func(container, agent string) string
 }
 
 type Row struct {
@@ -183,6 +196,17 @@ type Snapshot struct {
 	Agents  []Row  `json:"agents"`
 	// Sound is the daemon's sound switch ("on", "off", "" when nothing plays), set by the daemon.
 	Sound string `json:"sound,omitempty"`
+	// LockHTTP is the LockHTTP gate's state for the container (LEA_LOCKHTTP=1), set by the
+	// daemon; nil when LockHTTP is off.
+	LockHTTP *LockHTTPView `json:"lockhttp,omitempty"`
+}
+
+// LockHTTPView is what the deck shows of the LockHTTP gate (D6): whether its console runs
+// ("up", "down", "" when unknown) and how many of the container's requests wait in it. A
+// notification only: requests are approved in the console, never in the deck.
+type LockHTTPView struct {
+	Console string `json:"console"`
+	Pending int    `json:"pending"`
 }
 
 type NewRequest struct {
@@ -220,7 +244,11 @@ type Manager struct {
 	recheck map[string]bool
 	feed    feed
 	// backoff spaces out the respawns of a pane that keeps dying (by pane id; under mu).
-	backoff  map[string]*backoff
+	backoff map[string]*backoff
+	// tearing holds, per agent key, the teardown of its stack in flight (closed when it is over;
+	// under tmu). A new agent of that name waits for it.
+	tmu      sync.Mutex
+	tearing  map[string]chan struct{}
 	clock    func() time.Time
 	schedule func(time.Duration, func())
 	// later runs the steps of a redraw (redrawAfterReattach).
@@ -239,7 +267,7 @@ func NewManager(cfg Config) *Manager {
 	}
 	m := &Manager{cfg: cfg, conns: map[string]Session{}, shown: map[string]string{}, fresh: map[string]bool{},
 		shells: map[string][]string{}, recheck: map[string]bool{},
-		backoff: map[string]*backoff{}, clock: time.Now,
+		backoff: map[string]*backoff{}, tearing: map[string]chan struct{}{}, clock: time.Now,
 		schedule: func(d time.Duration, f func()) { time.AfterFunc(d, f) },
 		later:    func(d time.Duration, f func()) { time.AfterFunc(d, f) }}
 	m.feed.v = 1 // a first watch (since 0) returns at once
@@ -377,6 +405,9 @@ func (m *Manager) paneCmd(container string, a store.Agent, args []string, attach
 		"-e", "LEA_AGENT=" + a.Name, "-e", "LEA_APPROVALS=" + m.cfg.Approvals}
 	if m.cfg.ApprovalTimeout > 0 {
 		cmd = append(cmd, "-e", "LEA_APPROVAL_TIMEOUT="+strconv.Itoa(m.cfg.ApprovalTimeout))
+	}
+	if m.cfg.ProxyToken != nil && !attach {
+		cmd = append(cmd, "-e", "LEA_PROXY_TOKEN="+m.cfg.ProxyToken(container, a.Name))
 	}
 	cmd = append(cmd, "-w", a.Workdir, container, "abduco")
 	if attach {
@@ -942,6 +973,7 @@ func (m *Manager) reconcile(ctx context.Context, container string, s Session) er
 				return err
 			}
 			stateChanged = true
+			m.teardownLater(container, a.Name)
 		}
 	}
 	var orphans []string
@@ -1727,6 +1759,9 @@ func (m *Manager) New(ctx context.Context, r NewRequest) (Row, error) {
 		}
 	}
 	if err == nil {
+		err = m.waitTeardown(ctx, a.Key)
+	}
+	if err == nil {
 		id, err = m.newPane(ctx, s, r.Container, a, args, false)
 	}
 	if err == nil && !r.Hidden {
@@ -1747,6 +1782,8 @@ func (m *Manager) New(ctx context.Context, r NewRequest) (Row, error) {
 			if serr := m.cfg.Containers.Stop(ctx, r.Container, a.Name); serr != nil {
 				log.Printf("lea daemon: stop %s after a failed spawn: %v", a.Key, serr)
 				forget = false
+			} else {
+				m.teardown(ctx, r.Container, a.Name)
 			}
 		}
 		if forget {
@@ -1915,6 +1952,7 @@ func (m *Manager) stop(ctx context.Context, key string, endedOnly bool) error {
 	if err := m.cfg.Containers.Stop(ctx, a.Container, a.Name); err != nil {
 		return err
 	}
+	m.teardown(ctx, a.Container, a.Name)
 	if s, err := m.session(ctx, a.Container); err == nil {
 		if ps, err := listPanes(ctx, s, a.Container); err == nil {
 			if p, ok := byAgent(ps, a.Name); ok {
@@ -2061,11 +2099,128 @@ func (m *Manager) restart(ctx context.Context, s Session, container string, a st
 			return err
 		}
 	}
+	if err := m.waitTeardown(ctx, a.Key); err != nil {
+		return err
+	}
 	if err := m.cfg.Store.SetState(a.Key, "unknown", "", m.cfg.Now()); err != nil {
 		return err
 	}
 	_, err = m.newPane(ctx, s, container, a, args, false)
 	return err
+}
+
+// teardownTimeout bounds the removal of an ended agent's stack in the background.
+const teardownTimeout = 2 * time.Minute
+
+// teardownLater removes, in the background, what an agent that has just ended started in the
+// nested Podman (#97): pods and containers left running would pile up until the host runs out of
+// memory. A teardown of that agent already in flight is enough.
+func (m *Manager) teardownLater(container, name string) {
+	key := container + "/" + name
+	m.tmu.Lock()
+	if _, ok := m.tearing[key]; ok {
+		m.tmu.Unlock()
+		return
+	}
+	done := make(chan struct{})
+	m.tearing[key] = done
+	m.tmu.Unlock()
+	go func() {
+		defer func() {
+			m.tmu.Lock()
+			delete(m.tearing, key)
+			m.tmu.Unlock()
+			close(done)
+		}()
+		ctx, cancel := context.WithTimeout(context.Background(), teardownTimeout)
+		defer cancel()
+		if err := m.cfg.Containers.Teardown(ctx, container, name); err != nil {
+			log.Printf("lea daemon: tear down the stack of %s: %v", key, err)
+		}
+	}()
+}
+
+// waitTeardown waits for the teardown in flight of the agent key, if any: an agent started under
+// that name meanwhile would lose its own Podman service.
+func (m *Manager) waitTeardown(ctx context.Context, key string) error {
+	m.tmu.Lock()
+	done := m.tearing[key]
+	m.tmu.Unlock()
+	if done == nil {
+		return nil
+	}
+	select {
+	case <-done:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
+// teardown removes a stopped agent's stack now; a failure is logged only: the agent is gone
+// either way, and the next container's sweep removes what is left.
+func (m *Manager) teardown(ctx context.Context, container, name string) {
+	key := container + "/" + name
+	if err := m.waitTeardown(ctx, key); err != nil {
+		return
+	}
+	if err := m.cfg.Containers.Teardown(ctx, container, name); err != nil {
+		log.Printf("lea daemon: tear down the stack of %s: %v", key, err)
+	}
+}
+
+// ParkStack stops what an idle agent started in the nested Podman (#132): its containers hold
+// memory and CPU while the agent waits, and it starts them again when it needs them. It says
+// what it freed. An ended agent is torn down instead, never parked; a teardown in flight goes
+// first.
+func (m *Manager) ParkStack(ctx context.Context, key string) (string, error) {
+	a, err := m.spawned(key)
+	if err != nil {
+		return "", err
+	}
+	if a.State == "done" || a.State == stateStopped {
+		return "", fmt.Errorf("%s has ended", a.Name)
+	}
+	if err := m.waitTeardown(ctx, key); err != nil {
+		return "", err
+	}
+	return m.cfg.Containers.Park(ctx, a.Container, a.Name)
+}
+
+// UnparkStack starts again what ParkStack stopped: a new turn came while it stopped them.
+func (m *Manager) UnparkStack(ctx context.Context, key string) (string, error) {
+	a, err := m.spawned(key)
+	if err != nil {
+		return "", err
+	}
+	return m.cfg.Containers.Unpark(ctx, a.Container, a.Name)
+}
+
+// SweepStacks removes, in a container the launcher has just started, what the agents that are
+// gone left in its nested Podman (the agents that run or come back keep theirs), and says what it
+// removed and what no agent started (orphans of a shell or of an older lea).
+func (m *Manager) SweepStacks(ctx context.Context, container string) (string, error) {
+	if !containerRe.MatchString(container) {
+		return "", fmt.Errorf("invalid container name %q", container)
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	live, err := m.cfg.Containers.Live(ctx, container)
+	if err != nil {
+		return "", err
+	}
+	as, err := m.cfg.Store.SpawnedAgents(container)
+	if err != nil {
+		return "", err
+	}
+	keep := append([]string(nil), live...)
+	for _, a := range as {
+		if a.State != "done" && !slices.Contains(keep, a.Name) {
+			keep = append(keep, a.Name)
+		}
+	}
+	slices.Sort(keep)
+	return m.cfg.Containers.Sweep(ctx, container, keep)
 }
 
 // userClients lists the user's terminals attached to the session (control clients, the

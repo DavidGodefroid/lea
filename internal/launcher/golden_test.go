@@ -224,6 +224,9 @@ func normalize(w *world, s string) string {
 	s = strings.ReplaceAll(s, Slug(w.proj), "$SLUG")
 	s = strings.ReplaceAll(s, w.dir, "$W")
 	s = strings.ReplaceAll(s, w.root, "$R")
+	if r := (&Launcher{Root: w.root}).proxyRules(); r != "" {
+		s = strings.ReplaceAll(s, r, "$RULES")
+	}
 	return strings.ReplaceAll(s, ID(w.proj), "$ID")
 }
 
@@ -243,6 +246,9 @@ func commandSetup(t *testing.T, root string, sc commandScenario) (*world, []stri
 	w.env["FAKE_DOCKER_OUT_NETWORK_INSPECT"] = "true"
 	w.env["FAKE_DOCKER_OUT_CONTAINER_INSPECT"] = "172.18.0.5"
 	w.env["FAKE_DOCKER_OUT_INSPECT__F"] = "true"
+	if r := (&Launcher{Root: w.root}).proxyRules(); r != "" {
+		w.env["FAKE_DOCKER_OUT_INSPECT___FORMAT"] = "@" + r
+	}
 	for k, v := range sc.env {
 		v = strings.ReplaceAll(strings.ReplaceAll(v, "$W", w.dir), "$ID", w.id())
 		w.env[strings.ReplaceAll(k, "$ID", fakeKey(w.id()))] = v
@@ -562,8 +568,36 @@ func TestCommandsMatchTheGoldenFiles(t *testing.T) {
 		{name: "rollback outside a release install", args: []string{"rollback"}, exit: 1,
 			want: []string{"lea: error: lea rollback is for a release install"}, absent: []string{"ln", "curl"}},
 		{name: "rollback takes no argument", args: []string{"rollback", "now"}, exit: 2, absent: []string{"lea:"}},
+		// The host versions are pinned: a fixed uname -r and os-release, and Docker's components.
 		{name: "doctor", args: []string{"doctor"}, exit: 1,
-			want: []string{"ok    docker reachable", "FAIL  user config"}, absent: []string{"launcher"}},
+			env: map[string]string{"LEA_OS_RELEASE": "$W/os-release", "FAKE_DOCKER_OUT_VERSION___FORMAT": "Engine=29.4.2\ncontainerd=v2.1.4\nrunc=1.3.0"},
+			setup: func(w *world) {
+				os.WriteFile(w.dir+"/os-release", []byte("ID=ubuntu\nVERSION_ID=\"24.04\"\n"), 0o644)
+				os.WriteFile(w.dir+"/bin/uname", []byte("#!/bin/sh\necho 7.0.0-38-generic\n"), 0o755)
+			},
+			want: []string{"ok    docker reachable", "ok    Docker Engine 29.4.2 (containerd v2.1.4, runc 1.3.0)",
+				"warn  kernel 7.0.0-38-generic: no known minimum for ubuntu 24.04", "FAIL  user config",
+				"core [delivery] [--container] [lea-$ID] [--projects] [$W/projects] [check] [--state]"}, absent: []string{"launcher"}},
+		// Without a projects directory there is no lea to check delivery for.
+		// The host versions are pinned as in doctor: the recording never depends on the machine.
+		{name: "doctor without a projects dir", args: []string{"doctor"}, exit: 1,
+			env: map[string]string{"LEA_PROJECTS_DIR": "$W/none", "LEA_OS_RELEASE": "$W/os-release"},
+			setup: func(w *world) {
+				os.WriteFile(w.dir+"/os-release", []byte("ID=ubuntu\nVERSION_ID=\"24.04\"\n"), 0o644)
+				os.WriteFile(w.dir+"/bin/uname", []byte("#!/bin/sh\necho 7.0.0-38-generic\n"), 0o755)
+			},
+			want: []string{"ok    docker reachable", "warn  kernel 7.0.0-38-generic: no known minimum for ubuntu 24.04"}, absent: []string{"core [delivery]"}},
+		// lea delivery: the core form, with this projects dir's container and the directory.
+		{name: "delivery on", args: []string{"delivery", "on"},
+			want: []string{"core [delivery] [--container] [lea-$ID] [--projects] [$W/projects] [on]"}},
+		{name: "delivery on --yes", args: []string{"delivery", "on", "--yes", "0123456789abcdef"},
+			want: []string{"core [delivery] [--container] [lea-$ID] [--projects] [$W/projects] [on] [--yes] [0123456789abcdef]"}},
+		{name: "delivery on --gitlab", args: []string{"delivery", "on", "--gitlab", "git.corp.example", "--yes", "0123456789abcdef"},
+			want: []string{"core [delivery] [--container] [lea-$ID] [--projects] [$W/projects] [on] [--gitlab] [git.corp.example] [--yes] [0123456789abcdef]"}},
+		{name: "delivery on --yes without a digest", args: []string{"delivery", "on", "--yes"}, exit: 2, absent: []string{"core [delivery]"}},
+		{name: "delivery off --yes", args: []string{"delivery", "off", "--yes"}, exit: 2, absent: []string{"core [delivery]"}},
+		{name: "delivery without a verb", args: []string{"delivery"}, exit: 2,
+			want: []string{"lea: error: usage: lea delivery on [--yes DIGEST] [--gitlab HOST]...|off|status"}, absent: []string{"core [delivery]"}},
 		{name: "kube refresh", args: []string{"kube", "refresh"}, exit: 1, env: map[string]string{"LEA_K8S_USER": "dev"},
 			want: []string{"kubectl [config] [get-contexts]", "lea: error: no cluster issued a token"}},
 		{name: "init without a terminal", args: []string{"init"}, want: []string{"lea: ready. Run: lea"}, absent: []string{"ssh-keygen"}},

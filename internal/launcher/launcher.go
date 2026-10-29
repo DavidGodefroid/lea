@@ -378,6 +378,8 @@ func (l *Launcher) dispatch(args []string) error {
 		return l.sh(a0, rest...)
 	case "lock":
 		return l.lockConsole(rest)
+	case "delivery":
+		return l.delivery(rest)
 	case "shell":
 		if len(rest) > 0 {
 			if err := l.oldForm(rest[0]); err != nil {
@@ -405,7 +407,7 @@ func (l *Launcher) dispatch(args []string) error {
 	case "rollback":
 		return l.sh("rollback", rest...)
 	case "doctor":
-		return l.sh("doctor")
+		return l.doctor()
 	case "config":
 		return l.config(rest)
 	default:
@@ -435,6 +437,42 @@ func (l *Launcher) lockConsole(args []string) error {
 		return err
 	}
 	if l.coreCall(append([]string{"lock", "--container", l.Cfg.ContainerName(proj)}, args...)...) != nil {
+		return exitError{1}
+	}
+	return nil
+}
+
+// doctor is lea doctor: the workstation's checks (lea-sh doctor), then, when the projects
+// directory resolves, its lea's delivery (issue #92) through the core, which reads the grants
+// from the daemon and the credentials from lea's state. The worst of the two is the status.
+func (l *Launcher) doctor() error {
+	err := l.sh("doctor")
+	proj, perr := l.projectsDir()
+	if perr != nil {
+		return err
+	}
+	if l.coreCall("delivery", "--container", l.Cfg.ContainerName(proj), "--projects", proj, "check", "--state", l.Cfg.StateDir()) != nil && err == nil {
+		return exitError{1}
+	}
+	return err
+}
+
+// delivery is lea delivery on [--yes DIGEST] [--gitlab HOST]...|off|status (issue #92), through the core, which the launcher
+// tells this projects dir's container and the directory whose repositories it covers.
+func (l *Launcher) delivery(args []string) error {
+	ok := len(args) > 0 && (args[0] == "on" || (len(args) == 1 && (args[0] == "off" || args[0] == "status")))
+	for i := 1; ok && i < len(args); i += 2 {
+		ok = (args[i] == "--yes" || args[i] == "--gitlab") && i+1 < len(args) && args[i+1] != ""
+	}
+	if !ok {
+		l.logf("error: usage: lea delivery on [--yes DIGEST] [--gitlab HOST]...|off|status")
+		return exitError{2}
+	}
+	proj, err := l.projectsDir()
+	if err != nil {
+		return err
+	}
+	if l.coreCall(append([]string{"delivery", "--container", l.Cfg.ContainerName(proj), "--projects", proj}, args...)...) != nil {
 		return exitError{1}
 	}
 	return nil

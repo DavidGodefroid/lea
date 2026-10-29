@@ -21,6 +21,8 @@ type boardItem struct {
 	Question int64
 	// Subagents counts the subagents the agent still runs: its state cell says so.
 	Subagents int
+	// Stack is what lea stopped of the agent's nested containers while it was idle (#132).
+	Stack string
 }
 
 // stateCell is an item's state as the deck shows it (issue #72), with the subagents it still
@@ -46,6 +48,15 @@ func stateCell(it boardItem) string {
 type board struct {
 	Items  []boardItem  `json:"items"`
 	Leases []boardLease `json:"leases"`
+	// Heavy is each container's heavy jobs that run or wait (#132).
+	Heavy []boardHeavy `json:"heavy"`
+}
+
+type boardHeavy struct {
+	Container string
+	Slots     int
+	Running   []string
+	Queued    int
 }
 
 // mdCell makes agent text safe in one markdown table cell printed on a terminal: control, bidi
@@ -115,11 +126,11 @@ type boardLease struct {
 // leases, then the last ended tasks.
 func renderBoard(w io.Writer, b board) {
 	fmt.Fprintln(w, "# lea board")
-	if len(b.Items) == 0 && len(b.Leases) == 0 {
+	if len(b.Items) == 0 && len(b.Leases) == 0 && len(b.Heavy) == 0 {
 		fmt.Fprintln(w, "\nNo tasks yet.")
 		return
 	}
-	items, leases := map[string][]boardItem{}, map[string][]boardLease{}
+	items, leases, heavy := map[string][]boardItem{}, map[string][]boardLease{}, map[string]boardHeavy{}
 	seen := map[string]bool{}
 	var cs []string
 	add := func(c string) {
@@ -135,6 +146,10 @@ func renderBoard(w io.Writer, b board) {
 	for _, l := range b.Leases {
 		add(l.Container)
 		leases[l.Container] = append(leases[l.Container], l)
+	}
+	for _, h := range b.Heavy {
+		add(h.Container)
+		heavy[h.Container] = h
 	}
 	sort.Strings(cs)
 	for _, c := range cs {
@@ -161,6 +176,25 @@ func renderBoard(w io.Writer, b board) {
 				}
 				fmt.Fprintf(w, "| %s | %s | %s | %s | %s | %s | %s | %s | %s |\n", name, mdCell(it.Role), mdCell(stateCell(it)),
 					mdCell(it.Branch), mdCell(it.Title), mdCell(it.Status), mdCell(it.Next), mdCell(blocked), stamp(it.Updated))
+			}
+		}
+		var stacks []boardItem
+		for _, it := range open {
+			if it.Stack != "" {
+				stacks = append(stacks, it)
+			}
+		}
+		if len(stacks) > 0 {
+			fmt.Fprintln(w, "\n### Stacks stopped while idle")
+			fmt.Fprintln(w)
+			for _, it := range stacks {
+				fmt.Fprintf(w, "- %s\n", mdCell(it.Stack))
+			}
+		}
+		if h, ok := heavy[c]; ok {
+			fmt.Fprintf(w, "\n### Heavy jobs (%d of %d slots, %d waiting)\n\n", len(h.Running), h.Slots, h.Queued)
+			for _, r := range h.Running {
+				fmt.Fprintf(w, "- %s\n", mdCell(r))
 			}
 		}
 		if ls := leases[c]; len(ls) > 0 {

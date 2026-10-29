@@ -135,10 +135,16 @@ func newWorld(t *testing.T, root string) *world {
 	write(w.data+"/lea/host/daemon.tmux", w.tmux, 0o600)
 	write(w.data+"/lea/host/daemon.approvals", "deck 60", 0o600)
 	write(w.data+"/lea/host/daemon.resume", "on 60", 0o600)
+	write(w.data+"/lea/host/daemon.lockhttp", "off", 0o600)
+	write(w.data+"/lea/host/daemon.stacks", "10 0 4", 0o600)
 	w.env = map[string]string{
 		"HOME": w.home, "XDG_DATA_HOME": w.data, "XDG_CONFIG_HOME": dir + "/config", "FAKE_LOG": w.log,
 		"LEA_PROJECTS_DIR": w.proj, "LEA_TMUX_BIN": w.tmux, "LEA_TMUX_BUILT": dir + "/no-built-tmux",
 		"LEA_CLIPBOARD": "0", "LEA_LOCK_TIMEOUT": "2", "LC_ALL": "C",
+		// Docker's memory (docker system info): 32 GiB, so the lea container gets a 16 GiB limit.
+		"FAKE_DOCKER_OUT_SYSTEM_INFO": "34359738368",
+		// Docker's CPUs: 16, so the lea container gets 12.
+		"FAKE_DOCKER_OUT_SYSTEM_INFO_AT____NCPU__": "16",
 		"PATH": repoRoot(t) + "/tests/fakes:" + dir + "/bin:/usr/local/bin:/usr/bin:/bin",
 	}
 	// What a daemon started with the default provider settings records.

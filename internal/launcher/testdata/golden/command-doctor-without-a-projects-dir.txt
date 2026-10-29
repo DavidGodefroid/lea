@@ -1,0 +1,33 @@
+status 1
+-- calls
+docker [info]
+docker [info] [--format] [{{json .SecurityOptions}}]
+docker [version] [--format] [{{range .Server.Components}}{{.Name}}={{.Version}}{{"\n"}}{{end}}]
+docker [--version]
+docker [image] [inspect] [lea:dev]
+docker [image] [inspect] [lea-proxy:dev]
+tmux [-V]
+docker [inspect] [-f] [{{.State.Running}}] [lea-proxy]
+docker [network] [ls] [--filter] [label=lea.prefix=lea] [--format] [{{.Name}}]
+docker [ps] [--filter] [label=lea.prefix=lea] [--filter] [label=lea.role=session] [--format] [{{.Names}}]
+docker [ps] [--filter] [label=lea.prefix=lea] [--filter] [label=lea.role=session] [--format] [{{.Names}}]
+docker [image] [inspect] [locksql:0.9.0]
+docker [volume] [inspect] [locksql-run]
+-- lea
+-- stdout
+ok    docker reachable
+warn  Docker Engine: version unknown (not Docker Engine?)
+warn  kernel 7.0.0-38-generic: no known minimum for ubuntu 24.04 in $R/config/host-minimums: check that it has the fixes for CVE-2026-74753, CVE-2026-80521, CVE-2026-80841
+ok    state claude.json
+FAIL  user config: $W/config/lea/lea.conf missing: run lea init
+FAIL  projects dir: LEA_PROJECTS_DIR=$W/none is not a directory; run lea init
+ok    image lea:dev
+ok    image lea-proxy:dev
+ok    tmux (tmux 3.4, host)
+ok    proxy running
+ok    internal networks: none (each lea creates its own at start)
+ok    egress allowlist: lea's default (forges, registries, model APIs; LEA_EGRESS_ALLOW extends it with 'default,<domain>')
+ok    telemetry: off (LEA_OTEL_UPSTREAM)
+ok    locksql image locksql:0.9.0
+ok    locksql-run volume
+warn  kubernetes token: none (optional): lea kube refresh

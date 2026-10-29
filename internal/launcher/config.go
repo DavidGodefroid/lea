@@ -13,6 +13,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -30,10 +31,11 @@ var protectedKeys = map[string]bool{
 // core subcommands and libexec/lea-sh.
 var ExportedKeys = []string{
 	"LEA_PREFIX", "LEA_IMAGE", "LEA_PROXY_IMAGE", "LEA_GIT_SSH", "LEA_GIT_KNOWN_HOSTS", "LEA_LOCKSQL", "LEA_LOCKSQL_IMAGE", "LEA_LOCKSQL_REF", "LEA_LOCKSQL_VAULT_ADDR",
-	"LEA_LOCKMQ", "LEA_LOCKFILE", "LEA_LOCKMQ_REF", "LEA_LOCKFILE_REF",
+	"LEA_LOCKMQ", "LEA_LOCKFILE", "LEA_LOCKMQ_REF", "LEA_LOCKFILE_REF", "LEA_LOCKHTTP", "LEA_LOCKHTTP_MITM",
 	"LEA_OTEL_UPSTREAM", "LEA_NESTED_NETWORKS", "LEA_K8S_NAMESPACE", "LEA_INTERNAL_HOSTS", "LEA_EGRESS_ALLOW", "LEA_PROJECTS_DIR",
 	"LEA_APPROVALS", "LEA_APPROVAL_TIMEOUT", "LEA_SOUND", "LEA_SOUND_ATTENTION", "LEA_SOUND_DONE",
 	"LEA_PROVIDER", "LEA_MODEL", "LEA_PROVIDERS", "LEA_AUTO_RESUME", "LEA_RESUME_DELAY",
+	"LEA_STACK_IDLE", "LEA_HEAVY_SLOTS", "LEA_HEAVY_WORKERS",
 }
 
 // Config is what lea_load_config gives the shell: the environment, overlaid by the assignments of
@@ -241,6 +243,31 @@ func (c *Config) resolve(root string) error {
 			return fmt.Errorf("LEA_LOCKFILE_REF %s is refused: lockfile v0.1.0 lets a plugin escape its sandbox (v0.1.1 or later)", ref)
 		}
 	}
+	if err := c.resolveAgentCPUs(); err != nil {
+		return err
+	}
+	lh := nonEmpty(c.Get("LEA_LOCKHTTP"), "0")
+	if lh != "0" && lh != "1" {
+		return fmt.Errorf("LEA_LOCKHTTP must be 1 (agents' web egress through a LockHTTP gate) or 0, not '%s'", lh)
+	}
+	if lh == "1" && c.Get("LEA_GIT_SSH") != "" {
+		return fmt.Errorf("LEA_LOCKHTTP=1 refuses LEA_GIT_SSH: its SSH forwarders would bypass the LockHTTP gate (use git over HTTPS, or LEA_LOCKHTTP=0)")
+	}
+	if lh == "1" && c.Get("LEA_OTEL_UPSTREAM") != "" {
+		return fmt.Errorf("LEA_LOCKHTTP=1 refuses LEA_OTEL_UPSTREAM: its TCP forwarder (port 4318) would bypass the LockHTTP gate (leave it empty, or LEA_LOCKHTTP=0)")
+	}
+	c.final["LEA_LOCKHTTP"] = lh
+	mitm := nonEmpty(c.Get("LEA_LOCKHTTP_MITM"), "0")
+	if mitm != "0" && mitm != "1" {
+		return fmt.Errorf("LEA_LOCKHTTP_MITM must be 1 (the LockHTTP gate decrypts HTTPS with a local CA) or 0, not '%s'", mitm)
+	}
+	if mitm == "1" && lh != "1" {
+		return fmt.Errorf("LEA_LOCKHTTP_MITM=1 needs LEA_LOCKHTTP=1")
+	}
+	c.final["LEA_LOCKHTTP_MITM"] = mitm
+	if err := c.resolveLimits(); err != nil {
+		return err
+	}
 	au := nonEmpty(c.Get("LEA_AUTOUPDATE"), "1")
 	if au != "0" && au != "1" {
 		return fmt.Errorf("LEA_AUTOUPDATE must be 1 (check for a new release every day) or 0, not '%s'", au)
@@ -249,6 +276,50 @@ func (c *Config) resolve(root string) error {
 	if sk := c.Get("LEA_AUTOUPDATE_SKIP"); sk != "" && !releaseVersion.MatchString(sk) {
 		return fmt.Errorf("LEA_AUTOUPDATE_SKIP must be empty or a release version (vX.Y.Z, set by lea rollback), not '%s'", sk)
 	}
+	return nil
+}
+
+// Resource limits of the lea container: a share of Docker's memory (N%) or a docker size, a
+// docker size for memory plus swap (or -1, swap without limit), a number of processes and threads.
+var (
+	memoryPercent = regexp.MustCompile(`^([1-9][0-9]?|100)%$`)
+	cpuCount      = regexp.MustCompile(`^([1-9][0-9]{0,3}(\.[0-9]{1,2})?|0\.[0-9]{1,2})$`)
+	dockerSize    = regexp.MustCompile(`^[1-9][0-9]{0,15}[bkmg]?$`)
+)
+
+// resolveLimits checks LEA_CPUS (default 75%, 0: no limit), LEA_MEMORY (default 50%, 0: no
+// limit), LEA_MEMORY_SWAP (empty: as LEA_MEMORY, no swap) and LEA_PIDS_LIMIT (default 16384, 0: no
+// limit).
+func (c *Config) resolveLimits() error {
+	cpus := nonEmpty(c.Get("LEA_CPUS"), "75%")
+	if cpus != "0" && !memoryPercent.MatchString(cpus) && !cpuCount.MatchString(cpus) {
+		return fmt.Errorf("LEA_CPUS must be a share of Docker's CPUs (1%%-100%%), a number of CPUs (8, 1.5) or 0 (no limit), not '%s'", cpus)
+	}
+	c.final["LEA_CPUS"] = cpus
+	mem := nonEmpty(c.Get("LEA_MEMORY"), "50%")
+	if mem != "0" && !memoryPercent.MatchString(mem) && !dockerSize.MatchString(mem) {
+		return fmt.Errorf("LEA_MEMORY must be a share of Docker's memory (1%%-100%%), a size (8g, 512m) or 0 (no limit), not '%s'", mem)
+	}
+	swap := c.Get("LEA_MEMORY_SWAP")
+	if swap != "" && swap != "-1" && !dockerSize.MatchString(swap) {
+		return fmt.Errorf("LEA_MEMORY_SWAP must be empty (no swap), a size of memory plus swap (12g) or -1 (no limit), not '%s'", swap)
+	}
+	pids := nonEmpty(c.Get("LEA_PIDS_LIMIT"), "16384")
+	if _, ok := plainNumber(pids, 7); !ok && pids != "0" {
+		return fmt.Errorf("LEA_PIDS_LIMIT must be a number of processes without leading zeros or 0 (no limit), not '%s'", pids)
+	}
+	c.final["LEA_MEMORY"], c.final["LEA_MEMORY_SWAP"], c.final["LEA_PIDS_LIMIT"] = mem, swap, pids
+	return nil
+}
+
+// resolveAgentCPUs checks LEA_AGENT_CPUS, the CPU window of each agent (#132): a number of CPUs
+// (4 by default, at most 1024) or 0 (no window).
+func (c *Config) resolveAgentCPUs() error {
+	n := nonEmpty(c.Get("LEA_AGENT_CPUS"), "4")
+	if v, ok := plainNumber(n, 4); n != "0" && (!ok || v > 1024) {
+		return fmt.Errorf("LEA_AGENT_CPUS must be a number of CPUs (1-1024) or 0 (no window), not '%s'", n)
+	}
+	c.final["LEA_AGENT_CPUS"] = n
 	return nil
 }
 
@@ -336,9 +407,16 @@ const maxEgressDomains = 64
 
 // egressAllow is LEA_EGRESS_ALLOW normalized as lea__check_egress_allow does: domain names
 // separated by commas or blanks, lower-cased, joined by commas. Each one also stands for its
-// subdomains; an IP literal or a wildcard is refused.
+// subdomains; an IP literal or a wildcard is refused. Empty is the proxy's default allowlist, and
+// "default" in the list stands for it; "*" alone opens the web to any domain.
 func egressAllow(v string) (string, error) {
 	names := strings.FieldsFunc(v, func(r rune) bool { return r == ',' || r == ' ' || r == '\t' || r == '\n' })
+	if slices.Contains(names, "*") {
+		if len(names) > 1 {
+			return "", fmt.Errorf("LEA_EGRESS_ALLOW: '*' opens the web to any domain and cannot be combined with domain names")
+		}
+		return "*", nil
+	}
 	if len(names) > maxEgressDomains {
 		return "", fmt.Errorf("LEA_EGRESS_ALLOW lists %d domains, at most %d", len(names), maxEgressDomains)
 	}
@@ -508,6 +586,14 @@ func expandHome(s, home string) (string, error) {
 
 // GitSSH is LEA_GIT_SSH: the git SSH endpoints, space separated ("" when git uses HTTPS only).
 func (c *Config) GitSSH() string { return c.Get("LEA_GIT_SSH") }
+
+// LockHTTP reports whether the agents' web egress goes through a LockHTTP gate (LEA_LOCKHTTP=1;
+// off by default).
+func (c *Config) LockHTTP() bool { return c.Get("LEA_LOCKHTTP") == "1" }
+
+// LockHTTPMITM reports whether the LockHTTP gate decrypts HTTPS (LEA_LOCKHTTP_MITM=1, with
+// LEA_LOCKHTTP=1; off by default).
+func (c *Config) LockHTTPMITM() bool { return c.LockHTTP() && c.Get("LEA_LOCKHTTP_MITM") == "1" }
 
 // Locksql reports whether lea is wired for a locksql console (LEA_LOCKSQL=1, the default).
 func (c *Config) Locksql() bool { return c.Get("LEA_LOCKSQL") != "0" }

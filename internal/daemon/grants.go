@@ -61,13 +61,15 @@ func (d *Daemon) grantAdd(raw json.RawMessage) (any, error) {
 	if p.Repo == "" && grants.NeedsGitHub(p.Action) {
 		return nil, fmt.Errorf("repo: a %s grant names the repository it covers, the one --github is", p.Action)
 	}
-	switch m := grantGitHub.FindStringSubmatch(p.GitHub); {
+	switch {
 	case p.GitHub == "" && grants.NeedsGitHub(p.Action):
 		return nil, fmt.Errorf("github: a %s grant names the GitHub repository its gh and git calls are pinned to (OWNER/NAME)", p.Action)
-	case p.GitHub != "" && (m == nil || m[3] == "." || m[3] == ".."):
-		return nil, errors.New("github: OWNER/NAME of a github.com repository")
 	case p.GitHub != "":
-		p.GitHub = "github.com/" + m[2] + "/" + m[3]
+		gh, err := githubRepo(p.GitHub)
+		if err != nil {
+			return nil, err
+		}
+		p.GitHub = gh
 	}
 	if p.Agent != "" {
 		key, err := d.resolveSpawned(p.Agent, p.Container)
@@ -91,6 +93,83 @@ func (d *Daemon) grantAdd(raw json.RawMessage) (any, error) {
 	}
 	d.changed()
 	return g, nil
+}
+
+// githubRepo is s, OWNER/NAME or github.com/OWNER/NAME, as github.com/OWNER/NAME.
+func githubRepo(s string) (string, error) {
+	m := grantGitHub.FindStringSubmatch(s)
+	if m == nil || m[3] == "." || m[3] == ".." {
+		return "", errors.New("github: OWNER/NAME of a github.com repository")
+	}
+	return "github.com/" + m[2] + "/" + m[3], nil
+}
+
+// deliverySet is lea delivery on|off (issue #92), the host's only: off revokes the standing
+// grants of a lea; on replaces them with the delivery actions on each repository it names, with
+// the GitHub repository the host read from that repository's origin. Standing grants never expire;
+// grants the user added by hand are left alone. A repository's forge pin is github.com/OWNER/NAME
+// (OWNER/NAME accepted) or gitlab:HOST/GROUP/.../NAME (grants.ValidPin).
+func (d *Daemon) deliverySet(raw json.RawMessage) (any, error) {
+	var p struct {
+		Container string
+		On        bool
+		Repos     []struct{ Repo, GitHub string }
+	}
+	if err := json.Unmarshal(raw, &p); err != nil {
+		return nil, err
+	}
+	if !containerName.MatchString(p.Container) {
+		return nil, errors.New("container: name the lea delivery applies to")
+	}
+	if !p.On && len(p.Repos) > 0 {
+		return nil, errors.New("repos: delivery off names none")
+	}
+	if len(p.Repos) > maxGrantList/len(grants.DeliveryActions) {
+		return nil, errors.New("repos: too many repositories")
+	}
+	seen := map[string]bool{}
+	for i, r := range p.Repos {
+		if !grantRepo.MatchString(r.Repo) || seen[r.Repo] {
+			return nil, fmt.Errorf("repo %q: a directory name under the projects directory, once", r.Repo)
+		}
+		seen[r.Repo] = true
+		if strings.HasPrefix(r.GitHub, "gitlab:") {
+			if !grants.ValidPin(r.GitHub) {
+				return nil, fmt.Errorf("repo %s: gitlab:HOST/GROUP/NAME of a GitLab project", r.Repo)
+			}
+			continue
+		}
+		gh, err := githubRepo(r.GitHub)
+		if err != nil {
+			return nil, fmt.Errorf("repo %s: %w", r.Repo, err)
+		}
+		p.Repos[i].GitHub = gh
+	}
+	now := d.now()
+	old, err := d.st.ActiveGrants(p.Container, now)
+	if err != nil {
+		return nil, err
+	}
+	for _, g := range old {
+		if g.IsStanding() {
+			if err := d.st.RevokeGrant(g.ID, now); err != nil && !errors.Is(err, store.ErrDecided) {
+				return nil, err
+			}
+		}
+	}
+	out := []grants.Grant{}
+	for _, r := range p.Repos {
+		for _, a := range grants.DeliveryActions {
+			g, err := d.st.AddGrant(grants.Grant{Container: p.Container, Action: a, Repo: r.Repo, GitHub: r.GitHub,
+				Created: now, Expires: grants.Standing})
+			if err != nil {
+				return nil, err
+			}
+			out = append(out, g)
+		}
+	}
+	d.changed()
+	return map[string]any{"grants": out}, nil
 }
 
 // grantRevoke ends a grant at once: its next matching call takes the normal path again.
@@ -166,10 +245,29 @@ func contains(xs []string, x string) bool {
 	return false
 }
 
+// SetGrantProxy names the proxy of the pinned calls of an agent (nil: grants.LeaProxy, the
+// default). Under LockHTTP squid is on the proxy's loopback: the calls go through the gate, with
+// the agent's own proxy password.
+func (d *Daemon) SetGrantProxy(f func(container, agent string) string) {
+	d.mu.Lock()
+	d.grantProxy = f
+	d.mu.Unlock()
+}
+
+func (d *Daemon) grantProxyFor(container, agent string) string {
+	d.mu.Lock()
+	f := d.grantProxy
+	d.mu.Unlock()
+	if f == nil {
+		return grants.LeaProxy
+	}
+	return f(container, agent)
+}
+
 // grantCaller is the calling agent as the daemon knows it: its container is the socket's, its
 // repo, branch and parents its row's, never anything the agent says. A branch another live agent
 // of the lea also works on (same repo) is nobody's own. cwd is where the tool call runs (the
-// hook's): it only says whether that is the caller's own worktree.
+// hook's): it says whether that is the caller's own worktree, and relative paths are read from it.
 func (d *Daemon) grantCaller(o Origin, me, cwd string) (grants.Caller, error) {
 	if o.Container == "" {
 		return grants.Caller{}, errors.New("grants apply to agents only")
@@ -179,7 +277,7 @@ func (d *Daemon) grantCaller(o Origin, me, cwd string) (grants.Caller, error) {
 		return grants.Caller{}, err
 	}
 	c := grants.Caller{Key: me, Container: o.Container, Repo: a.Repo, Branch: a.Branch, Lineage: []string{me},
-		OwnWorktree: grants.InWorktree(cwd, a.Repo, a.Name)}
+		OwnWorktree: grants.InWorktree(cwd, a.Repo, a.Name), Cwd: cwd, Proxy: d.grantProxyFor(o.Container, a.Name)}
 	if c.OwnWorktree {
 		c.Worktree = strings.TrimSuffix(cwd, "/")
 	}

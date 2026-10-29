@@ -1,9 +1,16 @@
 #!/bin/sh
 # Renders squid.conf on stdout from an internal-hosts file. Usage: render-squid-conf.sh [--peek] INTERNAL_HOSTS
 #
-# LEA_EGRESS_ALLOW (domain names separated by commas or blanks; empty: none) restricts the web
-# destinations on 80 and 443 to those domains and their subdomains, plus the ones lea's agents
-# always need (EGRESS_ALWAYS: the model API and its login). Internal hosts are not affected.
+# LEA_EGRESS_ALLOW (domain names separated by commas or blanks; empty: EGRESS_DEFAULT; the word
+# "default" stands for EGRESS_DEFAULT; "*" alone: any domain) restricts the web destinations on 80
+# and 443 to those domains and their subdomains, plus the ones lea's agents always need
+# (EGRESS_ALWAYS: the model API and its login). Internal hosts are not affected. Whatever its
+# value, public DNS-over-HTTPS resolvers (DOH_NAMES, any doh.* name) and public IP literals are
+# refused: a tunnel to them would reopen the DNS channel the internal network closes, or bypass
+# the allowlist.
+#
+# LEA_LOCKHTTP=1: a LockHTTP gate on :3130 decides the web destinations and is the only client of
+# squid, which then listens on 127.0.0.1 only and drops its allowlist (the floor above stays).
 #
 # An internal name usually sits behind a shared ingress that routes TLS on SNI and Host, so the main
 # squid hands an allowed CONNECT to an internal name to a second, loopback squid (--peek; nothing
@@ -18,12 +25,30 @@ hosts_file=$1
 
 # Keep in step with libexec/lib/doctor.sh.
 EGRESS_ALWAYS="anthropic.com claude.ai claude.com"
+# What the image's tools need: the git forges and their content hosts, the Go, npm and PyPI
+# registries, the container registries and distribution mirrors of nested builds, Codex's API and
+# login. Keep in step with the README.
+EGRESS_DEFAULT="github.com githubusercontent.com ghcr.io gitlab.com golang.org registry.npmjs.org registry.yarnpkg.com
+  pypi.org pythonhosted.org docker.io docker.com quay.io fedoraproject.org alpinelinux.org openai.com chatgpt.com"
+# Public DNS-over-HTTPS resolvers, each with its subdomains (squid refuses overlaps).
+DOH_NAMES="dns.google dns.google.com cloudflare-dns.com one.one.one.one quad9.net nextdns.io adguard-dns.com
+  dns.adguard.com opendns.com cleanbrowsing.org dns.sb dns.mullvad.net controld.com dns0.eu dns.switch.ch
+  doh.libredns.gr dns.alidns.com doh.pub dns.twnic.tw"
+# An address as getaddrinfo reads one: dotted, shortened, decimal or hex IPv4; IPv6, bracketed or not.
+IP_LITERAL='^((0x[0-9a-f]*|[0-9]+)(\.(0x[0-9a-f]*|[0-9]+)){0,3}\.?|\[.*\]|.*:.*)$'
 
-# egress_domains: LEA_EGRESS_ALLOW then EGRESS_ALWAYS, lower-cased, checked, without a name that
+# egress_domains: LEA_EGRESS_ALLOW ("default" expanded) then EGRESS_ALWAYS, lower-cased, checked, without a name that
 # another one already covers (squid refuses a dstdomain list where one entry covers another).
 egress_domains() {
-  all=
-  for d in $(printf '%s' "$LEA_EGRESS_ALLOW" | tr ',' ' ') $EGRESS_ALWAYS; do
+  all='' list=''
+  for d in $(printf '%s' "${LEA_EGRESS_ALLOW:-default}" | tr ',' ' '); do
+    case $d in
+      '*') echo "render-squid-conf: LEA_EGRESS_ALLOW: '*' opens the web and goes alone" >&2; return 1 ;;
+      default) list="$list $EGRESS_DEFAULT" ;;
+      *) list="$list $d" ;;
+    esac
+  done
+  for d in $list $EGRESS_ALWAYS; do
     case $d in
       *[!ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789.-]*|.*|*.|*..*) bad=1 ;;
       *[!0-9.]*) bad= ;;
@@ -50,7 +75,12 @@ acls=$(mktemp)
 trap 'rm -f "$acls"' EXIT
 set -f
 egress=
-if [ -n "${LEA_EGRESS_ALLOW:-}" ]; then egress=$(egress_domains) || exit 1; fi
+listen=3128
+if [ "${LEA_LOCKHTTP:-0}" = 1 ]; then
+  listen=127.0.0.1:3128
+elif [ "${LEA_EGRESS_ALLOW:-}" != '*' ]; then
+  egress=$(egress_domains) || exit 1
+fi
 n=0
 names=0
 lineno=0
@@ -110,8 +140,8 @@ CONF
   exit 0
 fi
 
+echo "http_port $listen"
 cat <<'CONF'
-http_port 3128
 visible_hostname lea-proxy
 cache deny all
 cache_mem 0 MB
@@ -148,11 +178,24 @@ deny_info ERR_LEA_EGRESS egress_allow
 http_access deny !egress_allow
 CONF
 fi
+printf 'acl doh_names dstdomain -n'
+for d in $DOH_NAMES; do printf ' .%s' "$d"; done
+printf '\n'
 cat <<'CONF'
+acl doh_re dstdom_regex -n -i (^|\.)doh\.
+deny_info ERR_LEA_DOH doh_names
+deny_info ERR_LEA_DOH doh_re
+http_access deny doh_names
+http_access deny doh_re
 acl private_dst dst 0.0.0.0/8 10.0.0.0/8 100.64.0.0/10 127.0.0.0/8 169.254.0.0/16 172.16.0.0/12 192.168.0.0/16 224.0.0.0/4 240.0.0.0/4
 acl private_dst dst ::/128 ::1/128 ::ffff:0:0/96 fc00::/7 fe80::/10 ff00::/8
 deny_info ERR_LEA_PRIVATE private_dst
 http_access deny private_dst
+CONF
+printf 'acl ip_literal dstdom_regex -n -i %s\n' "$IP_LITERAL"
+cat <<'CONF'
+deny_info ERR_LEA_LITERAL ip_literal
+http_access deny ip_literal
 http_access allow CONNECT web_tls
 http_access allow !CONNECT web_http
 deny_info ERR_LEA_DENIED all

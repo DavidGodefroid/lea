@@ -21,6 +21,19 @@ const expanded = "\x01"
 // with their target. ok is false for what it cannot read: a heredoc, a process substitution, an
 // unterminated quote or substitution.
 func segments(cmd string) (segs [][]string, inners []string, ok bool) {
+	segs, _, inners, ok = split(cmd)
+	return segs, inners, ok
+}
+
+// redir is a redirection's target, in the simple command segs[seg] of split (or one after it,
+// when the redirection stands alone).
+type redir struct {
+	seg    int
+	target string
+}
+
+// split is segments, plus the redirections' targets.
+func split(cmd string) (segs [][]string, redirs []redir, inners []string, ok bool) {
 	var words []string
 	var cur strings.Builder
 	in := false
@@ -62,7 +75,7 @@ func segments(cmd string) (segs [][]string, inners []string, ok bool) {
 		case ch == '\'':
 			j := strings.IndexByte(cmd[i+1:], '\'')
 			if j < 0 {
-				return nil, nil, false
+				return nil, nil, nil, false
 			}
 			cur.WriteString(cmd[i+1 : i+1+j])
 			in = true
@@ -80,7 +93,7 @@ func segments(cmd string) (segs [][]string, inners []string, ok bool) {
 				case c == '$' || c == '`':
 					e, ok := expand(i)
 					if !ok {
-						return nil, nil, false
+						return nil, nil, nil, false
 					}
 					i = e
 				default:
@@ -88,12 +101,12 @@ func segments(cmd string) (segs [][]string, inners []string, ok bool) {
 				}
 			}
 			if i >= len(cmd) {
-				return nil, nil, false
+				return nil, nil, nil, false
 			}
 			in = true
 		case ch == '\\':
 			if i+1 >= len(cmd) {
-				return nil, nil, false
+				return nil, nil, nil, false
 			}
 			i++
 			if cmd[i] != '\n' { // \newline: a line continuation
@@ -105,7 +118,7 @@ func segments(cmd string) (segs [][]string, inners []string, ok bool) {
 		case ch == '$' || ch == '`':
 			e, ok := expand(i)
 			if !ok {
-				return nil, nil, false
+				return nil, nil, nil, false
 			}
 			i = e
 			in = true
@@ -125,7 +138,7 @@ func segments(cmd string) (segs [][]string, inners []string, ok bool) {
 				j++ // &>
 			}
 			if j < len(cmd) && (cmd[j] == '(' || (ch == '<' && cmd[j] == '<')) {
-				return nil, nil, false
+				return nil, nil, nil, false
 			}
 			for j < len(cmd) && (cmd[j] == '>' || cmd[j] == '&' || cmd[j] == '|') {
 				j++
@@ -136,13 +149,14 @@ func segments(cmd string) (segs [][]string, inners []string, ok bool) {
 			k := j
 			for k < len(cmd) && strings.IndexByte(" \t\n;&|()<>", cmd[k]) < 0 {
 				if strings.IndexByte("'\"$`\\", cmd[k]) >= 0 {
-					return nil, nil, false
+					return nil, nil, nil, false
 				}
 				k++
 			}
 			if k == j {
-				return nil, nil, false
+				return nil, nil, nil, false
 			}
+			redirs = append(redirs, redir{len(segs), cmd[j:k]})
 			i = k - 1
 		case ch == '#' && !in:
 			j := strings.IndexByte(cmd[i:], '\n')
@@ -152,7 +166,7 @@ func segments(cmd string) (segs [][]string, inners []string, ok bool) {
 				i += j - 1
 			}
 		case ch < 0x20 || ch == 0x7f:
-			return nil, nil, false
+			return nil, nil, nil, false
 		case strings.IndexByte("*?[]{}", ch) >= 0 || (ch == '~' && !in):
 			cur.WriteString(wild)
 			cur.WriteByte(ch)
@@ -163,7 +177,7 @@ func segments(cmd string) (segs [][]string, inners []string, ok bool) {
 		}
 	}
 	cut()
-	return segs, inners, true
+	return segs, redirs, inners, true
 }
 
 // expansion reads the shell expansion starting at cmd[i] ($ or `): end is its last byte (-1 for
@@ -332,10 +346,11 @@ func isGit(w string) bool { return w == "git" || strings.HasSuffix(w, "/git") }
 var readers = map[string]bool{"grep": true, "egrep": true, "fgrep": true, "rg": true, "ag": true, "echo": true, "printf": true}
 
 // printsOnly says whether w (a program and its words) runs none of its words: a reader, or gh
-// pr/issue (titles, bodies, comments). gh alias set can define a shell alias: not a reader.
+// pr/issue or glab mr/issue (titles, bodies, comments). gh alias set can define a shell alias: not a reader.
 func printsOnly(w []string) bool {
 	b := path.Base(w[0])
-	return readers[b] || (b == "gh" && len(w) > 1 && (w[1] == "pr" || w[1] == "issue"))
+	return readers[b] || (b == "gh" && len(w) > 1 && (w[1] == "pr" || w[1] == "issue")) ||
+		(b == "glab" && len(w) > 1 && (w[1] == "mr" || w[1] == "issue"))
 }
 
 // pushWord says whether x, a whole word, is a push or a git transport that writes remote refs

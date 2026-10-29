@@ -93,11 +93,16 @@ type boardItem struct {
 	// in flight. Both are the daemon's, never an agent's text.
 	WaitsOn  string `json:"waits_on,omitempty"`
 	Question int64  `json:"question,omitempty"`
+	// Stack is what lea stopped of the agent's nested containers while it was idle (#132), the
+	// daemon's text, until the agent works again.
+	Stack string `json:"stack,omitempty"`
 }
 
 type boardView struct {
 	Items  []boardItem `json:"items"`
 	Leases []leaseView `json:"leases"`
+	// Heavy is the heavy jobs that run or wait (#132), per container.
+	Heavy []heavyView `json:"heavy"`
 }
 
 // boardList is the board (spec A13; host only): every open task with its agent, then the last
@@ -135,6 +140,10 @@ func (d *Daemon) boardList(raw json.RawMessage) (boardView, error) {
 	for k, v := range d.asks {
 		asks[k] = v
 	}
+	parked := make(map[string]string, len(d.parked))
+	for k, v := range d.parked {
+		parked[k] = v
+	}
 	d.mu.Unlock()
 	out := boardView{Items: []boardItem{}, Leases: []leaseView{}}
 	for i, t := range ts {
@@ -152,6 +161,7 @@ func (d *Daemon) boardList(raw json.RawMessage) (boardView, error) {
 			if q, ok := asks[t.Agent]; ok {
 				it.WaitsOn, it.Question = q.target, q.id
 			}
+			it.Stack = parked[t.Agent]
 		}
 		out.Items = append(out.Items, it)
 	}
@@ -165,6 +175,7 @@ func (d *Daemon) boardList(raw json.RawMessage) (boardView, error) {
 		}
 		out.Leases = append(out.Leases, leaseView{l.ID, l.Container, shortName(l.Agent), l.Glob, l.Expires})
 	}
+	out.Heavy = d.heavyBoard(p.Container)
 	return out, nil
 }
 
@@ -200,6 +211,12 @@ func (d *Daemon) boardRead(o Origin) (boardView, error) {
 	}
 	for i := range b.Leases {
 		mark(&b.Leases[i].Glob)
+	}
+	// A heavy job's label is its agent's text.
+	for i := range b.Heavy {
+		for j := range b.Heavy[i].Running {
+			mark(&b.Heavy[i].Running[j])
+		}
 	}
 	return b, nil
 }

@@ -224,6 +224,15 @@ func (m Model) top(w int) string {
 	if m.sound == "off" {
 		count = "muted " + c.dot + " " + count
 	}
+	// LockHTTP: the requests waiting for the user in the lockhttp console, or its absence.
+	if h := m.lockhttp; h != nil {
+		switch {
+		case h.Pending > 0:
+			count = fmt.Sprintf("lockhttp %d to approve ", h.Pending) + c.dot + " " + count
+		case h.Console == "down":
+			count = "lockhttp console down " + c.dot + " " + count
+		}
+	}
 	// c.tl+c.h+" " (3) + title + " " + fill + " " + count + " "+c.h+c.tr (3)
 	fill := w - 8 - tw - lipgloss.Width(count)
 	if fill < 1 {

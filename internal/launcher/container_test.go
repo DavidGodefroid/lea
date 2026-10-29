@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -249,7 +250,11 @@ func TestRunArgsContents(t *testing.T) {
 		if a == "--network" {
 			n++
 		}
-		for _, bad := range []string{"--net=host", "--network=host", "--pid", "--ipc", "--privileged", "docker.sock", "--userns", "--uts",
+		// --pid and --pid=host share the host's pids; --pids-limit only caps lea's own.
+		if a == "--pid" || strings.HasPrefix(a, "--pid=") {
+			t.Errorf("argument %q", a)
+		}
+		for _, bad := range []string{"--net=host", "--network=host", "--ipc", "--privileged", "docker.sock", "--userns", "--uts",
 			"src=" + st + ",", "dst=/lea/state,", "src=" + st + "/clipboard,", "dst=" + w.home + "/.kube/config", "apparmor=lea"} {
 			if strings.Contains(a, bad) {
 				t.Errorf("%q in %q", bad, a)
@@ -511,7 +516,7 @@ func TestProxyFollowsTheGitSSHEndpoints(t *testing.T) {
 	w := newWorld(t, repoRoot(t))
 	writeUserConf(t, w, "LEA_GIT_SSH='github.com:22 gitlab.com:22'\n")
 	w.env["FAKE_DOCKER_OUT_INSPECT__F"] = "true"
-	w.env["FAKE_DOCKER_OUT_INSPECT___FORMAT"] = "github.com:22 gitlab.com:22"
+	w.env["FAKE_DOCKER_OUT_INSPECT___FORMAT"] = "github.com:22 gitlab.com:22@" + w.launcher().proxyRules()
 	if err := w.launcher().ensureProxy(w.proj); err != nil {
 		t.Fatal(err)
 	}
@@ -666,7 +671,7 @@ func TestProxyFollowsTheEgressAllowlist(t *testing.T) {
 	w := newWorld(t, repoRoot(t))
 	writeUserConf(t, w, "LEA_EGRESS_ALLOW=github.com,proxy.golang.org\n")
 	w.env["FAKE_DOCKER_OUT_INSPECT__F"] = "true"
-	w.env["FAKE_DOCKER_OUT_INSPECT___FORMAT"] = "|github.com,proxy.golang.org"
+	w.env["FAKE_DOCKER_OUT_INSPECT___FORMAT"] = "|github.com,proxy.golang.org@" + w.launcher().proxyRules()
 	if err := w.launcher().ensureProxy(w.proj); err != nil {
 		t.Fatal(err)
 	}
@@ -679,6 +684,195 @@ func TestProxyFollowsTheEgressAllowlist(t *testing.T) {
 	}
 	if !w.hasCall("[--label] [lea.egress-allow=github.com,proxy.golang.org]") || !w.hasCall("[LEA_EGRESS_ALLOW=github.com,proxy.golang.org]") {
 		t.Fatalf("the proxy was not restarted for the new allowlist:\n%s", strings.Join(w.calls(), "\n"))
+	}
+}
+
+// argAfter is the value that follows flag in args, and whether flag is there.
+func argAfter(args []string, flag string) (string, bool) {
+	for i, a := range args {
+		if a == flag && i+1 < len(args) {
+			return args[i+1], true
+		}
+	}
+	return "", false
+}
+
+// The lea container has memory, swap and pids limits by default (half of Docker's memory, no
+// swap beyond it), so that a runaway nested stack is OOM-killed inside lea instead of freezing
+// the host (#97); each one is configurable, and 0 turns it off.
+func TestRunArgsResourceLimits(t *testing.T) {
+	limits := func(w *world) (mem, swap, pids string, err error) {
+		args, err := w.launcher().runArgs(w.proj, "172.18.0.5")
+		mem, _ = argAfter(args, "--memory")
+		swap, _ = argAfter(args, "--memory-swap")
+		pids, _ = argAfter(args, "--pids-limit")
+		if len(args) > 0 && args[len(args)-1] != "lea:dev" {
+			t.Errorf("the image is not last: %q", args[len(args)-1])
+		}
+		return
+	}
+	w := newWorld(t, repoRoot(t))
+	w.env["FAKE_DOCKER_OUT_SYSTEM_INFO"] = "34359738368" // 32 GiB
+	if m, s, p, err := limits(w); err != nil || m != "16384m" || s != "16384m" || p != "16384" {
+		t.Errorf("defaults: --memory %q --memory-swap %q --pids-limit %q, %v", m, s, p, err)
+	}
+	if b, _ := os.ReadFile(w.log); !strings.Contains(string(b), "docker [system] [info] [--format] [{{.MemTotal}}]") {
+		t.Error("the host memory is not asked from Docker")
+	}
+	for _, c := range []struct{ mem, swap, pids, wm, ws, wp string }{
+		{"25%", "", "", "8192m", "8192m", "16384"},
+		{"8g", "12g", "4096", "8g", "12g", "4096"},
+		{"8g", "-1", "0", "8g", "-1", ""},
+		{"0", "4g", "", "", "", "16384"},
+	} {
+		w := newWorld(t, repoRoot(t))
+		w.env["FAKE_DOCKER_OUT_SYSTEM_INFO"] = "34359738368"
+		writeUserConf(t, w, "LEA_MEMORY="+c.mem+"\nLEA_MEMORY_SWAP="+c.swap+"\nLEA_PIDS_LIMIT="+c.pids+"\n")
+		if m, s, p, err := limits(w); err != nil || m != c.wm || s != c.ws || p != c.wp {
+			t.Errorf("%+v: --memory %q --memory-swap %q --pids-limit %q, %v", c, m, s, p, err)
+		}
+	}
+	// Podman has no {{.MemTotal}} (rc 125, "can't evaluate field MemTotal"): {{.Host.MemTotal}}.
+	w = newWorld(t, repoRoot(t))
+	delete(w.env, "FAKE_DOCKER_OUT_SYSTEM_INFO")
+	w.env["FAKE_DOCKER_RC_SYSTEM_INFO_AT____MEMTOTAL__"] = "125"
+	w.env["FAKE_DOCKER_OUT_SYSTEM_INFO_AT____HOST_MEMTOTAL__"] = "17179869184" // 16 GiB
+	noMeminfo(t)
+	if m, s, _, err := limits(w); err != nil || m != "8192m" || s != "8192m" {
+		t.Errorf("podman: --memory %q --memory-swap %q, %v, stderr %q", m, s, err, w.errb.String())
+	}
+	// Neither answers: the host's /proc/meminfo (Linux, where the engine runs on the host).
+	w = newWorld(t, repoRoot(t))
+	w.env["FAKE_DOCKER_RC_SYSTEM_INFO"] = "125"
+	mi := filepath.Join(t.TempDir(), "meminfo")
+	if err := os.WriteFile(mi, []byte("MemTotal:       65536000 kB\nMemFree:  1 kB\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	old := meminfoPath
+	meminfoPath = mi
+	if m, _, _, err := limits(w); err != nil || m != "32000m" {
+		t.Errorf("meminfo: --memory %q, %v, stderr %q", m, err, w.errb.String())
+	}
+	meminfoPath = old
+	// Nothing tells the memory: no memory limit, and a warning naming LEA_MEMORY.
+	w = newWorld(t, repoRoot(t))
+	w.env["FAKE_DOCKER_RC_SYSTEM_INFO"] = "1"
+	noMeminfo(t)
+	if m, _, p, err := limits(w); err != nil || m != "" || p != "16384" ||
+		!strings.Contains(w.errb.String(), "LEA_MEMORY") {
+		t.Errorf("unknown memory: --memory %q --pids-limit %q, %v, stderr %q", m, p, err, w.errb.String())
+	}
+}
+
+// noMeminfo hides the host's /proc/meminfo from limitArgs for the test.
+func noMeminfo(t *testing.T) {
+	old := meminfoPath
+	meminfoPath = filepath.Join(t.TempDir(), "no-meminfo")
+	t.Cleanup(func() { meminfoPath = old })
+}
+
+func TestResourceLimitsAreValidated(t *testing.T) {
+	for _, line := range []string{"LEA_MEMORY=0%", "LEA_MEMORY=101%", "LEA_MEMORY=lots", "LEA_MEMORY=-1", "LEA_MEMORY=08g",
+		"LEA_MEMORY_SWAP=2t", "LEA_MEMORY_SWAP=50%", "LEA_PIDS_LIMIT=-5", "LEA_PIDS_LIMIT=12k", "LEA_PIDS_LIMIT=010"} {
+		w := newWorld(t, repoRoot(t))
+		writeUserConf(t, w, line+"\n")
+		key, _, _ := strings.Cut(line, "=")
+		if _, err := LoadConfig(w.getenv, w.root, w.proj); err == nil || !strings.Contains(err.Error(), key+" must be") {
+			t.Errorf("%s: err = %v", line, err)
+		}
+	}
+}
+
+// A running proxy started from other rules (lea.rules, a digest of proxy/: an older lea's
+// squid.conf, an open egress by default) is replaced; one started from the same rules is kept.
+func TestProxyFollowsItsRules(t *testing.T) {
+	w := newWorld(t, repoRoot(t))
+	rules := w.launcher().proxyRules()
+	if len(rules) != 12 {
+		t.Fatalf("proxyRules() = %q, want 12 hex digits", rules)
+	}
+	w.env["FAKE_DOCKER_OUT_INSPECT__F"] = "true"
+	w.env["FAKE_DOCKER_OUT_INSPECT___FORMAT"] = "@" + rules
+	if err := w.launcher().ensureProxy(w.proj); err != nil {
+		t.Fatal(err)
+	}
+	if w.hasCall("docker [run]") {
+		t.Fatalf("a proxy started from the same rules was replaced:\n%s", strings.Join(w.calls(), "\n"))
+	}
+	w.env["FAKE_DOCKER_OUT_INSPECT___FORMAT"] = ""
+	if err := w.launcher().ensureProxy(w.proj); err != nil {
+		t.Fatal(err)
+	}
+	if !w.hasCall("[--label] [lea.rules=" + rules + "]") {
+		t.Fatalf("a proxy started from older rules was kept:\n%s", strings.Join(w.calls(), "\n"))
+	}
+}
+
+// The digest covers the proxy's rule files: a change to one changes it; no proxy/ directory, none.
+func TestProxyRulesDigest(t *testing.T) {
+	root := t.TempDir()
+	l := &Launcher{Root: root}
+	if got := l.proxyRules(); got != "" {
+		t.Fatalf("no proxy/: proxyRules() = %q, want empty", got)
+	}
+	if err := os.MkdirAll(filepath.Join(root, "proxy", "errors"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	write := func(p, s string) {
+		if err := os.WriteFile(filepath.Join(root, "proxy", p), []byte(s), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write("render-squid-conf.sh", "a")
+	write("errors/ERR_LEA_DOH", "b")
+	first := l.proxyRules()
+	write("errors/ERR_LEA_DOH", "c")
+	if second := l.proxyRules(); second == first || second == "" {
+		t.Fatalf("an error page change left the digest at %q", second)
+	}
+	write("render-squid-conf.sh", "a2")
+	if third := l.proxyRules(); third == first {
+		t.Fatal("a render-squid-conf.sh change left the digest unchanged")
+	}
+}
+
+// A running proxy started from another image than LEA_PROXY_IMAGE is now (a rebuilt or updated
+// image: its rules are copied in) is replaced; when the image cannot be inspected, its labels
+// decide alone.
+func TestProxyFollowsItsImage(t *testing.T) {
+	w := newWorld(t, repoRoot(t))
+	stamp := "@" + w.launcher().proxyRules()
+	w.env["FAKE_DOCKER_OUT_INSPECT__F"] = "true"
+	w.env["FAKE_DOCKER_OUT_IMAGE_INSPECT"] = "sha256:new"
+	w.env["FAKE_DOCKER_OUT_INSPECT___FORMAT"] = stamp + "!sha256:new"
+	if err := w.launcher().ensureProxy(w.proj); err != nil {
+		t.Fatal(err)
+	}
+	if w.hasCall("docker [run]") {
+		t.Fatalf("a proxy on the current image was replaced:\n%s", strings.Join(w.calls(), "\n"))
+	}
+	// Podman writes the container's image ID without the sha256: prefix.
+	w.env["FAKE_DOCKER_OUT_INSPECT___FORMAT"] = stamp + "!new"
+	if err := w.launcher().ensureProxy(w.proj); err != nil {
+		t.Fatal(err)
+	}
+	if w.hasCall("docker [run]") {
+		t.Fatalf("a proxy on the current image, written without sha256:, was replaced:\n%s", strings.Join(w.calls(), "\n"))
+	}
+	w.env["FAKE_DOCKER_RC_IMAGE_INSPECT"] = "1"
+	w.env["FAKE_DOCKER_OUT_INSPECT___FORMAT"] = stamp + "!sha256:old"
+	if err := w.launcher().ensureProxy(w.proj); err != nil {
+		t.Fatal(err)
+	}
+	if w.hasCall("docker [run]") {
+		t.Fatalf("a proxy was replaced although its image could not be compared:\n%s", strings.Join(w.calls(), "\n"))
+	}
+	w.env["FAKE_DOCKER_RC_IMAGE_INSPECT"] = "0"
+	if err := w.launcher().ensureProxy(w.proj); err != nil {
+		t.Fatal(err)
+	}
+	if !w.hasCall("docker [run]") {
+		t.Fatalf("a proxy on an older image was kept:\n%s", strings.Join(w.calls(), "\n"))
 	}
 }
 
@@ -725,5 +919,222 @@ func TestRunArgsLocksqlDirReadOnly(t *testing.T) {
 	}
 	if _, err := os.Lstat(d); !os.IsNotExist(err) {
 		t.Fatalf("locksql off made %s: %v", d, err)
+	}
+}
+
+// The lea container's CPUs are limited too (#132): 75% of the engine's CPUs by default, at least
+// 2, a number of CPUs or a share; 0 turns it off.
+func TestRunArgsCPULimit(t *testing.T) {
+	cpus := func(w *world) (string, bool) {
+		args, err := w.launcher().runArgs(w.proj, "172.18.0.5")
+		if err != nil {
+			t.Fatal(err)
+		}
+		return argAfter(args, "--cpus")
+	}
+	for _, c := range []struct{ conf, ncpu, want string }{
+		{"", "22", "16.5"},
+		{"", "16", "12"},
+		{"", "2", "2"},
+		{"", "1", "1"},
+		{"LEA_CPUS=50%\n", "22", "11"},
+		{"LEA_CPUS=10%\n", "8", "2"},
+		{"LEA_CPUS=6\n", "22", "6"},
+		{"LEA_CPUS=1.5\n", "22", "1.5"},
+		{"LEA_CPUS=0\n", "22", ""},
+	} {
+		w := newWorld(t, repoRoot(t))
+		w.env["FAKE_DOCKER_OUT_SYSTEM_INFO_AT____NCPU__"] = c.ncpu
+		writeUserConf(t, w, c.conf)
+		if got, _ := cpus(w); got != c.want {
+			t.Errorf("%q on %s CPUs: --cpus %q, want %q", c.conf, c.ncpu, got, c.want)
+		}
+	}
+	// Podman has no {{.NCPU}}: {{.Host.CPUs}}.
+	w := newWorld(t, repoRoot(t))
+	w.env["FAKE_DOCKER_RC_SYSTEM_INFO_AT____NCPU__"] = "125"
+	w.env["FAKE_DOCKER_OUT_SYSTEM_INFO_AT____HOST_CPUS__"] = "8"
+	if got, _ := cpus(w); got != "6" {
+		t.Errorf("podman: --cpus %q, want 6", got)
+	}
+	// Neither answers: the CPUs this process sees.
+	w = newWorld(t, repoRoot(t))
+	w.env["FAKE_DOCKER_RC_SYSTEM_INFO"] = "125"
+	old := hostCPUs
+	hostCPUs = func() int { return 4 }
+	defer func() { hostCPUs = old }()
+	if got, _ := cpus(w); got != "3" {
+		t.Errorf("host CPUs: --cpus %q, want 3", got)
+	}
+}
+
+func TestCPULimitIsValidated(t *testing.T) {
+	for _, line := range []string{"LEA_CPUS=0%", "LEA_CPUS=101%", "LEA_CPUS=lots", "LEA_CPUS=-1", "LEA_CPUS=06", "LEA_CPUS=1.555", "LEA_CPUS=1."} {
+		w := newWorld(t, repoRoot(t))
+		writeUserConf(t, w, line+"\n")
+		if _, err := LoadConfig(w.getenv, w.root, w.proj); err == nil || !strings.Contains(err.Error(), "LEA_CPUS must be") {
+			t.Errorf("%s: err = %v", line, err)
+		}
+	}
+	for _, line := range []string{"LEA_CPUS=0", "LEA_CPUS=0.5", "LEA_CPUS=12", "LEA_CPUS=100%", "LEA_CPUS=2.25"} {
+		w := newWorld(t, repoRoot(t))
+		writeUserConf(t, w, line+"\n")
+		if _, err := LoadConfig(w.getenv, w.root, w.proj); err != nil {
+			t.Errorf("%s: %v", line, err)
+		}
+	}
+}
+
+// A container started by an older lea, or with other limits, gets the configured ones at the
+// next lea without a restart (#132: a container started before #122 ran without any limit). The
+// CPUs only throttle: always applied. Memory and pids are lowered only with headroom (usage under
+// 80% of the new limit), never into an OOM kill or a fork failure of the agents' work. A refusal
+// of the engine is remembered for that container: no retry, no warning at every lea.
+func TestRunningContainerGetsTheConfiguredLimits(t *testing.T) {
+	// inspect: Id NanoCpus Memory MemorySwap PidsLimit; usage: memory.current and pids.current.
+	limitsWorld := func(conf, inspect, usage string) *world {
+		w := newWorld(t, repoRoot(t))
+		running(w)
+		w.env["FAKE_DOCKER_OUT_SYSTEM_INFO_AT____NCPU__"] = "16"
+		w.env["FAKE_DOCKER_OUT_SYSTEM_INFO_AT____MEMTOTAL__"] = "34359738368" // 32 GiB
+		w.env["FAKE_DOCKER_OUT_INSPECT___FORMAT_AT_"+fakeKey(w.name())] = inspect
+		w.env["FAKE_DOCKER_OUT_EXEC_"+fakeKey(w.name())+"_AT__SYS_FS_CGROUP_PIDS_CURRENT"] = usage
+		writeUserConf(t, w, conf)
+		return w
+	}
+	updates := func(w *world) []string {
+		var u []string
+		for _, c := range w.calls() {
+			if strings.HasPrefix(c, "docker [update]") {
+				u = append(u, c)
+			}
+		}
+		return u
+	}
+	up := func(w *world) {
+		t.Helper()
+		l := w.launcher()
+		u, err := l.up(w.proj)
+		if err != nil {
+			t.Fatal(err)
+		}
+		l.unlock(u.sid)
+	}
+	const gib = "1073741824"
+	// No limits at all (NanoCpus=0, Memory=0), 2 GiB and 300 processes in use: every limit.
+	w := limitsWorld("", "c1 0 0 0 0", "2147483648\n300")
+	up(w)
+	want := "docker [update] [--cpus] [12] [--memory] [16384m] [--memory-swap] [16384m] [--pids-limit] [16384] [" + w.name() + "]"
+	if u := updates(w); len(u) != 1 || u[0] != want {
+		t.Fatalf("updates %q, want %q", u, want)
+	}
+	if !w.hasCall("docker [exec] [" + w.name() + "] [cat] [/sys/fs/cgroup/memory.current] [/sys/fs/cgroup/pids.current]") {
+		t.Fatalf("the usage is not read:\n%s", strings.Join(w.calls(), "\n"))
+	}
+	if !strings.Contains(w.errb.String(), "applied") {
+		t.Errorf("the update is not reported: %q", w.errb.String())
+	}
+	// 20 GiB in use (the incident): the memory limit (16 GiB) waits for a restart, the CPUs do
+	// not; the warning says why and how.
+	w = limitsWorld("", "c1 0 0 0 16384", "21474836480\n300")
+	up(w)
+	if u := updates(w); len(u) != 1 || u[0] != "docker [update] [--cpus] [12] ["+w.name()+"]" {
+		t.Fatalf("updates %q", u)
+	}
+	if e := w.errb.String(); !strings.Contains(e, "--memory 16384m") || !strings.Contains(e, "lea stop") || !strings.Contains(e, "20480 MiB") {
+		t.Errorf("warning %q", e)
+	}
+	// Usage just under 80% of the new limits: applied; at 80% of the pids limit: not.
+	w = limitsWorld("", "c1 12000000000 0 0 0", "13421772800\n13107")
+	up(w)
+	if u := updates(w); len(u) != 1 || u[0] != "docker [update] [--memory] [16384m] [--memory-swap] [16384m] [--pids-limit] [16384] ["+w.name()+"]" {
+		t.Fatalf("updates %q", u)
+	}
+	w = limitsWorld("", "c1 12000000000 17179869184 17179869184 0", "1\n13108")
+	up(w)
+	if u := updates(w); len(u) != 0 {
+		t.Fatalf("updates %q, want none", u)
+	}
+	if e := w.errb.String(); !strings.Contains(e, "--pids-limit 16384") || !strings.Contains(e, "13108 processes") {
+		t.Errorf("warning %q", e)
+	}
+	// Usage unknown (no cgroup files): memory and pids are not lowered, the CPUs are.
+	w = limitsWorld("", "c1 0 0 0 0", "")
+	w.env["FAKE_DOCKER_RC_EXEC_"+fakeKey(w.name())+"_AT__SYS_FS_CGROUP_PIDS_CURRENT"] = "1"
+	up(w)
+	if u := updates(w); len(u) != 1 || u[0] != "docker [update] [--cpus] [12] ["+w.name()+"]" {
+		t.Fatalf("updates %q", u)
+	}
+	// Raising a limit needs no headroom: 15 GiB in use, 8 GiB limit, 16 GiB wanted.
+	w = limitsWorld("", "c1 12000000000 8589934592 8589934592 16384", "16106127360\n10")
+	up(w)
+	if u := updates(w); len(u) != 1 || u[0] != "docker [update] [--memory] [16384m] [--memory-swap] [16384m] ["+w.name()+"]" {
+		t.Fatalf("updates %q", u)
+	}
+	// Docker answers <nil> for a container without a pids limit.
+	w = limitsWorld("", "c1 12000000000 17179869184 17179869184 <nil>", gib+"\n10")
+	up(w)
+	if u := updates(w); len(u) != 1 || u[0] != "docker [update] [--pids-limit] [16384] ["+w.name()+"]" {
+		t.Fatalf("updates %q", u)
+	}
+	// The limits already hold: nothing to do, the usage is not even read.
+	w = limitsWorld("", "c1 12000000000 17179869184 17179869184 16384", gib+"\n10")
+	up(w)
+	if u := updates(w); len(u) != 0 || w.hasCall("docker [exec] ["+w.name()+"] [cat]") {
+		t.Fatalf("updates %q", u)
+	}
+	// A limit turned off (0) is not taken away from a running container: a restart does.
+	w = limitsWorld("LEA_CPUS=0\nLEA_MEMORY=0\nLEA_PIDS_LIMIT=0\n", "c1 12000000000 17179869184 17179869184 16384", gib+"\n10")
+	up(w)
+	if u := updates(w); len(u) != 0 {
+		t.Fatalf("updates %q, want none", u)
+	}
+	// An engine that cannot update (rootless Podman without the cpu controller): a warning that
+	// says how to apply them, and the session goes on. The next lea neither retries nor warns
+	// again for that container; another container (a new Id) is tried again.
+	w = limitsWorld("", "c1 0 0 0 2048", gib+"\n10")
+	w.env["FAKE_DOCKER_RC_UPDATE___CPUS"] = "125"
+	up(w)
+	if e := w.errb.String(); !strings.Contains(e, "lea stop") || !strings.Contains(e, "--cpus 12") {
+		t.Errorf("warning %q", e)
+	}
+	w.errb.Reset()
+	os.Remove(w.log)
+	up(w)
+	if u := updates(w); len(u) != 0 || strings.Contains(w.errb.String(), "limits") {
+		t.Fatalf("retried: updates %q, stderr %q", u, w.errb.String())
+	}
+	w.env["FAKE_DOCKER_OUT_INSPECT___FORMAT_AT_"+fakeKey(w.name())] = "c2 0 0 0 2048"
+	up(w)
+	if u := updates(w); len(u) != 1 {
+		t.Fatalf("a new container is not tried: updates %q", u)
+	}
+	// An inspect that does not answer five fields (an engine without these fields) is left alone.
+	w = limitsWorld("", "", gib+"\n10")
+	up(w)
+	if u := updates(w); len(u) != 0 {
+		t.Fatalf("updates %q, want none", u)
+	}
+}
+
+// Each agent's CPU window (#132) reaches the container: lea-agent run reads LEA_AGENT_CPUS.
+func TestRunArgsAgentCPUs(t *testing.T) {
+	for conf, want := range map[string]string{"": "4", "LEA_AGENT_CPUS=8\n": "8", "LEA_AGENT_CPUS=0\n": "0"} {
+		w := newWorld(t, repoRoot(t))
+		writeUserConf(t, w, conf)
+		args, err := w.launcher().runArgs(w.proj, "172.18.0.5")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !slices.Contains(args, "LEA_AGENT_CPUS="+want) {
+			t.Errorf("%q: no LEA_AGENT_CPUS=%s in %q", conf, want, args)
+		}
+	}
+	for _, line := range []string{"LEA_AGENT_CPUS=-1", "LEA_AGENT_CPUS=04", "LEA_AGENT_CPUS=1025", "LEA_AGENT_CPUS=two"} {
+		w := newWorld(t, repoRoot(t))
+		writeUserConf(t, w, line+"\n")
+		if _, err := LoadConfig(w.getenv, w.root, w.proj); err == nil || !strings.Contains(err.Error(), "LEA_AGENT_CPUS must be") {
+			t.Errorf("%s: err = %v", line, err)
+		}
 	}
 }

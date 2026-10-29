@@ -35,6 +35,9 @@ const usage = `usage: lea <command>
   approvals                  list pending approvals
   approve <id> allow|deny|always   answer an approval
   board [--md] [--container NAME]   the tasks of every agent, as markdown
+  heavy -- <command> [args...]
+                             run a test suite, an analysis, a build in one of the container's
+                             heavy slots, on its CPUs, with capped workers (inside lea)
   requests                   list the spawn requests that wait for you
   request accept <id> | request decline <id> [reason]
                              answer a spawn request
@@ -56,9 +59,12 @@ const usage = `usage: lea <command>
   grant add <action> --container NAME [--repo R] [--github OWNER/NAME] [--branch GLOB] [--agent NAME] [--expires 8h]
                              let every agent of a lea (or one agent's subtree) take an action
                              without asking: merge, stop-finished, close-issue,
-                             delete-own-branch, commit-identity (hard denies always hold)
+                             delete-own-branch, commit-identity, pr-create (hard denies always hold)
   grant ls [--all] | grant revoke <id>
                              list or revoke grants
+  delivery --container NAME --projects DIR on|off|status
+                             standing grants so every agent of a lea pushes its branch, opens
+                             and merges its PR on each GitHub repo of DIR (used by the launcher)
   sound [on|off]             show or switch lea's sounds (until the daemon restarts)
   hook claude <event>        Claude Code hook (inside lea)
   mcp                        MCP server for agents (inside lea)
@@ -84,6 +90,8 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		return runHost(args, stdout, stderr)
 	case "grant":
 		return runGrant(args, stdout, stderr)
+	case "heavy":
+		return runHeavy(args[1:], stdin, stdout, stderr)
 	case "deck":
 		return runDeck(args[1:], stderr)
 	case "deck-open":
@@ -94,6 +102,8 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		return runNew(args[1:], stdout, stderr)
 	case "lock":
 		return runLock(args[1:], stdout, stderr)
+	case "delivery":
+		return runDelivery(args[1:], stdout, stderr)
 	case "hook":
 		if len(args) == 4 && args[1] == "codex" && args[2] == "notify" {
 			hook.CodexNotify(context.Background(), args[3], os.Getenv)

@@ -1,0 +1,19 @@
+# Host minimums lea doctor checks (issue #108). Every lea container shares the host kernel, so the
+# host's patch level is part of the containment.
+#
+# No Docker Engine minimum: Moby 29.4.2's seccomp fixes (AF_ALG and socketcall, CVE-2026-31431) are
+# in Docker's default profile, which lea does not use; lea runs image/seccomp.json, which carries
+# the same hardening. lea doctor shows the Docker Engine, containerd and runc versions.
+#
+# podman MIN: Podman 5.8.4 fixes CVE-2026-57231 (GHSA-4hq8-gpf5-8p68: an image's key-only ENV
+# passes the host's variable of that name into the container). lea is built for Docker Engine:
+# on a Podman host, below this minimum is a warning (lea doctor and the launcher), never a
+# refusal; Podman's bridge has no gateway_mode_ipv4=isolated.
+podman 5.8.4
+#
+# kernel ID VERSION_ID MIN: the oldest kernel release (uname -r, without its flavour suffix) of
+# that distribution (/etc/os-release) that carries the fixes for CVE-2026-74753 (perf
+# use-after-free), CVE-2026-80521 (af_unix SCM_RIGHTS race) and CVE-2026-80841. Add a line only
+# once the distribution's changelog shows the three fixes, for example on Ubuntu:
+#   apt changelog linux-image-$(uname -r) | grep -nE 'CVE-2026-(74753|80521|80841)'
+# A distribution without a line gets a warning in lea doctor, never a failure.

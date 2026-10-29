@@ -1,0 +1,1 @@
+<html><body><p>lea-proxy: %H refused: it is a public DNS-over-HTTPS resolver, which would let an agent resolve names the proxy does not see. lea refuses these whatever LEA_EGRESS_ALLOW says.</p></body></html>

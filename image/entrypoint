@@ -27,6 +27,11 @@ if [ "${LEA_LOCKFILE:-0}" = 1 ]; then lock_host lockfile "${LEA_LOCKFILE_UID:-}"
 grep -q "^$user:" /etc/subuid || echo "$user:200000:65536" >>/etc/subuid
 grep -q "^$user:" /etc/subgid || echo "$user:200000:65536" >>/etc/subgid
 
+# Runtime state of a previous boot: /run is the container's writable layer, so a docker start
+# after a host crash or reboot finds it again. Podman refuses to run on its stale boot ID (#97),
+# a stale socket would pass for the new service's, and agent and shell pid files name dead
+# processes. The bus directory (/run/lea/bus) is a bind mount and stays.
+rm -rf "/run/user/$LEA_UID" /run/lea/agents /run/lea/shells /run/lea/ready
 install -d -m 0700 -o "$LEA_UID" -g "$LEA_GID" "/run/user/$LEA_UID"
 install -d -m 0755 -o "$LEA_UID" -g "$LEA_GID" /run/lea
 chown "$LEA_UID:$LEA_GID" /lea/podman
@@ -38,7 +43,32 @@ for d in "$HOME/.config" "$HOME/.kube"; do
   if [ -d "$d" ]; then chown "$LEA_UID:$LEA_GID" "$d"; fi
 done
 
-sed -e "s/@LEA_PROXY_IP@/$LEA_PROXY_IP/g" /usr/local/share/lea/containers.conf.tmpl >/etc/containers/containers.conf
+case $LEA_PROXY_IP in ''|*[!0123456789.]*) echo "lea: invalid LEA_PROXY_IP" >&2; exit 1 ;; esac
+nested_proxy=http://$LEA_PROXY_IP:3128
+if [ "${LEA_LOCKHTTP:-0}" = 1 ]; then
+  # LockHTTP: the nested Podman's containers go through the gate as "nested".
+  case ${LEA_NESTED_PROXY_TOKEN:-} in ''|*[!0123456789abcdef]*)
+    echo "lea: LEA_LOCKHTTP=1 needs LEA_NESTED_PROXY_TOKEN (lea's launcher sets it)" >&2; exit 1 ;;
+  esac
+  nested_proxy=http://nested:$LEA_NESTED_PROXY_TOKEN@$LEA_PROXY_IP:3130
+fi
+sed -e "s|@LEA_NESTED_PROXY@|$nested_proxy|g" /usr/local/share/lea/containers.conf.tmpl >/etc/containers/containers.conf
+if [ "${LEA_LOCKHTTP_MITM:-0}" = 1 ]; then
+  # The LockHTTP gate decrypts HTTPS with lea's local CA: its certificate (never its key) joins
+  # the system trust store, which curl, git, Go, OpenSSL and Podman read; the launcher points
+  # Node, Python requests and pip at it too.
+  [ -s /etc/lea/lockhttp-ca.pem ] || { echo "lea: LEA_LOCKHTTP_MITM=1 needs /etc/lea/lockhttp-ca.pem (lea's launcher mounts it)" >&2; exit 1; }
+  install -m 0644 /etc/lea/lockhttp-ca.pem /etc/pki/ca-trust/source/anchors/lea-lockhttp.pem
+  update-ca-trust extract
+fi
+if [ "${LEA_LOCKHTTP:-0}" = 1 ]; then
+  # LockHTTP decides every request the agents make; claude.ai's connectors would act from
+  # Anthropic's side, out of its sight: off (decision D10; WebSearch and WebFetch stay).
+  m=/etc/claude-code/managed-settings.json
+  jq '.env.ENABLE_CLAUDEAI_MCP_SERVERS = "false"' "$m" >"$m.new"
+  chmod 0644 "$m.new"
+  mv "$m.new" "$m"
+fi
 # Each git SSH endpoint goes to its forwarder on the proxy (port 2222 + its index), by IP so that
 # nested containers (GIT_SSH_COMMAND -F /run/lea/ssh_config) reach it too.
 {
