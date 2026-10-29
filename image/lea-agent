@@ -1,8 +1,8 @@
 #!/bin/sh
 # Deck agents inside lea. `run` is what abduco starts for an agent: it records the agent's pid,
 # then becomes its CLI (Claude Code, or Codex with --cli codex) through lea-session (exec keeps the pid). `ls` prints the live agents;
-# `stop` ends one; `pause` freezes one with its children (SIGSTOP), `resume` lets them continue
-# (SIGCONT). Each agent gets a CPU window (LEA_AGENT_CPUS, #132) and its own Podman service: what it starts in the nested Podman carries
+# `stop` ends one; `pause` freezes one with its children and the containers it started (SIGSTOP),
+# `resume` lets them continue (SIGCONT). Each agent gets a CPU window (LEA_AGENT_CPUS, #132) and its own Podman service: what it starts in the nested Podman carries
 # the annotation lea.agent=NAME, `teardown` removes it when the agent ends, `park` stops it while
 # the agent is idle (#132), and `sweep` removes the stacks of agents that are gone (#97). The deck's shells (s) work the same way: `shell` is what abduco starts for one (the
 # user's login shell, never an agent: no LEA_AGENT), `shells` prints the live ones and
@@ -360,10 +360,25 @@ case ${1:-} in
     fi
     ;;
   pause | resume)
+    # The agent's tree, then the running containers it started in the nested Podman (#132): a
+    # paused agent's database or browser holds no CPU either. Podman's own pause needs the cgroup
+    # freezer, which the nested Podman has not, so their processes get the signal too.
     name=${2:-}
     valid "$name" || { echo "lea-agent: invalid agent name '$name'" >&2; exit 2; }
     p=$(alive "$name") || { echo "lea-agent: $name is not running" >&2; exit 1; }
-    if [ "$1" = pause ]; then freeze "$p" STOP; else freeze "$p" CONT; fi
+    sig=CONT
+    [ "$1" = pause ] && sig=STOP
+    freeze "$p" "$sig"
+    if command -v "$podman" >/dev/null 2>&1; then
+      all=$(inventory)
+      own=$(printf '%s\n' "$all" | awk -F'|' -v a="$name" '$3 == a')
+      if [ -n "$own" ]; then
+        park_ids "$own" "$all"
+        for c in $cpids; do
+          if [ "$c" -gt 0 ] 2>/dev/null; then freeze "$c" "$sig"; fi
+        done
+      fi
+    fi
     ;;
   shell)
     name=${2:-}
