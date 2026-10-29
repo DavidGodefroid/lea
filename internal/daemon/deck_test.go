@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/DavidGodefroid/lea/internal/agents"
+	"github.com/DavidGodefroid/lea/internal/store"
 )
 
 type fakeAgents struct {
@@ -26,6 +27,8 @@ type fakeAgents struct {
 	parkErr                   error         // ParkStack fails with it
 	parkHold                  chan struct{} // when set, ParkStack waits for it to close
 	newHold                   chan struct{} // when set, New waits for it to close
+	// st, when set, is where SoftStop and ResumeSuspended record the state they leave.
+	st *store.Store
 }
 
 func (f *fakeAgents) rec(s string) { f.mu.Lock(); f.calls = append(f.calls, s); f.mu.Unlock() }
@@ -90,6 +93,23 @@ func (f *fakeAgents) ParkStack(ctx context.Context, key string) (string, error) 
 func (f *fakeAgents) UnparkStack(ctx context.Context, key string) (string, error) {
 	f.rec("unpark " + key)
 	return "", nil
+}
+func (f *fakeAgents) SoftStop(ctx context.Context, key string) error {
+	f.rec("softstop " + key)
+	if f.st == nil {
+		return nil
+	}
+	if a, err := f.st.AgentByKey(key); err != nil || a.State != store.StateSuspendedWarm {
+		return agents.ErrNotSuspended
+	}
+	return f.st.SetState(key, store.StateSuspendedCold, "", 0)
+}
+func (f *fakeAgents) ResumeSuspended(ctx context.Context, key, prompt string) error {
+	f.rec("resume " + key + ": " + prompt)
+	if f.st == nil {
+		return nil
+	}
+	return f.st.SetState(key, "unknown", "", 0)
 }
 func (f *fakeAgents) Attached(ctx context.Context, c string) (bool, error) {
 	f.rec("attached " + c)

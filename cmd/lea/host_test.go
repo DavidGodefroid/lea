@@ -253,6 +253,14 @@ func (c *cliAgents) UnparkStack(ctx context.Context, key string) (string, error)
 	c.rec("unpark " + key)
 	return "", nil
 }
+func (c *cliAgents) SoftStop(ctx context.Context, key string) error {
+	c.rec("softstop " + key)
+	return nil
+}
+func (c *cliAgents) ResumeSuspended(ctx context.Context, key, prompt string) error {
+	c.rec("resume " + key)
+	return nil
+}
 func (c *cliAgents) SweepStacks(ctx context.Context, ctr string) (string, error) {
 	c.rec("sweep " + ctr)
 	return c.sweep, c.sweepErr
