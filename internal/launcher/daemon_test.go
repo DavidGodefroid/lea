@@ -381,3 +381,25 @@ func TestAdmitSettings(t *testing.T) {
 		}
 	}
 }
+
+// The Locks a Codex agent gets as MCP servers and their tool timeout (#152).
+func TestLockServers(t *testing.T) {
+	for _, c := range []struct {
+		env  map[string]string
+		want string
+	}{
+		{nil, "locksql=1500"},
+		{map[string]string{"LEA_LOCKSQL": "0"}, ""},
+		{map[string]string{"LEA_LOCKMQ": "1", "LEA_LOCKFILE": "1", "LEA_LOCK_TOOL_TIMEOUT": "600"}, "locksql=600,lockmq=600,lockfile=600"},
+		{map[string]string{"LEA_LOCK_TOOL_TIMEOUT": "59"}, "locksql=1500"},
+		{map[string]string{"LEA_LOCK_TOOL_TIMEOUT": "x"}, "locksql=1500"},
+	} {
+		var got []string
+		for _, l := range LockServers(func(k string) string { return c.env[k] }) {
+			got = append(got, l.Name+"="+strconv.Itoa(l.TimeoutSec))
+		}
+		if strings.Join(got, ",") != c.want {
+			t.Errorf("%v: %v, want %s", c.env, got, c.want)
+		}
+	}
+}

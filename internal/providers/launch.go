@@ -4,6 +4,8 @@ import (
 	"errors"
 	"fmt"
 	"regexp"
+	"slices"
+	"strconv"
 	"strings"
 )
 
@@ -99,6 +101,21 @@ func (p Provider) Argv(agent, workdir, model, session string, user []string, pro
 			"-c", `notify=["`+LeaBin+`","hook","codex","notify"]`)
 		if trustable(workdir) {
 			a = append(a, "-c", `projects."`+workdir+`".trust_level="untrusted"`)
+		}
+		// Each enabled Lock's MCP server, whole: a Lock call waits for a human, longer than
+		// Codex's default tool timeout. An entry with the timeout alone (a server the user did not
+		// declare) would be no valid server, so lea declares it, with the image's own client. Its
+		// tools need no approval in Codex: the human approves each call at the Lock, and Codex's
+		// own prompt would hold the call before it reaches the Lock.
+		for _, l := range p.Locks {
+			if !slices.Contains(LockNames, l.Name) || l.TimeoutSec < 1 {
+				continue
+			}
+			a = append(a,
+				"-c", `mcp_servers.`+l.Name+`.command="/usr/local/bin/`+l.Name+`"`,
+				"-c", `mcp_servers.`+l.Name+`.args=["mcp"]`,
+				"-c", `mcp_servers.`+l.Name+`.tool_timeout_sec=`+strconv.Itoa(l.TimeoutSec),
+				"-c", `mcp_servers.`+l.Name+`.default_tools_approval_mode="approve"`)
 		}
 		if p.Endpoint != nil {
 			if !nameRe.MatchString(p.Name) || reserved[p.Name] {

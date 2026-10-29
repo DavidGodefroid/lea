@@ -30,7 +30,33 @@ func LoadProviders(get func(string) string) (*providers.Registry, error) {
 			o.Forbidden = append(o.Forbidden, d)
 		}
 	}
-	return providers.Load(get("LEA_PROVIDERS"), o)
+	r, err := providers.Load(get("LEA_PROVIDERS"), o)
+	if err != nil {
+		return nil, err
+	}
+	r.SetLocks(LockServers(get))
+	return r, nil
+}
+
+// LockServers are the enabled Locks a Codex agent gets as MCP servers (locksql unless
+// LEA_LOCKSQL=0, lockmq and lockfile with LEA_LOCKMQ=1 / LEA_LOCKFILE=1), each with Codex's tool
+// timeout LEA_LOCK_TOOL_TIMEOUT seconds (1500 when unset or invalid; 60 to 86400): a Lock call
+// waits for a human.
+func LockServers(get func(string) string) []providers.Lock {
+	t := 1500
+	if n, err := strconv.Atoi(get("LEA_LOCK_TOOL_TIMEOUT")); err == nil && n >= 60 && n <= 86400 {
+		t = n
+	}
+	var out []providers.Lock
+	if get("LEA_LOCKSQL") != "0" {
+		out = append(out, providers.Lock{Name: "locksql", TimeoutSec: t})
+	}
+	for _, k := range []struct{ name, env string }{{"lockmq", "LEA_LOCKMQ"}, {"lockfile", "LEA_LOCKFILE"}} {
+		if get(k.env) == "1" {
+			out = append(out, providers.Lock{Name: k.name, TimeoutSec: t})
+		}
+	}
+	return out
 }
 
 // forwarderSetup is what the proxy needs for the endpoints of the providers file: the mounts of

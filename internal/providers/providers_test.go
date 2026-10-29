@@ -232,6 +232,40 @@ func TestArgvClaude(t *testing.T) {
 	}
 }
 
+// Each enabled Lock's MCP server, declared whole with Codex's tool timeout (#152): a Lock call
+// waits for a human, who approves it at the Lock, so Codex does not ask first. Claude agents get none (their tool calls wait); an unknown Lock or a timeout
+// out of range is left out.
+func TestArgvCodexLockServers(t *testing.T) {
+	r := Builtin()
+	r.SetLocks([]Lock{{Name: "locksql", TimeoutSec: 1500}, {Name: "lockfile", TimeoutSec: 900}, {Name: "evil\"x", TimeoutSec: 60}, {Name: "lockmq", TimeoutSec: 0}})
+	p, _ := r.Get(Codex)
+	got, err := p.Argv("dev-1", "/p", "", "", nil, "go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	j := strings.Join(got, " ")
+	for _, w := range []string{
+		`-c mcp_servers.locksql.command="/usr/local/bin/locksql" -c mcp_servers.locksql.args=["mcp"] -c mcp_servers.locksql.tool_timeout_sec=1500 -c mcp_servers.locksql.default_tools_approval_mode="approve"`,
+		`-c mcp_servers.lockfile.command="/usr/local/bin/lockfile" -c mcp_servers.lockfile.args=["mcp"] -c mcp_servers.lockfile.tool_timeout_sec=900 -c mcp_servers.lockfile.default_tools_approval_mode="approve"`,
+	} {
+		if !strings.Contains(j, w) {
+			t.Errorf("missing %s in %s", w, j)
+		}
+	}
+	if strings.Contains(j, "lockmq") || strings.Contains(j, "evil") {
+		t.Errorf("a Lock left out reached the argv: %s", j)
+	}
+	c, _ := r.Get(Claude)
+	if got, _ := c.Argv("dev-1", "/p", "", "", nil, "go"); strings.Contains(strings.Join(got, " "), "mcp_servers") {
+		t.Errorf("claude: %q", got)
+	}
+	r.SetLocks(nil)
+	p, _ = r.Get(Codex)
+	if got, _ := p.Argv("dev-1", "/p", "", "", nil, "go"); strings.Contains(strings.Join(got, " "), "locksql") {
+		t.Errorf("no Lock: %q", got)
+	}
+}
+
 func TestArgvCodex(t *testing.T) {
 	p, _ := Builtin().Get(Codex)
 	got, err := p.Argv("dev-1", "/home/u/projects", "gpt-5.1-codex", "", nil, "read your brief")
