@@ -77,11 +77,38 @@ type Provider struct {
 	Model string
 	// Endpoint is set for a provider of the providers file (run through Codex).
 	Endpoint *Endpoint
+	// Locks are the Lock MCP servers a Codex agent gets (SetLocks), each with Codex's tool
+	// timeout set: a Lock call waits for a human.
+	Locks []Lock
 }
+
+// Lock is a Lock's MCP server in the lea container: its name (locksql, lockmq, lockfile), the
+// client binary that serves it (`<binary> mcp`) and how long Codex waits on one of its calls.
+type Lock struct {
+	Name       string
+	TimeoutSec int
+}
+
+// LockNames are the Locks whose client is in the lea image, in that order.
+var LockNames = []string{"locksql", "lockmq", "lockfile"}
 
 // Registry is the built-in providers and the endpoints of the providers file.
 type Registry struct {
-	list []Provider
+	list  []Provider
+	locks []Lock
+}
+
+// SetLocks gives every provider the Lock MCP servers its agents get; a name not of LockNames,
+// or a timeout out of 1 to 86400 seconds, is left out.
+func (r *Registry) SetLocks(ls []Lock) {
+	r.locks = nil
+	for _, l := range ls {
+		for _, n := range LockNames {
+			if l.Name == n && l.TimeoutSec >= 1 && l.TimeoutSec <= 86400 {
+				r.locks = append(r.locks, l)
+			}
+		}
+	}
 }
 
 // Builtin is the registry without a providers file.
@@ -113,6 +140,7 @@ func (r *Registry) Endpoints() []Provider {
 func (r *Registry) Get(name string) (Provider, error) {
 	for _, p := range r.list {
 		if p.Name == name {
+			p.Locks = r.locks
 			return p, nil
 		}
 	}

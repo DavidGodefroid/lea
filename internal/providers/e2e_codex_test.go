@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -188,5 +189,158 @@ func codexE2E(t *testing.T, plant bool) {
 	}
 	if len(via) == 0 || !strings.HasPrefix(up.URL, "http://"+via[0]) {
 		t.Fatalf("the request did not go through the forward proxy: %v", via)
+	}
+}
+
+// fakeLockMCP is a stdio MCP server standing in for a Lock: its one tool answers after secs
+// seconds, as a Lock call does once a human approves it.
+const fakeLockMCP = `
+import json, sys, time
+secs = float(sys.argv[1])
+def send(m):
+    sys.stdout.write(json.dumps(m) + "\n"); sys.stdout.flush()
+for line in sys.stdin:
+    try:
+        m = json.loads(line)
+    except ValueError:
+        continue
+    i, meth = m.get("id"), m.get("method")
+    if meth == "initialize":
+        send({"jsonrpc": "2.0", "id": i, "result": {"protocolVersion": m["params"].get("protocolVersion", "2025-06-18"),
+              "capabilities": {"tools": {}}, "serverInfo": {"name": "locksql", "version": "0"}}})
+    elif meth == "tools/list":
+        send({"jsonrpc": "2.0", "id": i, "result": {"tools": [{"name": "query", "description": "a slow Lock call",
+              "inputSchema": {"type": "object", "properties": {}}}]}})
+    elif meth == "tools/call":
+        time.sleep(secs)
+        send({"jsonrpc": "2.0", "id": i, "result": {"content": [{"type": "text", "text": "lock-call-done"}], "isError": False}})
+    elif i is not None:
+        send({"jsonrpc": "2.0", "id": i, "result": {}})
+`
+
+// A Lock call that waits 90 s for a human completes under Codex (#152): lea declares the Lock's MCP
+// server with tool_timeout_sec, where Codex's default would cut the call. The fake model asks for
+// the Lock's tool, and the test waits for the tool's result to come back to it.
+func TestCodexLockCallOutlivesTheDefaultToolTimeout(t *testing.T) {
+	codex := os.Getenv("LEA_E2E_CODEX")
+	if codex == "" {
+		t.Skip("LEA_E2E_CODEX is not set")
+	}
+	if _, err := exec.LookPath("python3"); err != nil {
+		t.Skip("no python3 for the pseudo-terminal and the fake Lock")
+	}
+	const wait = 90
+	var mu sync.Mutex
+	var tools []string
+	var output string
+	n := 0
+	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body struct {
+			Tools []struct {
+				Name string `json:"name"`
+			} `json:"tools"`
+			Input []struct {
+				Type   string          `json:"type"`
+				CallID string          `json:"call_id"`
+				Output json.RawMessage `json:"output"`
+			} `json:"input"`
+		}
+		b, _ := io.ReadAll(r.Body)
+		_ = json.Unmarshal(b, &body)
+		mu.Lock()
+		n++
+		first := n == 1
+		call := ""
+		for _, tl := range body.Tools {
+			tools = append(tools, tl.Name)
+			if strings.Contains(tl.Name, "locksql") && strings.Contains(tl.Name, "query") {
+				call = tl.Name
+			}
+		}
+		for _, in := range body.Input {
+			if in.Type == "function_call_output" && in.CallID == "call_lock" {
+				output = string(in.Output)
+			}
+		}
+		mu.Unlock()
+		w.Header().Set("Content-Type", "text/event-stream")
+		item := `{"type":"message","role":"assistant","id":"m1","content":[{"type":"output_text","text":"done"}]}`
+		if first && call != "" {
+			item = `{"type":"function_call","id":"fc1","call_id":"call_lock","name":"` + call + `","arguments":"{}"}`
+		}
+		for _, ev := range []string{
+			`{"type":"response.created","response":{"id":"resp_1"}}`,
+			`{"type":"response.output_item.done","item":` + item + `}`,
+			`{"type":"response.completed","response":{"id":"resp_1","usage":{"input_tokens":1,"output_tokens":1,"total_tokens":2}}}`,
+		} {
+			var e struct{ Type string }
+			_ = json.Unmarshal([]byte(ev), &e)
+			io.WriteString(w, "event: "+e.Type+"\ndata: "+ev+"\n\n")
+		}
+	}))
+	defer up.Close()
+
+	dir := t.TempDir()
+	key := filepath.Join(dir, "key")
+	os.WriteFile(key, []byte("sk-e2e-secret\n"), 0o600)
+	upURL, _ := url.Parse(up.URL + "/v1")
+	f, err := keyproxy.New(keyproxy.Config{Endpoints: []keyproxy.Endpoint{{Name: "llm", URL: upURL, KeyFile: key}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	kp := httptest.NewServer(f)
+	defer kp.Close()
+	fake := filepath.Join(dir, "fake-lock.py")
+	os.WriteFile(fake, []byte(fakeLockMCP), 0o600)
+
+	p := providers.Provider{Name: "llm", CLI: providers.Codex, Endpoint: &providers.Endpoint{URL: upURL, KeyFile: key}, Locks: []providers.Lock{{Name: "locksql", TimeoutSec: 1500}}}
+	wd := filepath.Join(dir, "projects")
+	os.Mkdir(wd, 0o755)
+	// The image's locksql client is not here: the user's -c (after lea's) points the server at the
+	// fake one; the timeout stays lea's.
+	user := []string{"-c", `model_providers.lea-llm.base_url="` + kp.URL + `/llm"`,
+		"-c", `mcp_servers.locksql.command="python3"`, "-c", `mcp_servers.locksql.args=["-I","` + fake + `","` + strconv.Itoa(wait) + `"]`}
+	argv, err := p.Argv("dev-1", wd, "qwen3-coder", "", user, "query the database")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(strings.Join(argv, " "), "mcp_servers.locksql.tool_timeout_sec=1500") {
+		t.Fatalf("no tool timeout in %q", argv)
+	}
+	cmd := exec.Command("python3", append([]string{"-I", "-c", ptyRun, strconv.Itoa(wait + 60), codex}, argv...)...)
+	cmd.Dir = wd
+	home := filepath.Join(dir, "home")
+	os.MkdirAll(filepath.Join(home, ".codex"), 0o700)
+	cmd.Env = []string{"PATH=" + os.Getenv("PATH"), "HOME=" + home, "CODEX_HOME=" + filepath.Join(home, ".codex"),
+		"TERM=xterm-256color", "LEA_BUS_SOCK=" + filepath.Join(dir, "no-bus.sock"), "NO_PROXY=*"}
+	done := make(chan []byte, 1)
+	go func() { out, _ := cmd.CombinedOutput(); done <- out }()
+	defer func() {
+		if cmd.Process != nil {
+			cmd.Process.Kill()
+		}
+	}()
+	deadline := time.After(time.Duration(wait+55) * time.Second)
+	for {
+		mu.Lock()
+		got := output
+		mu.Unlock()
+		if got != "" {
+			if !strings.Contains(got, "lock-call-done") {
+				t.Fatalf("the Lock call did not complete: the model got %s", got)
+			}
+			return
+		}
+		select {
+		case out := <-done:
+			mu.Lock()
+			defer mu.Unlock()
+			t.Fatalf("codex ended before the Lock call came back (tools %q, %d requests):\n%s", tools, n, out)
+		case <-deadline:
+			mu.Lock()
+			defer mu.Unlock()
+			t.Fatalf("no tool result within %d s (tools %q, %d requests)", wait+55, tools, n)
+		case <-time.After(time.Second):
+		}
 	}
 }

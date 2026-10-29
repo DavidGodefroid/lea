@@ -24,7 +24,11 @@ func (l *Launcher) providersStamp() string {
 // DaemonProvidersStamp is the provider settings as one line: the default provider and model, the
 // providers file and the internal-hosts file it is checked against.
 func DaemonProvidersStamp(get func(string) string) string {
-	return strings.Join([]string{get("LEA_PROVIDER"), get("LEA_MODEL"), get("LEA_PROVIDERS"), get("LEA_INTERNAL_HOSTS")}, " ")
+	var locks []string
+	for _, l := range LockServers(get) {
+		locks = append(locks, l.Name+"="+strconv.Itoa(l.TimeoutSec))
+	}
+	return strings.Join([]string{get("LEA_PROVIDER"), get("LEA_MODEL"), get("LEA_PROVIDERS"), get("LEA_INTERNAL_HOSTS"), strings.Join(locks, ",")}, " ")
 }
 
 // ResumeSettings is the auto-resume setting (issue #20): on unless LEA_AUTO_RESUME is 0, and the
