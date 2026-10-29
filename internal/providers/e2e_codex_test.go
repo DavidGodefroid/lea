@@ -232,9 +232,12 @@ func TestCodexLockCallOutlivesTheDefaultToolTimeout(t *testing.T) {
 	const wait = 90
 	var mu sync.Mutex
 	var tools []string
-	var output string
+	var output, lockTool string
 	n := 0
 	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var raw struct {
+			Tools []json.RawMessage `json:"tools"`
+		}
 		var body struct {
 			Tools []struct {
 				Name string `json:"name"`
@@ -247,7 +250,13 @@ func TestCodexLockCallOutlivesTheDefaultToolTimeout(t *testing.T) {
 		}
 		b, _ := io.ReadAll(r.Body)
 		_ = json.Unmarshal(b, &body)
+		_ = json.Unmarshal(b, &raw)
 		mu.Lock()
+		for _, tl := range raw.Tools {
+			if strings.Contains(string(tl), "locksql") {
+				lockTool = string(tl)
+			}
+		}
 		n++
 		first := n == 1
 		call := ""
@@ -351,11 +360,11 @@ func TestCodexLockCallOutlivesTheDefaultToolTimeout(t *testing.T) {
 		case out := <-done:
 			mu.Lock()
 			defer mu.Unlock()
-			t.Fatalf("codex ended before the Lock call came back (tools %q, %d requests):\n%s", tools, n, out)
+			t.Fatalf("codex ended before the Lock call came back (tools %q, %d requests; the Lock's tool: %s):\n%s", tools, n, lockTool, out)
 		case <-deadline:
 			mu.Lock()
 			defer mu.Unlock()
-			t.Fatalf("no tool result within %d s (tools %q, %d requests)", wait+55, tools, n)
+			t.Fatalf("no tool result within %d s (tools %q, %d requests; the Lock's tool: %s)", wait+55, tools, n, lockTool)
 		case <-time.After(time.Second):
 		}
 	}
