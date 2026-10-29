@@ -333,3 +333,25 @@ host_minimums() {
   run lea_doctor
   [[ "$output" == *"ok    lea-abc CPU windows: none"* ]]
 }
+
+@test "pressure: PSI, each lea container's cgroup and the thresholds (#132, P2)" {
+  export LEA_DOCTOR_PROC="$BATS_TEST_TMPDIR/proc" LEA_DOCTOR_CGROUP="$BATS_TEST_TMPDIR/cg"
+  mkdir -p "$LEA_DOCTOR_PROC/pressure" "$LEA_DOCTOR_PROC/4242" "$LEA_DOCTOR_CGROUP/user.slice/libpod-abc.scope"
+  : >"$LEA_DOCTOR_PROC/pressure/cpu"; : >"$LEA_DOCTOR_PROC/pressure/memory"
+  printf '0::/user.slice/libpod-abc.scope\n' >"$LEA_DOCTOR_PROC/4242/cgroup"
+  echo 1 >"$LEA_DOCTOR_CGROUP/user.slice/libpod-abc.scope/memory.current"
+  export FAKE_DOCKER_OUT_PS___FILTER=lea-abc FAKE_DOCKER_OUT_INSPECT__F_AT_LEA_ABC=4242
+  run lea_doctor
+  [[ "$output" == *"ok    pressure stall information (PSI)"* ]]
+  [[ "$output" == *"ok    lea-abc pressure readable (cgroup /user.slice/libpod-abc.scope)"* ]]
+  [[ "$output" == *"ok    admission: cpu PSI 40%, memory 85% of the limit, memory PSI 10%, io PSI 40%, load 2 per CPU (0: off)"* ]]
+  [[ "$output" == *"ok    shedding: after 30 s at memory 95% (LEA_SHED_*)"* ]]
+  rm "$LEA_DOCTOR_PROC/pressure/cpu" "$LEA_DOCTOR_PROC/4242/cgroup"
+  LEA_SHED_MEM_PCT=80 run lea_doctor
+  [[ "$output" == *"warn  pressure stall information (PSI): "*"psi=0"* ]]
+  [[ "$output" == *"warn  lea-abc pressure: its cgroup v2 is not readable from the host"* ]]
+  [[ "$output" == *"warn  shedding: LEA_SHED_MEM_PCT (80) is not above LEA_ADMIT_MEM_PCT (85)"* ]]
+  LEA_ADMIT_CPU_PSI=0 LEA_ADMIT_MEM_PCT=0 LEA_ADMIT_MEM_PSI=0 LEA_ADMIT_IO_PSI=0 LEA_ADMIT_LOAD=0 LEA_SHED_AFTER=0 run lea_doctor
+  [[ "$output" == *"warn  admission: every LEA_ADMIT_* threshold is 0"* ]]
+  [[ "$output" == *"ok    shedding: off (LEA_SHED_AFTER=0)"* ]]
+}

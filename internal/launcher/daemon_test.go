@@ -190,7 +190,7 @@ esac
 // other approval settings, is restarted, and the new one gets LEA_TMUX_BIN (daemon tests of the
 // retired deck.bats and core.bats).
 func TestEnsureDaemonPinsTheResolvedTmuxAndApprovals(t *testing.T) {
-	for name, record := range map[string][2]string{"tmux": {"daemon.tmux", "/old/tmux"}, "approvals": {"daemon.approvals", "pane 5"}, "resume": {"daemon.resume", "off 60"}, "lockhttp": {"daemon.lockhttp", "on"}, "stacks": {"daemon.stacks", "30"}, "admit": {"daemon.admit", "50 85 10 40 2"}} {
+	for name, record := range map[string][2]string{"tmux": {"daemon.tmux", "/old/tmux"}, "approvals": {"daemon.approvals", "pane 5"}, "resume": {"daemon.resume", "off 60"}, "lockhttp": {"daemon.lockhttp", "on"}, "stacks": {"daemon.stacks", "30"}, "admit": {"daemon.admit", "50 85 10 40 2 95 30 80 30 60"}} {
 		t.Run(name, func(t *testing.T) {
 			w := newWorld(t, repoRoot(t))
 			delete(w.env, "LEA_TMUX_BIN") // resolved from PATH: the world's tmux
@@ -371,9 +371,9 @@ func TestAdmitSettings(t *testing.T) {
 		env  map[string]string
 		want string
 	}{
-		{nil, "40 85 10 40 2"},
-		{map[string]string{"LEA_ADMIT_CPU_PSI": "0", "LEA_ADMIT_MEM_PCT": "90", "LEA_ADMIT_MEM_PSI": "2.5", "LEA_ADMIT_IO_PSI": "0", "LEA_ADMIT_LOAD": "1.5"}, "0 90 2.5 0 1.5"},
-		{map[string]string{"LEA_ADMIT_CPU_PSI": "101", "LEA_ADMIT_MEM_PCT": "-1", "LEA_ADMIT_MEM_PSI": "x", "LEA_ADMIT_LOAD": "65"}, "40 85 10 40 2"},
+		{nil, "40 85 10 40 2 95 30 80 30 60"},
+		{map[string]string{"LEA_ADMIT_CPU_PSI": "0", "LEA_ADMIT_MEM_PCT": "90", "LEA_ADMIT_MEM_PSI": "2.5", "LEA_ADMIT_IO_PSI": "0", "LEA_ADMIT_LOAD": "1.5", "LEA_SHED_AFTER": "0", "LEA_SHED_RESUME": "120"}, "0 90 2.5 0 1.5 95 30 80 0 120"},
+		{map[string]string{"LEA_ADMIT_CPU_PSI": "101", "LEA_ADMIT_MEM_PCT": "-1", "LEA_ADMIT_MEM_PSI": "x", "LEA_ADMIT_LOAD": "65", "LEA_SHED_AFTER": "3601"}, "40 85 10 40 2 95 30 80 30 60"},
 	} {
 		get := func(k string) string { return c.env[k] }
 		if got := DaemonAdmitStamp(get); got != c.want {

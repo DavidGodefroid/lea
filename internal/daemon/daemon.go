@@ -127,6 +127,13 @@ type Daemon struct {
 	spawnQueue    []*queuedSpawn
 	spawnSeq      int64
 	queueStarting bool
+	// pressClock is the pressure's clock (nil: time.Now), a test seam.
+	pressClock func() time.Time
+	// Shedding (shed.go, #132): its thresholds, each container's state, and whether pauses or
+	// resumes are in flight.
+	shed     Shed
+	shedding map[string]*shedState
+	shedBusy bool
 }
 
 func New(st *store.Store, runDir string, now func() int64) *Daemon {

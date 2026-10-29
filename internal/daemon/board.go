@@ -96,6 +96,9 @@ type boardItem struct {
 	// Stack is what lea stopped of the agent's nested containers while it was idle (#132), the
 	// daemon's text, until the agent works again.
 	Stack string `json:"stack,omitempty"`
+	// Shed says lea paused the agent under pressure (#132, P2), the daemon's text, until it
+	// resumes it.
+	Shed string `json:"shed,omitempty"`
 }
 
 type boardView struct {
@@ -146,6 +149,12 @@ func (d *Daemon) boardList(raw json.RawMessage) (boardView, error) {
 	for k, v := range d.parked {
 		parked[k] = v
 	}
+	shed := map[string]string{}
+	for _, t := range ts {
+		if l := d.shedLabelLocked(t.Agent); l != "" {
+			shed[t.Agent] = l
+		}
+	}
 	d.mu.Unlock()
 	out := boardView{Items: []boardItem{}, Leases: []leaseView{}}
 	for i, t := range ts {
@@ -164,6 +173,7 @@ func (d *Daemon) boardList(raw json.RawMessage) (boardView, error) {
 				it.WaitsOn, it.Question = q.target, q.id
 			}
 			it.Stack = parked[t.Agent]
+			it.Shed = shed[t.Agent]
 		}
 		out.Items = append(out.Items, it)
 	}

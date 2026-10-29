@@ -90,11 +90,14 @@ func DaemonStacksStamp(get func(string) string) string {
 // Admission thresholds (#132, P2), each 0 (off) to its maximum, the default when unset or
 // invalid: LEA_ADMIT_CPU_PSI (cpu PSI, percent, 40), LEA_ADMIT_MEM_PCT (memory in use, percent of
 // the lea container's limit, 85), LEA_ADMIT_MEM_PSI (memory PSI, 10), LEA_ADMIT_IO_PSI (io PSI,
-// 40), LEA_ADMIT_LOAD (host load per CPU, 2).
+// 40), LEA_ADMIT_LOAD (host load per CPU, 2). Shedding: LEA_SHED_MEM_PCT (95), LEA_SHED_MEM_PSI
+// (30), LEA_SHED_CPU_PSI (80), LEA_SHED_AFTER (seconds critical before an agent is paused, 30; 0
+// turns shedding off), LEA_SHED_RESUME (seconds calm before one is resumed, 60).
 var admitKeys = []struct {
 	key      string
 	def, max float64
-}{{"LEA_ADMIT_CPU_PSI", 40, 100}, {"LEA_ADMIT_MEM_PCT", 85, 100}, {"LEA_ADMIT_MEM_PSI", 10, 100}, {"LEA_ADMIT_IO_PSI", 40, 100}, {"LEA_ADMIT_LOAD", 2, 64}}
+}{{"LEA_ADMIT_CPU_PSI", 40, 100}, {"LEA_ADMIT_MEM_PCT", 85, 100}, {"LEA_ADMIT_MEM_PSI", 10, 100}, {"LEA_ADMIT_IO_PSI", 40, 100}, {"LEA_ADMIT_LOAD", 2, 64},
+	{"LEA_SHED_MEM_PCT", 95, 100}, {"LEA_SHED_MEM_PSI", 30, 100}, {"LEA_SHED_CPU_PSI", 80, 100}, {"LEA_SHED_AFTER", 30, 3600}, {"LEA_SHED_RESUME", 60, 3600}}
 
 // AdmitSettings are the admission thresholds in admitKeys' order.
 func AdmitSettings(get func(string) string) []float64 {
@@ -108,7 +111,7 @@ func AdmitSettings(get func(string) string) []float64 {
 	return out
 }
 
-// DaemonAdmitStamp is the admission thresholds as one line ("40 85 10 40 2"): a daemon started
+// DaemonAdmitStamp is the admission and shedding thresholds as one line: a daemon started
 // with others is restarted.
 func DaemonAdmitStamp(get func(string) string) string {
 	var p []string
