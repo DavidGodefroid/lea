@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"errors"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	_ "modernc.org/sqlite"
@@ -119,6 +120,11 @@ func TestHubWaitRefusesBadInput(t *testing.T) {
 	}
 	if _, err := s.DecideHubWaits(t1, "maybe", "", 2); err == nil {
 		t.Error("an unknown decision accepted")
+	}
+	for _, r := range []string{strings.Repeat("r", maxHubReason+1), "\xff"} {
+		if _, err := s.DecideHubWaits(t1, DecisionDenied, r, 2); err == nil {
+			t.Errorf("reason %.20q accepted", r)
+		}
 	}
 }
 

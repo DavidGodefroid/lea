@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"regexp"
+	"unicode/utf8"
 )
 
 // Hub waits (the Lock Family approval hub, #159): an agent whose Lock call is pending a human's
@@ -30,8 +31,12 @@ const (
 	DecisionExpired   = "expired"
 )
 
-// hubWaitKeep is how long a delivered wait is kept (seconds).
-const hubWaitKeep = 7 * 24 * 3600
+// hubWaitKeep is how long a delivered wait is kept (seconds); maxHubReason caps the hub's reason,
+// which reaches the agent's context.
+const (
+	hubWaitKeep  = 7 * 24 * 3600
+	maxHubReason = 500
+)
 
 var (
 	ticketRe   = regexp.MustCompile(`^[0-9A-HJKMNP-TV-Z]{26}$`) // a ULID
@@ -76,6 +81,9 @@ func (s *Store) AddHubWait(agent, ticket, lock, instance string, now int64) erro
 func (s *Store) DecideHubWaits(ticket, decision, reason string, now int64) ([]HubWait, error) {
 	if !decisionOK[decision] {
 		return nil, fmt.Errorf("hub wait: unknown decision %q", decision)
+	}
+	if len(reason) > maxHubReason || !utf8.ValidString(reason) {
+		return nil, fmt.Errorf("hub wait: the reason is not valid UTF-8 of at most %d bytes", maxHubReason)
 	}
 	tx, err := s.db.Begin()
 	if err != nil {
