@@ -1,0 +1,4 @@
+hooks.log
+*.err
+settings-*.json
+*.screen

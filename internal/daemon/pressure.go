@@ -169,8 +169,10 @@ type cpuMark struct {
 // of its process (docker inspect, either engine) and /proc/PID/cgroup: no engine-specific path.
 type HostPressure struct {
 	Proc, Cgroup string // "/proc", "/sys/fs/cgroup" when empty (tests: a fake tree)
-	// Pid is the pid of a container's process on the host (nil: docker inspect).
+	// Pid is the pid of a container's process on the host (nil: Bin inspect).
 	Pid func(ctx context.Context, container string) (int, error)
+	// Bin is the engine's CLI ("docker" when empty; podman answers the same inspect).
+	Bin string
 	Now func() time.Time
 
 	mu   sync.Mutex
@@ -361,7 +363,11 @@ func (h *HostPressure) pid(ctx context.Context, c string) (int, error) {
 	}
 	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
-	out, err := exec.CommandContext(ctx, "docker", "inspect", "-f", "{{.State.Pid}}", c).Output()
+	bin := h.Bin
+	if bin == "" {
+		bin = "docker"
+	}
+	out, err := exec.CommandContext(ctx, bin, "inspect", "-f", "{{.State.Pid}}", c).Output()
 	if err != nil {
 		return 0, err
 	}

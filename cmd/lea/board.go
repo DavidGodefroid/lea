@@ -25,6 +25,8 @@ type boardItem struct {
 	Subagents int
 	// Stack is what lea stopped of the agent's nested containers while it was idle (#132).
 	Stack string
+	// Shed says lea paused the agent under pressure (#132, P2), the daemon's text.
+	Shed string `json:"shed"`
 }
 
 // stateCell is an item's state as the deck shows it (issue #72), with the subagents it still
@@ -207,6 +209,19 @@ func renderBoard(w io.Writer, b board) {
 			fmt.Fprintln(w)
 			for _, it := range stacks {
 				fmt.Fprintf(w, "- %s\n", mdCell(it.Stack))
+			}
+		}
+		var shed []boardItem
+		for _, it := range open {
+			if it.Shed != "" {
+				shed = append(shed, it)
+			}
+		}
+		if len(shed) > 0 {
+			fmt.Fprintln(w, "\n### Paused under pressure")
+			fmt.Fprintln(w)
+			for _, it := range shed {
+				fmt.Fprintf(w, "- %s: %s\n", mdCell(it.Agent), mdCell(it.Shed))
 			}
 		}
 		if h, ok := heavy[c]; ok {
