@@ -48,6 +48,16 @@ if [ "${LEA_LOCKSQL:-}" = 1 ]; then
   rm -f "$lk.new"
   must   ".locksql is still a directory"          test -d "$lk" -a ! -L "$lk"
 fi
+# The Lock Family's directory (hub config, keys, routing): read-only, whatever Lock is on, so that
+# no agent rewrites what the locks and the hub trust (a write gets EROFS).
+lf=$LEA_PROJECTS/.lockfamily
+must   ".lockfamily is a directory"             test -d "$lf" -a ! -L "$lf"
+must   ".lockfamily write gets EROFS"           sh -c 'touch "$1/lea-isolation" 2>&1 | grep -q "Read-only file system"' sh "$lf"
+mustnt ".lockfamily cannot be removed"          rm -rf "$lf"
+mustnt ".lockfamily cannot be renamed"          mv "$lf" "$LEA_PROJECTS/.lockfamily-moved"
+mustnt ".lockfamily cannot be replaced by a link" sh -c 'ln -sfn /tmp "$1.new" && mv -T "$1.new" "$1"' sh "$lf"
+rm -f "$lf.new"
+must   ".lockfamily is still a directory"       test -d "$lf" -a ! -L "$lf"
 mustnt "host ~/.ssh absent"                     test -e "$HOME/.ssh"
 mustnt "host ~/.docker absent"                  test -e "$HOME/.docker"
 mustnt "host ~/.config/glab-cli absent"         test -e "$HOME/.config/glab-cli"
