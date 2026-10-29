@@ -140,6 +140,15 @@ func TestBoardShowsPressure(t *testing.T) {
 	}
 }
 
+// The agents lea paused under pressure are listed with why (#132, P2).
+func TestBoardShowsShedAgents(t *testing.T) {
+	var out bytes.Buffer
+	renderBoard(&out, board{Items: []boardItem{{Task: 1, Container: "lea-a", Agent: "dev-3", State: "working", Shed: "paused by lea at 15:04 under pressure (container memory 97% of 24.0 GiB > 95%)"}}})
+	if s := out.String(); !strings.Contains(s, "### Paused under pressure\n\n- "+mdCell("dev-3")+": "+mdCell("paused by lea at 15:04 under pressure (container memory 97% of 24.0 GiB > 95%)")+"\n") {
+		t.Fatalf("no paused agent in:\n%s", s)
+	}
+}
+
 func TestBoardStateCellCountsSubagents(t *testing.T) {
 	var out bytes.Buffer
 	renderBoard(&out, board{Items: []boardItem{
