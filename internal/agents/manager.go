@@ -199,6 +199,17 @@ type Snapshot struct {
 	// LockHTTP is the LockHTTP gate's state for the container (LEA_LOCKHTTP=1), set by the
 	// daemon; nil when LockHTTP is off.
 	LockHTTP *LockHTTPView `json:"lockhttp,omitempty"`
+	// Pressure is the container's pressure gauge (#132, P2), set by the daemon; nil without a
+	// recent sample.
+	Pressure *PressureView `json:"pressure,omitempty"`
+}
+
+// PressureView is what the deck shows of the pressure: a short gauge of the container and the
+// worse level of the container and the host (ok, warn, over), with the thresholds passed.
+type PressureView struct {
+	Short string `json:"short"`
+	Level string `json:"level"`
+	Over  string `json:"over,omitempty"`
 }
 
 // LockHTTPView is what the deck shows of the LockHTTP gate (D6): whether its console runs

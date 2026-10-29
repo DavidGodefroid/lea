@@ -116,6 +116,17 @@ type Daemon struct {
 	heavyTTL     time.Duration
 	heavyMaxHold time.Duration
 	heavySeq     int64
+	// Pressure (pressure.go, admit.go, #132): what samples it, the admission thresholds, the last
+	// sample of the host and of each container and when it was taken, and the spawns queued
+	// until the pressure falls.
+	pressSrc      PressureSource
+	thresholds    Thresholds
+	pressHost     Reading
+	pressScopes   map[string]Reading
+	pressAt       time.Time
+	spawnQueue    []*queuedSpawn
+	spawnSeq      int64
+	queueStarting bool
 }
 
 func New(st *store.Store, runDir string, now func() int64) *Daemon {

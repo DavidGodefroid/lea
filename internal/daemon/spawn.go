@@ -71,6 +71,8 @@ type spawnParams struct {
 	Branch  string `json:"branch"`
 	Brief   string `json:"brief"`
 	For     string `json:"for"`
+	// Queue: under pressure, start the agent once it falls instead of refusing it (#132).
+	Queue bool `json:"queue"`
 }
 
 // Caps on what an agent names before the daemon uses or echoes it in an error (the manager
@@ -142,6 +144,12 @@ func (d *Daemon) agentsSpawn(ctx context.Context, o Origin, me string, raw json.
 		}
 		req = &r
 	}
+	d.mu.Lock()
+	admit := d.admitLocked(o.Container)
+	d.mu.Unlock()
+	if admit != nil && !p.Queue {
+		return nil, fmt.Errorf("agents_spawn: %w", admit)
+	}
 	if err := d.rates.allow("agents_spawn", me, d.now()); err != nil {
 		return nil, err
 	}
@@ -151,9 +159,29 @@ func (d *Daemon) agentsSpawn(ctx context.Context, o Origin, me string, raw json.
 	}
 	nr := agents.NewRequest{Container: o.Container, Profile: p.Profile, Model: p.Model, Role: p.Role, Parent: me,
 		Repo: p.Repo, Branch: p.Branch, Brief: p.Brief, BriefFrom: me, NamePrefix: p.Role, Hidden: true}
+	if admit != nil {
+		id, err := d.queueSpawn(me, nr, req)
+		if err != nil {
+			return nil, err
+		}
+		d.changed()
+		return map[string]any{"queued": id, "reason": admit.Error(),
+			"note": fmt.Sprintf("queued: it starts once the pressure falls (you get a message), or is dropped after %s", queuedSpawnTTL)}, nil
+	}
+	row, err := d.startSpawn(ctx, a, me, nr, req)
+	if err != nil {
+		return nil, err
+	}
+	d.changed()
+	return map[string]string{"name": row.Name, "key": row.Key, "role": row.Role, "provider": row.Profile, "model": row.Model}, nil
+}
+
+// startSpawn starts the agent nr asks for, accepting the spawn request req (nil: none) on lead's
+// behalf.
+func (d *Daemon) startSpawn(ctx context.Context, a Agents, lead string, nr agents.NewRequest, req *store.SpawnRequest) (agents.Row, error) {
 	if req != nil {
 		if err := d.st.MoveSpawnRequest(req.ID, "pending", "accepting", "", d.now()); err != nil {
-			return nil, fmt.Errorf("spawn request #%d: %w", req.ID, err)
+			return agents.Row{}, fmt.Errorf("spawn request #%d: %w", req.ID, err)
 		}
 		nr.BriefReplyTo = req.Message
 	}
@@ -162,13 +190,12 @@ func (d *Daemon) agentsSpawn(ctx context.Context, o Origin, me string, raw json.
 		if req != nil {
 			d.reopenRequest(req.ID)
 		}
-		return nil, err
+		return agents.Row{}, err
 	}
 	if req != nil {
-		d.acceptRequest(*req, me, p.Role, row)
+		d.acceptRequest(*req, lead, nr.Role, row)
 	}
-	d.changed()
-	return map[string]string{"name": row.Name, "key": row.Key, "role": row.Role, "provider": row.Profile, "model": row.Model}, nil
+	return row, nil
 }
 
 // agentsStop stops one of the calling lead's own children (spec §5.2: several leads may run; each

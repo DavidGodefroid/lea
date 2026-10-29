@@ -122,6 +122,24 @@ func TestBoardShowsHeavyJobs(t *testing.T) {
 	}
 }
 
+// The host's gauge heads the board, each container's heads its section (#132, P2).
+func TestBoardShowsPressure(t *testing.T) {
+	var out bytes.Buffer
+	renderBoard(&out, board{
+		Items: []boardItem{{Task: 1, Container: "lea-a", Agent: "a", State: "working"}},
+		Pressure: []boardGauge{
+			{Scope: "host", Level: "ok", CPUUsed: 3, CPUs: 22, CPUPSI: 1, MemUsed: -1, Load1: 4},
+			{Scope: "lea-a", Level: "over", Over: "cpu PSI 63% > 40%", CPUUsed: 15.8, CPUs: 16, CPUPSI: 63, MemUsed: 18 << 30, MemMax: 24 << 30, Heavy: 2, Slots: 2},
+		}})
+	s := out.String()
+	for _, w := range []string{"\nHost: " + mdCell("CPU 3.0/22 · PSI 1% · load 4.0") + "\n",
+		"## " + mdCell("lea-a") + "\n\nPressure: " + mdCell("CPU 15.8/16 · PSI 63% · mem 18.0/24.0 GiB · heavy 2/2") + " (under pressure: " + mdCell("cpu PSI 63% > 40%") + "; new agents wait, heavy slots halved)\n"} {
+		if !strings.Contains(s, w) {
+			t.Fatalf("%q not in:\n%s", w, s)
+		}
+	}
+}
+
 func TestBoardStateCellCountsSubagents(t *testing.T) {
 	var out bytes.Buffer
 	renderBoard(&out, board{Items: []boardItem{

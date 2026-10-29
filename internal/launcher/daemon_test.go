@@ -190,7 +190,7 @@ esac
 // other approval settings, is restarted, and the new one gets LEA_TMUX_BIN (daemon tests of the
 // retired deck.bats and core.bats).
 func TestEnsureDaemonPinsTheResolvedTmuxAndApprovals(t *testing.T) {
-	for name, record := range map[string][2]string{"tmux": {"daemon.tmux", "/old/tmux"}, "approvals": {"daemon.approvals", "pane 5"}, "resume": {"daemon.resume", "off 60"}, "lockhttp": {"daemon.lockhttp", "on"}, "stacks": {"daemon.stacks", "30"}} {
+	for name, record := range map[string][2]string{"tmux": {"daemon.tmux", "/old/tmux"}, "approvals": {"daemon.approvals", "pane 5"}, "resume": {"daemon.resume", "off 60"}, "lockhttp": {"daemon.lockhttp", "on"}, "stacks": {"daemon.stacks", "30"}, "admit": {"daemon.admit", "50 85 10 40 2"}} {
 		t.Run(name, func(t *testing.T) {
 			w := newWorld(t, repoRoot(t))
 			delete(w.env, "LEA_TMUX_BIN") // resolved from PATH: the world's tmux
@@ -361,6 +361,23 @@ func TestHeavySettings(t *testing.T) {
 		}
 		if s, w := HeavySettings(get); s != c.ws || w != c.ww {
 			t.Errorf("%+v: %d %d", c, s, w)
+		}
+	}
+}
+
+// LEA_ADMIT_* (#132, P2): each threshold 0 (off) to its maximum, the default otherwise.
+func TestAdmitSettings(t *testing.T) {
+	for _, c := range []struct {
+		env  map[string]string
+		want string
+	}{
+		{nil, "40 85 10 40 2"},
+		{map[string]string{"LEA_ADMIT_CPU_PSI": "0", "LEA_ADMIT_MEM_PCT": "90", "LEA_ADMIT_MEM_PSI": "2.5", "LEA_ADMIT_IO_PSI": "0", "LEA_ADMIT_LOAD": "1.5"}, "0 90 2.5 0 1.5"},
+		{map[string]string{"LEA_ADMIT_CPU_PSI": "101", "LEA_ADMIT_MEM_PCT": "-1", "LEA_ADMIT_MEM_PSI": "x", "LEA_ADMIT_LOAD": "65"}, "40 85 10 40 2"},
+	} {
+		get := func(k string) string { return c.env[k] }
+		if got := DaemonAdmitStamp(get); got != c.want {
+			t.Errorf("%v: %q, want %q", c.env, got, c.want)
 		}
 	}
 }

@@ -280,6 +280,7 @@ func (d *Daemon) dispatchDeck(ctx context.Context, o Origin, req wire.Request) (
 		// The deck shows the user's sound switch beside the agents.
 		snap.Sound = d.soundState()
 		snap.LockHTTP = d.lockHTTPView(p.Container)
+		snap.Pressure = d.deckPressure(p.Container)
 		return snap, err
 	}
 	return nil, fmt.Errorf("unknown method %q", req.Method)

@@ -49,6 +49,7 @@ type spawnIn struct {
 	Branch  string `json:"branch,omitempty" jsonschema:"the git branch the agent works on, in its own worktree"`
 	Brief   string `json:"brief" jsonschema:"what the new agent must do, at most 32 KiB; it is its first message"`
 	For     string `json:"for,omitempty" jsonschema:"answers a spawn request: #<request id>, or the requester's name (its oldest pending request)"`
+	Queue   bool   `json:"queue,omitempty" jsonschema:"when the host is under pressure, queue the spawn and start it once the pressure falls (you get a message) instead of refusing it"`
 }
 
 type requestIn struct {
@@ -128,7 +129,7 @@ func New(sock, agent, version string) *mcp.Server {
 			return proxy(ctx, sock, agent, "msg_reply", short, in), nil, nil
 		})
 	const long = 60 * time.Second // the daemon starts a terminal and the agent's container process
-	mcp.AddTool(s, &mcp.Tool{Name: "agents_spawn", Description: "Leads only: start a new agent as your child. Its brief is its first message. Refused beyond 20 children per lead; the reason comes back."},
+	mcp.AddTool(s, &mcp.Tool{Name: "agents_spawn", Description: "Leads only: start a new agent as your child. Its brief is its first message. Refused beyond 20 children per lead, or while the host is under pressure (then queue: true starts it once the pressure falls); the reason comes back."},
 		func(ctx context.Context, _ *mcp.CallToolRequest, in spawnIn) (*mcp.CallToolResult, any, error) {
 			return proxy(ctx, sock, agent, "agents_spawn", long, in), nil, nil
 		})

@@ -158,6 +158,14 @@ func (m Model) statusLine(inner int) string {
 			lipgloss.NewStyle().Foreground(theme.Accent).Render(c.bar), inner)
 	}
 	if m.status == "" {
+		// Near or over a threshold, and nothing else to say: the gauge, amber or red.
+		if m.noticeText == "" && m.pressure != nil && m.pressure.Level != "ok" {
+			st := lipgloss.NewStyle().Foreground(theme.Working)
+			if m.pressure.Level == "over" {
+				st = alert
+			}
+			return padRight(" "+st.Render(fit(safe(m.pressure.Short, c), inner-1, c)), inner)
+		}
 		if m.noticeText == "" {
 			return ""
 		}
