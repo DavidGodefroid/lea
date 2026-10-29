@@ -92,6 +92,8 @@ lea_doctor() {
     else lea__ok "$_dctr CPU windows: none (no agent runs, or LEA_AGENT_CPUS=0)"; fi
   done
 
+  lea__doctor_pressure
+
   # The domains the proxy always allows: EGRESS_ALWAYS of proxy/render-squid-conf.sh.
   if [ "${LEA_LOCKHTTP:-0}" = 1 ]; then
     lea__ok "egress: the LockHTTP gate decides (its policy's trusted reads replace LEA_EGRESS_ALLOW: lockhttp init --trusted)"
@@ -121,6 +123,38 @@ lea_doctor() {
     lea__warn "kubernetes token" "none (optional): lea kube refresh"
   fi
   return "$_drc"
+}
+
+# lea__doctor_pressure: what the daemon reads to refuse or queue new agents and pause some under
+# pressure (#132, P2): PSI, each running lea container's cgroup v2 (found from its pid, either
+# engine), and thresholds that make sense together.
+lea__doctor_pressure() {
+  _dproc=${LEA_DOCTOR_PROC:-/proc}; _dcg=${LEA_DOCTOR_CGROUP:-/sys/fs/cgroup}
+  if [ -r "$_dproc/pressure/cpu" ] && [ -r "$_dproc/pressure/memory" ]; then lea__ok "pressure stall information (PSI)"
+  else lea__warn "pressure stall information (PSI)" "$_dproc/pressure is not readable (a kernel without PSI, or booted with psi=0): admission and shedding see memory and load only"; fi
+  for _dctr in $(docker ps --filter "label=lea.prefix=$LEA_PREFIX" --filter label=lea.role=session --format '{{.Names}}' 2>/dev/null || true); do
+    _dpid=$(docker inspect -f '{{.State.Pid}}' "$_dctr" 2>/dev/null || true); _dcgp=
+    case $_dpid in '' | *[!0-9]* | 0) ;; *) _dcgp=$(sed -n 's/^0:://p' "$_dproc/$_dpid/cgroup" 2>/dev/null | head -n 1) ;; esac
+    case $_dcgp in *..*) _dcgp= ;; esac
+    if [ -n "$_dcgp" ] && [ -r "$_dcg$_dcgp/memory.current" ]; then
+      lea__ok "$_dctr pressure readable (cgroup $_dcgp)"
+    else
+      lea__warn "$_dctr pressure" "its cgroup v2 is not readable from the host: admission and shedding see the host's readings only"
+    fi
+  done
+  _dnum() { case $1 in '' | *[!0-9.]* | *.*.*) echo "$2" ;; *) echo "$1" ;; esac; }
+  _dac=$(_dnum "${LEA_ADMIT_CPU_PSI:-}" 40); _dam=$(_dnum "${LEA_ADMIT_MEM_PCT:-}" 85); _dap=$(_dnum "${LEA_ADMIT_MEM_PSI:-}" 10)
+  _dai=$(_dnum "${LEA_ADMIT_IO_PSI:-}" 40); _dal=$(_dnum "${LEA_ADMIT_LOAD:-}" 2)
+  _dsm=$(_dnum "${LEA_SHED_MEM_PCT:-}" 95); _dsa=$(_dnum "${LEA_SHED_AFTER:-}" 30)
+  if awk -v a="$_dac" -v b="$_dam" -v c="$_dap" -v d="$_dai" -v e="$_dal" 'BEGIN { exit !(a + b + c + d + e == 0) }'; then
+    lea__warn "admission" "every LEA_ADMIT_* threshold is 0: new agents start whatever the pressure"
+  else
+    lea__ok "admission: cpu PSI $_dac%, memory $_dam% of the limit, memory PSI $_dap%, io PSI $_dai%, load $_dal per CPU (0: off)"
+  fi
+  if awk -v a="$_dsa" 'BEGIN { exit !(a == 0) }'; then lea__ok "shedding: off (LEA_SHED_AFTER=0)"
+  elif awk -v s="$_dsm" -v a="$_dam" 'BEGIN { exit !(s > 0 && a > 0 && s <= a) }'; then
+    lea__warn "shedding" "LEA_SHED_MEM_PCT ($_dsm) is not above LEA_ADMIT_MEM_PCT ($_dam): lea would pause agents before it stops starting new ones"
+  else lea__ok "shedding: after ${_dsa} s at memory $_dsm% (LEA_SHED_*)"; fi
 }
 
 # The kernel fixes lea's containment relies on (config/host-minimums).
