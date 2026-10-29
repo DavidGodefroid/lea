@@ -28,7 +28,8 @@ type fakeAgents struct {
 	parkHold                  chan struct{} // when set, ParkStack waits for it to close
 	newHold                   chan struct{} // when set, New waits for it to close
 	// st, when set, is where SoftStop and ResumeSuspended record the state they leave.
-	st *store.Store
+	st        *store.Store
+	resumeErr error // ResumeSuspended fails with it
 }
 
 func (f *fakeAgents) rec(s string) { f.mu.Lock(); f.calls = append(f.calls, s); f.mu.Unlock() }
@@ -106,6 +107,9 @@ func (f *fakeAgents) SoftStop(ctx context.Context, key string) error {
 }
 func (f *fakeAgents) ResumeSuspended(ctx context.Context, key, prompt string) error {
 	f.rec("resume " + key + ": " + prompt)
+	if f.resumeErr != nil {
+		return f.resumeErr
+	}
 	if f.st == nil {
 		return nil
 	}

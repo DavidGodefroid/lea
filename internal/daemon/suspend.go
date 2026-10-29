@@ -118,8 +118,8 @@ func (d *Daemon) softStop(key string) {
 	d.wakeSuspended(key)
 }
 
-// wakeSuspended resumes a suspended_cold agent that has unread messages: a message (from its
-// lead, a child, the user, or the decision lea delivers) wakes it, so a lead waiting for a
+// wakeSuspended resumes a suspended_cold agent that has unread messages or a decided ticket: a
+// decision, or a message (from its lead, a child, the user), wakes it, so a lead waiting for a
 // decision never blocks the children that write to it. The resume goes through the admission's
 // resume lane (resumelane.go): in the background at once, or once the pressure falls. A warm
 // agent hears them through its Rewake job.
@@ -128,8 +128,7 @@ func (d *Daemon) wakeSuspended(key string) {
 	if err != nil || ag.State != store.StateSuspendedCold {
 		return
 	}
-	n, err := d.unreadNotice(key)
-	if err != nil || n["count"] == 0 {
+	if n, err := d.unreadNotice(key); (err != nil || n["count"] == 0) && !d.hasUndelivered(key) {
 		return
 	}
 	d.mu.Lock()

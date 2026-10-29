@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/DavidGodefroid/lea/internal/agents"
+	"github.com/DavidGodefroid/lea/internal/store"
 )
 
 // The resume lane of the admission (#162). A suspended agent woken by a decision or a message,
@@ -84,18 +85,33 @@ func (d *Daemon) startResume(a Agents, r *queuedResume) {
 	d.resumeSuspended(a, r.key)
 }
 
-// resumeSuspended resumes a suspended_cold agent with the unread notice it has now as its next
-// turn; one that woke or ended meanwhile is left alone.
+// resumeSuspended resumes a suspended_cold agent with what it has now as its next turn: the
+// decisions on its tickets (delivered by this resume) and the unread notice. One that woke or
+// ended meanwhile is left alone. A resume that fails leaves the decisions in its inbox.
 func (d *Daemon) resumeSuspended(a Agents, key string) {
+	ag, err := d.st.AgentByKey(key)
+	if err != nil || ag.State != store.StateSuspendedCold {
+		return
+	}
 	n, err := d.unreadNotice(key)
-	if err != nil || n["count"] == 0 {
+	if err != nil {
 		return
 	}
 	text, _ := n["text"].(string)
+	ws := d.takeDecisions(key)
+	prompt := resumePrompt(ws, text)
+	if prompt == "" {
+		return
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), suspendTimeout)
 	defer cancel()
-	if err := a.ResumeSuspended(ctx, key, text); err != nil && !errors.Is(err, agents.ErrNotSuspended) {
-		log.Printf("lea daemon: resume suspended %s: %v", key, err)
+	if err := a.ResumeSuspended(ctx, key, prompt); err != nil {
+		if !errors.Is(err, agents.ErrNotSuspended) {
+			log.Printf("lea daemon: resume suspended %s: %v", key, err)
+		}
+		for _, w := range ws {
+			d.post("user", key, "result", hubDecisionText(w), 0)
+		}
 	}
 	d.changed()
 }
