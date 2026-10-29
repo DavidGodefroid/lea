@@ -24,6 +24,7 @@ const (
 	pushShadowed = "a tag is named like the agent's branch: git would push the tag (refs/tags/<branch>); delete the tag or push refs/heads/<branch>"
 	pushNoBranch = "the agent's branch is not a local branch of the repository the push runs in: git would push whatever else has its name; push refs/heads/<branch>"
 	pushNoRepo   = "lea cannot tell which repository the push runs in (cd or -C computed, cd -, a substitution): push from the worktree, plainly"
+	pushAfter    = "a bare git push origin <branch> after commands that may change the refs (anything but cd, git add|commit|status|log|diff|show, echo): lea reads them before the command runs; push refs/heads/<branch>, or alone"
 	pushRefsOdd  = "lea cannot read the refs of the repository the push runs in (reftable, a symlink or an odd file): push refs/heads/<branch>"
 )
 
@@ -61,6 +62,8 @@ func RawPush(tool string, input json.RawMessage, c Caller) string {
 	if strings.HasPrefix(c.Cwd, "/") {
 		dir, known = path.Clean(c.Cwd), true
 	}
+	// moved: a command before the push may have changed the refs lea reads before any runs.
+	moved := false
 	for _, w := range segs {
 		p := 0
 		for p < len(w) && isAssignment(w[p]) {
@@ -76,12 +79,21 @@ func RawPush(tool string, input json.RawMessage, c Caller) string {
 		case "popd":
 			known = false
 			continue
+		case "echo", "printf", "true", "pwd":
+			continue
 		}
 		if !isGit(w[p]) {
+			moved = true
 			continue
 		}
 		gdir, gknown, names := gitPushNames(w[p:], dir, known, c.Branch)
+		if s := gitSub(w[p:]); s > 0 && refsKept[w[p+s]] {
+			continue
+		}
 		for _, b := range names {
+			if moved {
+				return pushAfter
+			}
 			if !gknown {
 				return pushNoRepo
 			}
@@ -89,9 +101,13 @@ func RawPush(tool string, input json.RawMessage, c Caller) string {
 				return why
 			}
 		}
+		moved = true // the push itself, a git call that may change the refs
 	}
 	return ""
 }
+
+// refsKept are the git subcommands that leave every ref but the branch's own as it is.
+var refsKept = map[string]bool{"add": true, "commit": true, "status": true, "log": true, "diff": true, "show": true}
 
 // pushDir is the directory cd args leaves the shell in: known false when lea cannot tell.
 func pushDir(dir string, known bool, args []string) (string, bool) {

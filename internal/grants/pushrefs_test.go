@@ -95,6 +95,10 @@ func TestRawPushNeverMakesATag(t *testing.T) {
 		{"a branch and a tag of its name", "git push origin feat/73-x", func(t *testing.T, wt string) {
 			git(t, wt, "tag", "feat/73-x")
 		}, true, false},
+		{"tag made by the same command", "git checkout -q --detach && git branch -D feat/73-x && git tag feat/73-x && git push origin feat/73-x", nil, true, true},
+		{"tag made by a script first", "sh -c 'git tag feat/73-x' ; git push origin feat/73-x", nil, true, false},
+		{"commit then push", "git add -A && git commit -q --allow-empty -m x && git push origin feat/73-x", nil, false, false},
+		{"tag made by the same command, qualified", "git tag v3 && git push origin refs/heads/feat/73-x", nil, false, false},
 		{"packed branch", "git push origin feat/73-x", func(t *testing.T, wt string) {
 			git(t, wt, "pack-refs", "--all")
 		}, false, false},

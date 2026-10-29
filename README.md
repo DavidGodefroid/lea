@@ -574,7 +574,8 @@ live agent of the lea works on it. Some calls are denied outright, grant or not:
 `git push`, `HEAD` or `@` follows whatever is checked out), a refspec whose destination git would
 infer (`<src>:<branch>` with neither side `refs/heads/…`: a tag's source makes `refs/tags/<branch>`),
 a bare `git push origin <branch>` where the repository it runs in has no local branch of that name
-or a tag of it (lea reads its refs), a push of every branch or tag (`--all`,
+or a tag of it (lea reads its refs; after a command that may change them, `refs/heads/<branch>`
+only), a push of every branch or tag (`--all`,
 `--branches`, `--tags`, `--follow-tags`, a wildcard or a bare `:`), other git transports (`send-pack`, `http-push`,
 `remote-<helper>`, `svn`, `p4`), a push lea cannot read (an unknown option, a shell glob, a push run
 through another program, or a `git … push` in the arguments of any program but `grep`, `rg`,
