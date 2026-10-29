@@ -405,6 +405,24 @@ family() {
   [ "$(pstate "$_fk")" != T ]
 }
 
+@test "pause also freezes the running containers the agent started, only those; resume thaws them (#132)" {
+  fake_podman
+  export PODMAN_RUNNING="$BATS_TEST_TMPDIR/running" PODMAN_PIDS="$BATS_TEST_TMPDIR/pids"
+  family claude-1
+  printf '%s\n' 'c1||claude-1|false' 'c2||claude-1|false' 'c5||dev-2|false' >"$PODMAN_DB"
+  printf '%s\n' c1 c5 >"$PODMAN_RUNNING"
+  sh -c 'sleep 60 & wait' & p1=$!; sleep 60 & p5=$!; PIDS="$PIDS $p1 $p5"
+  k1=$(kid "$p1"); PIDS="$PIDS $k1"
+  printf 'c1 %s\nc5 %s\n' "$p1" "$p5" >"$PODMAN_PIDS"
+  run "$A" pause claude-1
+  [ "$status" -eq 0 ]
+  [ "$(pstate "$_fp")" = T ] && [ "$(pstate "$p1")" = T ] && [ "$(pstate "$k1")" = T ]
+  [ "$(pstate "$p5")" != T ]
+  run "$A" resume claude-1
+  [ "$status" -eq 0 ]
+  [ "$(pstate "$_fp")" != T ] && [ "$(pstate "$p1")" != T ] && [ "$(pstate "$k1")" != T ]
+}
+
 @test "stop ends a paused agent at once and leaves no frozen child" {
   family claude-1
   "$A" pause claude-1

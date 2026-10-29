@@ -214,8 +214,12 @@ func runDaemon(stderr io.Writer) int {
 		fmt.Fprintln(stderr, "lea:", clean(err.Error(), false))
 		return 1
 	}
-	if a := launcher.AdmitSettings(os.Getenv); len(a) == 5 {
+	if a := launcher.AdmitSettings(os.Getenv); len(a) == 10 {
 		d.SetPressure(&daemon.HostPressure{}, daemon.Thresholds{CPUPSI: a[0], MemPct: a[1], MemPSI: a[2], IOPSI: a[3], Load: a[4]})
+		// Under sustained critical pressure the lowest-priority agent is paused, and resumed once
+		// the pressure falls.
+		d.SetShed(daemon.Shed{MemPct: a[5], MemPSI: a[6], CPUPSI: a[7],
+			After: time.Duration(a[8] * float64(time.Second)), Resume: time.Duration(a[9] * float64(time.Second))})
 		go d.RunPressure(ctx)
 	}
 	// The Lock Family hub's decisions (#164): read from its host facade socket, from the recorded

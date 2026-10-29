@@ -5,11 +5,13 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/DavidGodefroid/lea/internal/daemon"
+	"github.com/DavidGodefroid/lea/internal/providers"
 	"github.com/DavidGodefroid/lea/internal/store"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
@@ -70,6 +72,12 @@ func TestToolsRoundTrip(t *testing.T) {
 	for _, n := range []string{"agents_list", "msg_send", "msg_inbox", "msg_wait", "msg_reply", "ask"} {
 		if !names[n] {
 			t.Errorf("missing tool %s", n)
+		}
+	}
+	// Codex runs each of lea's tools without its prompt or with it (providers): a new tool picks one.
+	for n := range names {
+		if slices.Contains(providers.LeaApprovedTools, n) == slices.Contains(providers.LeaPromptedTools, n) {
+			t.Errorf("tool %s is in neither or both of providers.LeaApprovedTools and LeaPromptedTools", n)
 		}
 	}
 	if _, err := rev.CallTool(ctx, &mcp.CallToolParams{Name: "agents_list", Arguments: map[string]any{}}); err != nil { // registers rev
