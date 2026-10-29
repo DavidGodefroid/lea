@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 	"sync"
@@ -191,6 +192,8 @@ func codexE2E(t *testing.T, plant bool) {
 		t.Fatalf("the request did not go through the forward proxy: %v", via)
 	}
 }
+
+var ansi = regexp.MustCompile(`\x1b\[[0-9;?]*[a-zA-Z]|\x1b\][^\x07]*\x07`)
 
 // fakeLockMCP is a stdio MCP server standing in for a Lock: its one tool answers after secs
 // seconds, as a Lock call does once a human approves it.
@@ -378,9 +381,14 @@ func TestCodexLockCallOutlivesTheDefaultToolTimeout(t *testing.T) {
 			defer mu.Unlock()
 			t.Fatalf("codex ended before the Lock call came back (tools %q, %d requests; the Lock's tool: %s):\n%s", tools, n, lockTool, out)
 		case <-deadline:
+			cmd.Process.Kill()
+			out := <-done
+			if len(out) > 4000 {
+				out = out[len(out)-4000:]
+			}
 			mu.Lock()
 			defer mu.Unlock()
-			t.Fatalf("no tool result within %d s (tools %q, %d requests; the Lock's tool: %s)", wait+55, tools, n, lockTool)
+			t.Fatalf("no tool result within %d s (%d requests; the Lock's tool: %s); codex's screen ends with:\n%s", wait+55, n, lockTool, ansi.ReplaceAll(out, nil))
 		case <-time.After(time.Second):
 		}
 	}
