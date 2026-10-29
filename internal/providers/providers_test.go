@@ -233,7 +233,7 @@ func TestArgvClaude(t *testing.T) {
 }
 
 // Each enabled Lock's MCP server, declared whole with Codex's tool timeout (#152): a Lock call
-// waits for a human. Claude agents get none (their tool calls wait); an unknown Lock or a timeout
+// waits for a human, who approves it at the Lock, so Codex does not ask first. Claude agents get none (their tool calls wait); an unknown Lock or a timeout
 // out of range is left out.
 func TestArgvCodexLockServers(t *testing.T) {
 	r := Builtin()
@@ -245,8 +245,8 @@ func TestArgvCodexLockServers(t *testing.T) {
 	}
 	j := strings.Join(got, " ")
 	for _, w := range []string{
-		`-c mcp_servers.locksql.command="/usr/local/bin/locksql" -c mcp_servers.locksql.args=["mcp"] -c mcp_servers.locksql.tool_timeout_sec=1500`,
-		`-c mcp_servers.lockfile.command="/usr/local/bin/lockfile" -c mcp_servers.lockfile.args=["mcp"] -c mcp_servers.lockfile.tool_timeout_sec=900`,
+		`-c mcp_servers.locksql.command="/usr/local/bin/locksql" -c mcp_servers.locksql.args=["mcp"] -c mcp_servers.locksql.tool_timeout_sec=1500 -c mcp_servers.locksql.default_tools_approval_mode="approve"`,
+		`-c mcp_servers.lockfile.command="/usr/local/bin/lockfile" -c mcp_servers.lockfile.args=["mcp"] -c mcp_servers.lockfile.tool_timeout_sec=900 -c mcp_servers.lockfile.default_tools_approval_mode="approve"`,
 	} {
 		if !strings.Contains(j, w) {
 			t.Errorf("missing %s in %s", w, j)
@@ -272,12 +272,19 @@ func TestArgvCodex(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// lea's tools run without Codex's prompt, but agents_spawn and agents_stop: they start and
+	// stop agents, and keep the prompt a Claude agent gets (where a grant may answer it).
 	want := []string{"--sandbox", "workspace-write", "--ask-for-approval", "on-request",
 		"-c", "check_for_update_on_startup=false",
 		"-c", `mcp_servers.lea.command="/usr/local/bin/lea"`, "-c", `mcp_servers.lea.args=["mcp"]`,
-		"-c", `mcp_servers.lea.env.LEA_AGENT="dev-1"`, "-c", `notify=["/usr/local/bin/lea","hook","codex","notify"]`,
-		"-c", `projects."/home/u/projects".trust_level="untrusted"`,
-		"--model", "gpt-5.1-codex", "read your brief"}
+		"-c", `mcp_servers.lea.env.LEA_AGENT="dev-1"`, "-c", `notify=["/usr/local/bin/lea","hook","codex","notify"]`}
+	for _, tool := range []string{"agents_list", "agents_request_spawn", "ask", "board_read", "grants_list",
+		"lease_acquire", "lease_release", "lock_request", "msg_inbox", "msg_reply", "msg_send", "msg_wait",
+		"providers_list", "task_update"} {
+		want = append(want, "-c", `mcp_servers.lea.tools.`+tool+`.approval_mode="approve"`)
+	}
+	want = append(want, "-c", `projects."/home/u/projects".trust_level="untrusted"`,
+		"--model", "gpt-5.1-codex", "read your brief")
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("got  %q\nwant %q", got, want)
 	}

@@ -62,12 +62,15 @@ func TestHubWaitLifecycle(t *testing.T) {
 	if ws, err := s.PendingHubWaits(a); err != nil || len(ws) != 2 || ws[0].Ticket != t1 || ws[0].Lock != "locksql" || ws[0].Instance != "crm-prod" {
 		t.Fatalf("pending %+v %v", ws, err)
 	}
-	ds, err := s.DecideHubWaits(t1, DecisionApproved, "", 20)
+	if ds, err := s.DecideHubWaits(t1, "other-instance", DecisionApproved, "", 19); err != nil || len(ds) != 0 {
+		t.Fatalf("another instance's decision applied: %+v %v", ds, err)
+	}
+	ds, err := s.DecideHubWaits(t1, "crm-prod", DecisionApproved, "", 20)
 	if err != nil || len(ds) != 2 || ds[0].Agent != a || ds[1].Agent != b || ds[0].Decision != DecisionApproved || ds[0].DecidedAt != 20 {
 		t.Fatalf("decided %+v %v", ds, err)
 	}
 	// Final: a later decision on the same ticket changes nothing.
-	if ds, err := s.DecideHubWaits(t1, DecisionDenied, "too late", 21); err != nil || len(ds) != 0 {
+	if ds, err := s.DecideHubWaits(t1, "crm-prod", DecisionDenied, "too late", 21); err != nil || len(ds) != 0 {
 		t.Fatalf("decided again %+v %v", ds, err)
 	}
 	u, err := s.UndeliveredHubWaits(a)
@@ -89,7 +92,7 @@ func TestHubWaitLifecycle(t *testing.T) {
 	if u, _ := s.UndeliveredHubWaits(b); len(u) != 1 {
 		t.Fatalf("dev-2's decision %+v", u)
 	}
-	if _, err := s.DecideHubWaits(t2, DecisionDenied, "not now", 40); err != nil {
+	if _, err := s.DecideHubWaits(t2, "crm-prod", DecisionDenied, "not now", 40); err != nil {
 		t.Fatal(err)
 	}
 	if u, _ := s.UndeliveredHubWaits(a); len(u) != 1 || u[0].Reason != "not now" {
@@ -118,11 +121,11 @@ func TestHubWaitRefusesBadInput(t *testing.T) {
 			t.Errorf("%q accepted", c)
 		}
 	}
-	if _, err := s.DecideHubWaits(t1, "maybe", "", 2); err == nil {
+	if _, err := s.DecideHubWaits(t1, "crm-prod", "maybe", "", 2); err == nil {
 		t.Error("an unknown decision accepted")
 	}
 	for _, r := range []string{strings.Repeat("r", maxHubReason+1), "\xff"} {
-		if _, err := s.DecideHubWaits(t1, DecisionDenied, r, 2); err == nil {
+		if _, err := s.DecideHubWaits(t1, "crm-prod", DecisionDenied, r, 2); err == nil {
 			t.Errorf("reason %.20q accepted", r)
 		}
 	}

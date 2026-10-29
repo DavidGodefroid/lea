@@ -11,6 +11,7 @@ docker [inspect] [-f] [{{.State.Running}}] [lea-proxy]
 docker [network] [ls] [--filter] [label=lea.prefix=lea] [--format] [{{.Name}}]
 docker [ps] [--filter] [label=lea.prefix=lea] [--filter] [label=lea.role=session] [--format] [{{.Names}}]
 docker [ps] [--filter] [label=lea.prefix=lea] [--filter] [label=lea.role=session] [--format] [{{.Names}}]
+docker [ps] [--filter] [label=lea.prefix=lea] [--filter] [label=lea.role=session] [--format] [{{.Names}}]
 docker [image] [inspect] [locksql:0.9.0]
 docker [volume] [inspect] [locksql-run]
 core [delivery] [--container] [lea-$ID] [--projects] [$W/projects] [check] [--state] [$W/data/lea/state]
@@ -27,6 +28,9 @@ ok    image lea-proxy:dev
 ok    tmux (tmux 3.4, host)
 ok    proxy running
 ok    internal networks: none (each lea creates its own at start)
+warn  pressure stall information (PSI): $W/proc/pressure is not readable (a kernel without PSI, or booted with psi=0): admission and shedding see memory and load only
+ok    admission: cpu PSI 40%, memory 85% of the limit, memory PSI 10%, io PSI 40%, load 2 per CPU (0: off)
+ok    shedding: after 30 s at memory 95% (LEA_SHED_*)
 ok    egress allowlist: lea's default (forges, registries, model APIs; LEA_EGRESS_ALLOW extends it with 'default,<domain>')
 ok    telemetry: off (LEA_OTEL_UPSTREAM)
 ok    locksql image locksql:0.9.0

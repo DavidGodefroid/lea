@@ -133,3 +133,25 @@ func TestResumesRunAtOnceWithoutPressure(t *testing.T) {
 	}
 	waitCall(t, fa, "resume-stopped lea-a")
 }
+
+// A daemon that started again resumes, when the container's bus attaches, a stopped suspended
+// agent whose messages came while it was down: no launcher sweep is needed.
+func TestAttachingAContainerTakesOverItsSuspendedAgents(t *testing.T) {
+	e := start(t)
+	fa := &fakeAgents{st: e.d.st}
+	e.d.SetAgents(fa)
+	a, err := e.d.st.Register(store.NewAgent{Container: "lea-b", Name: "dev-1", Profile: "claude", Workdir: "/p", Role: "dev"}, store.Caps{}, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := e.d.st.SetState(a.Key, store.StateSuspendedCold, testSession, 2); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := e.d.st.Send(store.Message{From: "user", To: a.Key, Kind: "note", Body: "hi", At: 3}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := e.d.AttachContainer(e.ctx, "lea-b"); err != nil {
+		t.Fatal(err)
+	}
+	waitCall(t, fa, "resume "+a.Key)
+}

@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 	"sync"
@@ -37,7 +38,7 @@ while time.time() < end:
             break
         if not d:
             break
-        sys.stdout.buffer.write(d)
+        sys.stdout.buffer.write(d); sys.stdout.buffer.flush()
         if b'\x1b[6n' in d:
             os.write(fd, b'\x1b[1;1R')
 os.kill(pid, signal.SIGKILL)
@@ -192,6 +193,8 @@ func codexE2E(t *testing.T, plant bool) {
 	}
 }
 
+var ansi = regexp.MustCompile(`\x1b\[[0-9;?]*[a-zA-Z]|\x1b\][^\x07]*\x07`)
+
 // fakeLockMCP is a stdio MCP server standing in for a Lock: its one tool answers after secs
 // seconds, as a Lock call does once a human approves it.
 const fakeLockMCP = `
@@ -232,12 +235,19 @@ func TestCodexLockCallOutlivesTheDefaultToolTimeout(t *testing.T) {
 	const wait = 90
 	var mu sync.Mutex
 	var tools []string
-	var output string
+	var output, lockTool string
 	n := 0
 	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var raw struct {
+			Tools []json.RawMessage `json:"tools"`
+		}
 		var body struct {
 			Tools []struct {
-				Name string `json:"name"`
+				Type  string `json:"type"`
+				Name  string `json:"name"`
+				Tools []struct {
+					Name string `json:"name"`
+				} `json:"tools"`
 			} `json:"tools"`
 			Input []struct {
 				Type   string          `json:"type"`
@@ -247,14 +257,29 @@ func TestCodexLockCallOutlivesTheDefaultToolTimeout(t *testing.T) {
 		}
 		b, _ := io.ReadAll(r.Body)
 		_ = json.Unmarshal(b, &body)
+		_ = json.Unmarshal(b, &raw)
 		mu.Lock()
+		for _, tl := range raw.Tools {
+			if strings.Contains(string(tl), "locksql") {
+				lockTool = string(tl)
+			}
+		}
 		n++
 		first := n == 1
-		call := ""
+		// Codex lists an MCP server's tools as a flat function (server__tool) or, since it groups
+		// them, under a namespace (mcp__server); the call names the tool and that namespace.
+		call, ns := "", ""
 		for _, tl := range body.Tools {
 			tools = append(tools, tl.Name)
 			if strings.Contains(tl.Name, "locksql") && strings.Contains(tl.Name, "query") {
 				call = tl.Name
+			}
+			if tl.Type == "namespace" && strings.Contains(tl.Name, "locksql") {
+				for _, sub := range tl.Tools {
+					if sub.Name == "query" {
+						call, ns = sub.Name, tl.Name
+					}
+				}
 			}
 		}
 		for _, in := range body.Input {
@@ -267,6 +292,9 @@ func TestCodexLockCallOutlivesTheDefaultToolTimeout(t *testing.T) {
 		item := `{"type":"message","role":"assistant","id":"m1","content":[{"type":"output_text","text":"done"}]}`
 		if first && call != "" {
 			item = `{"type":"function_call","id":"fc1","call_id":"call_lock","name":"` + call + `","arguments":"{}"}`
+			if ns != "" {
+				item = `{"type":"function_call","id":"fc1","call_id":"call_lock","namespace":"` + ns + `","name":"` + call + `","arguments":"{}"}`
+			}
 		}
 		for _, ev := range []string{
 			`{"type":"response.created","response":{"id":"resp_1"}}`,
@@ -284,7 +312,23 @@ func TestCodexLockCallOutlivesTheDefaultToolTimeout(t *testing.T) {
 	key := filepath.Join(dir, "key")
 	os.WriteFile(key, []byte("sk-e2e-secret\n"), 0o600)
 	upURL, _ := url.Parse(up.URL + "/v1")
-	f, err := keyproxy.New(keyproxy.Config{Endpoints: []keyproxy.Endpoint{{Name: "llm", URL: upURL, KeyFile: key}}})
+	fwd := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		r.RequestURI = ""
+		res, err := http.DefaultTransport.RoundTrip(r)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadGateway)
+			return
+		}
+		defer res.Body.Close()
+		for k, v := range res.Header {
+			w.Header()[k] = v
+		}
+		w.WriteHeader(res.StatusCode)
+		io.Copy(w, res.Body)
+	}))
+	defer fwd.Close()
+	viaURL, _ := url.Parse(fwd.URL)
+	f, err := keyproxy.New(keyproxy.Config{Endpoints: []keyproxy.Endpoint{{Name: "llm", URL: upURL, KeyFile: key}}, Via: viaURL})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -304,8 +348,9 @@ func TestCodexLockCallOutlivesTheDefaultToolTimeout(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(strings.Join(argv, " "), "mcp_servers.locksql.tool_timeout_sec=1500") {
-		t.Fatalf("no tool timeout in %q", argv)
+	if j := strings.Join(argv, " "); !strings.Contains(j, "mcp_servers.locksql.tool_timeout_sec=1500") ||
+		!strings.Contains(j, `mcp_servers.locksql.default_tools_approval_mode="approve"`) {
+		t.Fatalf("no tool timeout or approval mode in %q", argv)
 	}
 	cmd := exec.Command("python3", append([]string{"-I", "-c", ptyRun, strconv.Itoa(wait + 60), codex}, argv...)...)
 	cmd.Dir = wd
@@ -335,11 +380,16 @@ func TestCodexLockCallOutlivesTheDefaultToolTimeout(t *testing.T) {
 		case out := <-done:
 			mu.Lock()
 			defer mu.Unlock()
-			t.Fatalf("codex ended before the Lock call came back (tools %q, %d requests):\n%s", tools, n, out)
+			t.Fatalf("codex ended before the Lock call came back (tools %q, %d requests; the Lock's tool: %s):\n%s", tools, n, lockTool, out)
 		case <-deadline:
+			cmd.Process.Kill()
+			out := <-done
+			if len(out) > 4000 {
+				out = out[len(out)-4000:]
+			}
 			mu.Lock()
 			defer mu.Unlock()
-			t.Fatalf("no tool result within %d s (tools %q, %d requests)", wait+55, tools, n)
+			t.Fatalf("no tool result within %d s (%d requests; the Lock's tool: %s); codex's screen ends with:\n%s", wait+55, n, lockTool, ansi.ReplaceAll(out, nil))
 		case <-time.After(time.Second):
 		}
 	}
