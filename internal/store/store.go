@@ -75,6 +75,14 @@ CREATE INDEX IF NOT EXISTS grants_container ON grants(container, revoked, expire
 CREATE TABLE IF NOT EXISTS grant_uses(
   id INTEGER PRIMARY KEY AUTOINCREMENT, grant_id INTEGER NOT NULL, agent TEXT NOT NULL,
   action TEXT NOT NULL, target TEXT NOT NULL, at INTEGER NOT NULL);
+
+CREATE TABLE IF NOT EXISTS hub_waits(
+  agent_key TEXT NOT NULL, ticket TEXT NOT NULL, lock TEXT NOT NULL, instance TEXT NOT NULL,
+  created INTEGER NOT NULL, decided_at INTEGER NOT NULL DEFAULT 0, decision TEXT NOT NULL DEFAULT '',
+  reason TEXT NOT NULL DEFAULT '', delivered INTEGER NOT NULL DEFAULT 0,
+  PRIMARY KEY(agent_key, ticket));
+CREATE INDEX IF NOT EXISTS hub_waits_ticket ON hub_waits(ticket);
+CREATE TABLE IF NOT EXISTS kv(key TEXT PRIMARY KEY, value TEXT NOT NULL);
 `
 
 type Store struct{ db *sql.DB }
@@ -214,7 +222,7 @@ func (s *Store) UpsertAgent(container, name string, now int64) (string, error) {
 func (s *Store) SetState(key, state, sessionID string, now int64) error {
 	_, err := s.db.Exec(`UPDATE agents SET state=?,
 		session_id=CASE WHEN ?='' THEN session_id ELSE ? END, updated=?,
-		paused=CASE WHEN ? IN ('done','stopped','unknown') THEN 0 ELSE paused END,
+		paused=CASE WHEN ? IN ('done','stopped','unknown','suspended_cold') THEN 0 ELSE paused END,
 		limit_until=CASE WHEN ?='done' THEN 0
 			WHEN ? IN ('stopped','unknown') AND paused=1 AND limit_until>0 THEN -1 ELSE limit_until END,
 		limit_tries=CASE WHEN ?='done' THEN 0 ELSE limit_tries END WHERE key=?`,
