@@ -128,6 +128,10 @@ type Daemon struct {
 	spawnQueue    []*queuedSpawn
 	spawnSeq      int64
 	queueStarting bool
+	// hubFacade is where lea reads the Lock Family hub's decisions (hubsync.go, #164; nil: no
+	// hub); hubSyncMu keeps one sync at a time.
+	hubFacade HubFacade
+	hubSyncMu sync.Mutex
 }
 
 func New(st *store.Store, runDir string, now func() int64) *Daemon {

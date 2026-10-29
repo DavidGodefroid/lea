@@ -218,6 +218,12 @@ func runDaemon(stderr io.Writer) int {
 		d.SetPressure(&daemon.HostPressure{}, daemon.Thresholds{CPUPSI: a[0], MemPct: a[1], MemPSI: a[2], IOPSI: a[3], Load: a[4]})
 		go d.RunPressure(ctx)
 	}
+	// The Lock Family hub's decisions (#164): read from its host facade socket, from the recorded
+	// cursor, so that one taken while the daemon was down still reaches the agent that waits.
+	if sock := hubFacadeSocket(os.Getenv); sock != "" {
+		d.SetHubFacade(daemon.SocketFacade{Path: sock})
+		go d.RunHubSync(ctx)
+	}
 	exe, err := os.Executable()
 	if err != nil {
 		fmt.Fprintln(stderr, "lea:", clean(err.Error(), false))
@@ -859,4 +865,16 @@ func soundFiles(getenv func(string) string) (files map[string]string, on bool) {
 		}
 	}
 	return files, getenv("LEA_SOUND") != "0"
+}
+
+// hubFacadeSocket is the Lock Family hub's host facade socket: LEA_HUB_SOCKET, else
+// $XDG_RUNTIME_DIR/lockhub/facade.sock; "" without either.
+func hubFacadeSocket(get func(string) string) string {
+	if p := get("LEA_HUB_SOCKET"); p != "" {
+		return p
+	}
+	if r := get("XDG_RUNTIME_DIR"); r != "" {
+		return filepath.Join(r, "lockhub", "facade.sock")
+	}
+	return ""
 }
