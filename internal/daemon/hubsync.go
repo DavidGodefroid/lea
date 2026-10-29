@@ -185,7 +185,9 @@ func (d *Daemon) syncHub(ctx context.Context) error {
 			log.Printf("lea daemon: hub decision on %.40q: %v", it.Ticket, err)
 		}
 	}
-	// Withdrawn and expired are no decisions: the ticket's state says so.
+	// Withdrawn and expired are no decisions: the ticket's state says so. An approval or a denial
+	// the stream does not hold (a hub whose sequence went back under lea's cursor answers that
+	// cursor and nothing after it) shows there too, without its reason.
 	pending, err := d.st.AllPendingHubWaits()
 	if err != nil {
 		return err
@@ -200,7 +202,7 @@ func (d *Daemon) syncHub(ctx context.Context) error {
 		if err != nil {
 			continue // asked again at the next sync
 		}
-		if st == store.DecisionWithdrawn || st == store.DecisionExpired {
+		if st == store.DecisionWithdrawn || st == store.DecisionExpired || st == store.DecisionApproved || st == store.DecisionDenied {
 			if _, err := d.st.DecideHubWaits(w.Ticket, w.Instance, st, "", d.now()); err != nil {
 				log.Printf("lea daemon: hub ticket %s %s: %v", w.Ticket, st, err)
 			}
@@ -214,7 +216,7 @@ func (d *Daemon) syncHub(ctx context.Context) error {
 	if err := d.st.PurgeHubWaits(d.now()); err != nil {
 		log.Printf("lea daemon: purge hub waits: %v", err)
 	}
-	if cursor > since {
+	if cursor != since {
 		return d.st.SetHubCursor(strconv.FormatInt(cursor, 10))
 	}
 	return nil

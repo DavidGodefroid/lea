@@ -33,6 +33,7 @@ func (h *fakeHub) decide(ticket, instance, decision, reason string) {
 	h.mu.Lock()
 	h.items = append(h.items, fakeDecision{ticket, instance, decision, reason})
 	h.mu.Unlock()
+	h.setState(instance, ticket, decision)
 }
 
 func (h *fakeHub) setState(instance, id, st string) {
@@ -213,6 +214,36 @@ func TestHubWithdrawnTicketReachesTheAgent(t *testing.T) {
 	defer hub.mu.Unlock()
 	if !strings.Contains(strings.Join(hub.calls, "\n"), "GET /v1/tickets/crm-prod/"+ticketA) {
 		t.Fatalf("calls %q", hub.calls)
+	}
+}
+
+// A hub whose sequence went back under lea's cursor (its database made again) answers that cursor
+// and nothing after it; the decision still reaches the agent through the ticket's state, as one
+// the stream does not hold.
+func TestHubCursorBackAndDecisionOutOfTheStream(t *testing.T) {
+	e := start(t)
+	dev := spawned(t, e, "dev-1", "dev", "")
+	e.d.st.AddHubWait(dev, ticketA, "locksql", "crm-prod", 1)
+	e.d.st.SetHubCursor("100")
+	hub := &fakeHub{}
+	hub.decide("01JB0000000000000000000007", "crm-prod", "denied", "")
+	hub.decide("01JB0000000000000000000008", "crm-prod", "denied", "")
+	hub.decide(ticketA, "crm-prod", "approved", "")
+	e.d.SetHubFacade(SocketFacade{Path: serveHub(t, hub)})
+	if err := e.d.syncHub(e.ctx); err != nil {
+		t.Fatal(err)
+	}
+	if ms := inbox(t, e, "dev-1"); len(ms) != 1 || !strings.Contains(ms[0].Text, "approved") {
+		t.Fatalf("cursor back: inbox %+v", ms)
+	}
+	const tB = "01JB000000000000000000000B"
+	e.d.st.AddHubWait(dev, tB, "locksql", "crm-prod", 2)
+	hub.setState("crm-prod", tB, "denied") // decided, but not in the stream
+	if err := e.d.syncHub(e.ctx); err != nil {
+		t.Fatal(err)
+	}
+	if ms := inbox(t, e, "dev-1"); len(ms) != 1 || !strings.Contains(ms[0].Text, tB+" on locksql (crm-prod) denied: no reason given") {
+		t.Fatalf("out of the stream: inbox %+v", ms)
 	}
 }
 
