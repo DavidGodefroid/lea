@@ -108,8 +108,9 @@ type Snapshot struct {
 	Agents  []Agent `json:"agents"`
 	// Sound is the daemon's sound switch: "on", "off", or "" when no sound plays on the host.
 	Sound string `json:"sound,omitempty"`
-	// LockHTTP is the LockHTTP gate's state for this container, nil when LockHTTP is off.
-	LockHTTP *LockHTTP `json:"lockhttp,omitempty"`
+	// Locks is each Lock's approvals state for this container (#153), none when lea knows of no
+	// Lock's approvals.
+	Locks []LockState `json:"locks,omitempty"`
 	// Pressure is the container's pressure gauge (agents.PressureView), nil without a sample.
 	Pressure *Pressure `json:"pressure,omitempty"`
 }
@@ -122,10 +123,11 @@ type Pressure struct {
 	Over  string `json:"over,omitempty"`
 }
 
-// LockHTTP is what the deck shows of the LockHTTP gate (agents.LockHTTPView): its console
-// ("up", "down", "" unknown) and the container's requests waiting there. A notification only:
-// the user approves them in the lockhttp console.
-type LockHTTP struct {
+// LockState is what the deck shows of one Lock's approvals (agents.LockView): its name, its
+// console ("up", "down", "" unknown) and the container's requests waiting there. A notification
+// only: the user approves them in the Lock's console (or the hub's facade).
+type LockState struct {
+	Lock    string `json:"lock"`
 	Console string `json:"console"`
 	Pending int    `json:"pending"`
 }
@@ -232,7 +234,7 @@ type Model struct {
 	notice      func() string // the update notice (WithNotice)
 	noticeText  string        // its latest text, shown while there is no status
 	sound       string        // the daemon's sound switch (Snapshot.Sound)
-	lockhttp    *LockHTTP     // the LockHTTP gate's state (Snapshot.LockHTTP)
+	locks       []LockState   // each Lock's approvals state (Snapshot.Locks)
 	pressure    *Pressure     // the container's pressure gauge (Snapshot.Pressure)
 	seq         int           // the latest selection; older delayed shows are dropped
 	frame       int           // the working spinner's frame
@@ -507,7 +509,7 @@ func (m *Model) ask(key string) {
 // the slot, so that the row selected in its place is to be shown.
 func (m *Model) apply(s Snapshot) bool {
 	before, was := m.shown, m.selected
-	m.version, m.shown, m.sound, m.lockhttp, m.pressure = s.Version, s.Shown, s.Sound, s.LockHTTP, s.Pressure
+	m.version, m.shown, m.sound, m.locks, m.pressure = s.Version, s.Shown, s.Sound, s.Locks, s.Pressure
 	for _, a := range s.Agents {
 		if a.Key == s.Shown && a.State == "done" {
 			m.seen[a.Key] = a.Updated

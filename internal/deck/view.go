@@ -3,6 +3,7 @@ package deck
 import (
 	"fmt"
 	"path/filepath"
+	"regexp"
 	"strings"
 
 	"github.com/charmbracelet/lipgloss"
@@ -232,14 +233,9 @@ func (m Model) top(w int) string {
 	if m.sound == "off" {
 		count = "muted " + c.dot + " " + count
 	}
-	// LockHTTP: the requests waiting for the user in the lockhttp console, or its absence.
-	if h := m.lockhttp; h != nil {
-		switch {
-		case h.Pending > 0:
-			count = fmt.Sprintf("lockhttp %d to approve ", h.Pending) + c.dot + " " + count
-		case h.Console == "down":
-			count = "lockhttp console down " + c.dot + " " + count
-		}
+	// The requests waiting for the user in every Lock's console, or a console that is down.
+	if l := m.lockLine(); l != "" {
+		count = l + " " + c.dot + " " + count
 	}
 	// c.tl+c.h+" " (3) + title + " " + fill + " " + count + " "+c.h+c.tr (3)
 	fill := w - 8 - tw - lipgloss.Width(count)
@@ -249,6 +245,37 @@ func (m Model) top(w int) string {
 	return m.frameStyle().Render(c.tl+c.h+" ") + title + m.frameStyle().Render(" "+strings.Repeat(c.h, fill)+" ") +
 		muted.Render(count) + m.frameStyle().Render(" "+c.h+c.tr)
 }
+
+// lockLine is what the top border says of the Locks' approvals: "locksql 2 to approve" when one
+// Lock's requests wait, "5 to approve" when several Locks' do, else "lockhttp console down" for
+// the first console down; "" when all is quiet. The Lock names are the daemon's, checked.
+func (m Model) lockLine() string {
+	total, one, down := 0, "", ""
+	n := 0
+	for _, l := range m.locks {
+		if !lockNameRe.MatchString(l.Lock) {
+			continue
+		}
+		if l.Pending > 0 {
+			total += l.Pending
+			n++
+			one = l.Lock
+		} else if l.Console == "down" && down == "" {
+			down = l.Lock
+		}
+	}
+	switch {
+	case n == 1:
+		return fmt.Sprintf("%s %d to approve", one, total)
+	case n > 1:
+		return fmt.Sprintf("%d to approve", total)
+	case down != "":
+		return down + " console down"
+	}
+	return ""
+}
+
+var lockNameRe = regexp.MustCompile(`^[a-z][a-z0-9-]{0,31}$`)
 
 func (m Model) bottom(w int) string {
 	c := m.cs()

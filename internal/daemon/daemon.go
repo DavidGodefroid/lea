@@ -100,8 +100,9 @@ type Daemon struct {
 	resumeDelay int64
 	windows     map[string][]limitWindow
 	limitJobs   map[string]string
-	// lockhttp is the LockHTTP gate's last status (nil: LockHTTP off).
-	lockhttp *LockHTTPStatus
+	// locks is each Lock's last approvals status, by name (lockhttp.go): none while lea knows of
+	// no Lock's approvals.
+	locks map[string]*LockStatus
 	// Idle stacks (stacks.go, #132): how long an agent stays idle before what it started in the
 	// nested Podman is stopped (0: never), the pending stop of each idle agent, and what the last
 	// one freed, for the board, until the agent works again.
