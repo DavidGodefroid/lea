@@ -88,12 +88,14 @@ func (p Provider) Argv(agent, workdir, model, session string, user []string, pro
 			a = append(a, "resume", session)
 		}
 		// The sandbox and approvals of Codex itself, in the agent's pane: writes in the
-		// workspace, asks for anything else (lea's container stays the outer boundary).
+		// workspace, asks for anything else (lea's container stays the outer boundary). lea's own
+		// tools need no approval in Codex: they are lea's control plane, not the workspace.
 		a = append(a, "--sandbox", "workspace-write", "--ask-for-approval", "on-request",
 			"-c", "check_for_update_on_startup=false",
 			"-c", `mcp_servers.lea.command="`+LeaBin+`"`,
 			"-c", `mcp_servers.lea.args=["mcp"]`,
 			"-c", `mcp_servers.lea.env.LEA_AGENT="`+agent+`"`,
+			"-c", `mcp_servers.lea.default_tools_approval_mode="approve"`,
 			"-c", `notify=["`+LeaBin+`","hook","codex","notify"]`)
 		if trustable(workdir) {
 			a = append(a, "-c", `projects."`+workdir+`".trust_level="untrusted"`)
