@@ -240,7 +240,11 @@ func TestCodexLockCallOutlivesTheDefaultToolTimeout(t *testing.T) {
 		}
 		var body struct {
 			Tools []struct {
-				Name string `json:"name"`
+				Type  string `json:"type"`
+				Name  string `json:"name"`
+				Tools []struct {
+					Name string `json:"name"`
+				} `json:"tools"`
 			} `json:"tools"`
 			Input []struct {
 				Type   string          `json:"type"`
@@ -259,11 +263,20 @@ func TestCodexLockCallOutlivesTheDefaultToolTimeout(t *testing.T) {
 		}
 		n++
 		first := n == 1
-		call := ""
+		// Codex lists an MCP server's tools as a flat function (server__tool) or, since it groups
+		// them, under a namespace (mcp__server); the call names the tool and that namespace.
+		call, ns := "", ""
 		for _, tl := range body.Tools {
 			tools = append(tools, tl.Name)
 			if strings.Contains(tl.Name, "locksql") && strings.Contains(tl.Name, "query") {
 				call = tl.Name
+			}
+			if tl.Type == "namespace" && strings.Contains(tl.Name, "locksql") {
+				for _, sub := range tl.Tools {
+					if sub.Name == "query" {
+						call, ns = sub.Name, tl.Name
+					}
+				}
 			}
 		}
 		for _, in := range body.Input {
@@ -276,6 +289,9 @@ func TestCodexLockCallOutlivesTheDefaultToolTimeout(t *testing.T) {
 		item := `{"type":"message","role":"assistant","id":"m1","content":[{"type":"output_text","text":"done"}]}`
 		if first && call != "" {
 			item = `{"type":"function_call","id":"fc1","call_id":"call_lock","name":"` + call + `","arguments":"{}"}`
+			if ns != "" {
+				item = `{"type":"function_call","id":"fc1","call_id":"call_lock","namespace":"` + ns + `","name":"` + call + `","arguments":"{}"}`
+			}
 		}
 		for _, ev := range []string{
 			`{"type":"response.created","response":{"id":"resp_1"}}`,
