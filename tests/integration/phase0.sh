@@ -298,7 +298,7 @@ console() {
     if [ "$i" -ge 180 ]; then sed 's/\x1b\[[0-9;?]*[A-Za-z]//g' "$log" | tail -30 >&2; ko "$n: the console never listened"; return 1; fi
     sleep 1
   done
-  ok "$n: the console listens: $(sed 's/\x1b\[[0-9;?]*[A-Za-z]//g' "$log" | grep -o 'Listening on [^[:space:]]*' | tail -1)"
+  ok "$n: the console listens on $(sed 's/\x1b\[[0-9;?]*[A-Za-z]//g' "$log" | grep -o '/run/[a-z]*/[0-9a-z]*-[a-z]*\.sock' | tail -1)"
 }
 cr=$(printf '\r')
 # stop NAME: the console container NAME, removed; its driver ends with it.
@@ -340,10 +340,11 @@ plain() {
 }
 # answered TEXT: whether TEXT is an answer of an MCP server to the call (a result or an error).
 answered() { case $1 in *'"call": {"jsonrpc": "2.0", "id": 2, '*) return 0 ;; esac; return 1; }
-# running TOOL TEXT: whether TEXT, an answer of TOOL's status tool, says its console runs.
+# running TOOL TEXT: whether TEXT, an answer of TOOL's status tool, says its console runs and
+# gave its status (locksql says "console running, status failed" for a socket it cannot connect to).
 running() {
   case $1 in
-    locksql) case $2 in *'"text": "dev: console running'*) return 0 ;; esac ;;
+    locksql) case $2 in *'"text": "dev: console running\nprofile      dev\n'*) return 0 ;; esac ;;
     lockmq) case $2 in *'"text": "profile p: console running'*) return 0 ;; esac ;;
     lockfile) case $2 in *'"text": "samples: console up'*) return 0 ;; esac ;;
   esac
