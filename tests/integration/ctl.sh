@@ -8,8 +8,9 @@
 # console: lea's side of it) starts in its standalone mode from lea-ctl, in the deck. Needs the
 # lea, lea-proxy and lea-ctl images (make build), build/lea and script(1). Linux hosts. Creates and
 # removes only lea-ctltest-* resources; the Lock console part also uses locksql's fixed names
-# (locksql-console, the locksql-run and locksql-home volumes), so it runs only on CI (CI=true) or
-# with LEA_CTL_E2E_LOCK=1, and only while none of them exists.
+# (locksql-console, the locksql-run and locksql-home volumes), so it runs only on CI (CI=true,
+# where it must) or with LEA_CTL_E2E_LOCK=1, and only while none of them exists; otherwise the
+# test runs with locksql off (LEA_LOCKSQL=0), and touches none of them.
 set -eu
 root=$(cd "$(dirname "$0")/../.." && pwd -P)
 fail() { echo "ctl e2e: $*" >&2; exit 1; }
@@ -19,6 +20,16 @@ work=$(cd "$work" && pwd -P) || exit 1
 projects="$work/projects"; mkdir -p "$projects"
 export XDG_DATA_HOME="$work/data"
 lockstub=lea-ctltest-lockstub:dev
+# The Lock console part, decided before any lea command: lea's agent containers mount locksql-run
+# while locksql is on, which would create it. Off, locksql is off for the whole test.
+lockrun=0
+if { [ "${CI:-}" = true ] || [ "${LEA_CTL_E2E_LOCK:-0}" = 1 ]; } &&
+  ! docker container inspect locksql-console >/dev/null 2>&1 &&
+  ! docker volume inspect locksql-run >/dev/null 2>&1 && ! docker volume inspect locksql-home >/dev/null 2>&1; then
+  lockrun=1
+elif [ "${CI:-}" = true ]; then
+  fail "on CI the Lock console part must run, but locksql's console names are in use"
+fi
 cat >"$work/lea.conf" <<CONF
 LEA_PREFIX=lea-ctltest
 LEA_IMAGE=lea:dev
@@ -27,6 +38,7 @@ LEA_CTL=1
 LEA_CTL_IMAGE=lea-ctl:dev
 LEA_LOCKSQL_IMAGE=$lockstub
 LEA_AUTONAME=0
+LEA_LOCKSQL=$lockrun
 CONF
 export LEA_CONFIG="$work/lea.conf" LEA_PROJECTS_DIR="$projects"
 state="$XDG_DATA_HOME/lea/state"; mkdir -p "$state"; printf '{}\n' >"$state/claude.json"
@@ -36,12 +48,13 @@ ctl=lea-ctltest-ctl agent=lea-ctltest-$id
 # shellcheck disable=SC2317 # invoked via trap
 cleanup() {
   [ -z "${attach:-}" ] || kill "$attach" 2>/dev/null || true
+  [ "${lockrun:-0}" != 1 ] || docker rm -f locksql-console >/dev/null 2>&1 || true
+  docker rm -f "$agent" lea-ctltest-proxy "$ctl" >/dev/null 2>&1 || true
+  # Its volumes once no container mounts them.
   if [ "${lockrun:-0}" = 1 ]; then
-    docker rm -f locksql-console >/dev/null 2>&1 || true
     docker volume rm locksql-run locksql-home >/dev/null 2>&1 || true
     docker image rm "$lockstub" >/dev/null 2>&1 || true
   fi
-  docker rm -f "$agent" lea-ctltest-proxy "$ctl" >/dev/null 2>&1 || true
   docker network rm "lea-ctltest-internal-$id" lea-ctltest-egress >/dev/null 2>&1 || true
   docker volume rm "lea-ctltest-podman-$id" >/dev/null 2>&1 || true
   rm -rf "$work"
@@ -105,12 +118,14 @@ case $agents in *e2e-dev*) ;; *) fail "lea agents does not list e2e-dev: $agents
 panes=$(docker exec -u "$u" "$ctl" tmux -L lea list-panes -a -F '#{pane_start_command}' 2>&1) || fail "no lea tmux in $ctl: $panes"
 case $panes in *"deck --container $agent"*) ;; *) fail "no deck pane in $ctl: $panes" ;; esac
 # The agent runs in the agent container, not in lea-ctl.
+# (Claude Code's process: claude, its native build, or node running its package.)
 for i in $(seq 60); do
-  docker top "$agent" -eo pid,args 2>/dev/null | grep -q '[c]laude' && break
-  [ "$i" -lt 60 ] || fail "the agent does not run in $agent: $(docker top "$agent" -eo pid,args 2>&1)"
+  docker top "$agent" -eo pid,comm,args 2>/dev/null |
+    awk '$2 == "claude" || ($2 == "node" && /@anthropic-ai\/claude-code/) { f = 1 } END { exit !f }' && break
+  [ "$i" -lt 60 ] || fail "Claude Code does not run in $agent: $(docker top "$agent" -eo pid,comm,args 2>&1)"
   sleep 1
 done
-docker exec "$ctl" pgrep -f '^claude' >/dev/null && fail "Claude Code runs in $ctl"
+{ docker exec "$ctl" pgrep -x claude || docker exec "$ctl" pgrep -f '@anthropic-ai/claude-code'; } >/dev/null && fail "Claude Code runs in $ctl"
 
 # docker exec -it lea-ctl tmux attach, in a real terminal: the deck shows, and a call of the agent
 # for the user rings that terminal's bell (lea-ctl has no sound player).
@@ -123,8 +138,11 @@ for i in $(seq 30); do
   [ "$i" -lt 30 ] || fail "tmux attach did not reach lea's tmux in $ctl: $(cat "$log")"
   sleep 1
 done
-sleep 2
-grep -q 'e2e-dev' "$log" || fail "the attached terminal does not show the deck: $(tr -cd '[:print:]\n' <"$log" | tail -c 2000)"
+for i in $(seq 20); do
+  grep -q 'e2e-dev' "$log" && break
+  [ "$i" -lt 20 ] || fail "the attached terminal does not show the deck: $(tr -cd '[:print:]\n' <"$log" | tail -c 2000)"
+  sleep 1
+done
 before=$(tr -cd '\007' <"$log" | wc -c)
 # The agent's PermissionRequest hook, as Claude Code runs it in the agent's pane.
 hook=$(docker exec -u "$u" -e LEA_AGENT=e2e-dev "$agent" sh -c 'printf "{\"hook_event_name\":\"PermissionRequest\",\"session_id\":\"e2e\",\"tool_name\":\"Bash\"}" | timeout 5 lea hook claude PermissionRequest; echo "rc=$?"' 2>&1) || true
@@ -141,11 +159,7 @@ for i in $(seq 20); do
 done
 
 # A Lock console, standalone (its own TTY, no hub), opened in the deck by lea in lea-ctl.
-lockrun=0
-if { [ "${CI:-}" = true ] || [ "${LEA_CTL_E2E_LOCK:-0}" = 1 ]; } &&
-  ! docker container inspect locksql-console >/dev/null 2>&1 &&
-  ! docker volume inspect locksql-run >/dev/null 2>&1 && ! docker volume inspect locksql-home >/dev/null 2>&1; then
-  lockrun=1
+if [ "$lockrun" = 1 ]; then
   # A stand-in of locksql's console image: its account, a console that waits at its terminal.
   printf 'FROM lea-ctl:dev\nRUN useradd -u 10001 -U locksql && mkdir -p /run/locksql /home/locksql && chown locksql /run/locksql /home/locksql\nENTRYPOINT ["sh", "-c", "echo LOCK-CONSOLE-UP; exec sleep 600", "console"]\n' |
     docker build -q -t "$lockstub" - >/dev/null || fail "could not build the stand-in console"
@@ -165,8 +179,15 @@ if { [ "${CI:-}" = true ] || [ "${LEA_CTL_E2E_LOCK:-0}" = 1 ]; } &&
   # The agents get its socket volume, never anything of its home.
   docker inspect -f '{{range .Mounts}}{{.Name}} {{end}}' "$agent" | grep -q 'locksql-home' && fail "$agent mounts locksql-home"
   "$root/bin/lea" lock close locksql </dev/null >/dev/null 2>&1 || fail "lea lock close failed"
+  for i in $(seq 20); do
+    [ "$(docker inspect -f '{{.State.Running}}' locksql-console 2>/dev/null)" = true ] || break
+    [ "$i" -lt 20 ] || fail "the console still runs after lea lock close"
+    sleep 1
+  done
+  docker exec -u "$u" "$ctl" tmux -L lea list-panes -a -F '#{pane_start_command}' | grep -q -- '--name locksql-console' &&
+    fail "the console's pane stays after lea lock close"
 else
-  echo "ctl e2e: the Lock console part is skipped (not on CI, or locksql's console names are in use)" >&2
+  echo "ctl e2e: the Lock console part is skipped (not on CI, or locksql's console names are in use): LEA_LOCKSQL=0" >&2
 fi
 
 # Every container but lea-ctl, now with the agent running: no Docker socket mounted, none seen.
