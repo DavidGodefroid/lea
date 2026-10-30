@@ -98,7 +98,7 @@ must   "public HTTPS works through the proxy"   curl -sf --max-time 20 -o /dev/n
 # net/ipv4/conf/<bridge>/route_localnet in the rootless network namespace, whose value comes from
 # the host's net.ipv4.conf.default (1 is needed, 0 is the usual default), and Docker mounts
 # /proc/sys read-only. Its engine's output goes to a log, shown when it fails.
-# shellcheck disable=SC2329 # run by must
+# shellcheck disable=SC2317,SC2329 # run by must
 nested_http() (
   exec 2>>"$1"
   docker run -d --rm --name lea-it-web busybox:1.37 sh -c 'mkdir -p /w && echo hi >/w/index.html && httpd -f -p 80 -h /w' >&2
