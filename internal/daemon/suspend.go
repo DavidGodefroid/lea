@@ -118,10 +118,11 @@ func (d *Daemon) softStop(key string) {
 	d.wakeSuspended(key)
 }
 
-// wakeSuspended resumes a suspended_cold agent that has unread messages, in the background: a
-// message (from its lead, a child, the user, or the decision lea delivers) wakes it, so a lead
-// waiting for a decision never blocks the children that write to it. A warm agent hears them
-// through its Rewake job.
+// wakeSuspended resumes a suspended_cold agent that has unread messages: a message (from its
+// lead, a child, the user, or the decision lea delivers) wakes it, so a lead waiting for a
+// decision never blocks the children that write to it. The resume goes through the admission's
+// resume lane (resumelane.go): in the background at once, or once the pressure falls. A warm
+// agent hears them through its Rewake job.
 func (d *Daemon) wakeSuspended(key string) {
 	ag, err := d.st.AgentByKey(key)
 	if err != nil || ag.State != store.StateSuspendedCold {
@@ -131,21 +132,18 @@ func (d *Daemon) wakeSuspended(key string) {
 	if err != nil || n["count"] == 0 {
 		return
 	}
-	text, _ := n["text"].(string)
 	d.mu.Lock()
 	a := d.agents
+	now := a != nil && d.queueResumeLocked(&queuedResume{key: key, container: ag.Container})
 	d.mu.Unlock()
 	if a == nil {
 		return
 	}
-	go func() {
-		ctx, cancel := context.WithTimeout(context.Background(), suspendTimeout)
-		defer cancel()
-		if err := a.ResumeSuspended(ctx, key, text); err != nil && !errors.Is(err, agents.ErrNotSuspended) {
-			log.Printf("lea daemon: resume suspended %s: %v", key, err)
-		}
+	if !now {
 		d.changed()
-	}()
+		return
+	}
+	go d.resumeSuspended(a, key)
 }
 
 // suspendedSince, in a container the launcher has just started or a daemon that started again,
