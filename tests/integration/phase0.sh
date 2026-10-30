@@ -15,14 +15,13 @@
 #     RabbitMQ (account tagged monitoring), lockfile on a local directory;
 #   - each call goes through the tool's MCP server (<tool> mcp) over stdio in lea's container:
 #     initialize, notifications/initialized, tools/call; no model is involved.
-# The one stand-in left, and why: lea's agents run as the host user's uid, which the consoles'
-# release images of lockmq and lockfile do not allow (their /etc/<tool>/system.toml has no
-# allowed_uids, and the uid has no account in the console's container, so the console closes every
-# connection of lea's agents). lea builds locksql's image with ALLOWED_UIDS, but nothing does it
-# for lockmq and lockfile. The test proves that first (with the release images unchanged, lea's
-# agent gets no console while the image's own agent account does), then runs those two consoles
-# from the release image plus one layer that appends `allowed_uids = [<uid>]` to the image's
-# system.toml: exactly what the tools' own ALLOWED_UIDS build argument writes; binary unchanged.
+# No stand-in: lea's agents run as the host user's uid, which has no account in the consoles'
+# images of lockmq and lockfile, and the release images allow no other uid (no allowed_uids in
+# their /etc/<tool>/system.toml). The human names it when starting the console, as lea's hints
+# say: `<tool> console --profile P --allowed-uids <uid>` (lockmq v0.4.1, lockfile v0.5.1; lea#226).
+# The test checks first that a console started without it refuses lea's agent while the image's
+# own agent account is served (the uid is never let in by default), then starts both consoles
+# again from the same release images with --allowed-uids <uid>, and lea's agent reaches them.
 # Negative control: lea's image without the clients groups is refused by the kernel.
 # Linux hosts with docker, cosign, curl, jq, python3, the images lea:dev and lea-proxy:dev (make
 # build), build/lea, and network access to GitHub and ghcr.io. The tools' launchers use fixed
@@ -76,7 +75,7 @@ cleanup() {
   # Checked absent above: this run made them.
   # shellcheck disable=SC2086 # names
   docker volume rm $fixed_volumes >/dev/null 2>&1 || true
-  docker image rm "$id-locksql:test" "$id-lockmq:allow" "$id-lockfile:allow" >/dev/null 2>&1 || true
+  docker image rm "$id-locksql:test" >/dev/null 2>&1 || true
   if [ -n "$slug" ]; then rm -r "${HOME:?}/.claude/projects/$slug" 2>/dev/null || true; fi
   # .locksql and .lockmq belong to the consoles' accounts after doctor --fix.
   docker run --rm --network none -v "$work:/w" docker.io/library/alpine:3.22 rm -rf /w/projects /w/data >/dev/null 2>&1 || true
@@ -249,12 +248,6 @@ else
   die "lea__locksql_build did not build the locksql console image"
 fi
 
-# The release images of lockmq and lockfile with the one line lea does not give them (see above).
-for t in lockmq:"$mq_img" lockfile:"$lf_img"; do
-  printf 'FROM %s\nUSER root\nRUN printf "allowed_uids = [%s]\\n" >>/etc/%s/system.toml\nUSER agent\n' "${t#*:}" "$uid" "${t%%:*}" |
-    docker build -q -t "$id-${t%%:*}:allow" - >/dev/null
-done
-
 say "the backends: a RabbitMQ, a SQLite database, a local directory"
 docker network create "$id-net" >/dev/null
 # A bounded nofile: Erlang sizes its tables on it, and starts very slowly under a huge one.
@@ -311,14 +304,19 @@ stop() {
   i=0
   while docker container inspect "$1" >/dev/null 2>&1 && [ "$i" -lt 30 ]; do i=$((i + 1)); sleep 1; done
 }
+# mq_console NAME LOG IMAGE [CONSOLE-ARGS...], lf_console likewise: the console by its launcher.
 mq_console() {
-  console "lockmq ($1)" "$work/lockmq-$2.log" '[y/N]' "y$cr" 'Password for' "$id-ro$cr" -- \
-    env LOCKMQ_IMAGE="$3" LOCKMQ_CONSOLE_NAME="$id-lockmq" LOCKMQ_DOCKER_ARGS="--network $id-net" "$lbin/lockmq" console --profile p
+  _n=$1 _l=$2 _i=$3
+  shift 3
+  console "lockmq ($_n)" "$work/lockmq-$_l.log" '[y/N]' "y$cr" 'Password for' "$id-ro$cr" -- \
+    env LOCKMQ_IMAGE="$_i" LOCKMQ_CONSOLE_NAME="$id-lockmq" LOCKMQ_DOCKER_ARGS="--network $id-net" "$lbin/lockmq" console --profile p "$@"
 }
 lf_console() {
-  console "lockfile ($1)" "$work/lockfile-$2.log" '[y/N]' "y$cr" -- \
-    env LOCKFILE_IMAGE="$3" LOCKFILE_CONSOLE_NAME="$id-lockfile" LOCKFILE_DOCKER_ARGS="-v $work/samples:/srv/samples:ro" \
-    "$lbin/lockfile" console --profile samples
+  _n=$1 _l=$2 _i=$3
+  shift 3
+  console "lockfile ($_n)" "$work/lockfile-$_l.log" '[y/N]' "y$cr" -- \
+    env LOCKFILE_IMAGE="$_i" LOCKFILE_CONSOLE_NAME="$id-lockfile" LOCKFILE_DOCKER_ARGS="-v $work/samples:/srv/samples:ro" \
+    "$lbin/lockfile" console --profile samples "$@"
 }
 
 say "the consoles: locksql by lea locksql, lockmq and lockfile by their launchers (release images)"
@@ -399,21 +397,21 @@ esac
 sq_ok=0
 out=$(call locksql release)
 if running locksql "$out"; then sq_ok=1; ok "lea's agent: locksql_status reaches the running locksql console"; else ko "lea's agent: locksql_status: $out"; fi
-# The bug this test works around (see the header): the release images refuse lea's agents. Only
-# meaningful when the same session reached locksql's console and the image's agent account
-# reached the tool's (the controls above).
+# Never by default (see the header): a console started without --allowed-uids refuses lea's
+# agents. Only meaningful when the same session reached locksql's console and the image's agent
+# account reached the tool's (the controls above).
 for t in lockmq lockfile; do
   out=$(call "$t" release)
   if [ "$sq_ok" = 1 ] && answered "$out" && ! running "$t" "$out"; then
-    ok "known lea bug: the $t release image (no allowed_uids) refuses lea's agent (uid $uid): ${t}_status gets no console"
-  else ko "the $t release image and lea's agent (uid $uid): $out"; fi
+    ok "without --allowed-uids, the $t console (release image) refuses lea's agent (uid $uid): ${t}_status gets no console"
+  else ko "the $t console without --allowed-uids and lea's agent (uid $uid): $out"; fi
 done
 
-say "lockmq and lockfile again, from the release image plus allowed_uids = [$uid]"
+say "lockmq and lockfile again, the same release images, started with --allowed-uids $uid"
 stop "$id-lockmq"
 stop "$id-lockfile"
-mq_console "release image $mq_v, allowed_uids" allow "$id-lockmq:allow" || true
-lf_console "release image $lf_v, allowed_uids" allow "$id-lockfile:allow" || true
+mq_console "release image $mq_v, --allowed-uids $uid" allow "$mq_img" --allowed-uids "$uid" || true
+lf_console "release image $lf_v, --allowed-uids $uid" allow "$lf_img" --allowed-uids "$uid" || true
 agent allow
 for t in locksql lockmq lockfile; do
   out=$(call "$t" allow)

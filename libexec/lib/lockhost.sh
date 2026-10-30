@@ -87,9 +87,11 @@ lea__lockhost_volume() {
 }
 
 # lea__lockhost_console_hint TOOL: how to open TOOL's console (lea never starts it).
+# lea's agents run as your uid, which names no account in the console's image: the console serves
+# it only when told so (--allowed-uids, lockmq v0.4.1 and lockfile v0.5.1 on), by you, never by lea.
 lea__lockhost_console_hint() {
-  lea_log "$1 console: start it with $1's launcher, in a terminal of yours: $1 console --profile PROFILE"
-  lea_log "  (lea's agents reach it through the $1-run volume after their lea restarts: lea stop --all, then lea)"
+  lea_log "$1 console: start it with $1's launcher, in a terminal of yours: $1 console --profile PROFILE --allowed-uids $(id -u)"
+  lea_log "  (--allowed-uids $(id -u): lea's agents run as your uid, which has no account in the console's image; they reach it through the $1-run volume after their lea restarts: lea stop --all, then lea)"
 }
 
 # lea__init_lockhost TOOL: lea init's part for TOOL. Without a decision yet (no flag, not in the
@@ -171,7 +173,7 @@ lea__doctor_lockhost() {
   else lea__warn "$1 launcher" "not installed: https://github.com/DavidGodefroid/$1#install"; fi
   case $(lea__lockhost_volume "$1") in
     ok) lea__ok "$1-run volume" ;;
-    absent) lea__warn "$1-run volume" "absent: start the console once ($1 console --profile PROFILE)" ;;
+    absent) lea__warn "$1-run volume" "absent: start the console once ($1 console --profile PROFILE --allowed-uids $(id -u))" ;;
     old) lea__warn "$1-run volume" "ids of lockfile before 0.3: start \`lockfile console\` once: it migrates the volume" ;;
     *) lea__warn "$1-run volume" "owner unknown" ;;
   esac
