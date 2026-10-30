@@ -29,17 +29,22 @@ say() { printf '\n=== %s\n' "$*"; }
 die() { printf 'FAIL: %s\n' "$*" >&2; exit 1; }
 # shellcheck disable=SC2317 # run by the trap
 cleanup() {
+  [ -d "$work" ] || return 0
   if [ -n "$cpid" ]; then kill "$cpid" 2>/dev/null || true; fi
   docker rm -f "$id-agent" "$id-gate" >/dev/null 2>&1 || true
-  if [ -n "$p" ]; then
-    docker compose -p "$p" --project-directory "$XDG_STATE_HOME/lockfamily/$p" -f "$XDG_STATE_HOME/lockfamily/$p/compose.yaml" down -v --remove-orphans >/dev/null 2>&1 || true
-  fi
+  # Every compose project of this run's own state directory, a lock up that failed half-way too.
+  for c in "$XDG_STATE_HOME"/lockfamily/*/compose.yaml; do
+    [ -f "$c" ] || continue
+    d=$(dirname "$c")
+    docker compose -p "$(basename "$d")" --project-directory "$d" -f "$c" down -v --remove-orphans >/dev/null 2>&1 || true
+  done
   docker network rm "$id-agents" >/dev/null 2>&1 || true
   # The hub's and the consoles' files may belong to their containers' accounts.
   docker run --rm -v "$work:/w" alpine:3.22 rm -rf /w/state /w/run /w/projects >/dev/null 2>&1 || true
   rm -rf "$work"
 }
-trap cleanup EXIT INT TERM
+trap cleanup EXIT
+trap 'exit 130' INT TERM
 # tty INPUT CMD...: CMD at a pseudo-terminal (lock up refuses a pipe), INPUT typed in.
 tty() { in=$1; shift; printf '%b' "$in" | script -qefc "$*" /dev/null; }
 
@@ -155,6 +160,9 @@ sleep 5
 docker logs "$id-gate" 2>&1 | tail -5
 
 say "an agent's write, held by the gate until a decision"
+# Pulled first: the check below that the write is held must not be the pull's time.
+docker pull -q curlimages/curl:8.11.1 >/dev/null
+docker pull -q alpine:3.22 >/dev/null
 docker run --rm --name "$id-agent" --network "$id-agents" curlimages/curl:8.11.1 -sS -m 280 -o /dev/null \
   -w '%{http_code}\n' -x "http://$id-gate:3128" -d probe=1 "http://example.com/" >"$work/curl.out" 2>&1 &
 cpid=$!
