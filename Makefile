@@ -1,4 +1,4 @@
-.PHONY: test build test-proxy test-isolation test-ctl test-lockhost test-locksql-confine test-update-deps test-pressure go-test go-build go-test-tmux go-get tmux-build
+.PHONY: test build test-proxy test-isolation test-ctl test-lockhost test-hubdeck test-locksql-confine test-update-deps test-pressure go-test go-build go-test-tmux go-get tmux-build
 test:
 	tests/run.sh
 build:
@@ -9,6 +9,9 @@ test-proxy:
 	tests/proxy/run.sh
 test-lockhost:
 	tests/integration/lockhost.sh
+# The phase-2 demo, lea's side: lea's deck approves a ticket in a real lockhub (released images).
+test-hubdeck:
+	tests/integration/hubdeck.sh
 test-locksql-confine:
 	tests/integration/locksql-confine.sh
 test-update-deps:

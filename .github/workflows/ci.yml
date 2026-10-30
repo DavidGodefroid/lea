@@ -95,6 +95,30 @@ jobs:
           node-version: 22
       - run: npm install -g --ignore-scripts "@openai/codex@$(sed -n 's/^ARG CODEX_VERSION=//p' image/Containerfile)"
       - run: LEA_E2E_CODEX="$(command -v codex)" go test -count=1 -run 'TestCodex(ReachesAnEndpointThroughTheForwarder|IgnoresAPlantedProjectConfig|LockCallOutlivesTheDefaultToolTimeout)' -v ./internal/providers/
+  # The phase-2 exit demo, lea's side (tests/integration/hubdeck.sh): lock up with the released,
+  # cosign-verified lockhub and a LockHTTP lock; the gate holds an agent's write, lea's deck
+  # approves its ticket through the real facade socket, and the gate lets the write out.
+  hubdeck:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+        with:
+          go-version-file: go.mod
+      - uses: sigstore/cosign-installer@7e8b541eb2e61bf99390e1afd4be13a184e9ebc5 # v3.10.1
+        with:
+          cosign-release: v2.6.1
+      - name: make test-hubdeck, the deck's test run
+        shell: bash
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          make test-hubdeck 2>&1 | tee hubdeck.log
+          grep -q -- '^--- PASS: TestHubDeckApprovesARealLockhubTicket ' hubdeck.log
+          grep -qx 'hubdeck: OK' hubdeck.log
   # The real Claude Code (the image's pinned version) with lea's hooks on a fake Messages API, and
   # lea's daemon: usage-limit resume, truncated transcripts, and the phase-3 suspend/resume demo
   # (a suspended agent stopped, resumed by its approval or a message). No secret, no real model.
