@@ -73,7 +73,6 @@ func ValidHubWait(ticket, lock, instance string) bool {
 
 // AddHubWait records that agent waits on ticket of lock's instance. The same wait again is no
 // error (a Lock's run returns the same ticket when called again).
-
 func (s *Store) AddHubWait(agent, ticket, lock, instance string, now int64) error {
 	if !ticketRe.MatchString(ticket) {
 		return errors.New("hub wait: invalid ticket id")

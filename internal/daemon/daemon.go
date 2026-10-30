@@ -404,7 +404,7 @@ func (d *Daemon) dispatch(ctx context.Context, o Origin, req wire.Request) (any,
 	case "board_read":
 		return d.boardRead(o)
 	case "hub_wait_register":
-		return d.hubWaitRegister(o, me, req.Params)
+		return d.hubWaitRegister(ctx, o, me, req.Params)
 	case "msg_watch":
 		var p struct {
 			TimeoutS int  `json:"timeout_s"`

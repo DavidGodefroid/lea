@@ -1,6 +1,7 @@
 package daemon
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 
@@ -14,7 +15,7 @@ import (
 // ticket another agent asked for, and so read that ticket's decision and reason: lea does not ask
 // the hub whose ticket it is. Running it stays refused, by the Lock, to any token but the one that
 // asked (LEA_AGENT_TOKEN); the agents of a container are one trust domain anyway (one UID).
-func (d *Daemon) hubWaitRegister(o Origin, me string, raw json.RawMessage) (any, error) {
+func (d *Daemon) hubWaitRegister(ctx context.Context, o Origin, me string, raw json.RawMessage) (any, error) {
 	if o.Container == "" {
 		return nil, errors.New("hub_wait_register: agents only")
 	}
@@ -30,10 +31,14 @@ func (d *Daemon) hubWaitRegister(o Origin, me string, raw json.RawMessage) (any,
 		return nil, err
 	}
 	// No facade to read the decision from: the wait would never end. lea does not suspend the
-	// agent, and tells it why, in its inbox (the hook reads it into the same turn).
-	if err := d.hubReachable(); err != nil {
+	// agent, and tells it why, in its inbox (the hook reads it into the same turn), once while
+	// that message is unread: a Lock called again answers the same ticket.
+	if err := d.hubReachable(ctx); err != nil {
 		if store.ValidHubWait(p.Ticket, p.Lock, p.Instance) {
-			d.post("user", me, "result", noHubText(p.Ticket, p.Lock, p.Instance), 0)
+			text := noHubText(p.Ticket, p.Lock, p.Instance)
+			if !d.unreadHas(me, text) {
+				d.post("user", me, "result", text, 0)
+			}
 		}
 		return nil, err
 	}
@@ -51,4 +56,18 @@ func (d *Daemon) hubWaitRegister(o Origin, me string, raw json.RawMessage) (any,
 		}
 	}
 	return map[string]bool{"suspended": suspended}, nil
+}
+
+// unreadHas reports whether agent has an unread message with that body (among its latest 50).
+func (d *Daemon) unreadHas(agent, body string) bool {
+	ms, err := d.st.Unread(agent, 50)
+	if err != nil {
+		return false
+	}
+	for _, m := range ms {
+		if m.Body == body {
+			return true
+		}
+	}
+	return false
 }

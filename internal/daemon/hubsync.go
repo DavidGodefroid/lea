@@ -91,17 +91,14 @@ func (f SocketFacade) get(ctx context.Context, path string, out any) error {
 	return nil
 }
 
-// Ping is nil when the facade socket is there and something accepts a connection on it.
-func (f SocketFacade) Ping(ctx context.Context) error {
-	if fi, err := os.Lstat(f.Path); err != nil || fi.Mode()&os.ModeSocket == 0 {
-		return ErrNoHub
+// Ping is nil when the hub answers its decisions endpoint (from since, the recorded cursor: a
+// short answer) as the sync reads it: a socket something else listens on, or a hub that answers
+// errors, is no hub lea can read.
+func (f SocketFacade) Ping(ctx context.Context, since int64) error {
+	var out struct {
+		Cursor int64 `json:"cursor"`
 	}
-	var dl net.Dialer
-	c, err := dl.DialContext(ctx, "unix", f.Path)
-	if err != nil {
-		return err
-	}
-	return c.Close()
+	return f.get(ctx, "/v1/decided?since="+strconv.FormatInt(max(since, 0), 10), &out)
 }
 
 func (f SocketFacade) Decided(ctx context.Context, since int64) ([]HubDecided, int64, error) {

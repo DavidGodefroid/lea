@@ -1,6 +1,7 @@
 package daemon
 
 import (
+	"net"
 	"os"
 	"path/filepath"
 	"strings"
@@ -80,10 +81,20 @@ func TestHubWaitRegisterRefusedWithoutAReachableHub(t *testing.T) {
 	if err := os.WriteFile(dead, nil, 0o600); err != nil { // not a socket
 		t.Fatal(err)
 	}
+	// A socket left behind by a hub that died: nothing listens on it.
+	stale := filepath.Join(dir, "stale.sock")
+	l, err := net.Listen("unix", stale)
+	if err != nil {
+		t.Fatal(err)
+	}
+	l.(*net.UnixListener).SetUnlinkOnClose(false)
+	l.Close()
 	for name, f := range map[string]HubFacade{
-		"none":       nil,
-		"no socket":  SocketFacade{Path: filepath.Join(dir, "missing.sock")},
-		"not socket": SocketFacade{Path: dead},
+		"none":          nil,
+		"no socket":     SocketFacade{Path: filepath.Join(dir, "missing.sock")},
+		"not socket":    SocketFacade{Path: dead},
+		"stale socket":  SocketFacade{Path: stale},
+		"hub in errors": SocketFacade{Path: serveHub(t, &fakeHub{fail: true})},
 	} {
 		t.Run(name, func(t *testing.T) {
 			e := start(t)
@@ -102,6 +113,10 @@ func TestHubWaitRegisterRefusedWithoutAReachableHub(t *testing.T) {
 			}
 			if ws, _ := e.d.st.PendingHubWaits(k); len(ws) != 0 {
 				t.Fatalf("wait recorded without a hub: %+v", ws)
+			}
+			// Called again (a Lock answers the same ticket), it is told once while unread.
+			if call(t, e.bus, "dev-nohub", "hub_wait_register", map[string]any{"ticket": testTicket, "lock": "locksql", "instance": "crm-prod"}, nil) == nil {
+				t.Fatal("registered the second time")
 			}
 			ms, err := e.d.st.Unread(k, 10)
 			if err != nil || len(ms) != 1 || !strings.Contains(ms[0].Body, "lea did not suspend you on ticket "+testTicket+" on locksql (crm-prod)") {

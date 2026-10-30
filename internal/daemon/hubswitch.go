@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"strconv"
 	"time"
 
 	"github.com/DavidGodefroid/lea/internal/store"
@@ -70,18 +71,19 @@ func (d *Daemon) DisableHub() {
 // errNoHubFacade is the suspend hook's call refused for want of a reachable hub facade.
 var errNoHubFacade = errors.New("hub_wait_register: no Lock Family hub facade is reachable (LEA_HUB=1, but no lockhub runs on this host, or LEA_HUB_SOCKET names another socket)")
 
-// hubPingTimeout bounds the check that the facade answers.
-const hubPingTimeout = 2 * time.Second
+// hubPingTimeout bounds the check that the facade answers: well within the suspend hook's budget
+// (hook.budget, 2 s), so that a slow answer cannot suspend an agent whose turn went on.
+const hubPingTimeout = 400 * time.Millisecond
 
 // hubPinger is a facade that can tell whether its hub answers (SocketFacade); a facade that
 // cannot (a test's) counts as reachable.
 type hubPinger interface {
-	Ping(ctx context.Context) error
+	Ping(ctx context.Context, since int64) error
 }
 
 // hubReachable is nil when lea can read the hub's decisions now, else errNoHubFacade; it records
 // the answer for the deck.
-func (d *Daemon) hubReachable() error {
+func (d *Daemon) hubReachable(ctx context.Context) error {
 	d.mu.Lock()
 	f := d.hubFacade
 	d.mu.Unlock()
@@ -89,8 +91,10 @@ func (d *Daemon) hubReachable() error {
 	if f == nil {
 		err = errNoHubFacade
 	} else if p, ok := f.(hubPinger); ok {
-		ctx, cancel := context.WithTimeout(context.Background(), hubPingTimeout)
-		if p.Ping(ctx) != nil {
+		c, _ := d.st.HubCursor()
+		since, _ := strconv.ParseInt(c, 10, 64)
+		pctx, cancel := context.WithTimeout(ctx, hubPingTimeout)
+		if p.Ping(pctx, since) != nil {
 			err = errNoHubFacade
 		}
 		cancel()
@@ -127,5 +131,5 @@ func (d *Daemon) hubState() string {
 // noHubText is what an agent whose wait lea refused is told: the Lock's ticket stands, but its
 // decision will not reach it through lea.
 func noHubText(ticket, lock, instance string) string {
-	return fmt.Sprintf("[status: fail] lea did not suspend you on ticket %s on %s (%s): it cannot reach the Lock Family hub (no lockhub facade answers), so the decision would never reach you. Do not wait for it: tell the user that the hub is not running, and carry on with what does not need that call.", ticket, lock, instance)
+	return fmt.Sprintf("[status: fail] lea did not suspend you on ticket %s on %s (%s): it cannot reach the Lock Family hub (no lockhub facade answers), so the decision would never reach you. Do not wait for it: tell the user that the hub is not running, and carry on with what does not need that call (calling the Lock again later answers the ticket's state).", ticket, lock, instance)
 }
