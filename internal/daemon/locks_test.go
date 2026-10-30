@@ -154,7 +154,7 @@ func TestLockRequestDeclinedFailedAndExpired(t *testing.T) {
 	}
 
 	// The console does not open: the user reads why; the agent learns only that it failed.
-	*e.clock += lockRequestGap
+	e.clock.Add(lockRequestGap)
 	r, err := lockAsk(t, e, "dev", "locksql", "prod")
 	if err != nil {
 		t.Fatal(err)
@@ -178,9 +178,9 @@ func TestLockRequestDeclinedFailedAndExpired(t *testing.T) {
 	fa.mu.Unlock()
 
 	// Nobody answers: past its time it is refused, closed, and the agent is told.
-	*e.clock += lockRequestGap
+	e.clock.Add(lockRequestGap)
 	r, _ = lockAsk(t, e, "dev", "locksql", "prod")
-	*e.clock += agents.LockRequestTTL
+	e.clock.Add(agents.LockRequestTTL)
 	fa.calls = nil
 	if _, err := decideLock(t, e, "lea-a", r.Request, true); err == nil || !strings.Contains(err.Error(), "expired") {
 		t.Fatalf("late: %v", err)
@@ -194,9 +194,9 @@ func TestLockRequestDeclinedFailedAndExpired(t *testing.T) {
 	}
 
 	// The sweep closes the ones nobody answered and tells their agents.
-	*e.clock += lockRequestGap
+	e.clock.Add(lockRequestGap)
 	r, _ = lockAsk(t, e, "dev", "locksql", "prod")
-	*e.clock += agents.LockRequestTTL
+	e.clock.Add(agents.LockRequestTTL)
 	e.d.sweepLockRequests()
 	if got, _ := e.d.st.LockRequestByID(r.Request); got.State != "expired" {
 		t.Fatalf("sweep: %+v", got)

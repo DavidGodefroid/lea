@@ -89,7 +89,7 @@ func TestRealLockRequestOpensOnlyWhenTheUserSaysSo(t *testing.T) {
 		}}
 	m := agents.NewManager(agents.Config{Store: e.d.st, Term: agents.Tmux(tmux.Server{Socket: sock, Conf: conf}),
 		Containers: realContainers{}, LeaBin: bin, Docker: docker, UID: 1000, GID: 1000,
-		Now: func() int64 { return *e.clock }, Consoles: noConsoles{},
+		Now: func() int64 { return e.clock.Load() }, Consoles: noConsoles{},
 		LockSpec: func(string) (agents.LockSpec, error) { return spec, nil }})
 	e.d.SetAgents(m)
 	if err := m.Ensure(e.ctx, C, "/"); err != nil {

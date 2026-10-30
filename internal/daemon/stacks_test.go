@@ -114,7 +114,7 @@ func TestSweepParksAgentsIdleForLong(t *testing.T) {
 	kid := spawned(t, e, "kid", "dev", "")
 	busy := spawned(t, e, "busy", "dev", "")
 	fresh := spawned(t, e, "fresh", "dev", "")
-	*e.clock = 5000
+	e.clock.Store(5000)
 	e.d.st.SetState(kid, "idle", "", 5000-601)
 	e.d.st.SetState(busy, "working", "", 1000)
 	e.d.st.SetState(fresh, "idle", "", 5000-60)
