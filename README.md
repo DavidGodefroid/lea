@@ -331,22 +331,22 @@ holds the credentials shows each request and waits for your approval. Both are p
 they are **off** by default; `lea init` asks (no by default), or `lea init --lockmq` /
 `lea init --lockfile`.
 
-Unlike locksql, their console runs **on this host**, not in a container (their isolation checks
-refuse a console in a container): in the tool's own account and login session, set up once by
-`sudo lockmq install` / `sudo lockfile install`. When you turn one on, `lea init` offers to install
-the release lea pins (`LEA_LOCKMQ_REF`, `LEA_LOCKFILE_REF`) into `/usr/local/bin`, root-owned,
-after checking its Sigstore signature with cosign (nothing is installed without cosign), then the
-separated setup, then lockmq's profile wizard (`lockmq setup`, never a password). lockfile below
-v0.1.1 is refused (a plugin sandbox escape).
+Like locksql's, their console runs in a container of its own, started by the tool's launcher
+(`lockmq console --profile <profile>`, `lockfile console --profile <profile>`; install the launcher
+with the tool's `scripts/install.sh`, see its README): no host account, no `sudo <tool> install`.
+lea installs nothing for them; their launchers update themselves (`lockmq update`,
+`lockfile update`). `lea init` points to the launcher when it is missing, then runs lockmq's
+profile wizard (`lockmq setup`, never a password). lockfile below v0.1.1 is refused (a plugin
+sandbox escape).
 
-lea never starts, sees or drives these consoles. It mounts into its containers only the tool's
-root-owned `/etc/<tool>/system.toml` and its socket directory `/run/<tool>`, both read-only, and
-adds the `<tool>-clients` group: the agents reach the socket and nothing else (no credential, no
-profile, no audit log of the console account). A setup lea cannot vouch for (a file not owned by
-root, a socket directory open to others, a console account that is yours) is left out with a
-warning at start. `lea lockmq` / `lea lockfile` tell you whether the agents reach it and how to
-open the console: switch to the tool's account (prefer Wayland), then
-`lockmq console --project <projects dir> --profile <profile>`. Restart lea (`lea stop --all`,
+lea never starts, sees or drives these consoles. Its containers get only the tool's socket volume
+(`lockmq-run`, `lockfile-run`) on `/run/<tool>` and the tool's clients group (`lockmq-clients` 10010,
+`lockfile-clients` 10030): lea's image names the console accounts with the ids of the tools'
+images, so the client checks that the socket is the console's. The agents reach the socket and
+nothing else (no credential, no profile, no audit log). A `lockfile-run` volume still holding the
+ids of lockfile before 0.3 leaves lockfile out, with a warning, until you start `lockfile console`
+once (its launcher migrates the volume; lea never does). `lea lockmq` / `lea lockfile` tell you
+whether the agents reach it and how to open the console. Restart lea (`lea stop --all`,
 then `lea`) after turning one on.
 
 ## Web requests, with LockHTTP

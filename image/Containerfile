@@ -61,8 +61,12 @@ RUN useradd -r -u 10001 -U -M -s /sbin/nologin locksql \
  && echo "$sq  $A" | sha256sum -c \
  && tar -xzf "$A" locksql && install -m 0755 -o root -g root locksql /usr/local/bin/locksql \
  && rm -f locksql "$A"
-# lockmq and lockfile clients of a console on the host (lea mounts /etc/<tool>/system.toml and
-# /run/<tool> read-only at start, libexec/lib/lockhost.sh). The archives are pinned by the sha256
+# lockmq and lockfile clients of a console in its own container (shared volumes lockmq-run and
+# lockfile-run on /run/<tool>, started by each tool's launcher). As for locksql, the accounts of
+# the tools' images are named here with their ids (lockmq 10011 and lockmq-clients 10010,
+# lockfile 10031 and lockfile-clients 10030), the root-owned system.toml names them, and
+# /run/<tool> has the console image's owner and mode, so an empty volume first mounted here is
+# initialised as the console expects. The archives are pinned by the sha256
 # of their release's checksums.txt, whose Sigstore signature by the tool's release workflow was
 # checked when the pin was set; they match LEA_LOCKMQ_REF and LEA_LOCKFILE_REF (config/lea.conf).
 RUN case "$TARGETARCH" in \
@@ -78,7 +82,15 @@ RUN case "$TARGETARCH" in \
  && tar -xzf "lockmq_${MQ}_linux_${TARGETARCH}.tar.gz" lockmq && tar -xzf "lockfile_${LF}_linux_${TARGETARCH}.tar.gz" lockfile \
  && install -m 0755 -o root -g root lockmq lockfile /usr/local/bin/ \
  && rm -f lockmq lockfile ./*.tar.gz \
- && install -d -m 0755 -o root -g root /etc/lockmq /etc/lockfile
+ && groupadd -g 10010 lockmq-clients && useradd -r -u 10011 -U -M -s /sbin/nologin lockmq \
+ && groupadd -g 10030 lockfile-clients && useradd -r -u 10031 -U -M -s /sbin/nologin lockfile \
+ && for t in lockmq lockfile; do \
+      install -d -m 0755 -o root -g root /etc/$t \
+      && printf '%s\n' "service_user = \"$t\"" "client_group = \"$t-clients\"" "socket_dir   = \"/run/$t\"" 'x11          = "refuse"' > /etc/$t/system.toml \
+      && chmod 0644 /etc/$t/system.toml; \
+    done \
+ && install -d -m 2710 -o 10011 -g 10010 /run/lockmq \
+ && install -d -m 2750 -o 10031 -g 10030 /run/lockfile
 RUN groupadd -g 10000 locksql-clients \
  && install -d -m 2710 -o 10001 -g 10000 /run/locksql \
  && install -d -m 0755 /lea /lea/podman /usr/local/share/lea /usr/local/libexec/lea /etc/claude-code
@@ -88,7 +100,7 @@ COPY image/ssh_config.tmpl /usr/local/share/lea/ssh_config.tmpl
 COPY image/managed-settings.json /etc/claude-code/managed-settings.json
 COPY image/claude-settings.json /usr/local/share/lea/claude-settings.json
 COPY image/claude-plugin /usr/local/share/lea/claude-plugin
-COPY image/entrypoint image/user-init image/lock-host /usr/local/libexec/lea/
+COPY image/entrypoint image/user-init /usr/local/libexec/lea/
 COPY image/lea-crun /usr/local/libexec/lea/
 COPY image/lea-session image/lea-agent image/wl-copy /usr/local/bin/
 COPY image/go-cross /usr/local/bin/
@@ -97,7 +109,6 @@ COPY --from=go-tools /out/ /usr/local/bin/
 RUN sed -i "s/@LEA_VERSION@/${LEA_VERSION}/" /etc/claude-code/managed-settings.json /usr/local/share/lea/claude-settings.json \
  && chmod 0644 /etc/claude-code/managed-settings.json /usr/local/share/lea/claude-settings.json \
  && chmod -R u=rwX,go=rX /usr/local/share/lea/claude-plugin \
- && chmod 0644 /usr/local/libexec/lea/lock-host \
  && chmod 0755 /usr/local/libexec/lea/entrypoint /usr/local/libexec/lea/user-init /usr/local/libexec/lea/lea-crun /usr/local/bin/lea-session /usr/local/bin/lea-agent /usr/local/bin/wl-copy /usr/local/bin/go-cross
 # Go's caches and installed tools live in the persistent state dir go (/lea/state/go); the
 # toolchain never downloads another one (GOTOOLCHAIN=local).

@@ -11,8 +11,8 @@ Usage:
   lea lock open|close locksql [profile] | lea lock list
                               a locksql console in a pane of the deck, under the agent (the
                               deck's L); approvals are typed there, by you only
-  lea lockmq | lea lockfile   whether agents reach that tool's console on this host, and how to
-                              open it (in the tool's own account; lea never starts it)
+  lea lockmq | lea lockfile   whether agents reach that tool's console, and how to open it
+                              (with the tool's own launcher; lea never starts it)
   lea                         open the deck: your agents on the left, the selected one on the right
                               (keys: j/k select, enter focus, ctrl+space back, n new, x stop, q quit)
   lea new [-r role] [-p provider] [-m model] [--repo R] [--branch B] [--brief file] [name] [-- args]
@@ -36,7 +36,8 @@ Usage:
   lea config import FILE [--dry-run] [--replace] [--yes]
                               take a team's configuration (lea config --help: what needs a flag)
   lea update [--deps ask|all|none]
-                              the latest lea, then each newer locksql, lockmq, lockfile release
+                              the latest lea, then each newer locksql release (lockmq and
+                              lockfile: their launchers update themselves)
                               (asked one by one; all or none without asking; signatures checked)
   lea rollback                back to the previous version; the background update skips this one
   lea doctor
