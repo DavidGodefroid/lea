@@ -169,3 +169,25 @@ func TestBoardShowsSubagents(t *testing.T) {
 		t.Fatalf("board=%+v err=%v", b, err)
 	}
 }
+
+// A timer that fires at once (a TTL shorter than arming it) knows its own generation: no read of
+// a variable assigned after it was armed (go test -race), and the subagents are still forgotten.
+func TestSubagentsExpireAtOnce(t *testing.T) {
+	e := start(t)
+	e.d.mu.Lock()
+	e.d.subTTL = time.Nanosecond
+	e.d.mu.Unlock()
+	for i := 0; i < 20; i++ {
+		subHook(t, e, "dev", "SubagentStart", sub("a1"))
+	}
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		if _, n := listed(t, e, "dev"); n == 0 {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("subagents never expired")
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+}
