@@ -11,7 +11,7 @@ setup() {
   [ "$status" -eq 0 ]
   r=$(cd "$P" && pwd -P)
   run calls
-  [[ "$output" == *"launcher pwd=$r image=locksql:0.10.0 ro=1 name=locksql-console vault= [console] [--project] [$P] [--profile] [uat]"* ]]
+  [[ "$output" == *"launcher pwd=$r image=locksql:0.11.0 ro=1 name=locksql-console vault= [console] [--project] [$P] [--profile] [uat]"* ]]
   [[ "$output" != *"docker [run]"* && "$output" != *"docker [rm]"* ]]
   [ -d "$P/.locksql" ]
   [ ! -L "$P/.locksql" ]
@@ -99,7 +99,7 @@ setup() {
 @test "lea locksql vault runs the vault CLI as the console account" {
   lea_locksql vault login -method=oidc </dev/null
   run calls
-  [[ "$output" == *"docker [run] [-i] [--rm] [--log-driver] [none] [--user] [locksql] [--cap-drop] [ALL] [--security-opt] [no-new-privileges] [--read-only] [--tmpfs] [/tmp:rw,nosuid,nodev,noexec,size=64m] [--pids-limit] [256] [--memory] [1g] [-v] [locksql-home:/home/locksql] [--entrypoint] [vault] [locksql:0.10.0] [login] [-method=oidc]"* ]]
+  [[ "$output" == *"docker [run] [-i] [--rm] [--log-driver] [none] [--user] [locksql] [--cap-drop] [ALL] [--security-opt] [no-new-privileges] [--read-only] [--tmpfs] [/tmp:rw,nosuid,nodev,noexec,size=64m] [--pids-limit] [256] [--memory] [1g] [-v] [locksql-home:/home/locksql] [--entrypoint] [vault] [locksql:0.11.0] [login] [-method=oidc]"* ]]
 }
 
 @test "lea locksql refuses without locksql, a projects directory or the image" {
@@ -107,8 +107,8 @@ setup() {
   [[ "$output" == *"locksql is off (LEA_LOCKSQL=0)"* ]]
   LEA_PROJECTS_DIR= run lea_locksql
   [[ "$output" == *"no projects directory: run lea init"* ]]
-  FAKE_DOCKER_RC_IMAGE_INSPECT_AT_LOCKSQL_0_10_0=1 run lea_locksql
-  [[ "$output" == *"no locksql console image locksql:0.10.0: run lea init"* ]]
+  FAKE_DOCKER_RC_IMAGE_INSPECT_AT_LOCKSQL_0_11_0=1 run lea_locksql
+  [[ "$output" == *"no locksql console image locksql:0.11.0: run lea init"* ]]
   # Without locksql's launcher there is no console: lea init installs it.
   rm "$BATS_TEST_TMPDIR/lbin/locksql"
   run lea_locksql </dev/null
@@ -146,7 +146,7 @@ EOT
   r=$(cd "$P" && pwd -P)
   run calls
   [[ "$output" == *"docker [ps] [--filter] [label=lea.role=session]"* ]]
-  [[ "$output" == *"launcher pwd=$r image=locksql:0.10.0 ro=1 name=locksql-console vault=https://vault.example.com [console] [--project] [$P] [--profile] [uat]"* ]]
+  [[ "$output" == *"launcher pwd=$r image=locksql:0.11.0 ro=1 name=locksql-console vault=https://vault.example.com [console] [--project] [$P] [--profile] [uat]"* ]]
   [[ "$output" != *"docker [run]"* ]]
   # Its checks still stop it first.
   : >"$FAKE_LOG"; ln -s "$HOME/.ssh" "$P/.locksql/k"

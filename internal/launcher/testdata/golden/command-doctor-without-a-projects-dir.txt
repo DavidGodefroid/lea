@@ -12,7 +12,7 @@ docker [network] [ls] [--filter] [label=lea.prefix=lea] [--format] [{{.Name}}]
 docker [ps] [--filter] [label=lea.prefix=lea] [--filter] [label=lea.role=session] [--format] [{{.Names}}]
 docker [ps] [--filter] [label=lea.prefix=lea] [--filter] [label=lea.role=session] [--format] [{{.Names}}]
 docker [ps] [--filter] [label=lea.prefix=lea] [--filter] [label=lea.role=session] [--format] [{{.Names}}]
-docker [image] [inspect] [locksql:0.10.0]
+docker [image] [inspect] [locksql:0.11.0]
 docker [volume] [inspect] [locksql-run]
 -- lea
 -- stdout
@@ -32,7 +32,7 @@ ok    admission: cpu PSI 40%, memory 85% of the limit, memory PSI 10%, io PSI 40
 ok    shedding: after 30 s at memory 95% (LEA_SHED_*)
 ok    egress allowlist: lea's default (forges, registries, model APIs; LEA_EGRESS_ALLOW extends it with 'default,<domain>')
 ok    telemetry: off (LEA_OTEL_UPSTREAM)
-ok    locksql image locksql:0.10.0
+ok    locksql image locksql:0.11.0
 ok    locksql-run volume
 warn  approval hub: LEA_HUB=1 but no facade socket to read (set LEA_HUB_SOCKET, or XDG_RUNTIME_DIR): agents are not suspended on a Lock call that waits for the hub (LEA_HUB=0 to silence this)
 warn  kubernetes token: none (optional): lea kube refresh
