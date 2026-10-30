@@ -1,6 +1,8 @@
 package launcher
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"os"
 	"os/exec"
@@ -30,7 +32,7 @@ func (l *Launcher) ctlRunArgs(projects []string, sock string, sockGID int) ([]st
 	}
 	a := []string{"run", "-d", "--init", "--name", l.CtlName(), "--restart", "unless-stopped",
 		"--label", "lea.prefix=" + l.prefix(), "--label", "lea.role=ctl",
-		"--label", "lea.projects=" + strings.Join(projects, ":"),
+		"--label", "lea.projects=" + strings.Join(projects, ":"), "--label", "lea.claude=" + l.ctlClaudeLabel(),
 		"-u", uidgid(), "--group-add", fmt.Sprint(sockGID),
 		// The pressure gauge reads the host's /proc and each agent container's cgroup by its host
 		// pid (lea-ctl holds the engine's socket: it is the host's already).
@@ -57,12 +59,26 @@ func (l *Launcher) ctlRunArgs(projects []string, sock string, sockGID int) ([]st
 		return nil, err
 	}
 	bind(data, false)
-	// ~/.claude: lea creates each projects dir's projects/<slug> there and gives it to the agent
-	// container, as on the host.
-	if err := os.MkdirAll(home+"/.claude", 0o700); err != nil {
-		return nil, err
+	// ~/.claude: only what lea gives an agent container (claudeMounts). The shared entries and
+	// *.md read-only; each projects dir's projects/<slug>, made here, writable; never the other
+	// projects' transcripts nor the credentials. plugins/data, the mount point of the agents'
+	// private plugin data, is made here too: lea-ctl sees plugins read-only.
+	c := home + "/.claude"
+	for _, e := range l.ctlClaudeEntries() {
+		bind(c+"/"+e, true)
+		if e == "plugins" {
+			if err := Mkdirs(c, c+"/plugins/data"); err != nil {
+				l.logf("no writable %s/plugins/data: %v", c, err)
+			}
+		}
 	}
-	bind(home+"/.claude", false)
+	for _, p := range projects {
+		t := c + "/projects/" + Slug(p)
+		if err := Mkdirs(c, t); err != nil {
+			return nil, die("%v", err)
+		}
+		bind(t, false)
+	}
 	for _, p := range projects {
 		bind(p, false)
 	}
@@ -89,6 +105,36 @@ func (l *Launcher) ctlRunArgs(projects []string, sock string, sockGID int) ([]st
 		a = append(a, "-e", e)
 	}
 	return append(a, l.Cfg.Get("LEA_CTL_IMAGE")), nil
+}
+
+// ctlClaudeEntries are the ~/.claude entries lea-ctl mounts read-only, sorted: the real (not
+// symlinked) shared entries and *.md files claudeMounts gives agent containers.
+func (l *Launcher) ctlClaudeEntries() []string {
+	c := l.Cfg.Get("HOME") + "/.claude"
+	ok := func(name string) bool {
+		p := c + "/" + name
+		return !strings.Contains(name, ",") && !isSymlink(p) && (isDir(p) || isRegular(p))
+	}
+	var es []string
+	for _, e := range claudeShared {
+		if ok(e) {
+			es = append(es, e)
+		}
+	}
+	ents, _ := os.ReadDir(c)
+	for _, e := range ents {
+		if m, _ := filepath.Match("*.md", e.Name()); m && !strings.HasPrefix(e.Name(), ".") && isRegular(c+"/"+e.Name()) && ok(e.Name()) {
+			es = append(es, e.Name())
+		}
+	}
+	sort.Strings(es)
+	return es
+}
+
+// ctlClaudeLabel names the set of ctlClaudeEntries: when it changes, ensureCtl restarts lea-ctl.
+func (l *Launcher) ctlClaudeLabel() string {
+	h := sha256.Sum256([]byte(strings.Join(l.ctlClaudeEntries(), "\x00")))
+	return hex.EncodeToString(h[:6])
 }
 
 // ctlHostOnly are the commands that stay on the host with LEA_CTL=1: they install, configure or
@@ -185,16 +231,16 @@ func (l *Launcher) ctlExec(cmd []string) error {
 // ends its tmux server (the agents' containers keep running; the deck opens them again).
 func (l *Launcher) ensureCtl(proj string) error {
 	name, image := l.CtlName(), l.Cfg.Get("LEA_CTL_IMAGE")
-	got, _ := l.output(false, "docker", "inspect", "-f", `{{.State.Running}}|{{index .Config.Labels "lea.projects"}}|{{.Image}}`, name)
-	if f := strings.Split(got, "|"); len(f) == 3 && f[0] == "true" {
+	got, _ := l.output(false, "docker", "inspect", "-f", `{{.State.Running}}|{{index .Config.Labels "lea.projects"}}|{{.Image}}|{{index .Config.Labels "lea.claude"}}`, name)
+	if f := strings.Split(got, "|"); len(f) == 4 && f[0] == "true" {
 		current, err := l.output(false, "docker", "image", "inspect", "-f", "{{.Id}}", image)
 		if err != nil || current == "" {
 			current = f[2]
 		}
-		if f[1] == proj && strings.TrimPrefix(f[2], "sha256:") == strings.TrimPrefix(current, "sha256:") {
+		if f[1] == proj && strings.TrimPrefix(f[2], "sha256:") == strings.TrimPrefix(current, "sha256:") && f[3] == l.ctlClaudeLabel() {
 			return nil
 		}
-		l.logf("restarting %s for %s and the image %s", name, proj, image)
+		l.logf("restarting %s for %s, the image %s and the entries of ~/.claude", name, proj, image)
 	}
 	sock, gid, err := l.engineSocket()
 	if err != nil {
