@@ -396,7 +396,9 @@ without it, a phone's decision is refused). Only the proxy joins the hub's netwo
 addresses the gate refuses as targets: no agent reaches the hub. lea checks first the volumes' and
 the network's labels, the key, and the facade keys and devices as the gate reads them (lockkit's
 parsers; it writes them in canonical form); anything it cannot trust leaves the gate as without
-lock up, and lea says why. The pinned lockhttp release decides too: hub mode needs v0.3.0, the
+lock up, and lea says why; so does an up.json that does not say what the gate pins
+(`lockhttp_gate` 1: a lock's devices, required and sealed, its reveals), and a lock whose required or
+sealed devices lea cannot pass. The pinned lockhttp release decides too: hub mode needs v0.3.0, the
 devices v0.4.0, the facade keys v0.5.0; lea passes no flag that release lacks, and says so. One
 lockhttp lock at a time: the gate follows the projects directory whose lea started it last.
 

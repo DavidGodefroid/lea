@@ -82,6 +82,12 @@ func (l *Launcher) lockUpGate(proj string) *gateHub {
 	if len(names) > 1 {
 		return warn(fmt.Sprintf("lock up runs %q: lea's gate asks for one", names))
 	}
+	// lock up says what the gate pins (its devices, required and sealed, its reveals) only from
+	// lockhttp_gate 1 on: before, a lock's devices: true in lockfamily.yaml would not reach the
+	// gate, and it would take the hub's approvals the human meant to be device-signed.
+	if s.LockHTTPGate != 1 {
+		return warn("lock up does not say what this lock's gate pins (lockhttp_gate 1; update lockhub)")
+	}
 	name, lk := names[0], s.Locks[names[0]]
 	if !lockUpInstance.MatchString(name) {
 		return warn("not an instance name")
@@ -167,8 +173,10 @@ func (l *Launcher) lockUpGate(proj string) *gateHub {
 		case g.devices == nil:
 			// No device paired yet: the gate pins none, and a device's decision fails closed.
 			l.logf("warning: %s: lockhttp: the lock pins the paired devices, but none is paired: decisions from a phone are refused", p)
-		case !lockHTTPAtLeast(ver, "0.4.0") && len(lk.RequireDevice) > 0:
-			return warn("require_device needs lockhttp v0.4.0 or later, and the pinned one is " + orUnknown(ver))
+		case !lockHTTPAtLeast(ver, "0.4.0") && (len(lk.RequireDevice) > 0 || lk.SealClear):
+			// Unsealed clear screens to a hub that routes them to the phones, or approvals taken
+			// from any facade: the standalone gate instead.
+			return warn("require_device or seal_clear needs lockhttp v0.4.0 or later, and the pinned one is " + orUnknown(ver))
 		case !lockHTTPAtLeast(ver, "0.4.0"):
 			g.devices = nil
 			l.logf("warning: %s: lockhttp: the pinned lockhttp %s cannot pin devices (v0.4.0 or later): decisions from a phone are refused", p, orUnknown(ver))

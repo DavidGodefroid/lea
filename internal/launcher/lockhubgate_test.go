@@ -63,7 +63,7 @@ func hubUp(t *testing.T, w *world, lock, facades, devices string) {
 	}
 	pr := upProjectOf(w)
 	s := `{"version":1,"project":"` + pr + `","workspace":"` + w.proj + `","hub_network":"` + pr + `_lockhub",` +
-		`"hub_url":"http://lockhub:8443","hub_key":"` + testHubKey + `",`
+		`"hub_url":"http://lockhub:8443","hub_key":"` + testHubKey + `","lockhttp_gate":1,`
 	if facades != "" {
 		s += `"facade_keys":` + facades + `,`
 	}
@@ -232,9 +232,10 @@ func TestLockHTTPGateRefusesAnUntrustedHub(t *testing.T) {
 		"hub url":     {mod: func(w *world) { rewriteUp(t, w, "http://lockhub:8443", "https://evil.example") }, want: "not a service on the hub's network"},
 		"required none paired": {lock: `,"devices":true,"require_device":["prod-write"]`, mod: func(w *world) { rewriteUp(t, w, `"devices":{`, `"x":{`) },
 			want: "require_device prod-write but no device is paired"},
-		"bad profile": {lock: `,"profile":"-x"`, want: "not a profile name"},
-		"hub host":    {mod: func(w *world) { rewriteUp(t, w, "http://lockhub:8443", "http://evil:8443") }, want: "not a service on the hub's network"},
-		"hub port":    {mod: func(w *world) { rewriteUp(t, w, "http://lockhub:8443", "http://lockhub:65536") }, want: "not a service on the hub's network"},
+		"bad profile":      {lock: `,"profile":"-x"`, want: "not a profile name"},
+		"no gate contract": {mod: func(w *world) { rewriteUp(t, w, `"lockhttp_gate":1,`, "") }, want: "lockhttp_gate 1"},
+		"hub host":         {mod: func(w *world) { rewriteUp(t, w, "http://lockhub:8443", "http://evil:8443") }, want: "not a service on the hub's network"},
+		"hub port":         {mod: func(w *world) { rewriteUp(t, w, "http://lockhub:8443", "http://lockhub:65536") }, want: "not a service on the hub's network"},
 		"hub key newline": {mod: func(w *world) { rewriteUp(t, w, testHubKey, testHubKey[:20]+`\r\n`+testHubKey[20:]) },
 			want: "not an Ed25519 public key"},
 		"network workspace": {mod: func(w *world) {
@@ -346,9 +347,9 @@ func TestLockHTTPGateFollowsThePinnedRelease(t *testing.T) {
 	} {
 		t.Run(c.version, func(t *testing.T) {
 			w, root := lockHTTPWorld(t)
-			lock := `,"reveal":true,"devices":true,"seal_clear":true`
+			lock := `,"reveal":true,"devices":true`
 			if c.devices {
-				lock += `,"require_device":["write"]`
+				lock += `,"require_device":["write"],"seal_clear":true`
 			}
 			hubUp(t, w, lock, testFacades, testDevices)
 			if err := os.WriteFile(root+"/usr/local/bin/lockhttp", []byte(fakeLockHTTPLauncher(c.version, testDigest)), 0o755); err != nil {
@@ -369,17 +370,20 @@ func TestLockHTTPGateFollowsThePinnedRelease(t *testing.T) {
 			}
 		})
 	}
-	// Devices that must sign a risk class, and a release without --require-device: no hub mode.
-	w, root := lockHTTPWorld(t)
-	hubUp(t, w, `,"devices":true,"require_device":["write"]`, "", testDevices)
-	if err := os.WriteFile(root+"/usr/local/bin/lockhttp", []byte(fakeLockHTTPLauncher("0.3.0", testDigest)), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := w.launcher().ensureProxy(w.proj); err != nil {
-		t.Fatal(err)
-	}
-	if run := gateRun(t, w); strings.Contains(run, "[--hub]") || !strings.Contains(w.errb.String(), "require_device needs lockhttp v0.4.0") {
-		t.Errorf("hub mode without --require-device: %s\n%s", run, w.errb.String())
+	// Devices that must sign a risk class, or seal the clear screens, and a release without those
+	// flags: no hub mode.
+	for _, lock := range []string{`,"devices":true,"require_device":["write"]`, `,"devices":true,"seal_clear":true`} {
+		w, root := lockHTTPWorld(t)
+		hubUp(t, w, lock, "", testDevices)
+		if err := os.WriteFile(root+"/usr/local/bin/lockhttp", []byte(fakeLockHTTPLauncher("0.3.0", testDigest)), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := w.launcher().ensureProxy(w.proj); err != nil {
+			t.Fatal(err)
+		}
+		if run := gateRun(t, w); strings.Contains(run, "[--hub]") || !strings.Contains(w.errb.String(), "needs lockhttp v0.4.0") {
+			t.Errorf("%s: hub mode without its device flags: %s\n%s", lock, run, w.errb.String())
+		}
 	}
 	for v, want := range map[string]bool{"0.10.0": true, "v0.5.1": true, "1.0.0": true, "0.4.9": false, "": false, "x": false, "0.5": false,
 		"0.5.0-rc.1": false, "0.5.1-rc.1": true, "0.5.0+build": true} {

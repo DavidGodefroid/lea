@@ -35,7 +35,11 @@ type lockUpState struct {
 	HubURL     string          `json:"hub_url"`
 	HubKey     string          `json:"hub_key"`
 	FacadeKeys json.RawMessage `json:"facade_keys,omitempty"`
-	Devices    json.RawMessage `json:"devices,omitempty"`
+	// LockHTTPGate is the version of what lock up says of a lockhttp lock's gate (1: the reveal,
+	// devices, require_device and seal_clear of each lock, the paired devices): lea's gate asks
+	// the hub only then.
+	LockHTTPGate int             `json:"lockhttp_gate,omitempty"`
+	Devices      json.RawMessage `json:"devices,omitempty"`
 }
 
 type lockUpLock struct {
