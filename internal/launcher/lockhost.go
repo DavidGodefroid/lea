@@ -91,7 +91,7 @@ func (l *Launcher) lockVolumeStale(t lockHostTool) string {
 		}
 		return ""
 	case "10001:10000":
-		return "the lockfile-run volume still has the ids of lockfile before 0.3: start the console once with lockfile's launcher (lockfile console --profile P), which moves it to its own ids"
+		return "the lockfile-run volume still has the ids of lockfile before 0.3: start the console once with lockfile's launcher (lockfile console --profile P --allowed-uids <your uid>), which moves it to its own ids"
 	}
 	if err != nil {
 		return "cannot read the owner of the lockfile-run volume"

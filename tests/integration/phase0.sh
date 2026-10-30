@@ -75,7 +75,7 @@ cleanup() {
   # Checked absent above: this run made them.
   # shellcheck disable=SC2086 # names
   docker volume rm $fixed_volumes >/dev/null 2>&1 || true
-  docker image rm "$id-locksql:test" "$id-lockmq:allow" "$id-lockfile:allow" >/dev/null 2>&1 || true
+  docker image rm "$id-locksql:test" >/dev/null 2>&1 || true
   if [ -n "$slug" ]; then rm -r "${HOME:?}/.claude/projects/$slug" 2>/dev/null || true; fi
   # .locksql and .lockmq belong to the consoles' accounts after doctor --fix.
   docker run --rm --network none -v "$work:/w" docker.io/library/alpine:3.22 rm -rf /w/projects /w/data >/dev/null 2>&1 || true
