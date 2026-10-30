@@ -57,6 +57,28 @@ jobs:
         with:
           go-version-file: go.mod
       - run: make test-pressure ENGINE=${{ matrix.engine }}
+  # lea-ctl (#165): lea in its control container on a real engine; the agent container it starts
+  # never sees the Docker socket.
+  ctl:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+        with:
+          go-version-file: go.mod
+      - run: go build -trimpath -o build/lea ./cmd/lea
+      - run: make build
+      - name: AppArmor profile (as lea init loads it)
+        run: |
+          if docker info --format '{{json .SecurityOptions}}' | grep -q 'name=apparmor'; then
+            if [ -e /etc/apparmor.d/abi/4.0 ]; then abi=4.0 userns='  userns,'; else abi=3.0 userns=''; fi
+            sed -e "s|@ABI@|$abi|" -e "s|^@USERNS@\$|$userns|" apparmor/lea.tmpl | sudo tee /etc/apparmor.d/lea >/dev/null
+            sudo apparmor_parser -r /etc/apparmor.d/lea
+          fi
+      - run: make test-ctl
   # The real Codex CLI (the image's pinned version) against a fake upstream through lea-keyproxy.
   codex:
     runs-on: ubuntu-latest
@@ -89,4 +111,9 @@ jobs:
         with:
           context: .
           file: proxy/Containerfile
+          push: false
+      - uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
+        with:
+          context: image/ctl
+          file: image/ctl/Containerfile
           push: false

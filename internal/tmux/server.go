@@ -169,3 +169,24 @@ func (s Server) AttachArgv(session string) ([]string, error) {
 	}
 	return []string{s.bin(), "-L", s.Socket, "-f", s.Conf, "attach-session", "-t", "=" + session}, nil
 }
+
+// ClientTTYs are the terminals of the server's user clients (not its control-mode ones: a byte
+// written there would enter lea's control stream).
+func (s Server) ClientTTYs(ctx context.Context) ([]string, error) {
+	out, err := s.command(ctx, "list-clients", "-F", "#{client_control} #{client_tty}").Output()
+	if err != nil {
+		return nil, err
+	}
+	return parseClientTTYs(string(out)), nil
+}
+
+func parseClientTTYs(out string) []string {
+	var ttys []string
+	for _, l := range strings.Split(out, "\n") {
+		control, tty, ok := strings.Cut(strings.TrimSpace(l), " ")
+		if ok && control == "0" && (strings.HasPrefix(tty, "/dev/pts/") || strings.HasPrefix(tty, "/dev/tty")) {
+			ttys = append(ttys, tty)
+		}
+	}
+	return ttys
+}

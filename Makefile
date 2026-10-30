@@ -1,9 +1,10 @@
-.PHONY: test build test-proxy test-isolation test-lockhost test-locksql-confine test-update-deps test-pressure go-test go-build go-test-tmux go-get tmux-build
+.PHONY: test build test-proxy test-isolation test-ctl test-lockhost test-locksql-confine test-update-deps test-pressure go-test go-build go-test-tmux go-get tmux-build
 test:
 	tests/run.sh
 build:
 	docker build -t lea-proxy:dev -f proxy/Containerfile .
 	docker build -t lea:dev --build-arg LEA_VERSION=dev -f image/Containerfile .
+	docker build -t lea-ctl:dev -f image/ctl/Containerfile image/ctl
 test-proxy:
 	tests/proxy/run.sh
 test-lockhost:
@@ -14,6 +15,9 @@ test-update-deps:
 	tests/integration/update-deps.sh
 test-isolation:
 	tests/integration/isolation.sh
+# lea-ctl (#165): lea in its control container on the host's engine; needs make build, build/lea.
+test-ctl:
+	tests/integration/ctl.sh
 # The admission e2e (#132): a real 64 MiB, half-CPU container under a real load, on the host's
 # engine (ENGINE=podman for rootless Podman); a minute at most. Runs on the host, not in a
 # container: the daemon reads the container's cgroup from the host.

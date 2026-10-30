@@ -1,6 +1,8 @@
 LEA_PREFIX=lea
 LEA_IMAGE=$W/home/i
 LEA_PROXY_IMAGE=$W/home/p
+LEA_CTL=0
+LEA_CTL_IMAGE=lea-ctl:dev
 LEA_GIT_SSH=
 LEA_GIT_KNOWN_HOSTS=$W/config/lea/git_known_hosts
 LEA_LOCKSQL=1

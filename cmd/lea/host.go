@@ -288,6 +288,16 @@ func runDaemon(stderr io.Writer) int {
 		if s := daemon.HostSounder(files); s != nil {
 			d.SetSounder(s)
 			d.SetSoundOn(on)
+		} else if os.Getenv("LEA_CTL_INSIDE") == "1" {
+			// In lea-ctl (#165) no player runs: the bell of the terminals attached to lea's tmux.
+			ts := tmux.Server{Socket: tmux.DefaultSocket, Bin: os.Getenv("LEA_TMUX_BIN")}
+			d.SetSounder(daemon.BellSounder(func() []string {
+				ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+				defer cancel()
+				l, _ := ts.ClientTTYs(ctx)
+				return l
+			}))
+			d.SetSoundOn(on)
 		}
 	}
 	// Agents are named after their first prompt unless LEA_AUTONAME=0 or claude is missing.
