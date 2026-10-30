@@ -179,7 +179,7 @@ func (l *Launcher) lockUpGate(proj string) *gateHub {
 			return warn("require_device or seal_clear needs lockhttp v0.4.0 or later, and the pinned one is " + orUnknown(ver))
 		case !lockHTTPAtLeast(ver, "0.4.0"):
 			g.devices = nil
-			l.logf("warning: %s: lockhttp: the pinned lockhttp %s cannot pin devices (v0.4.0 or later): decisions from a phone are refused", p, orUnknown(ver))
+			l.logf("warning: %s: lockhttp: the pinned lockhttp %s cannot pin devices (v0.4.0 or later): the lock pins none", p, orUnknown(ver))
 		default:
 			g.requireDevice, g.sealClear = lk.RequireDevice, lk.SealClear
 		}
@@ -430,9 +430,9 @@ func (l *Launcher) writeGateHub(g *gateHub) (string, error) {
 	return dir, nil
 }
 
-// joinHubNetwork connects the proxy (only it: the gate shares its namespace) to the hub's
-// network of g, and disconnects it from any other lock up hub network; nil g leaves none.
-func (l *Launcher) joinHubNetwork(proxy string, g *gateHub) error {
+// joinHubNetwork disconnects the proxy from any lock up hub network but g's and, with connect,
+// connects it (only it: the gate shares its namespace) to g's; nil g leaves none.
+func (l *Launcher) joinHubNetwork(proxy string, g *gateHub, connect bool) error {
 	// The proxy (the gate's namespace) on a hub network whose subnets the gate does not refuse
 	// would let an agent reach that hub: what cannot be read or left stops lea.
 	o, err := l.output(false, "docker", "inspect", "--type", "container", "-f", "{{range $k, $v := .NetworkSettings.Networks}}{{$k}} {{end}}", proxy)
@@ -450,7 +450,7 @@ func (l *Launcher) joinHubNetwork(proxy string, g *gateHub) error {
 			}
 		}
 	}
-	if g == nil || joined {
+	if g == nil || joined || !connect {
 		return nil
 	}
 	if err := l.run("docker", "network", "connect", g.network, proxy); err != nil {

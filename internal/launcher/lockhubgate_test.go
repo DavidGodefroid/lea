@@ -234,6 +234,7 @@ func TestLockHTTPGateRefusesAnUntrustedHub(t *testing.T) {
 			want: "require_device prod-write but no device is paired"},
 		"bad profile":      {lock: `,"profile":"-x"`, want: "not a profile name"},
 		"no gate contract": {mod: func(w *world) { rewriteUp(t, w, `"lockhttp_gate":1,`, "") }, want: "lockhttp_gate 1"},
+		"gate contract 2":  {mod: func(w *world) { rewriteUp(t, w, `"lockhttp_gate":1,`, `"lockhttp_gate":2,`) }, want: "lockhttp_gate 1"},
 		"hub host":         {mod: func(w *world) { rewriteUp(t, w, "http://lockhub:8443", "http://evil:8443") }, want: "not a service on the hub's network"},
 		"hub port":         {mod: func(w *world) { rewriteUp(t, w, "http://lockhub:8443", "http://lockhub:65536") }, want: "not a service on the hub's network"},
 		"hub key newline": {mod: func(w *world) { rewriteUp(t, w, testHubKey, testHubKey[:20]+`\r\n`+testHubKey[20:]) },
@@ -433,6 +434,47 @@ func TestLockHTTPGateStopsOnAHubNetworkItCannotLeave(t *testing.T) {
 			}
 			if len(gateRuns(w)) != 0 {
 				t.Error("the gate started")
+			}
+		})
+	}
+}
+
+// A reused proxy joins the hub's network only once the old gate (standalone, or another hub's,
+// which does not refuse this network's addresses) is gone: from standalone, and from another hub,
+// which it leaves first.
+func TestLockHTTPGateLeavesNoOldGateOnTheHubNetwork(t *testing.T) {
+	image := "ghcr.io/davidgodefroid/lockhttp@" + testDigest
+	for name, c := range map[string]struct{ nets, label string }{
+		"from standalone":  {"lea-egress ", ""},
+		"from another hub": {"lea-egress lockfamily-0badc0de_lockhub ", " hub:0123456789ab"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			w, _ := lockHTTPWorld(t)
+			hubUp(t, w, "", "", "")
+			w.env["FAKE_DOCKER_OUT_INSPECT__F"] = "true"
+			w.env["FAKE_DOCKER_OUT_INSPECT___FORMAT"] = "@" + w.launcher().proxyRules() + "^1"
+			w.env["FAKE_DOCKER_OUT_INSPECT___TYPE_AT_LEA_PROXY"] = c.nets
+			w.env["FAKE_DOCKER_OUT_INSPECT___TYPE"] = "true|2026-10-28T10:00:00Z|\ntrue|2026-10-28T10:00:01Z|" + image + c.label
+			if err := w.launcher().ensureProxy(w.proj); err != nil {
+				t.Fatal(err)
+			}
+			at := func(sub string) int {
+				for i, c := range w.calls() {
+					if strings.Contains(c, sub) {
+						return i
+					}
+				}
+				return -1
+			}
+			rm, connect := at("docker [rm] [-f] [lea-lockhttp-gate]"), at("[network] [connect] ["+upProjectOf(w)+"_lockhub] [lea-proxy]")
+			run := at("[--name] [lea-lockhttp-gate]")
+			if rm < 0 || connect < 0 || run < 0 || !(rm < connect && connect < run) {
+				t.Errorf("rm %d, connect %d, run %d:\n%s", rm, connect, run, strings.Join(w.calls(), "\n"))
+			}
+			if c.label != "" {
+				if d := at("[network] [disconnect] [lockfamily-0badc0de_lockhub]"); d < 0 || d > connect {
+					t.Errorf("disconnect %d, connect %d", d, connect)
+				}
 			}
 		})
 	}

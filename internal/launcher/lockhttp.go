@@ -152,7 +152,10 @@ func (l *Launcher) ensureLockHTTPGate(fresh bool, image string, hub *gateHub) er
 	if err != nil {
 		return die("LEA_LOCKHTTP=1: %v", err)
 	}
-	if err := l.joinHubNetwork(proxy, hub); err != nil {
+	// The proxy leaves any other hub network first; it joins hub's only once the gate in its
+	// namespace refuses that network's addresses: a current gate (its stamp names them), or after
+	// the old gate is gone, before the new one starts.
+	if err := l.joinHubNetwork(proxy, hub, false); err != nil {
 		return err
 	}
 	if !fresh {
@@ -160,10 +163,15 @@ func (l *Launcher) ensureLockHTTPGate(fresh bool, image string, hub *gateHub) er
 			`{{.State.Running}}|{{.State.StartedAt}}|{{index .Config.Labels "lea.lockhttp-image"}}{{with index .Config.Labels "lea.lockhttp-ca"}} ca:{{.}}{{end}}{{with index .Config.Labels "lea.lockhttp-hub"}} hub:{{.}}{{end}}`},
 			names...)...)
 		if err == nil && lockHTTPGateCurrent(out, want, len(names)) {
-			return nil
+			return l.joinHubNetwork(proxy, hub, true)
 		}
 	}
-	_ = l.quiet("docker", "rm", "-f", name, signer)
+	if err := l.quiet("docker", "rm", "-f", name, signer); err != nil && hub != nil {
+		return die("LEA_LOCKHTTP=1: could not remove the gate %s before it asks the hub", name)
+	}
+	if err := l.joinHubNetwork(proxy, hub, true); err != nil {
+		return err
+	}
 	data := l.Cfg.DataDir()
 	labels := []string{"--label", "lea.prefix=" + l.prefix(), "--label", "lea.lockhttp-image=" + image}
 	if hub != nil {
