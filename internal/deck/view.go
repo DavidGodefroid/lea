@@ -293,7 +293,10 @@ func (m Model) bottom(w int) string {
 		hint = fmt.Sprintf("O open console %s d decline", c.dot)
 	}
 	if a := m.selectedAgent(); a != nil && hubTicket(*a) != nil {
-		hint = fmt.Sprintf("a approve %[1]s d deny %[1]s v view", c.dot)
+		hint = fmt.Sprintf("a approve %[1]s d deny %[1]s v view %[1]s o clear values", c.dot)
+		if hubTicket(*a).Expired {
+			hint = fmt.Sprintf("r ask again %s v view", c.dot)
+		}
 	}
 	if a := m.selectedAgent(); a != nil && a.Approval != nil {
 		hint = fmt.Sprintf("a allow %s d deny", c.dot)
@@ -523,9 +526,20 @@ func (m Model) row(a Agent, inner int, inFolder bool) []string {
 		if !h.Verified {
 			lines = append(lines, row(alert, warn+" unverified: claims \""+clean(h.Claimed)+"\""))
 		}
-		lines = append(lines, row(alert, warn+" "+clean(h.Lock)+" "+clean(h.Instance)+" "+c.dot+" "+clean(h.Risk)))
+		head := warn + " " + clean(h.Lock) + " " + clean(h.Instance) + " " + c.dot + " " + clean(h.Risk)
+		if h.Expired {
+			head += " " + c.dot + " EXPIRED"
+		}
+		lines = append(lines, row(alert, head))
 		if h.Production {
 			lines = append(lines, row(alert, "PRODUCTION"))
+		}
+		if r := h.Renews; r != nil {
+			for _, l := range renewLines(*r) {
+				for _, w := range wrap(l, wide+2, c) {
+					lines = append(lines, row(alert, w))
+				}
+			}
 		}
 		for _, l := range wrap(clean(h.Header), wide+2, c) {
 			if l != "" {
@@ -547,8 +561,14 @@ func (m Model) row(a Agent, inner int, inFolder bool) []string {
 		for _, w := range m.hubWarnings(*h) {
 			lines = append(lines, row(alert, "  "+w))
 		}
-		keys := "[a]pprove [d]eny [v]iew"
-		if h.Production && h.Retype != "" {
+		if rv := m.revealed; rv != nil && rv.ref == h.Instance+"/"+h.ID {
+			lines = append(lines, m.clearLines(rv.clear, wide, row)...)
+		}
+		keys := "[a]pprove [d]eny [v]iew [o] clear values"
+		if h.Expired {
+			keys = "expired: [r] asks the lock again"
+		}
+		if h.Production && h.Retype != "" && !h.Expired {
 			keys += " " + c.dot + " approving asks for " + clean(h.Retype)
 		}
 		if n := len(a.Hub); n > 1 {
@@ -703,4 +723,58 @@ func padLeft(s string, w int) string {
 		return strings.Repeat(" ", d) + s
 	}
 	return s
+}
+
+// renewLines say what a renewal ticket renews and what changed since: the Lock's words, cleaned.
+func renewLines(r HubRenewal) []string {
+	why := "it expired before a decision"
+	if r.Reason == "approval-expired" {
+		why = "its approval expired before the run"
+	}
+	out := []string{"renews " + clean(r.Of) + ": " + why}
+	switch {
+	case !r.Checked:
+		out = append(out, "the lock could not compare the plan's inputs with the expired ticket's")
+	case len(r.Changes) == 0:
+		out = append(out, "nothing changed since then")
+	default:
+		out = append(out, "changed since then:")
+		for _, ch := range r.Changes {
+			out = append(out, "  "+clean(ch.Input)+": "+clean(ch.Change))
+		}
+	}
+	return out
+}
+
+// clearLines are a ticket's clear values on its card, set apart from the masked screen.
+func (m Model) clearLines(cl HubClear, wide int, row func(lipgloss.Style, string) string) []string {
+	c := m.cs()
+	rule := "════"
+	if m.ascii {
+		rule = "===="
+	}
+	mark := alert.Bold(true)
+	text := lipgloss.NewStyle().Foreground(theme.Text)
+	out := []string{row(mark, rule+" CLEAR VALUES "+c.dot+" sealed by the lock to this deck, not kept "+rule)}
+	for _, l := range wrap(clean(cl.Header), wide+2, c) {
+		if l != "" {
+			out = append(out, row(text, l))
+		}
+	}
+	for _, l := range m.hubWrap(cl.Body) {
+		out = append(out, row(text, "  "+l))
+	}
+	if cl.Note != "" {
+		for _, l := range wrap("agent: "+clean(cl.Note), wide+2, c) {
+			out = append(out, row(text, l))
+		}
+	}
+	for _, w := range m.hubWrap(cl.Warnings) {
+		out = append(out, row(alert, "  "+w))
+	}
+	end := rule + " end of clear values (o hides them) " + rule
+	if cl.Truncated {
+		end = rule + " cut: lock approve shows them all " + rule
+	}
+	return append(out, row(mark, end))
 }

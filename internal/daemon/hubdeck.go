@@ -13,9 +13,12 @@ import (
 	"net/url"
 	"os"
 	"regexp"
+	"slices"
 	"strings"
 	"time"
 	"unicode/utf8"
+
+	"github.com/DavidGodefroid/lockkit/ticket"
 
 	"github.com/DavidGodefroid/lea/internal/agents"
 	"github.com/DavidGodefroid/lea/internal/store"
@@ -53,7 +56,26 @@ type HubTicket struct {
 	Body, Warnings           []string
 	// Agent and Session are the ticket's requester: what the agent told its Lock.
 	Agent, Session string
+	// KeyID names the Lock's key that signed the ticket: a reveal opens only under the one lock
+	// up pinned for the instance (hubreveal.go).
+	KeyID string
+	// Expired: from the queue's expired list (the deck may ask the Lock again, never decide it).
+	// Renews: this ticket asks again for an expired one.
+	Expired bool
+	Renews  *HubRenewal
 }
+
+// HubRenewal is a renewal ticket's link to the expired ticket it asks again for (lockkit's
+// ticket.Renewal): its id, why it expired, whether the Lock compared the plan's inputs, and what
+// changed since.
+type HubRenewal struct {
+	Of, Reason string
+	Checked    bool
+	Changes    []HubChange
+}
+
+// HubChange is one input of a renewal's plan and how it changed (changed, new, gone).
+type HubChange struct{ Input, Change string }
 
 // HubVerdict is the user's answer to a ticket from the deck.
 type HubVerdict struct {
@@ -94,14 +116,11 @@ func (f SocketFacade) Queue(ctx context.Context, since uint64, wait int) ([]HubT
 		return nil, 0, fmt.Errorf("lockhub: GET /v1/queue: %s", res.Status)
 	}
 	var out struct {
-		Tickets []struct {
-			ID       string          `json:"id"`
-			Instance string          `json:"instance"`
-			Risk     string          `json:"risk"`
-			Expires  *time.Time      `json:"expires"`
-			Ticket   json.RawMessage `json:"ticket"`
-		} `json:"tickets"`
-		Version uint64 `json:"version"`
+		Tickets []queueItem `json:"tickets"`
+		Version uint64      `json:"version"`
+		// Expired are the tickets that expired in the last 24 hours with no renewal yet; Facades
+		// the ones that may ask the Lock again for each (lockhub#29).
+		Expired []queueItem `json:"expired"`
 	}
 	if err := json.NewDecoder(io.LimitReader(res.Body, maxHubBody)).Decode(&out); err != nil {
 		return nil, 0, fmt.Errorf("lockhub: GET /v1/queue: %w", err)
@@ -111,40 +130,93 @@ func (f SocketFacade) Queue(ctx context.Context, since uint64, wait int) ([]HubT
 		if len(ts) == maxHubQueue {
 			break
 		}
-		var tk struct {
-			ID     string `json:"id"`
-			Source struct {
-				Lock     string `json:"lock"`
-				Instance string `json:"instance"`
-			} `json:"source"`
-			Requester struct {
-				Agent   string `json:"agent"`
-				Session string `json:"session"`
-			} `json:"requester"`
-			Flags struct {
-				Production bool   `json:"production"`
-				Retype     string `json:"retype"`
-			} `json:"flags"`
-			Screen struct {
-				Header   string   `json:"header"`
-				Note     string   `json:"note"`
-				Body     []string `json:"body"`
-				Warnings []string `json:"warnings"`
-			} `json:"screen"`
+		if t, ok := it.ticket(); ok {
+			ts = append(ts, t)
 		}
-		if json.Unmarshal(it.Ticket, &tk) != nil || tk.ID != it.ID || tk.Source.Instance != it.Instance ||
-			!hubRef.MatchString(it.ID) || !hubRef.MatchString(it.Instance) || !lockName.MatchString(tk.Source.Lock) {
-			continue // not a ticket lea can name: `lock approve` answers it
+	}
+	for _, it := range out.Expired {
+		if len(ts) == maxHubQueue {
+			break
 		}
-		t := HubTicket{ID: it.ID, Instance: it.Instance, Lock: tk.Source.Lock, Risk: it.Risk,
-			Production: tk.Flags.Production, Retype: tk.Flags.Retype, Header: tk.Screen.Header, Note: tk.Screen.Note,
-			Body: tk.Screen.Body, Warnings: tk.Screen.Warnings, Agent: tk.Requester.Agent, Session: tk.Requester.Session}
-		if it.Expires != nil {
-			t.Expires = it.Expires.Unix()
+		if !slices.Contains(it.Facades, "deck") {
+			continue // the deck may not ask again for it: lock approve, or nothing
 		}
-		ts = append(ts, t)
+		if t, ok := it.ticket(); ok {
+			t.Expired = true
+			ts = append(ts, t)
+		}
 	}
 	return ts, out.Version, nil
+}
+
+// queueItem is one item of GET /v1/queue (lockhub's api.QueueItem).
+type queueItem struct {
+	ID       string          `json:"id"`
+	Instance string          `json:"instance"`
+	Risk     string          `json:"risk"`
+	Expires  *time.Time      `json:"expires"`
+	Facades  []string        `json:"facades"`
+	Ticket   json.RawMessage `json:"ticket"`
+}
+
+// ticket reads the fields of the item's signed ticket the deck uses; false: not a ticket lea can
+// name (`lock approve` answers it).
+func (it queueItem) ticket() (HubTicket, bool) {
+	var tk struct {
+		ID     string `json:"id"`
+		Source struct {
+			Lock     string `json:"lock"`
+			Instance string `json:"instance"`
+			KeyID    string `json:"key_id"`
+		} `json:"source"`
+		Requester struct {
+			Agent   string `json:"agent"`
+			Session string `json:"session"`
+		} `json:"requester"`
+		Flags struct {
+			Production bool   `json:"production"`
+			Retype     string `json:"retype"`
+		} `json:"flags"`
+		Screen struct {
+			Header   string   `json:"header"`
+			Note     string   `json:"note"`
+			Body     []string `json:"body"`
+			Warnings []string `json:"warnings"`
+		} `json:"screen"`
+		Renews *struct {
+			Of      string `json:"of"`
+			Reason  string `json:"reason"`
+			Checked bool   `json:"checked"`
+			Changes []struct {
+				Input  string `json:"input"`
+				Change string `json:"change"`
+			} `json:"changes"`
+		} `json:"renews"`
+	}
+	if json.Unmarshal(it.Ticket, &tk) != nil || tk.ID != it.ID || tk.Source.Instance != it.Instance ||
+		!hubRef.MatchString(it.ID) || !hubRef.MatchString(it.Instance) || !lockName.MatchString(tk.Source.Lock) {
+		return HubTicket{}, false
+	}
+	t := HubTicket{ID: it.ID, Instance: it.Instance, Lock: tk.Source.Lock, KeyID: tk.Source.KeyID, Risk: it.Risk,
+		Production: tk.Flags.Production, Retype: tk.Flags.Retype, Header: tk.Screen.Header, Note: tk.Screen.Note,
+		Body: tk.Screen.Body, Warnings: tk.Screen.Warnings, Agent: tk.Requester.Agent, Session: tk.Requester.Session}
+	if it.Expires != nil {
+		t.Expires = it.Expires.Unix()
+	}
+	if r := tk.Renews; r != nil {
+		if !hubRef.MatchString(r.Of) {
+			return HubTicket{}, false
+		}
+		t.Renews = &HubRenewal{Of: r.Of, Reason: r.Reason, Checked: r.Checked}
+		for i, c := range r.Changes {
+			if i == ticket.MaxChanges {
+				t.Renews.Checked = false // more than a Lock writes: say it could not compare
+				break
+			}
+			t.Renews.Changes = append(t.Renews.Changes, HubChange{Input: c.Input, Change: c.Change})
+		}
+	}
+	return t, true
 }
 
 // Errors of POST …/decide, as the deck tells them.
@@ -239,9 +311,12 @@ func (d *Daemon) setHubQueue(ctx context.Context, ts []HubTicket, up bool) {
 	var entries []hubEntry
 	if len(ts) > 0 {
 		all, err := d.st.Agents()
-		var waits []store.HubWait
+		var waits, every []store.HubWait
 		if err == nil {
 			waits, err = d.st.AllPendingHubWaits()
+		}
+		if err == nil {
+			every, err = d.st.AllHubWaits()
 		}
 		if err != nil { // no agent to show them on: none shows
 			log.Printf("lea daemon: hub queue: %v", err)
@@ -258,9 +333,24 @@ func (d *Daemon) setHubQueue(ctx context.Context, ts []HubTicket, up bool) {
 				waiting[w.Instance+"/"+w.Ticket] = w.Agent
 			}
 		}
+		// An expired ticket, or the renewal of one, is for the agent that waited on the expired
+		// ticket: its wait has ended (expired), so any of its waits names it.
+		waited := map[string]string{}
+		for _, w := range every {
+			if _, ok := waited[w.Instance+"/"+w.Ticket]; !ok {
+				waited[w.Instance+"/"+w.Ticket] = w.Agent
+			}
+		}
 		for _, t := range ts {
 			e := hubEntry{t: t}
-			if k, ok := waiting[t.Instance+"/"+t.ID]; ok && byKey[k].Key != "" {
+			k, ok := waiting[t.Instance+"/"+t.ID]
+			switch {
+			case !ok && t.Expired:
+				k, ok = waited[t.Instance+"/"+t.ID]
+			case !ok && t.Renews != nil:
+				k, ok = waited[t.Instance+"/"+t.Renews.Of]
+			}
+			if ok && byKey[k].Key != "" {
 				e.agent, e.verified = k, true
 			} else {
 				e.agent = claimedAgent(all, t)
@@ -287,8 +377,8 @@ func (d *Daemon) showHub(ctx context.Context, entries []hubEntry, console string
 	d.hubLocks = map[string]bool{}
 	counts := map[string]map[string]int{}
 	for _, e := range entries {
-		if e.t.Lock == "lockhttp" {
-			continue // the gate's status file counts LockHTTP's requests
+		if e.t.Lock == "lockhttp" || e.t.Expired {
+			continue // the gate's status file counts LockHTTP's requests; an expired ticket waits on no one
 		}
 		if counts[e.t.Lock] == nil {
 			counts[e.t.Lock] = map[string]int{}
@@ -371,10 +461,18 @@ func hubCard(e hubEntry) agents.HubCard {
 	}
 	claimed, _ := hubLine(t.Agent, 64)
 	note, _ := hubLine(t.Note, 240) // the agent's words: cut, they say nothing of what runs
-	return agents.HubCard{ID: t.ID, Instance: t.Instance, Lock: t.Lock, Risk: line(t.Risk, 16),
+	c := agents.HubCard{ID: t.ID, Instance: t.Instance, Lock: t.Lock, Risk: line(t.Risk, 16),
 		Production: t.Production, Retype: line(t.Retype, maxRetype), Verified: e.verified,
 		Header: line(t.Header, maxHubLine), Note: note, Body: lines(t.Body, maxHubLines),
-		Warnings: lines(t.Warnings, 10), Expires: t.Expires, Claimed: claimed, Truncated: cut}
+		Warnings: lines(t.Warnings, 10), Expires: t.Expires, Claimed: claimed, Truncated: cut, Expired: t.Expired}
+	if r := t.Renews; r != nil {
+		c.Renews = &agents.HubRenewal{Of: r.Of, Reason: line(r.Reason, 32), Checked: r.Checked}
+		for _, ch := range r.Changes {
+			c.Renews.Changes = append(c.Renews.Changes, agents.HubChange{Input: line(ch.Input, 200), Change: line(ch.Change, 16)})
+		}
+		c.Truncated = cut
+	}
+	return c
 }
 
 // hubLine is a line of the Lock's screen on one line, without control, bidi or zero-width
@@ -406,7 +504,7 @@ func (d *Daemon) hubDecide(ctx context.Context, params json.RawMessage) error {
 	f := d.hubFacade
 	found := false
 	for _, e := range d.hubQueue {
-		if e.t.ID == p.ID && e.t.Instance == p.Instance && e.container == p.Container && p.Container != "" {
+		if e.t.ID == p.ID && e.t.Instance == p.Instance && e.container == p.Container && p.Container != "" && !e.t.Expired {
 			found = true
 		}
 	}

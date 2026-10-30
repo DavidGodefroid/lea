@@ -72,7 +72,7 @@ var deckMethods = map[string]bool{
 	"deck_attached": true, "deck_popup": true, "agent_label": true, "shell_open": true,
 	"shell_split": true, "agent_pause": true,
 	"lock_open": true, "lock_close": true, "lock_list": true, "lock_request_decide": true,
-	"hub_decide": true,
+	"hub_decide": true, "hub_reveal": true, "hub_renew": true,
 }
 
 func (d *Daemon) SetAgents(a Agents) {
@@ -265,6 +265,11 @@ func (d *Daemon) dispatchDeck(ctx context.Context, o Origin, req wire.Request) (
 		return d.lockRequestDecide(ctx, a, req.Params)
 	case "hub_decide":
 		return ok, d.hubDecide(ctx, req.Params)
+	case "hub_reveal":
+		// The clear values go to the deck that asked, as this answer: nowhere else.
+		return d.hubReveal(ctx, req.Params)
+	case "hub_renew":
+		return d.hubRenew(ctx, req.Params)
 	case "lock_list":
 		var p struct{ Container string }
 		if err := json.Unmarshal(req.Params, &p); err != nil {

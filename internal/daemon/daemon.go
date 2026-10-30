@@ -143,6 +143,9 @@ type Daemon struct {
 	// #158).
 	hubQueue []hubEntry
 	hubLocks map[string]bool
+	// hubKeys is the directory of the host facades' keys lock up writes (hubreveal.go; "": no
+	// reveal).
+	hubKeys string
 	// pressClock is the pressure's clock (nil: time.Now), a test seam.
 	pressClock func() time.Time
 	// Shedding (shed.go, #132): its thresholds, each container's state, and whether pauses or

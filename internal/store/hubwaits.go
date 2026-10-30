@@ -168,6 +168,16 @@ func (s *Store) AllPendingHubWaits() ([]HubWait, error) {
 	return collectHubWaits(rows)
 }
 
+// AllHubWaits are every wait lea keeps, decided or not, oldest first: the deck finds the agent of
+// an expired ticket, or of its renewal, by the wait that named it.
+func (s *Store) AllHubWaits() ([]HubWait, error) {
+	rows, err := s.db.Query(`SELECT ` + hubWaitCols + ` FROM hub_waits ORDER BY created, ticket`)
+	if err != nil {
+		return nil, err
+	}
+	return collectHubWaits(rows)
+}
+
 // PendingHubWaits are agent's waits with no decision yet, oldest first.
 func (s *Store) PendingHubWaits(agent string) ([]HubWait, error) {
 	rows, err := s.db.Query(`SELECT `+hubWaitCols+` FROM hub_waits WHERE agent_key=? AND decision='' ORDER BY created, ticket`, agent)
