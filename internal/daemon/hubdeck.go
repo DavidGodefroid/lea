@@ -339,9 +339,13 @@ func (d *Daemon) setHubQueue(ctx context.Context, ts []HubTicket, up bool) {
 			}
 		}
 		// An expired ticket, or the renewal of one, is for the agent that waited on the expired
-		// ticket: its wait has ended (expired), so any of its waits names it.
+		// ticket: its wait has ended (expired), so any of its waits names it, but one lea
+		// abandoned (the hub off): lea told that agent it stopped waiting on the ticket.
 		waited := map[string]string{}
 		for _, w := range every {
+			if w.Decision == store.DecisionAbandoned {
+				continue
+			}
 			if _, ok := waited[w.Instance+"/"+w.Ticket]; !ok {
 				waited[w.Instance+"/"+w.Ticket] = w.Agent
 			}
@@ -359,9 +363,9 @@ func (d *Daemon) setHubQueue(ctx context.Context, ts []HubTicket, up bool) {
 			}
 			if ok && byKey[k].Key != "" {
 				e.agent, e.verified = k, true
-			} else if abandoned[t.Instance+"/"+t.ID] {
-				// lea stopped waiting on it (its agent forgotten, the hub off): not a ticket of a
-				// live agent that bears the same name.
+			} else if abandoned[t.Instance+"/"+t.ID] || (t.Renews != nil && abandoned[t.Instance+"/"+t.Renews.Of]) {
+				// lea stopped waiting on it, or on the ticket it renews (its agent forgotten, the
+				// hub off): not a ticket of a live agent that bears the same name.
 				continue
 			} else {
 				e.agent = claimedAgent(all, t)

@@ -523,3 +523,73 @@ func TestHubRenewKeepsANewerQueue(t *testing.T) {
 		t.Fatalf("cards %+v", hs)
 	}
 }
+
+// An expired ticket and the renewal of one follow #205: a ticket lea abandoned (its agent
+// forgotten, or the hub off) shows on no agent, neither expired nor renewed, not even on a live
+// agent of the same name or on the one whose wait lea abandoned; a renewal an agent waits on
+// itself shows on it, verified.
+func TestHubExpiredAndRenewalOfAnAbandonedTicket(t *testing.T) {
+	k := writeFacadeKeys(t)
+	renewal := func(id, of, agent string) map[string]any {
+		r := signedBy(queued(id, "crm", "locksql", agent, "", false, ""), k.lockPub)
+		r["ticket"].(map[string]any)["renews"] = map[string]any{"of": of, "reason": "expired", "checked": true}
+		return r
+	}
+	h := &fakeHub{}
+	e, dev, dev2 := hubEnv(t, h)
+	poll := func(expired, queue []map[string]any) {
+		t.Helper()
+		h.mu.Lock()
+		h.expired, h.queue = expired, queue
+		h.mu.Unlock()
+		if _, err := e.d.pollHubQueue(e.ctx, 0); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	// (a, b) dev-1 forgotten: its expired ticket and a renewal of it (claimed "dev-1") show on
+	// no one, not on its namesake.
+	if err := e.d.st.AddHubWait(dev, ticketA, "locksql", "crm", 1); err != nil {
+		t.Fatal(err)
+	}
+	if err := e.d.st.ForgetAgent(dev); err != nil {
+		t.Fatal(err)
+	}
+	again := spawned(t, e, "dev-1", "dev", "")
+	poll([]map[string]any{signedBy(queued(ticketA, "crm", "locksql", "dev-1", "", false, ""), k.lockPub)}, nil)
+	if hs := cardsOf(e, again).Agents[0].Hub; len(hs) != 0 {
+		t.Fatalf("a forgotten agent's expired ticket shows on its namesake: %+v", hs)
+	}
+	poll(nil, []map[string]any{renewal(ticketC, ticketA, "dev-1")})
+	if hs := cardsOf(e, again).Agents[0].Hub; len(hs) != 0 {
+		t.Fatalf("the renewal of a forgotten agent's ticket shows on its namesake: %+v", hs)
+	}
+
+	// (c) The hub off abandons dev-2's wait on ticketB; once expired, neither it nor its renewal
+	// shows on dev-2.
+	if err := e.d.st.AddHubWait(dev2, ticketB, "locksql", "crm", 2); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := e.d.st.AbandonAllHubWaits("off", 3); err != nil {
+		t.Fatal(err)
+	}
+	poll([]map[string]any{signedBy(queued(ticketB, "crm", "locksql", "dev-2", "", false, ""), k.lockPub)}, nil)
+	if hs := cardsOf(e, dev2).Agents[0].Hub; len(hs) != 0 {
+		t.Fatalf("an abandoned ticket shows expired: %+v", hs)
+	}
+	const ticketD = "01JB0000000000000000000004"
+	ren := renewal(ticketD, ticketB, "dev-2")
+	poll(nil, []map[string]any{ren})
+	if hs := cardsOf(e, dev2).Agents[0].Hub; len(hs) != 0 {
+		t.Fatalf("the renewal of an abandoned ticket shows: %+v", hs)
+	}
+
+	// (d) An agent that waits on the renewal itself has it, verified.
+	if err := e.d.st.AddHubWait(dev2, ticketD, "locksql", "crm", 4); err != nil {
+		t.Fatal(err)
+	}
+	poll(nil, []map[string]any{ren})
+	if hs := cardsOf(e, dev2).Agents[0].Hub; len(hs) != 1 || hs[0].ID != ticketD || !hs[0].Verified {
+		t.Fatalf("a renewal waited on: %+v", hs)
+	}
+}
