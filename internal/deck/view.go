@@ -149,6 +149,15 @@ func (m Model) statusLine(inner int) string {
 		return padRight(" "+lipgloss.NewStyle().Foreground(theme.Text).Render(prompt+field)+
 			lipgloss.NewStyle().Foreground(theme.Accent).Render(c.bar), inner)
 	}
+	if m.hubFor != "" {
+		prompt := "type the name to approve: "
+		if a := m.selectedAgent(); a != nil && hubTicket(*a) != nil {
+			prompt = "type " + clean(hubTicket(*a).Retype) + ": "
+		}
+		field := tail(safe(string(m.hubDraft), c), max(1, inner-1-len([]rune(prompt))-1))
+		return padRight(" "+lipgloss.NewStyle().Foreground(theme.Text).Render(prompt+field)+
+			lipgloss.NewStyle().Foreground(theme.Accent).Render(c.bar), inner)
+	}
 	if m.editFor != "" {
 		prompt := "name: "
 		if isFolderKey(m.editFor) {
@@ -283,6 +292,9 @@ func (m Model) bottom(w int) string {
 	if a := m.selectedAgent(); a != nil && a.Approval == nil && a.LockAsk != nil {
 		hint = fmt.Sprintf("O open console %s d decline", c.dot)
 	}
+	if a := m.selectedAgent(); a != nil && hubTicket(*a) != nil {
+		hint = fmt.Sprintf("a approve %[1]s d deny %[1]s v view", c.dot)
+	}
 	if a := m.selectedAgent(); a != nil && a.Approval != nil {
 		hint = fmt.Sprintf("a allow %s d deny", c.dot)
 		if a.Approval.Always {
@@ -297,6 +309,9 @@ func (m Model) bottom(w int) string {
 	}
 	if m.editFor != "" {
 		hint = fmt.Sprintf("enter save %s esc cancel", c.dot)
+	}
+	if m.hubFor != "" {
+		hint = fmt.Sprintf("enter approve %s esc cancel", c.dot)
 	}
 	if m.menuFor != "" {
 		hint = fmt.Sprintf("enter pick %s esc close", c.dot)
@@ -494,6 +509,52 @@ func (m Model) row(a Agent, inner int, inFolder bool) []string {
 		lines = append(lines,
 			bg(muted).Render(pad)+bg(alert).Render(padRight(fit(warn+" open the "+lockAskName(*l)+" console?", inner-4, c), inner-4)),
 			bg(muted).Render(pad)+bg(lipgloss.NewStyle().Foreground(theme.Text)).Render(padRight(fit("[O]pen [d]ecline", inner-4, c), inner-4)))
+	}
+	if h := hubTicket(a); h != nil {
+		warn := "⚠"
+		if m.ascii {
+			warn = "!"
+		}
+		text := lipgloss.NewStyle().Foreground(theme.Text)
+		row := func(st lipgloss.Style, s string) string {
+			return bg(muted).Render(pad) + bg(st).Render(padRight(fit(s, inner-4, c), inner-4))
+		}
+		wide := max(8, inner-6)
+		if !h.Verified {
+			lines = append(lines, row(alert, warn+" unverified: claims \""+clean(h.Claimed)+"\""))
+		}
+		lines = append(lines, row(alert, warn+" "+clean(h.Lock)+" "+clean(h.Instance)+" "+c.dot+" "+clean(h.Risk)))
+		if h.Production {
+			lines = append(lines, row(alert, "PRODUCTION"))
+		}
+		for _, l := range wrap(clean(h.Header), wide+2, c) {
+			if l != "" {
+				lines = append(lines, row(text, l))
+			}
+		}
+		if h.Note != "" {
+			for _, l := range wrap("agent: "+clean(h.Note), wide+2, c) {
+				lines = append(lines, row(muted, l))
+			}
+		}
+		body := m.hubBody(*h)
+		if !m.hubFull && len(body) > hubFolded {
+			body = append(append([]string(nil), body[:hubFolded]...), fmt.Sprintf("… %d more lines (v)", len(body)-hubFolded))
+		}
+		for _, l := range body {
+			lines = append(lines, row(text, "  "+l))
+		}
+		for _, w := range m.hubWarnings(*h) {
+			lines = append(lines, row(alert, "  "+w))
+		}
+		keys := "[a]pprove [d]eny [v]iew"
+		if h.Production && h.Retype != "" {
+			keys += " " + c.dot + " approving asks for " + clean(h.Retype)
+		}
+		if n := len(a.Hub); n > 1 {
+			keys += fmt.Sprintf(" %s %d more tickets", c.dot, n-1)
+		}
+		lines = append(lines, row(text, keys))
 	}
 	if ap := a.Approval; ap != nil {
 		warn := "⚠"

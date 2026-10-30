@@ -188,6 +188,8 @@ type Row struct {
 	// LimitUntil: the agent stopped on its provider's usage limit (store.Agent.LimitUntil): lea
 	// resumes it at that time (unix seconds), or -1: it waits for the user.
 	LimitUntil int64 `json:"limit_until,omitempty"`
+	// Hub: the hub's pending tickets for this agent (#158), oldest first, set by the daemon.
+	Hub []HubCard `json:"hub,omitempty"`
 }
 
 type Snapshot struct {
@@ -219,6 +221,30 @@ type LockView struct {
 	Lock    string `json:"lock"`
 	Console string `json:"console"`
 	Pending int    `json:"pending"`
+}
+
+// HubCard is one ticket of the Lock Family hub's queue (#158) the deck shows on the agent it is
+// for: the Lock, its instance, the risk, the production flags and the Lock's masked screen, all
+// cleaned by the daemon. Verified: the agent's own wait names the ticket; otherwise the ticket's
+// requester (which the agent wrote) claims the agent. Retype is what the user types to approve a
+// production ticket ("" none). Expires is unix seconds (0 never).
+type HubCard struct {
+	ID         string   `json:"id"`
+	Instance   string   `json:"instance"`
+	Lock       string   `json:"lock"`
+	Risk       string   `json:"risk"`
+	Production bool     `json:"production,omitempty"`
+	Retype     string   `json:"retype,omitempty"`
+	Verified   bool     `json:"verified,omitempty"`
+	Header     string   `json:"header,omitempty"`
+	Note       string   `json:"note,omitempty"`
+	Body       []string `json:"body,omitempty"`
+	Warnings   []string `json:"warnings,omitempty"`
+	Expires    int64    `json:"expires,omitempty"`
+	// Claimed is the agent name the ticket's requester gives (cleaned); Truncated: lea had to cut
+	// the Lock's screen, so the deck cannot show all of it and sends the user to lock approve.
+	Claimed   string `json:"claimed,omitempty"`
+	Truncated bool   `json:"truncated,omitempty"`
 }
 
 type NewRequest struct {

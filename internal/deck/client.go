@@ -145,3 +145,10 @@ func (c Client) SetSound(ctx context.Context, on bool) (string, error) {
 	err := c.call(ctx, "sound", map[string]any{"on": on}, &r)
 	return r.Sound, err
 }
+
+// HubDecide answers one of the hub's tickets for an agent of container (the hub card's a or d);
+// retype is the name typed for a production ticket.
+func (c Client) HubDecide(ctx context.Context, container, instance, id string, approved bool, retype string) error {
+	return c.call(ctx, "hub_decide", map[string]any{"container": container, "instance": instance, "id": id,
+		"approved": approved, "retype": retype}, nil)
+}

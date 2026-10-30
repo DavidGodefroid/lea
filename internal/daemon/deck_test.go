@@ -27,6 +27,7 @@ type fakeAgents struct {
 	parkErr                   error         // ParkStack fails with it
 	parkHold                  chan struct{} // when set, ParkStack waits for it to close
 	newHold                   chan struct{} // when set, New waits for it to close
+	rows                      []agents.Row  // the rows Watch reports
 	// st, when set, is where SoftStop and ResumeSuspended record the state they leave.
 	st        *store.Store
 	resumeErr error // ResumeSuspended fails with it
@@ -64,7 +65,7 @@ func (f *fakeAgents) RemoveEnded(ctx context.Context, k string) error {
 func (f *fakeAgents) Detach(ctx context.Context, c string) error { f.rec("detach " + c); return nil }
 func (f *fakeAgents) Watch(ctx context.Context, c string, since int64, to time.Duration) (agents.Snapshot, error) {
 	f.rec(fmt.Sprintf("watch %s %d %s", c, since, to))
-	return agents.Snapshot{Version: 9, Shown: c + "/claude-1"}, nil
+	return agents.Snapshot{Version: 9, Shown: c + "/claude-1", Agents: append([]agents.Row(nil), f.rows...)}, nil
 }
 func (f *fakeAgents) MarkStopped(ctx context.Context, c string, forget bool) error {
 	f.rec(fmt.Sprintf("mark-stopped %s %v", c, forget))
