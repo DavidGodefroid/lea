@@ -1,28 +1,62 @@
 package launcher
 
 import (
+	"bytes"
+	"crypto/ecdh"
+	"crypto/rand"
 	"encoding/base64"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/DavidGodefroid/lea/internal/lockhttp"
+	"github.com/DavidGodefroid/lockkit/ticket"
 )
 
 // testHubKey is an Ed25519 public key (32 bytes) in base64, as up.json's hub_key.
 var testHubKey = base64.StdEncoding.EncodeToString([]byte("0123456789abcdef0123456789abcdef"))
 
-const (
-	testFacades = `{"v": 1, "facades": [{"facade": "tty", "key": "dHR5"}, {"facade": "deck", "key": "ZGVjaw=="}]}`
-	testDevices = `{"v": 1, "devices": [{"id": "phone-1", "key": "cGhvbmU="}]}`
-)
+// testFacades are two host facades' keys (lockkit's ticket.FacadeSet), not in canonical form.
+var testFacades = `{"v": 1, "facades": [{"key": "` + base64.StdEncoding.EncodeToString(bytes.Repeat([]byte{1}, 32)) +
+	`", "facade": "tty"}, {"facade": "deck", "key": "` + base64.StdEncoding.EncodeToString(bytes.Repeat([]byte{2}, 32)) + `"}]}`
+
+// testDevices is one paired phone (lockkit's ticket.DeviceSet) as lock up would embed it: "v"
+// before "devices", not lockkit's canonical form.
+var testDevices = func() string {
+	p, err := ecdh.P256().GenerateKey(rand.Reader)
+	if err != nil {
+		panic(err)
+	}
+	x, err := ecdh.X25519().GenerateKey(rand.Reader)
+	if err != nil {
+		panic(err)
+	}
+	cred := []byte("credential-of-the-phone")
+	d := ticket.Device{V: 1, ID: ticket.DeviceID(cred), Credential: base64.RawURLEncoding.EncodeToString(cred), Name: "phone",
+		RPID: "hub.example.net", Origin: "https://hub.example.net", ES256: base64.RawURLEncoding.EncodeToString(p.PublicKey().Bytes()),
+		X25519: base64.RawURLEncoding.EncodeToString(x.PublicKey().Bytes())}
+	b, err := json.Marshal(struct {
+		V       int             `json:"v"`
+		Devices []ticket.Device `json:"devices"`
+	}{1, []ticket.Device{d}})
+	if err != nil {
+		panic(err)
+	}
+	return string(b)
+}()
 
 // hubUp writes lock up's up.json with the hub and the lockhttp lock web (its extra fields: lock),
 // with facade keys and devices when given, and makes the fake docker answer lock up's labels of
 // its volumes and network.
 func hubUp(t *testing.T, w *world, lock, facades, devices string) {
 	t.Helper()
+	// A launcher of a release with every flag lea passes (TestLockHTTPGateFollowsThePinnedRelease
+	// tries others).
+	if err := os.WriteFile(lockHTTPLauncher(), []byte(fakeLockHTTPLauncher("0.5.0", testDigest)), 0o755); err != nil {
+		t.Fatal(err)
+	}
 	d := w.proj + "/.lockfamily"
 	if err := os.MkdirAll(d, 0o755); err != nil {
 		t.Fatal(err)
@@ -75,7 +109,7 @@ func hubFile(t *testing.T, w *world, name string) (string, bool) {
 // says; only the proxy joins the hub's network.
 func TestLockHTTPGateAsksTheHubOfLockUp(t *testing.T) {
 	w, _ := lockHTTPWorld(t)
-	hubUp(t, w, `,"devices":true,"require_device":["prod-write","write"],"seal_clear":true`, testFacades, testDevices)
+	hubUp(t, w, `,"reveal":true,"devices":true,"require_device":["prod-write","write"],"seal_clear":true`, testFacades, testDevices)
 	if err := w.launcher().ensureProxy(w.proj); err != nil {
 		t.Fatal(err)
 	}
@@ -110,11 +144,13 @@ func TestLockHTTPGateAsksTheHubOfLockUp(t *testing.T) {
 	if k, _ := hubFile(t, w, "hub.pub"); k != testHubKey+"\n" {
 		t.Errorf("hub.pub %q", k)
 	}
-	if f, _ := hubFile(t, w, "facades.json"); !strings.Contains(f, `"facade":"deck"`) || strings.Contains(f, " ") {
+	// Both as the gate reads them: lockkit's parsers, devices in canonical form only.
+	if f, _ := hubFile(t, w, "facades.json"); func() error { _, err := ticket.ParseFacades([]byte(f)); return err }() != nil ||
+		!strings.Contains(f, `"facade":"deck"`) || strings.Contains(f, " ") {
 		t.Errorf("facades.json %q", f)
 	}
-	if d, _ := hubFile(t, w, "devices.json"); !strings.Contains(d, `"id":"phone-1"`) {
-		t.Errorf("devices.json %q", d)
+	if d, _ := hubFile(t, w, "devices.json"); func() error { _, err := ticket.ParseDevices([]byte(d)); return err }() != nil {
+		t.Errorf("devices.json %q is not what the gate reads", d)
 	}
 	if fi, err := os.Stat(hubDir + "/devices.json"); err != nil || fi.Mode().Perm() != 0o644 {
 		t.Errorf("devices.json mode %v %v", fi, err)
@@ -133,10 +169,12 @@ func TestLockHTTPGateDevicesOnlyForALockThatPinsThem(t *testing.T) {
 	}{
 		"not pinned":  {`,"require_device":["write"],"seal_clear":true`, testDevices, false},
 		"none paired": {`,"devices":true,"require_device":["write"],"seal_clear":true`, "", true},
+		"empty list":  {`,"devices":true,"require_device":["write"],"seal_clear":true`, `{"v":1,"devices":[]}`, true},
 	} {
 		t.Run(name, func(t *testing.T) {
 			w, _ := lockHTTPWorld(t)
-			hubUp(t, w, c.lock, "", c.devices)
+			// The facade keys, but no reveal for this lock: no --facade-keys-file.
+			hubUp(t, w, c.lock, testFacades, c.devices)
 			if err := w.launcher().ensureProxy(w.proj); err != nil {
 				t.Fatal(err)
 			}
@@ -149,8 +187,10 @@ func TestLockHTTPGateDevicesOnlyForALockThatPinsThem(t *testing.T) {
 					t.Errorf("%s: %s", f, run)
 				}
 			}
-			if _, ok := hubFile(t, w, "devices.json"); ok {
-				t.Error("devices.json written")
+			for _, f := range []string{"devices.json", "facades.json"} {
+				if _, ok := hubFile(t, w, f); ok {
+					t.Errorf("%s written", f)
+				}
 			}
 			if got := strings.Contains(w.errb.String(), "none is paired"); got != c.warn {
 				t.Errorf("warning %v: %s", got, w.errb.String())
@@ -178,8 +218,16 @@ func TestLockHTTPGateRefusesAnUntrustedHub(t *testing.T) {
 			k := "FAKE_DOCKER_OUT_NETWORK_INSPECT_AT_" + fakeKey(upProjectOf(w)+"_lockhub")
 			w.env[k] = strings.SplitN(w.env[k], "|", 2)[0] + "|"
 		}, want: "has no subnet"},
-		"bad risk":    {lock: `,"devices":true,"require_device":["--seal-clear"]`, want: "not a risk class"},
-		"bad devices": {lock: `,"devices":true`, mod: func(w *world) { rewriteUp(t, w, `"devices":`, `"devices":[1],"x":`) }, want: "devices: not a JSON object"},
+		"bad risk":     {lock: `,"devices":true,"require_device":["--seal-clear"]`, want: "require_device"},
+		"unknown risk": {lock: `,"devices":true,"require_device":["admin"]`, want: "require_device"},
+		"bad devices":  {lock: `,"devices":true`, mod: func(w *world) { rewriteUp(t, w, `"devices":`, `"devices":[1],"x":`) }, want: "devices: not a JSON object"},
+		"bad device": {lock: `,"devices":true`, mod: func(w *world) { rewriteUp(t, w, `"name":"phone"`, `"name":"phone","key":"x"`) },
+			want: "devices: not a JSON object"},
+		"device id": {lock: `,"devices":true`, mod: func(w *world) { rewriteUp(t, w, `"id":"webauthn:`, `"id":"webauthn:0`) }, want: "devices: "},
+		"facade key": {lock: `,"reveal":true`, mod: func(w *world) {
+			rewriteUp(t, w, base64.StdEncoding.EncodeToString(bytes.Repeat([]byte{1}, 32)), "dHR5")
+		}, want: "facade_keys: "},
+		"facade name": {lock: `,"reveal":true`, mod: func(w *world) { rewriteUp(t, w, `"facade": "deck"`, `"facade": "slack"`) }, want: "facade_keys: "},
 		"hub key":     {mod: func(w *world) { rewriteUp(t, w, testHubKey, "AAAA") }, want: "not an Ed25519 public key"},
 		"hub url":     {mod: func(w *world) { rewriteUp(t, w, "http://lockhub:8443", "https://evil.example") }, want: "not a service on the hub's network"},
 		"two locks": {mod: func(w *world) {
@@ -188,7 +236,7 @@ func TestLockHTTPGateRefusesAnUntrustedHub(t *testing.T) {
 	} {
 		t.Run(name, func(t *testing.T) {
 			w, _ := lockHTTPWorld(t)
-			hubUp(t, w, c.lock, "", testDevices)
+			hubUp(t, w, c.lock, testFacades, testDevices)
 			if c.mod != nil {
 				c.mod(w)
 			}
@@ -271,5 +319,44 @@ func TestLockHTTPGateFollowsTheHub(t *testing.T) {
 	h2.facades = []byte(`{"v":1}`)
 	if h2.stamp() == g.stamp() {
 		t.Error("the stamp ignores the facade keys")
+	}
+}
+
+// The pinned gate's release decides: before v0.3.0 no hub mode at all; before v0.4.0 no device
+// flags; before v0.5.0 no facade keys (each a flag that gate would refuse, and stop on); dev (a
+// clone) has them all.
+func TestLockHTTPGateFollowsThePinnedRelease(t *testing.T) {
+	for _, c := range []struct {
+		version               string
+		hub, devices, facades bool
+	}{
+		{"0.2.1", false, false, false}, {"0.3.0", true, false, false}, {"0.4.0", true, true, false},
+		{"0.5.0", true, true, true}, {"0.5.0-rc.1", true, true, true}, {"dev", true, true, true},
+	} {
+		t.Run(c.version, func(t *testing.T) {
+			w, root := lockHTTPWorld(t)
+			hubUp(t, w, `,"reveal":true,"devices":true,"require_device":["write"],"seal_clear":true`, testFacades, testDevices)
+			if err := os.WriteFile(root+"/usr/local/bin/lockhttp", []byte(fakeLockHTTPLauncher(c.version, testDigest)), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := w.launcher().ensureProxy(w.proj); err != nil {
+				t.Fatal(err)
+			}
+			run := gateRun(t, w)
+			for flag, want := range map[string]bool{"[--hub]": c.hub, "[--devices-file]": c.devices, "[--seal-clear]": c.devices,
+				"[--require-device]": c.devices, "[--facade-keys-file]": c.facades} {
+				if strings.Contains(run, flag) != want {
+					t.Errorf("%s: %v, want %v: %s", flag, !want, want, run)
+				}
+			}
+			if !c.hub && !strings.Contains(w.errb.String(), "has no hub mode") {
+				t.Errorf("warning: %s", w.errb.String())
+			}
+		})
+	}
+	for v, want := range map[string]bool{"0.10.0": true, "v0.5.1": true, "1.0.0": true, "0.4.9": false, "": false, "x": false, "0.5": false} {
+		if got := lockHTTPAtLeast(v, "0.5.0"); got != want {
+			t.Errorf("lockHTTPAtLeast(%q) = %v", v, got)
+		}
 	}
 }

@@ -7,14 +7,17 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
+	"io"
 	"net/netip"
 	"os"
 	"path/filepath"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/DavidGodefroid/lea/internal/lockhttp"
+	"github.com/DavidGodefroid/lockkit/ticket"
 )
 
 // LockHTTP's gate in hub mode (lockhub's docs/lock-up.md, "Why lockhttp is different"): when lock
@@ -42,10 +45,7 @@ type gateHub struct {
 	sealClear              bool
 }
 
-var (
-	gateHubURL = regexp.MustCompile(`^http://[a-z][a-z0-9-]{0,62}:[0-9]{1,5}$`)
-	gateRisk   = regexp.MustCompile(`^[a-z][a-z-]{0,31}$`)
-)
+var gateHubURL = regexp.MustCompile(`^http://[a-z][a-z0-9-]{0,62}:([1-9][0-9]{0,3}|[1-5][0-9]{4}|6[0-4][0-9]{3}|65[0-4][0-9]{2}|655[0-2][0-9]|6553[0-5])$`)
 
 // lockUpGate is the hub mode of the gate for the projects directory proj, nil without lock up, a
 // lockhttp lock in it, or when lea cannot trust what up.json says of it (lea says why).
@@ -104,6 +104,12 @@ func (l *Launcher) lockUpGate(proj string) *gateHub {
 	if k, err := base64.StdEncoding.DecodeString(s.HubKey); err != nil || len(k) != ed25519.PublicKeySize {
 		return warn("the hub key is not an Ed25519 public key")
 	}
+	// The pinned gate's release: a flag it does not know would stop it (a usage error, again and
+	// again under --restart): hub mode from v0.3.0, the devices from v0.4.0, reveals from v0.5.0.
+	ver := lockHTTPLauncherVersion()
+	if !lockHTTPAtLeast(ver, "0.3.0") {
+		return warn("the pinned lockhttp " + orUnknown(ver) + " has no hub mode (v0.3.0 or later)")
+	}
 	g := &gateHub{instance: name, url: s.HubURL, network: s.HubNetwork, socket: lk.Socket, home: lk.GateHome, hubKey: s.HubKey}
 	for _, f := range strings.Fields(subnets) {
 		pf, err := netip.ParsePrefix(f)
@@ -115,26 +121,156 @@ func (l *Launcher) lockUpGate(proj string) *gateHub {
 	if len(g.subnets) == 0 {
 		return warn(s.HubNetwork + " has no subnet")
 	}
-	if g.facades, err = compactJSON(s.FacadeKeys); err != nil {
-		return warn("facade_keys: " + err.Error())
+	// The facade keys only for a lock lock up lets reveal (locks.<name>.reveal), checked as the gate
+	// reads them, written in canonical form.
+	if lk.Reveal && len(s.FacadeKeys) > 0 && string(s.FacadeKeys) != "null" {
+		if !lockHTTPAtLeast(ver, "0.5.0") {
+			l.logf("warning: %s: lockhttp: the pinned lockhttp %s cannot pin facade keys (v0.5.0 or later): no reveal (Ctrl-O) of its tickets", p, orUnknown(ver))
+		} else if g.facades, err = facadesFile(s.FacadeKeys); err != nil {
+			return warn("facade_keys: " + err.Error())
+		}
 	}
 	if lk.DevicesOn {
-		if g.devices, err = compactJSON(s.Devices); err != nil {
-			return warn("devices: " + err.Error())
-		}
 		for _, r := range lk.RequireDevice {
-			if !gateRisk.MatchString(r) {
-				return warn("require_device: not a risk class")
+			if _, err := ticket.ParseRisk(r); err != nil {
+				return warn("require_device: " + err.Error())
 			}
 		}
-		if g.devices == nil {
+		if g.devices, err = devicesFile(s.Devices); err != nil {
+			return warn("devices: " + err.Error())
+		}
+		switch {
+		case g.devices == nil:
 			// No device paired yet: the gate pins none, and a device's decision fails closed.
 			l.logf("warning: %s: lockhttp: the lock pins the paired devices, but none is paired: decisions from a phone are refused", p)
-		} else {
+		case !lockHTTPAtLeast(ver, "0.4.0"):
+			g.devices = nil
+			l.logf("warning: %s: lockhttp: the pinned lockhttp %s cannot pin devices (v0.4.0 or later): decisions from a phone are refused", p, orUnknown(ver))
+		default:
 			g.requireDevice, g.sealClear = lk.RequireDevice, lk.SealClear
 		}
 	}
 	return g
+}
+
+// facadesFile is up.json's facade keys as the gate reads them (ticket.ParseFacades), in canonical
+// form; an error for anything it would refuse.
+func facadesFile(raw json.RawMessage) ([]byte, error) {
+	if len(raw) > 64<<10 {
+		return nil, errTooLarge
+	}
+	fs, err := ticket.ParseFacades(raw)
+	if err != nil {
+		return nil, err
+	}
+	set := ticket.FacadeSet{V: ticket.Version, Facades: []ticket.FacadeKey{}}
+	for _, f := range fs {
+		set.Facades = append(set.Facades, ticket.FacadeKey{Facade: f.Facade, Key: base64.StdEncoding.EncodeToString(f.Key)})
+	}
+	b, err := ticket.Canonical(set)
+	if err != nil {
+		return nil, err
+	}
+	if _, err := ticket.ParseFacades(b); err != nil {
+		return nil, err
+	}
+	return b, nil
+}
+
+// devicesFile is up.json's paired devices as the gate reads them (ticket.ParseDevices: canonical
+// form only), nil when none is paired; an error for a device the gate would refuse.
+func devicesFile(raw json.RawMessage) ([]byte, error) {
+	if len(raw) == 0 || string(raw) == "null" {
+		return nil, nil
+	}
+	if len(raw) > 64<<10 {
+		return nil, errTooLarge
+	}
+	var set ticket.DeviceSet
+	dec := json.NewDecoder(bytes.NewReader(raw))
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(&set); err != nil || dec.More() {
+		return nil, errNotObject
+	}
+	if set.V != ticket.Version {
+		return nil, gateErr("unsupported version")
+	}
+	if len(set.Devices) == 0 {
+		return nil, nil
+	}
+	for i := range set.Devices {
+		if err := set.Devices[i].Validate(); err != nil {
+			return nil, err
+		}
+	}
+	b, err := ticket.MarshalDevices(set.Devices)
+	if err != nil {
+		return nil, err
+	}
+	if _, err := ticket.ParseDevices(b); err != nil {
+		return nil, err
+	}
+	return b, nil
+}
+
+// lockHTTPLauncherVersion is the launcher_version of lockhttp's host launcher, "" when unknown.
+func lockHTTPLauncherVersion() string {
+	f, err := os.Open(lockHTTPLauncher())
+	if err != nil {
+		return ""
+	}
+	defer f.Close()
+	head := make([]byte, 64<<10)
+	n, _ := io.ReadFull(f, head)
+	if v := lockHTTPVersionLine.FindSubmatch(head[:n]); v != nil {
+		return string(v[1])
+	}
+	return ""
+}
+
+// lockHTTPAtLeast reports whether release v (lockhttp's launcher_version: 0.4.0, v0.4.0, dev for
+// a clone) is min or later; a pre-release counts as its release.
+func lockHTTPAtLeast(v, min string) bool {
+	if v == "dev" {
+		return true
+	}
+	parse := func(s string) ([3]int, bool) {
+		s = strings.TrimPrefix(s, "v")
+		if i := strings.IndexAny(s, "-+"); i >= 0 {
+			s = s[:i]
+		}
+		var out [3]int
+		f := strings.Split(s, ".")
+		if len(f) != 3 {
+			return out, false
+		}
+		for i, x := range f {
+			n, err := strconv.Atoi(x)
+			if err != nil || n < 0 {
+				return out, false
+			}
+			out[i] = n
+		}
+		return out, true
+	}
+	a, ok1 := parse(v)
+	b, ok2 := parse(min)
+	if !ok1 || !ok2 {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return a[i] > b[i]
+		}
+	}
+	return true
+}
+
+func orUnknown(v string) string {
+	if v == "" {
+		return "(version unknown)"
+	}
+	return "v" + strings.TrimPrefix(v, "v")
 }
 
 // lockUpLabelsWrong is why the docker object kind name lacks one of labels, or "", and what the
@@ -160,22 +296,6 @@ func (l *Launcher) lockUpLabelsWrong(kind, name, more string, labels map[string]
 		}
 	}
 	return "", rest
-}
-
-// compactJSON is a JSON object of up.json, compact, for a file the gate reads (64 KiB at most, as
-// lockkit reads it); nil when absent.
-func compactJSON(raw json.RawMessage) ([]byte, error) {
-	if len(raw) == 0 || string(raw) == "null" {
-		return nil, nil
-	}
-	var b bytes.Buffer
-	if err := json.Compact(&b, raw); err != nil || b.Len() == 0 || b.Bytes()[0] != '{' {
-		return nil, errNotObject
-	}
-	if b.Len() > 64<<10 {
-		return nil, errTooLarge
-	}
-	return b.Bytes(), nil
 }
 
 type gateErr string

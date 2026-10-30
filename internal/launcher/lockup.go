@@ -28,7 +28,7 @@ type lockUpState struct {
 	Project   string                `json:"project"`
 	Workspace string                `json:"workspace"`
 	Locks     map[string]lockUpLock `json:"locks"`
-	// The hub, for lea's LockHTTP gate in hub mode (lockhub_gate.go): its network (only lea's proxy
+	// The hub, for lea's LockHTTP gate in hub mode (lockhubgate.go): its network (only lea's proxy
 	// joins it), its URL there and its public key; the host facades' keys the locks pin (a reveal
 	// is sealed only to them); the approval devices lock up pinned (none paired: absent).
 	HubNetwork string          `json:"hub_network"`
@@ -44,6 +44,9 @@ type lockUpLock struct {
 	GID    string `json:"client_gid"`
 	// GateHome is a lockhttp lock's gate volume (role gate-home), lea's gate's --home.
 	GateHome string `json:"gate_home_volume,omitempty"`
+	// Reveal: lock up lets the lock reveal a ticket's clear values (locks.<name>.reveal): the gate
+	// pins the facade keys (--facade-keys-file, lockhttp v0.5.0).
+	Reveal bool `json:"reveal,omitempty"`
 	// DevicesOn: the lock pins the paired devices (locks.<name>.devices in lockfamily.yaml);
 	// RequireDevice and SealClear are hub.mobile's for it (--require-device, --seal-clear).
 	DevicesOn     bool     `json:"devices,omitempty"`
