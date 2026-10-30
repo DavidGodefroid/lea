@@ -91,6 +91,17 @@ func (l *Launcher) ensureProxy(proj string) error {
 		}
 		// lock up's lockhttp lock for this projects directory: the gate asks the hub.
 		hub = l.lockUpGate(proj)
+		// One gate serves every projects directory of this prefix: it asks the hub of the last one
+		// started under lock up. A switch of whose hub (or none) under the agents of another
+		// directory would change how their requests are approved: lea stops, before it changes
+		// anything (the proxy, the gate's inputs, its networks).
+		gateFor := gateStandalone
+		if hub != nil {
+			gateFor = proj
+		}
+		if err := l.gateSwitchRefused(l.lockHTTPGateName(), gateFor, proj); err != nil {
+			return err
+		}
 	}
 	if l.containerRunning(name) {
 		got, _ := l.output(false, "docker", "inspect", "--format",

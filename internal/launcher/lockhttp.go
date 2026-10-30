@@ -148,10 +148,6 @@ func (l *Launcher) ensureLockHTTPGate(fresh bool, image string, hub *gateHub, pr
 	if hub != nil {
 		want += " hub:" + hubStamp
 	}
-	hubDir, err := l.writeGateHub(hub)
-	if err != nil {
-		return die("LEA_LOCKHTTP=1: %v", err)
-	}
 	// The proxy leaves any other hub network first; it joins hub's only once the gate in its
 	// namespace refuses that network's addresses: a current gate (its stamp names them), or after
 	// the old gate is gone, before the new one starts.
@@ -163,21 +159,24 @@ func (l *Launcher) ensureLockHTTPGate(fresh bool, image string, hub *gateHub, pr
 			`{{.State.Running}}|{{.State.StartedAt}}|{{index .Config.Labels "lea.lockhttp-image"}}{{with index .Config.Labels "lea.lockhttp-ca"}} ca:{{.}}{{end}}{{with index .Config.Labels "lea.lockhttp-hub"}} hub:{{.}}{{end}}`},
 			names...)...)
 		if err == nil && lockHTTPGateCurrent(out, want, len(names)) {
+			// Its inputs as its stamp says they are.
+			if _, err := l.writeGateHub(hub); err != nil {
+				return die("LEA_LOCKHTTP=1: %v", err)
+			}
 			return l.joinHubNetwork(proxy, hub, true)
 		}
 	}
-	// One gate serves every projects directory of this prefix: it asks the hub of the last one
-	// started under lock up. A switch of whose hub (or none) under the running agents of another
-	// directory would change how their requests are approved: lea stops instead.
 	gateFor := gateStandalone
 	if hub != nil {
 		gateFor = proj
 	}
-	if err := l.gateSwitchRefused(name, gateFor, proj); err != nil {
-		return err
-	}
 	if err := l.quiet("docker", "rm", "-f", name, signer); err != nil && hub != nil {
 		return die("LEA_LOCKHTTP=1: could not remove the gate %s before it asks the hub", name)
+	}
+	// The new gate's inputs, once the old one, which read the same directory, is gone.
+	hubDir, err := l.writeGateHub(hub)
+	if err != nil {
+		return die("LEA_LOCKHTTP=1: %v", err)
 	}
 	if err := l.joinHubNetwork(proxy, hub, true); err != nil {
 		return err
@@ -398,8 +397,8 @@ func (l *Launcher) gateSwitchRefused(name, gateFor, proj string) error {
 	if err != nil {
 		return die("LEA_LOCKHTTP=1: cannot list lea's running containers before the gate changes hub")
 	}
-	for _, p := range strings.Fields(ps) {
-		if p != proj {
+	for _, p := range strings.Split(ps, "\n") {
+		if p = strings.TrimSpace(p); p != "" && p != proj {
 			mode := "its own console"
 			if gateFor != gateStandalone {
 				mode = "the hub of " + proj
@@ -407,8 +406,21 @@ func (l *Launcher) gateSwitchRefused(name, gateFor, proj string) error {
 			return die("LEA_LOCKHTTP=1: the LockHTTP gate serves every projects directory, and the agents of %s run: it would ask %s for them. Stop them first (lea stop in %s), or open that directory", p, mode, p)
 		}
 	}
+	// A start in another projects directory holds that directory's lock until its container
+	// runs: its agents come.
+	locks, err := os.ReadDir(l.Cfg.HostDir() + "/locks")
+	if err != nil && !os.IsNotExist(err) {
+		return die("LEA_LOCKHTTP=1: %v", err)
+	}
+	for _, e := range locks {
+		if lockSID.MatchString(e.Name()) && e.Name() != ID(proj) {
+			return die("LEA_LOCKHTTP=1: the LockHTTP gate serves every projects directory, and lea is starting in another one (%s/locks/%s): it would change how its agents are approved. Retry once it runs", l.Cfg.HostDir(), e.Name())
+		}
+	}
 	return nil
 }
+
+var lockSID = regexp.MustCompile(`^[0-9a-f]{10}$`)
 
 // gateStandalone is the lea.lockhttp-for of a gate that asks its own console.
 const gateStandalone = "-"

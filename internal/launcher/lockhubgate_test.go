@@ -576,3 +576,60 @@ func TestLockHTTPGateSwitchFailsClosed(t *testing.T) {
 		})
 	}
 }
+
+// A refused switch changes nothing: the running gate's inputs, the proxy's networks, the proxy
+// itself (stale or not). A start in progress in another projects directory (its lock) refuses
+// it too.
+func TestLockHTTPGateRefusedSwitchChangesNothing(t *testing.T) {
+	w, _ := lockHTTPWorld(t)
+	hubDir := filepath.Join(lockhttp.GateDir(w.launcher().Cfg.DataDir()), "hub")
+	if err := os.MkdirAll(hubDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	inputs := map[string]string{"hub.pub": "other hub key\n", "devices.json": `{"other":1}`}
+	for n, b := range inputs {
+		if err := os.WriteFile(filepath.Join(hubDir, n), []byte(b), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// This directory has no lock up; the gate asks /other's hub, whose agents run; the proxy is
+	// on /other's hub network, and stale (another image).
+	w.env["FAKE_DOCKER_OUT_PS__A"] = "lea-lockhttp-gate"
+	w.env["FAKE_DOCKER_OUT_INSPECT___TYPE_AT_LEA_LOCKHTTP_GATE"] = "for=/other|hub=x"
+	w.env["FAKE_DOCKER_OUT_PS___FILTER"] = "/other"
+	w.env["FAKE_DOCKER_OUT_INSPECT___TYPE_AT_LEA_PROXY"] = "lea-egress lockfamily-0123abcd_lockhub "
+	w.env["FAKE_DOCKER_OUT_INSPECT__F"] = "true"
+	if err := w.launcher().ensureProxy(w.proj); err == nil {
+		t.Fatal("not refused")
+	}
+	for n, b := range inputs {
+		if got, err := os.ReadFile(filepath.Join(hubDir, n)); err != nil || string(got) != b {
+			t.Errorf("%s: %q %v", n, got, err)
+		}
+	}
+	for _, c := range w.calls() {
+		if strings.Contains(c, "[network] [disconnect]") || strings.Contains(c, "[rm] [-f]") || strings.HasPrefix(c, "docker [run]") {
+			t.Errorf("changed: %s", c)
+		}
+	}
+
+	// Another directory's start in progress: its lock.
+	w, _ = lockHTTPWorld(t)
+	hubUp(t, w, "", "", "")
+	w.env["FAKE_DOCKER_OUT_PS__A"] = "lea-lockhttp-gate"
+	w.env["FAKE_DOCKER_OUT_INSPECT___TYPE_AT_LEA_LOCKHTTP_GATE"] = "for=-|hub="
+	if err := os.MkdirAll(w.hostDir()+"/locks/0123456789", 0o777); err != nil {
+		t.Fatal(err)
+	}
+	if err := w.launcher().ensureProxy(w.proj); err == nil || !strings.Contains(err.Error(), "starting in another one") || len(gateRuns(w)) != 0 {
+		t.Fatalf("%v:\n%s", err, strings.Join(w.calls(), "\n"))
+	}
+	// This directory's own lock (lea holds it while it starts) is no other start.
+	os.Remove(w.hostDir() + "/locks/0123456789")
+	if err := os.MkdirAll(w.hostDir()+"/locks/"+w.id(), 0o777); err != nil {
+		t.Fatal(err)
+	}
+	if err := w.launcher().ensureProxy(w.proj); err != nil {
+		t.Fatal(err)
+	}
+}
