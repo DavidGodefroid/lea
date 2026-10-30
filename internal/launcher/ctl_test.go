@@ -37,6 +37,7 @@ func TestCtlRunArgs(t *testing.T) {
 		"type=bind,src=" + run + "/lockhub,dst=" + run + "/lockhub",
 		"HOME=" + w.home, "XDG_DATA_HOME=" + w.data, "XDG_RUNTIME_DIR=" + run, "LEA_CTL_INSIDE=1",
 		"lea.projects=" + w.proj, "--pid=host", "--cgroupns=host", "LEA_CLIPBOARD=0",
+		fmt.Sprintf("%s:rw,nosuid,nodev,uid=%d,gid=%d,mode=0700", w.home, os.Getuid(), os.Getgid()),
 	} {
 		if !slices.Contains(args, want) && !strings.Contains(all, "\n"+want+"\n") {
 			t.Errorf("missing %q in\n%s", want, all)

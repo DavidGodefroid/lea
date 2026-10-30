@@ -35,7 +35,10 @@ func (l *Launcher) ctlRunArgs(projects []string, sock string, sockGID int) ([]st
 		// The pressure gauge reads the host's /proc and each agent container's cgroup by its host
 		// pid (lea-ctl holds the engine's socket: it is the host's already).
 		"--pid=host", "--cgroupns=host",
-		"--mount", "type=bind,src=" + sock + ",dst=" + sock}
+		"--mount", "type=bind,src=" + sock + ",dst=" + sock,
+		// $HOME is the user's own (the engine would create the parents of the binds below it,
+		// owned by root); only what is bound below comes from the host.
+		"--tmpfs", home + ":rw,nosuid,nodev,uid=" + fmt.Sprint(os.Getuid()) + ",gid=" + fmt.Sprint(os.Getgid()) + ",mode=0700"}
 	bind := func(p string, ro bool) {
 		m := "type=bind,src=" + p + ",dst=" + p
 		if ro {
