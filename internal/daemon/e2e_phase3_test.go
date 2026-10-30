@@ -137,7 +137,7 @@ func TestClaudePhase3SuspendResumeEndToEnd(t *testing.T) {
 	e.d.SetAgents(fa)
 	e.d.SetKeepalive(2 * time.Second)
 	e.d.SetHubFacade(SocketFacade{Path: sock})
-	go e.d.RunHubSync(t.Context())
+	go e.d.RunHubSync(e.ctx)
 	for i := 0; ; i++ {
 		if b, _ := os.ReadFile(runs); strings.Contains(string(b), "executed "+testTicket) {
 			break
@@ -152,8 +152,12 @@ func TestClaudePhase3SuspendResumeEndToEnd(t *testing.T) {
 	hub.mu.Lock()
 	calls := strings.Join(hub.calls[callsBefore:], "\n")
 	hub.mu.Unlock()
-	if !strings.Contains(calls, "GET /v1/decided?since=1") || strings.Contains(calls, "GET /v1/decided?since=0") {
-		t.Fatalf("the hub's decisions were not read from the cursor:\n%s", calls)
+	// The decision came from that feed: the wait was decided by it, so lea never had to ask the
+	// ticket's own state (its fallback for withdrawn and expired tickets).
+	lines := "\n" + calls + "\n"
+	if !strings.Contains(lines, "\nGET /v1/decided?since=1\n") || strings.Contains(lines, "since=0\n") ||
+		strings.Contains(calls, "GET /v1/tickets/crm-prod/"+testTicket) {
+		t.Fatalf("the decision was not read from the cursor's feed:\n%s", calls)
 	}
 	if c, _ := e.st.HubCursor(); c != "2" {
 		t.Fatalf("cursor %q after the decision", c)

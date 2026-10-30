@@ -70,7 +70,9 @@ type claudeE2E struct {
 	// dir, runDir and stop are the daemon's: restartDaemon ends it and starts another on the
 	// same store and run directory.
 	dir, runDir, bus string
-	stop             context.CancelFunc
+	// ctx is the running daemon's lifetime, which stop ends.
+	ctx  context.Context
+	stop context.CancelFunc
 }
 
 func newClaudeE2E(t *testing.T) *claudeE2E {
@@ -202,7 +204,7 @@ func (e *claudeE2E) startDaemon() string {
 	if err != nil {
 		e.t.Fatal(err)
 	}
-	e.d, e.api, e.stop, e.bus = d, filepath.Join(e.dir, "d.sock"), cancel, bus
+	e.d, e.api, e.ctx, e.stop, e.bus = d, filepath.Join(e.dir, "d.sock"), ctx, cancel, bus
 	return bus
 }
 
