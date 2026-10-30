@@ -31,7 +31,7 @@ var protectedKeys = map[string]bool{
 // core subcommands and libexec/lea-sh.
 var ExportedKeys = []string{
 	"LEA_PREFIX", "LEA_IMAGE", "LEA_PROXY_IMAGE", "LEA_CTL", "LEA_CTL_IMAGE", "LEA_GIT_SSH", "LEA_GIT_KNOWN_HOSTS", "LEA_LOCKSQL", "LEA_LOCKSQL_IMAGE", "LEA_LOCKSQL_REF", "LEA_LOCKSQL_VAULT_ADDR",
-	"LEA_LOCKMQ", "LEA_LOCKFILE", "LEA_LOCK_TOOL_TIMEOUT", "LEA_LOCKMQ_REF", "LEA_LOCKFILE_REF", "LEA_LOCKHTTP", "LEA_LOCKHTTP_MITM",
+	"LEA_LOCKMQ", "LEA_LOCKFILE", "LEA_LOCK_TOOL_TIMEOUT", "LEA_LOCKMQ_REF", "LEA_LOCKFILE_REF", "LEA_LOCKHTTP", "LEA_LOCKHTTP_MITM", "LEA_HUB",
 	"LEA_OTEL_UPSTREAM", "LEA_NESTED_NETWORKS", "LEA_K8S_NAMESPACE", "LEA_INTERNAL_HOSTS", "LEA_EGRESS_ALLOW", "LEA_PROJECTS_DIR",
 	"LEA_APPROVALS", "LEA_APPROVAL_TIMEOUT", "LEA_SOUND", "LEA_SOUND_ATTENTION", "LEA_SOUND_DONE",
 	"LEA_PROVIDER", "LEA_MODEL", "LEA_PROVIDERS", "LEA_AUTO_RESUME", "LEA_RESUME_DELAY",
@@ -272,6 +272,11 @@ func (c *Config) resolve(root string) error {
 		return fmt.Errorf("LEA_LOCKHTTP_MITM=1 needs LEA_LOCKHTTP=1")
 	}
 	c.final["LEA_LOCKHTTP_MITM"] = mitm
+	hub := nonEmpty(c.Get("LEA_HUB"), "0")
+	if hub != "0" && hub != "1" {
+		return fmt.Errorf("LEA_HUB must be 1 (lea follows the Lock Family approval hub) or 0, not '%s'", hub)
+	}
+	c.final["LEA_HUB"] = hub
 	if err := c.resolveLimits(); err != nil {
 		return err
 	}
