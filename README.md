@@ -295,6 +295,14 @@ processes and 1 GB of memory. It sees your projects directory read-only, since y
 there, but for its own `.locksql` directory (its PII rules); lea makes that directory when it is
 missing and opens no console while it is a symbolic link or a file.
 
+lea's console image is built with your uid in its `allowed_uids` (`ALLOWED_UIDS=$(id -u)`): lea's
+agents run as your uid, which has no account in locksql's own image. A console that runs
+locksql's release image as it is (locksql's launcher, `lock up`) serves them only when you name
+that uid: `locksql console --allowed-uids $(id -u)`, or under `lock up` the lock's `allowed_uids`
+(locksql v0.11.2 and lockhub v0.2.5 or later: `allowed_uids: [<your uid>]` in
+`.lockfamily/lockfamily.yaml`; lock up reviews it with you). You set it, at the console's start; no
+agent can.
+
 The console can also live **in the deck**: `L` in the deck (or `lea lock open locksql [profile]`)
 opens it in a pane under the agent, with a red `LOCK` border, without taking the keyboard: click
 it to answer (ctrl+space from the deck always goes to the agent, never to the console). It serves
@@ -841,8 +849,8 @@ so. Changes apply after `lea init` (endpoints, keys, images, locksql) or `lea st
 
 - The container sees the projects directory, a read-only allow-list of `~/.claude`
   (`settings.json`, `keybindings.json`, `hooks`, `skills`, `plugins`, `agents`, `commands`,
-  `output-styles`, the top-level `*.md` files) and, with locksql, its socket volume (with lockmq or
-  lockfile, their socket directory and system file, read-only). Nothing else.
+  `output-styles`, the top-level `*.md` files) and, with locksql, lockmq or lockfile, their socket
+  volume (`locksql-run`, `lockmq-run`, `lockfile-run`). Nothing else.
 - `.lockfamily` in the projects directory (the Lock Family hub's config, the locks' public keys,
   the routing) is read-only in the container: lea makes it, owned by you on the host, when it is
   missing, and refuses to start when it is a symbolic link or a file.
