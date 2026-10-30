@@ -490,19 +490,24 @@ func TestLockHTTPGateDoesNotSwitchUnderAnotherDirectorysAgents(t *testing.T) {
 		sessions string
 		refused  bool
 	}{
-		"hub to none":            {false, "/other", "/other\n", true},
-		"hub to another hub":     {true, "/other", "/other\n", true},
-		"none to a hub":          {true, "", "/other\n", true},
-		"only this directory":    {true, "/other", "PROJ\n", false},
-		"no agent runs":          {true, "/other", "", false},
-		"standalone, standalone": {false, "", "/other\n", false},
+		"hub to none":              {false, "for=/other|hub=x", "/other\n", true},
+		"hub to another hub":       {true, "for=/other|hub=x", "/other\n", true},
+		"none to a hub":            {true, "for=-|hub=", "/other\n", true},
+		"earlier lea to a hub":     {true, "for=|hub=", "/other\n", true},
+		"a hub but whose":          {false, "for=|hub=x", "/other\n", true},
+		"unreadable":               {false, "", "/other\n", true},
+		"only this directory":      {true, "for=/other|hub=x", "PROJ\n", false},
+		"no agent runs":            {true, "for=/other|hub=x", "", false},
+		"standalone to standalone": {false, "for=-|hub=", "/other\n", false},
+		"earlier lea standalone":   {false, "for=|hub=", "/other\n", false},
 	} {
 		t.Run(name, func(t *testing.T) {
 			w, _ := lockHTTPWorld(t)
 			if c.up {
 				hubUp(t, w, "", "", "")
 			}
-			w.env["FAKE_DOCKER_OUT_INSPECT___TYPE_AT_LEA_LOCKHTTP_GATE"] = "for=" + c.gateFor
+			w.env["FAKE_DOCKER_OUT_PS__A"] = "lea-lockhttp-gate"
+			w.env["FAKE_DOCKER_OUT_INSPECT___TYPE_AT_LEA_LOCKHTTP_GATE"] = c.gateFor
 			w.env["FAKE_DOCKER_OUT_PS___FILTER"] = strings.ReplaceAll(c.sessions, "PROJ", w.proj)
 			err := w.launcher().ensureProxy(w.proj)
 			if got := err != nil; got != c.refused {
@@ -543,5 +548,31 @@ func TestLockHTTPGateJoinsOnlyBehindAGateThatRefusesTheHub(t *testing.T) {
 	}
 	if !w.hasCall("docker [network] [connect] ["+upProjectOf(w)+"_lockhub] [lea-proxy]") || len(gateRuns(w)) != 0 {
 		t.Errorf("calls:\n%s", strings.Join(w.calls(), "\n"))
+	}
+}
+
+// Whether the gate exists, and its labels, lea must read before it switches it: a failure stops
+// lea, but a gate that does not exist switches nothing.
+func TestLockHTTPGateSwitchFailsClosed(t *testing.T) {
+	for name, c := range map[string]struct {
+		env     map[string]string
+		refused bool
+	}{
+		"ps fails":      {map[string]string{"FAKE_DOCKER_RC_PS__A": "1"}, true},
+		"inspect fails": {map[string]string{"FAKE_DOCKER_OUT_PS__A": "lea-lockhttp-gate", "FAKE_DOCKER_RC_INSPECT___TYPE_AT_LEA_LOCKHTTP_GATE": "1"}, true},
+		"no gate":       {map[string]string{"FAKE_DOCKER_OUT_PS__A": ""}, false},
+	} {
+		t.Run(name, func(t *testing.T) {
+			w, _ := lockHTTPWorld(t)
+			hubUp(t, w, "", "", "")
+			w.env["FAKE_DOCKER_OUT_PS___FILTER"] = "/other"
+			for k, v := range c.env {
+				w.env[k] = v
+			}
+			err := w.launcher().ensureProxy(w.proj)
+			if (err != nil) != c.refused || (c.refused && len(gateRuns(w)) != 0) {
+				t.Errorf("%v:\n%s", err, strings.Join(w.calls(), "\n"))
+			}
+		})
 	}
 }
