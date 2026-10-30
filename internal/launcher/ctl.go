@@ -32,6 +32,9 @@ func (l *Launcher) ctlRunArgs(projects []string, sock string, sockGID int) ([]st
 		"--label", "lea.prefix=" + l.prefix(), "--label", "lea.role=ctl",
 		"--label", "lea.projects=" + strings.Join(projects, ":"),
 		"-u", uidgid(), "--group-add", fmt.Sprint(sockGID),
+		// The pressure gauge reads the host's /proc and each agent container's cgroup by its host
+		// pid (lea-ctl holds the engine's socket: it is the host's already).
+		"--pid=host", "--cgroupns=host",
 		"--mount", "type=bind,src=" + sock + ",dst=" + sock}
 	bind := func(p string, ro bool) {
 		m := "type=bind,src=" + p + ",dst=" + p
@@ -64,7 +67,9 @@ func (l *Launcher) ctlRunArgs(projects []string, sock string, sockGID int) ([]st
 		}
 	}
 	env := []string{"HOME=" + home, "XDG_DATA_HOME=" + nonEmpty(l.Cfg.Get("XDG_DATA_HOME"), home+"/.local/share"),
-		"XDG_CONFIG_HOME=" + nonEmpty(l.Cfg.Get("XDG_CONFIG_HOME"), home+"/.config"), "LEA_CTL_INSIDE=1"}
+		"XDG_CONFIG_HOME=" + nonEmpty(l.Cfg.Get("XDG_CONFIG_HOME"), home+"/.config"), "LEA_CTL_INSIDE=1",
+		// No desktop session in lea-ctl: no clipboard loop (sounds are the terminal bell).
+		"LEA_CLIPBOARD=0"}
 	// The hub's facade socket, for the deck and the decision sync (never the hub's network).
 	if run := l.Cfg.Get("XDG_RUNTIME_DIR"); run != "" {
 		env = append(env, "XDG_RUNTIME_DIR="+run)

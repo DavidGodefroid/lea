@@ -171,3 +171,18 @@ func HostSounder(files map[string]string) Sounder {
 		}
 	}
 }
+
+// BellSounder rings the terminal bell of each terminal ttys lists (lea-ctl, #165: no sound player
+// runs there; the user's terminal sounds its bell). Every kind of sound is the bell.
+func BellSounder(ttys func() []string) Sounder {
+	return func(kind string) {
+		for _, tty := range ttys() {
+			f, err := os.OpenFile(tty, os.O_WRONLY|os.O_APPEND, 0)
+			if err != nil {
+				continue
+			}
+			f.Write([]byte("\a"))
+			f.Close()
+		}
+	}
+}

@@ -2,6 +2,7 @@ package daemon
 
 import (
 	"context"
+	"os"
 	"strings"
 	"sync"
 	"testing"
@@ -315,5 +316,22 @@ func TestTheDeckSeesTheSoundState(t *testing.T) {
 	}
 	if call(t, e.api, "", "agents_watch", map[string]any{"container": "lea-a", "since": 0, "timeout_s": 1}, &s); s.Sound != "off" {
 		t.Fatalf("watch %+v", s)
+	}
+}
+
+// In lea-ctl (#165) a sound is the terminal bell of each client the list names.
+func TestBellSounderRingsEachTerminal(t *testing.T) {
+	dir := t.TempDir()
+	a, b := dir+"/a", dir+"/b"
+	for _, f := range []string{a, b} {
+		if err := os.WriteFile(f, nil, 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	BellSounder(func() []string { return []string{a, b, dir + "/missing"} })(SoundAttention)
+	for _, f := range []string{a, b} {
+		if got, _ := os.ReadFile(f); string(got) != "\a" {
+			t.Fatalf("%s: %q", f, got)
+		}
 	}
 }
