@@ -127,10 +127,16 @@ sleep 2
 grep -q 'e2e-dev' "$log" || fail "the attached terminal does not show the deck: $(tr -cd '[:print:]\n' <"$log" | tail -c 2000)"
 before=$(tr -cd '\007' <"$log" | wc -c)
 # The agent's PermissionRequest hook, as Claude Code runs it in the agent's pane.
-docker exec -u "$u" -e LEA_AGENT=e2e-dev "$agent" sh -c 'printf "{\"session_id\":\"e2e\",\"tool_name\":\"Bash\"}" | timeout 5 lea hook claude PermissionRequest' >/dev/null 2>&1 || true
+hook=$(docker exec -u "$u" -e LEA_AGENT=e2e-dev "$agent" sh -c 'printf "{\"hook_event_name\":\"PermissionRequest\",\"session_id\":\"e2e\",\"tool_name\":\"Bash\"}" | timeout 5 lea hook claude PermissionRequest; echo "rc=$?"' 2>&1) || true
 for i in $(seq 20); do
   [ "$(tr -cd '\007' <"$log" | wc -c)" -gt "$before" ] && break
-  [ "$i" -lt 20 ] || fail "no bell in the attached terminal"
+  if [ "$i" -ge 20 ]; then
+    echo "hook: $hook" >&2
+    "$root/bin/lea" agents >&2 2>&1 || true
+    docker exec -u "$u" "$ctl" tmux -L lea list-clients -F '#{client_control} #{client_tty} #{session_name}' >&2 || true
+    tail -n 40 "$XDG_DATA_HOME/lea/host/daemon.log" >&2 2>/dev/null || true
+    fail "no bell in the attached terminal"
+  fi
   sleep 1
 done
 
