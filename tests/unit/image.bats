@@ -51,7 +51,7 @@ setup() { setup_fakes; I="$LEA_ROOT/image"; }
   grep -q '^FROM quay.io/podman/stable:v5.8.7-immutable$' "$c"
   grep -q '^ARG CLAUDE_CODE_VERSION=2.1.296$' "$c"
   grep -q '^ARG RTK_VERSION=0.36.0$' "$c"
-  grep -q ' V=0.11.0 ' "$c"
+  grep -q ' V=0.11.1 ' "$c"
 }
 
 @test "Containerfile ships Go 1.26 by digest, staticcheck and govulncheck pinned, with Go's state in the state dir go" {
