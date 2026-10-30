@@ -106,8 +106,8 @@ panes=$(docker exec -u "$u" "$ctl" tmux -L lea list-panes -a -F '#{pane_start_co
 case $panes in *"deck --container $agent"*) ;; *) fail "no deck pane in $ctl: $panes" ;; esac
 # The agent runs in the agent container, not in lea-ctl.
 for i in $(seq 60); do
-  docker top "$agent" -eo args 2>/dev/null | grep -q '[c]laude' && break
-  [ "$i" -lt 60 ] || fail "the agent does not run in $agent: $(docker top "$agent" -eo args 2>&1)"
+  docker top "$agent" -eo pid,args 2>/dev/null | grep -q '[c]laude' && break
+  [ "$i" -lt 60 ] || fail "the agent does not run in $agent: $(docker top "$agent" -eo pid,args 2>&1)"
   sleep 1
 done
 docker exec "$ctl" pgrep -f '^claude' >/dev/null && fail "Claude Code runs in $ctl"
