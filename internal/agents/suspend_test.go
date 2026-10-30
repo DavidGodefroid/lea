@@ -5,6 +5,7 @@ import (
 	"reflect"
 	"slices"
 	"testing"
+	"time"
 
 	"github.com/DavidGodefroid/lea/internal/store"
 )
@@ -98,6 +99,38 @@ func TestResumeSuspendedWithoutASessionEndsTheAgent(t *testing.T) {
 	}
 	if got := e.state(t, "kid"); got != "done" {
 		t.Fatalf("kid is %s, want done", got)
+	}
+	// Ended, it keeps nothing in the nested Podman (#201).
+	waitTorn(t, e.ctr, []string{C + "/kid"})
+}
+
+// An agent lea gives up resuming ends, and what it started in the nested Podman (kept while it
+// was suspended) is torn down; one that woke meanwhile is left alone, its stack too (#201).
+func TestEndSuspendedTearsDownTheAgentsStack(t *testing.T) {
+	e := newEnv(t)
+	e.ensure(t, "/p")
+	e.spawn(t, "kid")
+	e.spawn(t, "woke")
+	e.st.SetState(C+"/kid", store.StateSuspendedCold, sid1, 1001)
+	if ok, err := e.m.EndSuspended(bg, C+"/woke"); err != nil || ok {
+		t.Fatalf("ended an agent that is not suspended: %v %v", ok, err)
+	}
+	if ok, err := e.m.EndSuspended(bg, C+"/kid"); err != nil || !ok {
+		t.Fatalf("end: %v %v", ok, err)
+	}
+	if got := e.state(t, "kid"); got != "done" {
+		t.Fatalf("kid is %s, want done", got)
+	}
+	waitTorn(t, e.ctr, []string{C + "/kid"})
+	if ok, err := e.m.EndSuspended(bg, C+"/kid"); err != nil || ok {
+		t.Fatalf("ended twice: %v %v", ok, err)
+	}
+	if got := e.state(t, "woke"); got == "done" {
+		t.Fatal("woke ended")
+	}
+	time.Sleep(20 * time.Millisecond)
+	if got := e.ctr.tornDown(); !reflect.DeepEqual(got, []string{C + "/kid"}) {
+		t.Fatalf("torn down %q", got)
 	}
 }
 

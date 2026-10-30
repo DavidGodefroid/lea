@@ -372,6 +372,9 @@ func (f *e2eAgents) SoftStop(ctx context.Context, key string) error {
 	return nil
 }
 
+func (f *e2eAgents) EndSuspended(ctx context.Context, key string) (bool, error) {
+	return f.e.st.EndSuspended(key, time.Now().Unix())
+}
 func (f *e2eAgents) ResumeSuspended(ctx context.Context, key, prompt string) error {
 	a, err := f.e.st.AgentByKey(key)
 	if err != nil || a.State != store.StateSuspendedCold {
