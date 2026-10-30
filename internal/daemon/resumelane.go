@@ -172,6 +172,9 @@ func (d *Daemon) resumeSuspended(a Agents, key string) {
 		d.mu.Unlock()
 		return
 	}
+	if d.resumeHeldBack(key) {
+		return // queued before its last failure: the backoff holds it too
+	}
 	n, err := d.unreadNotice(key)
 	if err != nil {
 		return
@@ -191,7 +194,12 @@ func (d *Daemon) resumeSuspended(a Agents, key string) {
 			d.mu.Unlock()
 		} else {
 			log.Printf("lea daemon: resume suspended %s: %v", key, err)
-			if d.resumeFailed(key) {
+			if now, err := d.st.AgentByKey(key); err != nil || now.State != store.StateSuspendedCold {
+				// It started, or ended (no session), all the same: no failure to count.
+				d.mu.Lock()
+				delete(d.resumeFails, key)
+				d.mu.Unlock()
+			} else if d.resumeFailed(key) {
 				d.giveUpResume(key, maxSuspendedResumes)
 			}
 		}
