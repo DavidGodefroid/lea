@@ -1,8 +1,10 @@
 # lea-ctl (#165): lea's control container. It runs lea itself (the daemon, the tmux server, the
 # deck) and alone gets the Docker socket. lea's install, data, configuration and projects are
 # mounted at their host paths (the launcher's ctlRunArgs), so this image brings only what lea calls:
-# the Docker CLI, tmux and a shell. No agent tooling: agent containers use the lea image.
-FROM alpine:3.22
-RUN apk add --no-cache docker-cli tmux bash coreutils ncurses-terminfo-base procps git
+# the Docker CLI, tmux and a shell. No agent tooling: agent containers use the lea image. glibc, as
+# the build/lea of an install may be linked against it.
+FROM debian:trixie-slim
+RUN apt-get update && apt-get install -y --no-install-recommends docker-cli tmux bash coreutils procps git ca-certificates ncurses-term \
+    && rm -rf /var/lib/apt/lists/*
 # The launcher runs `docker exec lea-ctl <root>/build/lea …`; the container itself only waits.
 ENTRYPOINT ["sleep", "infinity"]
