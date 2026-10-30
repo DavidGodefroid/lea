@@ -91,13 +91,19 @@ if [ -n "${HOST_HIST_SHA:-}" ]; then
 fi
 must   "only this projects dir under ~/.claude/projects" sh -c '[ "$(ls -A "$HOME/.claude/projects" | wc -l)" -eq 1 ]'
 must   "public HTTPS works through the proxy"   curl -sf --max-time 20 -o /dev/null https://registry.npmjs.org/
+# Its engine's output goes to a log, shown when it fails.
+itlog=$(mktemp)
+before=$fail; fail=0
 must   "nested HTTP between containers is direct" sh -c '
-  docker network create lea-it >/dev/null 2>&1 || true
-  docker run -d --rm --name lea-it-web --network lea-it busybox:1.37 sh -c "mkdir -p /w && echo hi >/w/index.html && httpd -f -p 80 -h /w" >/dev/null
+  exec 2>>"$1"
+  docker network create lea-it >&2 || true
+  docker run -d --rm --name lea-it-web --network lea-it busybox:1.37 sh -c "mkdir -p /w && echo hi >/w/index.html && httpd -f -p 80 -h /w" >&2
   rc=1
   for _ in 1 2 3 4 5; do
-    if docker run --rm --network lea-it curlimages/curl:8.11.1 -sf --max-time 10 http://lea-it-web/ | grep -qx hi; then rc=0; break; fi
+    if docker run --rm --network lea-it curlimages/curl:8.11.1 -sSf --max-time 10 http://lea-it-web/ | grep -qx hi; then rc=0; break; fi
     sleep 1
   done
-  docker rm -f lea-it-web >/dev/null 2>&1; docker network rm lea-it >/dev/null 2>&1; exit $rc'
+  docker rm -f lea-it-web >/dev/null 2>&1; docker network rm lea-it >/dev/null 2>&1; exit $rc' sh "$itlog"
+if [ "$fail" = 1 ]; then sed 's/^/     | /' "$itlog"; else fail=$before; fi
+rm -f "$itlog"
 exit "$fail"
