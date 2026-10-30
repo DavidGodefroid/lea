@@ -33,8 +33,12 @@ The SessionStart hook sees `source=resume` in every resumed case.
 `LEA_E2E_CLAUDE=<claude>`): the real Claude, on lea's fake Messages API, in a throwaway
 `CLAUDE_CONFIG_DIR` (so no real transcript is touched, which the agent classifier refuses). b1: the
 last line of the file (a `cost-state` record) cut in half; b2: the last `assistant` message cut in
-half, nothing after it. Both resume with exit 0, the first prompt and the new one in the request;
-Claude then appends to the cut file, and a second resume still carries both earlier prompts. The
+half, nothing after it; b3: the `tool_result` of a tool call cut in half (an agent killed during a
+tool call: Claude adds a synthetic interrupted result itself). All resume with exit 0, the first prompt and the new one in the request;
+Claude leaves the cut half-line in the file as it is, for good, and writes its new records on lines
+of their own (the test checks the half-line is the file's only invalid line); a second resume still
+carries both earlier prompts. Anything that reads a transcript must so tolerate one invalid line in
+the middle, not only at the end. The
 interactive resume (lea's `claude --resume <id> "<prompt>"`) of b1 submits the prompt with the
 history. So lea needs no repair of the JSONL; the e2e stays as the guard against a Claude Code
 release that changes it.

@@ -2,6 +2,7 @@ package daemon
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"os"
 	"os/exec"
@@ -11,10 +12,14 @@ import (
 	"time"
 )
 
-// headless runs claude -p with args on the fake API; its JSON result and exit code.
+// headless runs claude -p with args on the fake API; its JSON result and exit code. A run that
+// hangs is killed after 90 s. It runs without lea's hooks: -p waits for their asyncRewake jobs
+// (spike SP2 c), which wait for a bus event; the interactive resume below has them.
 func (e *claudeE2E) headless(args ...string) (result, session string, rc int, out string) {
 	e.t.Helper()
-	cmd := exec.Command(e.claude, append([]string{"-p", "--output-format", "json"}, args...)...)
+	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, e.claude, append([]string{"-p", "--output-format", "json"}, args...)...)
 	cmd.Dir, cmd.Env = e.wd, e.env
 	var so, se bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &so, &se
@@ -53,34 +58,93 @@ func (e *claudeE2E) transcript(session string) string {
 	return found
 }
 
+// cutLine cuts the line pick chooses of transcript f in half, drops what follows it, and returns
+// the half kept: the transcript of a crash mid-write.
+func cutLine(t *testing.T, f string, pick func(ls [][]byte) int) []byte {
+	t.Helper()
+	b, err := os.ReadFile(f)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ls := bytes.Split(bytes.TrimRight(b, "\n"), []byte("\n"))
+	k := pick(ls)
+	if k < 0 || k >= len(ls) {
+		t.Fatalf("no line to cut in %d lines", len(ls))
+	}
+	half := ls[k][:len(ls[k])/2]
+	cut := append(append(bytes.Join(ls[:k], []byte("\n")), '\n'), half...)
+	if err := os.WriteFile(f, cut, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := os.ReadFile(f); !bytes.Equal(got, cut) || bytes.Equal(got, b) {
+		t.Fatal("the transcript was not cut")
+	}
+	t.Logf("%d lines, cut line %d (%.60s)", len(ls), k+1, ls[k])
+	return half
+}
+
+// lastOf picks the last line of type typ (any type when typ is ""), or the last line holding
+// marker.
+func lastOf(typ, marker string) func([][]byte) int {
+	return func(ls [][]byte) int {
+		for k := len(ls) - 1; k >= 0; k-- {
+			var l struct{ Type string }
+			if typ == "" && marker == "" ||
+				typ != "" && json.Unmarshal(ls[k], &l) == nil && l.Type == typ ||
+				marker != "" && bytes.Contains(ls[k], []byte(marker)) {
+				return k
+			}
+		}
+		return -1
+	}
+}
+
+// onlyCutLineInvalid checks that the one line of f that is not JSON is the half kept by the cut:
+// Claude left it as it was, and wrote what came after on lines of their own.
+func onlyCutLineInvalid(t *testing.T, f string, half []byte) {
+	t.Helper()
+	b, err := os.ReadFile(f)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var bad [][]byte
+	for _, l := range bytes.Split(bytes.TrimRight(b, "\n"), []byte("\n")) {
+		if !json.Valid(l) {
+			bad = append(bad, l)
+		}
+	}
+	if len(bad) != 1 || !bytes.Equal(bad[0], half) {
+		t.Fatalf("invalid lines %q, want only the cut one %q", bad, half)
+	}
+}
+
 // Spike SP2 (b) (#155): a real Claude resumes a session whose transcript's last JSONL line is
 // cut (a crash mid-write): b1, the last line whatever it is; b2, the last assistant message,
-// nothing after it.
+// nothing after it; b3, the result of a tool call (an agent killed during a tool call).
 func TestClaudeResumesATruncatedTranscript(t *testing.T) {
 	e := newClaudeE2E(t)
 	e.setLimited(false)
-	for _, c := range []string{"b1-last-line", "b2-last-assistant"} {
-		t.Run(c, func(t *testing.T) {
+	for _, c := range []struct {
+		name, tool string
+		pick       func([][]byte) int
+	}{
+		{"b1-last-line", "", lastOf("", "")},
+		{"b2-last-assistant", "", lastOf("assistant", "")},
+		{"b3-tool-result", "Read", lastOf("", `"tool_result"`)},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			e.mu.Lock()
+			e.toolUse = c.tool
+			e.mu.Unlock()
 			_, s, rc, out := e.headless("Reply with the single word READY.")
+			e.mu.Lock()
+			e.toolUse = ""
+			e.mu.Unlock()
 			if rc != 0 || len(s) != 36 {
 				t.Fatalf("new session: rc=%d %s", rc, out)
 			}
 			f := e.transcript(s)
-			b, _ := os.ReadFile(f)
-			ls := bytes.Split(bytes.TrimRight(b, "\n"), []byte("\n"))
-			k := len(ls) - 1
-			if c == "b2-last-assistant" {
-				for k = len(ls) - 1; k >= 0; k-- {
-					var l struct{ Type string }
-					if json.Unmarshal(ls[k], &l) == nil && l.Type == "assistant" {
-						break
-					}
-				}
-			}
-			cut := append(bytes.Join(ls[:k], []byte("\n")), '\n')
-			cut = append(cut, ls[k][:len(ls[k])/2]...)
-			os.WriteFile(f, cut, 0o600)
-			t.Logf("%s: %d lines, cut line %d (%.60s)", c, len(ls), k+1, ls[k])
+			half := cutLine(t, f, c.pick)
 			e.mu.Lock()
 			before := len(e.bodies)
 			e.mu.Unlock()
@@ -96,7 +160,8 @@ func TestClaudeResumesATruncatedTranscript(t *testing.T) {
 			if !strings.Contains(sent, "Reply with the single word READY.") || !strings.Contains(sent, "Reply with the single word OK.") {
 				t.Fatalf("the resumed turn lost the history:\n%.3000s", sent)
 			}
-			// Claude appended to the cut file: a second resume still sees the first resume's turn.
+			// Claude appended to the cut file: a second resume still sees the first resume's turn,
+			// and the cut line is the only invalid one (nothing was glued to it).
 			e.mu.Lock()
 			before = len(e.bodies)
 			e.mu.Unlock()
@@ -108,9 +173,9 @@ func TestClaudeResumesATruncatedTranscript(t *testing.T) {
 			sent = strings.Join(e.bodies[before:], "\n")
 			e.mu.Unlock()
 			if !strings.Contains(sent, "Reply with the single word OK.") || !strings.Contains(sent, "Reply with the single word READY.") {
-				b, _ := os.ReadFile(f)
-				t.Fatalf("the second resume lost the first resume's turn:\n%.3000s\n--- transcript:\n%s", sent, b)
+				t.Fatalf("the second resume lost the first resume's turn:\n%.3000s", sent)
 			}
+			onlyCutLineInvalid(t, f, half)
 		})
 	}
 }
@@ -124,10 +189,7 @@ func TestClaudeResumesATruncatedTranscriptInteractively(t *testing.T) {
 	if rc != 0 || len(s) != 36 {
 		t.Fatalf("new session: rc=%d %s", rc, out)
 	}
-	f := e.transcript(s)
-	b, _ := os.ReadFile(f)
-	b = bytes.TrimRight(b, "\n")
-	os.WriteFile(f, b[:len(b)-len(b[bytes.LastIndexByte(b, '\n')+1:])/2], 0o600)
+	cutLine(t, e.transcript(s), lastOf("", ""))
 	e.mu.Lock()
 	before := len(e.bodies)
 	e.mu.Unlock()
