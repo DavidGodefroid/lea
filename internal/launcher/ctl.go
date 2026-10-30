@@ -64,6 +64,9 @@ func (l *Launcher) ctlRunArgs(projects []string, sock string, sockGID int) ([]st
 	// projects' transcripts nor the credentials. plugins/data, the mount point of the agents'
 	// private plugin data, is made here too: lea-ctl sees plugins read-only.
 	c := home + "/.claude"
+	if err := os.MkdirAll(c, 0o700); err != nil {
+		return nil, err
+	}
 	for _, e := range l.ctlClaudeEntries() {
 		bind(c+"/"+e, true)
 		if e == "plugins" {

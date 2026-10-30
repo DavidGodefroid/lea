@@ -101,6 +101,14 @@ func TestCtlClaudeMounts(t *testing.T) {
 	if strings.Join(claude, "\n") != strings.Join(want, "\n") {
 		t.Fatalf("~/.claude mounts:\n%s\nwant:\n%s", strings.Join(claude, "\n"), strings.Join(want, "\n"))
 	}
+	// A ~/.claude lea creates is the user's only.
+	w2 := newWorld(t, repoRoot(t))
+	if _, err := w2.launcher().ctlRunArgs([]string{w2.proj}, "/var/run/docker.sock", 998); err != nil {
+		t.Fatal(err)
+	}
+	if fi, err := os.Stat(w2.home + "/.claude"); err != nil || fi.Mode().Perm() != 0o700 {
+		t.Fatalf("~/.claude: %v %v", fi, err)
+	}
 	// Made on the host: the agent's transcripts dir and the plugins' data mount point (lea-ctl
 	// sees plugins read-only).
 	for _, d := range []string{c + "/projects/" + slug, c + "/plugins/data"} {
