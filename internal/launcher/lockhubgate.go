@@ -45,7 +45,9 @@ type gateHub struct {
 	sealClear              bool
 }
 
-var gateHubURL = regexp.MustCompile(`^http://[a-z][a-z0-9-]{0,62}:([1-9][0-9]{0,3}|[1-5][0-9]{4}|6[0-4][0-9]{3}|65[0-4][0-9]{2}|655[0-2][0-9]|6553[0-5])$`)
+// gateHubURL is the hub on its network: lock up's service lockhub (a name no resolver outside the
+// network is asked for), on a port.
+var gateHubURL = regexp.MustCompile(`^http://lockhub:([1-9][0-9]{0,3}|[1-5][0-9]{4}|6[0-4][0-9]{3}|65[0-4][0-9]{2}|655[0-2][0-9]|6553[0-5])$`)
 
 // lockUpGate is the hub mode of the gate for the projects directory proj, nil without lock up, a
 // lockhttp lock in it, or when lea cannot trust what up.json says of it (lea says why).
@@ -94,14 +96,18 @@ func (l *Launcher) lockUpGate(proj string) *gateHub {
 		return warn("hub network " + s.HubNetwork + " is not lock up's")
 	}
 	why, subnets := l.lockUpLabelsWrong("network", s.HubNetwork, "{{range .IPAM.Config}}{{.Subnet}} {{end}}", map[string]string{
-		"com.docker.compose.project": s.Project, "com.docker.compose.network": "lockhub", "dev.lockfamily.role": "hub"})
+		"com.docker.compose.project": s.Project, "com.docker.compose.network": "lockhub", "dev.lockfamily.role": "hub",
+		"dev.lockfamily.workspace": proj})
 	if why != "" {
 		return warn(why)
 	}
 	if !gateHubURL.MatchString(s.HubURL) {
 		return warn("hub URL " + s.HubURL + " is not a service on the hub's network")
 	}
-	if k, err := base64.StdEncoding.DecodeString(s.HubKey); err != nil || len(k) != ed25519.PublicKeySize {
+	// Exactly the key's base64 on one line, as lockkit's ReadHubKey takes it: Go's decoder skips
+	// a CR or LF the gate refuses.
+	if k, err := base64.StdEncoding.DecodeString(s.HubKey); err != nil || len(k) != ed25519.PublicKeySize ||
+		base64.StdEncoding.EncodeToString(k) != s.HubKey {
 		return warn("the hub key is not an Ed25519 public key")
 	}
 	// The pinned gate's release: a flag it does not know would stop it (a usage error, again and

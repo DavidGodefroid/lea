@@ -79,7 +79,7 @@ func hubUp(t *testing.T, w *world, lock, facades, devices string) {
 		`","com.docker.compose.volume":"web-gate","dev.lockfamily.role":"gate-home","dev.lockfamily.instance":"web",` +
 		`"dev.lockfamily.type":"lockhttp","dev.lockfamily.workspace":"` + w.proj + `"}|`
 	w.env["FAKE_DOCKER_OUT_NETWORK_INSPECT_AT_"+fakeKey(pr+"_lockhub")] = `{"com.docker.compose.project":"` + pr +
-		`","com.docker.compose.network":"lockhub","dev.lockfamily.role":"hub"}|172.30.0.0/16 fd00:30::/64 `
+		`","com.docker.compose.network":"lockhub","dev.lockfamily.role":"hub","dev.lockfamily.workspace":"` + w.proj + `"}|172.30.0.0/16 fd00:30::/64 `
 }
 
 func gateRun(t *testing.T, w *world) string {
@@ -230,6 +230,14 @@ func TestLockHTTPGateRefusesAnUntrustedHub(t *testing.T) {
 		"facade name": {lock: `,"reveal":true`, mod: func(w *world) { rewriteUp(t, w, `"facade": "deck"`, `"facade": "slack"`) }, want: "facade_keys: "},
 		"hub key":     {mod: func(w *world) { rewriteUp(t, w, testHubKey, "AAAA") }, want: "not an Ed25519 public key"},
 		"hub url":     {mod: func(w *world) { rewriteUp(t, w, "http://lockhub:8443", "https://evil.example") }, want: "not a service on the hub's network"},
+		"hub host":    {mod: func(w *world) { rewriteUp(t, w, "http://lockhub:8443", "http://evil:8443") }, want: "not a service on the hub's network"},
+		"hub port":    {mod: func(w *world) { rewriteUp(t, w, "http://lockhub:8443", "http://lockhub:65536") }, want: "not a service on the hub's network"},
+		"hub key newline": {mod: func(w *world) { rewriteUp(t, w, testHubKey, testHubKey[:20]+`\r\n`+testHubKey[20:]) },
+			want: "not an Ed25519 public key"},
+		"network workspace": {mod: func(w *world) {
+			k := "FAKE_DOCKER_OUT_NETWORK_INSPECT_AT_" + fakeKey(upProjectOf(w)+"_lockhub")
+			w.env[k] = strings.Replace(w.env[k], w.proj, "/elsewhere", 1)
+		}, want: "label dev.lockfamily.workspace"},
 		"two locks": {mod: func(w *world) {
 			rewriteUp(t, w, `"locks":{`, `"locks":{"web2":{"type":"lockhttp","socket_volume":"x"},`)
 		}, want: "lea's gate asks for one"},
