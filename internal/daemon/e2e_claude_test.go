@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -63,6 +64,13 @@ type claudeE2E struct {
 	// toolUse, when set, is the tool the fake model calls first: a request that offers it and
 	// carries no tool result yet is answered with a call to it.
 	toolUse string
+	// answer, when set, decides instead: the tool to call (and its JSON input) for a request
+	// body, "" for the text answer.
+	answer func(body string) (tool, input string)
+	// dir, runDir and stop are the daemon's: restartDaemon ends it and starts another on the
+	// same store and run directory.
+	dir, runDir, bus string
+	stop             context.CancelFunc
 }
 
 func newClaudeE2E(t *testing.T) *claudeE2E {
@@ -102,13 +110,20 @@ func newClaudeE2E(t *testing.T) *claudeE2E {
 		}
 		w.Header().Set("Content-Type", "text/event-stream")
 		e.mu.Lock()
-		tool := e.toolUse
+		tool, input := e.toolUse, "{}"
+		answer := e.answer
 		e.mu.Unlock()
-		if tool != "" && strings.Contains(string(b), `"`+tool+`"`) && !strings.Contains(string(b), `"tool_result"`) {
+		if answer != nil {
+			tool, input = answer(string(b))
+		} else if strings.Contains(string(b), `"tool_result"`) {
+			tool = ""
+		}
+		if tool != "" && strings.Contains(string(b), `"`+tool+`"`) {
+			in, _ := json.Marshal(input)
 			for _, ev := range []string{
 				`{"type":"message_start","message":{"id":"msg_t","type":"message","role":"assistant","model":"claude-e2e","content":[],"stop_reason":null,"stop_sequence":null,"usage":{"input_tokens":1,"output_tokens":1}}}`,
 				`{"type":"content_block_start","index":0,"content_block":{"type":"tool_use","id":"toolu_e2e1","name":"` + tool + `","input":{}}}`,
-				`{"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"{}"}}`,
+				`{"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":` + string(in) + `}}`,
 				`{"type":"content_block_stop","index":0}`,
 				`{"type":"message_delta","delta":{"stop_reason":"tool_use","stop_sequence":null},"usage":{"output_tokens":2}}`,
 				`{"type":"message_stop"}`,
@@ -140,19 +155,8 @@ func newClaudeE2E(t *testing.T) *claudeE2E {
 	}
 	t.Cleanup(func() { st.Close() })
 	e.st = st
-	d := New(st, filepath.Join(dir, "run"), func() int64 { return time.Now().Unix() })
-	ctx, cancel := context.WithCancel(context.Background())
-	t.Cleanup(cancel)
-	l, err := Listen(filepath.Join(dir, "d.sock"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	go d.Serve(ctx, l, Origin{})
-	bus, err := d.AttachContainer(ctx, "lea-a")
-	if err != nil {
-		t.Fatal(err)
-	}
-	e.d, e.api = d, filepath.Join(dir, "d.sock")
+	e.dir, e.runDir = dir, filepath.Join(dir, "run")
+	bus := e.startDaemon()
 
 	// lea's own Claude settings, with this build of lea and without the telemetry.
 	raw, err := os.ReadFile("../../image/claude-settings.json")
@@ -180,6 +184,49 @@ func newClaudeE2E(t *testing.T) *claudeE2E {
 		"ANTHROPIC_BASE_URL=" + api.URL, "ANTHROPIC_API_KEY=" + key, "DISABLE_TELEMETRY=1", "DISABLE_AUTOUPDATER=1",
 		"LEA_BUS_SOCK=" + bus, "LEA_AGENT=dev"}
 	return e
+}
+
+// startDaemon starts lea's daemon on the store, serving its API and the container lea-a's bus;
+// the bus socket's path.
+func (e *claudeE2E) startDaemon() string {
+	e.t.Helper()
+	d := New(e.st, e.runDir, func() int64 { return time.Now().Unix() })
+	ctx, cancel := context.WithCancel(context.Background())
+	e.t.Cleanup(cancel)
+	l, err := Listen(filepath.Join(e.dir, "d.sock"))
+	if err != nil {
+		e.t.Fatal(err)
+	}
+	go d.Serve(ctx, l, Origin{})
+	bus, err := d.AttachContainer(ctx, "lea-a")
+	if err != nil {
+		e.t.Fatal(err)
+	}
+	e.d, e.api, e.stop, e.bus = d, filepath.Join(e.dir, "d.sock"), cancel, bus
+	return bus
+}
+
+// restartDaemon ends the daemon (its timers and queues go with it) and starts another on the
+// same store, as a lea daemon that stops and starts again; down runs in between.
+func (e *claudeE2E) restartDaemon(down func()) {
+	e.t.Helper()
+	e.stop()
+	for i := 0; ; i++ {
+		c, err := net.DialTimeout("unix", e.api, 100*time.Millisecond)
+		if err != nil {
+			break
+		}
+		c.Close()
+		if i == 50 {
+			e.t.Fatal("the daemon did not stop")
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	time.Sleep(200 * time.Millisecond) // the bus listener closes with it
+	if down != nil {
+		down()
+	}
+	e.startDaemon()
 }
 
 // run starts claude in a pseudo-terminal with args; kill ends it.
@@ -298,6 +345,8 @@ type e2eAgents struct {
 	fakeAgents
 	e    *claudeE2E
 	kill func()
+	// args are claude's arguments after the resume prompt (the Lock's MCP server).
+	args []string
 }
 
 func (f *e2eAgents) SoftStop(ctx context.Context, key string) error {
@@ -319,7 +368,7 @@ func (f *e2eAgents) ResumeSuspended(ctx context.Context, key, prompt string) err
 	if err := f.e.st.SetState(key, "unknown", "", time.Now().Unix()); err != nil {
 		return err
 	}
-	f.kill = f.e.run("--resume", a.SessionID, prompt)
+	f.kill = f.e.run(append([]string{"--resume", a.SessionID, prompt}, f.args...)...)
 	return nil
 }
 
