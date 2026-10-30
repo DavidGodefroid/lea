@@ -139,7 +139,7 @@ jobs:
         run: |
           make test-isolation 2>&1 | tee isolation.log
           if grep -E '^FAIL |^note: ' isolation.log; then echo "an isolation check failed or was skipped" >&2; exit 1; fi
-          for c in '.lockfamily write gets EROFS' 'host facade socket not visible' 'no facade socket in the container' 'sibling lea unreachable directly' 'host port unreachable via host IP'; do
+          for c in '.lockfamily write gets EROFS' 'host facade socket not visible' 'no facade socket in the container' 'sibling lea unreachable directly' 'host port unreachable via host IP' 'public HTTPS works through the proxy' 'nested HTTP between containers is direct'; do
             grep -qxF "ok   $c" isolation.log || { echo "isolation: '$c' did not run" >&2; exit 1; }
           done
   # The phase-2 exit demo, lea's side (tests/integration/hubdeck.sh): lock up with the released,

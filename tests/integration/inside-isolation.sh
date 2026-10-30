@@ -107,10 +107,10 @@ nested_http() (
     if docker run --rm --network container:lea-it-web busybox:1.37 sh -c '
       a=$(ip -4 -o addr show scope global | awk "{ print \$4 }" | cut -d/ -f1 | head -n 1)
       echo "address: ${a:-none}; HTTP proxy: ${http_proxy:-${HTTP_PROXY:-none}}" >&2
-      [ -n "$a" ] && wget -T 10 -qO- "http://$a/"' | grep -qx hi; then rc=0; break; fi
+      [ -z "${http_proxy:-}${HTTP_PROXY:-}" ] && [ -n "$a" ] && wget -T 10 -qO- "http://$a/"' | grep -qx hi; then rc=0; break; fi
     sleep 1
   done
-  docker rm -f lea-it-web >/dev/null 2>&1
+  docker rm -f -t 0 lea-it-web >/dev/null 2>&1
   exit "$rc"
 )
 itlog=$(mktemp)
