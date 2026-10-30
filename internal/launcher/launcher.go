@@ -460,6 +460,12 @@ func (l *Launcher) doctor() error {
 	if perr != nil {
 		return err
 	}
+	if msg := l.installCheck(proj); msg != "" {
+		l.logf("error: %s", msg)
+		if err == nil {
+			err = exitError{1}
+		}
+	}
 	if l.coreCall("delivery", "--container", l.Cfg.ContainerName(proj), "--projects", proj, "check", "--state", l.Cfg.StateDir()) != nil && err == nil {
 		return exitError{1}
 	}

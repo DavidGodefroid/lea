@@ -140,6 +140,11 @@ func (l *Launcher) viaCtl(args []string) error {
 	if err != nil {
 		return err
 	}
+	// The checks lea makes before it opens a projects dir, before lea-ctl starts for it: lea's
+	// install, its data and the user's credentials stay out of what agents can write.
+	if err := l.guardProjects(proj); err != nil {
+		return err
+	}
 	if err := l.ensureCtl(proj); err != nil {
 		return err
 	}
