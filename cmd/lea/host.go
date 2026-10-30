@@ -224,7 +224,16 @@ func runDaemon(stderr io.Writer) int {
 	}
 	// The Lock Family hub's decisions (#164): read from its host facade socket, from the recorded
 	// cursor, so that one taken while the daemon was down still reaches the agent that waits.
-	if sock := hubFacadeSocket(os.Getenv); sock != "" {
+	// LEA_HUB=0 (the default) switches it off: no hub is read, the suspend hook does nothing, and
+	// the agents still suspended are resumed with a "hub disabled" message.
+	_ = os.Remove(filepath.Join(host, "daemon.hub"))
+	if err := os.WriteFile(filepath.Join(host, "daemon.hub"), []byte(launcher.DaemonHubStamp(os.Getenv)), 0o600); err != nil {
+		fmt.Fprintln(stderr, "lea:", clean(err.Error(), false))
+		return 1
+	}
+	if !launcher.HubSetting(os.Getenv) {
+		d.DisableHub()
+	} else if sock := hubFacadeSocket(os.Getenv); sock != "" {
 		d.SetHubFacade(daemon.SocketFacade{Path: sock})
 		go d.RunHubSync(ctx)
 		// The deck shows the hub's pending tickets on their agents and answers them (#158).

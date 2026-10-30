@@ -61,6 +61,19 @@ func DaemonLockHTTPStamp(get func(string) string) string {
 	return "off"
 }
 
+// HubSetting is the Lock Family approval hub switch (LEA_HUB): on only when it is 1. Off, lea
+// reads no hub, its suspend hook is a no-op and the agents it suspended are resumed.
+func HubSetting(get func(string) string) bool { return get("LEA_HUB") == "1" }
+
+// DaemonHubStamp is the hub switch as the daemon records it ("on" or "off"): a daemon started
+// with the other is restarted.
+func DaemonHubStamp(get func(string) string) string {
+	if HubSetting(get) {
+		return "on"
+	}
+	return "off"
+}
+
 // StackIdleSetting is how long an agent stays idle before lea stops what it started in the nested
 // Podman (#132): LEA_STACK_IDLE minutes, 0 (off) to 1440, 10 when unset or invalid.
 func StackIdleSetting(get func(string) string) time.Duration {
@@ -146,6 +159,7 @@ func (l *Launcher) ensureDaemon() error {
 			readTrim(host+"/daemon.approvals") == appr && readTrim(host+"/daemon.providers") == l.providersStamp() &&
 			readTrim(host+"/daemon.resume") == DaemonResumeStamp(l.Cfg.Get) &&
 			readTrim(host+"/daemon.lockhttp") == DaemonLockHTTPStamp(l.Cfg.Get) &&
+			readTrim(host+"/daemon.hub") == DaemonHubStamp(l.Cfg.Get) &&
 			readTrim(host+"/daemon.stacks") == DaemonStacksStamp(l.Cfg.Get) &&
 			readTrim(host+"/daemon.admit") == DaemonAdmitStamp(l.Cfg.Get) {
 			return nil

@@ -183,15 +183,20 @@ latest() { export "FAKE_CURL_EFFECTIVE_$1=https://github.com/DavidGodefroid/$1/r
 @test "a recorded release older than lea's own pin gives way to the pin; a newer, empty or checkout ref stays" {
   printf "LEA_LOCKSQL_REF='v0.7.0'\nLEA_LOCKSQL_IMAGE='locksql:0.7.0'\nLEA_LOCKFILE_REF='v0.1.1'\nLEA_LOCKMQ_REF='v0.0.1'\n" >"$LEA_CONFIG"
   lea_load_config
-  [ "$LEA_LOCKSQL_REF" = v0.9.0 ] && [ "$LEA_LOCKSQL_IMAGE" = locksql:0.9.0 ]
-  [ "$LEA_LOCKFILE_REF" = v0.2.0 ] && [ "$LEA_LOCKMQ_REF" = v0.1.0 ]
+  [ "$LEA_LOCKSQL_REF" = v0.9.0 ]
+  [ "$LEA_LOCKSQL_IMAGE" = locksql:0.9.0 ]
+  [ "$LEA_LOCKFILE_REF" = v0.4.0 ]
+  [ "$LEA_LOCKMQ_REF" = v0.3.0 ]
   printf "LEA_LOCKSQL_REF='v0.10.0'\nLEA_LOCKSQL_IMAGE='locksql:0.10.0'\nLEA_LOCKFILE_REF=\nLEA_LOCKMQ_REF='v1.0.0'\n" >"$LEA_CONFIG"
   lea_load_config
-  [ "$LEA_LOCKSQL_REF" = v0.10.0 ] && [ "$LEA_LOCKSQL_IMAGE" = locksql:0.10.0 ]
-  [ -z "$LEA_LOCKFILE_REF" ] && [ "$LEA_LOCKMQ_REF" = v1.0.0 ]
+  [ "$LEA_LOCKSQL_REF" = v0.10.0 ]
+  [ "$LEA_LOCKSQL_IMAGE" = locksql:0.10.0 ]
+  [ -z "$LEA_LOCKFILE_REF" ]
+  [ "$LEA_LOCKMQ_REF" = v1.0.0 ]
   printf "LEA_LOCKSQL_REF='%s'\nLEA_LOCKSQL_IMAGE='locksql:dev'\n" "$P" >"$LEA_CONFIG"
   lea_load_config
-  [ "$LEA_LOCKSQL_REF" = "$P" ] && [ "$LEA_LOCKSQL_IMAGE" = locksql:dev ]
+  [ "$LEA_LOCKSQL_REF" = "$P" ]
+  [ "$LEA_LOCKSQL_IMAGE" = locksql:dev ]
 }
 
 @test "the background update never touches a dependency" {
