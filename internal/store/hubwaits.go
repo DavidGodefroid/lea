@@ -109,6 +109,18 @@ func (s *Store) DecideHubWaits(ticket, instance, decision, reason string, now in
 	return out, tx.Commit()
 }
 
+// EndSuspended ends an agent that is still suspended_cold (done), and reports whether it was:
+// one that woke or ended meanwhile is left as it is.
+func (s *Store) EndSuspended(key string, now int64) (bool, error) {
+	r, err := s.db.Exec(`UPDATE agents SET state='done', updated=?, paused=0, limit_until=0, limit_tries=0
+		WHERE key=? AND state=?`, now, key, StateSuspendedCold)
+	if err != nil {
+		return false, err
+	}
+	n, _ := r.RowsAffected()
+	return n == 1, nil
+}
+
 // UndeliveredHubWaits are agent's decided waits that have not reached it yet, oldest first.
 func (s *Store) UndeliveredHubWaits(agent string) ([]HubWait, error) {
 	rows, err := s.db.Query(`SELECT `+hubWaitCols+` FROM hub_waits WHERE agent_key=? AND decision<>'' AND delivered=0 ORDER BY decided_at, ticket`, agent)

@@ -85,11 +85,14 @@ func (d *Daemon) startResume(a Agents, r *queuedResume) {
 	d.resumeSuspended(a, r.key)
 }
 
-// A suspended agent's resume that fails is tried again by the next wake (a hub sync, every
-// hubSyncEvery, or a message), but not before its backoff: resumeBackoff seconds, doubling at each
-// failure. After maxSuspendedResumes failures lea gives up: the decisions go to the agent's inbox
-// and the agent ends (done), its messages kept. The count lives in the daemon: a restarted daemon
-// starts it again.
+// A suspended agent's resume that fails is tried again by its next wake (a hub sync, every
+// hubSyncEvery, while it has an undelivered decision; a new message; a daemon start), but not
+// before its backoff: resumeBackoff seconds, doubling at each failure. An agent woken only by
+// messages is tried again by the next message or daemon start, not by the hub sync. After
+// maxSuspendedResumes failures lea gives up: the agent ends (done), its decisions go to its
+// inbox and its lead is told. One resume of an agent runs at a time: a wake while it runs does
+// nothing, so one outage counts once. The count lives in the daemon: a restarted daemon starts it
+// again.
 var (
 	resumeBackoff       int64 = 30
 	maxSuspendedResumes       = 5
@@ -124,20 +127,22 @@ func (d *Daemon) resumeFailed(key string) (giveUp bool) {
 	return false
 }
 
-// giveUpResume ends a suspended agent whose resumes kept failing: its undelivered decisions are
-// posted to its inbox (once), and it is done. One that woke or ended meanwhile is left as it is.
+// giveUpResume ends a suspended agent whose resumes kept failing: it is done (only if it is still
+// suspended_cold), its undelivered decisions are posted to its inbox (once), and its lead is told.
 func (d *Daemon) giveUpResume(key string, tries int) {
-	ag, err := d.st.AgentByKey(key)
-	if err != nil || ag.State != store.StateSuspendedCold {
-		return
-	}
-	if err := d.st.SetState(key, "done", "", d.now()); err != nil {
-		log.Printf("lea daemon: give up resuming %s: %v", key, err)
+	ok, err := d.st.EndSuspended(key, d.now())
+	if err != nil || !ok {
+		if err != nil {
+			log.Printf("lea daemon: give up resuming %s: %v", key, err)
+		}
 		return
 	}
 	log.Printf("lea daemon: gave up resuming %s after %d tries: its decisions go to its inbox", key, tries)
 	if err := d.deliverHubDecisions(); err != nil {
 		log.Printf("lea daemon: give up resuming %s: %v", key, err)
+	}
+	if ag, err := d.st.AgentByKey(key); err == nil && ag.Parent != "" {
+		d.post("user", ag.Parent, "note", fmt.Sprintf("lea could not resume %s after %d tries: it is ended, the decisions on its tickets are in its inbox.", ag.Name, tries), 0)
 	}
 	d.changed()
 }
@@ -146,10 +151,25 @@ func (d *Daemon) giveUpResume(key string, tries int) {
 // decisions on its tickets (delivered once the resume started) and the unread notice. One that
 // woke or ended meanwhile is left alone. A resume that fails leaves the decisions undelivered:
 // the next wake past its backoff tries again, and lea gives up after maxSuspendedResumes tries
-// (the inbox, done).
+// (done, the inbox, its lead told).
 func (d *Daemon) resumeSuspended(a Agents, key string) {
+	d.mu.Lock()
+	if d.resuming[key] {
+		d.mu.Unlock()
+		return // its resume runs: this wake is that one's
+	}
+	d.resuming[key] = true
+	d.mu.Unlock()
+	defer func() {
+		d.mu.Lock()
+		delete(d.resuming, key)
+		d.mu.Unlock()
+	}()
 	ag, err := d.st.AgentByKey(key)
 	if err != nil || ag.State != store.StateSuspendedCold {
+		d.mu.Lock()
+		delete(d.resumeFails, key) // no longer cold: a later suspension starts afresh
+		d.mu.Unlock()
 		return
 	}
 	n, err := d.unreadNotice(key)
@@ -165,7 +185,11 @@ func (d *Daemon) resumeSuspended(a Agents, key string) {
 	ctx, cancel := context.WithTimeout(context.Background(), suspendTimeout)
 	defer cancel()
 	if err := a.ResumeSuspended(ctx, key, prompt); err != nil {
-		if !errors.Is(err, agents.ErrNotSuspended) {
+		if errors.Is(err, agents.ErrNotSuspended) {
+			d.mu.Lock()
+			delete(d.resumeFails, key)
+			d.mu.Unlock()
+		} else {
 			log.Printf("lea daemon: resume suspended %s: %v", key, err)
 			if d.resumeFailed(key) {
 				d.giveUpResume(key, maxSuspendedResumes)

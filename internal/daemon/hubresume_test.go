@@ -287,3 +287,57 @@ func TestASuccessfulResumeClearsTheBackoff(t *testing.T) {
 		t.Fatal("the failure count outlived the successful resume")
 	}
 }
+
+// Wakes that come while a resume runs (a hub sync, a message) start no other one: a slow outage
+// counts as one failed try.
+func TestWakesDuringAResumeCountOnce(t *testing.T) {
+	e := start(t)
+	fa := &fakeAgents{st: e.d.st, resumeErr: errors.New("no pane")}
+	e.d.SetAgents(fa)
+	k := suspendedOnTicket(t, e, fa, "dev-1")
+	time.Sleep(50 * time.Millisecond) // the soft stop's own wake found nothing to resume
+	if _, err := e.d.st.DecideHubWaits(testTicket, "crm-prod", store.DecisionApproved, "", e.d.now()); err != nil {
+		t.Fatal(err)
+	}
+	hold := make(chan struct{})
+	fa.mu.Lock()
+	fa.resumeHold = hold
+	fa.mu.Unlock()
+	e.d.wakeSuspended(k)
+	waitResumes(t, fa, k, 1)
+	for range 5 {
+		e.d.wakeSuspended(k)
+		go e.d.resumeSuspended(fa, k) // as a queued resume the lane lets through
+	}
+	time.Sleep(100 * time.Millisecond)
+	close(hold)
+	waitFails(t, e, k, 1)
+	time.Sleep(50 * time.Millisecond)
+	if n := resumeCalls(fa, k); n != 1 {
+		t.Fatalf("%d resumes for one outage", n)
+	}
+}
+
+// Giving up tells the agent's lead, and leaves an agent that woke meanwhile as it is.
+func TestGivingUpTellsTheLead(t *testing.T) {
+	e := start(t)
+	fa := &fakeAgents{st: e.d.st}
+	e.d.SetAgents(fa)
+	lead := spawned(t, e, "lead", "lead", "")
+	k := spawned(t, e, "dev-1", "dev", lead)
+	if err := e.d.st.SetState(k, store.StateSuspendedCold, testSession, e.d.now()); err != nil {
+		t.Fatal(err)
+	}
+	e.d.giveUpResume(k, maxSuspendedResumes)
+	if s := agentState(t, e, k); s != "done" {
+		t.Fatalf("state %s", s)
+	}
+	if ms, _ := e.d.st.Unread(lead, 10); len(ms) != 1 || !strings.Contains(ms[0].Body, "could not resume dev-1") {
+		t.Fatalf("lead inbox %+v", ms)
+	}
+	w := spawned(t, e, "dev-2", "dev", lead)
+	e.d.giveUpResume(w, maxSuspendedResumes) // not suspended: left alone
+	if s := agentState(t, e, w); s == "done" {
+		t.Fatal("ended an agent that was not suspended")
+	}
+}
