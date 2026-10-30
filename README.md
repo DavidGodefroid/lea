@@ -357,9 +357,11 @@ which lets through what its policy trusts and asks you, in a `lockhttp` console,
 It is **off** by default (`LEA_LOCKHTTP=0`): lea then behaves as before.
 
 LockHTTP runs in Docker only (`docs/docker.md` in the lockhttp repository). To turn it on,
-install lockhttp's launcher (its `scripts/install.sh`, which checks the release's signatures and
-pins its image by digest), write the policy once with `lockhttp init --trusted "<your
-LEA_EGRESS_ALLOW>"`, and start `lockhttp console` in a terminal you keep in view. Then set
+install the launcher of the lockhttp release lea pins, v0.5.0 (`LOCKHTTP_VERSION=v0.5.0 sh
+install.sh` with lockhttp's `scripts/install.sh`, which checks the release's signatures and
+pins its image by digest; `lea doctor` warns about an older one), write the policy once with
+`lockhttp init --trusted "<your LEA_EGRESS_ALLOW>"`, and start `lockhttp console` in a terminal
+you keep in view. Then set
 `LEA_LOCKHTTP=1` in `~/.config/lea/lea.conf` and restart lea (`lea stop --all`, then `lea`);
 `lea doctor` checks each step. Nothing else on the host: no account, group or socket directory.
 
