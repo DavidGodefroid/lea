@@ -348,6 +348,8 @@ func (d *Daemon) setHubQueue(ctx context.Context, ts []HubTicket, up bool) {
 			case !ok && t.Expired:
 				k, ok = waited[t.Instance+"/"+t.ID]
 			case !ok && t.Renews != nil:
+				// renews.of is the Lock's signed word, which lea does not check itself: the hub
+				// verifies the ticket and links the renewal to a ticket of the same instance.
 				k, ok = waited[t.Instance+"/"+t.Renews.Of]
 			}
 			if ok && byKey[k].Key != "" {
@@ -371,7 +373,27 @@ func (d *Daemon) setHubQueue(ctx context.Context, ts []HubTicket, up bool) {
 
 // showHub records the queued tickets lea shows and sets each Lock's counter from them.
 func (d *Daemon) showHub(ctx context.Context, entries []hubEntry, console string) {
+	d.showHubWith(ctx, func([]hubEntry) []hubEntry { return entries }, console)
+}
+
+// dropHub removes the queued tickets gone matches from the queue as it is then, not from an
+// older copy (a poll may have set a newer one meanwhile), and sets the counters from it.
+func (d *Daemon) dropHub(ctx context.Context, gone func(hubEntry) bool) {
+	d.showHubWith(ctx, func(cur []hubEntry) []hubEntry {
+		var rest []hubEntry
+		for _, e := range cur {
+			if !gone(e) {
+				rest = append(rest, e)
+			}
+		}
+		return rest
+	}, "up")
+}
+
+// showHubWith sets the queue to next(current), under one lock, and each Lock's counter from it.
+func (d *Daemon) showHubWith(ctx context.Context, next func(cur []hubEntry) []hubEntry, console string) {
 	d.mu.Lock()
+	entries := next(d.hubQueue)
 	d.hubQueue = entries
 	known := d.hubLocks
 	d.hubLocks = map[string]bool{}
@@ -519,14 +541,6 @@ func (d *Daemon) hubDecide(ctx context.Context, params json.RawMessage) error {
 	if err := f.Decide(ctx, p.Instance, p.ID, HubVerdict{Approved: p.Approved, Reason: reason, Retype: p.Retype}); err != nil {
 		return err
 	}
-	d.mu.Lock()
-	var rest []hubEntry
-	for _, e := range d.hubQueue {
-		if e.t.ID != p.ID || e.t.Instance != p.Instance {
-			rest = append(rest, e)
-		}
-	}
-	d.mu.Unlock()
-	d.showHub(ctx, rest, "up")
+	d.dropHub(ctx, func(e hubEntry) bool { return e.t.ID == p.ID && e.t.Instance == p.Instance && !e.t.Expired })
 	return nil
 }

@@ -552,7 +552,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 	case tea.MouseMsg:
-		return m.mouse(msg)
+		nm, cmd := m.mouse(msg)
+		if mm, ok := nm.(Model); ok {
+			mm.keepReveal() // a wheel or a click moved the selection: the clear values go
+			return mm, cmd
+		}
+		return nm, cmd
 	case hoverEndMsg:
 		if msg.seq == m.hoverSeq {
 			m.hoverFor = ""
@@ -1203,16 +1208,13 @@ func (m Model) answerHub(approve bool) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	if approve {
-		body := len(m.hubBody(h))
-		switch {
-		case h.Truncated || body+len(m.hubWarnings(h)) > maxHubCard || !m.hubFits(*a):
-			m.status = "too long for the deck: answer it with lock approve"
+		if why := m.unreadable(*a, h); why != "" {
+			m.status = why
 			return m, nil
+		}
+		switch {
 		case h.Production && h.Retype == "":
 			m.status = "a production ticket with no name to type: answer it with lock approve"
-			return m, nil
-		case body > hubFolded && !m.hubRead[ref]:
-			m.status = "v shows the whole ticket: read it before approving"
 			return m, nil
 		case h.Production:
 			m.hubFor, m.hubDraft, m.status = ref, nil, ""
@@ -1220,6 +1222,20 @@ func (m Model) answerHub(approve bool) (tea.Model, tea.Cmd) {
 		}
 	}
 	return m, m.decideHub(h, approve, "")
+}
+
+// unreadable says why the deck cannot approve h on a's card ("" when it can): the daemon cut
+// it, it is too long or too tall for the deck, or a long one was not read whole with v. a and r
+// (which may approve at once) both need it read.
+func (m Model) unreadable(a Agent, h HubCard) string {
+	body := len(m.hubBody(h))
+	switch {
+	case h.Truncated || body+len(m.hubWarnings(h)) > maxHubCard || !m.hubFits(a):
+		return "too long for the deck: answer it with lock approve"
+	case body > hubFolded && !m.hubRead[h.Instance+"/"+h.ID]:
+		return "v shows the whole ticket: read it before approving"
+	}
+	return ""
 }
 
 func (m Model) decideHub(h HubCard, approve bool, retype string) tea.Cmd {
@@ -1396,6 +1412,14 @@ func (m Model) renewHub(h HubCard) (tea.Model, tea.Cmd) {
 	ref := h.Instance + "/" + h.ID
 	if t, ok := m.hubSince[ref]; !ok || m.now().Sub(t) < lockAskDelay {
 		m.status = "read the " + clean(h.Lock) + " ticket first"
+		return m, nil
+	}
+	// The hub approves an unchanged renewal at once in the user's name, also of a ticket that
+	// expired undecided: r is an approval, read like a.
+	if a := m.selectedAgent(); a == nil {
+		return m, nil
+	} else if why := m.unreadable(*a, h); why != "" {
+		m.status = why
 		return m, nil
 	}
 	m.status = "asking the " + clean(h.Lock) + " lock again…"

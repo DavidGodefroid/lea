@@ -295,7 +295,7 @@ func (m Model) bottom(w int) string {
 	if a := m.selectedAgent(); a != nil && hubTicket(*a) != nil {
 		hint = fmt.Sprintf("a approve %[1]s d deny %[1]s v view %[1]s o clear values", c.dot)
 		if hubTicket(*a).Expired {
-			hint = fmt.Sprintf("r ask again %s v view", c.dot)
+			hint = fmt.Sprintf("r ask again (approves at once if nothing changed) %s v view", c.dot)
 		}
 	}
 	if a := m.selectedAgent(); a != nil && a.Approval != nil {
@@ -561,12 +561,12 @@ func (m Model) row(a Agent, inner int, inFolder bool) []string {
 		for _, w := range m.hubWarnings(*h) {
 			lines = append(lines, row(alert, "  "+w))
 		}
-		if rv := m.revealed; rv != nil && rv.ref == h.Instance+"/"+h.ID {
+		if rv := m.revealed; rv != nil && rv.ref == h.Instance+"/"+h.ID && a.Key == m.selected {
 			lines = append(lines, m.clearLines(rv.clear, wide, row)...)
 		}
 		keys := "[a]pprove [d]eny [v]iew [o] clear values"
 		if h.Expired {
-			keys = "expired: [r] asks the lock again"
+			keys = "expired: [r] asks the lock again, approved at once if nothing changed"
 		}
 		if h.Production && h.Retype != "" && !h.Expired {
 			keys += " " + c.dot + " approving asks for " + clean(h.Retype)
@@ -740,7 +740,11 @@ func renewLines(r HubRenewal) []string {
 	default:
 		out = append(out, "changed since then:")
 		for _, ch := range r.Changes {
-			out = append(out, "  "+clean(ch.Input)+": "+clean(ch.Change))
+			what := clean(ch.Change)
+			if ch.Change == "unchecked" { // lockkit ticket.ChangeUnchecked
+				what = "not checked now; the run checks it"
+			}
+			out = append(out, "  "+clean(ch.Input)+": "+what)
 		}
 	}
 	return out

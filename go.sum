@@ -1,5 +1,5 @@
-github.com/DavidGodefroid/lockkit v0.5.0 h1:0rMTTGFh5sSYtHtmwuMFvwoflQVzt4iZnL+srHi1Egw=
-github.com/DavidGodefroid/lockkit v0.5.0/go.mod h1:RXG/MvYxBK2h2cAccPWkyX9HsrpkJgWw0A8Y7SyEbuE=
+github.com/DavidGodefroid/lockkit v0.6.0 h1:CyBijT1qfD+7WIIc7rNzbpeaezYh5VcG4JL8zxbMogg=
+github.com/DavidGodefroid/lockkit v0.6.0/go.mod h1:RXG/MvYxBK2h2cAccPWkyX9HsrpkJgWw0A8Y7SyEbuE=
 github.com/aymanbagabas/go-osc52/v2 v2.0.1 h1:HwpRHbFMcZLEVr42D4p7XBqjyuxQH5SMiErDT4WkJ2k=
 github.com/aymanbagabas/go-osc52/v2 v2.0.1/go.mod h1:uYgXzlJ7ZpABp8OJ+exZzJJhRNQ2ASbcXHWsFqH8hp8=
 github.com/charmbracelet/bubbletea v1.3.10 h1:otUDHWMMzQSB0Pkc87rm691KZ3SWa4KUlvF9nRvCICw=

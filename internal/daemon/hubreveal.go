@@ -153,9 +153,12 @@ func (f SocketFacade) post(ctx context.Context, path string, in, out any) error 
 		return e
 	}
 	if len(b) > maxRevealBody {
-		return errors.New("lockhub: answer too large")
+		return errors.New("the hub's answer is too large")
 	}
-	return json.Unmarshal(b, out)
+	if json.Unmarshal(b, out) != nil {
+		return errors.New("the hub's answer is not valid") // never the decoder's words on the hub's bytes
+	}
+	return nil
 }
 
 func ticketPath(instance, id, verb string) string {
@@ -195,11 +198,27 @@ func (d *Daemon) SetHubKeys(dir string) {
 	d.mu.Unlock()
 }
 
-// privateFile reads a file the user alone may change: a regular file (no link), owned by the
-// user, mode without the bits in deny.
+// privateFile reads a file the user alone may change: opened once without following a link,
+// then checked on the open file (a regular file owned by the user, mode without the bits in deny,
+// not too large) and read from it, so that nothing can swap it between the check and the read.
+// Its directory must be the user's and writable by no one else (no file swapped in by name).
 func privateFile(path string, deny os.FileMode) ([]byte, error) {
-	fi, err := os.Lstat(path)
+	if err := privateDir(filepath.Dir(path)); err != nil {
+		return nil, err
+	}
+	f, err := os.OpenFile(path, os.O_RDONLY|syscall.O_NOFOLLOW, 0)
 	if err != nil {
+		if errors.Is(err, syscall.ELOOP) {
+			return nil, fmt.Errorf("%s: not a regular file", path)
+		}
+		return nil, err
+	}
+	defer f.Close()
+	fi, err := f.Stat()
+	if err != nil {
+		return nil, err
+	}
+	if err := ownedBy(path, fi); err != nil {
 		return nil, err
 	}
 	if !fi.Mode().IsRegular() {
@@ -208,13 +227,42 @@ func privateFile(path string, deny os.FileMode) ([]byte, error) {
 	if fi.Mode().Perm()&deny != 0 {
 		return nil, fmt.Errorf("%s: mode %v, want %v", path, fi.Mode().Perm(), fi.Mode().Perm()&^deny)
 	}
-	if st, ok := fi.Sys().(*syscall.Stat_t); ok && int(st.Uid) != os.Getuid() {
-		return nil, fmt.Errorf("%s: not owned by this user", path)
-	}
 	if fi.Size() > maxFacadeFile {
 		return nil, fmt.Errorf("%s: too large", path)
 	}
-	return os.ReadFile(path)
+	b, err := io.ReadAll(io.LimitReader(f, maxFacadeFile+1))
+	if err != nil {
+		return nil, err
+	}
+	if len(b) > maxFacadeFile {
+		return nil, fmt.Errorf("%s: too large", path)
+	}
+	return b, nil
+}
+
+// privateDir checks that dir is a directory (not a link) of the user's, that no one else can write.
+func privateDir(dir string) error {
+	fi, err := os.Lstat(dir)
+	if err != nil {
+		return err
+	}
+	if !fi.IsDir() {
+		return fmt.Errorf("%s: not a directory", dir)
+	}
+	if err := ownedBy(dir, fi); err != nil {
+		return err
+	}
+	if fi.Mode().Perm()&0o022 != 0 {
+		return fmt.Errorf("%s: mode %v: others can write it", dir, fi.Mode().Perm())
+	}
+	return nil
+}
+
+func ownedBy(path string, fi os.FileInfo) error {
+	if st, ok := fi.Sys().(*syscall.Stat_t); ok && int(st.Uid) != os.Getuid() {
+		return fmt.Errorf("%s: not owned by this user", path)
+	}
+	return nil
 }
 
 // loadFacadeKey reads a facade's Ed25519 key (PKCS#8 PEM) as lock up writes it, 0600: a key any
@@ -368,14 +416,6 @@ func (d *Daemon) hubRenew(ctx context.Context, params json.RawMessage) (HubRenew
 		return HubRenewed{}, errors.New("not renewed: the hub named no ticket")
 	}
 	// The expired ticket has a renewal now: the hub lists it no more.
-	d.mu.Lock()
-	var rest []hubEntry
-	for _, x := range d.hubQueue {
-		if x.t.ID != e.t.ID || x.t.Instance != e.t.Instance || !x.t.Expired {
-			rest = append(rest, x)
-		}
-	}
-	d.mu.Unlock()
-	d.showHub(ctx, rest, "up")
+	d.dropHub(ctx, func(x hubEntry) bool { return x.t.ID == e.t.ID && x.t.Instance == e.t.Instance && x.t.Expired })
 	return r, nil
 }

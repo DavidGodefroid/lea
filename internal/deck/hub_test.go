@@ -330,3 +330,91 @@ func wide(t *testing.T, m Model) Model {
 	m, _ = step(t, m, tea.WindowSizeMsg{Width: 120, Height: 60})
 	return m
 }
+
+// r may approve at once (the hub re-approves an unchanged renewal in the user's name, also of a
+// ticket that expired undecided): it is read like a. A cut, too long or too tall expired ticket
+// is never renewed from the deck; a long one only once v showed it whole.
+func TestHubRenewNeedsTheTicketReadLikeAnApproval(t *testing.T) {
+	expired := func() Agent {
+		a := ticketed("b", false)
+		a.Hub[0].Expired = true
+		return a
+	}
+	for name, prep := range map[string]func(*Agent){
+		"cut": func(a *Agent) { a.Hub[0].Truncated = true },
+		"too long": func(a *Agent) {
+			for i := 0; i < 40; i++ {
+				a.Hub[0].Body = append(a.Hub[0].Body, "line")
+			}
+		},
+	} {
+		a := expired()
+		prep(&a)
+		api := &fakeAPI{}
+		m := wide(t, readable(loaded(t, api, "lea-a/b", a)))
+		m, _ = step(t, m, key("v"))
+		if m2, cmd := step(t, m, key("r")); cmd != nil || !strings.Contains(m2.status, "lock approve") {
+			t.Fatalf("%s: renewed from the deck, status %q", name, m2.status)
+		}
+	}
+	// Taller than the deck.
+	tall := expired()
+	api := &fakeAPI{}
+	m := readable(loaded(t, api, "lea-a/b", tall))
+	m, _ = step(t, m, tea.WindowSizeMsg{Width: 60, Height: 8})
+	if m2, cmd := step(t, m, key("r")); cmd != nil || !strings.Contains(m2.status, "lock approve") {
+		t.Fatalf("taller than the deck: renewed, status %q", m2.status)
+	}
+	// Long: v first.
+	long := expired()
+	long.Hub[0].Body = append(long.Hub[0].Body, "-- line 3", "-- line 4")
+	m = wide(t, readable(loaded(t, api, "lea-a/b", long)))
+	if v := m.View(); !strings.Contains(v, "approved at once if nothing changed") {
+		t.Fatalf("the card does not say r may approve:\n%s", v)
+	}
+	if m2, cmd := step(t, m, key("r")); cmd != nil || !strings.Contains(m2.status, "v shows the whole ticket") {
+		t.Fatalf("renewed unread: status %q", m2.status)
+	}
+	m, _ = step(t, m, key("v"))
+	if _, cmd := step(t, m, key("r")); cmd == nil {
+		t.Fatal("not renewed after v")
+	}
+	if got := api.got(); len(got) != 0 {
+		t.Fatalf("calls %q", got)
+	}
+}
+
+// A wheel or a click that moves the selection drops the clear values; they are drawn on the
+// selected card only.
+func TestHubRevealGoesWhenTheMouseMovesTheSelection(t *testing.T) {
+	reveal := func(t *testing.T) Model {
+		api := &fakeAPI{clear: HubClear{Body: []string{"mail=" + "ann@example.com"}}}
+		m := wide(t, readable(loaded(t, api, "lea-a/b", ticketed("b", false), ag("c", "idle", 2))))
+		m, cmd := step(t, m, key("o"))
+		m, _ = step(t, m, cmd())
+		if !strings.Contains(m.View(), "ann@example.com") {
+			t.Fatal("not shown")
+		}
+		return m
+	}
+	m := reveal(t)
+	m, _ = step(t, m, tea.MouseMsg{Y: 1, Button: tea.MouseButtonWheelDown, Action: tea.MouseActionPress})
+	if m.selected == "lea-a/b" || m.revealed != nil || strings.Contains(m.View(), "ann@example.com") {
+		t.Fatalf("still shown after the wheel (selected %s)", m.selected)
+	}
+	// Drawn on the selected card only, even while kept.
+	m = reveal(t)
+	m.selected = "lea-a/c"
+	if strings.Contains(m.View(), "ann@example.com") {
+		t.Fatal("drawn on a card not selected")
+	}
+}
+
+// A renewal input the Lock could not check now says so.
+func TestHubRenewalSaysWhatWasNotChecked(t *testing.T) {
+	a := ticketed("b", false)
+	a.Hub[0].Renews = &HubRenewal{Of: "T1", Checked: true, Changes: []HubChange{{"schema", "unchecked"}}}
+	if v := wide(t, readable(loaded(t, &fakeAPI{}, "lea-a/b", a))).View(); !strings.Contains(v, "schema: not checked now; the run checks it") {
+		t.Fatalf("card:\n%s", v)
+	}
+}

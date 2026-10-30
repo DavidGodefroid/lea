@@ -264,8 +264,9 @@ func TestHubRevealRefusesBadKeysAndAnswers(t *testing.T) {
 			os.Rename(k.deckPath, k.deckPath+".real")
 			os.Symlink(k.deckPath+".real", k.deckPath)
 		}, want: "not a regular file"},
-		"key missing": {prep: func(t *testing.T, k facadeKeys) { os.Remove(k.deckPath) }, want: "run lock up"},
-		"key not PEM": {prep: func(t *testing.T, k facadeKeys) { os.WriteFile(k.deckPath, []byte("x"), 0o600) }, want: "not a PEM"},
+		"directory writable by others": {prep: func(t *testing.T, k facadeKeys) { os.Chmod(k.dir, 0o777) }, want: "others can write"},
+		"key missing":                  {prep: func(t *testing.T, k facadeKeys) { os.Remove(k.deckPath) }, want: "run lock up"},
+		"key not PEM":                  {prep: func(t *testing.T, k facadeKeys) { os.WriteFile(k.deckPath, []byte("x"), 0o600) }, want: "not a PEM"},
 		"lock keys writable by others": {prep: func(t *testing.T, k facadeKeys) {
 			os.Chmod(filepath.Join(k.dir, "locks.json"), 0o666)
 		}, want: "mode"},
@@ -476,5 +477,49 @@ func TestFacadeKeysLoad(t *testing.T) {
 	os.WriteFile(filepath.Join(k.dir, "locks.json"), []byte(`{"locks":{"crm":{"public_key":"eA=="}}}`), 0o600)
 	if _, err := loadLockKeys(filepath.Join(k.dir, "locks.json")); err == nil {
 		t.Fatal("a short key read")
+	}
+}
+
+// A hub answer that is no valid JSON says so in fixed words, never the decoder's (the hub's bytes).
+func TestHubInvalidAnswerIsAFixedMessage(t *testing.T) {
+	k := writeFacadeKeys(t)
+	h := &fakeHub{queue: []map[string]any{signedBy(queued(ticketA, "crm", "locksql", "dev-1", "", false, ""), k.lockPub)},
+		onReveal: func([]byte) (int, any) { return 200, json.RawMessage(`{"answer": xSECRET}`) }}
+	e, dev, _ := hubEnv(t, h)
+	e.d.SetAgents(&fakeAgents{})
+	e.d.SetHubKeys(k.dir)
+	e.d.st.AddHubWait(dev, ticketA, "locksql", "crm", 1)
+	if _, err := e.d.pollHubQueue(e.ctx, 0); err != nil {
+		t.Fatal(err)
+	}
+	err := call(t, e.api, "", "hub_reveal", revealParams("lea-a"), nil)
+	if err == nil || !strings.Contains(err.Error(), "the hub's answer is not valid") || strings.Contains(err.Error(), "SECRET") {
+		t.Fatalf("err %v", err)
+	}
+}
+
+// A queue a poll set while the renewal was in flight (with the renewal's card) is kept: the
+// renewed ticket goes from the queue as it is then, not from an older copy.
+func TestHubRenewKeepsANewerQueue(t *testing.T) {
+	k := writeFacadeKeys(t)
+	exp := signedBy(queued(ticketA, "crm", "locksql", "dev-1", "", false, ""), k.lockPub)
+	h := &fakeHub{expired: []map[string]any{exp}}
+	e, dev, _ := hubEnv(t, h)
+	e.d.SetAgents(&fakeAgents{rows: []agents.Row{{Key: dev, Name: "dev-1"}}})
+	if _, err := e.d.pollHubQueue(e.ctx, 0); err != nil {
+		t.Fatal(err)
+	}
+	h.onRenew = func([]byte) (int, any) {
+		// The hub's queue moved on meanwhile: the renewal is pending, the expired ticket listed still.
+		ren := HubTicket{ID: ticketC, Instance: "crm", Lock: "locksql", Agent: "dev-1", Renews: &HubRenewal{Of: ticketA, Checked: true}}
+		old := HubTicket{ID: ticketA, Instance: "crm", Lock: "locksql", Agent: "dev-1", Expired: true}
+		e.d.setHubQueue(e.ctx, []HubTicket{ren, old}, true)
+		return 200, map[string]any{"ticket": ticketC, "auto_approved": false}
+	}
+	if err := call(t, e.api, "", "hub_renew", map[string]any{"container": "lea-a", "instance": "crm", "id": ticketA}, nil); err != nil {
+		t.Fatal(err)
+	}
+	if hs := cardsOf(e, dev).Agents[0].Hub; len(hs) != 1 || hs[0].ID != ticketC {
+		t.Fatalf("cards %+v", hs)
 	}
 }

@@ -3,7 +3,7 @@ module github.com/DavidGodefroid/lea
 go 1.26.0
 
 require (
-	github.com/DavidGodefroid/lockkit v0.5.0
+	github.com/DavidGodefroid/lockkit v0.6.0
 	github.com/charmbracelet/bubbletea v1.3.10
 	github.com/charmbracelet/lipgloss v1.1.0
 	github.com/charmbracelet/x/term v0.2.1
