@@ -25,16 +25,17 @@ launcher() {
 
 @test "a launcher older than the release lea pins is a warning, not a failure; the pin or later, or a clone's, says nothing" {
   [ "$LEA_LOCKHTTP_RELEASE" = v0.5.0 ]
-  for v in 0.4.0 0.2.1 0.5.0-rc.1; do
+  for v in 0.4.0 0.2.1 0.5.0-rc.1 garbage; do
     launcher "$v" "$D"
     run lea__doctor_lockhttp
     [ "$status" -eq 0 ]
     [[ "$output" == *"warn  lockhttp launcher: v$v, older than v0.5.0, the release lea pins"*"LOCKHTTP_VERSION=v0.5.0 sh install.sh"* ]]
     [[ "$output" != *FAIL* ]]
   done
-  for v in 0.5.0 0.5.1 1.0.0 dev; do
+  for v in 0.5.0 0.5.1 1.0.0 0.6.0-rc.1 0.5.0+build v0.5.0 dev; do
     launcher "$v" "$D"
     run lea__doctor_lockhttp
+    [ "$status" -eq 0 ]
     [[ "$output" != *"older than"* ]]
   done
 }
