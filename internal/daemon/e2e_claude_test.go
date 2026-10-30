@@ -222,7 +222,17 @@ func (e *claudeE2E) restartDaemon(down func()) {
 		}
 		time.Sleep(100 * time.Millisecond)
 	}
-	time.Sleep(200 * time.Millisecond) // the bus listener closes with it
+	for i := 0; ; i++ { // the bus listener closes with it
+		c, err := net.DialTimeout("unix", e.bus, 100*time.Millisecond)
+		if err != nil {
+			break
+		}
+		c.Close()
+		if i == 50 {
+			e.t.Fatal("the bus did not close")
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
 	if down != nil {
 		down()
 	}

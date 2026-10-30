@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -61,7 +62,9 @@ func TestClaudePhase3SuspendResumeEndToEnd(t *testing.T) {
 	}
 	stub := filepath.Join(t.TempDir(), "lockstub.py")
 	runs := filepath.Join(t.TempDir(), "runs.log")
-	os.WriteFile(stub, []byte(lockStubRun), 0o600)
+	if err := os.WriteFile(stub, []byte(lockStubRun), 0o600); err != nil {
+		t.Fatal(err)
+	}
 	mcp, _ := json.Marshal(map[string]any{"mcpServers": map[string]any{
 		"lockstub": map[string]any{"type": "stdio", "command": "python3", "args": []string{"-I", stub, testTicket, runs}}}})
 	args := []string{"--mcp-config", string(mcp), "--strict-mcp-config", "--allowedTools=mcp__lockstub__run"}
@@ -70,15 +73,14 @@ func TestClaudePhase3SuspendResumeEndToEnd(t *testing.T) {
 	e.mu.Lock()
 	// The fake model calls the run once, then, told of the approval, calls it again with the
 	// ticket until the Lock ran it; else it answers with text.
-	called := false
+	var called atomic.Bool
 	e.answer = func(b string) (string, string) {
 		if !strings.Contains(b, `"`+tool+`"`) {
 			return "", "" // a request that does not offer the Lock (Claude's own side requests)
 		}
 		ran, _ := os.ReadFile(runs)
 		switch {
-		case !called:
-			called = true
+		case called.CompareAndSwap(false, true):
 			return tool, "{}"
 		case strings.Contains(b, approved) && len(ran) == 0:
 			return tool, `{"ticket":"` + testTicket + `"}`
@@ -96,29 +98,41 @@ func TestClaudePhase3SuspendResumeEndToEnd(t *testing.T) {
 	if ws, err := e.st.PendingHubWaits(a.Key); err != nil || len(ws) != 1 || ws[0].Ticket != testTicket {
 		t.Fatalf("waits %+v %v", ws, err)
 	}
-	kidBefore, _ := e.st.AgentByKey(kid.Key)
+	if err := e.st.SetState(kid.Key, "idle", "", time.Now().Unix()); err != nil {
+		t.Fatal(err)
+	}
+	ends := e.events(a.Key, "SessionEnd")
 
 	// The keepalive elapses: that agent alone is stopped, its session kept.
 	e.until("the soft stop", 30, func(b store.Agent) bool { return b.State == store.StateSuspendedCold })
-	time.Sleep(2 * time.Second) // the stopped Claude's SessionEnd leaves the agent cold
+	e.waitEvents(a.Key, "SessionEnd", ends+1) // the stopped Claude's SessionEnd leaves the agent cold
 	if b := e.until("still cold", 1, func(store.Agent) bool { return true }); b.State != store.StateSuspendedCold || b.SessionID != a.SessionID {
 		t.Fatalf("after the soft stop: %+v", b)
 	}
-	if k, _ := e.st.AgentByKey(kid.Key); k.State != kidBefore.State {
-		t.Fatalf("the child went from %s to %s with its lead's soft stop", kidBefore.State, k.State)
+	if k, _ := e.st.AgentByKey(kid.Key); k.State != "idle" {
+		t.Fatalf("the child went from idle to %s with its lead's soft stop", k.State)
 	}
 
 	// The daemon stops; the hub approves meanwhile; the restarted daemon reads the decision from
 	// its cursor and resumes the session with it, and the Lock runs.
+	// An earlier decision (no agent waits on it) moves lea's cursor to 1 before the stop.
+	const earlier = "01JB8Z5Q3W4X7Y9ABCDEFGHJKP"
 	hub := &fakeHub{}
 	sock := serveHub(t, hub)
+	hub.decide(earlier, "crm-prod", "approved", "")
 	e.d.SetHubFacade(SocketFacade{Path: sock})
-	if err := e.d.syncHub(t.Context()); err != nil { // the cursor before the decision
+	if err := e.d.syncHub(t.Context()); err != nil {
 		t.Fatal(err)
+	}
+	if c, _ := e.st.HubCursor(); c != "1" {
+		t.Fatalf("cursor %q before the stop", c)
 	}
 	e.mu.Lock()
 	before := len(e.bodies)
 	e.mu.Unlock()
+	hub.mu.Lock()
+	callsBefore := len(hub.calls)
+	hub.mu.Unlock()
 	e.restartDaemon(func() { hub.decide(testTicket, "crm-prod", "approved", "") })
 	e.d.SetAgents(fa)
 	e.d.SetKeepalive(2 * time.Second)
@@ -134,6 +148,16 @@ func TestClaudePhase3SuspendResumeEndToEnd(t *testing.T) {
 		time.Sleep(200 * time.Millisecond)
 	}
 	e.until("the resumed turn's end", 60, func(b store.Agent) bool { return b.State == "idle" && b.SessionID == a.SessionID })
+	// The restarted daemon read from its cursor, not from the start.
+	hub.mu.Lock()
+	calls := strings.Join(hub.calls[callsBefore:], "\n")
+	hub.mu.Unlock()
+	if !strings.Contains(calls, "GET /v1/decided?since=1") || strings.Contains(calls, "GET /v1/decided?since=0") {
+		t.Fatalf("the hub's decisions were not read from the cursor:\n%s", calls)
+	}
+	if c, _ := e.st.HubCursor(); c != "2" {
+		t.Fatalf("cursor %q after the decision", c)
+	}
 	if ws, err := e.st.UndeliveredHubWaits(a.Key); err != nil || len(ws) != 0 {
 		t.Fatalf("undelivered %+v %v", ws, err)
 	}
@@ -143,16 +167,27 @@ func TestClaudePhase3SuspendResumeEndToEnd(t *testing.T) {
 	if !strings.Contains(sent, approved) || !strings.Contains(sent, "run the plan") {
 		t.Fatalf("the resumed session lacks the decision or its history:\n%.3000s", sent)
 	}
-	if ms, _ := e.st.Unread(a.Key, 10); len(ms) != 0 {
-		t.Fatalf("the decision also went to the inbox: %+v", ms)
+	// Told once, by the resume prompt: no copy in its inbox, read or not, and no inbox notice.
+	ms, err := e.st.Thread(a.Key, 50)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, m := range ms {
+		if strings.Contains(m.Body, "approved") {
+			t.Fatalf("the decision also went to the inbox: %+v", m)
+		}
+	}
+	if strings.Contains(sent, "unread message(s)") {
+		t.Fatalf("the resumed turn was also told of an unread message:\n%.3000s", sent)
 	}
 
 	// Suspended again and stopped, the lead is woken by its child's message.
 	if err := e.d.suspend(a.Key); err != nil {
 		t.Fatal(err)
 	}
+	ends = e.events(a.Key, "SessionEnd")
 	e.until("the second soft stop", 30, func(b store.Agent) bool { return b.State == store.StateSuspendedCold })
-	time.Sleep(2 * time.Second)
+	e.waitEvents(a.Key, "SessionEnd", ends+1)
 	e.mu.Lock()
 	before = len(e.bodies)
 	e.mu.Unlock()
@@ -162,11 +197,29 @@ func TestClaudePhase3SuspendResumeEndToEnd(t *testing.T) {
 	e.until("the lead's turn on its child's message", 60, func(b store.Agent) bool {
 		e.mu.Lock()
 		defer e.mu.Unlock()
-		return b.State == "idle" && strings.Contains(strings.Join(e.bodies[before:], "\n"), "unread message(s)")
+		return b.State == "idle" && b.SessionID == a.SessionID && strings.Contains(strings.Join(e.bodies[before:], "\n"), "unread message(s)")
 	})
 	e.mu.Lock()
 	defer e.mu.Unlock()
-	if sent := strings.Join(e.bodies[before:], "\n"); !regexp.MustCompile(`unread message\(s\) from [^.]*\bkid\b`).MatchString(sent) {
+	if sent := strings.Join(e.bodies[before:], "\n"); !regexp.MustCompile(`unread message\(s\) from [^.]*\bkid\b`).MatchString(sent) || !strings.Contains(sent, "run the plan") {
 		t.Fatalf("the lead's resumed turn lacks its child's message:\n%.3000s", sent)
 	}
+}
+
+// events is how many hook events of kind agent sent.
+func (e *claudeE2E) events(agent, kind string) int {
+	ps, _ := e.st.EventPayloads(agent, kind)
+	return len(ps)
+}
+
+// waitEvents waits until agent sent n hook events of kind.
+func (e *claudeE2E) waitEvents(agent, kind string, n int) {
+	e.t.Helper()
+	for i := 0; e.events(agent, kind) < n; i++ {
+		if i == 150 {
+			e.t.Fatalf("%d %s events of %s, want %d", e.events(agent, kind), kind, agent, n)
+		}
+		time.Sleep(200 * time.Millisecond)
+	}
+	time.Sleep(500 * time.Millisecond) // the daemon handled it
 }
