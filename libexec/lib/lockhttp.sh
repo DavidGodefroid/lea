@@ -3,6 +3,11 @@
 # beside the proxy (contract: lockhttp's docs/lea.md, §6). The gate runs from the image the
 # launcher pins, as gate (uid 10003 in the image), with the console's socket volume lockhttp-run.
 
+# LEA_LOCKHTTP_RELEASE: the lockhttp release lea pins: the one this lea is tested with, whose gate
+# has every flag lea may pass (hub mode v0.3.0, devices v0.4.0, facade keys v0.5.0). lea runs the
+# image of the launcher installed on the host; lea doctor warns when it is older than this one.
+LEA_LOCKHTTP_RELEASE=v0.5.0
+
 # lea__lockhttp_image: the gate's image as lea's launcher runs it (internal/launcher/lockhttp.go):
 # the release image by the digest lockhttp's launcher pins, or the local image lockhttp for a
 # launcher run from a clone. On failure, prints why and returns 1.
@@ -30,6 +35,16 @@ lea__doctor_lockhttp() {
   _dh_rc=0 _dh_g=$LEA_PREFIX-lockhttp-gate
   if _dh_img=$(lea__lockhttp_image); then lea__ok "lockhttp launcher (gate image $_dh_img)"
   else lea__fail "lockhttp launcher" "$_dh_img"; _dh_img=; _dh_rc=1; fi
+  # The launcher's release, but for a clone's (dev).
+  _dh_v=
+  if _dh_b=$(lea__lockhost_bin lockhttp); then
+    _dh_v=$(head -c 65536 "$_dh_b" | sed -n 's/^launcher_version=\([0-9A-Za-z.+-]*\)$/\1/p' | head -n 1)
+  fi
+  if [ -n "$_dh_v" ] && [ "$_dh_v" != dev ]; then
+    if ! lea__semver "v$_dh_v" >/dev/null || lea__older "v$_dh_v" "$LEA_LOCKHTTP_RELEASE"; then
+      lea__warn "lockhttp launcher" "v$_dh_v, older than $LEA_LOCKHTTP_RELEASE, the release lea pins (lea leaves out the gate's features it lacks): LOCKHTTP_VERSION=$LEA_LOCKHTTP_RELEASE sh install.sh (lockhttp's docs/docker.md)"
+    fi
+  fi
   if [ -z "${LEA_GIT_SSH:-}" ]; then lea__ok "LockHTTP: no SSH forwarder (LEA_GIT_SSH empty)"
   else lea__fail "LockHTTP" "LEA_GIT_SSH is set: its forwarders would bypass the gate"; _dh_rc=1; fi
   if [ -n "${LEA_OTEL_UPSTREAM:-}" ]; then lea__fail "LockHTTP" "LEA_OTEL_UPSTREAM is set: its TCP forwarder would bypass the gate"; _dh_rc=1; fi
