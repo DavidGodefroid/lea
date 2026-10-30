@@ -57,6 +57,7 @@ type claudeE2E struct {
 	limited bool
 	bodies  []string
 	claude  string
+	lea     string // the core binary, built from this tree
 	wd      string
 	env     []string
 	sf      string
@@ -86,6 +87,7 @@ func newClaudeE2E(t *testing.T) *claudeE2E {
 	e := &claudeE2E{t: t, limited: true, claude: claude}
 	dir := shortDir(t)
 	lea := filepath.Join(dir, "lea")
+	e.lea = lea
 	if out, err := exec.Command("go", "build", "-o", lea, "../../cmd/lea").CombinedOutput(); err != nil {
 		t.Fatalf("build lea: %v\n%s", err, out)
 	}
