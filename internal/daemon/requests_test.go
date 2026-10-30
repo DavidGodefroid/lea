@@ -121,7 +121,7 @@ func TestAtMostTwoPendingRequests(t *testing.T) {
 	if _, err := requestFrom(t, e, "kid", map[string]any{"brief": "three"}); err == nil || !strings.Contains(err.Error(), "at most 2") {
 		t.Fatalf("third pending: err=%v", err)
 	}
-	*e.clock += 3601 // nobody answered for an hour: both expire
+	e.clock.Add(3601) // nobody answered for an hour: both expire
 	if _, err := requestFrom(t, e, "kid", map[string]any{"brief": "three"}); err != nil {
 		t.Fatalf("after expiry: %v", err)
 	}
@@ -147,7 +147,7 @@ func TestADeclinedBriefCannotBeSentAgain(t *testing.T) {
 			t.Fatalf("%q sent again: err=%v", b, err)
 		}
 	}
-	*e.clock += 61 // the refused calls used the rate window
+	e.clock.Add(61) // the refused calls used the rate window
 	if _, err := requestFrom(t, e, "kid", map[string]any{"brief": "review the cart and the tests"}); err != nil {
 		t.Fatalf("a changed brief: %v", err)
 	}
@@ -340,11 +340,11 @@ func TestARequestPastItsTTLIsNeitherAcceptedNorListed(t *testing.T) {
 	toBoss, _ := requestFrom(t, e, "kid", map[string]any{"brief": "x"})
 	// A request to the user, as from a container without a lead.
 	r, err := e.d.st.AddSpawnRequest(store.SpawnRequest{Container: "lea-a", Requester: "lea-a/solo", Lead: "user", Role: "dev",
-		Profile: "claude", Brief: "z"}, func(int64) string { return "r" }, 2, requestTTL, *e.clock)
+		Profile: "claude", Brief: "z"}, func(int64) string { return "r" }, 2, requestTTL, e.clock.Load())
 	if err != nil {
 		t.Fatal(err)
 	}
-	*e.clock += requestTTL
+	e.clock.Add(requestTTL)
 	for _, f := range []string{"#" + strconv.FormatInt(toBoss.Request, 10), "kid"} {
 		if err := call(t, e.bus, "boss", "agents_spawn", map[string]any{"for": f, "brief": "x"}, nil); err == nil || !strings.Contains(err.Error(), "no pending spawn request") {
 			t.Fatalf("expired request accepted with for=%s: err=%v", f, err)
@@ -376,12 +376,12 @@ func TestARequestDiesWithItsRequester(t *testing.T) {
 	solo := spawned(t, e, "solo", "dev", "")
 	toBoss, _ := requestFrom(t, e, "kid", map[string]any{"brief": "x"})
 	toUser, err := e.d.st.AddSpawnRequest(store.SpawnRequest{Container: "lea-a", Requester: solo, Lead: "user", Role: "dev",
-		Profile: "claude", Brief: "z"}, func(int64) string { return "r" }, 2, requestTTL, *e.clock)
+		Profile: "claude", Brief: "z"}, func(int64) string { return "r" }, 2, requestTTL, e.clock.Load())
 	if err != nil {
 		t.Fatal(err)
 	}
 	for _, k := range []string{kid, solo} {
-		if err := e.d.st.SetState(k, "done", "", *e.clock); err != nil {
+		if err := e.d.st.SetState(k, "done", "", e.clock.Load()); err != nil {
 			t.Fatal(err)
 		}
 	}

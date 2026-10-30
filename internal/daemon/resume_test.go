@@ -86,7 +86,7 @@ func TestUsageLimitResumesAtTheReset(t *testing.T) {
 	if r := limitWait(t, e, "dev", job1, true, 1); r != (waitAnswer{}) {
 		t.Fatalf("early answer %+v", r)
 	}
-	*e.clock = 1660
+	e.clock.Store(1660)
 	if r := limitWait(t, e, "dev", job1, false, 1); !r.Resume {
 		t.Fatalf("not resumed: %+v", r)
 	}
@@ -113,7 +113,7 @@ func TestLimitWaitWakesAtTheResumeTime(t *testing.T) {
 	e.d.SetResume(true, 0)
 	reportLimits(t, e, "dev", map[string]any{"window": "5h", "pct": 100, "resets_at": 1001})
 	limitHit(t, e, "dev", "rate_limit")
-	go func() { time.Sleep(300 * time.Millisecond); *e.clock = 1001 }()
+	go func() { time.Sleep(300 * time.Millisecond); e.clock.Store(1001) }()
 	start := time.Now()
 	if r := limitWait(t, e, "dev", job1, true, 4); !r.Resume {
 		t.Fatalf("answer %+v", r)
@@ -266,7 +266,7 @@ func TestAPausedAgentIsNotResumed(t *testing.T) {
 	}
 	limitHit(t, e, "dev", "rate_limit")
 	e.d.st.SetPaused("lea-a/dev", true)
-	*e.clock = 5000
+	e.clock.Store(5000)
 	if r := limitWait(t, e, "dev", job1, true, 1); r != (waitAnswer{}) {
 		t.Fatalf("paused agent answered %+v", r)
 	}
@@ -324,7 +324,7 @@ func TestALimitRecordedAfterTheJobsFirstCallIsStillResumed(t *testing.T) {
 	go func() { done <- limitWait(t, e, "dev", job1, true, 4) }()
 	time.Sleep(300 * time.Millisecond)
 	limitHit(t, e, "dev", "rate_limit")
-	*e.clock += 10_000
+	e.clock.Add(10_000)
 	e.d.wake(limitKey("lea-a/dev"))
 	select {
 	case r := <-done:
@@ -371,7 +371,7 @@ func TestAStaleGiveUpDoesNotLoseANewLimit(t *testing.T) {
 	go func() { done <- limitWait(t, e, "dev", job1, true, 4) }()
 	time.Sleep(300 * time.Millisecond)
 	limitHit(t, e, "dev", "rate_limit")
-	*e.clock += 10_000
+	e.clock.Add(10_000)
 	e.d.wake(limitKey("lea-a/dev"))
 	select {
 	case r := <-done:
@@ -397,7 +397,7 @@ func restartWait(t *testing.T, e env, agent, job string, timeoutS int) waitAnswe
 func restartContainer(t *testing.T, e env, agent string) {
 	t.Helper()
 	for _, st := range []string{"stopped", "unknown"} {
-		if err := e.d.st.SetState("lea-a/"+agent, st, "", *e.clock); err != nil {
+		if err := e.d.st.SetState("lea-a/"+agent, st, "", e.clock.Load()); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -422,7 +422,7 @@ func TestAPendingResumeSurvivesAContainerRestart(t *testing.T) {
 	if r := restartWait(t, e, "dev", job1, 1); r != (waitAnswer{}) {
 		t.Fatalf("early answer %+v", r)
 	}
-	*e.clock = 1660
+	e.clock.Store(1660)
 	if r := limitWait(t, e, "dev", job1, false, 1); !r.Resume {
 		t.Fatalf("not resumed: %+v", r)
 	}
@@ -470,8 +470,8 @@ func TestARestartedResumeIsBounded(t *testing.T) {
 		t.Fatalf("agent=%+v", a)
 	}
 
-	*e.clock = 2 * maxResumeHorizon
-	e.d.st.SetLimit("lea-a/dev", *e.clock-maxResumeHorizon-1, 1)
+	e.clock.Store(2 * maxResumeHorizon)
+	e.d.st.SetLimit("lea-a/dev", e.clock.Load()-maxResumeHorizon-1, 1)
 	if r := restartWait(t, e, "dev", job2, 1); !r.Done {
 		t.Fatalf("a stale resume was kept: %+v", r)
 	}
@@ -480,7 +480,7 @@ func TestARestartedResumeIsBounded(t *testing.T) {
 	}
 
 	// A time beyond the horizon ahead (a clock set back between containers) is not believed.
-	e.d.st.SetLimit("lea-a/dev", *e.clock+maxResumeHorizon+1, 1)
+	e.d.st.SetLimit("lea-a/dev", e.clock.Load()+maxResumeHorizon+1, 1)
 	if r := restartWait(t, e, "dev", job2, 1); !r.Done {
 		t.Fatalf("a resume beyond the horizon was kept: %+v", r)
 	}
@@ -489,7 +489,7 @@ func TestARestartedResumeIsBounded(t *testing.T) {
 	}
 
 	e.d.SetResume(false, 0)
-	e.d.st.SetLimit("lea-a/dev", *e.clock+5000, 1)
+	e.d.st.SetLimit("lea-a/dev", e.clock.Load()+5000, 1)
 	if r := restartWait(t, e, "dev", job1, 1); !r.Done {
 		t.Fatalf("auto-resume off, still resumed: %+v", r)
 	}
@@ -525,7 +525,7 @@ func TestAStoppedAgentsResumeIsLeftToTheNextContainer(t *testing.T) {
 	limitHit(t, e, "dev", "rate_limit")
 	e.d.st.SetLimit("lea-a/dev", 1500, 1)
 	e.d.st.SetState("lea-a/dev", "stopped", "", 1000)
-	*e.clock = 2000
+	e.clock.Store(2000)
 	if r := limitWait(t, e, "dev", job1, false, 1); r != (waitAnswer{}) {
 		t.Fatalf("a stopped agent was resumed: %+v", r)
 	}
@@ -536,7 +536,7 @@ func TestAStoppedAgentsResumeIsLeftToTheNextContainer(t *testing.T) {
 	if r := restartWait(t, e, "dev", job2, 1); r != (waitAnswer{}) {
 		t.Fatalf("resumed at once after the restart: %+v", r)
 	}
-	*e.clock += minResumeWait
+	e.clock.Add(minResumeWait)
 	if r := limitWait(t, e, "dev", job2, false, 1); !r.Resume {
 		t.Fatalf("the next container did not resume it: %+v", r)
 	}
@@ -558,7 +558,7 @@ func TestAPausedLimitedAgentIsNotResumedAfterARestart(t *testing.T) {
 	if a := agentRow(t, e, "lea-a/dev"); a.Paused || a.LimitUntil != -1 {
 		t.Fatalf("agent=%+v", a)
 	}
-	*e.clock = 5000
+	e.clock.Store(5000)
 	if r := restartWait(t, e, "dev", job1, 1); !r.Done {
 		t.Fatalf("a paused agent was resumed after the restart: %+v", r)
 	}

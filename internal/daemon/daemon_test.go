@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 	"unicode/utf8"
@@ -29,11 +30,12 @@ func shortDir(t *testing.T) string {
 }
 
 type env struct {
-	d     *Daemon
-	api   string
-	bus   string
-	ctx   context.Context
-	clock *int64
+	d   *Daemon
+	api string
+	bus string
+	ctx context.Context
+	// clock is the daemon's clock (d.now), set by the tests while its goroutines read it.
+	clock *atomic.Int64
 }
 
 func start(t *testing.T) env {
@@ -44,8 +46,9 @@ func start(t *testing.T) env {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { st.Close() })
-	clock := int64(1000)
-	d := New(st, filepath.Join(dir, "run"), func() int64 { return clock })
+	clock := new(atomic.Int64)
+	clock.Store(1000)
+	d := New(st, filepath.Join(dir, "run"), clock.Load)
 	ctx, cancel := context.WithCancel(context.Background())
 	t.Cleanup(cancel)
 	api := filepath.Join(dir, "d.sock")
@@ -58,7 +61,7 @@ func start(t *testing.T) env {
 	if err != nil {
 		t.Fatal(err)
 	}
-	return env{d: d, api: api, bus: bus, ctx: ctx, clock: &clock}
+	return env{d: d, api: api, bus: bus, ctx: ctx, clock: clock}
 }
 
 func call(t *testing.T, sock, agent, method string, params, result any) error {

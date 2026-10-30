@@ -86,7 +86,7 @@ func TestThreadListFitsOnTheWire(t *testing.T) {
 	big := strings.Repeat("<", 60<<10)
 	for i := 0; i < 30; i++ {
 		if i%10 == 0 {
-			*e.clock += 61
+			e.clock.Add(61)
 		}
 		if err := call(t, e.bus, "dev", "msg_send", map[string]any{"to": "user", "body": big, "kind": "note"}, nil); err != nil {
 			t.Fatal(err)

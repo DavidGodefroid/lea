@@ -84,6 +84,8 @@ CREATE TABLE IF NOT EXISTS hub_waits(
   reason TEXT NOT NULL DEFAULT '', delivered INTEGER NOT NULL DEFAULT 0,
   PRIMARY KEY(agent_key, ticket));
 CREATE INDEX IF NOT EXISTS hub_waits_ticket ON hub_waits(ticket);
+CREATE TABLE IF NOT EXISTS hub_abandoned(
+  instance TEXT NOT NULL, ticket TEXT NOT NULL, at INTEGER NOT NULL, PRIMARY KEY(instance, ticket));
 CREATE TABLE IF NOT EXISTS kv(key TEXT PRIMARY KEY, value TEXT NOT NULL);
 `
 
@@ -563,10 +565,15 @@ func (s *Store) ForgetAgent(key string) error {
 	}
 	// Its hub waits are abandoned (lea stop --forget, an agent removed for good): no later agent
 	// of the same name gets their decisions or is resumed for them. lea cannot withdraw a ticket
-	// on the hub (only its Lock can): an abandoned ticket shows on no agent of the deck as
-	// verified, only as unverified on a live agent its requester names, if any; it expires on the
-	// hub unless answered there; its run, asked by the forgotten agent's token, has no one to call
-	// it.
+	// on the hub (only its Lock can): an abandoned ticket shows on no agent of the deck, not even
+	// as unverified on a live agent its requester names (hub_abandoned), until an agent waits on
+	// it again; it expires on the hub
+	// unless answered there; its run, asked by the forgotten agent's token, has no one to call it.
+	if _, err := tx.Exec(`INSERT INTO hub_abandoned(instance, ticket, at)
+		SELECT instance, ticket, CAST(strftime('%s','now') AS INTEGER) FROM hub_waits WHERE agent_key=? AND decision='' ORDER BY 1, 2
+		ON CONFLICT(instance, ticket) DO UPDATE SET at=excluded.at`, key); err != nil {
+		return err
+	}
 	if _, err := tx.Exec(`DELETE FROM hub_waits WHERE agent_key=?`, key); err != nil {
 		return err
 	}

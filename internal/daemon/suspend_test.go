@@ -162,7 +162,7 @@ func TestTheSweepTakesOverTheSuspendedAgents(t *testing.T) {
 	e.d.SetAgents(fa)
 	warm := spawned(t, e, "warm", "dev", "")
 	cold := spawned(t, e, "cold", "dev", "")
-	if err := e.d.st.SetState(warm, store.StateSuspendedWarm, "", *e.clock-600); err != nil {
+	if err := e.d.st.SetState(warm, store.StateSuspendedWarm, "", e.clock.Load()-600); err != nil {
 		t.Fatal(err)
 	}
 	if err := e.d.st.SetState(cold, store.StateSuspendedCold, "11111111-2222-3333-4444-555555555555", 2); err != nil {

@@ -375,7 +375,7 @@ func TestRacingAsksNeverCloseALoop(t *testing.T) {
 	e := start(t)
 	register(t, e, "a", "b")
 	for i := 0; i < 10; i++ {
-		*e.clock += 61 // fresh rate windows: the asks and their questions
+		e.clock.Add(61) // fresh rate windows: the asks and their questions
 		go1 := make(chan struct{})
 		chs := []<-chan error{}
 		for _, p := range [][2]string{{"a", "b"}, {"b", "a"}} {

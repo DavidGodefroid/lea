@@ -69,7 +69,7 @@ func TestStopChecksAreCountedOneAtATime(t *testing.T) {
 	// were read and written by several checks at once.
 	for i := 0; i < 64; i++ {
 		if i%10 == 0 {
-			*e.clock += 61 // the user's rate limit: 10 a minute
+			e.clock.Add(61) // the user's rate limit: 10 a minute
 		}
 		userSends(t, e, "dev", fmt.Sprintf("m%d", i))
 	}
