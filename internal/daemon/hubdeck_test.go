@@ -345,4 +345,51 @@ func TestHubQueueDoesNotShowAnAbandonedTicketOnALiveAgentOfTheSameName(t *testin
 	if a := cardsOf(e, again).Agents[0].Hub; len(a) != 1 || a[0].ID != ticketB || !a[0].Verified {
 		t.Fatalf("a new wait's card %+v", a)
 	}
+	if v := lockView(e, "lockmq"); v == nil || v.Pending != 1 {
+		t.Fatalf("lockmq %+v", v)
+	}
+
+	// The same agent waiting again on a ticket lea abandoned (the hub off, then on: its Lock
+	// answers the same ticket) has it again, verified, and gets its decision.
+	h.mu.Lock()
+	h.queue = append(h.queue, queued(ticketC, "crm", "locksql", "dev-2", "", false, ""))
+	h.mu.Unlock()
+	if err := e.d.st.AddHubWait(dev2, ticketC, "locksql", "crm", 4); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := e.d.st.AbandonAllHubWaits("off", 5); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := e.d.pollHubQueue(e.ctx, 0); err != nil {
+		t.Fatal(err)
+	}
+	if b := cardsOf(e, dev2).Agents[0].Hub; len(b) != 0 {
+		t.Fatalf("the abandoned ticket shows: %+v", b)
+	}
+	if err := e.d.st.AddHubWait(dev2, ticketC, "locksql", "crm", 6); err != nil {
+		t.Fatal(err)
+	}
+	if ws, err := e.d.st.PendingHubWaits(dev2); err != nil || len(ws) != 1 || ws[0].Ticket != ticketC {
+		t.Fatalf("dev-2's waits %+v %v", ws, err)
+	}
+	if _, err := e.d.pollHubQueue(e.ctx, 0); err != nil {
+		t.Fatal(err)
+	}
+	if b := cardsOf(e, dev2).Agents[0].Hub; len(b) != 1 || b[0].ID != ticketC || !b[0].Verified {
+		t.Fatalf("dev-2's card after waiting again %+v", b)
+	}
+	h.decide(ticketC, "crm", "approved", "")
+	if err := e.d.syncHub(e.ctx); err != nil {
+		t.Fatal(err)
+	}
+	ms, err := e.d.st.Unread(dev2, 10)
+	approved := 0
+	for _, m := range ms {
+		if strings.Contains(m.Body, "ticket "+ticketC+" on locksql (crm) approved") {
+			approved++
+		}
+	}
+	if err != nil || approved != 1 {
+		t.Fatalf("dev-2's inbox %+v %v", ms, err)
+	}
 }

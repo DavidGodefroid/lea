@@ -26,8 +26,9 @@ import (
 // (a long poll), shows each one on the agent it is for, and answers it there with the user's
 // approval or denial (facade "deck"). A ticket is for the agent whose own wait names it (hub_waits,
 // verified), else for the agent its requester claims (the requester is the agent's own words:
-// unverified). A ticket no agent of lea claims shows nowhere: `lock approve` answers it. Each
-// Lock's counter (#153) follows the queue.
+// unverified). A ticket no agent of lea claims shows nowhere: `lock approve` answers it; nor does
+// one lea stopped waiting on (its agent forgotten, the hub switched off: hub_abandoned) until an
+// agent waits on it again. Each Lock's counter (#153) follows the queue.
 
 const (
 	// hubQueueWait is the long poll of GET /v1/queue (the hub caps it at 60 s); hubQueueRetry the

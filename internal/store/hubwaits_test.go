@@ -247,3 +247,36 @@ func TestAbandonedHubTicketsAreRecordedThenPurged(t *testing.T) {
 		t.Fatalf("after the purge %v (the forgotten one's time is the wall clock)", got)
 	}
 }
+
+// The same agent waiting again on a ticket lea abandoned waits anew: pending, the abandoned record
+// gone; a decided wait stays decided.
+func TestAddHubWaitRevivesAnAbandonedWait(t *testing.T) {
+	s := open(t)
+	if _, err := s.RegisterAgent("lea-a", "amy", "claude", "/w", 1); err != nil {
+		t.Fatal(err)
+	}
+	const t1, t2 = "01JB8Z5Q3W4X7Y9ABCDEFGHJKM", "01JB8Z5Q3W4X7Y9ABCDEFGHJKN"
+	for _, tk := range []string{t1, t2} {
+		if err := s.AddHubWait("lea-a/amy", tk, "locksql", "crm", 1); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := s.DecideHubWaits(t2, "crm", DecisionDenied, "no", 2); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.AbandonAllHubWaits("off", 3); err != nil {
+		t.Fatal(err)
+	}
+	for _, tk := range []string{t1, t2} {
+		if err := s.AddHubWait("lea-a/amy", tk, "locksql", "crm", 4); err != nil {
+			t.Fatal(err)
+		}
+	}
+	ws, err := s.PendingHubWaits("lea-a/amy")
+	if err != nil || len(ws) != 1 || ws[0].Ticket != t1 || ws[0].Created != 4 || ws[0].Delivered != 0 {
+		t.Fatalf("pending %+v %v", ws, err)
+	}
+	if got, _ := s.AbandonedHubTickets(); len(got) != 0 {
+		t.Fatalf("abandoned %v", got)
+	}
+}

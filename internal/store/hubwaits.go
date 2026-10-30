@@ -76,10 +76,27 @@ func (s *Store) AddHubWait(agent, ticket, lock, instance string, now int64) erro
 	}
 	// Only for an agent lea knows: a wait registered while its agent was forgotten would be left
 	// for a later agent of the same name.
-	_, err := s.db.Exec(`INSERT INTO hub_waits(agent_key, ticket, lock, instance, created)
+	// A wait lea abandoned (the hub switched off, then on) waits again: the Lock answered the same
+	// ticket to the same agent, and its decision must reach it.
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	r, err := tx.Exec(`INSERT INTO hub_waits(agent_key, ticket, lock, instance, created)
 		SELECT ?,?,?,?,? WHERE EXISTS(SELECT 1 FROM agents WHERE key=?)
-		ON CONFLICT(agent_key, ticket) DO NOTHING`, agent, ticket, lock, instance, now, agent)
-	return err
+		ON CONFLICT(agent_key, ticket) DO UPDATE SET decision='', reason='', decided_at=0, delivered=0,
+		lock=excluded.lock, instance=excluded.instance, created=excluded.created
+		WHERE hub_waits.decision='abandoned'`, agent, ticket, lock, instance, now, agent)
+	if err != nil {
+		return err
+	}
+	if n, _ := r.RowsAffected(); n > 0 {
+		if _, err := tx.Exec(`DELETE FROM hub_abandoned WHERE instance=? AND ticket=?`, instance, ticket); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
 }
 
 // DecideHubWaits records the hub's decision on ticket of instance for every agent that waits on
@@ -147,8 +164,9 @@ func (s *Store) AbandonAllHubWaits(reason string, now int64) ([]HubWait, error) 
 	if err != nil {
 		return nil, err
 	}
-	if _, err := tx.Exec(`INSERT OR IGNORE INTO hub_abandoned(instance, ticket, at)
-		SELECT instance, ticket, ? FROM hub_waits WHERE decision=''`, now); err != nil {
+	if _, err := tx.Exec(`INSERT INTO hub_abandoned(instance, ticket, at)
+		SELECT instance, ticket, ? FROM hub_waits WHERE decision='' ORDER BY 1, 2
+		ON CONFLICT(instance, ticket) DO UPDATE SET at=excluded.at`, now); err != nil {
 		return nil, err
 	}
 	if _, err := tx.Exec(`UPDATE hub_waits SET decision=?, reason=?, decided_at=? WHERE decision=''`, DecisionAbandoned, reason, now); err != nil {
