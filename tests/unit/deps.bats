@@ -38,7 +38,8 @@ latest() { export "FAKE_CURL_EFFECTIVE_$1=https://github.com/DavidGodefroid/$1/r
   grep -qx "LEA_LOCKSQL_REF='v0.10.0'" "$LEA_CONFIG"
   grep -qx "LEA_LOCKSQL_IMAGE='locksql:0.10.0'" "$LEA_CONFIG"
   lea_load_config
-  [ "$LEA_LOCKSQL_REF" = v0.10.0 ] && [ "$LEA_LOCKSQL_IMAGE" = locksql:0.10.0 ]
+  [ "$LEA_LOCKSQL_REF" = v0.10.0 ]
+  [ "$LEA_LOCKSQL_IMAGE" = locksql:0.10.0 ]
 }
 
 @test "a Vault profile gets the new locksql image with the vault CLI" {
@@ -151,7 +152,8 @@ latest() { export "FAKE_CURL_EFFECTIVE_$1=https://github.com/DavidGodefroid/$1/r
 @test "locksql off, without a pin, or a local checkout: lea update leaves it" {
   latest locksql v0.10.0
   LEA_LOCKSQL=0 run lea_update_deps all
-  [ -z "$output" ] && [ -z "$(calls)" ]
+  [ -z "$output" ]
+  [ -z "$(calls)" ]
   LEA_LOCKSQL_REF= run lea_update_deps all
   [[ "$output" == *"locksql: no pinned release (LEA_LOCKSQL_REF is empty): lea update installs nothing"* ]]
   [ -z "$(calls)" ]
@@ -170,7 +172,8 @@ latest() { export "FAKE_CURL_EFFECTIVE_$1=https://github.com/DavidGodefroid/$1/r
 @test "lockmq and lockfile are updated by their own launchers: lea update only says so" {
   LEA_LOCKSQL=0; latest lockmq v0.2.0; latest lockfile v0.3.0
   run lea_update_deps all
-  [ -z "$output" ] && [ -z "$(calls)" ]
+  [ -z "$output" ]
+  [ -z "$(calls)" ]
   LEA_LOCKMQ=1 LEA_LOCKFILE=1
   run lea_update_deps all
   [ "$status" -eq 0 ]
@@ -200,7 +203,7 @@ latest() { export "FAKE_CURL_EFFECTIVE_$1=https://github.com/DavidGodefroid/$1/r
 }
 
 @test "the background update never touches a dependency" {
-  ! grep -q 'update-deps\|lea_update_deps' <(sed -n '/^lea_update_background()/,/^}/p;/^lea__update_background()/,/^}/p' "$LEA_ROOT/libexec/lib/host.sh")
+  ! grep -q 'update-deps\|lea_update_deps' <(sed -n '/^lea_update_background()/,/^}/p;/^lea__update_background()/,/^}/p' "$LEA_ROOT/libexec/lib/host.sh") || false
   ! grep -q 'update-deps\|lea_update_deps' "$LEA_ROOT/internal/launcher/autoupdate.go"
 }
 

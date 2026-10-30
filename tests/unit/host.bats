@@ -26,14 +26,14 @@ setup() {
 
 @test "tmux versions: 3.2 and later are accepted" {
   for v in "tmux 3.2" "tmux 3.2a" "tmux 3.4" "tmux 3.10" "tmux 4.0" "tmux next-3.6"; do lea_tmux_version_ok "$v"; done
-  for v in "tmux 3.1c" "tmux 2.9" "tmux" "" "garbage 9.9"; do ! lea_tmux_version_ok "$v"; done
+  for v in "tmux 3.1c" "tmux 2.9" "tmux" "" "garbage 9.9"; do ! lea_tmux_version_ok "$v" || false; done
 }
 
 @test "lea_tmux_bin honours LEA_TMUX_BIN and fails when it is not executable" {
   fake_tmux
   [ "$(lea_tmux_bin)" = "$BATS_TEST_TMPDIR/tbin/tmux" ]
   LEA_TMUX_BIN="$BATS_TEST_TMPDIR/none"
-  ! lea_tmux_bin
+  ! lea_tmux_bin || false
   LEA_TMUX_BIN="$BATS_TEST_TMPDIR/tbin/tmux"
   [ "$(lea_tmux_bin)" = "$LEA_TMUX_BIN" ]
 }
@@ -64,7 +64,7 @@ built_tmux() {
 @test "tmux resolution: nothing usable names the install command and make tmux-build, never sudo" {
   no_tmux
   printf 'ID=ubuntu\n' >"$OSR"
-  ! lea_tmux_bin
+  ! lea_tmux_bin || false
   run lea_tmux_missing
   [ "$output" = "tmux is not installed. Install it with: sudo apt install tmux, or build a static one with: make -C \"$LEA_ROOT\" tmux-build" ]
   run calls
@@ -73,7 +73,7 @@ built_tmux() {
 
 @test "a LEA_TMUX_BIN that is a directory is named in the message" {
   export LEA_TMUX_BIN="$BATS_TEST_TMPDIR"
-  ! lea_tmux_bin
+  ! lea_tmux_bin || false
   run lea_tmux_missing
   [[ "$output" == *"LEA_TMUX_BIN=$BATS_TEST_TMPDIR is not an executable file"* ]]
   [[ "$output" != *"is not installed"* ]]
@@ -161,7 +161,7 @@ guarded() {
   export FAKE_DOCKER_OUT_INSPECT__F=true
   lea_container_running lea-x
   export FAKE_DOCKER_OUT_INSPECT__F=false
-  ! lea_container_running lea-x
+  ! lea_container_running lea-x || false
   run calls
   [[ "$output" == *"docker [inspect] [-f] [{{.State.Running}}] [lea-x]"* ]]
 }

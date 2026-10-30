@@ -160,7 +160,8 @@ DEFAULT_ACL="acl egress_allow dstdomain -n .github.com .githubusercontent.com .g
     private=$(printf '%s\n' "$output" | grep -n 'http_access deny private_dst' | cut -d: -f1)
     for a in doh_names doh_re; do
       doh=$(printf '%s\n' "$output" | grep -n "^http_access deny $a\$" | cut -d: -f1)
-      [ -n "$doh" ] && [ "$doh" -lt "$private" ]
+      [ -n "$doh" ]
+      [ "$doh" -lt "$private" ]
       [[ "$output" == *"deny_info ERR_LEA_DOH $a"* ]]
     done
   done
@@ -176,7 +177,9 @@ DEFAULT_ACL="acl egress_allow dstdomain -n .github.com .githubusercontent.com .g
     private=$(printf '%s\n' "$output" | grep -n 'http_access deny private_dst' | cut -d: -f1)
     lit=$(printf '%s\n' "$output" | grep -n '^http_access deny ip_literal$' | cut -d: -f1)
     web=$(printf '%s\n' "$output" | grep -n 'http_access allow CONNECT web_tls' | cut -d: -f1)
-    [ "$internal" -lt "$private" ] && [ "$private" -lt "$lit" ] && [ "$lit" -lt "$web" ]
+    [ "$internal" -lt "$private" ]
+    [ "$private" -lt "$lit" ]
+    [ "$lit" -lt "$web" ]
   done
 }
 

@@ -20,8 +20,10 @@ launcher() {
 }
 
 @test "lockmq and lockfile are off by default, pinned to releases" {
-  [ "$LEA_LOCKMQ" = 0 ] && [ "$LEA_LOCKFILE" = 0 ]
-  lea__semver "$LEA_LOCKMQ_REF" >/dev/null && lea__semver "$LEA_LOCKFILE_REF" >/dev/null
+  [ "$LEA_LOCKMQ" = 0 ]
+  [ "$LEA_LOCKFILE" = 0 ]
+  lea__semver "$LEA_LOCKMQ_REF" >/dev/null
+  lea__semver "$LEA_LOCKFILE_REF" >/dev/null
 }
 
 @test "the configuration refuses a bad switch, an unpinned ref and lockfile v0.1.0" {
@@ -85,7 +87,8 @@ launcher() {
 @test "lea init without a terminal never asks and leaves the tools off" {
   LEA_INIT_NONINTERACTIVE=1 lea__init_lockhost lockmq </dev/null
   LEA_INIT_NONINTERACTIVE=1 lea__init_lockhost lockfile </dev/null
-  [ "$LEA_LOCKMQ" = 0 ] && [ "$LEA_LOCKFILE" = 0 ]
+  [ "$LEA_LOCKMQ" = 0 ]
+  [ "$LEA_LOCKFILE" = 0 ]
   [ -z "$(calls)" ]
 }
 
