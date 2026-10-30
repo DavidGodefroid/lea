@@ -850,7 +850,7 @@ so. Changes apply after `lea init` (endpoints, keys, images, locksql) or `lea st
 - The container sees the projects directory, a read-only allow-list of `~/.claude`
   (`settings.json`, `keybindings.json`, `hooks`, `skills`, `plugins`, `agents`, `commands`,
   `output-styles`, the top-level `*.md` files) and, with locksql, lockmq or lockfile, their socket
-  volume (`locksql-run`, `lockmq-run`, `lockfile-run`). Nothing else.
+  volume (`locksql-run`, `lockmq-run`, `lockfile-run`, or a `lock up` lock's own). Nothing else.
 - `.lockfamily` in the projects directory (the Lock Family hub's config, the locks' public keys,
   the routing) is read-only in the container: lea makes it, owned by you on the host, when it is
   missing, and refuses to start when it is a symbolic link or a file.
