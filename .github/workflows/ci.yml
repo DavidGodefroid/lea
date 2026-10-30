@@ -142,6 +142,60 @@ jobs:
           n=$(grep -c '^ok ' lockhost.log)
           echo "$n lockhost checks passed"
           [ "$n" -eq 9 ]
+  # The phase-0 exit demo with real consoles (tests/integration/phase0.sh): an agent in a real lea
+  # (lea:dev) calls locksql_status, lockmq_status and lockfile_status, each reaching a running
+  # console of the release image/Containerfile pins (cosign-verified), wired as lea wires it. The
+  # two lea images come from the GitHub Actions cache when unchanged.
+  phase0:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+        with:
+          go-version-file: go.mod
+      - run: go build -trimpath -o build/lea ./cmd/lea
+      - uses: sigstore/cosign-installer@7e8b541eb2e61bf99390e1afd4be13a184e9ebc5 # v3.10.1
+        with:
+          cosign-release: v2.6.1
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
+      - uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
+        with:
+          context: .
+          file: proxy/Containerfile
+          tags: lea-proxy:dev
+          load: true
+          cache-from: type=gha,scope=lea-proxy-dev
+          cache-to: type=gha,scope=lea-proxy-dev,mode=max
+      - uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
+        with:
+          context: .
+          file: image/Containerfile
+          build-args: LEA_VERSION=dev
+          tags: lea:dev
+          load: true
+          cache-from: type=gha,scope=lea-dev
+          cache-to: type=gha,scope=lea-dev,mode=max
+      - name: AppArmor profile (as lea init loads it)
+        run: |
+          if docker info --format '{{json .SecurityOptions}}' | grep -q 'name=apparmor'; then
+            if [ -e /etc/apparmor.d/abi/4.0 ]; then abi=4.0 userns='  userns,'; else abi=3.0 userns=''; fi
+            sed -e "s|@ABI@|$abi|" -e "s|^@USERNS@\$|$userns|" apparmor/lea.tmpl | sudo tee /etc/apparmor.d/lea >/dev/null
+            sudo apparmor_parser -r /etc/apparmor.d/lea
+          fi
+      - name: make test-phase0, every check run, the three status calls on running consoles
+        shell: bash
+        run: |
+          make test-phase0 2>&1 | tee phase0.log
+          if grep '^FAIL' phase0.log; then exit 1; fi
+          for t in locksql lockmq lockfile; do
+            grep -qx "ok    lea's agent: ${t}_status reaches the running $t console" phase0.log || { echo "phase0: ${t}_status did not reach a running console" >&2; exit 1; }
+          done
+          n=$(grep -c '^ok ' phase0.log)
+          echo "$n phase0 checks passed"
+          [ "$n" -eq 26 ]
   images:
     runs-on: ubuntu-latest
     steps:
