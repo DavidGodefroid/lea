@@ -257,6 +257,10 @@ func (c *cliAgents) SoftStop(ctx context.Context, key string) error {
 	c.rec("softstop " + key)
 	return nil
 }
+func (c *cliAgents) EndSuspended(ctx context.Context, key string) (bool, error) {
+	c.rec("end " + key)
+	return true, nil
+}
 func (c *cliAgents) ResumeSuspended(ctx context.Context, key, prompt string) error {
 	c.rec("resume " + key)
 	return nil

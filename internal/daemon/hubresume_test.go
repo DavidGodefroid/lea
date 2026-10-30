@@ -328,15 +328,17 @@ func TestGivingUpTellsTheLead(t *testing.T) {
 	if err := e.d.st.SetState(k, store.StateSuspendedCold, testSession, e.d.now()); err != nil {
 		t.Fatal(err)
 	}
-	e.d.giveUpResume(k, maxSuspendedResumes)
+	e.d.giveUpResume(fa, k, maxSuspendedResumes)
 	if s := agentState(t, e, k); s != "done" {
 		t.Fatalf("state %s", s)
 	}
+	// Through the manager, which tears its stack down (#201).
+	waitCall(t, fa, "end "+k)
 	if ms, _ := e.d.st.Unread(lead, 10); len(ms) != 1 || !strings.Contains(ms[0].Body, "could not resume dev-1") {
 		t.Fatalf("lead inbox %+v", ms)
 	}
 	w := spawned(t, e, "dev-2", "dev", lead)
-	e.d.giveUpResume(w, maxSuspendedResumes) // not suspended: left alone
+	e.d.giveUpResume(fa, w, maxSuspendedResumes) // not suspended: left alone
 	if s := agentState(t, e, w); s == "done" {
 		t.Fatal("ended an agent that was not suspended")
 	}

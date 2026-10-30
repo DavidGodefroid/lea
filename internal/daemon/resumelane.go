@@ -128,9 +128,12 @@ func (d *Daemon) resumeFailed(key string) (giveUp bool) {
 }
 
 // giveUpResume ends a suspended agent whose resumes kept failing: it is done (only if it is still
-// suspended_cold), its undelivered decisions are posted to its inbox (once), and its lead is told.
-func (d *Daemon) giveUpResume(key string, tries int) {
-	ok, err := d.st.EndSuspended(key, d.now())
+// suspended_cold) and its stack torn down (#201), its undelivered decisions are posted to its
+// inbox (once), and its lead is told.
+func (d *Daemon) giveUpResume(a Agents, key string, tries int) {
+	ctx, cancel := context.WithTimeout(context.Background(), suspendTimeout)
+	ok, err := a.EndSuspended(ctx, key)
+	cancel()
 	if err != nil || !ok {
 		if err != nil {
 			log.Printf("lea daemon: give up resuming %s: %v", key, err)
@@ -200,7 +203,7 @@ func (d *Daemon) resumeSuspended(a Agents, key string) {
 				delete(d.resumeFails, key)
 				d.mu.Unlock()
 			} else if d.resumeFailed(key) {
-				d.giveUpResume(key, maxSuspendedResumes)
+				d.giveUpResume(a, key, maxSuspendedResumes)
 			}
 		}
 	} else {

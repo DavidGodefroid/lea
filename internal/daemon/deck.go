@@ -42,6 +42,9 @@ type Agents interface {
 	// ResumeSuspended starts it again with prompt as its next turn (#161).
 	SoftStop(ctx context.Context, key string) error
 	ResumeSuspended(ctx context.Context, key, prompt string) error
+	// EndSuspended ends a suspended_cold agent lea gave up resuming (done, its stack torn down),
+	// and reports whether it was still suspended_cold.
+	EndSuspended(ctx context.Context, key string) (bool, error)
 	Attached(ctx context.Context, container string) (bool, error)
 	Popup(ctx context.Context, key string, compose bool) error
 	// SetLabel renames an agent for display (the deck's e); OpenShell opens a shell in the
