@@ -328,14 +328,26 @@ func TestClaudeResumesAfterAContainerRestart(t *testing.T) {
 	minResumeWait, retryBase, resumeJitter = 1, 20, 0
 	e := newClaudeE2E(t)
 	kill := e.run("say hi")
-	a := e.until("the usage limit", 45, func(a store.Agent) bool { return a.LimitUntil > 0 && len(a.SessionID) == 36 })
+	// The daemon records the limit (StopFailure) just before it sets the agent idle: marked
+	// stopped in between, the agent would be set idle again and its SessionEnd would count.
+	a := e.until("the usage limit", 45, func(a store.Agent) bool {
+		return a.LimitUntil > 0 && len(a.SessionID) == 36 && a.State == "idle"
+	})
 	// lea stop: the agent is marked stopped, then its container (and Claude, which may still run
 	// its SessionEnd hook) ends; the next container marks it unknown and starts it again.
 	if err := e.st.SetState(a.Key, "stopped", "", time.Now().Unix()); err != nil {
 		t.Fatal(err)
 	}
+	ends, _ := e.st.EventPayloads(a.Key, "SessionEnd")
 	kill()
-	time.Sleep(3 * time.Second)
+	// The old container is gone before the next one starts: its SessionEnd, when Claude runs it,
+	// has come by then (or does not come).
+	for end := time.Now().Add(15 * time.Second); time.Now().Before(end); time.Sleep(200 * time.Millisecond) {
+		if ps, _ := e.st.EventPayloads(a.Key, "SessionEnd"); len(ps) > len(ends) {
+			break
+		}
+	}
+	time.Sleep(time.Second)
 	if err := e.st.SetState(a.Key, "unknown", "", time.Now().Unix()); err != nil {
 		t.Fatal(err)
 	}
