@@ -1064,6 +1064,48 @@ func TestLockHTTPTokenReachesTheAgent(t *testing.T) {
 	}
 }
 
+func TestRequesterTokenReachesTheAgent(t *testing.T) {
+	st, err := store.Open(filepath.Join(t.TempDir(), "lea.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { st.Close() })
+	term := &fakeTerm{sessions: map[string]*fakeSession{}}
+	key := []byte("0123456789abcdef0123456789abcdef")
+	cfg := Config{Store: st, Term: term, Containers: &fakeContainers{live: map[string][]string{}},
+		LeaBin: leaBin, UID: 1000, GID: 1000, Now: func() int64 { return 1000 },
+		RequesterToken: func(container, agent, inc string) string { return RequesterToken(key, container, agent, inc) }}
+	m := NewManager(cfg)
+	if err := m.Ensure(bg, C, "/p"); err != nil {
+		t.Fatal(err)
+	}
+	toks := map[string]string{}
+	for _, n := range []string{"a1", "a2"} {
+		r, err := m.New(bg, NewRequest{Container: C, Name: n})
+		if err != nil {
+			t.Fatal(err)
+		}
+		a, err := st.AgentByKey(r.Key)
+		if err != nil || len(a.Incarnation) != 32 {
+			t.Fatalf("%s: %+v %v", n, a, err)
+		}
+		toks[n] = RequesterToken(key, C, n, a.Incarnation)
+		if cmd := strings.Join(term.get(C).byAgent(n).cmd, " "); !strings.Contains(cmd, "-e LEA_AGENT_TOKEN="+toks[n]+" ") {
+			t.Fatalf("%s: cmd=%s", n, cmd)
+		}
+	}
+	if toks["a1"] == toks["a2"] || len(toks["a1"]) != 32 {
+		t.Fatalf("tokens %q", toks)
+	}
+	// The same incarnation gets the same token; another incarnation or key, another one.
+	a1, _ := st.AgentByKey(C + "/a1")
+	if RequesterToken(key, C, "a1", a1.Incarnation) != toks["a1"] ||
+		RequesterToken(key, C, "a1", "another") == toks["a1"] ||
+		RequesterToken([]byte("another key, 32 bytes long......"), C, "a1", a1.Incarnation) == toks["a1"] {
+		t.Fatal("the token is not bound to the key and the incarnation")
+	}
+}
+
 func TestSnapshotCarriesUnreadUsageAndTheOldestApproval(t *testing.T) {
 	e := newEnv(t)
 	e.ensure(t, "/p")

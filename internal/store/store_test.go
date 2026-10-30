@@ -110,8 +110,8 @@ func TestRegisterAgentAndLookups(t *testing.T) {
 		t.Fatal(err)
 	}
 	want := Agent{Key: "lea-a/claude-1", Container: "lea-a", Name: "claude-1", State: "unknown",
-		Updated: 10, Profile: "claude", Workdir: "/p/shop", Created: 10, Role: "dev"}
-	if !reflect.DeepEqual(a, want) {
+		Updated: 10, Profile: "claude", Workdir: "/p/shop", Created: 10, Role: "dev", Incarnation: a.Incarnation}
+	if len(a.Incarnation) != 32 || !reflect.DeepEqual(a, want) {
 		t.Fatalf("registered %+v, want %+v", a, want)
 	}
 	got, err := s.AgentByKey("lea-a/claude-1")
@@ -1215,5 +1215,31 @@ func TestLimitIsSetAndClearedWhenTheProcessGoes(t *testing.T) {
 	}
 	if a, _ := s.AgentByKey("lea-a/claude-1"); a.LimitUntil != 0 || a.LimitTries != 0 {
 		t.Fatalf("limit inherited: %+v", a)
+	}
+}
+
+// Each registration gives the agent a new incarnation, kept by its state changes (a resume).
+func TestRegisterGivesANewIncarnation(t *testing.T) {
+	s, err := Open(filepath.Join(t.TempDir(), "lea.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	a, err := s.RegisterAgent("lea-a", "dev-1", "claude", "/p", 1)
+	if err != nil || len(a.Incarnation) != 32 {
+		t.Fatalf("%+v %v", a, err)
+	}
+	if err := s.SetState(a.Key, "done", "", 2); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := s.AgentByKey(a.Key); got.Incarnation != a.Incarnation {
+		t.Fatalf("incarnation %q after a state change, want %q", got.Incarnation, a.Incarnation)
+	}
+	b, err := s.RegisterAgent("lea-a", "dev-1", "claude", "/p", 3)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := s.AgentByKey(b.Key); got.Incarnation == a.Incarnation || got.Incarnation != b.Incarnation {
+		t.Fatalf("incarnation %q again for a new registration (first %q)", got.Incarnation, a.Incarnation)
 	}
 }

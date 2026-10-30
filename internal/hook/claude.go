@@ -82,6 +82,7 @@ func Claude(ctx context.Context, event string, stdin io.Reader, stdout io.Writer
 		Error          string          `json:"error"`
 		Source         string          `json:"source"`
 		Cwd            string          `json:"cwd"`
+		ToolResponse   json.RawMessage `json:"tool_response"`
 	}
 	_ = json.Unmarshal(in, &p)
 	// Forward only what phase 0 needs: never tool_input or tool_response (file contents,
@@ -132,6 +133,9 @@ func Claude(ctx context.Context, event string, stdin io.Reader, stdout io.Writer
 			json.NewEncoder(stdout).Encode(map[string]any{"decision": "block", "reason": r.Reason})
 		}
 	case "UserPromptSubmit", "PostToolUse":
+		if event == "PostToolUse" && suspend(bctx, c, p.ToolName, p.ToolResponse, stdout) {
+			return
+		}
 		if event == "UserPromptSubmit" && p.Prompt != "" {
 			// The daemon names an unlabelled agent after its first prompt; the prompt is not
 			// stored (hook_event above never carries it).
