@@ -30,7 +30,7 @@ var protectedKeys = map[string]bool{
 // ExportedKeys are the keys lea_load_config exports to every child: the daemon, docker, the
 // core subcommands and libexec/lea-sh.
 var ExportedKeys = []string{
-	"LEA_PREFIX", "LEA_IMAGE", "LEA_PROXY_IMAGE", "LEA_GIT_SSH", "LEA_GIT_KNOWN_HOSTS", "LEA_LOCKSQL", "LEA_LOCKSQL_IMAGE", "LEA_LOCKSQL_REF", "LEA_LOCKSQL_VAULT_ADDR",
+	"LEA_PREFIX", "LEA_IMAGE", "LEA_PROXY_IMAGE", "LEA_CTL", "LEA_CTL_IMAGE", "LEA_GIT_SSH", "LEA_GIT_KNOWN_HOSTS", "LEA_LOCKSQL", "LEA_LOCKSQL_IMAGE", "LEA_LOCKSQL_REF", "LEA_LOCKSQL_VAULT_ADDR",
 	"LEA_LOCKMQ", "LEA_LOCKFILE", "LEA_LOCK_TOOL_TIMEOUT", "LEA_LOCKMQ_REF", "LEA_LOCKFILE_REF", "LEA_LOCKHTTP", "LEA_LOCKHTTP_MITM",
 	"LEA_OTEL_UPSTREAM", "LEA_NESTED_NETWORKS", "LEA_K8S_NAMESPACE", "LEA_INTERNAL_HOSTS", "LEA_EGRESS_ALLOW", "LEA_PROJECTS_DIR",
 	"LEA_APPROVALS", "LEA_APPROVAL_TIMEOUT", "LEA_SOUND", "LEA_SOUND_ATTENTION", "LEA_SOUND_DONE",
@@ -248,6 +248,11 @@ func (c *Config) resolve(root string) error {
 	if err := c.resolveAgentCPUs(); err != nil {
 		return err
 	}
+	ctl := nonEmpty(c.Get("LEA_CTL"), "0")
+	if ctl != "0" && ctl != "1" {
+		return fmt.Errorf("LEA_CTL must be 1 (lea runs in its lea-ctl control container) or 0 (on the host), not '%s'", ctl)
+	}
+	c.final["LEA_CTL"] = ctl
 	lh := nonEmpty(c.Get("LEA_LOCKHTTP"), "0")
 	if lh != "0" && lh != "1" {
 		return fmt.Errorf("LEA_LOCKHTTP must be 1 (agents' web egress through a LockHTTP gate) or 0, not '%s'", lh)
@@ -592,6 +597,9 @@ func (c *Config) GitSSH() string { return c.Get("LEA_GIT_SSH") }
 // LockHTTP reports whether the agents' web egress goes through a LockHTTP gate (LEA_LOCKHTTP=1;
 // off by default).
 func (c *Config) LockHTTP() bool { return c.Get("LEA_LOCKHTTP") == "1" }
+
+// Ctl is LEA_CTL=1: lea runs in its control container (lea-ctl, #165).
+func (c *Config) Ctl() bool { return c.Get("LEA_CTL") == "1" }
 
 // LockHTTPMITM reports whether the LockHTTP gate decrypts HTTPS (LEA_LOCKHTTP_MITM=1, with
 // LEA_LOCKHTTP=1; off by default).

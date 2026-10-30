@@ -4,6 +4,7 @@ test:
 build:
 	docker build -t lea-proxy:dev -f proxy/Containerfile .
 	docker build -t lea:dev --build-arg LEA_VERSION=dev -f image/Containerfile .
+	docker build -t lea-ctl:dev -f image/ctl/Containerfile image/ctl
 test-proxy:
 	tests/proxy/run.sh
 test-lockhost:

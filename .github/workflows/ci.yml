@@ -90,3 +90,8 @@ jobs:
           context: .
           file: proxy/Containerfile
           push: false
+      - uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
+        with:
+          context: image/ctl
+          file: image/ctl/Containerfile
+          push: false

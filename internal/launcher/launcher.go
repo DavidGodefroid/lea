@@ -366,6 +366,10 @@ func (l *Launcher) dispatch(args []string) error {
 	if len(args) > 1 {
 		rest = args[1:]
 	}
+	// LEA_CTL=1 (#165): lea runs in its control container, but for what installs or configures it.
+	if l.Cfg.Ctl() && l.Cfg.Get("LEA_CTL_INSIDE") != "1" && !ctlHostOnly[a0] {
+		return l.viaCtl(args)
+	}
 	switch a0 {
 	case "-h", "--help", "help":
 		_, err := l.Stdout.Write([]byte(Usage))
@@ -409,7 +413,12 @@ func (l *Launcher) dispatch(args []string) error {
 	case "doctor":
 		return l.doctor()
 	case "config":
+		if len(rest) > 0 && rest[0] == "ctl" {
+			return l.configCtl(rest[1:])
+		}
 		return l.config(rest)
+	case "ctl":
+		return l.ctl(rest)
 	default:
 		if len(args) > 0 {
 			if err := l.oldForm(args[0]); err != nil {
