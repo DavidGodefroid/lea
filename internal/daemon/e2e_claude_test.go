@@ -341,3 +341,43 @@ func TestClaudeSuspendedAgentIsResumedByAMessage(t *testing.T) {
 		t.Fatalf("the resumed turn lacks the unread notice:\n%.2000s", strings.Join(e.bodies[before:], "\n"))
 	}
 }
+
+// A real Claude suspended on a ticket and stopped after its keepalive resumes when the ticket is
+// approved, with the decision in the first turn of its resumed session (#163).
+func TestClaudeSuspendedAgentIsResumedByADecision(t *testing.T) {
+	e := newClaudeE2E(t)
+	e.setLimited(false)
+	fa := &e2eAgents{e: e}
+	fa.kill = e.run("say hi")
+	e.d.SetAgents(fa)
+	a := e.until("the first turn", 45, func(a store.Agent) bool {
+		ps, _ := e.st.EventPayloads(a.Key, "Stop")
+		return a.State == "idle" && len(a.SessionID) == 36 && len(ps) > 0
+	})
+	if err := e.st.AddHubWait(a.Key, testTicket, "locksql", "crm-prod", e.d.now()); err != nil {
+		t.Fatal(err)
+	}
+	e.d.SetKeepalive(2 * time.Second)
+	if err := e.d.suspend(a.Key); err != nil {
+		t.Fatal(err)
+	}
+	e.until("the soft stop", 30, func(b store.Agent) bool { return b.State == store.StateSuspendedCold })
+	time.Sleep(2 * time.Second) // the stopped Claude's SessionEnd leaves the agent cold
+	e.mu.Lock()
+	before := len(e.bodies)
+	e.mu.Unlock()
+	if _, err := e.st.DecideHubWaits(testTicket, "crm-prod", store.DecisionApproved, "", e.d.now()); err != nil {
+		t.Fatal(err)
+	}
+	e.d.wakeSuspended(a.Key)
+	e.until("the resumed turn", 60, func(b store.Agent) bool {
+		e.mu.Lock()
+		defer e.mu.Unlock()
+		return b.State == "idle" && len(e.bodies) > before
+	})
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if !strings.Contains(strings.Join(e.bodies[before:], "\n"), "approved: call its run again with ticket="+testTicket) {
+		t.Fatalf("the resumed turn lacks the decision:\n%.2000s", strings.Join(e.bodies[before:], "\n"))
+	}
+}

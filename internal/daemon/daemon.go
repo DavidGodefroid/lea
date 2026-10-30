@@ -122,8 +122,8 @@ type Daemon struct {
 	heavyMaxHold time.Duration
 	heavySeq     int64
 	// Pressure (pressure.go, admit.go, #132): what samples it, the admission thresholds, the last
-	// sample of the host and of each container and when it was taken, and the spawns queued
-	// until the pressure falls.
+	// sample of the host and of each container and when it was taken, and the spawns and the
+	// resumes queued until the pressure falls.
 	pressSrc      PressureSource
 	thresholds    Thresholds
 	pressHost     Reading
@@ -131,6 +131,7 @@ type Daemon struct {
 	pressAt       time.Time
 	spawnQueue    []*queuedSpawn
 	spawnSeq      int64
+	resumeQueue   []*queuedResume
 	queueStarting bool
 	// hubFacade is where lea reads the Lock Family hub's decisions (hubsync.go, #164; nil: no
 	// hub); hubSyncMu keeps one sync at a time.
@@ -208,6 +209,9 @@ func (d *Daemon) AttachContainer(ctx context.Context, name string) (string, erro
 		return "", err
 	}
 	d.attached[name] = p
+	// A daemon that started again takes over the container's suspended agents: their keepalive
+	// timers and queued resumes went with the previous daemon (#162).
+	go d.suspendedSince(name)
 	go func() {
 		d.Serve(ctx, l, Origin{Container: name})
 		// The listener is closed (and its socket file removed): a later attach binds it again.
