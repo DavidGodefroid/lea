@@ -16,6 +16,9 @@ func (d *Daemon) hubWaitRegister(o Origin, me string, raw json.RawMessage) (any,
 	if o.Container == "" {
 		return nil, errors.New("hub_wait_register: agents only")
 	}
+	if d.hubDisabled() {
+		return nil, errHubDisabled
+	}
 	var p struct {
 		Ticket   string `json:"ticket"`
 		Lock     string `json:"lock"`

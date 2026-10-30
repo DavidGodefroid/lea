@@ -190,7 +190,7 @@ esac
 // other approval settings, is restarted, and the new one gets LEA_TMUX_BIN (daemon tests of the
 // retired deck.bats and core.bats).
 func TestEnsureDaemonPinsTheResolvedTmuxAndApprovals(t *testing.T) {
-	for name, record := range map[string][2]string{"tmux": {"daemon.tmux", "/old/tmux"}, "approvals": {"daemon.approvals", "pane 5"}, "resume": {"daemon.resume", "off 60"}, "lockhttp": {"daemon.lockhttp", "on"}, "stacks": {"daemon.stacks", "30"}, "admit": {"daemon.admit", "50 85 10 40 2 95 30 80 30 60"}} {
+	for name, record := range map[string][2]string{"tmux": {"daemon.tmux", "/old/tmux"}, "approvals": {"daemon.approvals", "pane 5"}, "resume": {"daemon.resume", "off 60"}, "lockhttp": {"daemon.lockhttp", "on"}, "hub": {"daemon.hub", "on"}, "stacks": {"daemon.stacks", "30"}, "admit": {"daemon.admit", "50 85 10 40 2 95 30 80 30 60"}} {
 		t.Run(name, func(t *testing.T) {
 			w := newWorld(t, repoRoot(t))
 			delete(w.env, "LEA_TMUX_BIN") // resolved from PATH: the world's tmux
@@ -400,6 +400,21 @@ func TestLockServers(t *testing.T) {
 		}
 		if strings.Join(got, ",") != c.want {
 			t.Errorf("%v: %v, want %s", c.env, got, c.want)
+		}
+	}
+}
+
+// The hub switch is on only at LEA_HUB=1; its stamp says which.
+func TestHubSetting(t *testing.T) {
+	for v, want := range map[string]string{"": "off", "0": "off", "1": "on", "yes": "off"} {
+		get := func(k string) string {
+			if k == "LEA_HUB" {
+				return v
+			}
+			return ""
+		}
+		if got := DaemonHubStamp(get); got != want || HubSetting(get) != (want == "on") {
+			t.Errorf("LEA_HUB=%q: %s, want %s", v, got, want)
 		}
 	}
 }

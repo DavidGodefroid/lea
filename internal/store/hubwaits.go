@@ -29,6 +29,9 @@ const (
 	DecisionDenied    = "denied"
 	DecisionWithdrawn = "withdrawn"
 	DecisionExpired   = "expired"
+	// DecisionAbandoned is lea's own: lea stopped waiting on the ticket (the hub is disabled,
+	// LEA_HUB=0), whatever the hub decides later.
+	DecisionAbandoned = "abandoned"
 )
 
 // hubWaitKeep is how long a delivered wait is kept (seconds); maxHubReason caps the hub's reason,
@@ -41,7 +44,7 @@ const (
 var (
 	ticketRe   = regexp.MustCompile(`^[0-9A-HJKMNP-TV-Z]{26}$`) // a ULID
 	hubNameRe  = regexp.MustCompile(`^[a-z][a-z0-9-]{0,31}$`)
-	decisionOK = map[string]bool{DecisionApproved: true, DecisionDenied: true, DecisionWithdrawn: true, DecisionExpired: true}
+	decisionOK = map[string]bool{DecisionApproved: true, DecisionDenied: true, DecisionWithdrawn: true, DecisionExpired: true, DecisionAbandoned: true}
 )
 
 // HubWait is one agent's wait on a hub ticket.
@@ -105,6 +108,35 @@ func (s *Store) DecideHubWaits(ticket, instance, decision, reason string, now in
 	}
 	for i := range out {
 		out[i].Decision, out[i].Reason, out[i].DecidedAt = decision, reason, now
+	}
+	return out, tx.Commit()
+}
+
+// AbandonAllHubWaits records, on every wait with no decision yet, that lea stopped waiting
+// (DecisionAbandoned, with reason), and returns those waits. A decision the hub takes later does
+// not replace it (a decision is final).
+func (s *Store) AbandonAllHubWaits(reason string, now int64) ([]HubWait, error) {
+	if len(reason) > maxHubReason || !utf8.ValidString(reason) {
+		return nil, fmt.Errorf("hub wait: the reason is not valid UTF-8 of at most %d bytes", maxHubReason)
+	}
+	tx, err := s.db.Begin()
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback()
+	rows, err := tx.Query(`SELECT ` + hubWaitCols + ` FROM hub_waits WHERE decision='' ORDER BY agent_key, ticket`)
+	if err != nil {
+		return nil, err
+	}
+	out, err := collectHubWaits(rows)
+	if err != nil {
+		return nil, err
+	}
+	if _, err := tx.Exec(`UPDATE hub_waits SET decision=?, reason=?, decided_at=? WHERE decision=''`, DecisionAbandoned, reason, now); err != nil {
+		return nil, err
+	}
+	for i := range out {
+		out[i].Decision, out[i].Reason, out[i].DecidedAt = DecisionAbandoned, reason, now
 	}
 	return out, tx.Commit()
 }
