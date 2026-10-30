@@ -1182,3 +1182,27 @@ func currentUmask() os.FileMode {
 	syscall.Umask(m)
 	return os.FileMode(m)
 }
+
+// No agent mount is the engine's socket or a directory above it, wherever the engine listens:
+// DOCKER_HOST (a rootless Podman's socket under XDG_RUNTIME_DIR, say), or the default paths.
+func TestRunArgsRefuseTheEngineSocket(t *testing.T) {
+	w := newWorld(t, repoRoot(t))
+	claudeHome(t, w)
+	sockDir := w.proj + "/run/podman"
+	if err := os.MkdirAll(sockDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	w.env["DOCKER_HOST"] = "unix://" + sockDir + "/podman.sock"
+	if _, err := w.launcher().runArgs(w.proj, "172.18.0.5"); err == nil || !strings.Contains(err.Error(), "engine") {
+		t.Fatalf("the projects dir above the engine's socket was mounted: %v", err)
+	}
+	w.env["DOCKER_HOST"] = ""
+	w.env["XDG_RUNTIME_DIR"] = w.proj + "/run"
+	if _, err := w.launcher().runArgs(w.proj, "172.18.0.5"); err == nil {
+		t.Fatal("the projects dir above $XDG_RUNTIME_DIR/podman/podman.sock was mounted")
+	}
+	w.env["XDG_RUNTIME_DIR"] = w.dir + "/xdg"
+	if _, err := w.launcher().runArgs(w.proj, "172.18.0.5"); err != nil {
+		t.Fatalf("a clean layout: %v", err)
+	}
+}
