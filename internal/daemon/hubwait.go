@@ -3,6 +3,8 @@ package daemon
 import (
 	"encoding/json"
 	"errors"
+
+	"github.com/DavidGodefroid/lea/internal/store"
 )
 
 // hubWaitRegister is the suspend hook's call (#160): the agent's Lock call answered pending, so
@@ -25,6 +27,14 @@ func (d *Daemon) hubWaitRegister(o Origin, me string, raw json.RawMessage) (any,
 		Instance string `json:"instance"`
 	}
 	if err := json.Unmarshal(raw, &p); err != nil {
+		return nil, err
+	}
+	// No facade to read the decision from: the wait would never end. lea does not suspend the
+	// agent, and tells it why, in its inbox (the hook reads it into the same turn).
+	if err := d.hubReachable(); err != nil {
+		if store.ValidHubWait(p.Ticket, p.Lock, p.Instance) {
+			d.post("user", me, "result", noHubText(p.Ticket, p.Lock, p.Instance), 0)
+		}
 		return nil, err
 	}
 	a, err := d.st.AgentByKey(me)

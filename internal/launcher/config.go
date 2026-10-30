@@ -272,7 +272,7 @@ func (c *Config) resolve(root string) error {
 		return fmt.Errorf("LEA_LOCKHTTP_MITM=1 needs LEA_LOCKHTTP=1")
 	}
 	c.final["LEA_LOCKHTTP_MITM"] = mitm
-	hub := nonEmpty(c.Get("LEA_HUB"), "0")
+	hub := nonEmpty(c.Get("LEA_HUB"), "1")
 	if hub != "0" && hub != "1" {
 		return fmt.Errorf("LEA_HUB must be 1 (lea follows the Lock Family approval hub) or 0, not '%s'", hub)
 	}

@@ -113,7 +113,9 @@ func TestClientSpeaksTheDaemonAPI(t *testing.T) {
 
 	c := Client{Sock: sock}
 	snap, err := c.Watch(ctx, "lea-a", 4)
-	want := Snapshot{Version: 5, Shown: "lea-a/claude-1", Agents: []Agent{{Key: "lea-a/claude-1", Name: "claude-1", Profile: "claude", State: "idle", Workdir: "/p", Updated: 5}}}
+	want := Snapshot{Version: 5, Shown: "lea-a/claude-1", Agents: []Agent{{Key: "lea-a/claude-1", Name: "claude-1", Profile: "claude", State: "idle", Workdir: "/p", Updated: 5}},
+		// The hub is on (lea's default) and this daemon has no facade.
+		HubState: "down"}
 	if err != nil || !reflect.DeepEqual(snap, want) {
 		t.Fatalf("snapshot=%+v err=%v", snap, err)
 	}

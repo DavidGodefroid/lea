@@ -115,6 +115,8 @@ type Snapshot struct {
 	Locks []LockState `json:"locks,omitempty"`
 	// Pressure is the container's pressure gauge (agents.PressureView), nil without a sample.
 	Pressure *Pressure `json:"pressure,omitempty"`
+	// HubState is "down" when lea follows the hub but cannot reach it (agents.Snapshot.HubState).
+	HubState string `json:"hub_state,omitempty"`
 }
 
 // Pressure is what the deck shows of the pressure (#132, P2): a short gauge of the container
@@ -262,6 +264,7 @@ type Model struct {
 	sound       string        // the daemon's sound switch (Snapshot.Sound)
 	locks       []LockState   // each Lock's approvals state (Snapshot.Locks)
 	pressure    *Pressure     // the container's pressure gauge (Snapshot.Pressure)
+	hubDown     bool          // lea follows the hub but cannot reach it (Snapshot.HubState)
 	seq         int           // the latest selection; older delayed shows are dropped
 	frame       int           // the working spinner's frame
 	intro       int           // frames left of the logo's start animation (WithIntro)
@@ -546,7 +549,7 @@ func (m *Model) ask(key string) {
 // the slot, so that the row selected in its place is to be shown.
 func (m *Model) apply(s Snapshot) bool {
 	before, was := m.shown, m.selected
-	m.version, m.shown, m.sound, m.locks, m.pressure = s.Version, s.Shown, s.Sound, s.Locks, s.Pressure
+	m.version, m.shown, m.sound, m.locks, m.pressure, m.hubDown = s.Version, s.Shown, s.Sound, s.Locks, s.Pressure, s.HubState == "down"
 	for _, a := range s.Agents {
 		if a.Key == s.Shown && a.State == "done" {
 			m.seen[a.Key] = a.Updated

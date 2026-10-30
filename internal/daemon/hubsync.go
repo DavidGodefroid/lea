@@ -91,6 +91,19 @@ func (f SocketFacade) get(ctx context.Context, path string, out any) error {
 	return nil
 }
 
+// Ping is nil when the facade socket is there and something accepts a connection on it.
+func (f SocketFacade) Ping(ctx context.Context) error {
+	if fi, err := os.Lstat(f.Path); err != nil || fi.Mode()&os.ModeSocket == 0 {
+		return ErrNoHub
+	}
+	var dl net.Dialer
+	c, err := dl.DialContext(ctx, "unix", f.Path)
+	if err != nil {
+		return err
+	}
+	return c.Close()
+}
+
 func (f SocketFacade) Decided(ctx context.Context, since int64) ([]HubDecided, int64, error) {
 	var out struct {
 		Decisions []struct {
@@ -176,6 +189,7 @@ func (d *Daemon) syncHub(ctx context.Context) error {
 	}
 	since, _ := strconv.ParseInt(c, 10, 64)
 	items, cursor, err := f.Decided(ctx, max(since, 0))
+	d.setHubDown(err != nil)
 	if errors.Is(err, ErrNoHub) {
 		return nil
 	}

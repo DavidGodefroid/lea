@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"strings"
 	"testing"
+
+	"github.com/DavidGodefroid/lea/internal/daemon"
 )
 
 const ticket = "01JB8Z5Q3W4X7Y9ABCDEFGHJKM"
@@ -44,7 +46,7 @@ func hubWaits(t *testing.T, db string) []string {
 // A pending answer of a Lock tool (its structured content as a JSON string) records the agent's
 // wait and ends its turn.
 func TestPendingLockResultEndsTheTurn(t *testing.T) {
-	_, bus, db := startDB(t)
+	_, bus, db := startWith(t, func(d *daemon.Daemon) { d.SetHubFacade(struct{ daemon.HubFacade }{}) })
 	runHook(bus, "SessionStart", `{"session_id":"s1"}`, nil)
 	out := runHook(bus, "PostToolUse", postToolUse("mcp__locksql__query_run", pendingJSON("crm-prod")), nil)
 	var r struct {
@@ -87,6 +89,28 @@ func TestOtherResultsDoNotSuspend(t *testing.T) {
 		if out := runHook(bus, "PostToolUse", in, nil); strings.Contains(out, "continue") {
 			t.Fatalf("%s: out=%q", name, out)
 		}
+	}
+	if ws := hubWaits(t, db); len(ws) != 0 {
+		t.Fatalf("waits %q", ws)
+	}
+}
+
+// With the hub on (lea's default) but no hub facade lea can reach, a pending answer does not end
+// the turn: nothing would sync its decision. The agent is told so in the same turn (an unread
+// message: the daemon's reason, in its inbox).
+func TestPendingLockResultWithoutAHubKeepsTheTurnAndSaysWhy(t *testing.T) {
+	_, bus, db := startDB(t)
+	runHook(bus, "SessionStart", `{"session_id":"s1"}`, nil)
+	out := runHook(bus, "PostToolUse", postToolUse("mcp__locksql__query_run", pendingJSON("crm-prod")), nil)
+	var r struct {
+		Continue *bool `json:"continue"`
+		Hook     struct {
+			Context string `json:"additionalContext"`
+		} `json:"hookSpecificOutput"`
+	}
+	if err := json.Unmarshal([]byte(out), &r); err != nil || r.Continue != nil ||
+		!strings.Contains(r.Hook.Context, "1 unread message(s) from user") {
+		t.Fatalf("out=%q", out)
 	}
 	if ws := hubWaits(t, db); len(ws) != 0 {
 		t.Fatalf("waits %q", ws)

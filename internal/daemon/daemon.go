@@ -144,6 +144,8 @@ type Daemon struct {
 	hubSyncMu sync.Mutex
 	// hubOff is the hub switched off (LEA_HUB=0, hubswitch.go): no wait is registered.
 	hubOff bool
+	// hubDown: the hub's facade did not answer last (hubswitch.go); the deck says so.
+	hubDown bool
 	// hubQueue is the hub's queue as the decks show it, hubLocks the Locks it counted (hubdeck.go,
 	// #158).
 	hubQueue []hubEntry
