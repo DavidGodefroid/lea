@@ -228,14 +228,35 @@ func (s *Store) UpsertAgent(container, name string, now int64) (string, error) {
 // session takes over (daemon.limitWait, restart), unless the user had paused it: its pending
 // resume is then given up (-1), so the restart that unpauses it does not resume it either.
 func (s *Store) SetState(key, state, sessionID string, now int64) error {
-	_, err := s.db.Exec(`UPDATE agents SET state=?,
+	_, err := s.setState(key, state, sessionID, now, "")
+	return err
+}
+
+// setStateSQL is SetState's update; a caller's extra condition follows its WHERE.
+const setStateSQL = `UPDATE agents SET state=?,
 		session_id=CASE WHEN ?='' THEN session_id ELSE ? END, updated=?,
 		paused=CASE WHEN ? IN ('done','stopped','unknown','suspended_cold') THEN 0 ELSE paused END,
 		limit_until=CASE WHEN ?='done' THEN 0
 			WHEN ? IN ('stopped','unknown') AND paused=1 AND limit_until>0 THEN -1 ELSE limit_until END,
-		limit_tries=CASE WHEN ?='done' THEN 0 ELSE limit_tries END WHERE key=?`,
-		state, sessionID, sessionID, now, state, state, state, state, key)
-	return err
+		limit_tries=CASE WHEN ?='done' THEN 0 ELSE limit_tries END WHERE key=?`
+
+func (s *Store) setState(key, state, sessionID string, now int64, and string) (bool, error) {
+	res, err := s.db.Exec(setStateSQL+and, state, sessionID, sessionID, now, state, state, state, state, key)
+	if err != nil {
+		return false, err
+	}
+	n, err := res.RowsAffected()
+	return n > 0, err
+}
+
+// SetHookState records the state an agent's own hooks (or a hook's answer) report, as SetState
+// does, unless lea stop has marked the agent stopped: its container is ending, and a late hook
+// of it (the turn's Stop or StopFailure, a tool, its SessionEnd) must not make it live or done
+// again, or the next container would forget it and its pending usage-limit resume. The next
+// container's agent reports again once restart has set it unknown. It says whether the state
+// was recorded.
+func (s *Store) SetHookState(key, state, sessionID string, now int64) (bool, error) {
+	return s.setState(key, state, sessionID, now, ` AND state<>'stopped'`)
 }
 
 const agentCols = `key, container, name, session_id, state, updated, profile, workdir, created, role, parent, repo, branch, task_id, label, args, prompt, paused, model, limit_until, limit_tries, incarnation`
