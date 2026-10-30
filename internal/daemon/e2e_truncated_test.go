@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -119,25 +120,26 @@ func allLinesValid(t *testing.T, f string) {
 	}
 }
 
-// repair is what lea-session does before claude --resume (lea repair-transcript, #219): the cut
-// line is dropped, and the file as it was is kept beside it.
+// repair is what lea-session does before claude --resume (#219): the built lea binary's
+// repair-transcript, in the agent's environment. The cut line is dropped, and the file as it was
+// is kept beside it.
 func (e *claudeE2E) repair(t *testing.T, session, f string, half []byte) {
 	t.Helper()
-	var cfg string
-	for _, v := range e.env {
-		if c, ok := strings.CutPrefix(v, "CLAUDE_CONFIG_DIR="); ok {
-			cfg = c
-		}
-	}
 	cut, err := os.ReadFile(f)
 	if err != nil {
 		t.Fatal(err)
 	}
-	rs, err := transcript.RepairSession(cfg, session)
-	if err != nil || len(rs) != 1 || rs[0].File != f || rs[0].Dropped != int64(len(half)) {
-		t.Fatalf("repair: %+v %v", rs, err)
+	cmd := exec.Command(e.lea, "repair-transcript", session)
+	cmd.Dir, cmd.Env = e.wd, e.env
+	out, err := cmd.CombinedOutput()
+	if err != nil || !strings.Contains(string(out), fmt.Sprintf("%d bytes dropped", len(half))) {
+		t.Fatalf("lea repair-transcript: %v\n%s", err, out)
 	}
-	if b, _ := os.ReadFile(rs[0].Backup); !bytes.Equal(b, cut) {
+	bs, _ := filepath.Glob(f + transcript.BackupSuffix + "*")
+	if len(bs) != 1 {
+		t.Fatalf("backups %v", bs)
+	}
+	if b, _ := os.ReadFile(bs[0]); !bytes.Equal(b, cut) {
 		t.Fatal("the backup is not the transcript as it was")
 	}
 	if b, _ := os.ReadFile(f); !bytes.Equal(b, cut[:len(cut)-len(half)]) {

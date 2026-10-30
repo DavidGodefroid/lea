@@ -46,3 +46,24 @@ func TestRepairTranscriptCommand(t *testing.T) {
 		t.Fatalf("no id: rc=%d", rc)
 	}
 }
+
+// lea-session runs it as `lea repair-transcript <id>` inside lea: the core takes it, not the
+// launcher.
+func TestRepairTranscriptRunsInsideLea(t *testing.T) {
+	const id = "0f8e2c1a-1b2c-4d5e-8f90-123456789abc"
+	d := t.TempDir()
+	f := filepath.Join(d, "projects", "-p", id+".jsonl")
+	if err := os.MkdirAll(filepath.Dir(f), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	os.WriteFile(f, []byte(`{"a":1}`+"\n"+`{"cut`), 0o600)
+	t.Setenv("CLAUDE_CONFIG_DIR", d)
+	t.Setenv("LEA_BUS_SOCK", filepath.Join(d, "bus.sock"))
+	var out, errb bytes.Buffer
+	if rc := run([]string{"repair-transcript", id}, strings.NewReader(""), &out, &errb); rc != 0 {
+		t.Fatalf("rc=%d %s", rc, errb.String())
+	}
+	if b, _ := os.ReadFile(f); string(b) != `{"a":1}`+"\n" {
+		t.Fatalf("not repaired: %q (%s)", b, errb.String())
+	}
+}
