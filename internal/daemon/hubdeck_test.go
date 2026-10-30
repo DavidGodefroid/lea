@@ -126,10 +126,18 @@ func TestHubDecideFromTheDeck(t *testing.T) {
 	if err := decide("lea-a", ticketB, true, ""); err == nil {
 		t.Fatal("a ticket not in the queue was decided")
 	}
+	// A wrong or empty name is refused by the daemon itself, though this hub would accept it
+	// (a hub older than lockhub v0.2.3 checks only flags.retype): fail closed.
+	for _, typed := range []string{"crn", "", "r", "CRM"} {
+		if err := decide("lea-a", ticketA, true, typed); err == nil || !strings.Contains(err.Error(), "typed") {
+			t.Fatalf("approved with %q typed: %v", typed, err)
+		}
+	}
+	// The hub's own refusal comes back as one line.
 	h.mu.Lock()
 	h.decideStatus = 422
 	h.mu.Unlock()
-	if err := decide("lea-a", ticketA, true, "crn"); err == nil || !strings.Contains(err.Error(), "typed") {
+	if err := decide("lea-a", ticketA, true, "crm"); err == nil || !strings.Contains(err.Error(), "typed") {
 		t.Fatalf("retype refusal: %v", err)
 	}
 	h.mu.Lock()

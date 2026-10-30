@@ -177,7 +177,7 @@ func (it queueItem) ticket() (HubTicket, bool) {
 		} `json:"requester"`
 		Flags struct {
 			Production bool   `json:"production"`
-			Retype     string `json:"retype"`
+			Retype     string `json:"retype"` // lockkit's "retype values" answer: deliberately unused
 		} `json:"flags"`
 		Screen struct {
 			Header   string   `json:"header"`
@@ -544,15 +544,20 @@ func (d *Daemon) hubDecide(ctx context.Context, params json.RawMessage) error {
 	}
 	d.mu.Lock()
 	f := d.hubFacade
-	found := false
+	found, production := false, false
 	for _, e := range d.hubQueue {
 		if e.t.ID == p.ID && e.t.Instance == p.Instance && e.container == p.Container && p.Container != "" && !e.t.Expired {
-			found = true
+			found, production = true, e.t.Production
 		}
 	}
 	d.mu.Unlock()
 	if f == nil || !found {
 		return errors.New("no such ticket in this deck")
+	}
+	// The instance name is checked here too, whatever the hub checks (a hub older than lockhub
+	// v0.2.3 checks only the ticket's flags.retype): fail closed.
+	if p.Approved && production && (p.Instance == "" || p.Retype != p.Instance) {
+		return ErrHubRetype
 	}
 	if len(p.Retype) > maxRetype || strings.ContainsFunc(p.Retype, textsafe.Unsafe) {
 		return errors.New("the typed name is too long or holds control characters")

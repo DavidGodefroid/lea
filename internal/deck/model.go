@@ -128,7 +128,8 @@ type Pressure struct {
 }
 
 // HubCard is one of the hub's pending tickets for an agent (agents.HubCard, #158): the deck
-// answers the oldest (a approves, d denies); a production one needs its Retype typed first.
+// answers the oldest (a approves, d denies); a production one needs its Retype (its instance
+// name) typed first.
 // Verified: the agent's own wait names it; else the agent claims it (shown "unverified").
 type HubCard struct {
 	ID         string   `json:"id"`
@@ -1258,6 +1259,10 @@ func (m Model) hubKey(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 		a := m.selectedAgent()
 		if a == nil || hubTicket(*a) == nil || hubTicket(*a).Instance+"/"+hubTicket(*a).ID != ref {
 			m.status = "the ticket changed: answer it again"
+			return m, nil
+		}
+		if h := *hubTicket(*a); typed != h.Retype {
+			m.status = "does not match: not approved"
 			return m, nil
 		}
 		return m, m.decideHub(*hubTicket(*a), true, typed)

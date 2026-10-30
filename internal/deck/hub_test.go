@@ -77,6 +77,13 @@ func TestHubProductionTicketNeedsItsNameTyped(t *testing.T) {
 	if m.hubFor != "" || len(api.got()) != 0 {
 		t.Fatal("esc did not cancel")
 	}
+	// A wrong name is refused in the deck: nothing reaches the daemon.
+	m, _ = step(t, m, key("a"))
+	m, _ = step(t, m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("Crm")})
+	m, cmd = step(t, m, tea.KeyMsg{Type: tea.KeyEnter})
+	if cmd != nil || !strings.Contains(m.status, "does not match") || len(api.got()) != 0 {
+		t.Fatalf("a wrong name was sent: status %q, calls %q", m.status, api.got())
+	}
 	m, _ = step(t, m, key("a"))
 	m, _ = step(t, m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("crm")})
 	m, cmd = step(t, m, tea.KeyMsg{Type: tea.KeyEnter})
