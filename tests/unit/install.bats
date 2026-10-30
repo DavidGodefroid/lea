@@ -335,7 +335,7 @@ legacy_warning="warning: no Sigstore bundle for this release (pre-signing versio
   [ "$status" -eq 1 ]
   [[ "$output" == *"the cosign downloaded from $COSIGN_URL does not match its pinned SHA-256"* ]]
   nothing_installed
-  ! grep -q '^evil' "$FAKE_LOG"
+  ! grep -q '^evil' "$FAKE_LOG" || false
   ! grep -q '^cosign ' "$FAKE_LOG"
 }
 
@@ -400,7 +400,7 @@ legacy_warning="warning: no Sigstore bundle for this release (pre-signing versio
   for p in linux-amd64 linux-arm64 darwin-amd64 darwin-arm64; do
     grep -qx "      $p) cosign_pin=$(lea__cosign_pin "$p") ;;" "$REAL_INSTALL"
   done
-  ! lea__cosign_pin windows-amd64
+  ! lea__cosign_pin windows-amd64 || false
   grep -q 'releases/download/v3\.0\.6/cosign-' "$LEA_ROOT/libexec/lib/host.sh"
 }
 

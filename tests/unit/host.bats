@@ -33,7 +33,7 @@ setup() {
   fake_tmux
   [ "$(lea_tmux_bin)" = "$BATS_TEST_TMPDIR/tbin/tmux" ]
   LEA_TMUX_BIN="$BATS_TEST_TMPDIR/none"
-  ! lea_tmux_bin
+  ! lea_tmux_bin || false
   LEA_TMUX_BIN="$BATS_TEST_TMPDIR/tbin/tmux"
   [ "$(lea_tmux_bin)" = "$LEA_TMUX_BIN" ]
 }
@@ -64,7 +64,7 @@ built_tmux() {
 @test "tmux resolution: nothing usable names the install command and make tmux-build, never sudo" {
   no_tmux
   printf 'ID=ubuntu\n' >"$OSR"
-  ! lea_tmux_bin
+  ! lea_tmux_bin || false
   run lea_tmux_missing
   [ "$output" = "tmux is not installed. Install it with: sudo apt install tmux, or build a static one with: make -C \"$LEA_ROOT\" tmux-build" ]
   run calls
@@ -73,7 +73,7 @@ built_tmux() {
 
 @test "a LEA_TMUX_BIN that is a directory is named in the message" {
   export LEA_TMUX_BIN="$BATS_TEST_TMPDIR"
-  ! lea_tmux_bin
+  ! lea_tmux_bin || false
   run lea_tmux_missing
   [[ "$output" == *"LEA_TMUX_BIN=$BATS_TEST_TMPDIR is not an executable file"* ]]
   [[ "$output" != *"is not installed"* ]]
@@ -161,7 +161,7 @@ guarded() {
   export FAKE_DOCKER_OUT_INSPECT__F=true
   lea_container_running lea-x
   export FAKE_DOCKER_OUT_INSPECT__F=false
-  ! lea_container_running lea-x
+  ! lea_container_running lea-x || false
   run calls
   [[ "$output" == *"docker [inspect] [-f] [{{.State.Running}}] [lea-x]"* ]]
 }

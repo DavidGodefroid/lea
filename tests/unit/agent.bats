@@ -158,7 +158,7 @@ service() { tr '\0' ' ' <"/proc/$1/cmdline" 2>/dev/null | grep -q 'unix://'; }
   grep -qxF 'podman [pod] [rm] [-f] [p1]' "$PODMAN_LOG"
   grep -qxF 'podman [rm] [-f] [-v] [c1] [c2] [c3]' "$PODMAN_LOG"
   i=0; while kill -0 "$svc" 2>/dev/null && [ "$i" -lt 20 ]; do sleep 0.1; i=$((i + 1)); done
-  ! kill -0 "$svc" 2>/dev/null
+  ! kill -0 "$svc" 2>/dev/null || false
   [ ! -e "$XDG_RUNTIME_DIR/podman/agent-dev-1.sock" ]
   [ ! -e "$LEA_AGENT_RUN_DIR/dev-1.podman.pid" ]
   # Nothing of its own: nothing removed, nothing said.
@@ -239,7 +239,7 @@ service() { tr '\0' ' ' <"/proc/$1/cmdline" 2>/dev/null | grep -q 'unix://'; }
   [[ "$output" =~ ^dev-1:\ stopped\ 3\ containers\ and\ 1\ pod\ \(freed\ [0-9]+\ MiB\)$ ]]
   grep -qxF 'podman [pod] [stop] [-t] [10] [p1]' "$PODMAN_LOG"
   grep -qxF 'podman [stop] [-t] [10] [c1] [c2] [c4]' "$PODMAN_LOG"
-  ! grep -q '\[rm\]' "$PODMAN_LOG"
+  ! grep -q '\[rm\]' "$PODMAN_LOG" || false
   # unpark starts again what park stopped, once.
   : >"$PODMAN_LOG"
   run "$A" unpark dev-1
@@ -268,7 +268,7 @@ service() { tr '\0' ' ' <"/proc/$1/cmdline" 2>/dev/null | grep -q 'unix://'; }
   run "$A" park dev-1
   [ "$status" -eq 3 ]
   [[ "$output" == *"dev-1: stack busy ("*"% of a CPU), not stopped"* ]]
-  ! grep -q '\[stop\]' "$PODMAN_LOG"
+  ! grep -q '\[stop\]' "$PODMAN_LOG" || false
   [ ! -e "$LEA_AGENT_RUN_DIR/dev-1.parked" ]
 }
 
@@ -354,7 +354,7 @@ service() { tr '\0' ' ' <"/proc/$1/cmdline" 2>/dev/null | grep -q 'unix://'; }
   run "$A" stop claude-1
   [ "$status" -eq 0 ]
   i=0; while kill -0 "$pid" 2>/dev/null && [ "$i" -lt 20 ]; do sleep 0.1; i=$((i + 1)); done
-  ! kill -0 "$pid" 2>/dev/null
+  ! kill -0 "$pid" 2>/dev/null || false
   [ ! -e "$LEA_AGENT_RUN_DIR/claude-1.pid" ]
 }
 
@@ -442,7 +442,7 @@ family() {
   LEA_AGENT_STOP_WAIT=5 run "$A" stop claude-1
   t1=$(date +%s%N)
   [ "$status" -eq 0 ]
-  ! kill -0 "$_fp" 2>/dev/null
+  ! kill -0 "$_fp" 2>/dev/null || false
   [ $(((t1 - t0) / 1000000)) -lt 2000 ]
   [ "$(pstate "$_fk")" != T ]
 }
@@ -507,7 +507,7 @@ EOT
   run "$A" stop-shell sh-1
   [ "$status" -eq 0 ]
   i=0; while kill -0 "$pid" 2>/dev/null && [ "$i" -lt 20 ]; do sleep 0.1; i=$((i + 1)); done
-  ! kill -0 "$pid" 2>/dev/null
+  ! kill -0 "$pid" 2>/dev/null || false
   [ ! -e "$LEA_SHELL_RUN_DIR/sh-1.pid" ]
   run "$A" stop-shell sh-1
   [ "$status" -eq 0 ]
@@ -528,7 +528,7 @@ EOT
   LEA_AGENT_STOP_WAIT=5 run "$A" stop-shell sh-1
   t1=$(date +%s%N)
   [ "$status" -eq 0 ]
-  ! kill -0 "$pid" 2>/dev/null
+  ! kill -0 "$pid" 2>/dev/null || false
   [ $(((t1 - t0) / 1000000)) -lt 2000 ]
 }
 

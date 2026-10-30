@@ -199,7 +199,7 @@ check_endpoints() {
   u="$I/user-init"
   grep -q 'jq -e .\.mcpServers\.lea\.command == "/usr/local/bin/lea"' "$u"
   grep -q 'could not register the lea MCP server' "$u"
-  ! grep -q 'mv ' "$u"
+  ! grep -q 'mv ' "$u" || false
   [ "$(grep -n 'mcpServers.lea = ' "$u" | cut -d: -f1)" -lt "$(grep -n 'touch /run/lea/ready' "$u" | cut -d: -f1)" ]
 }
 

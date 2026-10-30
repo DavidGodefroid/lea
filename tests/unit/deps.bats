@@ -203,7 +203,7 @@ latest() { export "FAKE_CURL_EFFECTIVE_$1=https://github.com/DavidGodefroid/$1/r
 }
 
 @test "the background update never touches a dependency" {
-  ! grep -q 'update-deps\|lea_update_deps' <(sed -n '/^lea_update_background()/,/^}/p;/^lea__update_background()/,/^}/p' "$LEA_ROOT/libexec/lib/host.sh")
+  ! grep -q 'update-deps\|lea_update_deps' <(sed -n '/^lea_update_background()/,/^}/p;/^lea__update_background()/,/^}/p' "$LEA_ROOT/libexec/lib/host.sh") || false
   ! grep -q 'update-deps\|lea_update_deps' "$LEA_ROOT/internal/launcher/autoupdate.go"
 }
 
