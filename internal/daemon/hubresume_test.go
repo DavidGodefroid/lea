@@ -41,7 +41,7 @@ func TestAnApprovedTicketResumesTheAgentWithTheDecision(t *testing.T) {
 	fa := &fakeAgents{st: e.d.st}
 	e.d.SetAgents(fa)
 	k := suspendedOnTicket(t, e, fa, "dev-1")
-	*e.clock += 20 * 60
+	e.clock.Add(20 * 60)
 	if _, err := e.d.st.DecideHubWaits(testTicket, "crm-prod", store.DecisionApproved, "", e.d.now()); err != nil {
 		t.Fatal(err)
 	}
@@ -226,9 +226,9 @@ func TestAFailingResumeBacksOffThenEndsInTheInbox(t *testing.T) {
 		waitFails(t, e, k, try)
 		// Within the backoff, wakes (a hub sync, a message) do not try again.
 		for range 3 {
-			*e.clock += backoff - 1
+			e.clock.Add(backoff - 1)
 			e.d.wakeSuspended(k)
-			*e.clock -= backoff - 1
+			e.clock.Add(-(backoff - 1))
 		}
 		time.Sleep(50 * time.Millisecond)
 		if n := resumeCalls(fa, k); n != try {
@@ -237,7 +237,7 @@ func TestAFailingResumeBacksOffThenEndsInTheInbox(t *testing.T) {
 		if s := agentState(t, e, k); s != store.StateSuspendedCold {
 			t.Fatalf("try %d: state %s", try, s)
 		}
-		*e.clock += backoff
+		e.clock.Add(backoff)
 		backoff *= 2
 	}
 	for i := 0; agentState(t, e, k) != "done"; i++ {
@@ -251,7 +251,7 @@ func TestAFailingResumeBacksOffThenEndsInTheInbox(t *testing.T) {
 	if err != nil || len(ms) != 1 || !strings.Contains(ms[0].Body, "approved: call its run again with ticket="+testTicket) {
 		t.Fatalf("inbox %+v %v", ms, err)
 	}
-	*e.clock += 3600
+	e.clock.Add(3600)
 	e.d.wakeSuspended(k)
 	time.Sleep(50 * time.Millisecond)
 	if n := resumeCalls(fa, k); n != maxSuspendedResumes {
@@ -276,7 +276,7 @@ func TestASuccessfulResumeClearsTheBackoff(t *testing.T) {
 	fa.mu.Lock()
 	fa.resumeErr = nil
 	fa.mu.Unlock()
-	*e.clock += resumeBackoff
+	e.clock.Add(resumeBackoff)
 	e.d.wakeSuspended(k)
 	waitResumes(t, fa, k, 2)
 	waitDelivered(t, e, k)
@@ -328,15 +328,17 @@ func TestGivingUpTellsTheLead(t *testing.T) {
 	if err := e.d.st.SetState(k, store.StateSuspendedCold, testSession, e.d.now()); err != nil {
 		t.Fatal(err)
 	}
-	e.d.giveUpResume(k, maxSuspendedResumes)
+	e.d.giveUpResume(fa, k, maxSuspendedResumes)
 	if s := agentState(t, e, k); s != "done" {
 		t.Fatalf("state %s", s)
 	}
+	// Through the manager, which tears its stack down (#201).
+	waitCall(t, fa, "end "+k)
 	if ms, _ := e.d.st.Unread(lead, 10); len(ms) != 1 || !strings.Contains(ms[0].Body, "could not resume dev-1") {
 		t.Fatalf("lead inbox %+v", ms)
 	}
 	w := spawned(t, e, "dev-2", "dev", lead)
-	e.d.giveUpResume(w, maxSuspendedResumes) // not suspended: left alone
+	e.d.giveUpResume(fa, w, maxSuspendedResumes) // not suspended: left alone
 	if s := agentState(t, e, w); s == "done" {
 		t.Fatal("ended an agent that was not suspended")
 	}

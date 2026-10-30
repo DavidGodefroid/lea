@@ -108,6 +108,13 @@ func (f *fakeAgents) SoftStop(ctx context.Context, key string) error {
 	}
 	return f.st.SetState(key, store.StateSuspendedCold, "", 0)
 }
+func (f *fakeAgents) EndSuspended(ctx context.Context, key string) (bool, error) {
+	f.rec("end " + key)
+	if f.st == nil {
+		return true, nil
+	}
+	return f.st.EndSuspended(key, 0)
+}
 func (f *fakeAgents) ResumeSuspended(ctx context.Context, key, prompt string) error {
 	f.rec("resume " + key + ": " + prompt)
 	f.mu.Lock()

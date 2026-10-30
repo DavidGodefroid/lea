@@ -287,3 +287,109 @@ func TestHubQueueDoesNotSpin(t *testing.T) {
 		t.Fatalf("%d queue requests in 1.5 s", f.n)
 	}
 }
+
+// A ticket lea stopped waiting on shows on no agent: forgotten while it waited (its waits
+// dropped), its ticket stays on the hub, and a live agent of the same name, which its requester
+// names, is not shown it as unverified; nor is it after the hub was switched off. Another agent
+// that waits on it still has it, verified.
+func TestHubQueueDoesNotShowAnAbandonedTicketOnALiveAgentOfTheSameName(t *testing.T) {
+	h := &fakeHub{queue: []map[string]any{
+		queued(ticketA, "crm", "locksql", "dev-1", "", false, ""),
+		queued(ticketB, "rabbit", "lockmq", "dev-2", "", false, ""),
+	}}
+	e, dev, dev2 := hubEnv(t, h)
+	if err := e.d.st.AddHubWait(dev, ticketA, "locksql", "crm", 1); err != nil {
+		t.Fatal(err)
+	}
+	if err := e.d.st.ForgetAgent(dev); err != nil {
+		t.Fatal(err)
+	}
+	again := spawned(t, e, "dev-1", "dev", "")
+	if again != dev {
+		t.Fatalf("new key %s", again)
+	}
+	if _, err := e.d.pollHubQueue(e.ctx, 0); err != nil {
+		t.Fatal(err)
+	}
+	snap := cardsOf(e, again, dev2)
+	if len(snap.Agents[0].Hub) != 0 {
+		t.Fatalf("the forgotten agent's ticket shows on its namesake: %+v", snap.Agents[0].Hub)
+	}
+	if b := snap.Agents[1].Hub; len(b) != 1 || b[0].ID != ticketB || b[0].Verified {
+		t.Fatalf("dev-2's cards %+v", b)
+	}
+	if v := lockView(e, "locksql"); v != nil && v.Pending != 0 {
+		t.Fatalf("locksql counts the abandoned ticket: %+v", v)
+	}
+
+	// The hub switched off abandons dev-2's wait on ticketB: once on again, the ticket shows
+	// nowhere either, but on an agent that waits on it anew, verified.
+	if err := e.d.st.AddHubWait(dev2, ticketB, "lockmq", "rabbit", 1); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := e.d.st.AbandonAllHubWaits("off", 2); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := e.d.pollHubQueue(e.ctx, 0); err != nil {
+		t.Fatal(err)
+	}
+	if b := cardsOf(e, dev2).Agents[0].Hub; len(b) != 0 {
+		t.Fatalf("the abandoned ticket shows: %+v", b)
+	}
+	if err := e.d.st.AddHubWait(again, ticketB, "lockmq", "rabbit", 3); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := e.d.pollHubQueue(e.ctx, 0); err != nil {
+		t.Fatal(err)
+	}
+	if a := cardsOf(e, again).Agents[0].Hub; len(a) != 1 || a[0].ID != ticketB || !a[0].Verified {
+		t.Fatalf("a new wait's card %+v", a)
+	}
+	if v := lockView(e, "lockmq"); v == nil || v.Pending != 1 {
+		t.Fatalf("lockmq %+v", v)
+	}
+
+	// The same agent waiting again on a ticket lea abandoned (the hub off, then on: its Lock
+	// answers the same ticket) has it again, verified, and gets its decision.
+	h.mu.Lock()
+	h.queue = append(h.queue, queued(ticketC, "crm", "locksql", "dev-2", "", false, ""))
+	h.mu.Unlock()
+	if err := e.d.st.AddHubWait(dev2, ticketC, "locksql", "crm", 4); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := e.d.st.AbandonAllHubWaits("off", 5); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := e.d.pollHubQueue(e.ctx, 0); err != nil {
+		t.Fatal(err)
+	}
+	if b := cardsOf(e, dev2).Agents[0].Hub; len(b) != 0 {
+		t.Fatalf("the abandoned ticket shows: %+v", b)
+	}
+	if err := e.d.st.AddHubWait(dev2, ticketC, "locksql", "crm", 6); err != nil {
+		t.Fatal(err)
+	}
+	if ws, err := e.d.st.PendingHubWaits(dev2); err != nil || len(ws) != 1 || ws[0].Ticket != ticketC {
+		t.Fatalf("dev-2's waits %+v %v", ws, err)
+	}
+	if _, err := e.d.pollHubQueue(e.ctx, 0); err != nil {
+		t.Fatal(err)
+	}
+	if b := cardsOf(e, dev2).Agents[0].Hub; len(b) != 1 || b[0].ID != ticketC || !b[0].Verified {
+		t.Fatalf("dev-2's card after waiting again %+v", b)
+	}
+	h.decide(ticketC, "crm", "approved", "")
+	if err := e.d.syncHub(e.ctx); err != nil {
+		t.Fatal(err)
+	}
+	ms, err := e.d.st.Unread(dev2, 10)
+	approved := 0
+	for _, m := range ms {
+		if strings.Contains(m.Body, "ticket "+ticketC+" on locksql (crm) approved") {
+			approved++
+		}
+	}
+	if err != nil || approved != 1 {
+		t.Fatalf("dev-2's inbox %+v %v", ms, err)
+	}
+}

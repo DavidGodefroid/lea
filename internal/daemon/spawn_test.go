@@ -94,7 +94,7 @@ func TestAgentsSpawnIsRateLimited(t *testing.T) {
 	if err := call(t, e.bus, "boss", "agents_spawn", map[string]any{"brief": "x"}, nil); err == nil || !strings.Contains(err.Error(), "rate limit") {
 		t.Fatalf("fourth spawn in a minute: err=%v", err)
 	}
-	*e.clock += 61
+	e.clock.Add(61)
 	if err := call(t, e.bus, "boss", "agents_spawn", map[string]any{"brief": "x"}, nil); err != nil {
 		t.Fatalf("a minute later: %v", err)
 	}

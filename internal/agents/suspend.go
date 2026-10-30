@@ -83,10 +83,9 @@ func (m *Manager) ResumeSuspended(ctx context.Context, key, prompt string) error
 		return fmt.Errorf("%s is %s: %w", a.Name, a.State, ErrNotSuspended)
 	}
 	if !sessionRe.MatchString(a.SessionID) {
-		if err := m.cfg.Store.SetState(key, "done", "", m.cfg.Now()); err != nil {
+		if _, err := m.endSuspendedLocked(a); err != nil {
 			return err
 		}
-		m.feed.bump()
 		return fmt.Errorf("%s has no session to resume", a.Name)
 	}
 	s, err := m.session(ctx, a.Container)
@@ -95,4 +94,29 @@ func (m *Manager) ResumeSuspended(ctx context.Context, key, prompt string) error
 	}
 	defer m.feed.bump()
 	return m.restartWith(ctx, s, a.Container, a, a.SessionID, prompt)
+}
+
+// EndSuspended ends an agent lea gave up resuming: done, only while it is still suspended_cold
+// (one that woke or ended meanwhile is left alone, false), and what it started in the nested
+// Podman is torn down, as for any agent that ends: SoftStop kept it for a resume that will not
+// come.
+func (m *Manager) EndSuspended(ctx context.Context, key string) (bool, error) {
+	a, err := m.spawned(key)
+	if err != nil {
+		return false, err
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.endSuspendedLocked(a)
+}
+
+// endSuspendedLocked is EndSuspended under m.mu.
+func (m *Manager) endSuspendedLocked(a store.Agent) (bool, error) {
+	ok, err := m.cfg.Store.EndSuspended(a.Key, m.cfg.Now())
+	if err != nil || !ok {
+		return false, err
+	}
+	m.teardownLater(a.Container, a.Name)
+	m.feed.bump()
+	return true, nil
 }
