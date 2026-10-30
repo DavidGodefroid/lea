@@ -131,6 +131,9 @@ func (d *Daemon) wakeSuspended(key string) {
 	if n, err := d.unreadNotice(key); (err != nil || n["count"] == 0) && !d.hasUndelivered(key) {
 		return
 	}
+	if d.resumeHeldBack(key) {
+		return // its last resume failed: the next wake past the backoff tries again
+	}
 	d.mu.Lock()
 	a := d.agents
 	now := a != nil && d.queueResumeLocked(&queuedResume{key: key, container: ag.Container})

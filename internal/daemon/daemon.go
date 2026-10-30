@@ -113,6 +113,11 @@ type Daemon struct {
 	// pending soft stop of each one.
 	keepalive  time.Duration
 	keepTimers map[string]*time.Timer
+	// resumeFails counts each suspended agent's failed resumes and when the next may run
+	// (resumelane.go, #184).
+	resumeFails map[string]resumeFail
+	// resuming is the suspended agents whose resume runs now: one at a time each.
+	resuming map[string]bool
 	// Heavy jobs (heavy.go, #132): each container's slots, their number, the workers of one job,
 	// how long a slot lives without renewal (a test seam) and the last holder id.
 	heavy        map[string]*heavyPool
@@ -163,7 +168,7 @@ func New(st *store.Store, runDir string, now func() int64) *Daemon {
 		doneDelay: doneDelay, doneTimers: map[string]*time.Timer{},
 		resumeDelay: DefaultResumeDelay, windows: map[string][]limitWindow{}, limitJobs: map[string]string{},
 		stackIdle: DefaultStackIdle, parkTimers: map[string]*time.Timer{}, parked: map[string]string{},
-		keepalive: DefaultKeepalive, keepTimers: map[string]*time.Timer{},
+		keepalive: DefaultKeepalive, keepTimers: map[string]*time.Timer{}, resumeFails: map[string]resumeFail{}, resuming: map[string]bool{},
 		heavy: map[string]*heavyPool{}, heavySlots: DefaultHeavySlots(runtime.NumCPU(), DefaultHeavyWorkers), heavyWorkers: DefaultHeavyWorkers}
 }
 
