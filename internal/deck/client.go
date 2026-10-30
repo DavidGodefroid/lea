@@ -152,3 +152,18 @@ func (c Client) HubDecide(ctx context.Context, container, instance, id string, a
 	return c.call(ctx, "hub_decide", map[string]any{"container": container, "instance": instance, "id": id,
 		"approved": approved, "retype": retype}, nil)
 }
+
+// HubReveal asks the Lock, through the daemon and the hub, for the clear values of a pending
+// ticket of an agent of container (the hub card's o or Ctrl-O).
+func (c Client) HubReveal(ctx context.Context, container, instance, id string) (HubClear, error) {
+	var r HubClear
+	err := c.call(ctx, "hub_reveal", map[string]any{"container": container, "instance": instance, "id": id}, &r)
+	return r, err
+}
+
+// HubRenew asks the Lock again for an expired ticket of an agent of container (the card's r).
+func (c Client) HubRenew(ctx context.Context, container, instance, id string) (HubRenewed, error) {
+	var r HubRenewed
+	err := c.call(ctx, "hub_renew", map[string]any{"container": container, "instance": instance, "id": id}, &r)
+	return r, err
+}

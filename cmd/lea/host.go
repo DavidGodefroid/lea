@@ -224,8 +224,9 @@ func runDaemon(stderr io.Writer) int {
 	}
 	// The Lock Family hub's decisions (#164): read from its host facade socket, from the recorded
 	// cursor, so that one taken while the daemon was down still reaches the agent that waits.
-	// LEA_HUB=0 (the default) switches it off: no hub is read, the suspend hook does nothing, and
-	// the agents still suspended are resumed with a "hub disabled" message.
+	// LEA_HUB=0 switches it off: no hub is read, the suspend hook does nothing, and the agents
+	// still suspended are resumed with a "hub disabled" message. On (the default) without a facade
+	// socket, no agent is suspended: nothing would sync its decision (hubswitch.go).
 	_ = os.Remove(filepath.Join(host, "daemon.hub"))
 	if err := os.WriteFile(filepath.Join(host, "daemon.hub"), []byte(launcher.DaemonHubStamp(os.Getenv)), 0o600); err != nil {
 		fmt.Fprintln(stderr, "lea:", clean(err.Error(), false))
@@ -236,9 +237,13 @@ func runDaemon(stderr io.Writer) int {
 		d.DisableHub()
 	} else if sock := hubFacadeSocket(os.Getenv); sock != "" {
 		d.SetHubFacade(daemon.SocketFacade{Path: sock})
+		// The deck's facade key and the lock keys lock up pinned: the deck's Ctrl-O (lockhub#29).
+		d.SetHubKeys(hubFacadeKeys(os.Getenv))
 		go d.RunHubSync(ctx)
 		// The deck shows the hub's pending tickets on their agents and answers them (#158).
 		go d.RunHubQueue(ctx)
+	} else {
+		fmt.Fprintln(stderr, "lea daemon: LEA_HUB=1 but no hub facade socket (LEA_HUB_SOCKET, XDG_RUNTIME_DIR): no agent is suspended on a Lock call")
 	}
 	exe, err := os.Executable()
 	if err != nil {
@@ -904,6 +909,23 @@ func soundFiles(getenv func(string) string) (files map[string]string, on bool) {
 
 // hubFacadeSocket is the Lock Family hub's host facade socket: LEA_HUB_SOCKET, else
 // $XDG_RUNTIME_DIR/lockhub/facade.sock; "" without either.
+// hubFacadeKeys is the directory of the host facades' keys lock up writes (deck.key, locks.json):
+// LEA_HUB_FACADE_KEYS, else $XDG_STATE_HOME/lockfamily/facades ("" when there is no home).
+func hubFacadeKeys(get func(string) string) string {
+	if p := get("LEA_HUB_FACADE_KEYS"); p != "" {
+		return p
+	}
+	st := get("XDG_STATE_HOME")
+	if st == "" {
+		h := get("HOME")
+		if h == "" {
+			return ""
+		}
+		st = filepath.Join(h, ".local", "state")
+	}
+	return filepath.Join(st, "lockfamily", "facades")
+}
+
 func hubFacadeSocket(get func(string) string) string {
 	if p := get("LEA_HUB_SOCKET"); p != "" {
 		return p

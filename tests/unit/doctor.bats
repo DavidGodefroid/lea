@@ -355,3 +355,21 @@ host_minimums() {
   [[ "$output" == *"warn  admission: every LEA_ADMIT_* threshold is 0"* ]]
   [[ "$output" == *"ok    shedding: off (LEA_SHED_AFTER=0)"* ]]
 }
+
+@test "hub: off is reported, on without a facade socket is a warning, with one is ok" {
+  export LEA_HUB=0
+  run lea_doctor
+  [[ "$output" == *"ok    approval hub: off (LEA_HUB=0)"* ]]
+  export LEA_HUB=1 XDG_RUNTIME_DIR="$BATS_TEST_TMPDIR/run"
+  unset LEA_HUB_SOCKET
+  run lea_doctor
+  [[ "$output" == *"warn  approval hub: LEA_HUB=1 but no lockhub facade at $BATS_TEST_TMPDIR/run/lockhub/facade.sock"* ]]
+  unset XDG_RUNTIME_DIR
+  run lea_doctor
+  [[ "$output" == *"warn  approval hub: LEA_HUB=1 but no facade socket to read"* ]]
+  export LEA_HUB_SOCKET="$BATS_TEST_TMPDIR/f.sock"
+  python3 -c 'import socket,sys; socket.socket(socket.AF_UNIX).bind(sys.argv[1])' "$LEA_HUB_SOCKET"
+  run lea_doctor
+  [[ "$output" == *"ok    approval hub facade $LEA_HUB_SOCKET"* ]]
+  [[ "$output" != *"warn  approval hub"* ]]
+}

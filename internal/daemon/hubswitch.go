@@ -1,8 +1,12 @@
 package daemon
 
 import (
+	"context"
 	"errors"
+	"fmt"
 	"log"
+	"strconv"
+	"time"
 
 	"github.com/DavidGodefroid/lea/internal/store"
 )
@@ -57,4 +61,75 @@ func (d *Daemon) DisableHub() {
 	if err := d.deliverHubDecisions(); err != nil {
 		log.Printf("lea daemon: hub disabled: %v", err)
 	}
+}
+
+// With the hub on, a wait is only worth registering when lea can read its decision: no facade
+// configured (no LEA_HUB_SOCKET nor XDG_RUNTIME_DIR), or a facade socket nothing answers on, and
+// the agent would wait on a decision nothing ever syncs. lea then refuses the wait, tells the
+// agent, and the deck and lea doctor say the hub is unreachable.
+
+// errNoHubFacade is the suspend hook's call refused for want of a reachable hub facade.
+var errNoHubFacade = errors.New("hub_wait_register: no Lock Family hub facade is reachable (LEA_HUB=1, but no lockhub runs on this host, or LEA_HUB_SOCKET names another socket)")
+
+// hubPingTimeout bounds the check that the facade answers: well within the suspend hook's budget
+// (hook.budget, 2 s), so that a slow answer cannot suspend an agent whose turn went on.
+const hubPingTimeout = 400 * time.Millisecond
+
+// hubPinger is a facade that can tell whether its hub answers (SocketFacade); a facade that
+// cannot (a test's) counts as reachable.
+type hubPinger interface {
+	Ping(ctx context.Context, since int64) error
+}
+
+// hubReachable is nil when lea can read the hub's decisions now, else errNoHubFacade; it records
+// the answer for the deck.
+func (d *Daemon) hubReachable(ctx context.Context) error {
+	d.mu.Lock()
+	f := d.hubFacade
+	d.mu.Unlock()
+	err := error(nil)
+	if f == nil {
+		err = errNoHubFacade
+	} else if p, ok := f.(hubPinger); ok {
+		c, _ := d.st.HubCursor()
+		since, _ := strconv.ParseInt(c, 10, 64)
+		pctx, cancel := context.WithTimeout(ctx, hubPingTimeout)
+		if p.Ping(pctx, since) != nil {
+			err = errNoHubFacade
+		}
+		cancel()
+	}
+	d.setHubDown(err != nil)
+	return err
+}
+
+// setHubDown records whether the hub's facade answered last, and redraws the decks on a change.
+func (d *Daemon) setHubDown(down bool) {
+	d.mu.Lock()
+	was := d.hubDown
+	d.hubDown = down
+	d.mu.Unlock()
+	if was != down {
+		d.changed()
+	}
+}
+
+// hubState is what the deck shows of the hub: "down" when it is on but lea cannot reach its
+// facade (no facade configured, or none answered last), else "".
+func (d *Daemon) hubState() string {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if d.hubOff {
+		return ""
+	}
+	if d.hubFacade == nil || d.hubDown {
+		return "down"
+	}
+	return ""
+}
+
+// noHubText is what an agent whose wait lea refused is told: the Lock's ticket stands, but its
+// decision will not reach it through lea.
+func noHubText(ticket, lock, instance string) string {
+	return fmt.Sprintf("[status: fail] lea did not suspend you on ticket %s on %s (%s): it cannot reach the Lock Family hub (no lockhub facade answers), so the decision would never reach you. Do not wait for it: tell the user that the hub is not running, and carry on with what does not need that call (calling the Lock again later answers the ticket's state).", ticket, lock, instance)
 }

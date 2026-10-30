@@ -91,6 +91,10 @@ func TestClaudePhase3SuspendResumeEndToEnd(t *testing.T) {
 	fa := &e2eAgents{e: e, args: args}
 	e.d.SetAgents(fa)
 	e.d.SetKeepalive(2 * time.Second)
+	// The hub's facade: lea suspends an agent only on a hub it can read (LEA_HUB=1's default).
+	hub := &fakeHub{}
+	sock := serveHub(t, hub)
+	e.d.SetHubFacade(SocketFacade{Path: sock})
 
 	// Suspended on the ticket by lea's hook.
 	fa.kill = e.run(append([]string{"run the plan"}, args...)...)
@@ -117,10 +121,7 @@ func TestClaudePhase3SuspendResumeEndToEnd(t *testing.T) {
 	// its cursor and resumes the session with it, and the Lock runs.
 	// An earlier decision (no agent waits on it) moves lea's cursor to 1 before the stop.
 	const earlier = "01JB8Z5Q3W4X7Y9ABCDEFGHJKP"
-	hub := &fakeHub{}
-	sock := serveHub(t, hub)
 	hub.decide(earlier, "crm-prod", "approved", "")
-	e.d.SetHubFacade(SocketFacade{Path: sock})
 	if err := e.d.syncHub(t.Context()); err != nil {
 		t.Fatal(err)
 	}

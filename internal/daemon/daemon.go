@@ -144,10 +144,15 @@ type Daemon struct {
 	hubSyncMu sync.Mutex
 	// hubOff is the hub switched off (LEA_HUB=0, hubswitch.go): no wait is registered.
 	hubOff bool
+	// hubDown: the hub's facade did not answer last (hubswitch.go); the deck says so.
+	hubDown bool
 	// hubQueue is the hub's queue as the decks show it, hubLocks the Locks it counted (hubdeck.go,
 	// #158).
 	hubQueue []hubEntry
 	hubLocks map[string]bool
+	// hubKeys is the directory of the host facades' keys lock up writes (hubreveal.go; "": no
+	// reveal).
+	hubKeys string
 	// pressClock is the pressure's clock (nil: time.Now), a test seam.
 	pressClock func() time.Time
 	// Shedding (shed.go, #132): its thresholds, each container's state, and whether pauses or
@@ -402,7 +407,7 @@ func (d *Daemon) dispatch(ctx context.Context, o Origin, req wire.Request) (any,
 	case "board_read":
 		return d.boardRead(o)
 	case "hub_wait_register":
-		return d.hubWaitRegister(o, me, req.Params)
+		return d.hubWaitRegister(ctx, o, me, req.Params)
 	case "msg_watch":
 		var p struct {
 			TimeoutS int  `json:"timeout_s"`

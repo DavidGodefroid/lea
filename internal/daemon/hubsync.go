@@ -57,6 +57,10 @@ type HubFacade interface {
 	// passed), and that version; Decide answers one from the deck (hubdeck.go, #158).
 	Queue(ctx context.Context, since uint64, wait int) ([]HubTicket, uint64, error)
 	Decide(ctx context.Context, instance, id string, v HubVerdict) error
+	// Reveal carries a deck's reveal key to the Lock and returns its signed, sealed answer;
+	// Renew asks the Lock again for an expired ticket (hubreveal.go).
+	Reveal(ctx context.Context, instance, id string, key []byte) ([]byte, error)
+	Renew(ctx context.Context, instance, id string) (HubRenewed, error)
 }
 
 // ErrNoHub is a facade socket that is not there: no hub runs (yet); nothing to read.
@@ -69,7 +73,8 @@ func (f SocketFacade) get(ctx context.Context, path string, out any) error {
 	if fi, err := os.Lstat(f.Path); err != nil || fi.Mode()&os.ModeSocket == 0 {
 		return ErrNoHub
 	}
-	c := &http.Client{Transport: &http.Transport{DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
+	// One request per client: no idle connection is kept to the hub.
+	c := &http.Client{Transport: &http.Transport{DisableKeepAlives: true, DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
 		var d net.Dialer
 		return d.DialContext(ctx, "unix", f.Path)
 	}}, Timeout: hubSyncTimeout}
@@ -89,6 +94,16 @@ func (f SocketFacade) get(ctx context.Context, path string, out any) error {
 		return fmt.Errorf("lockhub: GET %s: %w", strings.SplitN(path, "?", 2)[0], err)
 	}
 	return nil
+}
+
+// Ping is nil when the hub answers its decisions endpoint (from since, the recorded cursor: a
+// short answer) as the sync reads it: a socket something else listens on, or a hub that answers
+// errors, is no hub lea can read.
+func (f SocketFacade) Ping(ctx context.Context, since int64) error {
+	var out struct {
+		Cursor int64 `json:"cursor"`
+	}
+	return f.get(ctx, "/v1/decided?since="+strconv.FormatInt(max(since, 0), 10), &out)
 }
 
 func (f SocketFacade) Decided(ctx context.Context, since int64) ([]HubDecided, int64, error) {
@@ -176,6 +191,7 @@ func (d *Daemon) syncHub(ctx context.Context) error {
 	}
 	since, _ := strconv.ParseInt(c, 10, 64)
 	items, cursor, err := f.Decided(ctx, max(since, 0))
+	d.setHubDown(err != nil)
 	if errors.Is(err, ErrNoHub) {
 		return nil
 	}

@@ -19,6 +19,9 @@ type fakeAPI struct {
 	err      error
 	newAgent Agent
 	newShell Agent
+	// clear and renewed answer HubReveal and HubRenew.
+	clear   HubClear
+	renewed HubRenewed
 }
 
 func (f *fakeAPI) rec(s string) { f.mu.Lock(); f.calls = append(f.calls, s); f.mu.Unlock() }

@@ -136,7 +136,7 @@ func newWorld(t *testing.T, root string) *world {
 	write(w.data+"/lea/host/daemon.approvals", "deck 60", 0o600)
 	write(w.data+"/lea/host/daemon.resume", "on 60", 0o600)
 	write(w.data+"/lea/host/daemon.lockhttp", "off", 0o600)
-	write(w.data+"/lea/host/daemon.hub", "off 300", 0o600)
+	write(w.data+"/lea/host/daemon.hub", "on 300", 0o600)
 	write(w.data+"/lea/host/daemon.stacks", "10 0 4", 0o600)
 	write(w.data+"/lea/host/daemon.admit", "40 85 10 40 2 95 30 80 30 60", 0o600)
 	w.env = map[string]string{

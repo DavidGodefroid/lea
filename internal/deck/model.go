@@ -115,6 +115,8 @@ type Snapshot struct {
 	Locks []LockState `json:"locks,omitempty"`
 	// Pressure is the container's pressure gauge (agents.PressureView), nil without a sample.
 	Pressure *Pressure `json:"pressure,omitempty"`
+	// HubState is "down" when lea follows the hub but cannot reach it (agents.Snapshot.HubState).
+	HubState string `json:"hub_state,omitempty"`
 }
 
 // Pressure is what the deck shows of the pressure (#132, P2): a short gauge of the container
@@ -145,6 +147,41 @@ type HubCard struct {
 	// the Lock's screen, so the deck cannot show all of it (lock approve answers it).
 	Claimed   string `json:"claimed,omitempty"`
 	Truncated bool   `json:"truncated,omitempty"`
+	// Expired: the ticket expired at the hub: r asks the Lock again, nothing decides it.
+	// Renews: this ticket asks again for an expired one, with what changed since.
+	Expired bool        `json:"expired,omitempty"`
+	Renews  *HubRenewal `json:"renews,omitempty"`
+}
+
+// HubRenewal is what a renewal ticket says of the expired ticket it asks again for
+// (agents.HubRenewal): its id, why it expired, whether the Lock compared the plan's inputs, and
+// each input that changed, is new or is gone.
+type HubRenewal struct {
+	Of      string      `json:"of"`
+	Reason  string      `json:"reason,omitempty"`
+	Checked bool        `json:"checked,omitempty"`
+	Changes []HubChange `json:"changes,omitempty"`
+}
+
+type HubChange struct {
+	Input  string `json:"input"`
+	Change string `json:"change"`
+}
+
+// HubClear is a ticket's clear screen (o or Ctrl-O), cleaned by the daemon: the deck shows it
+// marked, in memory only, until the card changes or revealFor passes.
+type HubClear struct {
+	Header    string   `json:"header,omitempty"`
+	Note      string   `json:"note,omitempty"`
+	Body      []string `json:"body,omitempty"`
+	Warnings  []string `json:"warnings,omitempty"`
+	Truncated bool     `json:"truncated,omitempty"`
+}
+
+// HubRenewed is the hub's answer to r on an expired ticket.
+type HubRenewed struct {
+	Ticket       string `json:"ticket"`
+	AutoApproved bool   `json:"auto_approved"`
 }
 
 // LockState is what the deck shows of one Lock's approvals (agents.LockView): its name, its
@@ -185,6 +222,10 @@ type API interface {
 	LockDecide(ctx context.Context, container string, id int64, open bool) (string, error)
 	// HubDecide answers one of the hub's tickets for an agent of container (the hub card's a or d).
 	HubDecide(ctx context.Context, container, instance, id string, approved bool, retype string) error
+	// HubReveal asks the Lock for a pending ticket's clear values (o, Ctrl-O); HubRenew asks it
+	// again for an expired ticket (r).
+	HubReveal(ctx context.Context, container, instance, id string) (HubClear, error)
+	HubRenew(ctx context.Context, container, instance, id string) (HubRenewed, error)
 }
 
 // isShell reports whether a row is a shell.
@@ -262,6 +303,7 @@ type Model struct {
 	sound       string        // the daemon's sound switch (Snapshot.Sound)
 	locks       []LockState   // each Lock's approvals state (Snapshot.Locks)
 	pressure    *Pressure     // the container's pressure gauge (Snapshot.Pressure)
+	hubDown     bool          // lea follows the hub but cannot reach it (Snapshot.HubState)
 	seq         int           // the latest selection; older delayed shows are dropped
 	frame       int           // the working spinner's frame
 	intro       int           // frames left of the logo's start animation (WithIntro)
@@ -291,7 +333,11 @@ type Model struct {
 	hubDraft []rune
 	hubFull  bool
 	// hubRead are the tickets v showed whole (by instance/id).
-	hubRead       map[string]bool
+	hubRead map[string]bool
+	// revealed is the clear screen of the ticket o showed (memory only), dropped when the card
+	// changes or revealFor passes; revealSeq tells its timeout from an older one's.
+	revealed      *hubRevealed
+	revealSeq     int
 	width, height int
 }
 
@@ -485,9 +531,36 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.menuFor != "" {
 			return m.menuKey(msg.String())
 		}
-		return m.key(msg.String())
+		nm, cmd := m.key(msg.String())
+		if mm, ok := nm.(Model); ok {
+			mm.keepReveal() // the selection moved off the card: its clear values go
+			return mm, cmd
+		}
+		return nm, cmd
+	case revealMsg:
+		return m.revealed1(msg)
+	case revealEndMsg:
+		if m.revealed != nil && msg.seq == m.revealSeq {
+			m.revealed = nil
+		}
+		return m, nil
+	case renewMsg:
+		switch {
+		case msg.err != nil:
+			m.status = oneLine(msg.err.Error())
+		case msg.r.AutoApproved:
+			m.status = "renewed as ticket " + clean(msg.r.Ticket) + " and approved: nothing changed since"
+		default:
+			m.status = "the lock asks again with ticket " + clean(msg.r.Ticket) + ": review it on this row"
+		}
+		return m, nil
 	case tea.MouseMsg:
-		return m.mouse(msg)
+		nm, cmd := m.mouse(msg)
+		if mm, ok := nm.(Model); ok {
+			mm.keepReveal() // a wheel or a click moved the selection: the clear values go
+			return mm, cmd
+		}
+		return nm, cmd
 	case hoverEndMsg:
 		if msg.seq == m.hoverSeq {
 			m.hoverFor = ""
@@ -546,7 +619,7 @@ func (m *Model) ask(key string) {
 // the slot, so that the row selected in its place is to be shown.
 func (m *Model) apply(s Snapshot) bool {
 	before, was := m.shown, m.selected
-	m.version, m.shown, m.sound, m.locks, m.pressure = s.Version, s.Shown, s.Sound, s.Locks, s.Pressure
+	m.version, m.shown, m.sound, m.locks, m.pressure, m.hubDown = s.Version, s.Shown, s.Sound, s.Locks, s.Pressure, s.HubState == "down"
 	for _, a := range s.Agents {
 		if a.Key == s.Shown && a.State == "done" {
 			m.seen[a.Key] = a.Updated
@@ -588,6 +661,7 @@ func (m *Model) apply(s Snapshot) bool {
 		}
 	}
 	m.hubSince = hubSince
+	m.keepReveal()
 	for ref := range m.hubRead {
 		if _, ok := hubSince[ref]; !ok {
 			delete(m.hubRead, ref)
@@ -698,6 +772,21 @@ func (m Model) key(k string) (tea.Model, tea.Cmd) {
 	if isFolderKey(m.selected) {
 		if nm, cmd, ok := m.onFolder(k); ok {
 			return nm, cmd
+		}
+	}
+	if h := m.selectedHub(); h != nil {
+		switch k {
+		case "o", "ctrl+o":
+			return m.revealHub(*h)
+		case "r":
+			if h.Expired {
+				return m.renewHub(*h)
+			}
+		case "a", "d", "A":
+			if h.Expired {
+				m.status = "this ticket expired: r asks the " + clean(h.Lock) + " lock again"
+				return m, nil
+			}
 		}
 	}
 	switch k {
@@ -954,7 +1043,7 @@ func rank(a Agent, seen map[string]int64) int {
 		return 6
 	case a.Paused: // frozen by the user: it neither needs them nor works
 		return 4
-	case shownState(a) == "blocked" || a.LockAsk != nil || len(a.Hub) > 0:
+	case shownState(a) == "blocked" || a.LockAsk != nil || hubPending(a):
 		return 0
 	case a.State == "done" && seen[a.Key] != a.Updated:
 		return 1
@@ -991,6 +1080,8 @@ func (m Model) label(a Agent) string {
 		return "paused"
 	case a.LockAsk != nil && a.Approval == nil:
 		return "asks for a console"
+	case hubTicket(a) != nil && hubTicket(a).Expired:
+		return "Lock ticket expired"
 	case hubTicket(a) != nil:
 		return "Lock ticket"
 	case a.State == "blocked" && a.Approval == nil:
@@ -1120,16 +1211,13 @@ func (m Model) answerHub(approve bool) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	if approve {
-		body := len(m.hubBody(h))
-		switch {
-		case h.Truncated || body+len(m.hubWarnings(h)) > maxHubCard || !m.hubFits(*a):
-			m.status = "too long for the deck: answer it with lock approve"
+		if why := m.unreadable(*a, h); why != "" {
+			m.status = why
 			return m, nil
+		}
+		switch {
 		case h.Production && h.Retype == "":
 			m.status = "a production ticket with no name to type: answer it with lock approve"
-			return m, nil
-		case body > hubFolded && !m.hubRead[ref]:
-			m.status = "v shows the whole ticket: read it before approving"
 			return m, nil
 		case h.Production:
 			m.hubFor, m.hubDraft, m.status = ref, nil, ""
@@ -1137,6 +1225,20 @@ func (m Model) answerHub(approve bool) (tea.Model, tea.Cmd) {
 		}
 	}
 	return m, m.decideHub(h, approve, "")
+}
+
+// unreadable says why the deck cannot approve h on a's card ("" when it can): the daemon cut
+// it, it is too long or too tall for the deck, or a long one was not read whole with v. a and r
+// (which may approve at once) both need it read.
+func (m Model) unreadable(a Agent, h HubCard) string {
+	body := len(m.hubBody(h))
+	switch {
+	case h.Truncated || body+len(m.hubWarnings(h)) > maxHubCard || !m.hubFits(a):
+		return "too long for the deck: answer it with lock approve"
+	case body > hubFolded && !m.hubRead[h.Instance+"/"+h.ID]:
+		return "v shows the whole ticket: read it before approving"
+	}
+	return ""
 }
 
 func (m Model) decideHub(h HubCard, approve bool, retype string) tea.Cmd {
@@ -1209,6 +1311,126 @@ func (m Model) hubFits(a Agent) bool {
 		}
 	}
 	full := m
-	full.hubFull = true
+	// The clear values are no part of what is approved: they do not count.
+	full.hubFull, full.revealed = true, nil
 	return len(full.row(a, m.innerWidth(), in)) <= m.height-3 // the borders and the status line
+}
+
+// hubPending reports whether a has a pending hub ticket (one the user decides): an expired one
+// waits on no one.
+func hubPending(a Agent) bool {
+	for _, h := range a.Hub {
+		if !h.Expired {
+			return true
+		}
+	}
+	return false
+}
+
+// selectedHub is the hub ticket the selected row's card shows, nil when none.
+func (m Model) selectedHub() *HubCard {
+	if a := m.selectedAgent(); a != nil {
+		return hubTicket(*a)
+	}
+	return nil
+}
+
+// revealFor is how long the deck shows a ticket's clear values.
+const revealFor = time.Minute
+
+type hubRevealed struct {
+	ref   string
+	clear HubClear
+}
+
+type revealMsg struct {
+	ref   string
+	clear HubClear
+	err   error
+}
+
+type revealEndMsg struct{ seq int }
+
+type renewMsg struct {
+	r   HubRenewed
+	err error
+}
+
+// revealHub asks the Lock for the clear values of the selected card's ticket (o, Ctrl-O); o
+// again hides them. Not within lockAskDelay of the card coming into view, nor for an expired
+// ticket (the Lock keeps no clear screen past it).
+func (m Model) revealHub(h HubCard) (tea.Model, tea.Cmd) {
+	ref := h.Instance + "/" + h.ID
+	if m.revealed != nil && m.revealed.ref == ref {
+		m.revealed, m.status = nil, "clear values hidden"
+		return m, nil
+	}
+	if h.Expired {
+		m.status = "this ticket expired: nothing to reveal (r asks the lock again)"
+		return m, nil
+	}
+	if t, ok := m.hubSince[ref]; !ok || m.now().Sub(t) < lockAskDelay {
+		m.status = "read the " + clean(h.Lock) + " ticket first"
+		return m, nil
+	}
+	m.status = "asking the " + clean(h.Lock) + " lock for the clear values…"
+	api, c := m.api, m.container
+	return m, func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), callTimeout)
+		defer cancel()
+		cl, err := api.HubReveal(ctx, c, h.Instance, h.ID)
+		return revealMsg{ref, cl, err}
+	}
+}
+
+// revealed1 takes a reveal's answer: shown on its card while that card is in view.
+func (m Model) revealed1(msg revealMsg) (tea.Model, tea.Cmd) {
+	if msg.err != nil {
+		m.status = oneLine(msg.err.Error())
+		return m, nil
+	}
+	if h := m.selectedHub(); h == nil || h.Instance+"/"+h.ID != msg.ref {
+		m.status = "the ticket changed: o asks again"
+		return m, nil
+	}
+	m.revealSeq++
+	m.revealed, m.status = &hubRevealed{ref: msg.ref, clear: msg.clear}, "clear values shown for a minute (o hides them)"
+	seq := m.revealSeq
+	return m, tea.Tick(revealFor, func(time.Time) tea.Msg { return revealEndMsg{seq} })
+}
+
+// keepReveal drops the clear values once the selected row's card no longer shows their ticket.
+func (m *Model) keepReveal() {
+	if m.revealed == nil {
+		return
+	}
+	if h := m.selectedHub(); h == nil || h.Instance+"/"+h.ID != m.revealed.ref || h.Expired {
+		m.revealed = nil
+	}
+}
+
+// renewHub asks the Lock again for the selected card's expired ticket (r): the hub approves the
+// renewal at once when nothing changed (not for production), else it comes as a new card.
+func (m Model) renewHub(h HubCard) (tea.Model, tea.Cmd) {
+	ref := h.Instance + "/" + h.ID
+	if t, ok := m.hubSince[ref]; !ok || m.now().Sub(t) < lockAskDelay {
+		m.status = "read the " + clean(h.Lock) + " ticket first"
+		return m, nil
+	}
+	// The hub approves an unchanged renewal at once in the user's name, also of a ticket that
+	// expired undecided: r is an approval, read like a.
+	if a := m.selectedAgent(); a == nil {
+		return m, nil
+	} else if why := m.unreadable(*a, h); why != "" {
+		m.status = why
+		return m, nil
+	}
+	m.status = "asking the " + clean(h.Lock) + " lock again…"
+	api, c := m.api, m.container
+	return m, func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), callTimeout)
+		defer cancel()
+		r, err := api.HubRenew(ctx, c, h.Instance, h.ID)
+		return renewMsg{r, err}
+	}
 }
