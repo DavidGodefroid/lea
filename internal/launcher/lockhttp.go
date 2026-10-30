@@ -135,18 +135,29 @@ var lockHTTPConfine = []string{"--cap-drop", "ALL", "--security-opt", "no-new-pr
 // ensureLockHTTPGate runs the gate container beside the proxy (docs/lea.md, §2.1), and under MITM
 // the signer (§3), unless fresh is false and they are current: a running gate of image (and CA)
 // started after the proxy, and a running signer of the same. A gate older than the proxy is in a
-// network namespace the proxy left.
-func (l *Launcher) ensureLockHTTPGate(fresh bool, image string) error {
+// network namespace the proxy left. With hub (lock up's lockhttp lock, lockhubgate.go), the gate
+// asks the hub, and only the proxy joins the hub's network.
+func (l *Launcher) ensureLockHTTPGate(fresh bool, image string, hub *gateHub) error {
 	proxy, name, signer := l.prefix()+"-proxy", l.lockHTTPGateName(), l.lockHTTPSignerName()
-	mitm, stamp := l.Cfg.LockHTTPMITM(), l.lockHTTPCAStamp()
+	mitm, stamp, hubStamp := l.Cfg.LockHTTPMITM(), l.lockHTTPCAStamp(), hub.stamp()
 	want, names := image, []string{proxy, name}
 	if mitm {
 		want += " ca:" + stamp
 		names = append(names, signer)
 	}
+	if hub != nil {
+		want += " hub:" + hubStamp
+	}
+	hubDir, err := l.writeGateHub(hub)
+	if err != nil {
+		return die("LEA_LOCKHTTP=1: %v", err)
+	}
+	if err := l.joinHubNetwork(proxy, hub); err != nil {
+		return err
+	}
 	if !fresh {
 		out, err := l.output(false, "docker", append([]string{"inspect", "--type", "container", "-f",
-			`{{.State.Running}}|{{.State.StartedAt}}|{{index .Config.Labels "lea.lockhttp-image"}}{{with index .Config.Labels "lea.lockhttp-ca"}} ca:{{.}}{{end}}`},
+			`{{.State.Running}}|{{.State.StartedAt}}|{{index .Config.Labels "lea.lockhttp-image"}}{{with index .Config.Labels "lea.lockhttp-ca"}} ca:{{.}}{{end}}{{with index .Config.Labels "lea.lockhttp-hub"}} hub:{{.}}{{end}}`},
 			names...)...)
 		if err == nil && lockHTTPGateCurrent(out, want, len(names)) {
 			return nil
@@ -155,6 +166,9 @@ func (l *Launcher) ensureLockHTTPGate(fresh bool, image string) error {
 	_ = l.quiet("docker", "rm", "-f", name, signer)
 	data := l.Cfg.DataDir()
 	labels := []string{"--label", "lea.prefix=" + l.prefix(), "--label", "lea.lockhttp-image=" + image}
+	if hub != nil {
+		labels = append(labels, "--label", "lea.lockhttp-hub="+hubStamp)
+	}
 	var gateMITM, gateCA []string
 	if mitm {
 		labels = append(labels, "--label", "lea.lockhttp-ca="+stamp)
@@ -166,9 +180,15 @@ func (l *Launcher) ensureLockHTTPGate(fresh bool, image string) error {
 	}
 	a := []string{"run", "-d", "--name", name, "--restart", "unless-stopped",
 		"--network", "container:" + proxy, "--user", "gate", "--label", "lea.role=lockhttp-gate"}
+	// The console's socket: the gate's container only, never an agent's (lock up's, under lock up).
+	sock, gateHubArgs := "lockhttp-run", []string(nil)
+	if hub != nil {
+		sock, gateHubArgs = hub.socket, hub.args()
+		gateMITM = append(gateMITM, "--mount", "type=volume,src="+hub.home+",dst=/lockhttp-home",
+			"--mount", "type=bind,src="+hubDir+",dst="+gateHubDir+",readonly")
+	}
 	a = append(append(append(a, labels...), lockHTTPConfine...),
-		// The console's socket: the gate's container only, never an agent's.
-		"--mount", "type=volume,src=lockhttp-run,dst=/run/lockhttp",
+		"--mount", "type=volume,src="+sock+",dst=/run/lockhttp",
 		"--mount", "type=bind,src="+lockhttp.GateDir(data)+",dst=/etc/lockhttp-gate,readonly",
 		// The audit stays in the engine's volume, the gate's own (0700 in the image).
 		"--mount", "type=volume,src="+l.prefix()+"-lockhttp-audit,dst=/var/log/lockhttp",
@@ -179,7 +199,7 @@ func (l *Launcher) ensureLockHTTPGate(fresh bool, image string) error {
 		// The daemon's credentials.json (§2.4): a Claude API key not of the calling container is denied.
 		"--credentials", "/etc/lockhttp-gate/credentials.json",
 		"--audit-dir", "/var/log/lockhttp", "--status-file", "/run/lockhttp-gate/status.json")
-	return l.run("docker", append(a, gateCA...)...)
+	return l.run("docker", append(append(a, gateCA...), gateHubArgs...)...)
 }
 
 // lockHTTPSigner hands the CA key to the signer's volume and runs the signer (docs/lea.md, §3): a

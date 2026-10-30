@@ -385,6 +385,18 @@ not an agent that rewrites its own login file. `LEA_GIT_SSH` and `LEA_OTEL_UPSTR
 would bypass the gate: use git over HTTPS), and claude.ai's connectors are turned off in the
 agents' Claude Code (WebSearch and WebFetch stay).
 
+**With `lock up`** (lockhub's `docs/lock-up.md`): when lock up runs a lockhttp lock for the
+projects directory (its `.lockfamily/up.json`), the gate asks the Lock Family hub instead of a
+console of its own. It mounts that lock's socket volume and gate volume (`--home`), and reads
+lea's read-only copies of the hub's key, the host facades' keys (`--facade-keys-file`, so that a
+reveal is sealed only to them) and, for a lock that pins the paired phones (`devices: true` in
+`lockfamily.yaml`), the devices (`/run/lockfamily/devices.json`, with `--require-device` and
+`--seal-clear` as `hub.mobile` says; without it, a phone's decision is refused). Only the proxy
+joins the hub's network, whose addresses the gate refuses as targets: no agent reaches the hub.
+lea checks the volumes' and the network's labels and the key's form first; anything it cannot
+trust leaves the gate as without lock up, and lea says why. One lockhttp lock at a time: the gate
+follows the projects directory whose lea started it last. This needs lockhttp v0.4.0 or later.
+
 `LEA_LOCKHTTP_MITM=1` (with `LEA_LOCKHTTP=1`) lets the gate decrypt HTTPS, but for the policy's
 splice hosts, so that it decides on methods, paths and bodies. lea makes a local CA on first use
 through the launcher (`lockhttp ca init`, 90 days, in `~/.local/share/lea/lockhttp/ca/`; `lea

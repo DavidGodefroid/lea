@@ -84,10 +84,13 @@ func (l *Launcher) ensureProxy(proj string) error {
 	}
 	var lh []string
 	var gateImage string
+	var hub *gateHub
 	if l.Cfg.LockHTTP() {
 		if lh, gateImage, err = l.lockHTTPProxyArgs(); err != nil {
 			return err
 		}
+		// lock up's lockhttp lock for this projects directory: the gate asks the hub.
+		hub = l.lockUpGate(proj)
 	}
 	if l.containerRunning(name) {
 		got, _ := l.output(false, "docker", "inspect", "--format",
@@ -116,7 +119,7 @@ func (l *Launcher) ensureProxy(proj string) error {
 		// Docker writes the IDs sha256:<hex>, Podman <hex>.
 		if got == want && strings.TrimPrefix(image, "sha256:") == strings.TrimPrefix(current, "sha256:") {
 			if lh != nil {
-				return l.ensureLockHTTPGate(false, gateImage)
+				return l.ensureLockHTTPGate(false, gateImage, hub)
 			}
 			return nil
 		}
@@ -153,7 +156,7 @@ func (l *Launcher) ensureProxy(proj string) error {
 	if err := l.run("docker", a...); err != nil || lh == nil {
 		return err
 	}
-	return l.ensureLockHTTPGate(true, gateImage)
+	return l.ensureLockHTTPGate(true, gateImage, hub)
 }
 
 // proxyIP is lea__proxy_ip: the proxy's IPv4 address on network, "" when it is not attached.
