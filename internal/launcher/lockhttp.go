@@ -181,9 +181,9 @@ func (l *Launcher) ensureLockHTTPGate(fresh bool, image string, hub *gateHub) er
 	a := []string{"run", "-d", "--name", name, "--restart", "unless-stopped",
 		"--network", "container:" + proxy, "--user", "gate", "--label", "lea.role=lockhttp-gate"}
 	// The console's socket: the gate's container only, never an agent's (lock up's, under lock up).
-	sock, gateHubArgs := "lockhttp-run", []string(nil)
+	sock, profile, gateHubArgs := "lockhttp-run", "default", []string(nil)
 	if hub != nil {
-		sock, gateHubArgs = hub.socket, hub.args()
+		sock, profile, gateHubArgs = hub.socket, hub.profile, hub.args()
 		gateMITM = append(gateMITM, "--mount", "type=volume,src="+hub.home+",dst=/lockhttp-home",
 			"--mount", "type=bind,src="+hubDir+",dst="+gateHubDir+",readonly")
 	}
@@ -195,7 +195,7 @@ func (l *Launcher) ensureLockHTTPGate(fresh bool, image string, hub *gateHub) er
 		"--mount", "type=bind,src="+lockhttp.StatusDir(data)+",dst=/run/lockhttp-gate")
 	a = append(append(a, gateMITM...),
 		image, "gate", "--listen", "0.0.0.0:"+lockhttp.Port, "--upstream", "http://127.0.0.1:3128",
-		"--profile", "default", "--sources", "/etc/lockhttp-gate/sources.json",
+		"--profile", profile, "--sources", "/etc/lockhttp-gate/sources.json",
 		// The daemon's credentials.json (§2.4): a Claude API key not of the calling container is denied.
 		"--credentials", "/etc/lockhttp-gate/credentials.json",
 		"--audit-dir", "/var/log/lockhttp", "--status-file", "/run/lockhttp-gate/status.json")

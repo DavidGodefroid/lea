@@ -42,6 +42,9 @@ type lockUpLock struct {
 	Type   string `json:"type"`
 	Socket string `json:"socket_volume"`
 	GID    string `json:"client_gid"`
+	// Profile is the profile the lock's console serves (lockfamily.yaml's profile; "" its default):
+	// lea's gate asks that console.
+	Profile string `json:"profile,omitempty"`
 	// GateHome is a lockhttp lock's gate volume (role gate-home), lea's gate's --home.
 	GateHome string `json:"gate_home_volume,omitempty"`
 	// Reveal: lock up lets the lock reveal a ticket's clear values (locks.<name>.reveal): the gate

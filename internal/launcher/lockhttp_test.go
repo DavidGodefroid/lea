@@ -188,6 +188,7 @@ func TestLockHTTPGateFollowsTheProxy(t *testing.T) {
 		w.env["FAKE_DOCKER_OUT_INSPECT___TYPE"] = c.inspect
 		if c.rc != "" {
 			w.env["FAKE_DOCKER_RC_INSPECT___TYPE"] = c.rc
+			w.env["FAKE_DOCKER_RC_INSPECT___TYPE_AT_LEA_PROXY"] = "0" // the proxy's networks
 		}
 		if err := w.launcher().ensureProxy(w.proj); err != nil {
 			t.Fatal(err)

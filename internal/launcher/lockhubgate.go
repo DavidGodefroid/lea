@@ -7,6 +7,7 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/netip"
 	"os"
@@ -37,6 +38,7 @@ const gateHubDir = "/run/lockfamily"
 // network (its subnets) and key, and the facade keys and devices the gate pins.
 type gateHub struct {
 	instance, url, network string
+	profile                string
 	socket, home           string
 	subnets                []string
 	hubKey                 string
@@ -44,6 +46,9 @@ type gateHub struct {
 	requireDevice          []string
 	sealClear              bool
 }
+
+// gateProfile is a console profile's name (lockhub's lockfamily.yaml rule).
+var gateProfile = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$`)
 
 // gateHubURL is the hub on its network: lock up's service lockhub (a name no resolver outside the
 // network is asked for), on a port.
@@ -75,7 +80,7 @@ func (l *Launcher) lockUpGate(proj string) *gateHub {
 		return nil
 	}
 	if len(names) > 1 {
-		return warn("lock up runs " + strings.Join(names, ", ") + ": lea's gate asks for one")
+		return warn(fmt.Sprintf("lock up runs %q: lea's gate asks for one", names))
 	}
 	name, lk := names[0], s.Locks[names[0]]
 	if !lockUpInstance.MatchString(name) {
@@ -93,7 +98,7 @@ func (l *Launcher) lockUpGate(proj string) *gateHub {
 		return warn(why)
 	}
 	if s.HubNetwork != s.Project+"_lockhub" {
-		return warn("hub network " + s.HubNetwork + " is not lock up's")
+		return warn(fmt.Sprintf("hub network %q is not lock up's", s.HubNetwork))
 	}
 	why, subnets := l.lockUpLabelsWrong("network", s.HubNetwork, "{{range .IPAM.Config}}{{.Subnet}} {{end}}", map[string]string{
 		"com.docker.compose.project": s.Project, "com.docker.compose.network": "lockhub", "dev.lockfamily.role": "hub",
@@ -102,7 +107,7 @@ func (l *Launcher) lockUpGate(proj string) *gateHub {
 		return warn(why)
 	}
 	if !gateHubURL.MatchString(s.HubURL) {
-		return warn("hub URL " + s.HubURL + " is not a service on the hub's network")
+		return warn(fmt.Sprintf("hub URL %q is not a service on the hub's network", s.HubURL))
 	}
 	// Exactly the key's base64 on one line, as lockkit's ReadHubKey takes it: Go's decoder skips
 	// a CR or LF the gate refuses.
@@ -116,7 +121,15 @@ func (l *Launcher) lockUpGate(proj string) *gateHub {
 	if !lockHTTPAtLeast(ver, "0.3.0") {
 		return warn("the pinned lockhttp " + orUnknown(ver) + " has no hub mode (v0.3.0 or later)")
 	}
-	g := &gateHub{instance: name, url: s.HubURL, network: s.HubNetwork, socket: lk.Socket, home: lk.GateHome, hubKey: s.HubKey}
+	// The console's profile, as lock up runs it (its socket's name derives from it).
+	prof := lk.Profile
+	if prof == "" {
+		prof = "default"
+	}
+	if !gateProfile.MatchString(prof) {
+		return warn(fmt.Sprintf("profile %q is not a profile name", prof))
+	}
+	g := &gateHub{instance: name, url: s.HubURL, network: s.HubNetwork, socket: lk.Socket, home: lk.GateHome, hubKey: s.HubKey, profile: prof}
 	for _, f := range strings.Fields(subnets) {
 		pf, err := netip.ParsePrefix(f)
 		if err != nil {
@@ -145,10 +158,17 @@ func (l *Launcher) lockUpGate(proj string) *gateHub {
 		if g.devices, err = devicesFile(s.Devices); err != nil {
 			return warn("devices: " + err.Error())
 		}
+		// Risk classes that must be device-signed, and lea cannot say so to the gate: no hub mode,
+		// or the gate would take the hub's approvals of them from any facade (lock up refuses that
+		// too). The standalone gate asks its own console.
 		switch {
+		case g.devices == nil && len(lk.RequireDevice) > 0:
+			return warn("require_device " + strings.Join(lk.RequireDevice, ",") + " but no device is paired")
 		case g.devices == nil:
 			// No device paired yet: the gate pins none, and a device's decision fails closed.
 			l.logf("warning: %s: lockhttp: the lock pins the paired devices, but none is paired: decisions from a phone are refused", p)
+		case !lockHTTPAtLeast(ver, "0.4.0") && len(lk.RequireDevice) > 0:
+			return warn("require_device needs lockhttp v0.4.0 or later, and the pinned one is " + orUnknown(ver))
 		case !lockHTTPAtLeast(ver, "0.4.0"):
 			g.devices = nil
 			l.logf("warning: %s: lockhttp: the pinned lockhttp %s cannot pin devices (v0.4.0 or later): decisions from a phone are refused", p, orUnknown(ver))
@@ -235,11 +255,12 @@ func lockHTTPLauncherVersion() string {
 }
 
 // lockHTTPAtLeast reports whether release v (lockhttp's launcher_version: 0.4.0, v0.4.0, dev for
-// a clone) is min or later; a pre-release counts as its release.
+// a clone) is min or later; a pre-release of min is not.
 func lockHTTPAtLeast(v, min string) bool {
 	if v == "dev" {
 		return true
 	}
+	pre := strings.ContainsRune(strings.SplitN(v, "+", 2)[0], '-')
 	parse := func(s string) ([3]int, bool) {
 		s = strings.TrimPrefix(s, "v")
 		if i := strings.IndexAny(s, "-+"); i >= 0 {
@@ -269,7 +290,7 @@ func lockHTTPAtLeast(v, min string) bool {
 			return a[i] > b[i]
 		}
 	}
-	return true
+	return !pre // a pre-release comes before its release
 }
 
 func orUnknown(v string) string {
@@ -353,7 +374,7 @@ func (g *gateHub) stamp() string {
 		return ""
 	}
 	h := sha256.New()
-	h.Write([]byte(g.socket + "\x00" + g.home + "\x00" + g.network + "\x00" + strings.Join(g.args(), "\x00")))
+	h.Write([]byte(g.socket + "\x00" + g.home + "\x00" + g.network + "\x00" + g.profile + "\x00" + strings.Join(g.args(), "\x00")))
 	fs := g.files()
 	names := make([]string, 0, len(fs))
 	for n := range fs {
@@ -404,14 +425,21 @@ func (l *Launcher) writeGateHub(g *gateHub) (string, error) {
 // joinHubNetwork connects the proxy (only it: the gate shares its namespace) to the hub's
 // network of g, and disconnects it from any other lock up hub network; nil g leaves none.
 func (l *Launcher) joinHubNetwork(proxy string, g *gateHub) error {
-	o, _ := l.output(false, "docker", "inspect", "--type", "container", "-f", "{{range $k, $v := .NetworkSettings.Networks}}{{$k}} {{end}}", proxy)
+	// The proxy (the gate's namespace) on a hub network whose subnets the gate does not refuse
+	// would let an agent reach that hub: what cannot be read or left stops lea.
+	o, err := l.output(false, "docker", "inspect", "--type", "container", "-f", "{{range $k, $v := .NetworkSettings.Networks}}{{$k}} {{end}}", proxy)
+	if err != nil {
+		return die("LEA_LOCKHTTP=1: cannot read the networks of %s", proxy)
+	}
 	joined := false
 	for _, n := range strings.Fields(o) {
 		switch {
 		case g != nil && n == g.network:
 			joined = true
 		case lockUpHubNet.MatchString(n):
-			_ = l.quiet("docker", "network", "disconnect", n, proxy)
+			if err := l.quiet("docker", "network", "disconnect", n, proxy); err != nil {
+				return die("LEA_LOCKHTTP=1: could not take %s off the hub network %s", proxy, n)
+			}
 		}
 	}
 	if g == nil || joined {

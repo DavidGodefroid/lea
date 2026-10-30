@@ -168,8 +168,8 @@ func TestLockHTTPGateDevicesOnlyForALockThatPinsThem(t *testing.T) {
 		warn          bool
 	}{
 		"not pinned":  {`,"require_device":["write"],"seal_clear":true`, testDevices, false},
-		"none paired": {`,"devices":true,"require_device":["write"],"seal_clear":true`, "", true},
-		"empty list":  {`,"devices":true,"require_device":["write"],"seal_clear":true`, `{"v":1,"devices":[]}`, true},
+		"none paired": {`,"devices":true,"seal_clear":true`, "", true},
+		"empty list":  {`,"devices":true,"seal_clear":true`, `{"v":1,"devices":[]}`, true},
 	} {
 		t.Run(name, func(t *testing.T) {
 			w, _ := lockHTTPWorld(t)
@@ -230,6 +230,9 @@ func TestLockHTTPGateRefusesAnUntrustedHub(t *testing.T) {
 		"facade name": {lock: `,"reveal":true`, mod: func(w *world) { rewriteUp(t, w, `"facade": "deck"`, `"facade": "slack"`) }, want: "facade_keys: "},
 		"hub key":     {mod: func(w *world) { rewriteUp(t, w, testHubKey, "AAAA") }, want: "not an Ed25519 public key"},
 		"hub url":     {mod: func(w *world) { rewriteUp(t, w, "http://lockhub:8443", "https://evil.example") }, want: "not a service on the hub's network"},
+		"required none paired": {lock: `,"devices":true,"require_device":["prod-write"]`, mod: func(w *world) { rewriteUp(t, w, `"devices":{`, `"x":{`) },
+			want: "require_device prod-write but no device is paired"},
+		"bad profile": {lock: `,"profile":"-x"`, want: "not a profile name"},
 		"hub host":    {mod: func(w *world) { rewriteUp(t, w, "http://lockhub:8443", "http://evil:8443") }, want: "not a service on the hub's network"},
 		"hub port":    {mod: func(w *world) { rewriteUp(t, w, "http://lockhub:8443", "http://lockhub:65536") }, want: "not a service on the hub's network"},
 		"hub key newline": {mod: func(w *world) { rewriteUp(t, w, testHubKey, testHubKey[:20]+`\r\n`+testHubKey[20:]) },
@@ -339,11 +342,15 @@ func TestLockHTTPGateFollowsThePinnedRelease(t *testing.T) {
 		hub, devices, facades bool
 	}{
 		{"0.2.1", false, false, false}, {"0.3.0", true, false, false}, {"0.4.0", true, true, false},
-		{"0.5.0", true, true, true}, {"0.5.0-rc.1", true, true, true}, {"dev", true, true, true},
+		{"0.5.0", true, true, true}, {"0.5.0-rc.1", true, true, false}, {"dev", true, true, true},
 	} {
 		t.Run(c.version, func(t *testing.T) {
 			w, root := lockHTTPWorld(t)
-			hubUp(t, w, `,"reveal":true,"devices":true,"require_device":["write"],"seal_clear":true`, testFacades, testDevices)
+			lock := `,"reveal":true,"devices":true,"seal_clear":true`
+			if c.devices {
+				lock += `,"require_device":["write"]`
+			}
+			hubUp(t, w, lock, testFacades, testDevices)
 			if err := os.WriteFile(root+"/usr/local/bin/lockhttp", []byte(fakeLockHTTPLauncher(c.version, testDigest)), 0o755); err != nil {
 				t.Fatal(err)
 			}
@@ -352,7 +359,7 @@ func TestLockHTTPGateFollowsThePinnedRelease(t *testing.T) {
 			}
 			run := gateRun(t, w)
 			for flag, want := range map[string]bool{"[--hub]": c.hub, "[--devices-file]": c.devices, "[--seal-clear]": c.devices,
-				"[--require-device]": c.devices, "[--facade-keys-file]": c.facades} {
+				"[--facade-keys-file]": c.facades} {
 				if strings.Contains(run, flag) != want {
 					t.Errorf("%s: %v, want %v: %s", flag, !want, want, run)
 				}
@@ -362,9 +369,67 @@ func TestLockHTTPGateFollowsThePinnedRelease(t *testing.T) {
 			}
 		})
 	}
-	for v, want := range map[string]bool{"0.10.0": true, "v0.5.1": true, "1.0.0": true, "0.4.9": false, "": false, "x": false, "0.5": false} {
+	// Devices that must sign a risk class, and a release without --require-device: no hub mode.
+	w, root := lockHTTPWorld(t)
+	hubUp(t, w, `,"devices":true,"require_device":["write"]`, "", testDevices)
+	if err := os.WriteFile(root+"/usr/local/bin/lockhttp", []byte(fakeLockHTTPLauncher("0.3.0", testDigest)), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := w.launcher().ensureProxy(w.proj); err != nil {
+		t.Fatal(err)
+	}
+	if run := gateRun(t, w); strings.Contains(run, "[--hub]") || !strings.Contains(w.errb.String(), "require_device needs lockhttp v0.4.0") {
+		t.Errorf("hub mode without --require-device: %s\n%s", run, w.errb.String())
+	}
+	for v, want := range map[string]bool{"0.10.0": true, "v0.5.1": true, "1.0.0": true, "0.4.9": false, "": false, "x": false, "0.5": false,
+		"0.5.0-rc.1": false, "0.5.1-rc.1": true, "0.5.0+build": true} {
 		if got := lockHTTPAtLeast(v, "0.5.0"); got != want {
 			t.Errorf("lockHTTPAtLeast(%q) = %v", v, got)
 		}
+	}
+}
+
+// The gate asks the console of the profile lock up runs (its socket is named after it).
+func TestLockHTTPGateAsksTheConsolesProfile(t *testing.T) {
+	for prof, want := range map[string]string{"": "default", "crm.prod": "crm.prod"} {
+		w, _ := lockHTTPWorld(t)
+		lock := ""
+		if prof != "" {
+			lock = `,"profile":"` + prof + `"`
+		}
+		hubUp(t, w, lock, "", "")
+		if err := w.launcher().ensureProxy(w.proj); err != nil {
+			t.Fatal(err)
+		}
+		if run := gateRun(t, w); !strings.Contains(run, "[--profile] ["+want+"]") || !strings.Contains(run, "[--hub]") {
+			t.Errorf("%q: %s", prof, run)
+		}
+	}
+	// In the stamp: another profile restarts the gate.
+	a, b := gateHub{profile: "a"}, gateHub{profile: "b"}
+	if a.stamp() == b.stamp() {
+		t.Error("the stamp ignores the profile")
+	}
+}
+
+// The proxy on a hub network lea cannot take it off, or whose networks lea cannot read: lea stops
+// (the gate would not refuse that hub's addresses).
+func TestLockHTTPGateStopsOnAHubNetworkItCannotLeave(t *testing.T) {
+	for name, env := range map[string]map[string]string{
+		"disconnect fails": {"FAKE_DOCKER_OUT_INSPECT___TYPE_AT_LEA_PROXY": "lea-egress lockfamily-0badc0de_lockhub ", "FAKE_DOCKER_RC_NETWORK_DISCONNECT": "1"},
+		"inspect fails":    {"FAKE_DOCKER_RC_INSPECT___TYPE_AT_LEA_PROXY": "1"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			w, _ := lockHTTPWorld(t)
+			for k, v := range env {
+				w.env[k] = v
+			}
+			if err := w.launcher().ensureProxy(w.proj); err == nil {
+				t.Fatal("no error")
+			}
+			if len(gateRuns(w)) != 0 {
+				t.Error("the gate started")
+			}
+		})
 	}
 }
