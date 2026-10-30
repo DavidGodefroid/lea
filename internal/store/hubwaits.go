@@ -76,10 +76,27 @@ func (s *Store) AddHubWait(agent, ticket, lock, instance string, now int64) erro
 	}
 	// Only for an agent lea knows: a wait registered while its agent was forgotten would be left
 	// for a later agent of the same name.
-	_, err := s.db.Exec(`INSERT INTO hub_waits(agent_key, ticket, lock, instance, created)
+	// A wait lea abandoned (the hub switched off, then on) waits again: the Lock answered the same
+	// ticket to the same agent, and its decision must reach it.
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	r, err := tx.Exec(`INSERT INTO hub_waits(agent_key, ticket, lock, instance, created)
 		SELECT ?,?,?,?,? WHERE EXISTS(SELECT 1 FROM agents WHERE key=?)
-		ON CONFLICT(agent_key, ticket) DO NOTHING`, agent, ticket, lock, instance, now, agent)
-	return err
+		ON CONFLICT(agent_key, ticket) DO UPDATE SET decision='', reason='', decided_at=0, delivered=0,
+		lock=excluded.lock, instance=excluded.instance, created=excluded.created
+		WHERE hub_waits.decision='abandoned'`, agent, ticket, lock, instance, now, agent)
+	if err != nil {
+		return err
+	}
+	if n, _ := r.RowsAffected(); n > 0 {
+		if _, err := tx.Exec(`DELETE FROM hub_abandoned WHERE instance=? AND ticket=?`, instance, ticket); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
 }
 
 // DecideHubWaits records the hub's decision on ticket of instance for every agent that waits on
@@ -147,6 +164,11 @@ func (s *Store) AbandonAllHubWaits(reason string, now int64) ([]HubWait, error) 
 	if err != nil {
 		return nil, err
 	}
+	if _, err := tx.Exec(`INSERT INTO hub_abandoned(instance, ticket, at)
+		SELECT instance, ticket, ? FROM hub_waits WHERE decision='' ORDER BY 1, 2
+		ON CONFLICT(instance, ticket) DO UPDATE SET at=excluded.at`, now); err != nil {
+		return nil, err
+	}
 	if _, err := tx.Exec(`UPDATE hub_waits SET decision=?, reason=?, decided_at=? WHERE decision=''`, DecisionAbandoned, reason, now); err != nil {
 		return nil, err
 	}
@@ -206,10 +228,35 @@ func (s *Store) MarkHubWaitDelivered(agent, ticket string, now int64) error {
 }
 
 // PurgeHubWaits removes the waits delivered hubWaitKeep ago or more, and those of agents lea no
-// longer knows.
+// longer knows, and the abandoned tickets recorded hubWaitKeep ago or more (the hub expires a
+// ticket well before).
 func (s *Store) PurgeHubWaits(now int64) error {
-	_, err := s.db.Exec(`DELETE FROM hub_waits WHERE (delivered>0 AND delivered<=?) OR agent_key NOT IN (SELECT key FROM agents)`, now-hubWaitKeep)
+	if _, err := s.db.Exec(`DELETE FROM hub_waits WHERE (delivered>0 AND delivered<=?) OR agent_key NOT IN (SELECT key FROM agents)`, now-hubWaitKeep); err != nil {
+		return err
+	}
+	_, err := s.db.Exec(`DELETE FROM hub_abandoned WHERE at<=?`, now-hubWaitKeep)
 	return err
+}
+
+// AbandonedHubTickets are the tickets lea stopped waiting on (an agent forgotten while it waited,
+// the hub switched off), as "instance/ticket": the deck shows them on no agent, not even as
+// unverified on an agent of the name their requester gives. An agent that waits on one again
+// (a pending wait) still has it, verified.
+func (s *Store) AbandonedHubTickets() (map[string]bool, error) {
+	rows, err := s.db.Query(`SELECT instance, ticket FROM hub_abandoned`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := map[string]bool{}
+	for rows.Next() {
+		var i, t string
+		if err := rows.Scan(&i, &t); err != nil {
+			return nil, err
+		}
+		out[i+"/"+t] = true
+	}
+	return out, rows.Err()
 }
 
 func collectHubWaits(rows *sql.Rows) ([]HubWait, error) {
