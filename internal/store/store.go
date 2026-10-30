@@ -561,6 +561,15 @@ func (s *Store) ForgetAgent(key string) error {
 	if _, err := tx.Exec(`DELETE FROM leases WHERE agent=?`, key); err != nil {
 		return err
 	}
+	// Its hub waits are abandoned (lea stop --forget, an agent removed for good): no later agent
+	// of the same name gets their decisions or is resumed for them. lea cannot withdraw a ticket
+	// on the hub (only its Lock can): an abandoned ticket shows on no agent of the deck as
+	// verified, only as unverified on a live agent its requester names, if any; it expires on the
+	// hub unless answered there; its run, asked by the forgotten agent's token, has no one to call
+	// it.
+	if _, err := tx.Exec(`DELETE FROM hub_waits WHERE agent_key=?`, key); err != nil {
+		return err
+	}
 	if _, err := tx.Exec(`DELETE FROM agents WHERE key=?`, key); err != nil {
 		return err
 	}
