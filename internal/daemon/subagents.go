@@ -19,10 +19,13 @@ const (
 // subagentID is an agent_id lea keeps: a plain identifier. Anything else is ignored.
 var subagentID = regexp.MustCompile(`^[A-Za-z0-9_-]{1,64}$`)
 
-// subagents are the subagents an agent runs, by agent_id, and the timer that forgets them.
+// subagents are the subagents an agent runs, by agent_id, and the timer that forgets them. gen
+// names the current timer (d.mu held): a timer that fires knows its own by it, never by reading a
+// variable assigned after it was armed.
 type subagents struct {
 	ids   map[string]bool
 	timer *time.Timer
+	gen   uint64
 }
 
 // trackSubagents follows the subagents an agent runs from its hook events, for display only:
@@ -72,9 +75,9 @@ func (d *Daemon) trackSubagents(me, event string, payload json.RawMessage) {
 		if after == 0 {
 			delete(d.subs, me)
 		} else {
-			var t *time.Timer
-			t = time.AfterFunc(d.subTTL, func() { d.expireSubagents(me, t) })
-			s.timer = t
+			s.gen++
+			cur, gen := s, s.gen
+			s.timer = time.AfterFunc(d.subTTL, func() { d.expireSubagents(me, cur, gen) })
 		}
 	}
 	d.mu.Unlock()
@@ -83,12 +86,12 @@ func (d *Daemon) trackSubagents(me, event string, payload json.RawMessage) {
 	}
 }
 
-// expireSubagents forgets an agent's subagents when its timer t is still the current one.
-func (d *Daemon) expireSubagents(me string, t *time.Timer) {
+// expireSubagents forgets an agent's subagents when the timer gen of set is still its current one.
+func (d *Daemon) expireSubagents(me string, set *subagents, gen uint64) {
 	defer d.lockKey("sub:" + me)()
 	d.mu.Lock()
 	s := d.subs[me]
-	mine := s != nil && s.timer == t
+	mine := s != nil && s == set && s.gen == gen
 	if mine {
 		delete(d.subs, me)
 	}
