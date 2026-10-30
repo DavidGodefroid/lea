@@ -95,6 +95,53 @@ jobs:
           node-version: 22
       - run: npm install -g --ignore-scripts "@openai/codex@$(sed -n 's/^ARG CODEX_VERSION=//p' image/Containerfile)"
       - run: LEA_E2E_CODEX="$(command -v codex)" go test -count=1 -run 'TestCodex(ReachesAnEndpointThroughTheForwarder|IgnoresAPlantedProjectConfig|LockCallOutlivesTheDefaultToolTimeout)' -v ./internal/providers/
+  # The agent-side isolation (tests/integration/isolation.sh, I2/I11): from inside a real lea, no
+  # decoy, host port or sibling lea is reachable, .lockfamily is read-only (EROFS) and the hub's
+  # facade socket is not visible. The two images come from the GitHub Actions cache when unchanged.
+  isolation:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+        with:
+          go-version-file: go.mod
+      - run: go build -trimpath -o build/lea ./cmd/lea
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
+      - uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
+        with:
+          context: .
+          file: proxy/Containerfile
+          tags: lea-proxy:dev
+          load: true
+          cache-from: type=gha,scope=lea-proxy-dev
+          cache-to: type=gha,scope=lea-proxy-dev,mode=max
+      - uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
+        with:
+          context: .
+          file: image/Containerfile
+          build-args: LEA_VERSION=dev
+          tags: lea:dev
+          load: true
+          cache-from: type=gha,scope=lea-dev
+          cache-to: type=gha,scope=lea-dev,mode=max
+      - name: AppArmor profile (as lea init loads it)
+        run: |
+          if docker info --format '{{json .SecurityOptions}}' | grep -q 'name=apparmor'; then
+            if [ -e /etc/apparmor.d/abi/4.0 ]; then abi=4.0 userns='  userns,'; else abi=3.0 userns=''; fi
+            sed -e "s|@ABI@|$abi|" -e "s|^@USERNS@\$|$userns|" apparmor/lea.tmpl | sudo tee /etc/apparmor.d/lea >/dev/null
+            sudo apparmor_parser -r /etc/apparmor.d/lea
+          fi
+      - name: make test-isolation, every check run
+        shell: bash
+        run: |
+          make test-isolation 2>&1 | tee isolation.log
+          if grep -E '^FAIL |^note: ' isolation.log; then echo "an isolation check failed or was skipped" >&2; exit 1; fi
+          for c in '.lockfamily write gets EROFS' 'host facade socket not visible' 'no facade socket in the container' 'sibling lea unreachable directly' 'host port unreachable via host IP' 'public HTTPS works through the proxy' 'nested HTTP between containers is direct'; do
+            grep -qxF "ok   $c" isolation.log || { echo "isolation: '$c' did not run" >&2; exit 1; }
+          done
   # The phase-2 exit demo, lea's side (tests/integration/hubdeck.sh): lock up with the released,
   # cosign-verified lockhub and a LockHTTP lock; the gate holds an agent's write, lea's deck
   # approves its ticket through the real facade socket, and the gate lets the write out.

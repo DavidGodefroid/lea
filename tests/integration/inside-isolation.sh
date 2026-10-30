@@ -58,6 +58,16 @@ mustnt ".lockfamily cannot be renamed"          mv "$lf" "$LEA_PROJECTS/.lockfam
 mustnt ".lockfamily cannot be replaced by a link" sh -c 'ln -sfn /tmp "$1.new" && mv -T "$1.new" "$1"' sh "$lf"
 rm -f "$lf.new"
 must   ".lockfamily is still a directory"       test -d "$lf" -a ! -L "$lf"
+# The hub's facade socket (I11): the host's is not visible, nor any lockhub runtime directory nor
+# any facade socket anywhere in the container.
+if [ -n "${HOST_FACADE:-}" ]; then
+  mustnt "host facade socket not visible"       test -e "$HOST_FACADE"
+  mustnt "host facade directory not visible"    test -e "$(dirname "$HOST_FACADE")"
+fi
+if [ -n "${XDG_RUNTIME_DIR:-}" ]; then
+  mustnt "no lockhub runtime directory"         test -e "$XDG_RUNTIME_DIR/lockhub"
+fi
+must   "no facade socket in the container"      sh -c '[ -z "$(find / \( -path /proc -o -path /sys -o -path /dev \) -prune -o -name facade.sock -print 2>/dev/null)" ]'
 mustnt "host ~/.ssh absent"                     test -e "$HOME/.ssh"
 mustnt "host ~/.docker absent"                  test -e "$HOME/.docker"
 mustnt "host ~/.config/glab-cli absent"         test -e "$HOME/.config/glab-cli"
@@ -81,13 +91,31 @@ if [ -n "${HOST_HIST_SHA:-}" ]; then
 fi
 must   "only this projects dir under ~/.claude/projects" sh -c '[ "$(ls -A "$HOME/.claude/projects" | wc -l)" -eq 1 ]'
 must   "public HTTPS works through the proxy"   curl -sf --max-time 20 -o /dev/null https://registry.npmjs.org/
-must   "nested HTTP between containers is direct" sh -c '
-  docker network create lea-it >/dev/null 2>&1 || true
-  docker run -d --rm --name lea-it-web --network lea-it busybox:1.37 sh -c "mkdir -p /w && echo hi >/w/index.html && httpd -f -p 80 -h /w" >/dev/null
+# Plain HTTP between nested containers stays direct (containers.conf: http_proxy = false): a
+# server, and a client in its network namespace fetching it at the namespace's own address (a
+# private one, not in NO_PROXY, which the proxy would refuse). Not over a network of their own:
+# the nested Podman cannot create one (README, Known limitations): netavark writes
+# net/ipv4/conf/<bridge>/route_localnet in the rootless network namespace, whose value comes from
+# the host's net.ipv4.conf.default (1 is needed, 0 is the usual default), and Docker mounts
+# /proc/sys read-only. Its engine's output goes to a log, shown when it fails.
+# shellcheck disable=SC2317,SC2329 # run by must
+nested_http() (
+  exec 2>>"$1"
+  docker run -d --rm --name lea-it-web busybox:1.37 sh -c 'mkdir -p /w && echo hi >/w/index.html && httpd -f -p 80 -h /w' >&2
   rc=1
   for _ in 1 2 3 4 5; do
-    if docker run --rm --network lea-it curlimages/curl:8.11.1 -sf --max-time 10 http://lea-it-web/ | grep -qx hi; then rc=0; break; fi
+    if docker run --rm --network container:lea-it-web busybox:1.37 sh -c '
+      a=$(ip -4 -o addr show scope global | awk "{ print \$4 }" | cut -d/ -f1 | head -n 1)
+      echo "address: ${a:-none}; HTTP proxy: ${http_proxy:-${HTTP_PROXY:-none}}" >&2
+      [ -z "${http_proxy:-}${HTTP_PROXY:-}" ] && [ -n "$a" ] && wget -T 10 -qO- "http://$a/"' | grep -qx hi; then rc=0; break; fi
     sleep 1
   done
-  docker rm -f lea-it-web >/dev/null 2>&1; docker network rm lea-it >/dev/null 2>&1; exit $rc'
+  docker rm -f -t 0 lea-it-web >/dev/null 2>&1
+  exit "$rc"
+)
+itlog=$(mktemp)
+before=$fail; fail=0
+must   "nested HTTP between containers is direct" nested_http "$itlog"
+if [ "$fail" = 1 ]; then sed 's/^/     | /' "$itlog"; else fail=$before; fi
+rm -f "$itlog"
 exit "$fail"

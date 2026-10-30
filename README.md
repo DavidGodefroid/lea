@@ -1032,7 +1032,10 @@ container's on its last line, amber near a threshold, red over one.
   started.
 
 - `docker compose` with its own networks does not work inside lea yet: the nested Podman's
-  network backend needs to write `/proc/sys`, which Docker mounts read-only. `docker run` works.
+  network backend (netavark) sets `net/ipv4/conf/<bridge>/route_localnet` to 1 in its rootless
+  network namespace, which Docker's read-only `/proc/sys` refuses. It skips the write when the
+  value is already 1, but that namespace takes its defaults from the host's
+  `net.ipv4.conf.default`, where it is 0 on most hosts. `docker run` works.
 - The AppArmor profile (`apparmor/lea.tmpl`) omits docker-default's `/proc` write denies and mount
   narrowing for now: they may break rootless Podman and are pending validation.
 
