@@ -256,8 +256,10 @@ docker network create "$id-net" >/dev/null
 docker run -d --name "$id-rabbit" --network "$id-net" -e RABBITMQ_DEFAULT_USER=admin -e RABBITMQ_DEFAULT_PASS="$id-admin" \
   "$rabbit_image" >/dev/null
 i=0
-until docker exec "$id-rabbit" rabbitmqctl await_startup >/dev/null 2>&1; do
-  i=$((i + 1)); [ "$i" -lt 60 ] || die "RabbitMQ did not start"; sleep 2
+until docker exec "$id-rabbit" rabbitmqctl await_startup >"$work/rabbit.out" 2>&1; do
+  i=$((i + 1))
+  if [ "$i" -ge 90 ]; then cat "$work/rabbit.out" >&2; docker logs --tail 40 "$id-rabbit" >&2; die "RabbitMQ did not start"; fi
+  sleep 2
 done
 # The read-only account lockmq's docs make (docs/docker.md, A broker in a container).
 docker exec "$id-rabbit" rabbitmqctl add_user lockmq-ro "$id-ro" >/dev/null
