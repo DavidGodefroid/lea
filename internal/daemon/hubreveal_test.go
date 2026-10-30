@@ -593,3 +593,53 @@ func TestHubExpiredAndRenewalOfAnAbandonedTicket(t *testing.T) {
 		t.Fatalf("a renewal waited on: %+v", hs)
 	}
 }
+
+// A renewal asked from the deck is waited on by the agent whose wait named the expired ticket:
+// approved (here at once, by the hub's one click), the decision reaches that agent, as the
+// expired ticket's would have, and resumes it. A ticket shown on an agent by the requester's
+// claim only gets no wait.
+func TestHubRenewalFromTheDeckIsWaitedOn(t *testing.T) {
+	k := writeFacadeKeys(t)
+	exp := signedBy(queued(ticketA, "crm", "locksql", "someone", "", false, ""), k.lockPub)
+	claimed := signedBy(queued(ticketB, "crm", "locksql", "dev-2", "", false, ""), k.lockPub)
+	renewal := ticketC
+	h := &fakeHub{expired: []map[string]any{exp, claimed},
+		onRenew: func([]byte) (int, any) { return 200, map[string]any{"ticket": renewal, "auto_approved": true} }}
+	e, dev, dev2 := hubEnv(t, h)
+	e.d.SetAgents(&fakeAgents{rows: []agents.Row{{Key: dev, Name: "dev-1"}, {Key: dev2, Name: "dev-2"}}})
+	e.d.st.AddHubWait(dev, ticketA, "locksql", "crm", 1)
+	if _, err := e.d.st.DecideHubWaits(ticketA, "crm", store.DecisionExpired, "", 2); err != nil {
+		t.Fatal(err)
+	}
+	if err := e.d.syncHub(e.ctx); err != nil { // the expiry is told
+		t.Fatal(err)
+	}
+	inbox(t, e, "dev-1")
+	if _, err := e.d.pollHubQueue(e.ctx, 0); err != nil {
+		t.Fatal(err)
+	}
+	c := deck.Client{Sock: e.api}
+	if r, err := c.HubRenew(e.ctx, "lea-a", "crm", ticketA); err != nil || r.Ticket != ticketC || !r.AutoApproved {
+		t.Fatalf("renewed %+v %v", r, err)
+	}
+	if ws, _ := e.d.st.PendingHubWaits(dev); len(ws) != 1 || ws[0].Ticket != ticketC || ws[0].Lock != "locksql" || ws[0].Instance != "crm" {
+		t.Fatalf("waits of dev-1 %+v", ws)
+	}
+	h.decide(ticketC, "crm", "approved", "re-approved: nothing changed since approval")
+	if err := e.d.syncHub(e.ctx); err != nil {
+		t.Fatal(err)
+	}
+	ms := inbox(t, e, "dev-1")
+	if len(ms) != 1 || !strings.Contains(ms[0].Text, "ticket "+ticketC+" on locksql (crm) approved: call its run again with ticket="+ticketC) {
+		t.Fatalf("dev-1's inbox %+v", ms)
+	}
+
+	// dev-2 only claimed ticketB (no wait of lea's named it): its renewal is waited on by no one.
+	renewal = "01JB0000000000000000000009"
+	if r, err := c.HubRenew(e.ctx, "lea-a", "crm", ticketB); err != nil || r.Ticket != renewal {
+		t.Fatalf("renewed %+v %v", r, err)
+	}
+	if ws, _ := e.d.st.PendingHubWaits(dev2); len(ws) != 0 {
+		t.Fatalf("a claimed ticket's renewal is waited on: %+v", ws)
+	}
+}

@@ -11,6 +11,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"net/url"
 	"os"
@@ -414,6 +415,16 @@ func (d *Daemon) hubRenew(ctx context.Context, params json.RawMessage) (HubRenew
 	}
 	if !hubRef.MatchString(r.Ticket) {
 		return HubRenewed{}, errors.New("not renewed: the hub named no ticket")
+	}
+	// The agent whose wait named the expired ticket waits on its renewal now: approved (at once,
+	// or later from the queue), the decision reaches it and resumes it if suspended, as for the
+	// ticket its Lock call answered. Only a verified agent: a ticket shown on an agent by the
+	// requester's claim names no wait of lea's. The renewal is for the same caller (lockkit
+	// renews a plan for the token that asked), so that agent's run of it is the one the Lock takes.
+	if e.verified && e.agent != "" {
+		if err := d.st.AddHubWait(e.agent, r.Ticket, e.t.Lock, e.t.Instance, d.now()); err != nil {
+			log.Printf("lea daemon: hub renewal %.40q of %.40q: no wait for its agent: %v", r.Ticket, e.t.ID, err)
+		}
 	}
 	// The expired ticket has a renewal now: the hub lists it no more.
 	d.dropHub(ctx, func(x hubEntry) bool { return x.t.ID == e.t.ID && x.t.Instance == e.t.Instance && x.t.Expired })
