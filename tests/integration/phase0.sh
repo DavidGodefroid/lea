@@ -58,15 +58,19 @@ drivers=
 mkdir -p "$projects/.phase0" "$work/samples"
 mkdir -m 0755 "$lbin"
 export XDG_DATA_HOME="$work/data"
+# lea's tmux server (socket "lea" under TMUX_TMPDIR) is this run's own: lea stop --all ends it.
+export TMUX_TMPDIR="$work"
+# lea_up: LEA_CONFIG names this run's prefix; until then lea stop --all would stop the user's lea.
+lea_up=
 lid=$(printf '%s' "$projects" | sha256sum | cut -c1-10)
 slug=$(printf '%s' "$projects" | sed 's/[^A-Za-z0-9]/-/g')
 # shellcheck disable=SC2317 # run by the trap
 cleanup() {
-  for c in "$id-lockmq" "$id-lockfile" "$id-rabbit"; do docker rm -f "$c" >/dev/null 2>&1 || true; done
+  for c in "$id-lockmq" "$id-lockfile" "$id-rabbit"; do docker rm -fv "$c" >/dev/null 2>&1 || true; done
   docker rm -f locksql-console >/dev/null 2>&1 || true
   for p in $drivers; do kill "$p" 2>/dev/null || true; done
-  "$root/bin/lea" stop --all >/dev/null 2>&1 || true
-  docker rm -f "$id-$lid" "$id-proxy" >/dev/null 2>&1 || true
+  if [ -n "$lea_up" ]; then "$root/bin/lea" stop --all >/dev/null 2>&1 || true; fi
+  docker rm -fv "$id-$lid" "$id-proxy" >/dev/null 2>&1 || true
   docker network rm "$id-internal-$lid" "$id-egress" "$id-net" >/dev/null 2>&1 || true
   docker volume rm "$id-podman-$lid" >/dev/null 2>&1 || true
   # Checked absent above: this run made them.
@@ -368,6 +372,7 @@ LEA_LOCKFILE=1
 LEA_HUB=0
 CONF
 export LEA_CONFIG="$work/lea.conf"
+lea_up=1
 state=$XDG_DATA_HOME/lea/state
 mkdir -p "$state"
 printf '{}\n' >"$state/claude.json"
