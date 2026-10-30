@@ -257,15 +257,17 @@ docker network create "$id-net" >/dev/null
 docker run -d --name "$id-rabbit" --network "$id-net" --ulimit nofile=65536:65536 -e RABBITMQ_DEFAULT_USER=admin -e RABBITMQ_DEFAULT_PASS="$id-admin" \
   "$rabbit_image" >/dev/null
 i=0
-until docker exec "$id-rabbit" rabbitmqctl await_startup >"$work/rabbit.out" 2>&1; do
+# No rabbitmqctl before the server is up: run as root before the server, it writes the Erlang
+# cookie as root and the server (as rabbitmq) can no longer read it.
+until docker logs "$id-rabbit" 2>&1 | grep -q 'Server startup complete'; do
   i=$((i + 1))
-  if [ "$i" -ge 90 ]; then cat "$work/rabbit.out" >&2; docker logs --tail 40 "$id-rabbit" >&2; die "RabbitMQ did not start"; fi
+  if [ "$i" -ge 90 ]; then docker logs --tail 40 "$id-rabbit" >&2; die "RabbitMQ did not start"; fi
   sleep 2
 done
 # The read-only account lockmq's docs make (docs/docker.md, A broker in a container).
-docker exec "$id-rabbit" rabbitmqctl add_user lockmq-ro "$id-ro" >/dev/null
-docker exec "$id-rabbit" rabbitmqctl set_user_tags lockmq-ro monitoring >/dev/null
-docker exec "$id-rabbit" rabbitmqctl set_permissions -p / lockmq-ro '^$' '^$' '^$' >/dev/null
+docker exec -u rabbitmq "$id-rabbit" rabbitmqctl add_user lockmq-ro "$id-ro" >/dev/null
+docker exec -u rabbitmq "$id-rabbit" rabbitmqctl set_user_tags lockmq-ro monitoring >/dev/null
+docker exec -u rabbitmq "$id-rabbit" rabbitmqctl set_permissions -p / lockmq-ro '^$' '^$' '^$' >/dev/null
 python3 -I -c 'import sqlite3, sys; c = sqlite3.connect(sys.argv[1]); c.execute("create table t (x integer)"); c.commit()' "$projects/demo.db"
 mkdir -m 0755 "$projects/.locksql" "$projects/.lockmq"
 printf '[profiles.dev]\nengine = "sqlite"\npath   = "demo.db"\n' >"$projects/.locksql/config.toml"
