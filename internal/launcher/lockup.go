@@ -28,12 +28,37 @@ type lockUpState struct {
 	Project   string                `json:"project"`
 	Workspace string                `json:"workspace"`
 	Locks     map[string]lockUpLock `json:"locks"`
+	// The hub, for lea's LockHTTP gate in hub mode (lockhubgate.go): its network (only lea's proxy
+	// joins it), its URL there and its public key; the host facades' keys the locks pin (a reveal
+	// is sealed only to them); the approval devices lock up pinned (none paired: absent).
+	HubNetwork string          `json:"hub_network"`
+	HubURL     string          `json:"hub_url"`
+	HubKey     string          `json:"hub_key"`
+	FacadeKeys json.RawMessage `json:"facade_keys,omitempty"`
+	// LockHTTPGate is the version of what lock up says of a lockhttp lock's gate (1: the reveal,
+	// devices, require_device and seal_clear of each lock, the paired devices): lea's gate asks
+	// the hub only then.
+	LockHTTPGate int             `json:"lockhttp_gate,omitempty"`
+	Devices      json.RawMessage `json:"devices,omitempty"`
 }
 
 type lockUpLock struct {
 	Type   string `json:"type"`
 	Socket string `json:"socket_volume"`
 	GID    string `json:"client_gid"`
+	// Profile is the profile the lock's console serves (lockfamily.yaml's profile; "" its default):
+	// lea's gate asks that console.
+	Profile string `json:"profile,omitempty"`
+	// GateHome is a lockhttp lock's gate volume (role gate-home), lea's gate's --home.
+	GateHome string `json:"gate_home_volume,omitempty"`
+	// Reveal: lock up lets the lock reveal a ticket's clear values (locks.<name>.reveal): the gate
+	// pins the facade keys (--facade-keys-file, lockhttp v0.5.0).
+	Reveal bool `json:"reveal,omitempty"`
+	// DevicesOn: the lock pins the paired devices (locks.<name>.devices in lockfamily.yaml);
+	// RequireDevice and SealClear are hub.mobile's for it (--require-device, --seal-clear).
+	DevicesOn     bool     `json:"devices,omitempty"`
+	RequireDevice []string `json:"require_device,omitempty"`
+	SealClear     bool     `json:"seal_clear,omitempty"`
 }
 
 var (
@@ -41,38 +66,49 @@ var (
 	lockUpInstance = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,62}$`)
 )
 
-// lockUpSockets are the socket volumes lock up runs for the projects directory proj (its Lock
-// Family directory lf), by tool, for the tools on reports on; nil without lock up. A tool lock up
-// runs maps to "" when lea cannot use its lock (two instances, a volume docker does not confirm):
-// the agents then get no socket of that tool, never the fixed one of another console.
-func (l *Launcher) lockUpSockets(proj, lf string, on func(tool string) bool) map[string]string {
+// readLockUp is lock up's state for the projects directory proj (its Lock Family directory lf),
+// and its path; nil (lea says why) when there is none lea can trust: a link, a file not the user's
+// or others may write, not version 1, or of another projects directory.
+func (l *Launcher) readLockUp(proj, lf string) (*lockUpState, string) {
 	p := lf + "/" + lockUpFile
 	f, err := os.OpenFile(p, os.O_RDONLY|syscall.O_NOFOLLOW|syscall.O_NONBLOCK, 0)
 	if errors.Is(err, os.ErrNotExist) {
-		return nil
+		return nil, p
 	}
 	if err != nil {
 		l.logf("warning: %s: %v (a link?): lea ignores it", p, err)
-		return nil
+		return nil, p
 	}
 	defer f.Close()
 	fi, err := f.Stat()
 	if err != nil {
-		return nil
+		return nil, p
 	}
 	if why := lockUpUntrusted(lf, p, fi); why != "" {
 		l.logf("warning: %s: %s: lea ignores it", p, why)
-		return nil
+		return nil, p
 	}
 	var s lockUpState
 	if err := json.NewDecoder(io.LimitReader(f, 1<<20)).Decode(&s); err != nil || s.Version != 1 || !lockUpProject.MatchString(s.Project) {
 		l.logf("warning: %s: not lock up's state (version 1): lea ignores it", p)
-		return nil
+		return nil, p
 	}
 	// lock up's compose project of this very projects directory (lockhub's family.Project).
 	h := sha256.Sum256([]byte(proj))
 	if want := "lockfamily-" + hex.EncodeToString(h[:4]); s.Project != want || s.Workspace != proj {
 		l.logf("warning: %s: project %s of %q, not this projects directory's (%s of %q): lea ignores it", p, s.Project, s.Workspace, want, proj)
+		return nil, p
+	}
+	return &s, p
+}
+
+// lockUpSockets are the socket volumes lock up runs for the projects directory proj (its Lock
+// Family directory lf), by tool, for the tools on reports on; nil without lock up. A tool lock up
+// runs maps to "" when lea cannot use its lock (two instances, a volume docker does not confirm):
+// the agents then get no socket of that tool, never the fixed one of another console.
+func (l *Launcher) lockUpSockets(proj, lf string, on func(tool string) bool) map[string]string {
+	s, p := l.readLockUp(proj, lf)
+	if s == nil {
 		return nil
 	}
 	byType := map[string][]string{}

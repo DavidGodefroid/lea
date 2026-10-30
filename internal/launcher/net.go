@@ -84,8 +84,22 @@ func (l *Launcher) ensureProxy(proj string) error {
 	}
 	var lh []string
 	var gateImage string
+	var hub *gateHub
 	if l.Cfg.LockHTTP() {
 		if lh, gateImage, err = l.lockHTTPProxyArgs(); err != nil {
+			return err
+		}
+		// lock up's lockhttp lock for this projects directory: the gate asks the hub.
+		hub = l.lockUpGate(proj)
+		// One gate serves every projects directory of this prefix: it asks the hub of the last one
+		// started under lock up. A switch of whose hub (or none) under the agents of another
+		// directory would change how their requests are approved: lea stops, before it changes
+		// anything (the proxy, the gate's inputs, its networks).
+		gateFor := gateStandalone
+		if hub != nil {
+			gateFor = proj
+		}
+		if err := l.gateSwitchRefused(l.lockHTTPGateName(), gateFor, proj); err != nil {
 			return err
 		}
 	}
@@ -116,7 +130,7 @@ func (l *Launcher) ensureProxy(proj string) error {
 		// Docker writes the IDs sha256:<hex>, Podman <hex>.
 		if got == want && strings.TrimPrefix(image, "sha256:") == strings.TrimPrefix(current, "sha256:") {
 			if lh != nil {
-				return l.ensureLockHTTPGate(false, gateImage)
+				return l.ensureLockHTTPGate(false, gateImage, hub, proj)
 			}
 			return nil
 		}
@@ -153,7 +167,7 @@ func (l *Launcher) ensureProxy(proj string) error {
 	if err := l.run("docker", a...); err != nil || lh == nil {
 		return err
 	}
-	return l.ensureLockHTTPGate(true, gateImage)
+	return l.ensureLockHTTPGate(true, gateImage, hub, proj)
 }
 
 // proxyIP is lea__proxy_ip: the proxy's IPv4 address on network, "" when it is not attached.

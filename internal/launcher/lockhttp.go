@@ -135,26 +135,58 @@ var lockHTTPConfine = []string{"--cap-drop", "ALL", "--security-opt", "no-new-pr
 // ensureLockHTTPGate runs the gate container beside the proxy (docs/lea.md, §2.1), and under MITM
 // the signer (§3), unless fresh is false and they are current: a running gate of image (and CA)
 // started after the proxy, and a running signer of the same. A gate older than the proxy is in a
-// network namespace the proxy left.
-func (l *Launcher) ensureLockHTTPGate(fresh bool, image string) error {
+// network namespace the proxy left. With hub (lock up's lockhttp lock, lockhubgate.go), the gate
+// asks the hub, and only the proxy joins the hub's network.
+func (l *Launcher) ensureLockHTTPGate(fresh bool, image string, hub *gateHub, proj string) error {
 	proxy, name, signer := l.prefix()+"-proxy", l.lockHTTPGateName(), l.lockHTTPSignerName()
-	mitm, stamp := l.Cfg.LockHTTPMITM(), l.lockHTTPCAStamp()
+	mitm, stamp, hubStamp := l.Cfg.LockHTTPMITM(), l.lockHTTPCAStamp(), hub.stamp()
 	want, names := image, []string{proxy, name}
 	if mitm {
 		want += " ca:" + stamp
 		names = append(names, signer)
 	}
+	if hub != nil {
+		want += " hub:" + hubStamp
+	}
+	// The proxy leaves any other hub network first; it joins hub's only once the gate in its
+	// namespace refuses that network's addresses: a current gate (its stamp names them), or after
+	// the old gate is gone, before the new one starts.
+	if err := l.joinHubNetwork(proxy, hub, false); err != nil {
+		return err
+	}
 	if !fresh {
 		out, err := l.output(false, "docker", append([]string{"inspect", "--type", "container", "-f",
-			`{{.State.Running}}|{{.State.StartedAt}}|{{index .Config.Labels "lea.lockhttp-image"}}{{with index .Config.Labels "lea.lockhttp-ca"}} ca:{{.}}{{end}}`},
+			`{{.State.Running}}|{{.State.StartedAt}}|{{index .Config.Labels "lea.lockhttp-image"}}{{with index .Config.Labels "lea.lockhttp-ca"}} ca:{{.}}{{end}}{{with index .Config.Labels "lea.lockhttp-hub"}} hub:{{.}}{{end}}`},
 			names...)...)
 		if err == nil && lockHTTPGateCurrent(out, want, len(names)) {
-			return nil
+			// Its inputs as its stamp says they are.
+			if _, err := l.writeGateHub(hub); err != nil {
+				return die("LEA_LOCKHTTP=1: %v", err)
+			}
+			return l.joinHubNetwork(proxy, hub, true)
 		}
 	}
-	_ = l.quiet("docker", "rm", "-f", name, signer)
+	gateFor := gateStandalone
+	if hub != nil {
+		gateFor = proj
+	}
+	if err := l.quiet("docker", "rm", "-f", name, signer); err != nil && hub != nil {
+		return die("LEA_LOCKHTTP=1: could not remove the gate %s before it asks the hub", name)
+	}
+	// The new gate's inputs, once the old one, which read the same directory, is gone.
+	hubDir, err := l.writeGateHub(hub)
+	if err != nil {
+		return die("LEA_LOCKHTTP=1: %v", err)
+	}
+	if err := l.joinHubNetwork(proxy, hub, true); err != nil {
+		return err
+	}
 	data := l.Cfg.DataDir()
 	labels := []string{"--label", "lea.prefix=" + l.prefix(), "--label", "lea.lockhttp-image=" + image}
+	if hub != nil {
+		labels = append(labels, "--label", "lea.lockhttp-hub="+hubStamp)
+	}
+	labels = append(labels, "--label", "lea.lockhttp-for="+gateFor)
 	var gateMITM, gateCA []string
 	if mitm {
 		labels = append(labels, "--label", "lea.lockhttp-ca="+stamp)
@@ -166,20 +198,26 @@ func (l *Launcher) ensureLockHTTPGate(fresh bool, image string) error {
 	}
 	a := []string{"run", "-d", "--name", name, "--restart", "unless-stopped",
 		"--network", "container:" + proxy, "--user", "gate", "--label", "lea.role=lockhttp-gate"}
+	// The console's socket: the gate's container only, never an agent's (lock up's, under lock up).
+	sock, profile, gateHubArgs := "lockhttp-run", "default", []string(nil)
+	if hub != nil {
+		sock, profile, gateHubArgs = hub.socket, hub.profile, hub.args()
+		gateMITM = append(gateMITM, "--mount", "type=volume,src="+hub.home+",dst=/lockhttp-home",
+			"--mount", "type=bind,src="+hubDir+",dst="+gateHubDir+",readonly")
+	}
 	a = append(append(append(a, labels...), lockHTTPConfine...),
-		// The console's socket: the gate's container only, never an agent's.
-		"--mount", "type=volume,src=lockhttp-run,dst=/run/lockhttp",
+		"--mount", "type=volume,src="+sock+",dst=/run/lockhttp",
 		"--mount", "type=bind,src="+lockhttp.GateDir(data)+",dst=/etc/lockhttp-gate,readonly",
 		// The audit stays in the engine's volume, the gate's own (0700 in the image).
 		"--mount", "type=volume,src="+l.prefix()+"-lockhttp-audit,dst=/var/log/lockhttp",
 		"--mount", "type=bind,src="+lockhttp.StatusDir(data)+",dst=/run/lockhttp-gate")
 	a = append(append(a, gateMITM...),
 		image, "gate", "--listen", "0.0.0.0:"+lockhttp.Port, "--upstream", "http://127.0.0.1:3128",
-		"--profile", "default", "--sources", "/etc/lockhttp-gate/sources.json",
+		"--profile", profile, "--sources", "/etc/lockhttp-gate/sources.json",
 		// The daemon's credentials.json (§2.4): a Claude API key not of the calling container is denied.
 		"--credentials", "/etc/lockhttp-gate/credentials.json",
 		"--audit-dir", "/var/log/lockhttp", "--status-file", "/run/lockhttp-gate/status.json")
-	return l.run("docker", append(a, gateCA...)...)
+	return l.run("docker", append(append(a, gateCA...), gateHubArgs...)...)
 }
 
 // lockHTTPSigner hands the CA key to the signer's volume and runs the signer (docs/lea.md, §3): a
@@ -325,3 +363,64 @@ func rootOwned(path string, dir bool) string {
 	}
 	return ""
 }
+
+// gateSwitchRefused is an error when the gate name asks for another projects directory's hub
+// than gateFor (gateStandalone: none) and lea agents of a directory other than proj run: their
+// requests would be approved elsewhere. Only a gate that does not exist switches nothing; one lea
+// cannot read, or that asks a hub without saying whose, is refused the same way.
+func (l *Launcher) gateSwitchRefused(name, gateFor, proj string) error {
+	ex, err := l.output(false, "docker", "ps", "-a", "--filter", "name=^/"+name+"$", "--format", "{{.Names}}")
+	if err != nil {
+		return die("LEA_LOCKHTTP=1: cannot tell whether the gate %s exists", name)
+	}
+	if strings.TrimSpace(ex) == "" {
+		return nil
+	}
+	o, err := l.output(false, "docker", "inspect", "--type", "container", "-f",
+		`for={{index .Config.Labels "lea.lockhttp-for"}}|hub={{index .Config.Labels "lea.lockhttp-hub"}}`, name)
+	f, h, ok := strings.Cut(strings.TrimSpace(o), "|")
+	old, ok1 := strings.CutPrefix(f, "for=")
+	hub, ok2 := strings.CutPrefix(h, "hub=")
+	switch {
+	case err != nil || !ok || !ok1 || !ok2 || strings.ContainsAny(o, "\n"):
+		old = "?" // unreadable: its hub is unknown
+	case old == "" && hub == "":
+		old = gateStandalone // a standalone gate of an earlier lea
+	case old == "":
+		old = "?" // a hub, but whose is unknown
+	}
+	if old == gateFor {
+		return nil
+	}
+	ps, err := l.output(false, "docker", "ps", "--filter", "label=lea.prefix="+l.prefix(), "--filter", "label=lea.role=session",
+		"--format", `{{.Label "lea.projects"}}`)
+	if err != nil {
+		return die("LEA_LOCKHTTP=1: cannot list lea's running containers before the gate changes hub")
+	}
+	for _, p := range strings.Split(ps, "\n") {
+		if p = strings.TrimSpace(p); p != "" && p != proj {
+			mode := "its own console"
+			if gateFor != gateStandalone {
+				mode = "the hub of " + proj
+			}
+			return die("LEA_LOCKHTTP=1: the LockHTTP gate serves every projects directory, and the agents of %s run: it would ask %s for them. Stop them first (lea stop in %s), or open that directory", p, mode, p)
+		}
+	}
+	// A start in another projects directory holds that directory's lock until its container
+	// runs: its agents come.
+	locks, err := os.ReadDir(l.Cfg.HostDir() + "/locks")
+	if err != nil && !os.IsNotExist(err) {
+		return die("LEA_LOCKHTTP=1: %v", err)
+	}
+	for _, e := range locks {
+		if lockSID.MatchString(e.Name()) && e.Name() != ID(proj) {
+			return die("LEA_LOCKHTTP=1: the LockHTTP gate serves every projects directory, and lea is starting in another one (%s/locks/%s): it would change how its agents are approved. Retry once it runs", l.Cfg.HostDir(), e.Name())
+		}
+	}
+	return nil
+}
+
+var lockSID = regexp.MustCompile(`^[0-9a-f]{10}$`)
+
+// gateStandalone is the lea.lockhttp-for of a gate that asks its own console.
+const gateStandalone = "-"

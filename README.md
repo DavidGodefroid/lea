@@ -385,6 +385,25 @@ not an agent that rewrites its own login file. `LEA_GIT_SSH` and `LEA_OTEL_UPSTR
 would bypass the gate: use git over HTTPS), and claude.ai's connectors are turned off in the
 agents' Claude Code (WebSearch and WebFetch stay).
 
+**With `lock up`** (lockhub's `docs/lock-up.md`): when lock up runs a lockhttp lock for the
+projects directory (its `.lockfamily/up.json`), the gate asks the Lock Family hub instead of a
+console of its own. It mounts that lock's socket volume and gate volume (`--home`), and reads
+lea's read-only copies (in `/run/lockfamily`) of the hub's key; of the host facades' keys, for a
+lock lock up lets reveal (`reveal: true`: `--facade-keys-file`, so that a reveal, Ctrl-O, is
+sealed only to them); and of the paired phones, for a lock that pins them (`devices: true`:
+`/run/lockfamily/devices.json`, with `--require-device` and `--seal-clear` as `hub.mobile` says;
+without it, a phone's decision is refused). Only the proxy joins the hub's network, whose
+addresses the gate refuses as targets: no agent reaches the hub. lea checks first the volumes' and
+the network's labels, the key, and the facade keys and devices as the gate reads them (lockkit's
+parsers; it writes them in canonical form); anything it cannot trust leaves the gate as without
+lock up, and lea says why; so does an up.json that does not say what the gate pins
+(`lockhttp_gate` 1: a lock's devices, required and sealed, its reveals), and a lock whose required or
+sealed devices lea cannot pass. The pinned lockhttp release decides too: hub mode needs v0.3.0, the
+devices v0.4.0, the facade keys v0.5.0; lea passes no flag that release lacks, and says so. One
+lockhttp lock at a time: the gate serves every projects directory, and asks the hub of the one
+whose lea started it last; lea refuses to switch it (to another hub, or none) while agents of
+another projects directory run.
+
 `LEA_LOCKHTTP_MITM=1` (with `LEA_LOCKHTTP=1`) lets the gate decrypt HTTPS, but for the policy's
 splice hosts, so that it decides on methods, paths and bodies. lea makes a local CA on first use
 through the launcher (`lockhttp ca init`, 90 days, in `~/.local/share/lea/lockhttp/ca/`; `lea
