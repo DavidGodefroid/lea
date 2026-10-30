@@ -186,3 +186,41 @@ func TestHubTicketApprovedFromTheDeck(t *testing.T) {
 		t.Fatalf("after: %v %+v %+v", err, snap.Agents, snap.Locks)
 	}
 }
+
+// An agent cannot answer a ticket: hub_decide is the host's alone. A typed name longer than the
+// hub takes, or with control characters, never reaches it. A screen lea had to cut is marked,
+// so the deck sends it to lock approve; the claimed name shows.
+func TestHubDecideIsTheHostsAndTheScreenIsNeverCutSilently(t *testing.T) {
+	long := queued(ticketA, "crm", "locksql", "dev-1\x1b[2J", "", true, "crm")
+	var body []string
+	for i := 0; i < maxHubLines+1; i++ {
+		body = append(body, "line")
+	}
+	long["ticket"].(map[string]any)["screen"].(map[string]any)["body"] = body
+	h := &fakeHub{queue: []map[string]any{long}}
+	e, dev, _ := hubEnv(t, h)
+	e.d.SetAgents(&fakeAgents{})
+	e.d.st.AddHubWait(dev, ticketA, "locksql", "crm", 1)
+	if _, err := e.d.pollHubQueue(e.ctx, 0); err != nil {
+		t.Fatal(err)
+	}
+	c := cardsOf(e, dev).Agents[0].Hub
+	if len(c) != 1 || !c[0].Truncated || strings.ContainsRune(c[0].Claimed, '\x1b') || !strings.HasPrefix(c[0].Claimed, "dev-1") {
+		t.Fatalf("card %+v", c)
+	}
+	p := map[string]any{"container": "lea-a", "instance": "crm", "id": ticketA, "approved": true, "retype": "crm"}
+	if err := call(t, e.bus, "dev-1", "hub_decide", p, nil); err == nil {
+		t.Fatal("an agent decided a ticket")
+	}
+	for _, bad := range []string{strings.Repeat("c", 129), "cr\x1bm"} {
+		p["retype"] = bad
+		if err := call(t, e.api, "", "hub_decide", p, nil); err == nil {
+			t.Fatalf("retype %q reached the hub", bad)
+		}
+	}
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if len(h.decided) != 0 {
+		t.Fatalf("decided %q", h.decided)
+	}
+}

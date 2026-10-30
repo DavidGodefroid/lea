@@ -17,7 +17,7 @@ func (f *fakeAPI) HubDecide(ctx context.Context, c, instance, id string, approve
 func ticketed(name string, prod bool) Agent {
 	a := ag(name, "working", 1)
 	h := HubCard{ID: "T1", Instance: "crm", Lock: "locksql", Risk: "write", Header: "db / crm · write",
-		Note: "fix the row", Body: []string{"UPDATE t SET a=1", "WHERE id=7", "-- line 3", "-- line 4"}, Warnings: []string{"1 row"}}
+		Note: "fix the row", Body: []string{"UPDATE t SET a=1", "WHERE id=7"}, Warnings: []string{"1 row"}, Claimed: "b"}
 	if prod {
 		h.Production, h.Retype = true, "crm"
 	}
@@ -81,9 +81,11 @@ func TestHubProductionTicketNeedsItsNameTyped(t *testing.T) {
 // The card shows the Lock, the instance, the risk, production, an unverified requester, the
 // Lock's masked screen (three lines of it; v shows them all) and its warnings.
 func TestHubCardView(t *testing.T) {
-	m := readable(loaded(t, &fakeAPI{}, "lea-a/b", ticketed("b", true)))
+	a := ticketed("b", true)
+	a.Hub[0].Body = append(a.Hub[0].Body, "-- line 3", "-- line 4")
+	m := readable(loaded(t, &fakeAPI{}, "lea-a/b", a))
 	v := m.View()
-	for _, w := range []string{"locksql crm", "write", "PRODUCTION", "unverified", "db / crm · write", "fix the row",
+	for _, w := range []string{"locksql crm", "write", "PRODUCTION", `unverified: claims "b"`, "db / crm · write", "fix the row",
 		"UPDATE t SET a=1", "1 row", "[a]pprove [d]eny [v]iew"} {
 		if !strings.Contains(v, w) {
 			t.Errorf("missing %q in\n%s", w, v)
@@ -95,5 +97,50 @@ func TestHubCardView(t *testing.T) {
 	m, _ = step(t, m, key("v"))
 	if v := m.View(); !strings.Contains(v, "-- line 4") {
 		t.Errorf("v did not show the whole screen:\n%s", v)
+	}
+}
+
+// A ticket longer than the folded card (more lines, or a line wider than the deck) is approved only
+// once v showed all of it; nothing of it is cut, it wraps. One too long for the deck, one the
+// daemon had to cut, or a production one with no name to type, is refused: lock approve answers
+// it; d still denies.
+func TestHubTicketIsReadWholeBeforeApproval(t *testing.T) {
+	long := ticketed("b", false)
+	long.Hub[0].Body = []string{"UPDATE t SET a=1 WHERE id=7 OR 1=1; " + strings.Repeat("-- ", 30) + "DROP TABLE t"}
+	api := &fakeAPI{}
+	m := readable(loaded(t, api, "lea-a/b", long))
+	if strings.Contains(m.View(), "DROP") {
+		t.Fatal("the folded card shows the whole line")
+	}
+	if m2, cmd := step(t, m, key("a")); cmd != nil || !strings.Contains(m2.status, "v shows the whole ticket") {
+		t.Fatalf("approved unread: status %q", m2.status)
+	}
+	m, _ = step(t, m, key("v"))
+	if v := m.View(); !strings.Contains(v, "DROP") || !strings.Contains(v, "TABLE t") {
+		t.Fatalf("v does not show the whole line:\n%s", m.View())
+	}
+	if _, cmd := step(t, m, key("a")); cmd == nil {
+		t.Fatal("not approved after v")
+	}
+	for name, a := range map[string]Agent{"cut": ticketed("b", false), "huge": ticketed("b", false), "prod": ticketed("b", true)} {
+		switch name {
+		case "cut":
+			a.Hub[0].Truncated = true
+		case "huge":
+			a.Hub[0].Body = nil
+			for i := 0; i < 40; i++ {
+				a.Hub[0].Body = append(a.Hub[0].Body, "line")
+			}
+		case "prod":
+			a.Hub[0].Retype = ""
+		}
+		m := readable(loaded(t, &fakeAPI{}, "lea-a/b", a))
+		m, _ = step(t, m, key("v"))
+		if m2, cmd := step(t, m, key("a")); cmd != nil || !strings.Contains(m2.status, "lock approve") {
+			t.Fatalf("%s: approved from the deck, status %q", name, m2.status)
+		}
+		if _, cmd := step(t, m, key("d")); cmd == nil {
+			t.Fatalf("%s: d does not deny", name)
+		}
 	}
 }

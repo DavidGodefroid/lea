@@ -141,6 +141,10 @@ type HubCard struct {
 	Body       []string `json:"body,omitempty"`
 	Warnings   []string `json:"warnings,omitempty"`
 	Expires    int64    `json:"expires,omitempty"`
+	// Claimed is the agent name the ticket's requester gives; Truncated: the daemon had to cut
+	// the Lock's screen, so the deck cannot show all of it (lock approve answers it).
+	Claimed   string `json:"claimed,omitempty"`
+	Truncated bool   `json:"truncated,omitempty"`
 }
 
 // LockState is what the deck shows of one Lock's approvals (agents.LockView): its name, its
@@ -282,10 +286,12 @@ type Model struct {
 	lockSince map[int64]time.Time
 	// hubSince is the same for the hub's tickets (by instance/id); hubFor the ticket whose name
 	// the field (hubDraft) takes before approving it; hubFull shows the Lock's whole screen.
-	hubSince      map[string]time.Time
-	hubFor        string
-	hubDraft      []rune
-	hubFull       bool
+	hubSince map[string]time.Time
+	hubFor   string
+	hubDraft []rune
+	hubFull  bool
+	// hubRead are the tickets v showed whole (by instance/id).
+	hubRead       map[string]bool
 	width, height int
 }
 
@@ -582,6 +588,11 @@ func (m *Model) apply(s Snapshot) bool {
 		}
 	}
 	m.hubSince = hubSince
+	for ref := range m.hubRead {
+		if _, ok := hubSince[ref]; !ok {
+			delete(m.hubRead, ref)
+		}
+	}
 	// An agent shown from elsewhere (lea new in another terminal, another deck client) takes
 	// the selection, so the row under the cursor is the one in the slot. A show this deck asked
 	// for does not: the cursor may already have moved on.
@@ -824,6 +835,12 @@ func (m Model) key(k string) (tea.Model, tea.Cmd) {
 	case "v":
 		if a := m.selectedAgent(); a != nil && hubTicket(*a) != nil {
 			m.hubFull = !m.hubFull
+			if h := hubTicket(*a); m.hubFull {
+				if m.hubRead == nil {
+					m.hubRead = map[string]bool{}
+				}
+				m.hubRead[h.Instance+"/"+h.ID] = true
+			}
 		}
 		return m, nil
 	case "a", "d", "A":
@@ -1098,9 +1115,22 @@ func (m Model) answerHub(approve bool) (tea.Model, tea.Cmd) {
 		m.status = "read the " + clean(h.Lock) + " ticket first"
 		return m, nil
 	}
-	if approve && h.Production && h.Retype != "" {
-		m.hubFor, m.hubDraft, m.status = ref, nil, ""
-		return m, nil
+	if approve {
+		body := len(m.hubBody(h))
+		switch {
+		case h.Truncated || body+len(m.hubWarnings(h)) > maxHubCard:
+			m.status = "too long for the deck: answer it with lock approve"
+			return m, nil
+		case h.Production && h.Retype == "":
+			m.status = "a production ticket with no name to type: answer it with lock approve"
+			return m, nil
+		case body > hubFolded && !m.hubRead[ref]:
+			m.status = "v shows the whole ticket: read it before approving"
+			return m, nil
+		case h.Production:
+			m.hubFor, m.hubDraft, m.status = ref, nil, ""
+			return m, nil
+		}
 	}
 	return m, m.decideHub(h, approve, "")
 }
@@ -1141,4 +1171,22 @@ func (m Model) hubKey(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 	}
 	return m, nil
+}
+
+// hubFolded is how many lines of the Lock's screen a folded card shows; maxHubCard how many lines
+// of it (and of its warnings) the deck approves at most: a longer ticket goes to lock approve.
+const hubFolded, maxHubCard = 3, 24
+
+// hubBody is the Lock's screen of h as the card shows it at the deck's width: each line wrapped,
+// none cut. hubWarnings the same for its warnings.
+func (m Model) hubBody(h HubCard) []string     { return m.hubWrap(h.Body) }
+func (m Model) hubWarnings(h HubCard) []string { return m.hubWrap(h.Warnings) }
+
+func (m Model) hubWrap(ls []string) []string {
+	w := max(8, m.innerWidth()-6)
+	var out []string
+	for _, l := range ls {
+		out = append(out, wrap(clean(l), w, m.cs())...)
+	}
+	return out
 }

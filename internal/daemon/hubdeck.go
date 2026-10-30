@@ -36,6 +36,10 @@ const (
 	hubQueueRetry = 10 * time.Second
 	maxHubQueue   = 200
 	maxHubLines   = 40
+	// maxHubLine is the longest line of a Lock's screen lea passes whole; maxRetype the longest
+	// name the hub takes typed.
+	maxHubLine = 2000
+	maxRetype  = 128
 )
 
 // HubTicket is one pending ticket of the hub's queue: the fields of the facade's item and of the
@@ -192,6 +196,12 @@ func (d *Daemon) RunHubQueue(ctx context.Context) {
 	for ctx.Err() == nil {
 		v, err := d.pollHubQueue(ctx, since)
 		if err == nil {
+			if v == since { // the hub answered at once with nothing new: no busy loop
+				select {
+				case <-time.After(time.Second):
+				case <-ctx.Done():
+				}
+			}
 			since = v
 			continue
 		}
@@ -229,13 +239,13 @@ func (d *Daemon) setHubQueue(ctx context.Context, ts []HubTicket, up bool) {
 	var entries []hubEntry
 	if len(ts) > 0 {
 		all, err := d.st.Agents()
-		if err != nil {
-			log.Printf("lea daemon: hub queue: %v", err)
-			return
+		var waits []store.HubWait
+		if err == nil {
+			waits, err = d.st.AllPendingHubWaits()
 		}
-		waits, err := d.st.AllPendingHubWaits()
-		if err != nil {
+		if err != nil { // no agent to show them on: none shows
 			log.Printf("lea daemon: hub queue: %v", err)
+			d.showHub(ctx, nil, "")
 			return
 		}
 		byKey := map[string]store.Agent{}
@@ -342,15 +352,34 @@ func (d *Daemon) addHubCards(snap *agents.Snapshot) {
 
 func hubCard(e hubEntry) agents.HubCard {
 	t := e.t
-	return agents.HubCard{ID: t.ID, Instance: t.Instance, Lock: t.Lock, Risk: hubLine(t.Risk, 16),
-		Production: t.Production, Retype: hubLine(t.Retype, 128), Verified: e.verified,
-		Header: hubLine(t.Header, 160), Note: hubLine(t.Note, 240), Body: hubLines(t.Body, maxHubLines),
-		Warnings: hubLines(t.Warnings, 10), Expires: t.Expires}
+	var cut bool
+	line := func(s string, n int) string {
+		l, c := hubLine(s, n)
+		cut = cut || c
+		return l
+	}
+	lines := func(ls []string, n int) []string {
+		var out []string
+		for i, l := range ls {
+			if i == n {
+				cut = true
+				break
+			}
+			out = append(out, line(l, maxHubLine))
+		}
+		return out
+	}
+	claimed, _ := hubLine(t.Agent, 64)
+	note, _ := hubLine(t.Note, 240) // the agent's words: cut, they say nothing of what runs
+	return agents.HubCard{ID: t.ID, Instance: t.Instance, Lock: t.Lock, Risk: line(t.Risk, 16),
+		Production: t.Production, Retype: line(t.Retype, maxRetype), Verified: e.verified,
+		Header: line(t.Header, maxHubLine), Note: note, Body: lines(t.Body, maxHubLines),
+		Warnings: lines(t.Warnings, 10), Expires: t.Expires, Claimed: claimed, Truncated: cut}
 }
 
 // hubLine is a line of the Lock's screen on one line, without control, bidi or zero-width
-// characters, at most n runes.
-func hubLine(s string, n int) string {
+// characters, at most n runes; cut reports that it was longer.
+func hubLine(s string, n int) (line string, cut bool) {
 	s = strings.Map(func(r rune) rune {
 		if textsafe.Unsafe(r) || r == utf8.RuneError {
 			return ' '
@@ -358,21 +387,9 @@ func hubLine(s string, n int) string {
 		return r
 	}, s)
 	if utf8.RuneCountInString(s) > n {
-		s = string([]rune(s)[:n-1]) + "…"
+		return string([]rune(s)[:n-1]) + "…", true
 	}
-	return s
-}
-
-func hubLines(ls []string, n int) []string {
-	var out []string
-	for i, l := range ls {
-		if i == n {
-			out = append(out, fmt.Sprintf("… %d more lines", len(ls)-n))
-			break
-		}
-		out = append(out, hubLine(l, 200))
-	}
-	return out
+	return s, false
 }
 
 // hubDecide answers a queued ticket of one of container's agents from that container's deck.
@@ -397,7 +414,11 @@ func (d *Daemon) hubDecide(ctx context.Context, params json.RawMessage) error {
 	if f == nil || !found {
 		return errors.New("no such ticket in this deck")
 	}
-	if err := f.Decide(ctx, p.Instance, p.ID, HubVerdict{Approved: p.Approved, Reason: hubLine(p.Reason, 400), Retype: p.Retype}); err != nil {
+	if len(p.Retype) > maxRetype || strings.ContainsFunc(p.Retype, textsafe.Unsafe) {
+		return errors.New("the typed name is too long or holds control characters")
+	}
+	reason, _ := hubLine(p.Reason, 400)
+	if err := f.Decide(ctx, p.Instance, p.ID, HubVerdict{Approved: p.Approved, Reason: reason, Retype: p.Retype}); err != nil {
 		return err
 	}
 	d.mu.Lock()

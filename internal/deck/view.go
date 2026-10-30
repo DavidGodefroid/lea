@@ -519,32 +519,33 @@ func (m Model) row(a Agent, inner int, inFolder bool) []string {
 		row := func(st lipgloss.Style, s string) string {
 			return bg(muted).Render(pad) + bg(st).Render(padRight(fit(s, inner-4, c), inner-4))
 		}
-		lines = append(lines, row(alert, warn+" "+clean(h.Lock)+" "+clean(h.Instance)+" "+c.dot+" "+clean(h.Risk)))
-		var flags []string
-		if h.Production {
-			flags = append(flags, "PRODUCTION")
-		}
+		wide := max(8, inner-6)
 		if !h.Verified {
-			flags = append(flags, "unverified requester")
+			lines = append(lines, row(alert, warn+" unverified: claims \""+clean(h.Claimed)+"\""))
 		}
-		if len(flags) > 0 {
-			lines = append(lines, row(alert, strings.Join(flags, " "+c.dot+" ")))
+		lines = append(lines, row(alert, warn+" "+clean(h.Lock)+" "+clean(h.Instance)+" "+c.dot+" "+clean(h.Risk)))
+		if h.Production {
+			lines = append(lines, row(alert, "PRODUCTION"))
 		}
-		if h.Header != "" {
-			lines = append(lines, row(text, clean(h.Header)))
+		for _, l := range wrap(clean(h.Header), wide+2, c) {
+			if l != "" {
+				lines = append(lines, row(text, l))
+			}
 		}
 		if h.Note != "" {
-			lines = append(lines, row(muted, "agent: "+clean(h.Note)))
+			for _, l := range wrap("agent: "+clean(h.Note), wide+2, c) {
+				lines = append(lines, row(muted, l))
+			}
 		}
-		body := h.Body
-		if !m.hubFull && len(body) > 3 {
-			body = append(append([]string(nil), body[:3]...), fmt.Sprintf("… %d more (v)", len(h.Body)-3))
+		body := m.hubBody(*h)
+		if !m.hubFull && len(body) > hubFolded {
+			body = append(append([]string(nil), body[:hubFolded]...), fmt.Sprintf("… %d more lines (v)", len(body)-hubFolded))
 		}
 		for _, l := range body {
-			lines = append(lines, row(text, "  "+clean(l)))
+			lines = append(lines, row(text, "  "+l))
 		}
-		for _, w := range h.Warnings {
-			lines = append(lines, row(alert, "  "+clean(w)))
+		for _, w := range m.hubWarnings(*h) {
+			lines = append(lines, row(alert, "  "+w))
 		}
 		keys := "[a]pprove [d]eny [v]iew"
 		if h.Production && h.Retype != "" {

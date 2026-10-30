@@ -241,6 +241,10 @@ type HubCard struct {
 	Body       []string `json:"body,omitempty"`
 	Warnings   []string `json:"warnings,omitempty"`
 	Expires    int64    `json:"expires,omitempty"`
+	// Claimed is the agent name the ticket's requester gives (cleaned); Truncated: lea had to cut
+	// the Lock's screen, so the deck cannot show all of it and sends the user to lock approve.
+	Claimed   string `json:"claimed,omitempty"`
+	Truncated bool   `json:"truncated,omitempty"`
 }
 
 type NewRequest struct {
