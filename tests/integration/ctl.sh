@@ -53,8 +53,12 @@ done
 # pressure gauge) in the host's cgroup tree.
 [ "$(docker inspect -f '{{.HostConfig.PidMode}}' "$ctl")" != host ] || fail "$ctl shares the host's pid namespace"
 cid=$(docker inspect -f '{{.Id}}' "$agent")
-docker exec "$ctl" sh -c 'd=$(find /sys/fs/cgroup -maxdepth 8 -type d \( -name "docker-$1.scope" -o -name "$1" \) | head -n1) &&
-  [ -n "$d" ] && [ "$(cat "$d/memory.current")" -gt 0 ]' sh "$cid" || fail "lea-ctl does not see the cgroup of $agent"
+if ! docker exec "$ctl" sh -c 'd=$(find /sys/fs/cgroup -maxdepth 8 -type d \( -name "docker-$1.scope" -o -name "$1" \) | head -n1) &&
+  [ -n "$d" ] && [ "$(cat "$d/memory.current")" -gt 0 ]' sh "$cid"; then
+  echo "agent: running=$(docker inspect -f '{{.State.Running}}' "$agent") host cgroup: $(cat "/proc/$(docker inspect -f '{{.State.Pid}}' "$agent")/cgroup" 2>&1)" >&2
+  docker exec "$ctl" sh -c 'cat /proc/self/cgroup; find /sys/fs/cgroup -maxdepth 3 -type d | head -n 60' >&2 || true
+  fail "lea-ctl does not see the cgroup of $agent"
+fi
 # Every container but lea-ctl: no Docker socket mounted.
 for c in $(docker ps -q --filter label=lea.prefix=lea-ctltest); do
   name=$(docker inspect -f '{{.Name}}' "$c"); name=${name#/}
