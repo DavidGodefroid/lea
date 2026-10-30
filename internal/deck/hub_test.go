@@ -144,3 +144,38 @@ func TestHubTicketIsReadWholeBeforeApproval(t *testing.T) {
 		}
 	}
 }
+
+// The whole card must have been on screen: a ticket whose card (with the Lock's header and the
+// agent's note) is taller than the deck is never approved from it, even after v.
+func TestHubTicketTallerThanTheDeckGoesToLockApprove(t *testing.T) {
+	tall := ticketed("b", false)
+	tall.Hub[0].Note = strings.Repeat("n", 240)
+	tall.Hub[0].Body = nil
+	for i := 0; i < 18; i++ {
+		tall.Hub[0].Body = append(tall.Hub[0].Body, "-- ok")
+	}
+	tall.Hub[0].Body = append(tall.Hub[0].Body, "DROP hidden")
+	api := &fakeAPI{}
+	m := readable(loaded(t, api, "lea-a/b", tall))
+	m, _ = step(t, m, tea.WindowSizeMsg{Width: 36, Height: 30})
+	m, _ = step(t, m, key("v"))
+	if strings.Contains(m.View(), "DROP hidden") {
+		t.Fatalf("the test's card fits:\n%s", m.View())
+	}
+	if !strings.Contains(m.status, "lock approve") {
+		t.Fatalf("status %q", m.status)
+	}
+	if m, cmd := step(t, m, key("a")); cmd != nil || !strings.Contains(m.status, "lock approve") {
+		t.Fatalf("approved a ticket not all on screen: status %q", m.status)
+	}
+	// Tall enough: v shows it all, a approves.
+	m, _ = step(t, m, tea.WindowSizeMsg{Width: 36, Height: 60})
+	m, _ = step(t, m, key("v"))
+	m, _ = step(t, m, key("v"))
+	if !strings.Contains(m.View(), "DROP hidden") {
+		t.Fatalf("not all shown at height 60:\n%s", m.View())
+	}
+	if _, cmd := step(t, m, key("a")); cmd == nil {
+		t.Fatalf("not approved at height 60: status %q", m.status)
+	}
+}

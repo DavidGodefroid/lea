@@ -836,6 +836,10 @@ func (m Model) key(k string) (tea.Model, tea.Cmd) {
 		if a := m.selectedAgent(); a != nil && hubTicket(*a) != nil {
 			m.hubFull = !m.hubFull
 			if h := hubTicket(*a); m.hubFull {
+				if !m.hubFits(*a) {
+					m.status = "too tall for the deck: answer it with lock approve"
+					return m, nil
+				}
 				if m.hubRead == nil {
 					m.hubRead = map[string]bool{}
 				}
@@ -1118,7 +1122,7 @@ func (m Model) answerHub(approve bool) (tea.Model, tea.Cmd) {
 	if approve {
 		body := len(m.hubBody(h))
 		switch {
-		case h.Truncated || body+len(m.hubWarnings(h)) > maxHubCard:
+		case h.Truncated || body+len(m.hubWarnings(h)) > maxHubCard || !m.hubFits(*a):
 			m.status = "too long for the deck: answer it with lock approve"
 			return m, nil
 		case h.Production && h.Retype == "":
@@ -1189,4 +1193,22 @@ func (m Model) hubWrap(ls []string) []string {
 		out = append(out, wrap(clean(l), w, m.cs())...)
 	}
 	return out
+}
+
+// hubFits reports whether a's whole card, the Lock's screen unfolded, fits in the deck's height:
+// the rows scroll to keep the selected row's block on screen, so all of it shows. Before the
+// deck knows its height, nothing is cut.
+func (m Model) hubFits(a Agent) bool {
+	if m.height <= 0 {
+		return true
+	}
+	in := false
+	for _, e := range m.entries(false) {
+		if e.key == a.Key {
+			in = e.in >= 0
+		}
+	}
+	full := m
+	full.hubFull = true
+	return len(full.row(a, m.innerWidth(), in)) <= m.height-3 // the borders and the status line
 }

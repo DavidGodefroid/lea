@@ -1,8 +1,11 @@
 package daemon
 
 import (
+	"context"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/DavidGodefroid/lea/internal/agents"
 	"github.com/DavidGodefroid/lea/internal/deck"
@@ -222,5 +225,65 @@ func TestHubDecideIsTheHostsAndTheScreenIsNeverCutSilently(t *testing.T) {
 	defer h.mu.Unlock()
 	if len(h.decided) != 0 {
 		t.Fatalf("decided %q", h.decided)
+	}
+}
+
+// One line of the Lock's screen longer than lea passes whole marks the card cut.
+func TestHubLongLineMarksTheCardCut(t *testing.T) {
+	q := queued(ticketA, "crm", "locksql", "dev-1", "", false, "")
+	q["ticket"].(map[string]any)["screen"].(map[string]any)["body"] = []string{strings.Repeat("x", maxHubLine+1)}
+	e, dev, _ := hubEnv(t, &fakeHub{queue: []map[string]any{q}})
+	e.d.st.AddHubWait(dev, ticketA, "locksql", "crm", 1)
+	if _, err := e.d.pollHubQueue(e.ctx, 0); err != nil {
+		t.Fatal(err)
+	}
+	if c := cardsOf(e, dev).Agents[0].Hub; len(c) != 1 || !c[0].Truncated {
+		t.Fatalf("card %+v", c)
+	}
+}
+
+// A store that fails shows no ticket (none can be put on its agent).
+func TestHubQueueShowsNothingWhenTheStoreFails(t *testing.T) {
+	e, dev, _ := hubEnv(t, &fakeHub{queue: []map[string]any{queued(ticketA, "crm", "locksql", "dev-1", "", false, "")}})
+	e.d.st.AddHubWait(dev, ticketA, "locksql", "crm", 1)
+	if _, err := e.d.pollHubQueue(e.ctx, 0); err != nil {
+		t.Fatal(err)
+	}
+	if c := cardsOf(e, dev).Agents[0].Hub; len(c) != 1 {
+		t.Fatalf("card %+v", c)
+	}
+	e.d.st.Close()
+	e.d.pollHubQueue(e.ctx, 0)
+	if c := cardsOf(e, dev).Agents[0].Hub; len(c) != 0 {
+		t.Fatalf("cards after a store failure %+v", c)
+	}
+}
+
+// countingFacade answers the queue at once, always with the same version.
+type countingFacade struct {
+	stubFacade
+	mu sync.Mutex
+	n  int
+}
+
+func (f *countingFacade) Queue(ctx context.Context, since uint64, wait int) ([]HubTicket, uint64, error) {
+	f.mu.Lock()
+	f.n++
+	f.mu.Unlock()
+	return nil, 7, nil
+}
+
+// A hub that answers at once with nothing new is asked again a second later, not in a busy loop.
+func TestHubQueueDoesNotSpin(t *testing.T) {
+	e := start(t)
+	f := &countingFacade{}
+	e.d.SetHubFacade(f)
+	ctx, cancel := context.WithTimeout(e.ctx, 1500*time.Millisecond)
+	defer cancel()
+	e.d.RunHubQueue(ctx)
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.n > 3 {
+		t.Fatalf("%d queue requests in 1.5 s", f.n)
 	}
 }
