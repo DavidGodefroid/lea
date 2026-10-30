@@ -5,6 +5,7 @@ import (
 	"os"
 	"regexp"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/DavidGodefroid/lea/internal/lockhttp"
@@ -302,4 +303,25 @@ func (l *Launcher) lockHTTPAgentCA() []string {
 		"--mount", "type=bind,src=" + lockhttp.CADir(l.Cfg.DataDir()) + "/ca.pem,dst=/etc/lea/lockhttp-ca.pem,readonly",
 		"-e", "NODE_EXTRA_CA_CERTS=/etc/lea/lockhttp-ca.pem", "-e", "SSL_CERT_FILE=" + bundle,
 		"-e", "REQUESTS_CA_BUNDLE=" + bundle, "-e", "PIP_CERT=" + bundle}
+}
+
+// lockHostRoot and lockHostOwner: the host's root directory and the uid that must own its system
+// files (tests only change them).
+var (
+	lockHostRoot  = ""
+	lockHostOwner = 0
+)
+
+// rootOwned is why path is not a root-owned file (dir: directory) that only root may write, or "".
+// An agent able to edit the system file could point the client at a console of its own.
+func rootOwned(path string, dir bool) string {
+	fi, err := os.Lstat(path)
+	if err != nil {
+		return path + " is absent"
+	}
+	st, _ := fi.Sys().(*syscall.Stat_t)
+	if fi.IsDir() != dir || (!dir && !fi.Mode().IsRegular()) || st == nil || int(st.Uid) != lockHostOwner || fi.Mode().Perm()&0o022 != 0 {
+		return path + " is not owned and writable by root only"
+	}
+	return ""
 }

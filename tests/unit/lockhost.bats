@@ -4,19 +4,15 @@ setup() {
   P="$BATS_TEST_TMPDIR/projects"; mkdir -p "$P"
   export LEA_PROJECTS_DIR="$P"
   export LEA_CONFIG="$BATS_TEST_TMPDIR/user.conf"
-  R="$BATS_TEST_TMPDIR/host"; mkdir -p "$R/usr/local/bin" "$R/etc" "$R/run"
-  OWNER=$(id -u)
-  lea__lockhost_root() { printf '%s' "$R"; }
-  lea__lockhost_owner() { printf '%s' "$OWNER"; }
+  B="$BATS_TEST_TMPDIR/bin"; mkdir -p "$B"
 }
 
-# host_bin TOOL VERSION-LINE: a TOOL in the host's /usr/local/bin that prints VERSION-LINE and logs
-# its other calls.
-host_bin() {
-  printf '#!/bin/sh\nif [ "$1" = version ]; then echo "%s"; exit 0; fi\n{ printf "%s"; for a in "$@"; do printf " [%%s]" "$a"; done; printf "\\n"; } >>"$FAKE_LOG"\n' "$2" "$1" >"$R/usr/local/bin/$1"
-  chmod 0755 "$R/usr/local/bin/$1"
+# launcher TOOL: TOOL's launcher on the PATH (its install.sh put it there); it logs its calls.
+launcher() {
+  printf '#!/bin/sh\n{ printf "%s"; for a in "$@"; do printf " [%%s]" "$a"; done; printf "\\n"; } >>"$FAKE_LOG"\n' "$1" >"$B/$1"
+  chmod 0755 "$B/$1"
+  PATH="$B:$PATH"
 }
-host_setup() { mkdir -p "$R/etc/$1" "$R/run/$1"; : >"$R/etc/$1/system.toml"; }
 
 @test "lockfile below v0.1.1 is never safe (v0.1.0: plugin sandbox escape)" {
   for v in v0.1.0 v0.0.9 v0.1 latest ''; do if lea__lockfile_safe "$v"; then false; fi; done
@@ -25,7 +21,7 @@ host_setup() { mkdir -p "$R/etc/$1" "$R/run/$1"; : >"$R/etc/$1/system.toml"; }
 
 @test "lockmq and lockfile are off by default, pinned to releases" {
   [ "$LEA_LOCKMQ" = 0 ] && [ "$LEA_LOCKFILE" = 0 ]
-  [ "$LEA_LOCKMQ_REF" = v0.1.0 ] && [ "$LEA_LOCKFILE_REF" = v0.2.0 ]
+  lea__semver "$LEA_LOCKMQ_REF" >/dev/null && lea__semver "$LEA_LOCKFILE_REF" >/dev/null
 }
 
 @test "the configuration refuses a bad switch, an unpinned ref and lockfile v0.1.0" {
@@ -37,12 +33,16 @@ host_setup() { mkdir -p "$R/etc/$1" "$R/run/$1"; : >"$R/etc/$1/system.toml"; }
   [[ "$output" == *"lockfile v0.1.0 lets a plugin escape its sandbox"* ]]
 }
 
-@test "the image's clients are the releases lea pins" {
+@test "the image's clients are the releases lea pins, with the tools' own accounts and no host account" {
   c="$LEA_ROOT/image/Containerfile"
   grep -q "MQ=${LEA_LOCKMQ_REF#v} LF=${LEA_LOCKFILE_REF#v}" "$c"
-  grep -q 'echo "$mq  lockmq_' "$c" && grep -q 'echo "$lf  lockfile_' "$c"
-  grep -q 'image/lock-host /usr/local/libexec/lea/' "$c"
-  grep -q '^\. /usr/local/libexec/lea/lock-host$' "$LEA_ROOT/image/entrypoint"
+  grep -q 'groupadd -g 10010 lockmq-clients && useradd -r -u 10011 ' "$c"
+  grep -q 'groupadd -g 10030 lockfile-clients && useradd -r -u 10031 ' "$c"
+  grep -q 'install -d -m 2710 -o 10011 -g 10010 /run/lockmq' "$c"
+  grep -q 'install -d -m 2750 -o 10031 -g 10030 /run/lockfile' "$c"
+  if grep -q 'lock-host\|lock_host' "$c" "$LEA_ROOT/image/entrypoint"; then false; fi
+  grep -q 'usermod -aG lockmq-clients' "$LEA_ROOT/image/entrypoint"
+  grep -q 'usermod -aG lockfile-clients' "$LEA_ROOT/image/entrypoint"
 }
 
 @test "lea lockmq: off, it says how to turn it on; it never starts anything" {
@@ -52,17 +52,20 @@ host_setup() { mkdir -p "$R/etc/$1" "$R/run/$1"; : >"$R/etc/$1/system.toml"; }
   [ -z "$(calls)" ]
 }
 
-@test "lea lockfile: on, it reports the host setup and how to open the console in its account" {
+@test "lea lockfile: on, it reports the launcher, the volume and how to open the console" {
   LEA_LOCKFILE=1
+  export FAKE_DOCKER_RC_VOLUME_INSPECT=1
   run lea_lockhost lockfile
-  [[ "$output" == *"lockfile: not installed in /usr/local/bin (lea init installs v0.2.0)"* ]]
-  [[ "$output" == *"no separated setup: sudo lockfile install --client"* ]]
-  [[ "$output" == *"open a session of the lockfile account"*"lockfile console --project $P --profile PROFILE"* ]]
-  host_bin lockfile "lockfile v0.2.0"; host_setup lockfile
+  [[ "$output" == *"lockfile: install its launcher"*"scripts/install.sh"* ]]
+  [[ "$output" == *"no lockfile-run volume yet"* ]]
+  [[ "$output" == *"lockfile console --profile PROFILE"* ]]
+  launcher lockfile
+  unset FAKE_DOCKER_RC_VOLUME_INSPECT
+  export FAKE_DOCKER_OUT_RUN___RM=10031:10030
   run lea_lockhost lockfile
-  [[ "$output" == *"lockfile on this host: v0.2.0 (lea pins v0.2.0)"* ]]
-  [[ "$output" == *"separated setup present"* ]]
-  [ -z "$(calls)" ]
+  [[ "$output" == *"lockfile launcher: $B/lockfile"* ]]
+  [[ "$output" == *"socket volume lockfile-run present"* ]]
+  if calls | grep -q '^lockfile\|sudo\|migrate-ids'; then false; fi
 }
 
 @test "lea lockmq takes no argument: no way to pass flags to a console" {
@@ -89,55 +92,46 @@ host_setup() { mkdir -p "$R/etc/$1" "$R/run/$1"; : >"$R/etc/$1/system.toml"; }
 @test "lea init asks once, no by default, and remembers the answer" {
   lea__init_tty() { true; }
   run lea__init_lockhost lockmq <<<""
-  [[ "$output" == *"through a lockmq console on this host"*"[y/N]"* ]]
+  [[ "$output" == *"through a lockmq console"*"[y/N]"* ]]
   grep -qx "LEA_LOCKMQ='0'" "$LEA_CONFIG"
   run lea__init_lockhost lockmq <<<"y"
   [[ "$output" != *"[y/N]"* ]]
   [ -z "$(calls)" ]
 }
 
-@test "lea init --lockmq: the release is offered, its absence is never fatal" {
-  lea__init_tty() { true; }
+@test "lea init --lockmq without the launcher: how to install it, never fatal, nothing installed" {
   lea__lockhost_set lockmq 1
-  run lea__init_lockhost lockmq <<<"n"
+  LEA_INIT_NONINTERACTIVE=1 run lea__init_lockhost lockmq </dev/null
   [ "$status" -eq 0 ]
-  [[ "$output" == *"lockmq: lea pins v0.1.0; this host has none"* ]]
-  [[ "$output" == *"Install lockmq v0.1.0 there"* ]]
-  [[ "$output" == *"not installed; lea's agents cannot reach a lockmq console yet"* ]]
-  [ -z "$(calls)" ]
+  [[ "$output" == *"lockmq: install its launcher"* ]]
+  [[ "$output" == *"lockmq console --profile PROFILE"* ]]
+  if calls | grep -q 'sudo\|install'; then false; fi
 }
 
-@test "lea init: a lockfile below v0.1.1 on the host is not wired" {
+@test "lea init: a lockfile-run volume of lockfile before 0.3 is left to lockfile's launcher" {
   lea__lockhost_set lockfile 1
-  host_bin lockfile "lockfile v0.1.0"
-  LEA_LOCKFILE_REF=v0.1.0 LEA_INIT_NONINTERACTIVE=1 run lea__init_lockhost lockfile </dev/null
-  [[ "$output" == *"lockfile v0.1.0 lets a plugin escape its sandbox: lea does not wire it"* ]]
+  launcher lockfile
+  export FAKE_DOCKER_OUT_RUN___RM=10001:10000
+  LEA_INIT_NONINTERACTIVE=1 run lea__init_lockhost lockfile </dev/null
+  [[ "$output" == *"start \`lockfile console\` once: it migrates the volume"* ]]
+  if calls | grep -q 'migrate-ids'; then false; fi
 }
 
-@test "lea init with lockmq set up offers the profile wizard as you, in lea's image with only the projects dir, then the console hint" {
+@test "lea init with lockmq offers the profile wizard as you, in lea's image with only the projects dir, then the console hint" {
   lea__init_tty() { true; }
   lea__lockhost_set lockmq 1
-  host_bin lockmq "lockmq 0.1.0"; host_setup lockmq
+  launcher lockmq
   run lea__init_lockhost lockmq <<<"y"
   [[ "$output" == *"lockmq has no broker profile for $P yet"* ]]
-  [[ "$output" == *"lockmq console --project $P --profile PROFILE"* ]]
+  [[ "$output" == *"lockmq console --profile PROFILE"* ]]
   run calls
   [ "$output" = "docker [run] [-it] [--rm] [--network] [none] [--user] [$(id -u):$(id -g)] [-e] [HOME=/tmp] [-v] [$P:$P] [-w] [$P] [--entrypoint] [lockmq] [$LEA_IMAGE] [setup] [--project] [$P]" ]
-}
-
-@test "no environment variable relaxes the checks of the binary lea runs with sudo" {
-  host_bin lockmq "lockmq 0.1.0"
-  . "$LEA_ROOT/libexec/lib/lockhost.sh"
-  [ -z "$(lea__lockhost_root)" ] && [ "$(lea__lockhost_owner)" = 0 ]
-  LEA_LOCKHOST_ROOT="$R" LEA_LOCKHOST_OWNER=$OWNER run lea__lockhost_bin lockmq
-  [[ "$output" != "$R"* ]]
-  if grep -q 'LEA_LOCKHOST' "$LEA_ROOT/libexec/lib/lockhost.sh"; then false; fi
 }
 
 @test "lea init never runs lockmq setup through a symlink the agents planted" {
   lea__init_tty() { true; }
   lea__lockhost_set lockmq 1
-  host_bin lockmq "lockmq 0.1.0"; host_setup lockmq
+  launcher lockmq
   ln -s "$BATS_TEST_TMPDIR/elsewhere" "$P/.lockmq"
   run lea__init_lockhost lockmq <<<"y"
   [[ "$output" == *".lockmq or its config.toml is a symbolic link: lockmq setup not offered"* ]]
@@ -148,94 +142,25 @@ host_setup() { mkdir -p "$R/etc/$1" "$R/run/$1"; : >"$R/etc/$1/system.toml"; }
   [ -z "$(calls)" ]
 }
 
-@test "lea init offers the separated setup, with the tool's own root script" {
-  lea__init_tty() { true; }
-  lea__lockhost_set lockfile 1
-  host_bin lockfile "lockfile v0.2.0"
-  run lea__init_lockhost lockfile <<<"y"
-  [[ "$output" == *"no separated console account yet"* ]]
-  run calls
-  [[ "$output" == "sudo [$R/usr/local/bin/lockfile] [install] [--client] [$(lea_user_name)]" ]]
-}
-
-# release TOOL VERSION: the release archive of a TOOL printing VERSION, and its checksums.txt.
-release() {
-  d="$BATS_TEST_TMPDIR/rel"; mkdir -p "$d/x"
-  printf '#!/bin/sh\necho "%s %s"\n' "$1" "$2" >"$d/x/$1"; chmod 0755 "$d/x/$1"
-  a=${1}_${2#v}_linux_$(lea__lockhost_arch).tar.gz
-  tar -czf "$d/$a" -C "$d/x" "$1"
-  printf '%s  %s\n' "$(lea__sha256 "$d/$a")" "$a" >"$d/checksums.txt"
-  : >"$d/checksums.txt.sigstore.json"
-  export FAKE_CURL_DIR="$d"
-}
-
-@test "the host install checks the signature against the tool's release workflow at that tag" {
-  release lockmq v0.1.0
-  lea__lockhost_install lockmq v0.1.0
-  run calls
-  [[ "$output" == *"cosign [verify-blob] [--bundle] "*"[--certificate-identity-regexp] [^https://github\\.com/DavidGodefroid/lockmq/\\.github/workflows/release\\.yml@refs/tags/v0\\.1\\.0\$] [--certificate-oidc-issuer] [https://token.actions.githubusercontent.com]"* ]]
-  [[ "$output" == *"sudo [install] [-m] [0755] [-o] [root] [-g] [root] "*"[$R/usr/local/bin/lockmq]"* ]]
-  [[ "$output" == *"curl "*"[https://github.com/DavidGodefroid/lockmq/releases/download/v0.1.0/lockmq_0.1.0_linux_"* ]]
-}
-
-@test "nothing is installed when the signature, the checksum or the version is wrong" {
-  release lockmq v0.1.0
-  FAKE_COSIGN_RC=1 run lea__lockhost_install lockmq v0.1.0
-  [ "$status" -ne 0 ]
-  [[ "$output" == *"is not signed by lockmq's release workflow; nothing installed"* ]]
-  if calls | grep -q '^sudo'; then false; fi
-  release lockmq v0.1.0
-  printf '0000  %s\n' "lockmq_0.1.0_linux_$(lea__lockhost_arch).tar.gz" >"$FAKE_CURL_DIR/checksums.txt"
-  run lea__lockhost_install lockmq v0.1.0
-  [[ "$output" == *"does not match the signed checksums.txt; nothing installed"* ]]
-  if calls | grep -q '^sudo'; then false; fi
-  release lockmq v0.0.1
-  mv "$FAKE_CURL_DIR/lockmq_0.0.1_linux_$(lea__lockhost_arch).tar.gz" "$FAKE_CURL_DIR/lockmq_0.1.0_linux_$(lea__lockhost_arch).tar.gz"
-  sed -i 's/0\.0\.1/0.1.0/' "$FAKE_CURL_DIR/checksums.txt"
-  run lea__lockhost_install lockmq v0.1.0
-  [[ "$output" == *"holds no lockmq v0.1.0; nothing installed"* ]]
-  if calls | grep -q '^sudo'; then false; fi
-}
-
-@test "a binary that is a symlink, not root's, or writable by others (or in such a dir) is not the host's tool" {
-  host_bin lockmq "lockmq 0.1.0"
-  lea__lockhost_bin lockmq
-  OWNER=12345 run lea__lockhost_bin lockmq
-  [ "$status" -ne 0 ]
-  chmod 0775 "$R/usr/local/bin/lockmq"
-  run lea__lockhost_bin lockmq
-  [ "$status" -ne 0 ]
-  chmod 0757 "$R/usr/local/bin/lockmq"
-  run lea__lockhost_bin lockmq
-  [ "$status" -ne 0 ]
-  chmod 0755 "$R/usr/local/bin/lockmq"; chmod 0777 "$R/usr/local/bin"
-  run lea__lockhost_bin lockmq
-  [ "$status" -ne 0 ]
-  chmod 0755 "$R/usr/local/bin"
-  lea__lockhost_bin lockmq
-  mv "$R/usr/local/bin/lockmq" "$R/usr/local/bin/real"; ln -s real "$R/usr/local/bin/lockmq"
-  run lea__lockhost_bin lockmq
-  [ "$status" -ne 0 ]
-}
-
 @test "lea doctor reports the tools that are on, and only those" {
   run lea__doctor_lockhost lockmq
   [ -z "$output" ]
   LEA_LOCKFILE=1
-  host_bin lockfile "lockfile v0.1.0"
+  export FAKE_DOCKER_OUT_RUN___RM=10001:10000
   run lea__doctor_lockhost lockfile
-  [[ "$output" == *"warn  lockfile binary: v0.1.0: below v0.1.1"* ]]
-  [[ "$output" == *"warn  lockfile separated setup: none"* ]]
-  host_bin lockfile "lockfile v0.2.0"; host_setup lockfile
+  [[ "$output" == *"warn  lockfile launcher: not installed"* ]]
+  [[ "$output" == *"warn  lockfile-run volume: ids of lockfile before 0.3: start \`lockfile console\` once: it migrates the volume"* ]]
+  launcher lockfile
+  export FAKE_DOCKER_OUT_RUN___RM=10031:10030
   run lea__doctor_lockhost lockfile
-  [[ "$output" == *"ok    lockfile binary v0.2.0"*"ok    lockfile separated setup"*"ok    lockfile socket directory /run/lockfile"* ]]
+  [[ "$output" == *"ok    lockfile launcher $B/lockfile"*"ok    lockfile-run volume"* ]]
 }
 
-@test "without a pinned release lea init installs nothing" {
-  lea__init_tty() { true; }
-  lea__lockhost_set lockmq 1
-  LEA_LOCKMQ_REF= run lea__init_lockhost lockmq <<<"y"
-  [[ "$output" == *"no pinned release (LEA_LOCKMQ_REF is empty): lea installs nothing"* ]]
-  [[ "$output" != *"Install lockmq"* ]]
-  [ -z "$(calls)" ]
+@test "the entrypoint refuses a session whose uid or gid is a lock console's id in the image" {
+  for ids in "10011 4243" "4242 10030" "10001 4243" "4242 10010" "10031 4243" "4242 10000"; do
+    set -- $ids
+    run env LEA_UID="$1" LEA_GID="$2" LEA_USER=u HOME="$BATS_TEST_TMPDIR" LEA_PROXY_IP=10.0.0.2 sh "$LEA_ROOT/image/entrypoint" true
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"refusing to run the session as uid $1 / gid $2: a lock console's id"* ]]
+  done
 }

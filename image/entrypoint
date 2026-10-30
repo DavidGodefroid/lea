@@ -9,6 +9,13 @@ for ep in ${LEA_GIT_SSH:-}; do
 done
 [ "$LEA_UID" -ne 0 ] || { echo "lea: refusing to run the session as root" >&2; exit 1; }
 [ "$LEA_GID" -ne 0 ] || { echo "lea: refusing to run the session with group root" >&2; exit 1; }
+# The ids of the locks' accounts and clients groups in the image (locksql, lockmq, lockfile): a
+# session with one of them would be that console account, or in that group without asking.
+for id in 10000 10001 10010 10011 10030 10031; do
+  if [ "$LEA_UID" -eq "$id" ] || [ "$LEA_GID" -eq "$id" ]; then
+    echo "lea: refusing to run the session as uid $LEA_UID / gid $LEA_GID: a lock console's id in lea's image" >&2; exit 1
+  fi
+done
 # A name useradd accepts everywhere: ^[a-z_][a-z0-9_-]*$, at most 32 characters.
 case $LEA_USER in [abcdefghijklmnopqrstuvwxyz_]*) ;; *) LEA_USER=u$LEA_UID ;; esac
 case $LEA_USER in *[!abcdefghijklmnopqrstuvwxyz0123456789_-]*) LEA_USER=u$LEA_UID ;; esac
@@ -19,11 +26,10 @@ if ! getent passwd "$LEA_UID" >/dev/null; then
   useradd -M -N -d "$HOME" -u "$LEA_UID" -g "$LEA_GID" -s /bin/bash "$LEA_USER"
 fi
 user=$(getent passwd "$LEA_UID" | cut -d: -f1)
+# The clients groups of the locks lea is wired for (their consoles run in their own containers).
 if [ "${LEA_LOCKSQL:-0}" = 1 ]; then usermod -aG locksql-clients "$user"; fi
-# shellcheck source=image/lock-host
-. /usr/local/libexec/lea/lock-host
-if [ "${LEA_LOCKMQ:-0}" = 1 ]; then lock_host lockmq "${LEA_LOCKMQ_UID:-}" "${LEA_LOCKMQ_GID:-}"; fi
-if [ "${LEA_LOCKFILE:-0}" = 1 ]; then lock_host lockfile "${LEA_LOCKFILE_UID:-}" "${LEA_LOCKFILE_GID:-}"; fi
+if [ "${LEA_LOCKMQ:-0}" = 1 ]; then usermod -aG lockmq-clients "$user"; fi
+if [ "${LEA_LOCKFILE:-0}" = 1 ]; then usermod -aG lockfile-clients "$user"; fi
 grep -q "^$user:" /etc/subuid || echo "$user:200000:65536" >>/etc/subuid
 grep -q "^$user:" /etc/subgid || echo "$user:200000:65536" >>/etc/subgid
 

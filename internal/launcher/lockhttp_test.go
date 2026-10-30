@@ -18,6 +18,20 @@ func fakeLockHTTPLauncher(version, digest string) string {
 		"\n\nrepo=\"DavidGodefroid/lockhttp\"\nregistry=\"ghcr.io/davidgodefroid/lockhttp\"\n"
 }
 
+// lockHostWorld is a host root whose /usr/local/bin is owned by the test's uid, which stands for
+// root (lockHostOwner).
+func lockHostWorld(t *testing.T) string {
+	t.Helper()
+	root := t.TempDir()
+	if err := os.MkdirAll(root+"/usr/local/bin", 0o755); err != nil {
+		t.Fatal(err)
+	}
+	oldRoot, oldOwner := lockHostRoot, lockHostOwner
+	lockHostRoot, lockHostOwner = root, os.Getuid()
+	t.Cleanup(func() { lockHostRoot, lockHostOwner = oldRoot, oldOwner })
+	return root
+}
+
 // lockHTTPWorld adds what lockhttp's install.sh leaves to lockHostWorld: its launcher, root-owned
 // in /usr/local/bin, pinning testDigest.
 func lockHTTPWorld(t *testing.T) (*world, string) {

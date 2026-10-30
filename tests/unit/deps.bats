@@ -17,19 +17,6 @@ setup() {
 on_tty() { lea__init_tty() { :; }; }
 # latest DEP TAG: the latest release of DEP is TAG.
 latest() { export "FAKE_CURL_EFFECTIVE_$1=https://github.com/DavidGodefroid/$1/releases/tag/$2"; }
-# host_bin TOOL VERSION-LINE: a root's TOOL in the host's /usr/local/bin that prints VERSION-LINE.
-host_bin() {
-  printf '#!/bin/sh\nif [ "$1" = version ]; then echo "%s"; exit 0; fi\n' "$2" >"$R/usr/local/bin/$1"
-  chmod 0755 "$R/usr/local/bin/$1"
-}
-# release TOOL vX.Y.Z: TOOL's release archive, checksums.txt and bundle, as the fake curl serves them.
-release() {
-  mkdir -p "$D/x"
-  printf '#!/bin/sh\necho "%s %s"\n' "$1" "$2" >"$D/x/$1"; chmod 0755 "$D/x/$1"
-  a=${1}_${2#v}_linux_$(lea__lockhost_arch).tar.gz
-  tar -czf "$D/$a" -C "$D/x" "$1"
-  printf '%s  %s\n' "$(lea__sha256 "$D/$a")" "$a" >"$D/checksums.txt"
-}
 
 @test "a newer locksql is shown with its release notes and, accepted, built from the signed commit" {
   on_tty; latest locksql v0.10.0
@@ -173,68 +160,24 @@ release() {
   [ -z "$(calls)" ]
 }
 
-@test "a newer lockfile is installed on the host with the strict signed installer, then recorded" {
-  LEA_LOCKSQL=0 LEA_LOCKFILE=1; latest lockfile v0.3.0
-  host_bin lockfile "lockfile v0.2.0"
-  release lockfile v0.3.0
-  run lea_update_deps all
-  [ "$status" -eq 0 ]
-  [[ "$output" == *"lockfile: v0.2.0 -> v0.3.0 (release notes: https://github.com/DavidGodefroid/lockfile/releases/tag/v0.3.0)"* ]]
-  [[ "$output" == *"lea's image has the lockfile v0.2.0 client: a v0.3.0 console may refuse it until a lea release ships that client"* ]]
-  [[ "$output" == *"lockfile v0.3.0 installed and recorded; restart the lockfile console in the lockfile account"* ]]
-  run calls
-  [[ "$output" == *"[--certificate-identity-regexp] [^https://github\\.com/DavidGodefroid/lockfile/\\.github/workflows/release\\.yml@refs/tags/v0\\.3\\.0\$]"* ]]
-  [[ "$output" == *"sudo [install] [-m] [0755] [-o] [root] [-g] [root] "*"[$R/usr/local/bin/lockfile]"* ]]
-  grep -qx "LEA_LOCKFILE_REF='v0.3.0'" "$LEA_CONFIG"
-}
-
-@test "a lockfile or lockmq release that fails its checks is not recorded" {
-  LEA_LOCKSQL=0 LEA_LOCKMQ=1; latest lockmq v0.2.0
-  host_bin lockmq "lockmq 0.1.0"
-  release lockmq v0.2.0
-  FAKE_COSIGN_RC=1 run lea_update_deps all
-  [[ "$output" == *"is not signed by lockmq's release workflow; nothing installed"*"warning: lockmq stays at v0.1.0"* ]]
-  if calls | grep -q '^sudo'; then false; fi
-  [ ! -e "$LEA_CONFIG" ]
-}
-
 @test "lockfile is never offered below its v0.1.1 security floor" {
   if lea__dep_floor_ok lockfile v0.1.0; then false; fi
   lea__dep_floor_ok lockfile v0.1.1
   lea__dep_floor_ok locksql v0.1.0
   if lea__dep_floor_ok locksql latest; then false; fi
-  # Even if lea pinned nothing safer, a newer but unsafe lockfile is refused.
-  LEA_LOCKSQL=0 LEA_LOCKFILE=1; latest lockfile v0.1.0
-  host_bin lockfile "lockfile v0.0.9"
-  lea__dep_ref() { printf v0.0.9; }
-  run lea_update_deps all
-  [[ "$output" == *"warning: lockfile v0.1.0 is below its security floor: not offered"* ]]
-  if calls | grep -q 'releases/download\|^sudo'; then false; fi
 }
 
-@test "lockmq and lockfile: off, without a pin or not installed, lea update leaves them" {
+@test "lockmq and lockfile are updated by their own launchers: lea update only says so" {
   LEA_LOCKSQL=0; latest lockmq v0.2.0; latest lockfile v0.3.0
   run lea_update_deps all
   [ -z "$output" ] && [ -z "$(calls)" ]
   LEA_LOCKMQ=1 LEA_LOCKFILE=1
   run lea_update_deps all
-  [[ "$output" == *"lockmq: not installed in /usr/local/bin (root-owned): lea init installs v0.1.0"* ]]
-  [[ "$output" == *"lockfile: not installed in /usr/local/bin (root-owned): lea init installs v0.2.0"* ]]
-  host_bin lockmq "lockmq 0.1.0"
-  LEA_LOCKMQ_REF= run lea_update_deps all
-  [[ "$output" == *"lockmq: no pinned release (LEA_LOCKMQ_REF is empty): lea update installs nothing"* ]]
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"lockmq: its launcher updates it and its image (lockmq update)"* ]]
+  [[ "$output" == *"lockfile: its launcher updates it and its image (lockfile update)"* ]]
   [ -z "$(calls)" ]
-}
-
-@test "each dependency is asked on its own" {
-  on_tty; LEA_LOCKMQ=1 LEA_LOCKFILE=1
-  latest locksql v0.10.0; latest lockmq v0.2.0; latest lockfile v0.3.0
-  host_bin lockmq "lockmq 0.1.0"; host_bin lockfile "lockfile v0.2.0"
-  release lockmq v0.2.0
-  run lea_update_deps ask <<<$'n\ny\nn'
-  [[ "$output" == *"locksql: kept at v0.9.0"*"lockmq v0.2.0 installed and recorded"*"lockfile: kept at v0.2.0"* ]]
-  grep -qx "LEA_LOCKMQ_REF='v0.2.0'" "$LEA_CONFIG"
-  if grep -q 'LOCKSQL\|LOCKFILE' "$LEA_CONFIG"; then false; fi
+  [ ! -e "$LEA_CONFIG" ]
 }
 
 @test "a recorded release older than lea's own pin gives way to the pin; a newer, empty or checkout ref stays" {
@@ -263,12 +206,6 @@ release() {
   [ "$status" -eq 0 ]
   [[ "$output" == *"locksql: locksql:0.10.0 is built but v0.10.0 could not be recorded in $LEA_CONFIG; lea keeps locksql:0.9.0"*"warning: locksql stays at v0.9.0"* ]]
   [[ "$output" != *"v0.10.0 recorded"* ]]
-  [ ! -s "$BATS_TEST_TMPDIR/elsewhere" ]
-  LEA_LOCKSQL=0 LEA_LOCKFILE=1; latest lockfile v0.3.0
-  host_bin lockfile "lockfile v0.2.0"; release lockfile v0.3.0
-  run lea_update_deps all
-  [[ "$output" == *"lockfile v0.3.0 is installed on the host but could not be recorded in $LEA_CONFIG"*"warning: lockfile stays at v0.2.0"* ]]
-  [[ "$output" != *"installed and recorded"* ]]
   [ ! -s "$BATS_TEST_TMPDIR/elsewhere" ]
 }
 
