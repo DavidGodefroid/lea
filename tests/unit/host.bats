@@ -26,7 +26,7 @@ setup() {
 
 @test "tmux versions: 3.2 and later are accepted" {
   for v in "tmux 3.2" "tmux 3.2a" "tmux 3.4" "tmux 3.10" "tmux 4.0" "tmux next-3.6"; do lea_tmux_version_ok "$v"; done
-  for v in "tmux 3.1c" "tmux 2.9" "tmux" "" "garbage 9.9"; do ! lea_tmux_version_ok "$v"; done
+  for v in "tmux 3.1c" "tmux 2.9" "tmux" "" "garbage 9.9"; do ! lea_tmux_version_ok "$v" || false; done
 }
 
 @test "lea_tmux_bin honours LEA_TMUX_BIN and fails when it is not executable" {

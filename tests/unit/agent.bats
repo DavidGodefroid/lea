@@ -157,8 +157,8 @@ service() { tr '\0' ' ' <"/proc/$1/cmdline" 2>/dev/null | grep -q 'unix://'; }
   [ "$output" = "dev-1: removed 3 containers and 1 pod" ]
   grep -qxF 'podman [pod] [rm] [-f] [p1]' "$PODMAN_LOG"
   grep -qxF 'podman [rm] [-f] [-v] [c1] [c2] [c3]' "$PODMAN_LOG"
-  i=0; while kill -0 "$svc" 2>/dev/null && [ "$i" -lt 20 ]; do sleep 0.1; i=$((i + 1)); done
-  ! kill -0 "$svc" 2>/dev/null || false
+  i=0; while ! gone "$svc" && [ "$i" -lt 20 ]; do sleep 0.1; i=$((i + 1)); done
+  gone "$svc"
   [ ! -e "$XDG_RUNTIME_DIR/podman/agent-dev-1.sock" ]
   [ ! -e "$LEA_AGENT_RUN_DIR/dev-1.podman.pid" ]
   # Nothing of its own: nothing removed, nothing said.
@@ -381,6 +381,9 @@ service() { tr '\0' ' ' <"/proc/$1/cmdline" 2>/dev/null | grep -q 'unix://'; }
 
 # pstate PID: the process state letter (T when stopped).
 pstate() { sed 's/.*) //' "/proc/$1/stat" | cut -d' ' -f1; }
+# gone PID: PID has exited: no such process, or a zombie (in a container whose PID 1 does not
+# reap, an orphan that exited stays one).
+gone() { ! kill -0 "$1" 2>/dev/null || [ "$(pstate "$1" 2>/dev/null)" = Z ]; }
 # kid PID: the first child of PID.
 kid() {
   i=0
