@@ -60,8 +60,8 @@ func lockView(e env, lock string) *agents.LockView {
 // lea claims shows nowhere. The Lock's counter follows the queue.
 func TestHubQueueShowsEachTicketOnItsAgent(t *testing.T) {
 	h := &fakeHub{queue: []map[string]any{
-		queued(ticketA, "crm", "locksql", "someone", "", true, "crm"),
-		queued(ticketB, "rabbit", "lockmq", "dev-x", "s-2", false, ""),
+		queued(ticketA, "crm", "locksql", "someone", "", true, "r"), // lockkit's retype flag: not what is typed
+		queued(ticketB, "rabbit", "lockmq", "dev-x", "s-2", false, "r"),
 		queued(ticketC, "crm", "locksql", "ghost", "s-9", false, ""),
 	}}
 	e, dev, dev2 := hubEnv(t, h)
@@ -78,7 +78,7 @@ func TestHubQueueShowsEachTicketOnItsAgent(t *testing.T) {
 	if strings.ContainsRune(a[0].Note, '\x1b') {
 		t.Fatalf("note not cleaned: %q", a[0].Note)
 	}
-	if len(b) != 1 || b[0].ID != ticketB || b[0].Verified {
+	if len(b) != 1 || b[0].ID != ticketB || b[0].Verified || b[0].Production || b[0].Retype != "" {
 		t.Fatalf("dev-2's cards %+v", b)
 	}
 	if v := lockView(e, "locksql"); v == nil || v.Pending != 1 || v.Console != "up" {
@@ -105,12 +105,16 @@ func TestHubQueueShowsEachTicketOnItsAgent(t *testing.T) {
 // name for production); a ticket of another container's agent, or none, is refused, and the
 // hub's refusals come back as one line.
 func TestHubDecideFromTheDeck(t *testing.T) {
-	h := &fakeHub{queue: []map[string]any{queued(ticketA, "crm", "locksql", "dev-1", "", true, "crm")}}
+	// No lockkit retype flag: the card still asks for the instance name (lockhub#64).
+	h := &fakeHub{queue: []map[string]any{queued(ticketA, "crm", "locksql", "dev-1", "", true, "")}}
 	e, dev, _ := hubEnv(t, h)
 	e.d.SetAgents(&fakeAgents{})
 	e.d.st.AddHubWait(dev, ticketA, "locksql", "crm", 1)
 	if _, err := e.d.pollHubQueue(e.ctx, 0); err != nil {
 		t.Fatal(err)
+	}
+	if c := cardsOf(e, dev).Agents[0].Hub; len(c) != 1 || !c[0].Production || c[0].Retype != "crm" {
+		t.Fatalf("production card %+v: approving it must ask for the instance name", c)
 	}
 	decide := func(container, id string, approved bool, retype string) error {
 		return call(t, e.api, "", "hub_decide", map[string]any{"container": container, "instance": "crm", "id": id,
