@@ -104,6 +104,26 @@ func TestHubQueueShowsEachTicketOnItsAgent(t *testing.T) {
 // The deck answers a ticket of one of its agents through the facade (facade "deck", the typed
 // name for production); a ticket of another container's agent, or none, is refused, and the
 // hub's refusals come back as one line.
+// Denying a production ticket from the deck needs no name typed.
+func TestHubDenyProductionNeedsNoName(t *testing.T) {
+	h := &fakeHub{queue: []map[string]any{queued(ticketA, "crm", "locksql", "dev-1", "", true, "")}}
+	e, dev, _ := hubEnv(t, h)
+	e.d.SetAgents(&fakeAgents{})
+	e.d.st.AddHubWait(dev, ticketA, "locksql", "crm", 1)
+	if _, err := e.d.pollHubQueue(e.ctx, 0); err != nil {
+		t.Fatal(err)
+	}
+	if err := call(t, e.api, "", "hub_decide", map[string]any{"container": "lea-a", "instance": "crm", "id": ticketA,
+		"approved": false, "retype": ""}, nil); err != nil {
+		t.Fatal(err)
+	}
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if len(h.decided) != 1 || !strings.Contains(h.decided[0], `"approved":false`) {
+		t.Fatalf("decided %q", h.decided)
+	}
+}
+
 func TestHubDecideFromTheDeck(t *testing.T) {
 	// No lockkit retype flag: the card still asks for the instance name (lockhub#64).
 	h := &fakeHub{queue: []map[string]any{queued(ticketA, "crm", "locksql", "dev-1", "", true, "")}}
