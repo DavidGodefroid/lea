@@ -110,6 +110,14 @@ func TestCtlRunsLeaInTheControlContainer(t *testing.T) {
 	}
 	got := strings.Join(w.execs[0], " ")
 	want := fmt.Sprintf("exec -i -u %d:%d -w %s", os.Getuid(), os.Getgid(), w.proj)
+	for _, e := range []string{"-e LEA_PROJECTS_DIR ", "-e XDG_DATA_HOME ", "-e LC_ALL "} {
+		if !strings.Contains(got, e) {
+			t.Errorf("exec lacks %q: %q", e, got)
+		}
+	}
+	if strings.Contains(got, "LEA_PROJECTS_DIR=") {
+		t.Errorf("a value on the command line: %q", got)
+	}
 	if !strings.HasSuffix(w.execs[0][0], "docker") || !strings.Contains(got, want) || !strings.HasSuffix(got, "lea-ctl "+w.core+" new") {
 		t.Fatalf("exec %q", got)
 	}

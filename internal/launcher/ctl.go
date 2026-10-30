@@ -141,6 +141,10 @@ func (l *Launcher) viaCtl(args []string) error {
 	return l.ctlExec(append([]string{l.Core}, args...))
 }
 
+// ctlEnv are the variables but LEA_* lea in lea-ctl takes from the host's lea.
+var ctlEnv = map[string]bool{"TERM": true, "COLORTERM": true, "LANG": true, "LC_ALL": true,
+	"XDG_DATA_HOME": true, "XDG_CONFIG_HOME": true, "XDG_RUNTIME_DIR": true}
+
 // ctlExec runs argv in lea-ctl on this terminal, at the same working directory, as the user.
 func (l *Launcher) ctlExec(cmd []string) error {
 	docker, err := exec.LookPath("docker")
@@ -152,9 +156,12 @@ func (l *Launcher) ctlExec(cmd []string) error {
 		flags = "-it"
 	}
 	argv := []string{docker, "exec", flags, "-u", uidgid(), "-w", l.Cwd}
-	for _, k := range []string{"TERM", "COLORTERM", "LANG", "LC_ALL"} {
-		if v := l.Cfg.Get(k); v != "" {
-			argv = append(argv, "-e", k+"="+v)
+	// The environment lea reads its configuration from (LEA_*, XDG_*, the terminal's): -e KEY
+	// takes the value from the docker CLI's environment, so none shows on its command line.
+	for _, kv := range l.Environ {
+		k, _, _ := strings.Cut(kv, "=")
+		if k != "LEA_CTL_INSIDE" && (strings.HasPrefix(k, "LEA_") || ctlEnv[k]) {
+			argv = append(argv, "-e", k)
 		}
 	}
 	argv = append(append(argv, l.CtlName()), cmd...)
