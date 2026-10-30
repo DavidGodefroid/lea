@@ -56,7 +56,8 @@ with_cosign() { ln -s "$LEA_ROOT/tests/fakes/cosign" "$B/cosign"; }
 # nothing_installed: no LEA_INSTALL_DIR/v1.2.3, no link, no lea init.
 nothing_installed() {
   [ ! -e "$LEA_INSTALL_DIR/v1.2.3" ]
-  [ ! -e "$LEA_BIN_DIR/lea" ] && [ ! -L "$LEA_BIN_DIR/lea" ]
+  [ ! -e "$LEA_BIN_DIR/lea" ]
+  [ ! -L "$LEA_BIN_DIR/lea" ]
   ! grep -q '^lea ' "$FAKE_LOG"
 }
 

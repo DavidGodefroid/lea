@@ -109,7 +109,8 @@ service() { tr '\0' ' ' <"/proc/$1/cmdline" 2>/dev/null | grep -q 'unix://'; }
   echo 0-3 >"$LEA_AGENT_RUN_DIR/dev-1.cpus"
   echo 4-7 >"$LEA_AGENT_RUN_DIR/dev-9.cpus"
   run "$A" windows
-  [ "$status" -eq 0 ] && [ "$output" = "dev-1 0-3" ]
+  [ "$status" -eq 0 ]
+  [ "$output" = "dev-1 0-3" ]
 }
 
 @test "run pins the agent to its window" {
@@ -158,11 +159,13 @@ service() { tr '\0' ' ' <"/proc/$1/cmdline" 2>/dev/null | grep -q 'unix://'; }
   grep -qxF 'podman [rm] [-f] [-v] [c1] [c2] [c3]' "$PODMAN_LOG"
   i=0; while kill -0 "$svc" 2>/dev/null && [ "$i" -lt 20 ]; do sleep 0.1; i=$((i + 1)); done
   ! kill -0 "$svc" 2>/dev/null
-  [ ! -e "$XDG_RUNTIME_DIR/podman/agent-dev-1.sock" ] && [ ! -e "$LEA_AGENT_RUN_DIR/dev-1.podman.pid" ]
+  [ ! -e "$XDG_RUNTIME_DIR/podman/agent-dev-1.sock" ]
+  [ ! -e "$LEA_AGENT_RUN_DIR/dev-1.podman.pid" ]
   # Nothing of its own: nothing removed, nothing said.
   : >"$PODMAN_LOG"
   run "$A" teardown dev-3
-  [ "$status" -eq 0 ] && [ -z "$output" ]
+  [ "$status" -eq 0 ]
+  [ -z "$output" ]
   ! grep -q '\[rm\]' "$PODMAN_LOG"
 }
 
@@ -213,7 +216,8 @@ service() { tr '\0' ' ' <"/proc/$1/cmdline" 2>/dev/null | grep -q 'unix://'; }
   # Nothing to remove, nothing unowned: silent.
   printf '%s\n' 'c1|p1|dev-1' >"$PODMAN_DB"; : >"$PODMAN_LOG"
   run "$A" sweep dev-1
-  [ "$status" -eq 0 ] && [ -z "$output" ]
+  [ "$status" -eq 0 ]
+  [ -z "$output" ]
   ! grep -q '\[rm\]' "$PODMAN_LOG"
 }
 
@@ -239,15 +243,18 @@ service() { tr '\0' ' ' <"/proc/$1/cmdline" 2>/dev/null | grep -q 'unix://'; }
   # unpark starts again what park stopped, once.
   : >"$PODMAN_LOG"
   run "$A" unpark dev-1
-  [ "$status" -eq 0 ] && [ "$output" = "dev-1: started 3 containers and 1 pod again" ]
+  [ "$status" -eq 0 ]
+  [ "$output" = "dev-1: started 3 containers and 1 pod again" ]
   grep -qxF 'podman [pod] [start] [p1]' "$PODMAN_LOG"
   grep -qxF 'podman [start] [c1] [c2] [c4]' "$PODMAN_LOG"
   run "$A" unpark dev-1
-  [ "$status" -eq 0 ] && [ -z "$output" ]
+  [ "$status" -eq 0 ]
+  [ -z "$output" ]
   # Nothing of its own runs: nothing stopped, nothing said.
   printf '%s\n' c5 >"$PODMAN_RUNNING"; : >"$PODMAN_LOG"
   run "$A" park dev-1
-  [ "$status" -eq 0 ] && [ -z "$output" ]
+  [ "$status" -eq 0 ]
+  [ -z "$output" ]
   ! grep -q '\[stop\]' "$PODMAN_LOG"
 }
 
@@ -267,7 +274,8 @@ service() { tr '\0' ' ' <"/proc/$1/cmdline" 2>/dev/null | grep -q 'unix://'; }
 
 @test "park without Podman says nothing" {
   run "$A" park dev-1
-  [ "$status" -eq 0 ] && [ -z "$output" ]
+  [ "$status" -eq 0 ]
+  [ -z "$output" ]
 }
 
 @test "teardown and sweep check the names" {
@@ -416,11 +424,15 @@ family() {
   printf 'c1 %s\nc5 %s\n' "$p1" "$p5" >"$PODMAN_PIDS"
   run "$A" pause claude-1
   [ "$status" -eq 0 ]
-  [ "$(pstate "$_fp")" = T ] && [ "$(pstate "$p1")" = T ] && [ "$(pstate "$k1")" = T ]
+  [ "$(pstate "$_fp")" = T ]
+  [ "$(pstate "$p1")" = T ]
+  [ "$(pstate "$k1")" = T ]
   [ "$(pstate "$p5")" != T ]
   run "$A" resume claude-1
   [ "$status" -eq 0 ]
-  [ "$(pstate "$_fp")" != T ] && [ "$(pstate "$p1")" != T ] && [ "$(pstate "$k1")" != T ]
+  [ "$(pstate "$_fp")" != T ]
+  [ "$(pstate "$p1")" != T ]
+  [ "$(pstate "$k1")" != T ]
 }
 
 @test "stop ends a paused agent at once and leaves no frozen child" {

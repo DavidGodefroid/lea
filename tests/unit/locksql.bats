@@ -13,7 +13,8 @@ setup() {
   run calls
   [[ "$output" == *"launcher pwd=$r image=locksql:0.9.0 ro=1 name=locksql-console vault= [console] [--project] [$P] [--profile] [uat]"* ]]
   [[ "$output" != *"docker [run]"* && "$output" != *"docker [rm]"* ]]
-  [ -d "$P/.locksql" ] && [ ! -L "$P/.locksql" ]
+  [ -d "$P/.locksql" ]
+  [ ! -L "$P/.locksql" ]
 }
 
 @test "lea locksql refuses a .locksql that is not a directory of the projects directory" {
