@@ -70,11 +70,11 @@ RUN useradd -r -u 10001 -U -M -s /sbin/nologin locksql \
 # of their release's checksums.txt, whose Sigstore signature by the tool's release workflow was
 # checked when the pin was set; they match LEA_LOCKMQ_REF and LEA_LOCKFILE_REF (config/lea.conf).
 RUN case "$TARGETARCH" in \
-      amd64) mq=fe0b851393b3eab71b329da1b06f7add0001ae54262bc507b04b506201d5a88b lf=cb439469ae937133ac0f83d1edc44e3ebebb3cf0a95a56beb9fb5cf6728e1e45 ;; \
-      arm64) mq=93ecc85ada5e6a73eb2beff549800e1947a259ce47199e789b1d1aba78a21223 lf=3b6eabcd7dece649d83c4eb3a09f679aafd4c122929157854e6685ada8828c48 ;; \
+      amd64) mq=9522a9805b2bdf8073196167d3534b272064b11079f1fa58b9bd26a98da2d8b6 lf=6a772a1c87cc8ddd30e12ff614653b0a437216e5fb391bd207e9e4b016288348 ;; \
+      arm64) mq=8ef233e849d0847d682233840f20806c1297919ba91994305e5ecfad1935be2a lf=5b25cb72d63e0d55f86027215893e034642bc0be7421030907002debb22e1f6a ;; \
       *) echo "unsupported architecture: $TARGETARCH" >&2; exit 1 ;; \
     esac \
- && cd /tmp && MQ=0.1.0 LF=0.2.0 \
+ && cd /tmp && MQ=0.2.0 LF=0.3.0 \
  && curl -fsSLO "https://github.com/DavidGodefroid/lockmq/releases/download/v$MQ/lockmq_${MQ}_linux_${TARGETARCH}.tar.gz" \
  && echo "$mq  lockmq_${MQ}_linux_${TARGETARCH}.tar.gz" | sha256sum -c \
  && curl -fsSLO "https://github.com/DavidGodefroid/lockfile/releases/download/v$LF/lockfile_${LF}_linux_${TARGETARCH}.tar.gz" \
