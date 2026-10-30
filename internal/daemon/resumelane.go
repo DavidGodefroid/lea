@@ -86,8 +86,9 @@ func (d *Daemon) startResume(a Agents, r *queuedResume) {
 }
 
 // resumeSuspended resumes a suspended_cold agent with what it has now as its next turn: the
-// decisions on its tickets (delivered by this resume) and the unread notice. One that woke or
-// ended meanwhile is left alone. A resume that fails leaves the decisions in its inbox.
+// decisions on its tickets (delivered once the resume started) and the unread notice. One that
+// woke or ended meanwhile is left alone. A resume that fails leaves the decisions undelivered:
+// the next hub sync wakes the agent again, or tells its inbox once it is no longer cold.
 func (d *Daemon) resumeSuspended(a Agents, key string) {
 	ag, err := d.st.AgentByKey(key)
 	if err != nil || ag.State != store.StateSuspendedCold {
@@ -98,7 +99,7 @@ func (d *Daemon) resumeSuspended(a Agents, key string) {
 		return
 	}
 	text, _ := n["text"].(string)
-	ws := d.takeDecisions(key)
+	ws := d.decisionsOf(key)
 	prompt := resumePrompt(ws, text)
 	if prompt == "" {
 		return
@@ -109,9 +110,8 @@ func (d *Daemon) resumeSuspended(a Agents, key string) {
 		if !errors.Is(err, agents.ErrNotSuspended) {
 			log.Printf("lea daemon: resume suspended %s: %v", key, err)
 		}
-		for _, w := range ws {
-			d.post("user", key, "result", hubDecisionText(w), 0)
-		}
+	} else {
+		d.markDelivered(key, ws)
 	}
 	d.changed()
 }

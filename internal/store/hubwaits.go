@@ -76,9 +76,10 @@ func (s *Store) AddHubWait(agent, ticket, lock, instance string, now int64) erro
 	return err
 }
 
-// DecideHubWaits records the hub's decision on ticket for every agent that waits on it, once: a
-// decision already recorded stays (a decision is final). It returns the waits it decided.
-func (s *Store) DecideHubWaits(ticket, decision, reason string, now int64) ([]HubWait, error) {
+// DecideHubWaits records the hub's decision on ticket of instance for every agent that waits on
+// it, once: a decision already recorded stays (a decision is final). It returns the waits it
+// decided.
+func (s *Store) DecideHubWaits(ticket, instance, decision, reason string, now int64) ([]HubWait, error) {
 	if !decisionOK[decision] {
 		return nil, fmt.Errorf("hub wait: unknown decision %q", decision)
 	}
@@ -90,7 +91,7 @@ func (s *Store) DecideHubWaits(ticket, decision, reason string, now int64) ([]Hu
 		return nil, err
 	}
 	defer tx.Rollback()
-	rows, err := tx.Query(`SELECT `+hubWaitCols+` FROM hub_waits WHERE ticket=? AND decision='' ORDER BY agent_key`, ticket)
+	rows, err := tx.Query(`SELECT `+hubWaitCols+` FROM hub_waits WHERE ticket=? AND instance=? AND decision='' ORDER BY agent_key`, ticket, instance)
 	if err != nil {
 		return nil, err
 	}
@@ -98,8 +99,8 @@ func (s *Store) DecideHubWaits(ticket, decision, reason string, now int64) ([]Hu
 	if err != nil {
 		return nil, err
 	}
-	if _, err := tx.Exec(`UPDATE hub_waits SET decision=?, reason=?, decided_at=? WHERE ticket=? AND decision=''`,
-		decision, reason, now, ticket); err != nil {
+	if _, err := tx.Exec(`UPDATE hub_waits SET decision=?, reason=?, decided_at=? WHERE ticket=? AND instance=? AND decision=''`,
+		decision, reason, now, ticket, instance); err != nil {
 		return nil, err
 	}
 	for i := range out {
@@ -111,6 +112,24 @@ func (s *Store) DecideHubWaits(ticket, decision, reason string, now int64) ([]Hu
 // UndeliveredHubWaits are agent's decided waits that have not reached it yet, oldest first.
 func (s *Store) UndeliveredHubWaits(agent string) ([]HubWait, error) {
 	rows, err := s.db.Query(`SELECT `+hubWaitCols+` FROM hub_waits WHERE agent_key=? AND decision<>'' AND delivered=0 ORDER BY decided_at, ticket`, agent)
+	if err != nil {
+		return nil, err
+	}
+	return collectHubWaits(rows)
+}
+
+// UndeliveredAllHubWaits are every agent's decided waits not delivered yet, oldest first.
+func (s *Store) UndeliveredAllHubWaits() ([]HubWait, error) {
+	rows, err := s.db.Query(`SELECT ` + hubWaitCols + ` FROM hub_waits WHERE decision<>'' AND delivered=0 ORDER BY decided_at, agent_key, ticket`)
+	if err != nil {
+		return nil, err
+	}
+	return collectHubWaits(rows)
+}
+
+// AllPendingHubWaits are every agent's waits with no decision yet, oldest first.
+func (s *Store) AllPendingHubWaits() ([]HubWait, error) {
+	rows, err := s.db.Query(`SELECT ` + hubWaitCols + ` FROM hub_waits WHERE decision='' ORDER BY created, ticket`)
 	if err != nil {
 		return nil, err
 	}

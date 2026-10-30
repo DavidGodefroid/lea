@@ -570,7 +570,8 @@ func TestCommandsMatchTheGoldenFiles(t *testing.T) {
 		{name: "rollback takes no argument", args: []string{"rollback", "now"}, exit: 2, absent: []string{"lea:"}},
 		// The host versions are pinned: a fixed uname -r and os-release, and Docker's components.
 		{name: "doctor", args: []string{"doctor"}, exit: 1,
-			env: map[string]string{"LEA_OS_RELEASE": "$W/os-release", "FAKE_DOCKER_OUT_VERSION___FORMAT": "Engine=29.4.2\ncontainerd=v2.1.4\nrunc=1.3.0"},
+			env: map[string]string{"LEA_OS_RELEASE": "$W/os-release", "FAKE_DOCKER_OUT_VERSION___FORMAT": "Engine=29.4.2\ncontainerd=v2.1.4\nrunc=1.3.0",
+				"LEA_DOCTOR_PROC": "$W/proc"},
 			setup: func(w *world) {
 				os.WriteFile(w.dir+"/os-release", []byte("ID=ubuntu\nVERSION_ID=\"24.04\"\n"), 0o644)
 				os.WriteFile(w.dir+"/bin/uname", []byte("#!/bin/sh\necho 7.0.0-38-generic\n"), 0o755)
@@ -581,7 +582,7 @@ func TestCommandsMatchTheGoldenFiles(t *testing.T) {
 		// Without a projects directory there is no lea to check delivery for.
 		// The host versions are pinned as in doctor: the recording never depends on the machine.
 		{name: "doctor without a projects dir", args: []string{"doctor"}, exit: 1,
-			env: map[string]string{"LEA_PROJECTS_DIR": "$W/none", "LEA_OS_RELEASE": "$W/os-release"},
+			env: map[string]string{"LEA_PROJECTS_DIR": "$W/none", "LEA_OS_RELEASE": "$W/os-release", "LEA_DOCTOR_PROC": "$W/proc"},
 			setup: func(w *world) {
 				os.WriteFile(w.dir+"/os-release", []byte("ID=ubuntu\nVERSION_ID=\"24.04\"\n"), 0o644)
 				os.WriteFile(w.dir+"/bin/uname", []byte("#!/bin/sh\necho 7.0.0-38-generic\n"), 0o755)

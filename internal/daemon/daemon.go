@@ -133,6 +133,17 @@ type Daemon struct {
 	spawnSeq      int64
 	resumeQueue   []*queuedResume
 	queueStarting bool
+	// hubFacade is where lea reads the Lock Family hub's decisions (hubsync.go, #164; nil: no
+	// hub); hubSyncMu keeps one sync at a time.
+	hubFacade HubFacade
+	hubSyncMu sync.Mutex
+	// pressClock is the pressure's clock (nil: time.Now), a test seam.
+	pressClock func() time.Time
+	// Shedding (shed.go, #132): its thresholds, each container's state, and whether pauses or
+	// resumes are in flight.
+	shed     Shed
+	shedding map[string]*shedState
+	shedBusy bool
 }
 
 func New(st *store.Store, runDir string, now func() int64) *Daemon {
@@ -198,6 +209,9 @@ func (d *Daemon) AttachContainer(ctx context.Context, name string) (string, erro
 		return "", err
 	}
 	d.attached[name] = p
+	// A daemon that started again takes over the container's suspended agents: their keepalive
+	// timers and queued resumes went with the previous daemon (#162).
+	go d.suspendedSince(name)
 	go func() {
 		d.Serve(ctx, l, Origin{Container: name})
 		// The listener is closed (and its socket file removed): a later attach binds it again.
