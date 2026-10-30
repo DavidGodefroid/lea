@@ -42,11 +42,20 @@ func lockfileSafe(v string) bool {
 // group. The volume is mounted read-write, as locksql-run: an empty volume is then initialised
 // from lea's image with the console's directory (owner, mode 2710 or 2750), and that mode lets
 // the clients group enter it and connect to the socket, never write in it. A volume still holding a release's older ids leaves the tool out with a
-// warning: lea works without it.
-func (l *Launcher) lockHostArgs() []string {
+// warning: lea works without it. A lock of lock up's for the tool replaces the fixed volume.
+func (l *Launcher) lockHostArgs(ups map[string]string) []string {
 	var a []string
 	for _, t := range lockHostTools {
 		if !l.Cfg.LockHost(t.env) {
+			continue
+		}
+		// A console of lock up (lockup.go) made its volume with its own ids.
+		if v, ok := ups[t.name]; ok {
+			if v == "" {
+				l.logf("warning: %s: lea's agents get no %s socket (see above)", t.name, t.name)
+			} else {
+				a = append(a, "-e", t.env+"=1", "--group-add", t.gid, "--mount", lockUpMount(v, t.name))
+			}
 			continue
 		}
 		if why := l.lockVolumeStale(t); why != "" {
