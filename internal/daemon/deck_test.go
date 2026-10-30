@@ -31,6 +31,8 @@ type fakeAgents struct {
 	// st, when set, is where SoftStop and ResumeSuspended record the state they leave.
 	st        *store.Store
 	resumeErr error // ResumeSuspended fails with it
+	// resumeHold, when set, holds ResumeSuspended until it is closed.
+	resumeHold chan struct{}
 }
 
 func (f *fakeAgents) rec(s string) { f.mu.Lock(); f.calls = append(f.calls, s); f.mu.Unlock() }
@@ -108,8 +110,14 @@ func (f *fakeAgents) SoftStop(ctx context.Context, key string) error {
 }
 func (f *fakeAgents) ResumeSuspended(ctx context.Context, key, prompt string) error {
 	f.rec("resume " + key + ": " + prompt)
-	if f.resumeErr != nil {
-		return f.resumeErr
+	f.mu.Lock()
+	hold, rerr := f.resumeHold, f.resumeErr
+	f.mu.Unlock()
+	if hold != nil {
+		<-hold
+	}
+	if rerr != nil {
+		return rerr
 	}
 	if f.st == nil {
 		return nil
