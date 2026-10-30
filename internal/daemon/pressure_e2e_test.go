@@ -13,8 +13,8 @@ import (
 )
 
 // The admission e2e (#132, P2): a real container of the engine LEA_E2E_PRESSURE names (docker or
-// podman, rootless included) under a real load; the daemon's real sampler finds its cgroup from
-// its pid and agents_spawn is refused with the metric that crossed, then let through once the
+// podman, rootless included) under a real load; the daemon's real sampler finds its cgroup by
+// its ID and agents_spawn is refused with the metric that crossed, then let through once the
 // load stops. Bounded: a 64 MiB, half-CPU container for a minute at most.
 //
 //	LEA_E2E_PRESSURE=docker go test -count=1 -run TestPressureE2E -v ./internal/daemon/

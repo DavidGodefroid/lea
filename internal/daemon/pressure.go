@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -165,31 +166,23 @@ type cpuMark struct {
 	at   time.Time
 }
 
-// HostPressure samples the host (/proc) and each lea container's cgroup, found through the pid
-// of its process (docker inspect, either engine) and /proc/PID/cgroup: no engine-specific path.
+// HostPressure samples the host (/proc) and each lea container's cgroup, found by its container
+// ID (docker inspect, either engine) in the host's cgroup tree: never by a host pid, which lea-ctl
+// (its own pid namespace) could not tell from one of its own.
 type HostPressure struct {
 	Proc, Cgroup string // "/proc", "/sys/fs/cgroup" when empty (tests: a fake tree)
-	// Pid is the pid of a container's process on the host (nil: Bin inspect).
-	Pid func(ctx context.Context, container string) (int, error)
+	// ID is a container's full ID (nil: Bin inspect).
+	ID func(ctx context.Context, container string) (string, error)
 	// Bin is the engine's CLI ("docker" when empty; podman answers the same inspect).
 	Bin string
 	Now func() time.Time
 
 	mu   sync.Mutex
-	pids map[string]pidAt
+	dirs map[string]string // container -> its cgroup directory, while it exists
 	prev map[string]cpuMark
 }
 
-// pidAt is a container's pid and when docker inspect said so; pidRefresh asks again, so that a
-// container restarted under a reused pid is not read in another cgroup for long.
-type pidAt struct {
-	pid int
-	at  time.Time
-}
-
-const pidRefresh = time.Minute
-
-func (h *HostPressure) dirs() (string, string) {
+func (h *HostPressure) roots() (string, string) {
 	proc, cg := h.Proc, h.Cgroup
 	if proc == "" {
 		proc = "/proc"
@@ -211,10 +204,10 @@ func (h *HostPressure) now() time.Time {
 func (h *HostPressure) Sample(ctx context.Context, containers []string) (Reading, map[string]Reading) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	if h.pids == nil {
-		h.pids, h.prev = map[string]pidAt{}, map[string]cpuMark{}
+	if h.dirs == nil {
+		h.dirs, h.prev = map[string]string{}, map[string]cpuMark{}
 	}
-	proc, _ := h.dirs()
+	proc, _ := h.roots()
 	host := h.readHost(proc)
 	scopes := map[string]Reading{}
 	for _, c := range containers {
@@ -224,10 +217,10 @@ func (h *HostPressure) Sample(ctx context.Context, containers []string) (Reading
 		}
 		scopes[c] = h.readCgroup(c, dir)
 	}
-	// Containers gone: their pid and CPU mark go too.
-	for c := range h.pids {
+	// Containers gone: their cgroup and CPU mark go too.
+	for c := range h.dirs {
 		if _, ok := scopes[c]; !ok {
-			delete(h.pids, c)
+			delete(h.dirs, c)
 			delete(h.prev, c)
 		}
 	}
@@ -325,41 +318,87 @@ func (h *HostPressure) readCgroup(c, dir string) Reading {
 	return r
 }
 
-// cgroupOf is the cgroup directory of container c's process, from its pid (cached while that pid
-// lives in the same container).
+// cgroupOf is the cgroup directory of container c, from its ID (cached while that directory
+// exists: a container re-created under the same name has a new ID).
 func (h *HostPressure) cgroupOf(ctx context.Context, c string) (string, error) {
-	proc, cg := h.dirs()
-	for try := 0; try < 2; try++ {
-		e, ok := h.pids[c]
-		pid := e.pid
-		if !ok || try > 0 || h.now().Sub(e.at) >= pidRefresh {
-			var err error
-			if pid, err = h.pid(ctx, c); err != nil {
-				return "", err
-			}
-			h.pids[c] = pidAt{pid: pid, at: h.now()}
+	if d, ok := h.dirs[c]; ok {
+		if fi, err := os.Stat(d); err == nil && fi.IsDir() {
+			return d, nil
 		}
-		b, err := os.ReadFile(filepath.Join(proc, strconv.Itoa(pid), "cgroup"))
-		if err != nil {
-			continue
-		}
-		for _, line := range strings.Split(string(b), "\n") {
-			if p, ok := strings.CutPrefix(line, "0::"); ok {
-				p = filepath.Clean("/" + p)
-				if strings.Contains(p, "..") {
-					break
-				}
-				return filepath.Join(cg, p), nil
-			}
-		}
+		delete(h.dirs, c)
 	}
-	delete(h.pids, c)
-	return "", fmt.Errorf("no cgroup v2 for %s", c)
+	id, err := h.id(ctx, c)
+	if err != nil {
+		return "", err
+	}
+	_, cg := h.roots()
+	d, err := cgroupByID(cg, id)
+	if err != nil {
+		return "", fmt.Errorf("%s: %w", c, err)
+	}
+	h.dirs[c] = d
+	return d, nil
 }
 
-func (h *HostPressure) pid(ctx context.Context, c string) (int, error) {
-	if h.Pid != nil {
-		return h.Pid(ctx, c)
+// cgroupByID finds the cgroup v2 directory of the container with full ID id below root, under
+// each engine's naming: docker-<id>.scope and libpod-<id>.scope (systemd driver, rootless or
+// not), <id> (cgroupfs driver). Podman's libpod-conmon-<id>.scope is its monitor, not the
+// container. Not followed: symbolic links; not searched: below maxCgroupDepth.
+func cgroupByID(root, id string) (string, error) {
+	if !fullID(id) {
+		return "", fmt.Errorf("not a container ID: %q", id)
+	}
+	root = filepath.Clean(root)
+	found := ""
+	err := filepath.WalkDir(root, func(p string, e fs.DirEntry, err error) error {
+		if err != nil {
+			if p == root {
+				return err
+			}
+			return fs.SkipDir
+		}
+		if !e.IsDir() {
+			return nil
+		}
+		name := strings.TrimSuffix(e.Name(), ".scope")
+		if p != root && (name == id || name == "docker-"+id || name == "libpod-"+id) {
+			found = p
+			return fs.SkipAll
+		}
+		if strings.Count(strings.TrimPrefix(p, root), "/") >= maxCgroupDepth {
+			return fs.SkipDir
+		}
+		return nil
+	})
+	if err != nil {
+		return "", err
+	}
+	if found == "" {
+		return "", fmt.Errorf("no cgroup v2 for container %.12s", id)
+	}
+	return found, nil
+}
+
+// maxCgroupDepth bounds the search: rootless Podman's scopes are six levels down
+// (user.slice/user-N.slice/user@N.service/user.slice/libpod-ID.scope).
+const maxCgroupDepth = 8
+
+// fullID says whether id is a full container ID: 64 lowercase hex digits (either engine).
+func fullID(id string) bool {
+	if len(id) != 64 {
+		return false
+	}
+	for _, r := range id {
+		if (r < '0' || r > '9') && (r < 'a' || r > 'f') {
+			return false
+		}
+	}
+	return true
+}
+
+func (h *HostPressure) id(ctx context.Context, c string) (string, error) {
+	if h.ID != nil {
+		return h.ID(ctx, c)
 	}
 	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
@@ -367,13 +406,9 @@ func (h *HostPressure) pid(ctx context.Context, c string) (int, error) {
 	if bin == "" {
 		bin = "docker"
 	}
-	out, err := exec.CommandContext(ctx, bin, "inspect", "-f", "{{.State.Pid}}", c).Output()
+	out, err := exec.CommandContext(ctx, bin, "inspect", "-f", "{{.Id}}", c).Output()
 	if err != nil {
-		return 0, err
+		return "", err
 	}
-	pid, err := strconv.Atoi(strings.TrimSpace(string(out)))
-	if err != nil || pid <= 0 {
-		return 0, fmt.Errorf("%s is not running", c)
-	}
-	return pid, nil
+	return strings.TrimSpace(string(out)), nil
 }

@@ -49,6 +49,12 @@ docker exec -u "$(id -u):$(id -g)" "$ctl" docker version --format '{{.Server.Ver
 for p in "$root/build/lea" "$projects" "$XDG_DATA_HOME/lea/state/claude.json"; do
   docker exec "$ctl" test -e "$p" || fail "lea-ctl does not see $p"
 done
+# lea-ctl has a pid namespace of its own; it reads the agent container's cgroup by its ID (the
+# pressure gauge) in the host's cgroup tree.
+[ "$(docker inspect -f '{{.HostConfig.PidMode}}' "$ctl")" != host ] || fail "$ctl shares the host's pid namespace"
+cid=$(docker inspect -f '{{.Id}}' "$agent")
+docker exec "$ctl" sh -c 'd=$(find /sys/fs/cgroup -maxdepth 8 -type d \( -name "docker-$1.scope" -o -name "$1" \) | head -n1) &&
+  [ -n "$d" ] && [ "$(cat "$d/memory.current")" -gt 0 ]' sh "$cid" || fail "lea-ctl does not see the cgroup of $agent"
 # Every container but lea-ctl: no Docker socket mounted.
 for c in $(docker ps -q --filter label=lea.prefix=lea-ctltest); do
   name=$(docker inspect -f '{{.Name}}' "$c"); name=${name#/}
