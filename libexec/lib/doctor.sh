@@ -115,6 +115,7 @@ lea_doctor() {
   lea__doctor_lockhost lockmq
   lea__doctor_lockhost lockfile
   lea__doctor_lockhttp || _drc=1
+  lea__doctor_hub
 
   if [ -f "$_dds/kube/config" ]; then
     if [ -n "$(find "$_dds/kube/config" -mmin -480 2>/dev/null)" ]; then lea__ok "kubernetes token"
@@ -123,6 +124,21 @@ lea_doctor() {
     lea__warn "kubernetes token" "none (optional): lea kube refresh"
   fi
   return "$_drc"
+}
+
+# lea__doctor_hub: with LEA_HUB=1 (the default), whether the Lock Family hub's facade socket is
+# there (LEA_HUB_SOCKET, else $XDG_RUNTIME_DIR/lockhub/facade.sock). Without it lea cannot read the
+# hub's decisions, so it does not suspend an agent whose Lock call waits for one: a warning.
+lea__doctor_hub() {
+  if [ "${LEA_HUB:-1}" = 0 ]; then lea__ok "approval hub: off (LEA_HUB=0)"; return 0; fi
+  _dhs=${LEA_HUB_SOCKET:-}
+  if [ -z "$_dhs" ] && [ -n "${XDG_RUNTIME_DIR:-}" ]; then _dhs=$XDG_RUNTIME_DIR/lockhub/facade.sock; fi
+  if [ -z "$_dhs" ]; then
+    lea__warn "approval hub" "LEA_HUB=1 but no facade socket to read (set LEA_HUB_SOCKET, or XDG_RUNTIME_DIR): agents are not suspended on a Lock call that waits for the hub (LEA_HUB=0 to silence this)"
+  elif [ -S "$_dhs" ]; then lea__ok "approval hub facade $_dhs"
+  else
+    lea__warn "approval hub" "LEA_HUB=1 but no lockhub facade at $_dhs (lock up starts it): agents are not suspended on a Lock call that waits for the hub (LEA_HUB=0 to silence this)"
+  fi
 }
 
 # lea__doctor_pressure: what the daemon reads to refuse or queue new agents and pause some under

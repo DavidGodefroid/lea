@@ -294,6 +294,27 @@ func TestTheDeckShowsLockApprovals(t *testing.T) {
 	}
 }
 
+// With the hub on but unreachable, the top border says so, unless a Lock's requests wait (they
+// matter more); once it answers again, the line goes.
+func TestTheDeckShowsAnUnreachableHub(t *testing.T) {
+	m := sized(loaded(t, &fakeAPI{}, "lea-a/a", ag("a", "idle", 1)), 60, 10)
+	for _, c := range []struct {
+		hub  string
+		l    []LockState
+		want bool
+	}{
+		{"down", nil, true},
+		{"down", []LockState{{Lock: "locksql", Pending: 1}}, false},
+		{"", nil, false},
+		{"other", nil, false},
+	} {
+		m, _ = step(t, m, snapshotMsg{snap: Snapshot{Version: m.version + 1, Shown: "lea-a/a", Agents: []Agent{ag("a", "idle", 1)}, Locks: c.l, HubState: c.hub}})
+		if top := viewLines(m)[0]; strings.Contains(top, "lockhub unreachable") != c.want {
+			t.Errorf("%q %+v: top %q", c.hub, c.l, top)
+		}
+	}
+}
+
 // Without a sound player, S says so and calls nothing.
 func TestSWithoutASoundPlayer(t *testing.T) {
 	api := &fakeAPI{}

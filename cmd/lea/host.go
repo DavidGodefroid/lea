@@ -224,8 +224,9 @@ func runDaemon(stderr io.Writer) int {
 	}
 	// The Lock Family hub's decisions (#164): read from its host facade socket, from the recorded
 	// cursor, so that one taken while the daemon was down still reaches the agent that waits.
-	// LEA_HUB=0 (the default) switches it off: no hub is read, the suspend hook does nothing, and
-	// the agents still suspended are resumed with a "hub disabled" message.
+	// LEA_HUB=0 switches it off: no hub is read, the suspend hook does nothing, and the agents
+	// still suspended are resumed with a "hub disabled" message. On (the default) without a facade
+	// socket, no agent is suspended: nothing would sync its decision (hubswitch.go).
 	_ = os.Remove(filepath.Join(host, "daemon.hub"))
 	if err := os.WriteFile(filepath.Join(host, "daemon.hub"), []byte(launcher.DaemonHubStamp(os.Getenv)), 0o600); err != nil {
 		fmt.Fprintln(stderr, "lea:", clean(err.Error(), false))
@@ -241,6 +242,8 @@ func runDaemon(stderr io.Writer) int {
 		go d.RunHubSync(ctx)
 		// The deck shows the hub's pending tickets on their agents and answers them (#158).
 		go d.RunHubQueue(ctx)
+	} else {
+		fmt.Fprintln(stderr, "lea daemon: LEA_HUB=1 but no hub facade socket (LEA_HUB_SOCKET, XDG_RUNTIME_DIR): no agent is suspended on a Lock call")
 	}
 	exe, err := os.Executable()
 	if err != nil {

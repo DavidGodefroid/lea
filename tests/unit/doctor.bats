@@ -58,13 +58,13 @@ setup() {
 }
 
 @test "locksql: its image and volume are checked with LEA_LOCKSQL=1, never with 0" {
-  export FAKE_DOCKER_RC_IMAGE_INSPECT_AT_LOCKSQL_0_9_0=1 FAKE_DOCKER_RC_VOLUME_INSPECT=1
+  export FAKE_DOCKER_RC_IMAGE_INSPECT_AT_LOCKSQL_0_10_0=1 FAKE_DOCKER_RC_VOLUME_INSPECT=1
   run lea_doctor
-  [[ "$output" == *"warn  locksql image: locksql:0.9.0 absent: run lea init (or set LEA_LOCKSQL=0)"* ]]
+  [[ "$output" == *"warn  locksql image: locksql:0.10.0 absent: run lea init (or set LEA_LOCKSQL=0)"* ]]
   [[ "$output" == *"warn  locksql-run volume"* ]]
-  unset FAKE_DOCKER_RC_IMAGE_INSPECT_AT_LOCKSQL_0_9_0 FAKE_DOCKER_RC_VOLUME_INSPECT
+  unset FAKE_DOCKER_RC_IMAGE_INSPECT_AT_LOCKSQL_0_10_0 FAKE_DOCKER_RC_VOLUME_INSPECT
   run lea_doctor
-  [[ "$output" == *"ok    locksql image locksql:0.9.0"* ]]
+  [[ "$output" == *"ok    locksql image locksql:0.10.0"* ]]
   [[ "$output" == *"ok    locksql-run volume"* ]]
   LEA_LOCKSQL=0 run lea_doctor
   [[ "$output" != *locksql* ]]
@@ -354,4 +354,22 @@ host_minimums() {
   LEA_ADMIT_CPU_PSI=0 LEA_ADMIT_MEM_PCT=0 LEA_ADMIT_MEM_PSI=0 LEA_ADMIT_IO_PSI=0 LEA_ADMIT_LOAD=0 LEA_SHED_AFTER=0 run lea_doctor
   [[ "$output" == *"warn  admission: every LEA_ADMIT_* threshold is 0"* ]]
   [[ "$output" == *"ok    shedding: off (LEA_SHED_AFTER=0)"* ]]
+}
+
+@test "hub: off is reported, on without a facade socket is a warning, with one is ok" {
+  export LEA_HUB=0
+  run lea_doctor
+  [[ "$output" == *"ok    approval hub: off (LEA_HUB=0)"* ]]
+  export LEA_HUB=1 XDG_RUNTIME_DIR="$BATS_TEST_TMPDIR/run"
+  unset LEA_HUB_SOCKET
+  run lea_doctor
+  [[ "$output" == *"warn  approval hub: LEA_HUB=1 but no lockhub facade at $BATS_TEST_TMPDIR/run/lockhub/facade.sock"* ]]
+  unset XDG_RUNTIME_DIR
+  run lea_doctor
+  [[ "$output" == *"warn  approval hub: LEA_HUB=1 but no facade socket to read"* ]]
+  export LEA_HUB_SOCKET="$BATS_TEST_TMPDIR/f.sock"
+  python3 -c 'import socket,sys; socket.socket(socket.AF_UNIX).bind(sys.argv[1])' "$LEA_HUB_SOCKET"
+  run lea_doctor
+  [[ "$output" == *"ok    approval hub facade $LEA_HUB_SOCKET"* ]]
+  [[ "$output" != *"warn  approval hub"* ]]
 }

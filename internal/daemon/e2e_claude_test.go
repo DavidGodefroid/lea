@@ -499,6 +499,8 @@ func TestClaudePendingLockCallSuspendsTheAgent(t *testing.T) {
 		t.Fatal(err)
 	}
 	e.d.SetKeepalive(time.Hour)
+	// The hub's facade: lea suspends an agent only on a hub it can read (LEA_HUB=1's default).
+	e.d.SetHubFacade(SocketFacade{Path: serveHub(t, &fakeHub{})})
 	stub := filepath.Join(t.TempDir(), "lockstub.py")
 	os.WriteFile(stub, []byte(lockStub), 0o600)
 	mcp, _ := json.Marshal(map[string]any{"mcpServers": map[string]any{
