@@ -51,7 +51,11 @@ func (l *Launcher) lockHostArgs(ups map[string]string) []string {
 		}
 		// A console of lock up (lockup.go) made its volume with its own ids.
 		if v, ok := ups[t.name]; ok {
-			a = append(a, "-e", t.env+"=1", "--group-add", t.gid, "--mount", "type=volume,src="+v+",dst=/run/"+t.name)
+			if v == "" {
+				l.logf("warning: %s: lea's agents get no %s socket (see above)", t.name, t.name)
+			} else {
+				a = append(a, "-e", t.env+"=1", "--group-add", t.gid, "--mount", lockUpMount(v, t.name))
+			}
 			continue
 		}
 		if why := l.lockVolumeStale(t); why != "" {
