@@ -417,16 +417,30 @@ func (d *Daemon) hubRenew(ctx context.Context, params json.RawMessage) (HubRenew
 		return HubRenewed{}, errors.New("not renewed: the hub named no ticket")
 	}
 	// The agent whose wait named the expired ticket waits on its renewal now: approved (at once,
-	// or later from the queue), the decision reaches it and resumes it if suspended, as for the
-	// ticket its Lock call answered. Only a verified agent: a ticket shown on an agent by the
-	// requester's claim names no wait of lea's. The renewal is for the same caller (lockkit
-	// renews a plan for the token that asked), so that agent's run of it is the one the Lock takes.
-	if e.verified && e.agent != "" {
+	// or later from the queue), the decision reaches it (and resumes it if it is suspended), as
+	// for the ticket its Lock call answered; it is told now which ticket that is. Only a verified
+	// agent: a ticket shown on an agent by the requester's claim names no wait of lea's. The
+	// renewal is for the same caller (lockkit renews a plan for the token that asked), so that
+	// agent's run of it is the one the Lock takes. When several agents waited on the expired
+	// ticket, the first one's wait names it (setHubQueue): only that agent waits on the renewal.
+	if e.verified && e.agent != "" && !d.hubDisabled() {
 		if err := d.st.AddHubWait(e.agent, r.Ticket, e.t.Lock, e.t.Instance, d.now()); err != nil {
 			log.Printf("lea daemon: hub renewal %.40q of %.40q: no wait for its agent: %v", r.Ticket, e.t.ID, err)
+		} else {
+			d.post("user", e.agent, "result", hubRenewalText(e.t.ID, r.Ticket, e.t.Lock, e.t.Instance), 0)
+			d.changed()
 		}
 	}
 	// The expired ticket has a renewal now: the hub lists it no more.
 	d.dropHub(ctx, func(x hubEntry) bool { return x.t.ID == e.t.ID && x.t.Instance == e.t.Instance && x.t.Expired })
 	return r, nil
+}
+
+// hubRenewalText tells an agent that the deck asked its Lock again for its expired ticket old, as
+// ticket renewal: the same planned run, whose decision comes as the renewal's. The ids, Lock and
+// instance are the hub's, checked by hubRef and the store.
+func hubRenewalText(old, renewal, lock, instance string) string {
+	return fmt.Sprintf("[status: pending] the user asked %s (%s) again for your expired ticket %s, as ticket %s: the same run. "+
+		"Its decision comes as ticket %s; once approved, run it with ticket=%s. If you planned that run again meanwhile, run only one of them.",
+		lock, instance, old, renewal, renewal, renewal)
 }
