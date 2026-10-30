@@ -253,7 +253,8 @@ done
 
 say "the backends: a RabbitMQ, a SQLite database, a local directory"
 docker network create "$id-net" >/dev/null
-docker run -d --name "$id-rabbit" --network "$id-net" -e RABBITMQ_DEFAULT_USER=admin -e RABBITMQ_DEFAULT_PASS="$id-admin" \
+# A bounded nofile: Erlang sizes its tables on it, and starts very slowly under a huge one.
+docker run -d --name "$id-rabbit" --network "$id-net" --ulimit nofile=65536:65536 -e RABBITMQ_DEFAULT_USER=admin -e RABBITMQ_DEFAULT_PASS="$id-admin" \
   "$rabbit_image" >/dev/null
 i=0
 until docker exec "$id-rabbit" rabbitmqctl await_startup >"$work/rabbit.out" 2>&1; do
