@@ -744,6 +744,34 @@ func agentArgs(t *testing.T, s *fakeSession, name string) []string {
 	return cmd[i+1:]
 }
 
+// A lea stop cut short (interrupted, or its container never stopped) leaves the container running
+// with its agents marked stopped, and no hook of theirs makes them live again: opening that
+// container (Ensure with a workdir, the launcher) sets its live ones unknown, so that their next
+// hook reports their state. A reconcile meanwhile (no workdir) leaves the stop alone.
+func TestOpeningARunningContainerTakesBackACutShortStop(t *testing.T) {
+	e := newEnv(t)
+	e.ensure(t, "/p")
+	e.spawn(t, "lead-1")
+	e.spawn(t, "gone")
+	if err := e.m.MarkStopped(bg, C, false); err != nil {
+		t.Fatal(err)
+	}
+	e.ctr.mu.Lock()
+	e.ctr.live[C] = []string{"lead-1"}
+	e.ctr.mu.Unlock()
+	e.ensure(t, "")
+	if got := e.state(t, "lead-1"); got != "stopped" {
+		t.Fatalf("a reconcile took the stop back: %s", got)
+	}
+	e.ensure(t, "/p")
+	if got := e.state(t, "lead-1"); got != "unknown" {
+		t.Fatalf("lead-1 is %s once its running container is opened, want unknown", got)
+	}
+	if got := e.state(t, "gone"); got != "stopped" {
+		t.Fatalf("gone is %s, want stopped (not live)", got)
+	}
+}
+
 func TestStoppedAgentsResumeTheirConversationInANewContainer(t *testing.T) {
 	e := newEnv(t)
 	e.ensure(t, "/p")

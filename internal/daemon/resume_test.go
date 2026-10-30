@@ -517,6 +517,42 @@ func TestTheSessionEndOfAStoppingContainerKeepsTheResume(t *testing.T) {
 	}
 }
 
+// lea stop can mark an agent stopped while its turn fails on the usage limit: the StopFailure (and
+// the SessionEnd after it) of the ending container then land on a stopped agent. They record the
+// limit but leave the agent stopped, so the next container resumes it and its pending resume
+// (before, StopFailure set it idle again, its SessionEnd then ended it, and the next container
+// forgot it). The hook's state is written only while the agent is not stopped (SetHookState), so
+// a stop landing between the limit and that write is covered the same way.
+func TestALateUsageLimitOfAStoppingContainerKeepsTheResume(t *testing.T) {
+	noJitter(t)
+	e := start(t)
+	call(t, e.bus, "dev", "hook_event", map[string]any{"event": "UserPromptSubmit", "session_id": "s1"}, nil)
+	reportLimits(t, e, "dev", map[string]any{"window": "5h", "pct": 100, "resets_at": 1600})
+	e.d.st.SetState("lea-a/dev", "stopped", "", 1000)
+	limitHit(t, e, "dev", "rate_limit")
+	if a := agentRow(t, e, "lea-a/dev"); a.State != "stopped" || a.LimitUntil != 1600+DefaultResumeDelay {
+		t.Fatalf("after the StopFailure: %+v", a)
+	}
+	for _, ev := range []string{"Notification", "SessionEnd"} {
+		call(t, e.bus, "dev", "hook_event", map[string]any{"event": ev, "session_id": "s1",
+			"payload": map[string]any{"hook_event_name": ev, "notification_type": "idle_prompt"}}, nil)
+	}
+	if a := agentRow(t, e, "lea-a/dev"); a.State != "stopped" || a.LimitUntil != 1600+DefaultResumeDelay || a.LimitTries != 0 {
+		t.Fatalf("the stop lost the resume: %+v", a)
+	}
+	// The next container takes the agent and its resume over.
+	if err := e.d.st.SetState("lea-a/dev", "unknown", "", 1000); err != nil {
+		t.Fatal(err)
+	}
+	if err := call(t, e.bus, "dev", "hook_event", map[string]any{"event": "SessionStart", "session_id": "s1",
+		"payload": map[string]any{"hook_event_name": "SessionStart", "source": "resume"}}, nil); err != nil {
+		t.Fatal(err)
+	}
+	if a := agentRow(t, e, "lea-a/dev"); a.State != "idle" || a.LimitUntil != 1600+DefaultResumeDelay {
+		t.Fatalf("after the restart: %+v", a)
+	}
+}
+
 // A resume falling due while the container stops (lea stop marked the agent stopped, its old job
 // still runs) is not claimed: the old job would wake a model about to die. The next container's
 // LimitResume job claims it.
