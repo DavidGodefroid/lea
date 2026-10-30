@@ -817,6 +817,15 @@ so. Changes apply after `lea init` (endpoints, keys, images, locksql) or `lea st
 - `.lockfamily` in the projects directory (the Lock Family hub's config, the locks' public keys,
   the routing) is read-only in the container: lea makes it, owned by you on the host, when it is
   missing, and refuses to start when it is a symbolic link or a file.
+- With the Lock Family's `lock up` in the projects directory, its locks replace the consoles
+  started by each tool's own launcher: for each tool that is on (`LEA_LOCKSQL`, `LEA_LOCKMQ`,
+  `LEA_LOCKFILE`), lea mounts the socket volume `lock up` names in `.lockfamily/up.json` (lockhub's
+  `docs/lock-up.md`) on `/run/<tool>`, read-only, once docker confirms it is that lock's socket
+  volume for this projects directory (compose project, `dev.lockfamily.role=socket`, instance and
+  workspace labels): never a lock's home or the hub's network. lea ignores an `up.json` that is a
+  link, that others than you can write, or that names another projects directory. A tool that
+  `lock up` runs but lea cannot use (two locks of it, a volume docker does not confirm) gets no
+  socket at all, never the fixed one of another console; a warning says so.
 - Egress goes through a proxy: HTTPS (and plain HTTP) to an allowlist of public domains (plus
   `LEA_INTERNAL_HOSTS`), SSH only to `LEA_GIT_SSH`. Private and link-local addresses are refused.
 - By default the allowlist is lea's own: `github.com`, `githubusercontent.com`, `ghcr.io`,

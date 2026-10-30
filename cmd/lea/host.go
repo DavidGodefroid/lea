@@ -231,6 +231,7 @@ func runDaemon(stderr io.Writer) int {
 		fmt.Fprintln(stderr, "lea:", clean(err.Error(), false))
 		return 1
 	}
+	d.SetKeepalive(launcher.HubKeepalive(os.Getenv))
 	if !launcher.HubSetting(os.Getenv) {
 		d.DisableHub()
 	} else if sock := hubFacadeSocket(os.Getenv); sock != "" {

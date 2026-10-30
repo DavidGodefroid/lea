@@ -23,7 +23,10 @@ tool() {
   prog=$(grep -n '^🔄 In progress' "$K" | head -1 | cut -d: -f1)
   left=$(grep -n '^⏳ Left' "$K" | head -1 | cut -d: -f1)
   blk=$(grep -n '^⚠️ Blocked / to decide' "$K" | head -1 | cut -d: -f1)
-  [ -n "$done" ] && [ "$done" -lt "$prog" ] && [ "$prog" -lt "$left" ] && [ "$left" -lt "$blk" ]
+  [ -n "$done" ]
+  [ "$done" -lt "$prog" ]
+  [ "$prog" -lt "$left" ]
+  [ "$left" -lt "$blk" ]
   grep -q '10 lines' "$K"
   grep -q '12 words' "$K"
   grep -qi 'single line' "$K"

@@ -814,11 +814,13 @@ y
 
 @test "init links no locksql, removes the one an older lea linked, keeps a host locksql" {
   lea_init </dev/null 2>/dev/null
-  [ ! -e "$LEA_BIN_DIR/locksql" ] && [ ! -L "$LEA_BIN_DIR/locksql" ]
+  [ ! -e "$LEA_BIN_DIR/locksql" ]
+  [ ! -L "$LEA_BIN_DIR/locksql" ]
   old="$BATS_TEST_TMPDIR/old/bin"; mkdir -p "$old"; : >"$old/lea"; : >"$old/locksql"
   ln -sfn "$old/locksql" "$LEA_BIN_DIR/locksql"
   lea_init </dev/null 2>/dev/null
-  [ ! -e "$LEA_BIN_DIR/locksql" ] && [ ! -L "$LEA_BIN_DIR/locksql" ]
+  [ ! -e "$LEA_BIN_DIR/locksql" ]
+  [ ! -L "$LEA_BIN_DIR/locksql" ]
   # A link into an installation lea update has since pruned dangles: removed too.
   ln -sfn "$BATS_TEST_TMPDIR/gone/v0.1.0/bin/locksql" "$LEA_BIN_DIR/locksql"
   lea_init </dev/null 2>/dev/null
@@ -835,5 +837,6 @@ y
 @test "LEA_LOCKSQL=0 links no locksql" {
   lea_user_config_set LEA_LOCKSQL 0; lea_load_config
   lea_init </dev/null 2>/dev/null
-  [ ! -e "$LEA_BIN_DIR/locksql" ] && [ ! -L "$LEA_BIN_DIR/locksql" ]
+  [ ! -e "$LEA_BIN_DIR/locksql" ]
+  [ ! -L "$LEA_BIN_DIR/locksql" ]
 }

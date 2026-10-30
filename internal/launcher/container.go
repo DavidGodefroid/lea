@@ -520,20 +520,33 @@ func (l *Launcher) runArgs(proj, pip string) ([]string, error) {
 		return nil, err
 	}
 	a = append(a, "--mount", "type=bind,src="+lf+",dst="+lf+",readonly")
-	if l.Cfg.Locksql() {
+	ups := l.lockUpSockets(proj, lf, func(tool string) bool {
+		if tool == "locksql" {
+			return l.Cfg.Locksql()
+		}
+		for _, t := range lockHostTools {
+			if t.name == tool {
+				return l.Cfg.LockHost(t.env)
+			}
+		}
+		return false
+	})
+	if v, ok := ups["locksql"]; ok && v == "" {
+		l.logf("warning: locksql: lea's agents get no locksql socket (see above)")
+	} else if l.Cfg.Locksql() {
 		// The locksql console's socket volume, and its client group (locksql-clients). Its own
 		// directory read-only (locksqlDir).
 		d, err := locksqlDir(proj)
 		if err != nil {
 			return nil, err
 		}
-		a = append(a, "-e", "LEA_LOCKSQL=1", "--group-add", "10000", "--mount", "type=volume,src=locksql-run,dst=/run/locksql",
+		a = append(a, "-e", "LEA_LOCKSQL=1", "--group-add", "10000", "--mount", locksqlMount(ups),
 			"--mount", "type=bind,src="+d+",dst="+d+",readonly")
 	}
 	a = append(a, lh...)
 	// lockmq and lockfile: only the socket of a console in its own container, in the tool's
 	// socket volume (lockhost.go).
-	a = append(a, l.lockHostArgs()...)
+	a = append(a, l.lockHostArgs(ups)...)
 	a = append(a, l.securityArgs()...)
 	a = append(a, l.limitArgs()...)
 	for _, part := range []func() ([]string, error){
@@ -680,6 +693,15 @@ func IsTerminal(x any) bool {
 		return false
 	}
 	return term.IsTerminal(f.Fd())
+}
+
+// locksqlMount is the agents' mount of locksql's socket volume: lock up's (lockup.go), else the
+// fixed one of the console locksql's launcher starts.
+func locksqlMount(ups map[string]string) string {
+	if v := ups["locksql"]; v != "" {
+		return lockUpMount(v, "locksql")
+	}
+	return "type=volume,src=locksql-run,dst=/run/locksql"
 }
 
 // locksqlDir is the locksql console's own directory of the projects directory (<proj>/.locksql:
