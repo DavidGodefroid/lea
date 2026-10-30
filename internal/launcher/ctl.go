@@ -34,9 +34,9 @@ func (l *Launcher) ctlRunArgs(projects []string, sock string, sockGID int) ([]st
 		"--label", "lea.prefix=" + l.prefix(), "--label", "lea.role=ctl",
 		"--label", "lea.projects=" + strings.Join(projects, ":"), "--label", "lea.claude=" + l.ctlClaudeLabel(),
 		"-u", uidgid(), "--group-add", fmt.Sprint(sockGID),
-		// The pressure gauge reads the host's /proc and each agent container's cgroup by its host
-		// pid (lea-ctl holds the engine's socket: it is the host's already).
-		"--pid=host", "--cgroupns=host",
+		// The pressure gauge reads each agent container's cgroup by its container ID in the host's
+		// cgroup tree; lea-ctl keeps a pid namespace of its own.
+		"--cgroupns=host",
 		"--mount", "type=bind,src=" + sock + ",dst=" + sock,
 		// $HOME is the user's own (the engine would create the parents of the binds below it,
 		// owned by root); only what is bound below comes from the host.

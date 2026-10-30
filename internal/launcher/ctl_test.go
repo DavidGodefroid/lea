@@ -35,7 +35,7 @@ func TestCtlRunArgs(t *testing.T) {
 		"type=bind,src=" + w.dir + "/config/lea,dst=" + w.dir + "/config/lea,readonly",
 		"type=bind,src=" + run + "/lockhub,dst=" + run + "/lockhub",
 		"HOME=" + w.home, "XDG_DATA_HOME=" + w.data, "XDG_RUNTIME_DIR=" + run, "LEA_CTL_INSIDE=1",
-		"lea.projects=" + w.proj, "--pid=host", "--cgroupns=host", "LEA_CLIPBOARD=0",
+		"lea.projects=" + w.proj, "--cgroupns=host", "LEA_CLIPBOARD=0",
 		fmt.Sprintf("%s:rw,nosuid,nodev,uid=%d,gid=%d,mode=0700", w.home, os.Getuid(), os.Getgid()),
 	} {
 		if !slices.Contains(args, want) && !strings.Contains(all, "\n"+want+"\n") {
@@ -45,7 +45,7 @@ func TestCtlRunArgs(t *testing.T) {
 	if args[len(args)-1] != l.Cfg.Get("LEA_CTL_IMAGE") || l.Cfg.Get("LEA_CTL_IMAGE") == "" {
 		t.Errorf("image: %q (LEA_CTL_IMAGE %q)", args[len(args)-1], l.Cfg.Get("LEA_CTL_IMAGE"))
 	}
-	for _, bad := range []string{"--privileged", "--network=host", "--userns", "--cap-add"} {
+	for _, bad := range []string{"--privileged", "--network=host", "--userns", "--cap-add", "--pid", "--ipc=host"} {
 		if strings.Contains(all, bad) {
 			t.Errorf("ctl run args contain %q", bad)
 		}
