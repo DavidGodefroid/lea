@@ -265,7 +265,7 @@ func hubDecisionText(w store.HubWait) string {
 	case store.DecisionDenied:
 		return fmt.Sprintf("[status: fail] ticket %s on %s (%s) denied: %s. Do not retry it as is.", w.Ticket, w.Lock, w.Instance, orNone(w.Reason))
 	case store.DecisionAbandoned:
-		return fmt.Sprintf("[status: fail] lea no longer waits on ticket %s on %s (%s): %s. Its decision will not reach you; plan it again if it is still needed.", w.Ticket, w.Lock, w.Instance, orNone(w.Reason))
+		return fmt.Sprintf("[status: fail] lea no longer waits on ticket %s on %s (%s): %s. Its decision will not reach you through lea: ask the user before calling that Lock again.", w.Ticket, w.Lock, w.Instance, orNone(w.Reason))
 	case store.DecisionExpired:
 		return fmt.Sprintf("[status: fail] ticket %s on %s (%s) expired before a decision: plan it again if it is still needed.", w.Ticket, w.Lock, w.Instance)
 	default:

@@ -31,16 +31,26 @@ func (d *Daemon) DisableHub() {
 	d.hubOff = true
 	d.hubFacade = nil
 	d.mu.Unlock()
-	if _, err := d.st.AbandonAllHubWaits(hubDisabledReason, d.now()); err != nil {
+	if ws, err := d.st.AbandonAllHubWaits(hubDisabledReason, d.now()); err != nil {
 		log.Printf("lea daemon: hub disabled: %v", err)
+	} else if len(ws) > 0 {
+		agents := map[string]bool{}
+		for _, w := range ws {
+			agents[w.Agent] = true
+		}
+		log.Printf("lea daemon: hub disabled (LEA_HUB=0): abandoned %d pending wait(s) of %d agent(s); their tickets stay on the hub", len(ws), len(agents))
 	}
-	// A suspended agent with no undelivered decision (none was pending) hears it too.
+	// A suspended agent with nothing to read yet (no undelivered decision, no unread message)
+	// hears it too, once: an earlier start's copy is still unread.
 	as, err := d.st.Agents()
 	if err != nil {
 		log.Printf("lea daemon: hub disabled: %v", err)
 	}
 	for _, a := range as {
-		if store.Suspended(a.State) && !d.hasUndelivered(a.Key) {
+		if !store.Suspended(a.State) || d.hasUndelivered(a.Key) {
+			continue
+		}
+		if n, err := d.st.UnreadCount(a.Key); err == nil && n == 0 {
 			d.post("user", a.Key, "result", "[status: fail] "+hubDisabledReason+": lea no longer suspends you on a Lock call; carry on with your task.", 0)
 		}
 	}

@@ -75,3 +75,37 @@ func TestDisableHubDropsTheFacade(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+// As the daemon starts: DisableHub runs before the agents are set, so a cold agent is resumed
+// only once its container attaches (suspendedSince), with the abandoned decision. A second start
+// does not post the plain message again while the first is unread.
+func TestDisableHubAtStartResumesOnAttach(t *testing.T) {
+	e := start(t)
+	k := spawned(t, e, "dev-1", "dev", "")
+	if err := e.d.st.AddHubWait(k, testTicket, "locksql", "crm-prod", e.d.now()); err != nil {
+		t.Fatal(err)
+	}
+	if err := e.d.st.SetState(k, store.StateSuspendedCold, testSession, e.d.now()); err != nil {
+		t.Fatal(err)
+	}
+	bare := spawned(t, e, "dev-2", "dev", "")
+	if err := e.d.st.SetState(bare, store.StateSuspendedCold, testSession, e.d.now()); err != nil {
+		t.Fatal(err)
+	}
+	e.d.DisableHub()
+	e.d.DisableHub() // a second daemon start
+	if ms, _ := e.d.st.Unread(bare, 10); len(ms) != 1 {
+		t.Fatalf("bare inbox after two starts: %+v", ms)
+	}
+	if ws, _ := e.d.st.UndeliveredHubWaits(k); len(ws) != 1 || ws[0].Decision != store.DecisionAbandoned {
+		t.Fatalf("before attach: %+v", ws)
+	}
+	fa := &fakeAgents{st: e.d.st}
+	e.d.SetAgents(fa)
+	e.d.suspendedSince("lea-a")
+	c := waitCall(t, fa, "resume "+k)
+	if !strings.Contains(c, "lea no longer waits on ticket "+testTicket) || !strings.Contains(c, "ask the user before calling that Lock again") {
+		t.Fatalf("resume prompt %q", c)
+	}
+	waitDelivered(t, e, k)
+}
