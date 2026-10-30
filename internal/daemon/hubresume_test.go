@@ -42,7 +42,7 @@ func TestAnApprovedTicketResumesTheAgentWithTheDecision(t *testing.T) {
 	e.d.SetAgents(fa)
 	k := suspendedOnTicket(t, e, fa, "dev-1")
 	*e.clock += 20 * 60
-	if _, err := e.d.st.DecideHubWaits(testTicket, store.DecisionApproved, "", e.d.now()); err != nil {
+	if _, err := e.d.st.DecideHubWaits(testTicket, "crm-prod", store.DecisionApproved, "", e.d.now()); err != nil {
 		t.Fatal(err)
 	}
 	e.d.wakeSuspended(k)
@@ -53,8 +53,21 @@ func TestAnApprovedTicketResumesTheAgentWithTheDecision(t *testing.T) {
 	if strings.Contains(c, "unread message") {
 		t.Fatalf("resume prompt %q: no message came", c)
 	}
-	if ws, err := e.d.st.UndeliveredHubWaits(k); err != nil || len(ws) != 0 {
-		t.Fatalf("undelivered %v %v", ws, err)
+	waitDelivered(t, e, k)
+}
+
+// waitDelivered waits until agent has no undelivered decision.
+func waitDelivered(t *testing.T, e env, agent string) {
+	t.Helper()
+	for i := 0; ; i++ {
+		ws, err := e.d.st.UndeliveredHubWaits(agent)
+		if err == nil && len(ws) == 0 {
+			return
+		}
+		if i == 300 {
+			t.Fatalf("undelivered %+v %v", ws, err)
+		}
+		time.Sleep(10 * time.Millisecond)
 	}
 }
 
@@ -68,7 +81,7 @@ func TestADeniedTicketResumesTheAgentWithTheReason(t *testing.T) {
 	if _, err := e.d.st.Send(store.Message{From: "user", To: k, Kind: "note", Body: "hi", At: e.d.now()}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := e.d.st.DecideHubWaits(testTicket, store.DecisionDenied, "not on\nprod", e.d.now()); err != nil {
+	if _, err := e.d.st.DecideHubWaits(testTicket, "crm-prod", store.DecisionDenied, "not on\nprod", e.d.now()); err != nil {
 		t.Fatal(err)
 	}
 	e.d.wakeSuspended(k)
@@ -78,30 +91,52 @@ func TestADeniedTicketResumesTheAgentWithTheReason(t *testing.T) {
 	}
 }
 
-// A resume that fails does not lose the decision: it waits in the agent's inbox.
-func TestAFailedResumeKeepsTheDecisionInTheInbox(t *testing.T) {
+// A resume that fails does not lose the decision: it stays undelivered, and the next sync wakes
+// the agent again.
+func TestAFailedResumeKeepsTheDecisionUndelivered(t *testing.T) {
 	e := start(t)
 	fa := &fakeAgents{st: e.d.st, resumeErr: errors.New("no pane")}
 	e.d.SetAgents(fa)
 	k := suspendedOnTicket(t, e, fa, "dev-1")
-	if _, err := e.d.st.DecideHubWaits(testTicket, store.DecisionApproved, "", e.d.now()); err != nil {
+	if _, err := e.d.st.DecideHubWaits(testTicket, "crm-prod", store.DecisionApproved, "", e.d.now()); err != nil {
 		t.Fatal(err)
 	}
 	e.d.wakeSuspended(k)
 	waitCall(t, fa, "resume "+k)
-	deadline := time.Now().Add(3 * time.Second)
-	for {
-		ms, err := e.d.st.Unread(k, 10)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if len(ms) == 1 && strings.Contains(ms[0].Body, "approved: call its run again") {
-			return
-		}
-		if time.Now().After(deadline) {
-			t.Fatalf("inbox %+v", ms)
-		}
-		time.Sleep(10 * time.Millisecond)
+	time.Sleep(100 * time.Millisecond)
+	if ws, err := e.d.st.UndeliveredHubWaits(k); err != nil || len(ws) != 1 {
+		t.Fatalf("undelivered %+v %v", ws, err)
+	}
+	if ms, _ := e.d.st.Unread(k, 10); len(ms) != 0 {
+		t.Fatalf("inbox %+v", ms)
+	}
+}
+
+// The hub sync wakes a stopped suspended agent whose ticket it finds decided: the agent resumes
+// with the decision, with no other call (#163).
+func TestTheHubSyncResumesAColdAgentWithItsDecision(t *testing.T) {
+	e := start(t)
+	fa := &fakeAgents{st: e.d.st}
+	e.d.SetAgents(fa)
+	k := spawned(t, e, "dev-1", "dev", "")
+	if err := e.d.st.AddHubWait(k, testTicket, "locksql", "crm-prod", 1); err != nil {
+		t.Fatal(err)
+	}
+	if err := e.d.st.SetState(k, store.StateSuspendedCold, testSession, 2); err != nil {
+		t.Fatal(err)
+	}
+	hub := &fakeHub{}
+	hub.decide(testTicket, "crm-prod", "approved", "")
+	e.d.SetHubFacade(SocketFacade{Path: serveHub(t, hub)})
+	if err := e.d.syncHub(e.ctx); err != nil {
+		t.Fatal(err)
+	}
+	if c := waitCall(t, fa, "resume "+k); !strings.Contains(c, "approved: call its run again with ticket="+testTicket) {
+		t.Fatalf("resume prompt %q", c)
+	}
+	waitDelivered(t, e, k)
+	if ms, _ := e.d.st.Unread(k, 10); len(ms) != 0 {
+		t.Fatalf("told twice, in the inbox too: %+v", ms)
 	}
 }
 
@@ -117,7 +152,7 @@ func TestTheSweepResumesAnAgentWhoseTicketWasDecided(t *testing.T) {
 	if err := e.d.st.SetState(k, store.StateSuspendedCold, testSession, 2); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := e.d.st.DecideHubWaits(testTicket, store.DecisionApproved, "", 3); err != nil {
+	if _, err := e.d.st.DecideHubWaits(testTicket, "crm-prod", store.DecisionApproved, "", 3); err != nil {
 		t.Fatal(err)
 	}
 	if err := call(t, e.api, "", "agents_sweep_stacks", map[string]any{"container": "lea-a"}, nil); err != nil {

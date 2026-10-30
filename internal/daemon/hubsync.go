@@ -228,10 +228,15 @@ func (d *Daemon) deliverHubDecisions() error {
 	if err != nil {
 		return err
 	}
+	woken := map[string]bool{}
 	for _, w := range ws {
-		// A cold-suspended agent reads no inbox: its wait stays undelivered until it wakes, and the
-		// resume prompt tells it the decision (#163).
+		// A cold-suspended agent reads no inbox: its wait stays undelivered, lea resumes it, and
+		// the resume prompt tells it the decision (#163).
 		if a, err := d.st.AgentByKey(w.Agent); err == nil && a.State == store.StateSuspendedCold {
+			if !woken[w.Agent] {
+				woken[w.Agent] = true
+				d.wakeSuspended(w.Agent)
+			}
 			continue
 		}
 		if err := d.st.MarkHubWaitDelivered(w.Agent, w.Ticket, d.now()); err != nil {

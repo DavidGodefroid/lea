@@ -366,7 +366,7 @@ func TestClaudeSuspendedAgentIsResumedByADecision(t *testing.T) {
 	e.mu.Lock()
 	before := len(e.bodies)
 	e.mu.Unlock()
-	if _, err := e.st.DecideHubWaits(testTicket, store.DecisionApproved, "", e.d.now()); err != nil {
+	if _, err := e.st.DecideHubWaits(testTicket, "crm-prod", store.DecisionApproved, "", e.d.now()); err != nil {
 		t.Fatal(err)
 	}
 	e.d.wakeSuspended(a.Key)
