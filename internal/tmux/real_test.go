@@ -92,6 +92,10 @@ func TestRealControlMode(t *testing.T) {
 	if len(cl) != 1 || !strings.HasPrefix(cl[0], "1|") || !strings.Contains(cl[0], "ignore-size") {
 		t.Fatalf("clients=%q", cl)
 	}
+	// ClientTTYs' format names it a control client (1), which gets no bell (#165).
+	if tt := run("list-clients", "-t", "=lea-t", "-F", clientTTYsFormat); len(tt) != 1 || !strings.HasPrefix(tt[0], "1 ") || len(parseClientTTYs(tt[0])) != 0 {
+		t.Fatalf("client ttys=%q", tt)
+	}
 
 	// A pane that exits stays (remain-on-exit) and its death arrives as a subscription change.
 	run("refresh-client", "-B", "lea-dead:%*:#{pane_dead}")

@@ -170,10 +170,14 @@ func (s Server) AttachArgv(session string) ([]string, error) {
 	return []string{s.bin(), "-L", s.Socket, "-f", s.Conf, "attach-session", "-t", "=" + session}, nil
 }
 
+// clientTTYsFormat is each client's control mode (1 or 0; tmux has no #{client_control}: an
+// unknown format is empty, and no terminal ever rang) and terminal.
+const clientTTYsFormat = "#{client_control_mode} #{client_tty}"
+
 // ClientTTYs are the terminals of the server's user clients (not its control-mode ones: a byte
 // written there would enter lea's control stream).
 func (s Server) ClientTTYs(ctx context.Context) ([]string, error) {
-	out, err := s.command(ctx, "list-clients", "-F", "#{client_control} #{client_tty}").Output()
+	out, err := s.command(ctx, "list-clients", "-F", clientTTYsFormat).Output()
 	if err != nil {
 		return nil, err
 	}

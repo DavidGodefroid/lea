@@ -133,7 +133,7 @@ for i in $(seq 20); do
   if [ "$i" -ge 20 ]; then
     echo "hook: $hook" >&2
     "$root/bin/lea" agents >&2 2>&1 || true
-    docker exec -u "$u" "$ctl" tmux -L lea list-clients -F '#{client_control} #{client_tty} #{session_name}' >&2 || true
+    docker exec -u "$u" "$ctl" tmux -L lea list-clients -F '#{client_control_mode} #{client_tty} #{session_name}' >&2 || true
     tail -n 40 "$XDG_DATA_HOME/lea/host/daemon.log" >&2 2>/dev/null || true
     fail "no bell in the attached terminal"
   fi
