@@ -74,8 +74,11 @@ func (s *Store) AddHubWait(agent, ticket, lock, instance string, now int64) erro
 	if !hubNameRe.MatchString(lock) || !hubNameRe.MatchString(instance) {
 		return errors.New("hub wait: invalid lock or instance name")
 	}
-	_, err := s.db.Exec(`INSERT INTO hub_waits(agent_key, ticket, lock, instance, created) VALUES(?,?,?,?,?)
-		ON CONFLICT(agent_key, ticket) DO NOTHING`, agent, ticket, lock, instance, now)
+	// Only for an agent lea knows: a wait registered while its agent was forgotten would be left
+	// for a later agent of the same name.
+	_, err := s.db.Exec(`INSERT INTO hub_waits(agent_key, ticket, lock, instance, created)
+		SELECT ?,?,?,?,? WHERE EXISTS(SELECT 1 FROM agents WHERE key=?)
+		ON CONFLICT(agent_key, ticket) DO NOTHING`, agent, ticket, lock, instance, now, agent)
 	return err
 }
 

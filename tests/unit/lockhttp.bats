@@ -25,7 +25,8 @@ launcher() {
 
 @test "off: no LockHTTP check" {
   LEA_LOCKHTTP=0 run lea__doctor_lockhttp
-  [ "$status" -eq 0 ] && [ -z "$output" ]
+  [ "$status" -eq 0 ]
+  [ -z "$output" ]
 }
 
 @test "a healthy setup: launcher, gate container (image, user, mounts, answers), loopback squid, console" {

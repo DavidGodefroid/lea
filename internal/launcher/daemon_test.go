@@ -190,7 +190,7 @@ esac
 // other approval settings, is restarted, and the new one gets LEA_TMUX_BIN (daemon tests of the
 // retired deck.bats and core.bats).
 func TestEnsureDaemonPinsTheResolvedTmuxAndApprovals(t *testing.T) {
-	for name, record := range map[string][2]string{"tmux": {"daemon.tmux", "/old/tmux"}, "approvals": {"daemon.approvals", "pane 5"}, "resume": {"daemon.resume", "off 60"}, "lockhttp": {"daemon.lockhttp", "on"}, "hub": {"daemon.hub", "on"}, "stacks": {"daemon.stacks", "30"}, "admit": {"daemon.admit", "50 85 10 40 2 95 30 80 30 60"}} {
+	for name, record := range map[string][2]string{"tmux": {"daemon.tmux", "/old/tmux"}, "approvals": {"daemon.approvals", "pane 5"}, "resume": {"daemon.resume", "off 60"}, "lockhttp": {"daemon.lockhttp", "on"}, "hub": {"daemon.hub", "on 300"}, "keepalive": {"daemon.hub", "off 60"}, "stacks": {"daemon.stacks", "30"}, "admit": {"daemon.admit", "50 85 10 40 2 95 30 80 30 60"}} {
 		t.Run(name, func(t *testing.T) {
 			w := newWorld(t, repoRoot(t))
 			delete(w.env, "LEA_TMUX_BIN") // resolved from PATH: the world's tmux
@@ -404,17 +404,24 @@ func TestLockServers(t *testing.T) {
 	}
 }
 
-// The hub switch is on only at LEA_HUB=1; its stamp says which.
-func TestHubSetting(t *testing.T) {
-	for v, want := range map[string]string{"": "off", "0": "off", "1": "on", "yes": "off"} {
+// The hub switch is on only at LEA_HUB=1; the keepalive is LEA_HUB_KEEPALIVE seconds (0 to
+// 3600, else 300); the stamp says both.
+func TestHubSettings(t *testing.T) {
+	for _, c := range []struct{ hub, keep, want string }{
+		{"", "", "off 300"}, {"0", "", "off 300"}, {"1", "", "on 300"}, {"yes", "", "off 300"},
+		{"1", "0", "on 0"}, {"1", "60", "on 60"}, {"1", "3600", "on 3600"}, {"1", "3601", "on 300"}, {"1", "-1", "on 300"}, {"1", "x", "on 300"},
+	} {
 		get := func(k string) string {
-			if k == "LEA_HUB" {
-				return v
+			switch k {
+			case "LEA_HUB":
+				return c.hub
+			case "LEA_HUB_KEEPALIVE":
+				return c.keep
 			}
 			return ""
 		}
-		if got := DaemonHubStamp(get); got != want || HubSetting(get) != (want == "on") {
-			t.Errorf("LEA_HUB=%q: %s, want %s", v, got, want)
+		if got := DaemonHubStamp(get); got != c.want || HubSetting(get) != strings.HasPrefix(c.want, "on") {
+			t.Errorf("LEA_HUB=%q LEA_HUB_KEEPALIVE=%q: %s, want %s", c.hub, c.keep, got, c.want)
 		}
 	}
 }

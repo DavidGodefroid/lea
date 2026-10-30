@@ -96,7 +96,8 @@ setup() { setup_fakes; I="$LEA_ROOT/image"; }
   grep -q 'A="locksql_${V}_linux_${TARGETARCH}.tar.gz"' "$c"
   # Pinned by the archive's sha256, for each architecture.
   grep -q 'echo "$sq  $A" | sha256sum -c' "$c"
-  grep -Eq 'amd64\) sq=[0-9a-f]{64} ;;' "$c" && grep -Eq 'arm64\) sq=[0-9a-f]{64} ;;' "$c"
+  grep -Eq 'amd64\) sq=[0-9a-f]{64} ;;' "$c"
+  grep -Eq 'arm64\) sq=[0-9a-f]{64} ;;' "$c"
   grep -q 'install -d -m 2710 -o 10001 -g 10000 /run/locksql' "$c"
   ! grep -q 'LOCKSQL_REF\|COPY --from=locksql' "$c"
 }
@@ -198,7 +199,7 @@ check_endpoints() {
   u="$I/user-init"
   grep -q 'jq -e .\.mcpServers\.lea\.command == "/usr/local/bin/lea"' "$u"
   grep -q 'could not register the lea MCP server' "$u"
-  ! grep -q 'mv ' "$u"
+  ! grep -q 'mv ' "$u" || false
   [ "$(grep -n 'mcpServers.lea = ' "$u" | cut -d: -f1)" -lt "$(grep -n 'touch /run/lea/ready' "$u" | cut -d: -f1)" ]
 }
 
@@ -324,9 +325,12 @@ reset_runtime() {
   echo stale-boot-id >"$r/run/user/$u/libpod/tmp/alive"
   touch "$r/run/user/$u/podman/podman.sock" "$r/run/lea/agents/dev-1.pid" "$r/run/lea/shells/sh-1.pid" "$r/run/lea/ready" "$r/run/lea/bus/keep"
   reset_runtime "$r"
-  [ -d "$r/run/user/$u" ] && [ "$(stat -c %a "$r/run/user/$u")" = 700 ]
+  [ -d "$r/run/user/$u" ]
+  [ "$(stat -c %a "$r/run/user/$u")" = 700 ]
   [ -z "$(ls -A "$r/run/user/$u")" ]
-  [ ! -e "$r/run/lea/agents" ] && [ ! -e "$r/run/lea/shells" ] && [ ! -e "$r/run/lea/ready" ]
+  [ ! -e "$r/run/lea/agents" ]
+  [ ! -e "$r/run/lea/shells" ]
+  [ ! -e "$r/run/lea/ready" ]
   # The bus directory is the daemon's bind mount: never touched.
   [ -f "$r/run/lea/bus/keep" ]
 }
