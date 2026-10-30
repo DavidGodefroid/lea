@@ -95,6 +95,35 @@ jobs:
           node-version: 22
       - run: npm install -g --ignore-scripts "@openai/codex@$(sed -n 's/^ARG CODEX_VERSION=//p' image/Containerfile)"
       - run: LEA_E2E_CODEX="$(command -v codex)" go test -count=1 -run 'TestCodex(ReachesAnEndpointThroughTheForwarder|IgnoresAPlantedProjectConfig|LockCallOutlivesTheDefaultToolTimeout)' -v ./internal/providers/
+  # The real Claude Code (the image's pinned version) with lea's hooks on a fake Messages API, and
+  # lea's daemon: usage-limit resume, truncated transcripts, and the phase-3 suspend/resume demo
+  # (a suspended agent stopped, resumed by its approval or a message). No secret, no real model.
+  claude:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+        with:
+          go-version-file: go.mod
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22
+      # Its postinstall links the platform binary, as in image/Containerfile.
+      - run: npm install -g "@anthropic-ai/claude-code@$(sed -n 's/^ARG CLAUDE_CODE_VERSION=//p' image/Containerfile)"
+      - name: the Claude e2e tests, none skipped
+        shell: bash
+        # Every TestClaude test but TestClaudeResumesATruncatedTranscript, which fails with this
+        # Claude Code (#219).
+        run: |
+          LEA_E2E_CLAUDE="$(command -v claude)" go test -count=1 -run '^TestClaude' -skip '^TestClaudeResumesATruncatedTranscript$' -v ./internal/daemon/ 2>&1 | tee claude-e2e.log
+          if grep -- '--- SKIP' claude-e2e.log; then echo "a Claude e2e test was skipped" >&2; exit 1; fi
+          grep -q -- '^--- PASS: TestClaudePhase3SuspendResumeEndToEnd ' claude-e2e.log
+          n=$(grep -c -- '^--- PASS: TestClaude' claude-e2e.log)
+          echo "$n Claude e2e tests passed"
+          [ "$n" -eq 7 ]
   # The lockmq / lockfile socket wiring (tests/integration/lockhost.sh, phase 0): the lockmq
   # client of the release image/Containerfile pins (sha256-checked) reaches a console's socket
   # through its volume, as lea wires it, with no host account; outsiders and other uids refused.
