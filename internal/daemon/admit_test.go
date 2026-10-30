@@ -289,12 +289,14 @@ func writeTree(t *testing.T, root string, files map[string]string) {
 	}
 }
 
-// HostPressure reads /proc and each container's cgroup v2, found through its pid.
+// HostPressure reads /proc and each container's cgroup v2, found by its container ID (no host
+// pid: lea-ctl has a pid namespace of its own).
 func TestHostPressureSample(t *testing.T) {
 	dir := t.TempDir()
 	proc, cg := filepath.Join(dir, "proc"), filepath.Join(dir, "cg")
 	psi := "some avg10=%s avg60=1.00 avg300=1.00 total=1\nfull avg10=%s avg60=0.00 avg300=0.00 total=1\n"
 	f := func(some, full string) string { return sprintf2(psi, some, full) }
+	id := strings.Repeat("ab", 32)
 	writeTree(t, proc, map[string]string{
 		"pressure/cpu":    f("12.50", "0.00"),
 		"pressure/memory": f("3.00", "1.25"),
@@ -302,10 +304,13 @@ func TestHostPressureSample(t *testing.T) {
 		"meminfo":         "MemTotal:       32000000 kB\nMemFree:  1000 kB\nMemAvailable:   8000000 kB\n",
 		"loadavg":         "44.00 30.00 20.00 3/900 1234\n",
 		"stat":            "cpu  100 0 100 800 0 0 0 0 0 0\ncpu0 1 1 1 1\n",
-		"4242/cgroup":     "0::/user.slice/libpod-abc.scope\n",
+		// A pid the container's would have on the host: never read.
+		"4242/cgroup": "0::/wrong.slice\n",
 	})
-	sc := "user.slice/libpod-abc.scope/"
+	sc := "user.slice/user-1000.slice/user@1000.service/user.slice/libpod-" + id + ".scope/"
 	writeTree(t, cg, map[string]string{
+		// Podman's conmon scope names the same ID: not the container.
+		"machine.slice/libpod-conmon-" + id + ".scope/memory.current": "1\n",
 		sc + "cpu.pressure":    f("63.00", "10.00"),
 		sc + "memory.pressure": f("5.00", "2.00"),
 		sc + "io.pressure":     f("1.00", "0.50"),
@@ -316,16 +321,19 @@ func TestHostPressureSample(t *testing.T) {
 		sc + "cpu.stat":        "usage_usec 1000000\nuser_usec 1\n",
 	})
 	now := time.Unix(1000, 0)
-	pids := 0
+	ids := 0
 	h := &HostPressure{Proc: proc, Cgroup: cg, Now: func() time.Time { return now },
-		Pid: func(ctx context.Context, c string) (int, error) {
-			pids++
-			if c != "lea-a" {
-				return 0, os.ErrNotExist
+		ID: func(ctx context.Context, c string) (string, error) {
+			ids++
+			switch c {
+			case "lea-a":
+				return id, nil
+			case "lea-bad":
+				return "../../etc", nil
 			}
-			return 4242, nil
+			return "", os.ErrNotExist
 		}}
-	host, scopes := h.Sample(context.Background(), []string{"lea-a", "lea-gone"})
+	host, scopes := h.Sample(context.Background(), []string{"lea-a", "lea-gone", "lea-bad"})
 	if host.CPUPSI != 12.5 || host.MemPSI != 1.25 || host.IOPSI != 4 || host.Load1 != 44 ||
 		host.MemMax != 32000000<<10 || host.MemUsed != 24000000<<10 || host.CPUUsed != -1 {
 		t.Fatalf("host=%+v", host)
@@ -348,13 +356,48 @@ func TestHostPressureSample(t *testing.T) {
 	if host.CPUUsed != 1 {
 		t.Fatalf("host cpu used %v", host.CPUUsed)
 	}
-	if pids != 2 { // lea-a once (then cached), lea-gone once
-		t.Fatalf("%d pid lookups", pids)
+	if ids != 3 { // lea-a once (then cached), lea-gone and lea-bad once
+		t.Fatalf("%d ID lookups", ids)
 	}
-	now = now.Add(pidRefresh)
-	h.Sample(context.Background(), []string{"lea-a"})
-	if pids != 3 { // the cached pid is asked again after pidRefresh
-		t.Fatalf("%d pid lookups", pids)
+	// The container recreated under the same name: its old cgroup is gone, the ID is asked again
+	// and the new one found (here Docker's systemd driver).
+	id = strings.Repeat("cd", 32)
+	if err := os.RemoveAll(filepath.Join(cg, "user.slice")); err != nil {
+		t.Fatal(err)
+	}
+	writeTree(t, cg, map[string]string{"system.slice/docker-" + id + ".scope/memory.max": "1048576\n"})
+	if _, scopes = h.Sample(context.Background(), []string{"lea-a"}); scopes["lea-a"].MemMax != 1<<20 || ids != 4 {
+		t.Fatalf("after a re-create: %+v, %d ID lookups", scopes, ids)
+	}
+}
+
+// The container's cgroup by its ID under each engine's layout.
+func TestCgroupByID(t *testing.T) {
+	id := strings.Repeat("0f", 32)
+	for _, dir := range []string{
+		"system.slice/docker-" + id + ".scope",  // Docker, systemd driver
+		"docker/" + id,                          // Docker, cgroupfs driver
+		"machine.slice/libpod-" + id + ".scope", // rootful Podman
+		"user.slice/user-1000.slice/user@1000.service/docker-" + id + ".scope", // rootless Docker
+		"machine.slice/libpod-" + id + ".scope/container",                      // Podman with a payload sub-cgroup: the scope
+	} {
+		cg := t.TempDir()
+		writeTree(t, cg, map[string]string{dir + "/memory.max": "1\n", "system.slice/docker-" + strings.Repeat("11", 32) + ".scope/memory.max": "2\n"})
+		got, err := cgroupByID(cg, id)
+		want := filepath.Join(cg, strings.TrimSuffix(dir, "/container"))
+		if err != nil || got != want {
+			t.Errorf("%s: %q, %v; want %q", dir, got, err, want)
+		}
+	}
+	cg := t.TempDir()
+	writeTree(t, cg, map[string]string{"machine.slice/libpod-conmon-" + id + ".scope/memory.max": "1\n"})
+	if got, err := cgroupByID(cg, id); err == nil {
+		t.Errorf("conmon's scope taken: %q", got)
+	}
+	for _, bad := range []string{"", "abc", "../" + id[3:], strings.ToUpper(id)} {
+		if got, err := cgroupByID(cg, bad); err == nil {
+			t.Errorf("ID %q accepted: %q", bad, got)
+		}
 	}
 }
 

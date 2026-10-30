@@ -49,6 +49,19 @@ docker exec -u "$(id -u):$(id -g)" "$ctl" docker version --format '{{.Server.Ver
 for p in "$root/build/lea" "$projects" "$XDG_DATA_HOME/lea/state/claude.json"; do
   docker exec "$ctl" test -e "$p" || fail "lea-ctl does not see $p"
 done
+# lea-ctl has a pid namespace of its own; it reads a lea container's cgroup by its ID (the
+# pressure gauge) in the host's cgroup tree. The agent container stopped with the shell: the
+# proxy's, still running, stands in for it.
+[ "$(docker inspect -f '{{.HostConfig.PidMode}}' "$ctl")" != host ] || fail "$ctl shares the host's pid namespace"
+probe=lea-ctltest-proxy
+[ "$(docker inspect -f '{{.State.Running}}' "$probe")" = true ] || fail "$probe is not running"
+cid=$(docker inspect -f '{{.Id}}' "$probe")
+if ! docker exec "$ctl" sh -c 'd=$(find /sys/fs/cgroup -maxdepth 8 -type d \( -name "docker-$1.scope" -o -name "$1" \) | head -n1) &&
+  [ -n "$d" ] && [ "$(cat "$d/memory.current")" -gt 0 ]' sh "$cid"; then
+  echo "host cgroup of $probe: $(cat "/proc/$(docker inspect -f '{{.State.Pid}}' "$probe")/cgroup" 2>&1)" >&2
+  docker exec "$ctl" sh -c 'cat /proc/self/cgroup; find /sys/fs/cgroup -maxdepth 3 -type d | head -n 60' >&2 || true
+  fail "lea-ctl does not see the cgroup of $probe"
+fi
 # Every container but lea-ctl: no Docker socket mounted.
 for c in $(docker ps -q --filter label=lea.prefix=lea-ctltest); do
   name=$(docker inspect -f '{{.Name}}' "$c"); name=${name#/}
