@@ -1,6 +1,7 @@
 package launcher
 
 import (
+	"fmt"
 	"path/filepath"
 	"strings"
 )
@@ -118,4 +119,14 @@ func (l *Launcher) cwdIn(p string) string {
 		return l.Cwd
 	}
 	return p
+}
+
+// installCheck is what lea doctor says of lea's install against the projects dir p: "" when
+// neither holds the other. An install inside a projects dir is one agents may rewrite (their
+// containers get the projects dir writable), and the host runs it.
+func (l *Launcher) installCheck(p string) string {
+	if root := phys(l.Root); under(p, root) || under(root, p) {
+		return fmt.Sprintf("lea's install %s overlaps the projects directory %s: agents could rewrite the lea the host runs; move it out (lea refuses to open this projects dir)", l.Root, p)
+	}
+	return ""
 }

@@ -185,3 +185,33 @@ func TestCtlSwitchAndCommands(t *testing.T) {
 		t.Fatalf("ctl attach exec %q", got)
 	}
 }
+
+// With LEA_CTL=1, lea-ctl never starts for a projects dir that holds lea's install (or lies in
+// it): agent containers get the projects dir writable.
+func TestCtlRefusesAnInstallInsideTheProjectsDir(t *testing.T) {
+	w, _ := ctlWorld(t)
+	l := w.launcher()
+	l.Root = w.proj + "/tools/lea"
+	if err := os.MkdirAll(l.Root, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := l.dispatch([]string{"new"}); err == nil {
+		t.Fatal("lea-ctl started with lea's install inside the projects dir")
+	}
+	if log := readLog(t, w); strings.Contains(log, "docker [run]") || len(w.execs) != 0 {
+		t.Fatalf("lea-ctl started:\n%s %q", log, w.execs)
+	}
+}
+
+// lea doctor names an install inside (or holding) the projects dir.
+func TestInstallCheckNamesAnInstallInTheProjectsDir(t *testing.T) {
+	w := newWorld(t, repoRoot(t))
+	l := w.launcher()
+	if msg := l.installCheck(w.proj); msg != "" {
+		t.Fatalf("a clean layout warned: %s", msg)
+	}
+	l.Root = w.proj + "/lea"
+	if msg := l.installCheck(w.proj); !strings.Contains(msg, l.Root) || !strings.Contains(msg, w.proj) {
+		t.Fatalf("no warning: %q", msg)
+	}
+}
