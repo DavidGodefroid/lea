@@ -520,6 +520,7 @@ func (l *Launcher) runArgs(proj, pip string) ([]string, error) {
 		return nil, err
 	}
 	a = append(a, "--mount", "type=bind,src="+lf+",dst="+lf+",readonly")
+	ups := l.lockUpSockets(lf)
 	if l.Cfg.Locksql() {
 		// The locksql console's socket volume, and its client group (locksql-clients). Its own
 		// directory read-only (locksqlDir).
@@ -527,13 +528,13 @@ func (l *Launcher) runArgs(proj, pip string) ([]string, error) {
 		if err != nil {
 			return nil, err
 		}
-		a = append(a, "-e", "LEA_LOCKSQL=1", "--group-add", "10000", "--mount", "type=volume,src=locksql-run,dst=/run/locksql",
+		a = append(a, "-e", "LEA_LOCKSQL=1", "--group-add", "10000", "--mount", "type=volume,src="+lockSocketVolume(ups, "locksql")+",dst=/run/locksql",
 			"--mount", "type=bind,src="+d+",dst="+d+",readonly")
 	}
 	a = append(a, lh...)
 	// lockmq and lockfile: only the socket of a console in its own container, in the tool's
 	// socket volume (lockhost.go).
-	a = append(a, l.lockHostArgs()...)
+	a = append(a, l.lockHostArgs(ups)...)
 	a = append(a, l.securityArgs()...)
 	a = append(a, l.limitArgs()...)
 	for _, part := range []func() ([]string, error){
