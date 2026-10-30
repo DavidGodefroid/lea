@@ -60,7 +60,7 @@ launcher() {
   run lea_lockhost lockfile
   [[ "$output" == *"lockfile: install its launcher"*"scripts/install.sh"* ]]
   [[ "$output" == *"no lockfile-run volume yet"* ]]
-  [[ "$output" == *"lockfile console --profile PROFILE"* ]]
+  [[ "$output" == *"lockfile console --profile PROFILE --allowed-uids $(id -u)"* ]]
   launcher lockfile
   unset FAKE_DOCKER_RC_VOLUME_INSPECT
   export FAKE_DOCKER_OUT_RUN___RM=10031:10030
@@ -107,7 +107,7 @@ launcher() {
   LEA_INIT_NONINTERACTIVE=1 run lea__init_lockhost lockmq </dev/null
   [ "$status" -eq 0 ]
   [[ "$output" == *"lockmq: install its launcher"* ]]
-  [[ "$output" == *"lockmq console --profile PROFILE"* ]]
+  [[ "$output" == *"lockmq console --profile PROFILE --allowed-uids $(id -u)"* ]]
   if calls | grep -q 'sudo\|install'; then false; fi
 }
 
@@ -126,7 +126,7 @@ launcher() {
   launcher lockmq
   run lea__init_lockhost lockmq <<<"y"
   [[ "$output" == *"lockmq has no broker profile for $P yet"* ]]
-  [[ "$output" == *"lockmq console --profile PROFILE"* ]]
+  [[ "$output" == *"lockmq console --profile PROFILE --allowed-uids $(id -u)"* ]]
   run calls
   [ "$output" = "docker [run] [-it] [--rm] [--network] [none] [--user] [$(id -u):$(id -g)] [-e] [HOME=/tmp] [-v] [$P:$P] [-w] [$P] [--entrypoint] [lockmq] [$LEA_IMAGE] [setup] [--project] [$P]" ]
 }

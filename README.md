@@ -332,8 +332,14 @@ they are **off** by default; `lea init` asks (no by default), or `lea init --loc
 `lea init --lockfile`.
 
 Like locksql's, their console runs in a container of its own, started by the tool's launcher
-(`lockmq console --profile <profile>`, `lockfile console --profile <profile>`; install the launcher
-with the tool's `scripts/install.sh`, see its README): no host account, no `sudo <tool> install`.
+(`lockmq console --profile <profile> --allowed-uids $(id -u)`, `lockfile console --profile <profile>
+--allowed-uids $(id -u)`; install the launcher with the tool's `scripts/install.sh`, see its
+README): no host account, no `sudo <tool> install`. lea's agents run as your uid, which has no
+account in the console's image: the console serves it only when you name it with
+`--allowed-uids` (lockmq v0.4.1, lockfile v0.5.1 or later); without it the agents get no console.
+You set it, at the console's start; no agent can. Under `lock up`, write it in the lock's
+`allowed_uids` instead (lockhub v0.2.4 or later: `allowed_uids: [<your uid>]` in
+`.lockfamily/lockfamily.yaml`; lock up reviews it with you).
 lea installs nothing for them; their launchers update themselves (`lockmq update`,
 `lockfile update`). `lea init` points to the launcher when it is missing, then runs lockmq's
 profile wizard (`lockmq setup`, never a password). lockfile below v0.1.1 is refused (a plugin

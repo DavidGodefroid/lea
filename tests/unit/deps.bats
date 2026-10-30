@@ -188,8 +188,8 @@ latest() { export "FAKE_CURL_EFFECTIVE_$1=https://github.com/DavidGodefroid/$1/r
   lea_load_config
   [ "$LEA_LOCKSQL_REF" = v0.11.1 ]
   [ "$LEA_LOCKSQL_IMAGE" = locksql:0.11.1 ]
-  [ "$LEA_LOCKFILE_REF" = v0.5.0 ]
-  [ "$LEA_LOCKMQ_REF" = v0.4.0 ]
+  [ "$LEA_LOCKFILE_REF" = v0.5.1 ]
+  [ "$LEA_LOCKMQ_REF" = v0.4.1 ]
   printf "LEA_LOCKSQL_REF='v0.12.0'\nLEA_LOCKSQL_IMAGE='locksql:0.12.0'\nLEA_LOCKFILE_REF=\nLEA_LOCKMQ_REF='v1.0.0'\n" >"$LEA_CONFIG"
   lea_load_config
   [ "$LEA_LOCKSQL_REF" = v0.12.0 ]
