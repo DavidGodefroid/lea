@@ -1,7 +1,7 @@
 # shellcheck shell=sh
 # lea init: launcher link, projects dir, lea's git SSH key (only with LEA_GIT_SSH), Claude
 # configuration copy, images, the locksql console image (unless LEA_LOCKSQL=0), lockmq and lockfile
-# on the host (asked; libexec/lib/lockhost.sh), AppArmor profile.
+# wiring (asked; their consoles run from their own launchers, libexec/lib/lockhost.sh), AppArmor profile.
 
 lea_init_apparmor() {
   docker info --format '{{json .SecurityOptions}}' 2>/dev/null | grep -q 'name=apparmor' || return 0

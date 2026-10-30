@@ -1,7 +1,8 @@
 # shellcheck shell=sh
-# lea update's dependencies: locksql (its console image, built from the source of a release) and
-# lockmq and lockfile (their binary on the host). lea pins a release of each (config/lea.conf); lea
-# update looks for a newer one and installs it only when you accept it, after checking that the
+# lea update's dependencies: locksql (its console image, built from the source of a release). lockmq
+# and lockfile run from their own launchers, which update themselves and their images (lockmq
+# update, lockfile update): lea update only says so. lea pins a release of locksql
+# (config/lea.conf); lea update looks for a newer one and installs it only when you accept it, after checking that the
 # tool's release workflow signed it at that very tag (cosign), then records it in the user config.
 # It never installs a release that is not newer than the current one, below the tool's security
 # floor, or not a plain vX.Y.Z; it never installs anything for an empty pin, and never silently.
@@ -51,22 +52,6 @@ lea__dep_current() {
         return 1
       fi
       printf '%s' "$LEA_LOCKSQL_REF" ;;
-    lockmq|lockfile)
-      [ "$(lea__lockhost_get "$1")" = 1 ] || return 1
-      _dc_r=$(lea__lockhost_get "$1" _REF)
-      if [ -z "$_dc_r" ]; then
-        lea_log "$1: no pinned release ($(lea__lockhost_var "$1")_REF is empty): lea update installs nothing"
-        return 1
-      fi
-      if ! _dc_b=$(lea__lockhost_bin "$1"); then
-        lea_log "$1: not installed in /usr/local/bin (root-owned): lea init installs $_dc_r"
-        return 1
-      fi
-      if ! _dc_v=$(lea__lockhost_version "$_dc_b"); then
-        lea_log "$1: $_dc_b reports no version: lea update leaves it (lea init installs $_dc_r)"
-        return 1
-      fi
-      printf '%s' "$_dc_v" ;;
   esac
 }
 
@@ -87,7 +72,13 @@ lea_update_deps() {
   _ud_m=${1:-ask}
   case $_ud_m in ask|all|none) ;; *) lea_die "usage: lea update [--deps ask|all|none]" ;; esac
   _ud_left=
-  for _ud_d in locksql lockmq lockfile; do
+  for _ud_d in lockmq lockfile; do
+    if [ "$(lea__lockhost_get "$_ud_d")" = 1 ]; then
+      lea_log "$_ud_d: its launcher updates it and its image ($_ud_d update); lea's agents use the client of lea's image"
+    fi
+  done
+  # shellcheck disable=SC2043 # one dependency today; the loop keeps room for others
+  for _ud_d in locksql; do
     _ud_cur=$(lea__dep_current "$_ud_d") || continue
     if ! _ud_new=$(lea__dep_latest "$_ud_d"); then
       lea_log "$_ud_d: cannot find its latest release ($(lea__dep_url "$_ud_d")/releases/latest): not updated"
@@ -103,14 +94,6 @@ lea_update_deps() {
       continue
     fi
     lea_log "$_ud_d: $_ud_cur -> $_ud_new (release notes: $(lea__dep_url "$_ud_d")/releases/tag/$_ud_new)"
-    case $_ud_d in
-      lockmq|lockfile)
-        # lea's agents talk to the console with the client of lea's image, the release lea pins.
-        _ud_c=$(lea__dep_pin "$(lea__lockhost_var "$_ud_d")_REF")
-        if [ "$_ud_c" != "$_ud_new" ]; then
-          lea_log "  lea's image has the $_ud_d ${_ud_c:-?} client: a $_ud_new console may refuse it until a lea release ships that client"
-        fi ;;
-    esac
     case $_ud_m in
       all) ;;
       none)
@@ -139,16 +122,6 @@ lea_update_deps() {
 lea__dep_update() {
   case $1 in
     locksql) lea__locksql_update "$2" ;;
-    lockmq|lockfile)
-      lea__lockhost_install "$1" "$2" || return 1
-      # In a subshell: a refused write (lea_die) only fails this step.
-      if ! (lea_user_config_set "$(lea__lockhost_var "$1")_REF" "$2"); then
-        lea_log "$1 $2 is installed on the host but could not be recorded in $(lea_user_config_path)"
-        return 1
-      fi
-      # shellcheck disable=SC2034 # read by lea__lockhost_get
-      case $1 in lockmq) LEA_LOCKMQ_REF=$2 ;; lockfile) LEA_LOCKFILE_REF=$2 ;; esac
-      lea_log "$1 $2 installed and recorded; restart the $1 console in the $1 account to run it" ;;
   esac
 }
 

@@ -6,8 +6,7 @@
 #     and recorded;
 #   - a tag moved to another commit, or a genuine commit with another release's signature, is
 #     never built nor recorded; a branch named like the tag is never what is built;
-#   - lockfile: the host binary goes from v0.1.1 to the latest release with the strict signed
-#     installer (into a stand-in /usr/local/bin) and is recorded;
+#   - lockfile: left to its own launcher (lockfile update): nothing installed or recorded;
 #   - asked and declined, nothing is fetched.
 # Needs git, curl and network access to GitHub. Writes only under a temporary directory.
 # shellcheck disable=SC2034,SC2317 # lea's functions read these variables and call these redefinitions
@@ -123,19 +122,10 @@ else
   ko "locksql: branch named like the tag: $out $initout"
 fi
 
-# lockfile: a host v0.1.1 (a stand-in: that release ships no binary) replaced by the latest
-# release with the strict signed installer, in a stand-in /usr/local/bin.
-mkdir -p "$w/host/usr/local/bin"; chmod 0755 "$w/host" "$w/host/usr" "$w/host/usr/local" "$w/host/usr/local/bin"
-printf '#!/bin/sh\necho "lockfile v0.1.1"\n' >"$w/host/usr/local/bin/lockfile"; chmod 0755 "$w/host/usr/local/bin/lockfile"
-lea__lockhost_root() { printf '%s' "$w/host"; }
-lea__lockhost_owner() { id -u; }
-# sudo install -m MODE -o root -g root SRC DST, as this user.
-sudo() { [ "$1" = install ] && install -m "$3" "$8" "$9"; }
-lftag=$(api_latest lockfile)
-reset; LEA_LOCKSQL=0 LEA_LOCKFILE=1 LEA_LOCKFILE_REF=v0.1.1
-if out=$(lea_update_deps all 2>&1) && printf '%s' "$out" | grep -q "lockfile: v0.1.1 -> $lftag" &&
-  [ "$(lea__lockhost_version "$w/host/usr/local/bin/lockfile")" = "$lftag" ] && grep -qx "LEA_LOCKFILE_REF='$lftag'" "$LEA_CONFIG"; then
-  ok "lockfile v0.1.1 -> $lftag: signed release installed and recorded"
+# lockfile: its launcher updates it (lockfile update); lea update installs nothing for it.
+reset; LEA_LOCKSQL=0 LEA_LOCKFILE=1
+if out=$(lea_update_deps all 2>&1) && printf '%s' "$out" | grep -q "lockfile: its launcher updates it" && [ ! -e "$LEA_CONFIG" ]; then
+  ok "lockfile: left to its launcher, nothing installed or recorded"
 else
   ko "lockfile update: $out"
 fi
