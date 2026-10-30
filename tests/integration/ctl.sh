@@ -49,6 +49,14 @@ docker exec -u "$(id -u):$(id -g)" "$ctl" docker version --format '{{.Server.Ver
 for p in "$root/build/lea" "$projects" "$XDG_DATA_HOME/lea/state/claude.json"; do
   docker exec "$ctl" test -e "$p" || fail "lea-ctl does not see $p"
 done
+# Of ~/.claude, lea-ctl mounts the projects dir's transcripts only, never all of ~/.claude or of
+# its projects.
+slug=$(printf '%s' "$projects" | sed 's/[^A-Za-z0-9]/-/g')
+mounts=$(docker inspect -f '{{range .Mounts}}{{.Destination}} {{end}}' "$ctl")
+for m in $mounts; do
+  case $m in "$HOME/.claude" | "$HOME/.claude/projects") fail "lea-ctl mounts $m" ;; esac
+done
+case " $mounts " in *" $HOME/.claude/projects/$slug "*) ;; *) fail "lea-ctl lacks $HOME/.claude/projects/$slug: $mounts" ;; esac
 # lea-ctl has a pid namespace of its own; it reads a lea container's cgroup by its ID (the
 # pressure gauge) in the host's cgroup tree. The agent container stopped with the shell: the
 # proxy's, still running, stands in for it.

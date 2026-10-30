@@ -33,7 +33,6 @@ func TestCtlRunArgs(t *testing.T) {
 		"type=bind,src=" + w.data + "/lea,dst=" + w.data + "/lea",
 		"type=bind,src=" + w.proj + ",dst=" + w.proj,
 		"type=bind,src=" + w.dir + "/config/lea,dst=" + w.dir + "/config/lea,readonly",
-		"type=bind,src=" + w.home + "/.claude,dst=" + w.home + "/.claude",
 		"type=bind,src=" + run + "/lockhub,dst=" + run + "/lockhub",
 		"HOME=" + w.home, "XDG_DATA_HOME=" + w.data, "XDG_RUNTIME_DIR=" + run, "LEA_CTL_INSIDE=1",
 		"lea.projects=" + w.proj, "--cgroupns=host", "LEA_CLIPBOARD=0",
@@ -58,6 +57,80 @@ func TestCtlRunArgs(t *testing.T) {
 	// A projects directory with a comma would split the mount: refused.
 	if _, err := l.ctlRunArgs([]string{w.dir + "/a,b"}, "/var/run/docker.sock", 998); err == nil {
 		t.Error("a projects dir with a comma was accepted")
+	}
+}
+
+// lea-ctl sees of ~/.claude only what lea gives agent containers: the shared entries and *.md
+// read-only, each projects dir's projects/<slug> writable; never the other transcripts.
+func TestCtlClaudeMounts(t *testing.T) {
+	w := newWorld(t, repoRoot(t))
+	c := w.home + "/.claude"
+	slug := Slug(w.proj)
+	for _, d := range []string{c + "/skills", c + "/plugins", c + "/projects/-other-project", c + "/shell-snapshots"} {
+		if err := os.MkdirAll(d, 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, f := range []string{c + "/settings.json", c + "/CLAUDE.md", c + "/.credentials.json", c + "/history.jsonl", w.dir + "/elsewhere.md"} {
+		if err := os.WriteFile(f, nil, 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.Symlink(w.dir+"/elsewhere.md", c+"/LINKED.md"); err != nil {
+		t.Fatal(err)
+	}
+	l := w.launcher()
+	args, err := l.ctlRunArgs([]string{w.proj}, "/var/run/docker.sock", 998)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var claude []string
+	for _, m := range args {
+		if strings.Contains(m, "src="+c) {
+			claude = append(claude, m)
+		}
+	}
+	want := []string{
+		"type=bind,src=" + c + "/CLAUDE.md,dst=" + c + "/CLAUDE.md,readonly",
+		"type=bind,src=" + c + "/plugins,dst=" + c + "/plugins,readonly",
+		"type=bind,src=" + c + "/projects/" + slug + ",dst=" + c + "/projects/" + slug,
+		"type=bind,src=" + c + "/settings.json,dst=" + c + "/settings.json,readonly",
+		"type=bind,src=" + c + "/skills,dst=" + c + "/skills,readonly",
+	}
+	slices.Sort(claude)
+	if strings.Join(claude, "\n") != strings.Join(want, "\n") {
+		t.Fatalf("~/.claude mounts:\n%s\nwant:\n%s", strings.Join(claude, "\n"), strings.Join(want, "\n"))
+	}
+	// A ~/.claude lea creates is the user's only.
+	w2 := newWorld(t, repoRoot(t))
+	if _, err := w2.launcher().ctlRunArgs([]string{w2.proj}, "/var/run/docker.sock", 998); err != nil {
+		t.Fatal(err)
+	}
+	if fi, err := os.Stat(w2.home + "/.claude"); err != nil || fi.Mode().Perm() != 0o700 {
+		t.Fatalf("~/.claude: %v %v", fi, err)
+	}
+	// Made on the host: the agent's transcripts dir and the plugins' data mount point (lea-ctl
+	// sees plugins read-only).
+	for _, d := range []string{c + "/projects/" + slug, c + "/plugins/data"} {
+		if !isDir(d) {
+			t.Errorf("%s not created", d)
+		}
+	}
+	// What lea-ctl sees is in a label: a change on the host restarts it.
+	label := ""
+	for _, a := range args {
+		if v, ok := strings.CutPrefix(a, "lea.claude="); ok {
+			label = v
+		}
+	}
+	if label == "" || label != l.ctlClaudeLabel() {
+		t.Fatalf("lea.claude label %q, want %q", label, l.ctlClaudeLabel())
+	}
+	if err := os.MkdirAll(c+"/agents", 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if l.ctlClaudeLabel() == label {
+		t.Fatal("a new shared entry left the label unchanged")
 	}
 }
 
@@ -123,7 +196,7 @@ func TestCtlRunsLeaInTheControlContainer(t *testing.T) {
 	}
 	// Running for these projects with the current image: used as it is.
 	w2, _ := ctlWorld(t)
-	w2.env["FAKE_DOCKER_OUT_INSPECT__F_AT_LEA_CTL"] = "true|" + w2.proj + "|sha256:abc"
+	w2.env["FAKE_DOCKER_OUT_INSPECT__F_AT_LEA_CTL"] = "true|" + w2.proj + "|sha256:abc|" + w2.launcher().ctlClaudeLabel()
 	w2.env["FAKE_DOCKER_OUT_IMAGE_INSPECT_AT_LEA_CTL_DEV"] = "sha256:abc"
 	if err := w2.launcher().dispatch(nil); err != nil {
 		t.Fatal(err)
@@ -133,6 +206,14 @@ func TestCtlRunsLeaInTheControlContainer(t *testing.T) {
 	}
 	if len(w2.execs) != 1 || !strings.HasSuffix(strings.Join(w2.execs[0], " "), "lea-ctl "+w2.core) {
 		t.Fatalf("exec %q", w2.execs)
+	}
+	// Running with other entries of ~/.claude: restarted.
+	w2.env["FAKE_DOCKER_OUT_INSPECT__F_AT_LEA_CTL"] = "true|" + w2.proj + "|sha256:abc|000000000000"
+	if err := w2.launcher().dispatch(nil); err != nil {
+		t.Fatal(err)
+	}
+	if log := readLog(t, w2); !strings.Contains(log, "docker [run]") {
+		t.Fatalf("lea-ctl kept with stale ~/.claude entries:\n%s", log)
 	}
 	// Host-only commands never reach it.
 	w3, _ := ctlWorld(t)
