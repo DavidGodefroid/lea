@@ -32,12 +32,16 @@ launcher() {
     [[ "$output" == *"warn  lockhttp launcher: v$v, older than v0.5.0, the release lea pins"*"LOCKHTTP_VERSION=v0.5.0 sh install.sh"* ]]
     [[ "$output" != *FAIL* ]]
   done
-  for v in 0.5.0 0.5.1 1.0.0 0.6.0-rc.1 0.5.0+build v0.5.0 dev; do
+  for v in 0.5.0 0.5.1 1.0.0 0.6.0-rc.1 0.5.0+build v0.5.0; do
     launcher "$v" "$D"
     run lea__doctor_lockhttp
     [ "$status" -eq 0 ]
     [[ "$output" != *"older than"* ]]
   done
+  # A clone's launcher runs the local image (not the gate's here: that is another failure).
+  launcher dev ""
+  run lea__doctor_lockhttp
+  [[ "$output" != *"older than"* ]]
 }
 
 @test "off: no LockHTTP check" {
