@@ -209,3 +209,41 @@ func TestForgetAgentAbandonsItsHubWaits(t *testing.T) {
 		t.Fatalf("bob's wait went too: %+v", ws)
 	}
 }
+
+// The tickets lea abandons (a forgotten agent's pending waits, the hub switched off) are recorded
+// until the purge, hubWaitKeep later; a decided wait of a forgotten agent is not.
+func TestAbandonedHubTicketsAreRecordedThenPurged(t *testing.T) {
+	s := open(t)
+	for _, n := range []string{"amy", "bob"} {
+		if _, err := s.RegisterAgent("lea-a", n, "claude", "/w", 1); err != nil {
+			t.Fatal(err)
+		}
+	}
+	const t1, t2, t3 = "01JB8Z5Q3W4X7Y9ABCDEFGHJKM", "01JB8Z5Q3W4X7Y9ABCDEFGHJKN", "01JB8Z5Q3W4X7Y9ABCDEFGHJKP"
+	for _, w := range [][2]string{{"lea-a/amy", t1}, {"lea-a/amy", t2}, {"lea-a/bob", t3}} {
+		if err := s.AddHubWait(w[0], w[1], "locksql", "crm", 1); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := s.DecideHubWaits(t2, "crm", DecisionApproved, "", 2); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.ForgetAgent("lea-a/amy"); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := s.AbandonedHubTickets(); err != nil || len(got) != 1 || !got["crm/"+t1] {
+		t.Fatalf("after forget %v %v", got, err)
+	}
+	if _, err := s.AbandonAllHubWaits("off", 3); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := s.AbandonedHubTickets(); len(got) != 2 || !got["crm/"+t3] {
+		t.Fatalf("after the hub off %v", got)
+	}
+	if err := s.PurgeHubWaits(3 + hubWaitKeep); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := s.AbandonedHubTickets(); len(got) != 1 || !got["crm/"+t1] {
+		t.Fatalf("after the purge %v (the forgotten one's time is the wall clock)", got)
+	}
+}

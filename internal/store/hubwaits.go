@@ -147,6 +147,10 @@ func (s *Store) AbandonAllHubWaits(reason string, now int64) ([]HubWait, error) 
 	if err != nil {
 		return nil, err
 	}
+	if _, err := tx.Exec(`INSERT OR IGNORE INTO hub_abandoned(instance, ticket, at)
+		SELECT instance, ticket, ? FROM hub_waits WHERE decision=''`, now); err != nil {
+		return nil, err
+	}
 	if _, err := tx.Exec(`UPDATE hub_waits SET decision=?, reason=?, decided_at=? WHERE decision=''`, DecisionAbandoned, reason, now); err != nil {
 		return nil, err
 	}
@@ -206,10 +210,35 @@ func (s *Store) MarkHubWaitDelivered(agent, ticket string, now int64) error {
 }
 
 // PurgeHubWaits removes the waits delivered hubWaitKeep ago or more, and those of agents lea no
-// longer knows.
+// longer knows, and the abandoned tickets recorded hubWaitKeep ago or more (the hub expires a
+// ticket well before).
 func (s *Store) PurgeHubWaits(now int64) error {
-	_, err := s.db.Exec(`DELETE FROM hub_waits WHERE (delivered>0 AND delivered<=?) OR agent_key NOT IN (SELECT key FROM agents)`, now-hubWaitKeep)
+	if _, err := s.db.Exec(`DELETE FROM hub_waits WHERE (delivered>0 AND delivered<=?) OR agent_key NOT IN (SELECT key FROM agents)`, now-hubWaitKeep); err != nil {
+		return err
+	}
+	_, err := s.db.Exec(`DELETE FROM hub_abandoned WHERE at<=?`, now-hubWaitKeep)
 	return err
+}
+
+// AbandonedHubTickets are the tickets lea stopped waiting on (an agent forgotten while it waited,
+// the hub switched off), as "instance/ticket": the deck shows them on no agent, not even as
+// unverified on an agent of the name their requester gives. An agent that waits on one again
+// (a pending wait) still has it, verified.
+func (s *Store) AbandonedHubTickets() (map[string]bool, error) {
+	rows, err := s.db.Query(`SELECT instance, ticket FROM hub_abandoned`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := map[string]bool{}
+	for rows.Next() {
+		var i, t string
+		if err := rows.Scan(&i, &t); err != nil {
+			return nil, err
+		}
+		out[i+"/"+t] = true
+	}
+	return out, rows.Err()
 }
 
 func collectHubWaits(rows *sql.Rows) ([]HubWait, error) {

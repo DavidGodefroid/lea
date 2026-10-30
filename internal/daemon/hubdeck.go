@@ -240,8 +240,12 @@ func (d *Daemon) setHubQueue(ctx context.Context, ts []HubTicket, up bool) {
 	if len(ts) > 0 {
 		all, err := d.st.Agents()
 		var waits []store.HubWait
+		var abandoned map[string]bool
 		if err == nil {
 			waits, err = d.st.AllPendingHubWaits()
+		}
+		if err == nil {
+			abandoned, err = d.st.AbandonedHubTickets()
 		}
 		if err != nil { // no agent to show them on: none shows
 			log.Printf("lea daemon: hub queue: %v", err)
@@ -262,6 +266,10 @@ func (d *Daemon) setHubQueue(ctx context.Context, ts []HubTicket, up bool) {
 			e := hubEntry{t: t}
 			if k, ok := waiting[t.Instance+"/"+t.ID]; ok && byKey[k].Key != "" {
 				e.agent, e.verified = k, true
+			} else if abandoned[t.Instance+"/"+t.ID] {
+				// lea stopped waiting on it (its agent forgotten, the hub off): not a ticket of a
+				// live agent that bears the same name.
+				continue
 			} else {
 				e.agent = claimedAgent(all, t)
 			}
