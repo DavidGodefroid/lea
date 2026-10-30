@@ -26,6 +26,16 @@ lea_settings() { [ -f "$settings" ] && printf '%s\n' "$settings"; }
 # this session only: nothing is installed in the user's Claude configuration.
 plugin=${LEA_CLAUDE_PLUGIN:-/usr/local/share/lea/claude-plugin}
 if [ "${1:-}" = --claude ]; then shift; fi
+# A resumed session's transcript whose last line was cut (a crash, a killed container) is cut
+# after its last valid line first, the file as it was kept beside it: Claude Code would glue its
+# next record onto the cut line (#219). It never stops the resume.
+lea=${LEA_BIN:-lea}
+prev=
+for a in "$@"; do
+  case $prev in --resume | -r) "$lea" repair-transcript "$a" || true ;; esac
+  case $a in --resume=?*) "$lea" repair-transcript "${a#--resume=}" || true ;; esac
+  prev=$a
+done
 if [ -d "$plugin" ]; then set -- --plugin-dir "$plugin" "$@"; fi
 if s=$(lea_settings); then set -- --settings "$s" "$@"; fi
 exec claude "$@"

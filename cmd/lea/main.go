@@ -7,12 +7,14 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"time"
 
 	"github.com/DavidGodefroid/lea/internal/hook"
 	"github.com/DavidGodefroid/lea/internal/identity"
 	"github.com/DavidGodefroid/lea/internal/mcpserver"
 	"github.com/DavidGodefroid/lea/internal/statusline"
+	"github.com/DavidGodefroid/lea/internal/transcript"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
@@ -67,6 +69,7 @@ const usage = `usage: lea <command>
                              and merges its PR on each GitHub repo of DIR (used by the launcher)
   sound [on|off]             show or switch lea's sounds (until the daemon restarts)
   hook claude <event>        Claude Code hook (inside lea)
+  repair-transcript <id>     cut a session's transcript after its last valid line before a resume (inside lea)
   mcp                        MCP server for agents (inside lea)
   statusline [--dump FILE]   Claude status line (inside lea)
   acp-probe -- CMD...        check an ACP agent`
@@ -123,6 +126,8 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		}
 		hook.Claude(context.Background(), args[2], stdin, stdout, os.Getenv)
 		return 0
+	case "repair-transcript":
+		return runRepairTranscript(args[1:], stderr, os.Getenv)
 	case "mcp":
 		s := mcpserver.New(identity.BusSock(os.Getenv), identity.Agent(os.Getenv), version)
 		if err := s.Run(context.Background(), &mcp.StdioTransport{}); err != nil {
@@ -150,4 +155,30 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	// Not reached: launcherCommand sends every word that is not a core command to the launcher.
 	fmt.Fprintf(stderr, "lea: unknown command %q\n%s\n", args[0], usage)
 	return 2
+}
+
+// runRepairTranscript is lea-session's step before `claude --resume <id>` (#219): a transcript
+// whose last line was cut is cut after its last valid line, the file as it was kept beside it.
+// It never stops the resume: it reports what it did or could not do, and returns 0.
+func runRepairTranscript(args []string, stderr io.Writer, getenv func(string) string) int {
+	if len(args) != 1 {
+		fmt.Fprintln(stderr, "usage: lea repair-transcript <session-id>")
+		return 2
+	}
+	cfg := getenv("CLAUDE_CONFIG_DIR")
+	if cfg == "" {
+		home := getenv("HOME")
+		if home == "" {
+			return 0
+		}
+		cfg = filepath.Join(home, ".claude")
+	}
+	rs, err := transcript.RepairSession(cfg, args[0])
+	for _, r := range rs {
+		fmt.Fprintf(stderr, "lea: the transcript %s ended in a cut line: %d bytes dropped, the file as it was is %s\n", r.File, r.Dropped, r.Backup)
+	}
+	if err != nil {
+		fmt.Fprintln(stderr, "lea: repair the transcript:", err)
+	}
+	return 0
 }

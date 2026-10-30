@@ -115,15 +115,15 @@ jobs:
       - run: npm install -g "@anthropic-ai/claude-code@$(sed -n 's/^ARG CLAUDE_CODE_VERSION=//p' image/Containerfile)"
       - name: the Claude e2e tests, none skipped
         shell: bash
-        # Every TestClaude test but TestClaudeResumesATruncatedTranscript, which fails with this
-        # Claude Code (#219).
+        # Every TestClaude test; the count below is theirs (add one with each new test).
         run: |
-          LEA_E2E_CLAUDE="$(command -v claude)" go test -count=1 -run '^TestClaude' -skip '^TestClaudeResumesATruncatedTranscript$' -v ./internal/daemon/ 2>&1 | tee claude-e2e.log
+          LEA_E2E_CLAUDE="$(command -v claude)" go test -count=1 -run '^TestClaude' -v ./internal/daemon/ 2>&1 | tee claude-e2e.log
           if grep -- '--- SKIP' claude-e2e.log; then echo "a Claude e2e test was skipped" >&2; exit 1; fi
           grep -q -- '^--- PASS: TestClaudePhase3SuspendResumeEndToEnd ' claude-e2e.log
+          grep -q -- '^--- PASS: TestClaudeResumesATruncatedTranscript ' claude-e2e.log
           n=$(grep -c -- '^--- PASS: TestClaude' claude-e2e.log)
           echo "$n Claude e2e tests passed"
-          [ "$n" -eq 7 ]
+          [ "$n" -eq 8 ]
   # The lockmq / lockfile socket wiring (tests/integration/lockhost.sh, phase 0): the lockmq
   # client of the release image/Containerfile pins (sha256-checked) reaches a console's socket
   # through its volume, as lea wires it, with no host account; outsiders and other uids refused.

@@ -81,3 +81,33 @@ EOT
   run calls
   [ "$output" = "codex [--model] [gpt-5] [do it]" ]
 }
+
+# A resumed session's transcript is repaired first (#219), by lea inside the container.
+@test "the session repairs the transcript of the session it resumes" {
+  cat >"$F/lea" <<'EOT'
+#!/bin/sh
+{ printf 'lea'; for a in "$@"; do printf ' [%s]' "$a"; done; printf '\n'; } >>"$FAKE_LOG"
+EOT
+  chmod +x "$F/lea"
+  export LEA_CLAUDE_PLUGIN="$BATS_TEST_TMPDIR/no-plugin" LEA_CLAUDE_SETTINGS="$BATS_TEST_TMPDIR/none.json"
+  run "$SESSION" --claude --resume 0f8e2c1a-1b2c-4d5e-8f90-123456789abc --model opus "go on"
+  [ "$status" -eq 0 ]
+  run calls
+  [ "$output" = "lea [repair-transcript] [0f8e2c1a-1b2c-4d5e-8f90-123456789abc]
+claude [--resume] [0f8e2c1a-1b2c-4d5e-8f90-123456789abc] [--model] [opus] [go on]" ]
+}
+
+@test "a failed repair does not stop the resume, and a new session repairs nothing" {
+  printf '#!/bin/sh\necho "lea $*" >>"$FAKE_LOG"; exit 1\n' >"$F/lea"; chmod +x "$F/lea"
+  export LEA_CLAUDE_PLUGIN="$BATS_TEST_TMPDIR/no-plugin" LEA_CLAUDE_SETTINGS="$BATS_TEST_TMPDIR/none.json"
+  run "$SESSION" --claude --resume=abc
+  [ "$status" -eq 0 ]
+  run calls
+  [ "$output" = "lea repair-transcript abc
+claude [--resume=abc]" ]
+  : >"$FAKE_LOG"
+  run "$SESSION" --claude "first prompt"
+  [ "$status" -eq 0 ]
+  run calls
+  [ "$output" = "claude [first prompt]" ]
+}
