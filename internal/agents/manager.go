@@ -145,7 +145,7 @@ type Config struct {
 	// RequesterToken is the agent's own token (LEA_AGENT_TOKEN, #160): a Lock's MCP server sends
 	// it as the requester of a plan, and the Lock runs a ticket only for the token that asked.
 	// Not a security boundary: the agents of a container share one UID. nil: no token.
-	RequesterToken func(container, agent string) string
+	RequesterToken func(container, agent, incarnation string) string
 }
 
 type Row struct {
@@ -426,7 +426,7 @@ func (m *Manager) paneCmd(container string, a store.Agent, args []string, attach
 		cmd = append(cmd, "-e", "LEA_PROXY_TOKEN="+m.cfg.ProxyToken(container, a.Name))
 	}
 	if m.cfg.RequesterToken != nil && !attach {
-		cmd = append(cmd, "-e", "LEA_AGENT_TOKEN="+m.cfg.RequesterToken(container, a.Name))
+		cmd = append(cmd, "-e", "LEA_AGENT_TOKEN="+m.cfg.RequesterToken(container, a.Name, a.Incarnation))
 	}
 	cmd = append(cmd, "-w", a.Workdir, container, "abduco")
 	if attach {

@@ -246,7 +246,9 @@ func runDaemon(stderr io.Writer) int {
 		fmt.Fprintln(stderr, "lea:", clean(err.Error(), false))
 		return 1
 	}
-	requesterToken := func(container, agent string) string { return agents.RequesterToken(key, container, agent) }
+	requesterToken := func(container, agent, incarnation string) string {
+		return agents.RequesterToken(key, container, agent, incarnation)
+	}
 	if os.Getenv("LEA_LOCKHTTP") == "1" {
 		proxyToken = func(container, agent string) string { return lockhttp.Token(key, container, agent) }
 		d.SetGrantProxy(lockHTTPGrantProxy(key))

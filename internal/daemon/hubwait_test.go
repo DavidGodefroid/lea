@@ -47,3 +47,21 @@ func TestHubWaitRegisterIsForAgents(t *testing.T) {
 		t.Fatal("registered from the host")
 	}
 }
+
+// An agent lea did not start (no profile: the user's own Claude in the container) gets its wait
+// recorded, for the decision to reach its inbox, but is not suspended: lea cannot stop or resume it.
+func TestHubWaitRegisterDoesNotSuspendAnAgentLeaDidNotStart(t *testing.T) {
+	e := start(t)
+	e.d.SetAgents(&fakeAgents{st: e.d.st})
+	hookEvent(t, e, "mine", "SessionStart")
+	var r struct{ Suspended bool }
+	if err := call(t, e.bus, "mine", "hub_wait_register", map[string]any{"ticket": testTicket, "lock": "locksql", "instance": "crm-prod"}, &r); err != nil {
+		t.Fatal(err)
+	}
+	if r.Suspended || agentState(t, e, "lea-a/mine") == store.StateSuspendedWarm {
+		t.Fatalf("r=%+v state=%s", r, agentState(t, e, "lea-a/mine"))
+	}
+	if ws, err := e.d.st.PendingHubWaits("lea-a/mine"); err != nil || len(ws) != 1 {
+		t.Fatalf("waits %+v %v", ws, err)
+	}
+}

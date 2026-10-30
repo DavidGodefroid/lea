@@ -81,6 +81,7 @@ func TestOtherResultsDoNotSuspend(t *testing.T) {
 		"object":         postToolUse("mcp__locksql__query_run", map[string]string{"status": "pending", "ticket": ticket, "lock": "locksql", "instance": "crm-prod"}),
 		"no instance":    postToolUse("mcp__locksql__query_run", pendingJSON("")),
 		"bad ticket":     postToolUse("mcp__locksql__query_run", strings.Replace(pendingJSON("crm-prod"), ticket, "42", 1)),
+		"status ok":      postToolUse("mcp__locksql__query_run", strings.Replace(pendingJSON("crm-prod"), `"pending"`, `"ok"`, 1)),
 	}
 	for name, in := range cases {
 		if out := runHook(bus, "PostToolUse", in, nil); strings.Contains(out, "continue") {

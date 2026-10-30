@@ -4,7 +4,9 @@
 package store
 
 import (
+	"crypto/rand"
 	"database/sql"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -132,6 +134,9 @@ type Agent struct {
 	// gave up). LimitTries counts the resumes since the agent last made progress.
 	LimitUntil int64
 	LimitTries int
+	// Incarnation is random, new each time the agent is registered (created or reused under its
+	// name), and kept across its resumes: what its requester token is bound to (#160).
+	Incarnation string
 }
 
 // agentColumns are the agents columns added after phase 0; migrate adds the missing ones to a
@@ -156,6 +161,7 @@ var agentColumns = [][2]string{
 	{"model", "TEXT NOT NULL DEFAULT ''"},
 	{"limit_until", "INTEGER NOT NULL DEFAULT 0"},
 	{"limit_tries", "INTEGER NOT NULL DEFAULT 0"},
+	{"incarnation", "TEXT NOT NULL DEFAULT ''"},
 }
 
 // requestColumns are the spawn_requests columns added after it was created.
@@ -230,13 +236,13 @@ func (s *Store) SetState(key, state, sessionID string, now int64) error {
 	return err
 }
 
-const agentCols = `key, container, name, session_id, state, updated, profile, workdir, created, role, parent, repo, branch, task_id, label, args, prompt, paused, model, limit_until, limit_tries`
+const agentCols = `key, container, name, session_id, state, updated, profile, workdir, created, role, parent, repo, branch, task_id, label, args, prompt, paused, model, limit_until, limit_tries, incarnation`
 
 func scanAgent(sc interface{ Scan(...any) error }) (Agent, error) {
 	var a Agent
 	var args string
 	err := sc.Scan(&a.Key, &a.Container, &a.Name, &a.SessionID, &a.State, &a.Updated, &a.Profile, &a.Workdir, &a.Created,
-		&a.Role, &a.Parent, &a.Repo, &a.Branch, &a.TaskID, &a.Label, &args, &a.Prompt, &a.Paused, &a.Model, &a.LimitUntil, &a.LimitTries)
+		&a.Role, &a.Parent, &a.Repo, &a.Branch, &a.TaskID, &a.Label, &args, &a.Prompt, &a.Paused, &a.Model, &a.LimitUntil, &a.LimitTries, &a.Incarnation)
 	if err == nil && args != "" {
 		err = json.Unmarshal([]byte(args), &a.Args)
 	}
@@ -367,16 +373,20 @@ func (s *Store) Register(n NewAgent, c Caps, now int64) (Agent, error) {
 			return Agent{}, fmt.Errorf("%w: %s already runs %d agents (max_children %d)", ErrLimit, nameOf(n.Parent), kids, c.MaxChildren)
 		}
 	}
+	inc, err := newIncarnation()
+	if err != nil {
+		return Agent{}, err
+	}
 	if reuse {
 		if _, err := tx.Exec(`UPDATE agents SET parent='' WHERE parent=?`, key); err != nil {
 			return Agent{}, err
 		}
 		_, err = tx.Exec(`UPDATE agents SET profile=?, workdir=?, created=?, updated=?, state='unknown', session_id='',
-			ctx_pct=-1, cost_usd=-1, role=?, parent=?, repo=?, branch=?, task_id=0, label='', args='', prompt='', paused=0, subagents=0, limit_until=0, limit_tries=0, model=? WHERE key=?`,
-			n.Profile, n.Workdir, now, now, n.Role, n.Parent, n.Repo, n.Branch, n.Model, key)
+			ctx_pct=-1, cost_usd=-1, role=?, parent=?, repo=?, branch=?, task_id=0, label='', args='', prompt='', paused=0, subagents=0, limit_until=0, limit_tries=0, model=?, incarnation=? WHERE key=?`,
+			n.Profile, n.Workdir, now, now, n.Role, n.Parent, n.Repo, n.Branch, n.Model, inc, key)
 	} else {
-		_, err = tx.Exec(`INSERT INTO agents(key, container, name, profile, workdir, created, updated, role, parent, repo, branch, model)
-			VALUES(?,?,?,?,?,?,?,?,?,?,?,?)`, key, n.Container, n.Name, n.Profile, n.Workdir, now, now, n.Role, n.Parent, n.Repo, n.Branch, n.Model)
+		_, err = tx.Exec(`INSERT INTO agents(key, container, name, profile, workdir, created, updated, role, parent, repo, branch, model, incarnation)
+			VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)`, key, n.Container, n.Name, n.Profile, n.Workdir, now, now, n.Role, n.Parent, n.Repo, n.Branch, n.Model, inc)
 	}
 	if err != nil {
 		return Agent{}, err
@@ -385,7 +395,16 @@ func (s *Store) Register(n NewAgent, c Caps, now int64) (Agent, error) {
 		return Agent{}, err
 	}
 	return Agent{Key: key, Container: n.Container, Name: n.Name, State: "unknown", Updated: now, Profile: n.Profile, Model: n.Model,
-		Workdir: n.Workdir, Created: now, Role: n.Role, Parent: n.Parent, Repo: n.Repo, Branch: n.Branch}, nil
+		Workdir: n.Workdir, Created: now, Role: n.Role, Parent: n.Parent, Repo: n.Repo, Branch: n.Branch, Incarnation: inc}, nil
+}
+
+// newIncarnation is a fresh agent incarnation: 16 random bytes in hex.
+func newIncarnation() (string, error) {
+	b := make([]byte, 16)
+	if _, err := rand.Read(b); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(b), nil
 }
 
 // RegisterAgent registers a dev agent without caps (callers before roles, tests).
