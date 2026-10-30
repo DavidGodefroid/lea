@@ -33,7 +33,7 @@ func TestCtlRunArgs(t *testing.T) {
 		"type=bind,src=" + w.data + "/lea,dst=" + w.data + "/lea",
 		"type=bind,src=" + w.proj + ",dst=" + w.proj,
 		"type=bind,src=" + w.dir + "/config/lea,dst=" + w.dir + "/config/lea,readonly",
-		"type=bind,src=" + w.home + "/.claude,dst=" + w.home + "/.claude,readonly",
+		"type=bind,src=" + w.home + "/.claude,dst=" + w.home + "/.claude",
 		"type=bind,src=" + run + "/lockhub,dst=" + run + "/lockhub",
 		"HOME=" + w.home, "XDG_DATA_HOME=" + w.data, "XDG_RUNTIME_DIR=" + run, "LEA_CTL_INSIDE=1",
 		"lea.projects=" + w.proj, "--pid=host", "--cgroupns=host", "LEA_CLIPBOARD=0",

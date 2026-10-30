@@ -57,13 +57,18 @@ func (l *Launcher) ctlRunArgs(projects []string, sock string, sockGID int) ([]st
 		return nil, err
 	}
 	bind(data, false)
+	// ~/.claude: lea creates each projects dir's projects/<slug> there and gives it to the agent
+	// container, as on the host.
+	if err := os.MkdirAll(home+"/.claude", 0o700); err != nil {
+		return nil, err
+	}
+	bind(home+"/.claude", false)
 	for _, p := range projects {
 		bind(p, false)
 	}
-	// What lea reads but never writes: the user's configuration and the providers' homes it
-	// mounts into agent containers. A path missing on the host is left out (the engine would
+	// What lea reads but never writes: the user's configuration, ~/.claude.json and ~/.codex. A path missing on the host is left out (the engine would
 	// create it, owned by root).
-	opt := []string{filepath.Dir(l.Cfg.UserConfigPath()), home + "/.claude", home + "/.claude.json", home + "/.codex"}
+	opt := []string{filepath.Dir(l.Cfg.UserConfigPath()), home + "/.claude.json", home + "/.codex"}
 	for _, p := range opt {
 		if _, err := os.Lstat(p); err == nil && !strings.Contains(p, ",") {
 			bind(p, true)
