@@ -58,6 +58,16 @@ mustnt ".lockfamily cannot be renamed"          mv "$lf" "$LEA_PROJECTS/.lockfam
 mustnt ".lockfamily cannot be replaced by a link" sh -c 'ln -sfn /tmp "$1.new" && mv -T "$1.new" "$1"' sh "$lf"
 rm -f "$lf.new"
 must   ".lockfamily is still a directory"       test -d "$lf" -a ! -L "$lf"
+# The hub's facade socket (I11): the host's is not visible, nor any lockhub runtime directory nor
+# any facade socket anywhere in the container.
+if [ -n "${HOST_FACADE:-}" ]; then
+  mustnt "host facade socket not visible"       test -e "$HOST_FACADE"
+  mustnt "host facade directory not visible"    test -e "$(dirname "$HOST_FACADE")"
+fi
+if [ -n "${XDG_RUNTIME_DIR:-}" ]; then
+  mustnt "no lockhub runtime directory"         test -e "$XDG_RUNTIME_DIR/lockhub"
+fi
+must   "no facade socket in the container"      sh -c '[ -z "$(find / \( -path /proc -o -path /sys -o -path /dev \) -prune -o -name facade.sock -print 2>/dev/null)" ]'
 mustnt "host ~/.ssh absent"                     test -e "$HOME/.ssh"
 mustnt "host ~/.docker absent"                  test -e "$HOME/.docker"
 mustnt "host ~/.config/glab-cli absent"         test -e "$HOME/.config/glab-cli"
