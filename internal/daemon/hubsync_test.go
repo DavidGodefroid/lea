@@ -31,6 +31,11 @@ type fakeHub struct {
 	queue        []map[string]any
 	decided      []string
 	decideStatus int
+	// expired is the queue's expired list (lockhub#29); onReveal and onRenew answer POST
+	// …/reveal and …/renew (status, JSON body), asked the bodies they got.
+	expired           []map[string]any
+	onReveal, onRenew func(body []byte) (int, any)
+	asked             []string
 }
 
 type fakeDecision struct{ ticket, instance, decision, reason string }
@@ -65,7 +70,28 @@ func (h *fakeHub) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		if q == nil {
 			q = []map[string]any{}
 		}
-		json.NewEncoder(w).Encode(map[string]any{"tickets": q, "version": len(h.calls)})
+		e := h.expired
+		if e == nil {
+			e = []map[string]any{}
+		}
+		json.NewEncoder(w).Encode(map[string]any{"tickets": q, "version": len(h.calls), "expired": e})
+		return
+	}
+	if r.Method == http.MethodPost && (strings.HasSuffix(r.URL.Path, "/reveal") || strings.HasSuffix(r.URL.Path, "/renew")) {
+		b, _ := io.ReadAll(r.Body)
+		h.asked = append(h.asked, strings.TrimPrefix(r.URL.Path, "/v1/tickets/")+" "+string(b))
+		on := h.onRenew
+		if strings.HasSuffix(r.URL.Path, "/reveal") {
+			on = h.onReveal
+		}
+		if on == nil {
+			w.WriteHeader(http.StatusNotFound)
+			json.NewEncoder(w).Encode(map[string]string{"error": "not_found", "message": "no such ticket"})
+			return
+		}
+		st, out := on(b)
+		w.WriteHeader(st)
+		json.NewEncoder(w).Encode(out)
 		return
 	}
 	if r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/decide") {
@@ -304,6 +330,14 @@ func (stubFacade) Queue(ctx context.Context, since uint64, wait int) ([]HubTicke
 }
 
 func (stubFacade) Decide(ctx context.Context, instance, id string, v HubVerdict) error { return nil }
+
+func (stubFacade) Reveal(ctx context.Context, instance, id string, key []byte) ([]byte, error) {
+	return nil, ErrNoHub
+}
+
+func (stubFacade) Renew(ctx context.Context, instance, id string) (HubRenewed, error) {
+	return HubRenewed{}, ErrNoHub
+}
 
 // A cold-suspended agent is not told on its inbox: its wait stays undelivered, and waking it tells
 // it the decision in its resume prompt (#163).

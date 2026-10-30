@@ -57,6 +57,10 @@ type HubFacade interface {
 	// passed), and that version; Decide answers one from the deck (hubdeck.go, #158).
 	Queue(ctx context.Context, since uint64, wait int) ([]HubTicket, uint64, error)
 	Decide(ctx context.Context, instance, id string, v HubVerdict) error
+	// Reveal carries a deck's reveal key to the Lock and returns its signed, sealed answer;
+	// Renew asks the Lock again for an expired ticket (hubreveal.go).
+	Reveal(ctx context.Context, instance, id string, key []byte) ([]byte, error)
+	Renew(ctx context.Context, instance, id string) (HubRenewed, error)
 }
 
 // ErrNoHub is a facade socket that is not there: no hub runs (yet); nothing to read.

@@ -252,6 +252,26 @@ type HubCard struct {
 	// the Lock's screen, so the deck cannot show all of it and sends the user to lock approve.
 	Claimed   string `json:"claimed,omitempty"`
 	Truncated bool   `json:"truncated,omitempty"`
+	// Expired: the ticket expired at the hub (its queue's expired list): the deck offers to ask
+	// the Lock again (r), never to decide it. Renews: this ticket asks again for an expired one.
+	Expired bool        `json:"expired,omitempty"`
+	Renews  *HubRenewal `json:"renews,omitempty"`
+}
+
+// HubRenewal is what a renewal ticket says of the expired ticket it asks again for (lockkit's
+// ticket.Renewal, cleaned): its id, why it expired (expired, approval-expired), whether the Lock
+// compared the plan's inputs (Checked) and what changed since (input: changed, new or gone).
+type HubRenewal struct {
+	Of      string      `json:"of"`
+	Reason  string      `json:"reason,omitempty"`
+	Checked bool        `json:"checked,omitempty"`
+	Changes []HubChange `json:"changes,omitempty"`
+}
+
+// HubChange is one input of a renewal's plan and how it changed.
+type HubChange struct {
+	Input  string `json:"input"`
+	Change string `json:"change"`
 }
 
 type NewRequest struct {

@@ -705,3 +705,21 @@ func TestLockSendsTheRequest(t *testing.T) {
 		t.Fatalf("calls=%q", ca.calls)
 	}
 }
+
+// The deck's facade keys are where lock up writes them: $XDG_STATE_HOME/lockfamily/facades, or
+// ~/.local/state's; LEA_HUB_FACADE_KEYS overrides.
+func TestHubFacadeKeys(t *testing.T) {
+	for _, tc := range []struct {
+		env  map[string]string
+		want string
+	}{
+		{map[string]string{"XDG_STATE_HOME": "/s", "HOME": "/h"}, "/s/lockfamily/facades"},
+		{map[string]string{"HOME": "/h"}, "/h/.local/state/lockfamily/facades"},
+		{map[string]string{"LEA_HUB_FACADE_KEYS": "/k", "HOME": "/h"}, "/k"},
+		{map[string]string{}, ""},
+	} {
+		if got := hubFacadeKeys(func(k string) string { return tc.env[k] }); got != tc.want {
+			t.Errorf("%v: %q, want %q", tc.env, got, tc.want)
+		}
+	}
+}
