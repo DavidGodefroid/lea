@@ -13,6 +13,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"syscall"
 	"testing"
 	"time"
 
@@ -20,13 +21,27 @@ import (
 	"github.com/DavidGodefroid/lea/internal/providers"
 )
 
-// ptyRun runs argv in a pseudo-terminal for secs seconds (Codex's TUI needs one), then kills it.
+// ptyRun runs argv in a pseudo-terminal for secs seconds (Codex's TUI needs one), then kills it
+// and every process of its session (its MCP servers), and waits for them: SIGTERM ends it early.
+// A Codex that outlived the test would write in its temporary directory while it is removed.
 const ptyRun = `
 import os, pty, sys, time, select, signal, struct, fcntl, termios
 secs = float(sys.argv[1]); argv = sys.argv[2:]
 pid, fd = pty.fork()
 if pid == 0:
     os.execvp(argv[0], argv)
+def stop(*_):
+    try:
+        os.killpg(pid, signal.SIGKILL)
+    except OSError:
+        pass
+    try:
+        os.waitpid(pid, 0)
+    except OSError:
+        pass
+    sys.stdout.buffer.flush()
+    os._exit(0)
+signal.signal(signal.SIGTERM, stop)
 fcntl.ioctl(fd, termios.TIOCSWINSZ, struct.pack('HHHH', 45, 160, 0, 0))
 end = time.time() + secs
 while time.time() < end:
@@ -41,8 +56,24 @@ while time.time() < end:
         sys.stdout.buffer.write(d); sys.stdout.buffer.flush()
         if b'\x1b[6n' in d:
             os.write(fd, b'\x1b[1;1R')
-os.kill(pid, signal.SIGKILL)
+stop()
 `
+
+// endPty ends a ptyRun started with cmd (whose CombinedOutput goes to done) and returns its
+// output, once Codex and its children are gone.
+func endPty(cmd *exec.Cmd, done chan []byte) []byte {
+	if cmd.Process == nil {
+		return nil
+	}
+	cmd.Process.Signal(syscall.SIGTERM)
+	select {
+	case out := <-done:
+		return out
+	case <-time.After(15 * time.Second):
+		cmd.Process.Kill()
+		return <-done
+	}
+}
 
 // The real Codex CLI, started with the arguments lea gives an agent on an endpoint provider,
 // reaches the endpoint through lea-keyproxy, which adds the key: Codex never has it. Set
@@ -153,7 +184,7 @@ func codexE2E(t *testing.T, plant bool) {
 	go func() { out, _ := cmd.CombinedOutput(); done <- out }()
 	if plant {
 		time.Sleep(10 * time.Second)
-		cmd.Process.Kill()
+		endPty(cmd, done)
 		mu.Lock()
 		defer mu.Unlock()
 		for _, g := range got {
@@ -179,9 +210,7 @@ func codexE2E(t *testing.T, plant bool) {
 		case <-time.After(200 * time.Millisecond):
 		}
 	}
-	if cmd.Process != nil {
-		cmd.Process.Kill()
-	}
+	endPty(cmd, done)
 	mu.Lock()
 	defer mu.Unlock()
 	g := got[0]
@@ -360,9 +389,10 @@ func TestCodexLockCallOutlivesTheDefaultToolTimeout(t *testing.T) {
 		"TERM=xterm-256color", "LEA_BUS_SOCK=" + filepath.Join(dir, "no-bus.sock"), "NO_PROXY=*"}
 	done := make(chan []byte, 1)
 	go func() { out, _ := cmd.CombinedOutput(); done <- out }()
+	ended := false
 	defer func() {
-		if cmd.Process != nil {
-			cmd.Process.Kill()
+		if !ended {
+			endPty(cmd, done)
 		}
 	}()
 	deadline := time.After(time.Duration(wait+55) * time.Second)
@@ -378,12 +408,13 @@ func TestCodexLockCallOutlivesTheDefaultToolTimeout(t *testing.T) {
 		}
 		select {
 		case out := <-done:
+			ended = true
 			mu.Lock()
 			defer mu.Unlock()
 			t.Fatalf("codex ended before the Lock call came back (tools %q, %d requests; the Lock's tool: %s):\n%s", tools, n, lockTool, out)
 		case <-deadline:
-			cmd.Process.Kill()
-			out := <-done
+			out := endPty(cmd, done)
+			ended = true
 			if len(out) > 4000 {
 				out = out[len(out)-4000:]
 			}
