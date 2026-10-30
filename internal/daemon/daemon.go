@@ -982,14 +982,18 @@ func (d *Daemon) dispatchHooks(ctx context.Context, o Origin, me string, req wir
 				a, err := d.st.AgentByKey(me)
 				waits = err == nil && a.State != "blocked"
 			}
-			if err := d.st.SetState(me, s, p.SessionID, d.now()); err != nil {
+			// A stopped agent's container is ending: its late hooks leave it stopped (SetHookState).
+			set, err := d.st.SetHookState(me, s, p.SessionID, d.now())
+			if err != nil {
 				return nil, err
 			}
-			d.stackActivity(me, s)
-			d.keepActivity(me, s)
-			d.changed()
-			if waits {
-				d.sound(ctx, o.Container, SoundAttention)
+			if set {
+				d.stackActivity(me, s)
+				d.keepActivity(me, s)
+				d.changed()
+				if waits {
+					d.sound(ctx, o.Container, SoundAttention)
+				}
 			}
 		}
 		if ok && (s == "idle" || s == "done" || p.Event == "UserPromptSubmit") {
@@ -1029,7 +1033,7 @@ func (d *Daemon) dispatchHooks(ctx context.Context, o Origin, me string, req wir
 		delete(d.stopped, me)
 		d.mu.Unlock()
 		// Blocking the stop means the agent keeps working on the delivered messages.
-		if err := d.st.SetState(me, "working", "", d.now()); err != nil {
+		if _, err := d.st.SetHookState(me, "working", "", d.now()); err != nil {
 			log.Printf("lea daemon: set state of %s: %v", me, err)
 		}
 		d.changed()
@@ -1117,7 +1121,7 @@ func (d *Daemon) dispatchHooks(ctx context.Context, o Origin, me string, req wir
 		// A withdrawn request leaves the state to the hook event that withdrew it (even when a
 		// deck verdict raced it: the turn is over either way).
 		if !withdrawn && (v != "" || hookGone) {
-			if err := d.st.SetState(me, "working", "", d.now()); err != nil {
+			if _, err := d.st.SetHookState(me, "working", "", d.now()); err != nil {
 				log.Printf("lea daemon: set state of %s: %v", me, err)
 			}
 		}

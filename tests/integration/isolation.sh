@@ -30,6 +30,10 @@ slug=$(printf '%s' "$projects" | sed 's/[^A-Za-z0-9]/-/g')
 id=$(printf '%s' "$projects" | sha256sum | cut -c1-10)
 sid=$(printf '%s' "$sibling" | sha256sum | cut -c1-10)
 holders=
+# A stand-in for the Lock Family hub's facade socket (I11): the host daemon is pointed at it, and
+# no agent may see it (lea follows the hub by default). Outside the projects dir, as lockhub's is.
+facade_dir="$work/run/lockhub"; facade="$facade_dir/facade.sock"; facade_pid=
+export LEA_HUB_SOCKET="$facade"
 
 # hold DIR: a background lea session on DIR, serving HTTP on port 8765 inside its container,
 # that ends when DIR/.lea-release exists.
@@ -62,6 +66,7 @@ wait_for() {
 # shellcheck disable=SC2317 # invoked via trap
 cleanup() {
   release_holders
+  if [ -n "$facade_pid" ]; then kill "$facade_pid" 2>/dev/null || true; fi
   docker rm -f lea-canary >/dev/null 2>&1 || true
   docker network rm lea-canary-net >/dev/null 2>&1 || true
   "$root/bin/lea" stop --all >/dev/null 2>&1 || true
@@ -94,6 +99,18 @@ host_ip=$(ip -4 route get 1.1.1.1 2>/dev/null | sed -n 's/.* src \([0-9.]*\).*/\
 cred_sha=; hist_sha=
 if [ -f "$HOME/.claude/.credentials.json" ]; then cred_sha=$(sha256sum <"$HOME/.claude/.credentials.json" | cut -d' ' -f1); fi
 if [ -f "$HOME/.claude/history.jsonl" ]; then hist_sha=$(sha256sum <"$HOME/.claude/history.jsonl" | cut -d' ' -f1); fi
+mkdir -p "$facade_dir"
+python3 -I -c 'import socket, sys
+s = socket.socket(socket.AF_UNIX); s.bind(sys.argv[1]); s.listen(8)
+while True: s.accept()[0].close()' "$facade" &
+facade_pid=$!
+# Positive control: the stand-in facade socket answers on the host.
+i=0
+until python3 -I -c 'import socket, sys; socket.socket(socket.AF_UNIX).connect(sys.argv[1])' "$facade" 2>/dev/null; do
+  i=$((i + 1))
+  if [ "$i" -ge 10 ]; then echo "isolation: the stand-in facade socket does not answer (positive control failed)" >&2; exit 1; fi
+  sleep 1
+done
 cp "$root/tests/integration/inside-isolation.sh" "$projects/"
 # The internal networks have Docker-allocated subnets: hold both sessions open to read the
 # gateway of this one and the address of the sibling.
@@ -113,5 +130,5 @@ until LEA_PROJECTS_DIR="$sibling" "$root/bin/lea" shell -- curl -s -o /dev/null 
 done
 rc=0
 LEA_PROJECTS_DIR="$projects" "$root/bin/lea" shell -- env CANARY_IP="$canary_ip" GW_IP="$gw_ip" HOST_IP="$host_ip" \
-  SIBLING_IP="$sibling_ip" HOST_CRED_SHA="$cred_sha" HOST_HIST_SHA="$hist_sha" sh "$projects/inside-isolation.sh" || rc=$?
+  SIBLING_IP="$sibling_ip" HOST_FACADE="$facade" HOST_CRED_SHA="$cred_sha" HOST_HIST_SHA="$hist_sha" sh "$projects/inside-isolation.sh" || rc=$?
 exit "$rc"

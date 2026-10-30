@@ -234,7 +234,8 @@ type LockView struct {
 // for: the Lock, its instance, the risk, the production flags and the Lock's masked screen, all
 // cleaned by the daemon. Verified: the agent's own wait names the ticket; otherwise the ticket's
 // requester (which the agent wrote) claims the agent. Retype is what the user types to approve a
-// production ticket ("" none). Expires is unix seconds (0 never).
+// production ticket: its instance name (set on every production ticket; "" otherwise). Expires is
+// unix seconds (0 never).
 type HubCard struct {
 	ID         string   `json:"id"`
 	Instance   string   `json:"instance"`
@@ -659,6 +660,9 @@ func (m *Manager) Ensure(ctx context.Context, container, workdir string) error {
 	}
 	if workdir != "" {
 		if _, err := s.Run(ctx, "set-option", "-t", "="+container+":", optWorkdir, workdir); err != nil {
+			return err
+		}
+		if err := m.unstopLive(ctx, container); err != nil {
 			return err
 		}
 	}
@@ -2078,6 +2082,30 @@ func (m *Manager) MarkStopped(ctx context.Context, container string, forget bool
 		}
 	}
 	m.feed.bump()
+	return nil
+}
+
+// unstopLive takes back the stop of agents still live in the container lea opens (a lea stop
+// cut short: interrupted, or its container never stopped): MarkStopped marked them stopped, and
+// no hook of theirs makes a stopped agent live again (store.SetHookState). They become unknown,
+// as an agent restart starts, so that their next hook reports their state. Callers hold m.mu.
+func (m *Manager) unstopLive(ctx context.Context, container string) error {
+	live, err := m.cfg.Containers.Live(ctx, container)
+	if err != nil {
+		return err
+	}
+	as, err := m.cfg.Store.SpawnedAgents(container)
+	if err != nil {
+		return err
+	}
+	for _, a := range as {
+		if a.State == stateStopped && slices.Contains(live, a.Name) {
+			if err := m.cfg.Store.SetState(a.Key, "unknown", "", m.cfg.Now()); err != nil {
+				return err
+			}
+			m.feed.bump()
+		}
+	}
 	return nil
 }
 

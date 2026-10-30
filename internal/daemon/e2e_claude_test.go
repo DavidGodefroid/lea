@@ -57,6 +57,7 @@ type claudeE2E struct {
 	limited bool
 	bodies  []string
 	claude  string
+	lea     string // the core binary, built from this tree
 	wd      string
 	env     []string
 	sf      string
@@ -86,6 +87,7 @@ func newClaudeE2E(t *testing.T) *claudeE2E {
 	e := &claudeE2E{t: t, limited: true, claude: claude}
 	dir := shortDir(t)
 	lea := filepath.Join(dir, "lea")
+	e.lea = lea
 	if out, err := exec.Command("go", "build", "-o", lea, "../../cmd/lea").CombinedOutput(); err != nil {
 		t.Fatalf("build lea: %v\n%s", err, out)
 	}
@@ -328,11 +330,9 @@ func TestClaudeResumesAfterAContainerRestart(t *testing.T) {
 	minResumeWait, retryBase, resumeJitter = 1, 20, 0
 	e := newClaudeE2E(t)
 	kill := e.run("say hi")
-	// The daemon records the limit (StopFailure) just before it sets the agent idle: marked
-	// stopped in between, the agent would be set idle again and its SessionEnd would count.
-	a := e.until("the usage limit", 45, func(a store.Agent) bool {
-		return a.LimitUntil > 0 && len(a.SessionID) == 36 && a.State == "idle"
-	})
+	// Marked stopped as soon as the limit is recorded, possibly before the StopFailure's own
+	// state (idle) is written: that late write leaves a stopped agent stopped (SetHookState).
+	a := e.until("the usage limit", 45, func(a store.Agent) bool { return a.LimitUntil > 0 && len(a.SessionID) == 36 })
 	// lea stop: the agent is marked stopped, then its container (and Claude, which may still run
 	// its SessionEnd hook) ends; the next container marks it unknown and starts it again.
 	if err := e.st.SetState(a.Key, "stopped", "", time.Now().Unix()); err != nil {
@@ -348,6 +348,9 @@ func TestClaudeResumesAfterAContainerRestart(t *testing.T) {
 		}
 	}
 	time.Sleep(time.Second)
+	if b := e.until("the agent still stopped", 1, func(store.Agent) bool { return true }); b.State != "stopped" || b.LimitUntil != a.LimitUntil {
+		t.Fatalf("the ending container's hooks changed the stopped agent: %+v", b)
+	}
 	if err := e.st.SetState(a.Key, "unknown", "", time.Now().Unix()); err != nil {
 		t.Fatal(err)
 	}

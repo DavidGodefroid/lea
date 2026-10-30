@@ -134,6 +134,39 @@ func TestRegisterAgentAndLookups(t *testing.T) {
 	}
 }
 
+// A stopped agent's late hooks leave it stopped; any other state takes the hook's.
+func TestSetHookStateLeavesAStoppedAgentStopped(t *testing.T) {
+	s := open(t)
+	a, err := s.RegisterAgent("lea-a", "claude-1", "claude", "/p", 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.SetLimit(a.Key, 1660, 1); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.SetState(a.Key, "stopped", "", 11); err != nil {
+		t.Fatal(err)
+	}
+	for _, st := range []string{"idle", "working", "done"} {
+		if set, err := s.SetHookState(a.Key, st, "sess", 12); err != nil || set {
+			t.Fatalf("%s: set=%v err=%v", st, set, err)
+		}
+	}
+	got, _ := s.AgentByKey(a.Key)
+	if got.State != "stopped" || got.LimitUntil != 1660 || got.LimitTries != 1 || got.SessionID != "" {
+		t.Fatalf("stopped agent changed: %+v", got)
+	}
+	if err := s.SetState(a.Key, "unknown", "", 13); err != nil {
+		t.Fatal(err)
+	}
+	if set, err := s.SetHookState(a.Key, "idle", "sess", 14); err != nil || !set {
+		t.Fatalf("restarted agent: set=%v err=%v", set, err)
+	}
+	if got, _ := s.AgentByKey(a.Key); got.State != "idle" || got.SessionID != "sess" || got.LimitUntil != 1660 {
+		t.Fatalf("restarted agent: %+v", got)
+	}
+}
+
 func TestRegisterAgentRefusesALiveNameAndReusesAnEndedOne(t *testing.T) {
 	s := open(t)
 	if _, err := s.RegisterAgent("lea-a", "claude-1", "claude", "/p", 10); err != nil {

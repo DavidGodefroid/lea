@@ -47,7 +47,8 @@ const (
 )
 
 // HubTicket is one pending ticket of the hub's queue: the fields of the facade's item and of the
-// Lock's signed ticket (lockkit's ticket.Ticket) the deck uses, as the hub sent them.
+// Lock's signed ticket (lockkit's ticket.Ticket) the deck uses, as the hub sent them; Retype is
+// the instance name of a production ticket (what the user types), never the ticket's flags.retype.
 type HubTicket struct {
 	ID, Instance, Lock, Risk string
 	Expires                  int64
@@ -176,7 +177,7 @@ func (it queueItem) ticket() (HubTicket, bool) {
 		} `json:"requester"`
 		Flags struct {
 			Production bool   `json:"production"`
-			Retype     string `json:"retype"`
+			Retype     string `json:"retype"` // lockkit's "retype values" answer: deliberately unused
 		} `json:"flags"`
 		Screen struct {
 			Header   string   `json:"header"`
@@ -199,8 +200,14 @@ func (it queueItem) ticket() (HubTicket, bool) {
 		return HubTicket{}, false
 	}
 	t := HubTicket{ID: it.ID, Instance: it.Instance, Lock: tk.Source.Lock, KeyID: tk.Source.KeyID, Risk: it.Risk,
-		Production: tk.Flags.Production, Retype: tk.Flags.Retype, Header: tk.Screen.Header, Note: tk.Screen.Note,
+		Production: tk.Flags.Production, Header: tk.Screen.Header, Note: tk.Screen.Note,
 		Body: tk.Screen.Body, Warnings: tk.Screen.Warnings, Agent: tk.Requester.Agent, Session: tk.Requester.Session}
+	// Every production ticket is approved by typing its instance name (the Lock Family hub checks
+	// it, lockhub#64). The ticket's flags.retype is lockkit's console answer that asks to retype
+	// values (such as "r"), not what the user types.
+	if t.Production {
+		t.Retype = it.Instance
+	}
 	if it.Expires != nil {
 		t.Expires = it.Expires.Unix()
 	}
@@ -537,15 +544,20 @@ func (d *Daemon) hubDecide(ctx context.Context, params json.RawMessage) error {
 	}
 	d.mu.Lock()
 	f := d.hubFacade
-	found := false
+	found, production := false, false
 	for _, e := range d.hubQueue {
 		if e.t.ID == p.ID && e.t.Instance == p.Instance && e.container == p.Container && p.Container != "" && !e.t.Expired {
-			found = true
+			found, production = true, e.t.Production
 		}
 	}
 	d.mu.Unlock()
 	if f == nil || !found {
 		return errors.New("no such ticket in this deck")
+	}
+	// The instance name is checked here too, whatever the hub checks (a hub older than lockhub
+	// v0.2.3 checks only the ticket's flags.retype): fail closed.
+	if p.Approved && production && (p.Instance == "" || p.Retype != p.Instance) {
+		return ErrHubRetype
 	}
 	if len(p.Retype) > maxRetype || strings.ContainsFunc(p.Retype, textsafe.Unsafe) {
 		return errors.New("the typed name is too long or holds control characters")

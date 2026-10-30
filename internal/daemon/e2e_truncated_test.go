@@ -4,12 +4,15 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/DavidGodefroid/lea/internal/transcript"
 )
 
 // headless runs claude -p with args on the fake API; its JSON result and exit code. A run that
@@ -99,9 +102,8 @@ func lastOf(typ, marker string) func([][]byte) int {
 	}
 }
 
-// onlyCutLineInvalid checks that the one line of f that is not JSON is the half kept by the cut:
-// Claude left it as it was, and wrote what came after on lines of their own.
-func onlyCutLineInvalid(t *testing.T, f string, half []byte) {
+// allLinesValid checks that every line of f is JSON: nothing was glued to another record.
+func allLinesValid(t *testing.T, f string) {
 	t.Helper()
 	b, err := os.ReadFile(f)
 	if err != nil {
@@ -113,14 +115,43 @@ func onlyCutLineInvalid(t *testing.T, f string, half []byte) {
 			bad = append(bad, l)
 		}
 	}
-	if len(bad) != 1 || !bytes.Equal(bad[0], half) {
-		t.Fatalf("invalid lines %q, want only the cut one %q", bad, half)
+	if len(bad) != 0 {
+		t.Fatalf("invalid lines %q", bad)
+	}
+}
+
+// repair is what lea-session does before claude --resume (#219): the built lea binary's
+// repair-transcript, in the agent's environment. The cut line is dropped, and the file as it was
+// is kept beside it.
+func (e *claudeE2E) repair(t *testing.T, session, f string, half []byte) {
+	t.Helper()
+	cut, err := os.ReadFile(f)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cmd := exec.Command(e.lea, "repair-transcript", session)
+	cmd.Dir, cmd.Env = e.wd, e.env
+	out, err := cmd.CombinedOutput()
+	if err != nil || !strings.Contains(string(out), fmt.Sprintf("%d bytes dropped", len(half))) {
+		t.Fatalf("lea repair-transcript: %v\n%s", err, out)
+	}
+	bs, _ := filepath.Glob(f + transcript.BackupSuffix + "*")
+	if len(bs) != 1 {
+		t.Fatalf("backups %v", bs)
+	}
+	if b, _ := os.ReadFile(bs[0]); !bytes.Equal(b, cut) {
+		t.Fatal("the backup is not the transcript as it was")
+	}
+	if b, _ := os.ReadFile(f); !bytes.Equal(b, cut[:len(cut)-len(half)]) {
+		t.Fatal("the transcript was not cut after its last valid line")
 	}
 }
 
 // Spike SP2 (b) (#155): a real Claude resumes a session whose transcript's last JSONL line is
 // cut (a crash mid-write): b1, the last line whatever it is; b2, the last assistant message,
-// nothing after it; b3, the result of a tool call (an agent killed during a tool call).
+// nothing after it; b3, the result of a tool call (an agent killed during a tool call). Claude
+// Code 2.1.296 glues its next record onto a cut line (#219): lea repairs the transcript first, as
+// lea-session does before every resume, and every line stays valid.
 func TestClaudeResumesATruncatedTranscript(t *testing.T) {
 	e := newClaudeE2E(t)
 	e.setLimited(false)
@@ -145,6 +176,7 @@ func TestClaudeResumesATruncatedTranscript(t *testing.T) {
 			}
 			f := e.transcript(s)
 			half := cutLine(t, f, c.pick)
+			e.repair(t, s, f, half)
 			e.mu.Lock()
 			before := len(e.bodies)
 			e.mu.Unlock()
@@ -160,8 +192,8 @@ func TestClaudeResumesATruncatedTranscript(t *testing.T) {
 			if !strings.Contains(sent, "Reply with the single word READY.") || !strings.Contains(sent, "Reply with the single word OK.") {
 				t.Fatalf("the resumed turn lost the history:\n%.3000s", sent)
 			}
-			// Claude appended to the cut file: a second resume still sees the first resume's turn,
-			// and the cut line is the only invalid one (nothing was glued to it).
+			// Claude appended to the repaired file: a second resume still sees the first resume's
+			// turn, and every line is valid (nothing was glued to another).
 			e.mu.Lock()
 			before = len(e.bodies)
 			e.mu.Unlock()
@@ -175,7 +207,7 @@ func TestClaudeResumesATruncatedTranscript(t *testing.T) {
 			if !strings.Contains(sent, "Reply with the single word OK.") || !strings.Contains(sent, "Reply with the single word READY.") {
 				t.Fatalf("the second resume lost the first resume's turn:\n%.3000s", sent)
 			}
-			onlyCutLineInvalid(t, f, half)
+			allLinesValid(t, f)
 		})
 	}
 }
