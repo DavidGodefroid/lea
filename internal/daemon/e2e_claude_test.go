@@ -311,10 +311,9 @@ func TestClaudeResumesAfterAUsageLimit(t *testing.T) {
 	minResumeWait, retryBase, resumeJitter = 1, 3, 0
 	e := newClaudeE2E(t)
 	e.run("say hi")
-	a := e.until("the usage limit", 45, func(a store.Agent) bool { return a.LimitUntil > 0 })
-	if a.State != "idle" {
-		t.Fatalf("a limited agent should be idle: %+v", a)
-	}
+	e.until("the usage limit", 45, func(a store.Agent) bool { return a.LimitUntil > 0 })
+	// The daemon records the limit (StopFailure) just before it sets the agent idle.
+	e.until("a limited agent idle", 10, func(a store.Agent) bool { return a.State == "idle" })
 	e.setLimited(false)
 	e.until("the resume", 45, func(a store.Agent) bool { return a.LimitUntil == 0 && a.LimitTries == 0 && a.State == "idle" })
 	e.resumedWithLeasText()
