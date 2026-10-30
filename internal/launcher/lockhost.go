@@ -5,7 +5,6 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
-	"syscall"
 )
 
 // lockHostTool is a lock tool whose console runs in its own container, started by the tool's
@@ -21,13 +20,6 @@ type lockHostTool struct {
 }
 
 var lockHostTools = []lockHostTool{{"lockmq", "LEA_LOCKMQ", "10010", "10011"}, {"lockfile", "LEA_LOCKFILE", "10030", "10031"}}
-
-// lockHostRoot and lockHostOwner: the host's root directory and the uid that must own its system
-// files (lockhttp's launcher; tests only change them).
-var (
-	lockHostRoot  = ""
-	lockHostOwner = 0
-)
 
 var lockVersion = regexp.MustCompile(`^v?([0-9]+)\.([0-9]+)\.([0-9]+)$`)
 
@@ -96,18 +88,4 @@ func (l *Launcher) lockVolumeStale(t lockHostTool) string {
 		return "cannot read the owner of the lockfile-run volume"
 	}
 	return "the lockfile-run volume is owned by " + strings.TrimSpace(owner) + ", not lockfile's console (" + t.uid + ":" + t.gid + ")"
-}
-
-// rootOwned is why path is not a root-owned file (dir: directory) that only root may write, or "".
-// An agent able to edit the system file could point the client at a console of its own.
-func rootOwned(path string, dir bool) string {
-	fi, err := os.Lstat(path)
-	if err != nil {
-		return path + " is absent"
-	}
-	st, _ := fi.Sys().(*syscall.Stat_t)
-	if fi.IsDir() != dir || (!dir && !fi.Mode().IsRegular()) || st == nil || int(st.Uid) != lockHostOwner || fi.Mode().Perm()&0o022 != 0 {
-		return path + " is not owned and writable by root only"
-	}
-	return ""
 }

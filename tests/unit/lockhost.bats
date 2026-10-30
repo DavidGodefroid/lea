@@ -155,3 +155,12 @@ launcher() {
   run lea__doctor_lockhost lockfile
   [[ "$output" == *"ok    lockfile launcher $B/lockfile"*"ok    lockfile-run volume"* ]]
 }
+
+@test "the entrypoint refuses a session whose uid or gid is a lock console's id in the image" {
+  for ids in "10011 4243" "4242 10030" "10001 4243" "4242 10010" "10031 4243" "4242 10000"; do
+    set -- $ids
+    run env LEA_UID="$1" LEA_GID="$2" LEA_USER=u HOME="$BATS_TEST_TMPDIR" LEA_PROXY_IP=10.0.0.2 sh "$LEA_ROOT/image/entrypoint" true
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"refusing to run the session as uid $1 / gid $2: a lock console's id"* ]]
+  done
+}

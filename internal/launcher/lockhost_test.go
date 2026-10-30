@@ -81,6 +81,27 @@ func TestLockfileVolumeOldIDs(t *testing.T) {
 	}
 }
 
+// A volume of any other owner (root, a foreign uid) is not lockfile's console's: left out.
+func TestLockfileVolumeUnknownOwner(t *testing.T) {
+	for _, owner := range []string{"0:0", "1000:1000", "10031:10000", ""} {
+		w := newWorld(t, repoRoot(t))
+		writeUserConf(t, w, "LEA_LOCKFILE=1\n")
+		w.env[volOwner] = owner
+		if args := lockArgs(t, w); contains(args, "LEA_LOCKFILE=1") {
+			t.Errorf("owner %q: lockfile wired", owner)
+		}
+		if !strings.Contains(w.errb.String(), "warning: lockfile") {
+			t.Errorf("owner %q: no warning: %s", owner, w.errb.String())
+		}
+		if owner == "0:0" && !strings.Contains(w.errb.String(), "owned by 0:0") {
+			t.Errorf("warning %q", w.errb.String())
+		}
+		if _, err := os.Stat(w.hostDir() + "/lockfile-run-ids"); err == nil {
+			t.Errorf("owner %q: marked checked", owner)
+		}
+	}
+}
+
 // A volume with lockfile's own ids is wired, and not checked again.
 func TestLockfileVolumeChecked(t *testing.T) {
 	w := newWorld(t, repoRoot(t))

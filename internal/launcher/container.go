@@ -531,7 +531,8 @@ func (l *Launcher) runArgs(proj, pip string) ([]string, error) {
 			"--mount", "type=bind,src="+d+",dst="+d+",readonly")
 	}
 	a = append(a, lh...)
-	// lockmq and lockfile: only the socket of a console on the host (lockhost.go).
+	// lockmq and lockfile: only the socket of a console in its own container, in the tool's
+	// socket volume (lockhost.go).
 	a = append(a, l.lockHostArgs()...)
 	a = append(a, l.securityArgs()...)
 	a = append(a, l.limitArgs()...)
