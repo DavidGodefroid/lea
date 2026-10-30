@@ -58,7 +58,8 @@ func (d *Daemon) hubWaitRegister(ctx context.Context, o Origin, me string, raw j
 	return map[string]bool{"suspended": suspended}, nil
 }
 
-// unreadHas reports whether agent has an unread message with that body (among its latest 50).
+// unreadHas reports whether agent has an unread message with that body (among its oldest 50
+// unread: the refusal is posted only while none is).
 func (d *Daemon) unreadHas(agent, body string) bool {
 	ms, err := d.st.Unread(agent, 50)
 	if err != nil {

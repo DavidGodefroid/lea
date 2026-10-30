@@ -69,7 +69,8 @@ func (f SocketFacade) get(ctx context.Context, path string, out any) error {
 	if fi, err := os.Lstat(f.Path); err != nil || fi.Mode()&os.ModeSocket == 0 {
 		return ErrNoHub
 	}
-	c := &http.Client{Transport: &http.Transport{DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
+	// One request per client: no idle connection is kept to the hub.
+	c := &http.Client{Transport: &http.Transport{DisableKeepAlives: true, DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
 		var d net.Dialer
 		return d.DialContext(ctx, "unix", f.Path)
 	}}, Timeout: hubSyncTimeout}
