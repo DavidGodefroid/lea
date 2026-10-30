@@ -119,7 +119,7 @@ func (l *Launcher) ensureProxy(proj string) error {
 		// Docker writes the IDs sha256:<hex>, Podman <hex>.
 		if got == want && strings.TrimPrefix(image, "sha256:") == strings.TrimPrefix(current, "sha256:") {
 			if lh != nil {
-				return l.ensureLockHTTPGate(false, gateImage, hub)
+				return l.ensureLockHTTPGate(false, gateImage, hub, proj)
 			}
 			return nil
 		}
@@ -156,7 +156,7 @@ func (l *Launcher) ensureProxy(proj string) error {
 	if err := l.run("docker", a...); err != nil || lh == nil {
 		return err
 	}
-	return l.ensureLockHTTPGate(true, gateImage, hub)
+	return l.ensureLockHTTPGate(true, gateImage, hub, proj)
 }
 
 // proxyIP is lea__proxy_ip: the proxy's IPv4 address on network, "" when it is not attached.

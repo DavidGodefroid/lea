@@ -400,7 +400,9 @@ lock up, and lea says why; so does an up.json that does not say what the gate pi
 (`lockhttp_gate` 1: a lock's devices, required and sealed, its reveals), and a lock whose required or
 sealed devices lea cannot pass. The pinned lockhttp release decides too: hub mode needs v0.3.0, the
 devices v0.4.0, the facade keys v0.5.0; lea passes no flag that release lacks, and says so. One
-lockhttp lock at a time: the gate follows the projects directory whose lea started it last.
+lockhttp lock at a time: the gate serves every projects directory, and asks the hub of the one
+whose lea started it last; lea refuses to switch it (to another hub, or none) while agents of
+another projects directory run.
 
 `LEA_LOCKHTTP_MITM=1` (with `LEA_LOCKHTTP=1`) lets the gate decrypt HTTPS, but for the policy's
 splice hosts, so that it decides on methods, paths and bodies. lea makes a local CA on first use

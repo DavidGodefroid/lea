@@ -479,3 +479,69 @@ func TestLockHTTPGateLeavesNoOldGateOnTheHubNetwork(t *testing.T) {
 		})
 	}
 }
+
+// The one gate of a prefix changes whose hub it asks (or none) only while no agent of another
+// projects directory runs: their requests would be approved by another hub, or none. Agents of
+// this directory only, or a gate already asking this hub, switch nothing.
+func TestLockHTTPGateDoesNotSwitchUnderAnotherDirectorysAgents(t *testing.T) {
+	for name, c := range map[string]struct {
+		up       bool
+		gateFor  string
+		sessions string
+		refused  bool
+	}{
+		"hub to none":            {false, "/other", "/other\n", true},
+		"hub to another hub":     {true, "/other", "/other\n", true},
+		"none to a hub":          {true, "", "/other\n", true},
+		"only this directory":    {true, "/other", "PROJ\n", false},
+		"no agent runs":          {true, "/other", "", false},
+		"standalone, standalone": {false, "", "/other\n", false},
+	} {
+		t.Run(name, func(t *testing.T) {
+			w, _ := lockHTTPWorld(t)
+			if c.up {
+				hubUp(t, w, "", "", "")
+			}
+			w.env["FAKE_DOCKER_OUT_INSPECT___TYPE_AT_LEA_LOCKHTTP_GATE"] = "for=" + c.gateFor
+			w.env["FAKE_DOCKER_OUT_PS___FILTER"] = strings.ReplaceAll(c.sessions, "PROJ", w.proj)
+			err := w.launcher().ensureProxy(w.proj)
+			if got := err != nil; got != c.refused {
+				t.Fatalf("refused = %v (%v)", got, err)
+			}
+			if c.refused {
+				if !strings.Contains(err.Error(), "the agents of /other run") || len(gateRuns(w)) != 0 || w.hasCall("[network] [connect]") ||
+					w.hasCall("docker [rm] [-f] [lea-lockhttp-gate]") {
+					t.Errorf("%v:\n%s", err, strings.Join(w.calls(), "\n"))
+				}
+			} else if len(gateRuns(w)) != 1 {
+				t.Errorf("no gate:\n%s", strings.Join(w.calls(), "\n"))
+			}
+		})
+	}
+}
+
+// The old gate that cannot be removed stops lea before the proxy joins the hub's network; a
+// current gate on a proxy not yet joined gets the network, and runs on.
+func TestLockHTTPGateJoinsOnlyBehindAGateThatRefusesTheHub(t *testing.T) {
+	w, _ := lockHTTPWorld(t)
+	hubUp(t, w, "", "", "")
+	w.env["FAKE_DOCKER_RC_RM__F_AT_LEA_LOCKHTTP_SIGNER"] = "1"
+	if err := w.launcher().ensureProxy(w.proj); err == nil || w.hasCall("[network] [connect]") || len(gateRuns(w)) != 0 {
+		t.Fatalf("%v:\n%s", err, strings.Join(w.calls(), "\n"))
+	}
+
+	w, _ = lockHTTPWorld(t)
+	hubUp(t, w, "", "", "")
+	g := w.launcher().lockUpGate(w.proj)
+	image := "ghcr.io/davidgodefroid/lockhttp@" + testDigest
+	w.env["FAKE_DOCKER_OUT_INSPECT__F"] = "true"
+	w.env["FAKE_DOCKER_OUT_INSPECT___FORMAT"] = "@" + w.launcher().proxyRules() + "^1"
+	w.env["FAKE_DOCKER_OUT_INSPECT___TYPE_AT_LEA_PROXY"] = "lea-egress "
+	w.env["FAKE_DOCKER_OUT_INSPECT___TYPE"] = "true|2026-10-28T10:00:00Z|\ntrue|2026-10-28T10:00:01Z|" + image + " hub:" + g.stamp()
+	if err := w.launcher().ensureProxy(w.proj); err != nil {
+		t.Fatal(err)
+	}
+	if !w.hasCall("docker [network] [connect] ["+upProjectOf(w)+"_lockhub] [lea-proxy]") || len(gateRuns(w)) != 0 {
+		t.Errorf("calls:\n%s", strings.Join(w.calls(), "\n"))
+	}
+}

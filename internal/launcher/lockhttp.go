@@ -137,7 +137,7 @@ var lockHTTPConfine = []string{"--cap-drop", "ALL", "--security-opt", "no-new-pr
 // started after the proxy, and a running signer of the same. A gate older than the proxy is in a
 // network namespace the proxy left. With hub (lock up's lockhttp lock, lockhubgate.go), the gate
 // asks the hub, and only the proxy joins the hub's network.
-func (l *Launcher) ensureLockHTTPGate(fresh bool, image string, hub *gateHub) error {
+func (l *Launcher) ensureLockHTTPGate(fresh bool, image string, hub *gateHub, proj string) error {
 	proxy, name, signer := l.prefix()+"-proxy", l.lockHTTPGateName(), l.lockHTTPSignerName()
 	mitm, stamp, hubStamp := l.Cfg.LockHTTPMITM(), l.lockHTTPCAStamp(), hub.stamp()
 	want, names := image, []string{proxy, name}
@@ -166,6 +166,16 @@ func (l *Launcher) ensureLockHTTPGate(fresh bool, image string, hub *gateHub) er
 			return l.joinHubNetwork(proxy, hub, true)
 		}
 	}
+	// One gate serves every projects directory of this prefix: it asks the hub of the last one
+	// started under lock up. A switch of whose hub (or none) under the running agents of another
+	// directory would change how their requests are approved: lea stops instead.
+	gateFor := ""
+	if hub != nil {
+		gateFor = proj
+	}
+	if err := l.gateSwitchRefused(name, gateFor, proj); err != nil {
+		return err
+	}
 	if err := l.quiet("docker", "rm", "-f", name, signer); err != nil && hub != nil {
 		return die("LEA_LOCKHTTP=1: could not remove the gate %s before it asks the hub", name)
 	}
@@ -177,6 +187,7 @@ func (l *Launcher) ensureLockHTTPGate(fresh bool, image string, hub *gateHub) er
 	if hub != nil {
 		labels = append(labels, "--label", "lea.lockhttp-hub="+hubStamp)
 	}
+	labels = append(labels, "--label", "lea.lockhttp-for="+gateFor)
 	var gateMITM, gateCA []string
 	if mitm {
 		labels = append(labels, "--label", "lea.lockhttp-ca="+stamp)
@@ -352,4 +363,30 @@ func rootOwned(path string, dir bool) string {
 		return path + " is not owned and writable by root only"
 	}
 	return ""
+}
+
+// gateSwitchRefused is an error when the gate name asks for another projects directory's hub
+// than gateFor ("" standalone) and lea agents of a directory other than proj run: their requests
+// would be approved elsewhere. A gate lea cannot read (none yet) switches nothing.
+func (l *Launcher) gateSwitchRefused(name, gateFor, proj string) error {
+	o, err := l.output(false, "docker", "inspect", "--type", "container", "-f", `for={{index .Config.Labels "lea.lockhttp-for"}}`, name)
+	old, ok := strings.CutPrefix(strings.TrimSpace(o), "for=")
+	if err != nil || !ok || strings.Contains(old, "\n") || old == gateFor {
+		return nil
+	}
+	ps, err := l.output(false, "docker", "ps", "--filter", "label=lea.prefix="+l.prefix(), "--filter", "label=lea.role=session",
+		"--format", `{{.Label "lea.projects"}}`)
+	if err != nil {
+		return die("LEA_LOCKHTTP=1: cannot list lea's running containers before the gate changes hub")
+	}
+	for _, p := range strings.Fields(ps) {
+		if p != proj {
+			mode := "its own console"
+			if gateFor != "" {
+				mode = "the hub of " + proj
+			}
+			return die("LEA_LOCKHTTP=1: the LockHTTP gate serves every projects directory, and the agents of %s run: it would ask %s for them. Stop them first (lea stop in %s), or open that directory", p, mode, p)
+		}
+	}
+	return nil
 }
