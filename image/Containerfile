@@ -52,11 +52,11 @@ RUN useradd -r -u 10001 -U -M -s /sbin/nologin locksql \
  && printf '%s\n' 'service_user = "locksql"' 'client_group = "locksql-clients"' 'socket_dir   = "/run/locksql"' 'x11          = "refuse"' > /etc/locksql/system.toml \
  && chmod 0644 /etc/locksql/system.toml \
  && case "$TARGETARCH" in \
-      amd64) sq=32bddb64bc9cb0d6a471f9fcdd8f6578ee057209bc1d79f2524d0ec5361a9382 ;; \
-      arm64) sq=eea2be70f21af6b308a7e5311f4a4f2b6e4bee97ba48387585a0657916cf112a ;; \
+      amd64) sq=9ff84d8fdcb8a4656766edaeeba44a81252b8e96760936ebb343af6c56eb176d ;; \
+      arm64) sq=ee0abfdbdd826397b0296816f9b961b92a89276b693195ce2dc79a387caf40e9 ;; \
       *) echo "unsupported architecture: $TARGETARCH" >&2; exit 1 ;; \
     esac \
- && cd /tmp && V=0.10.0 && A="locksql_${V}_linux_${TARGETARCH}.tar.gz" \
+ && cd /tmp && V=0.11.0 && A="locksql_${V}_linux_${TARGETARCH}.tar.gz" \
  && curl -fsSLO "https://github.com/DavidGodefroid/locksql/releases/download/v$V/$A" \
  && echo "$sq  $A" | sha256sum -c \
  && tar -xzf "$A" locksql && install -m 0755 -o root -g root locksql /usr/local/bin/locksql \

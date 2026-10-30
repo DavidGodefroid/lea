@@ -58,13 +58,13 @@ setup() {
 }
 
 @test "locksql: its image and volume are checked with LEA_LOCKSQL=1, never with 0" {
-  export FAKE_DOCKER_RC_IMAGE_INSPECT_AT_LOCKSQL_0_10_0=1 FAKE_DOCKER_RC_VOLUME_INSPECT=1
+  export FAKE_DOCKER_RC_IMAGE_INSPECT_AT_LOCKSQL_0_11_0=1 FAKE_DOCKER_RC_VOLUME_INSPECT=1
   run lea_doctor
-  [[ "$output" == *"warn  locksql image: locksql:0.10.0 absent: run lea init (or set LEA_LOCKSQL=0)"* ]]
+  [[ "$output" == *"warn  locksql image: locksql:0.11.0 absent: run lea init (or set LEA_LOCKSQL=0)"* ]]
   [[ "$output" == *"warn  locksql-run volume"* ]]
-  unset FAKE_DOCKER_RC_IMAGE_INSPECT_AT_LOCKSQL_0_10_0 FAKE_DOCKER_RC_VOLUME_INSPECT
+  unset FAKE_DOCKER_RC_IMAGE_INSPECT_AT_LOCKSQL_0_11_0 FAKE_DOCKER_RC_VOLUME_INSPECT
   run lea_doctor
-  [[ "$output" == *"ok    locksql image locksql:0.10.0"* ]]
+  [[ "$output" == *"ok    locksql image locksql:0.11.0"* ]]
   [[ "$output" == *"ok    locksql-run volume"* ]]
   LEA_LOCKSQL=0 run lea_doctor
   [[ "$output" != *locksql* ]]
