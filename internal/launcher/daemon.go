@@ -65,13 +65,24 @@ func DaemonLockHTTPStamp(get func(string) string) string {
 // reads no hub, its suspend hook is a no-op and the agents it suspended are resumed.
 func HubSetting(get func(string) string) bool { return get("LEA_HUB") == "1" }
 
-// DaemonHubStamp is the hub switch as the daemon records it ("on" or "off"): a daemon started
-// with the other is restarted.
-func DaemonHubStamp(get func(string) string) string {
-	if HubSetting(get) {
-		return "on"
+// HubKeepalive is how long the process of an agent suspended on a hub ticket runs before lea
+// stops it, keeping its session: LEA_HUB_KEEPALIVE seconds, 0 (at once) to 3600, 300 when unset
+// or invalid.
+func HubKeepalive(get func(string) string) time.Duration {
+	if n, err := strconv.Atoi(strings.TrimSpace(get("LEA_HUB_KEEPALIVE"))); err == nil && n >= 0 && n <= 3600 {
+		return time.Duration(n) * time.Second
 	}
-	return "off"
+	return 5 * time.Minute
+}
+
+// DaemonHubStamp is the hub settings as the daemon records them ("on 300": the switch, the
+// keepalive in seconds): a daemon started with others is restarted.
+func DaemonHubStamp(get func(string) string) string {
+	mode := "off"
+	if HubSetting(get) {
+		mode = "on"
+	}
+	return mode + " " + strconv.Itoa(int(HubKeepalive(get)/time.Second))
 }
 
 // StackIdleSetting is how long an agent stays idle before lea stops what it started in the nested

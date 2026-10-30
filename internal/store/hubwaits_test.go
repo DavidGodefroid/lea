@@ -174,3 +174,38 @@ func countWaits(t *testing.T, s *Store) int {
 	}
 	return n
 }
+
+// Forgetting an agent (lea stop --forget, an agent removed for good) drops its hub waits, pending
+// or decided: a later agent of the same name never gets their decisions; another agent's stay.
+func TestForgetAgentAbandonsItsHubWaits(t *testing.T) {
+	s := open(t)
+	for _, n := range []string{"amy", "bob"} {
+		if _, err := s.RegisterAgent("lea-a", n, "claude", "/w", 1); err != nil {
+			t.Fatal(err)
+		}
+	}
+	const t1, t2 = "01JB8Z5Q3W4X7Y9ABCDEFGHJKM", "01JB8Z5Q3W4X7Y9ABCDEFGHJKN"
+	for _, w := range [][2]string{{"lea-a/amy", t1}, {"lea-a/amy", t2}, {"lea-a/bob", t1}} {
+		if err := s.AddHubWait(w[0], w[1], "locksql", "crm-prod", 1); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := s.DecideHubWaits(t2, "crm-prod", DecisionApproved, "", 2); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.ForgetAgent("lea-a/amy"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.RegisterAgent("lea-a", "amy", "claude", "/w", 3); err != nil {
+		t.Fatal(err)
+	}
+	if ws, _ := s.PendingHubWaits("lea-a/amy"); len(ws) != 0 {
+		t.Fatalf("the new amy inherited pending waits: %+v", ws)
+	}
+	if ws, _ := s.UndeliveredHubWaits("lea-a/amy"); len(ws) != 0 {
+		t.Fatalf("the new amy inherited decisions: %+v", ws)
+	}
+	if ws, _ := s.PendingHubWaits("lea-a/bob"); len(ws) != 1 {
+		t.Fatalf("bob's wait went too: %+v", ws)
+	}
+}
