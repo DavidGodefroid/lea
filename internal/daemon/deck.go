@@ -292,6 +292,7 @@ func (d *Daemon) dispatchDeck(ctx context.Context, o Origin, req wire.Request) (
 		snap.Locks = d.lockViews(p.Container)
 		d.addHubCards(&snap)
 		snap.Pressure = d.deckPressure(p.Container)
+		snap.HubState = d.hubState()
 		return snap, err
 	}
 	return nil, fmt.Errorf("unknown method %q", req.Method)

@@ -190,7 +190,7 @@ esac
 // other approval settings, is restarted, and the new one gets LEA_TMUX_BIN (daemon tests of the
 // retired deck.bats and core.bats).
 func TestEnsureDaemonPinsTheResolvedTmuxAndApprovals(t *testing.T) {
-	for name, record := range map[string][2]string{"tmux": {"daemon.tmux", "/old/tmux"}, "approvals": {"daemon.approvals", "pane 5"}, "resume": {"daemon.resume", "off 60"}, "lockhttp": {"daemon.lockhttp", "on"}, "hub": {"daemon.hub", "on 300"}, "keepalive": {"daemon.hub", "off 60"}, "stacks": {"daemon.stacks", "30"}, "admit": {"daemon.admit", "50 85 10 40 2 95 30 80 30 60"}} {
+	for name, record := range map[string][2]string{"tmux": {"daemon.tmux", "/old/tmux"}, "approvals": {"daemon.approvals", "pane 5"}, "resume": {"daemon.resume", "off 60"}, "lockhttp": {"daemon.lockhttp", "on"}, "hub": {"daemon.hub", "off"}, "keepalive": {"daemon.hub", "on 60"}, "older stamp": {"daemon.hub", "off 300"}, "stacks": {"daemon.stacks", "30"}, "admit": {"daemon.admit", "50 85 10 40 2 95 30 80 30 60"}} {
 		t.Run(name, func(t *testing.T) {
 			w := newWorld(t, repoRoot(t))
 			delete(w.env, "LEA_TMUX_BIN") // resolved from PATH: the world's tmux
@@ -224,6 +224,20 @@ esac
 	l := w.launcher()
 	if err := l.ensureDaemon(); err != nil || exists(w.log+".daemon") || l.Cfg.Get("LEA_TMUX_BIN") != w.tmux {
 		t.Fatalf("%v, LEA_TMUX_BIN=%q\n%s", err, l.Cfg.Get("LEA_TMUX_BIN"), strings.Join(w.calls(), "\n"))
+	}
+}
+
+// With the hub off, its keepalive does not matter: changing it leaves the running daemon alone.
+func TestEnsureDaemonIgnoresTheKeepaliveWhileTheHubIsOff(t *testing.T) {
+	w := newWorld(t, repoRoot(t))
+	writeUserConf(t, w, "LEA_HUB=0\nLEA_HUB_KEEPALIVE=60\n")
+	os.WriteFile(w.hostDir()+"/daemon.hub", []byte("off"), 0o600)
+	l := w.launcher()
+	if l.Cfg.Get("LEA_HUB") != "0" {
+		t.Fatalf("LEA_HUB=%q", l.Cfg.Get("LEA_HUB"))
+	}
+	if err := l.ensureDaemon(); err != nil || exists(w.log+".daemon") {
+		t.Fatalf("%v\n%s", err, strings.Join(w.calls(), "\n"))
 	}
 }
 
@@ -404,11 +418,11 @@ func TestLockServers(t *testing.T) {
 	}
 }
 
-// The hub switch is on only at LEA_HUB=1; the keepalive is LEA_HUB_KEEPALIVE seconds (0 to
-// 3600, else 300); the stamp says both.
+// The hub switch is off only at LEA_HUB=0; the keepalive is LEA_HUB_KEEPALIVE seconds (0 to
+// 3600, else 300); the stamp says both, but the keepalive only while the hub is on.
 func TestHubSettings(t *testing.T) {
 	for _, c := range []struct{ hub, keep, want string }{
-		{"", "", "off 300"}, {"0", "", "off 300"}, {"1", "", "on 300"}, {"yes", "", "off 300"},
+		{"", "", "on 300"}, {"0", "", "off"}, {"1", "", "on 300"}, {"0", "60", "off"}, {"0", "x", "off"},
 		{"1", "0", "on 0"}, {"1", "60", "on 60"}, {"1", "3600", "on 3600"}, {"1", "3601", "on 300"}, {"1", "-1", "on 300"}, {"1", "x", "on 300"},
 	} {
 		get := func(k string) string {

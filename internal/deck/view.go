@@ -257,7 +257,9 @@ func (m Model) top(w int) string {
 
 // lockLine is what the top border says of the Locks' approvals: "locksql 2 to approve" when one
 // Lock's requests wait, "5 to approve" when several Locks' do, else "lockhttp console down" for
-// the first console down; "" when all is quiet. The Lock names are the daemon's, checked.
+// the first console down, else "lockhub unreachable" when lea follows the hub but cannot reach it
+// (no agent is suspended on a Lock call then); "" when all is quiet. The Lock names are the
+// daemon's, checked.
 func (m Model) lockLine() string {
 	total, one, down := 0, "", ""
 	n := 0
@@ -280,6 +282,8 @@ func (m Model) lockLine() string {
 		return fmt.Sprintf("%d to approve", total)
 	case down != "":
 		return down + " console down"
+	case m.hubDown:
+		return "lockhub unreachable"
 	}
 	return ""
 }

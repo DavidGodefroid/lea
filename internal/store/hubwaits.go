@@ -65,6 +65,12 @@ func scanHubWait(sc interface{ Scan(...any) error }) (HubWait, error) {
 	return w, err
 }
 
+// ValidHubWait reports whether ticket, lock and instance are what AddHubWait takes: a ULID and two
+// names.
+func ValidHubWait(ticket, lock, instance string) bool {
+	return ticketRe.MatchString(ticket) && hubNameRe.MatchString(lock) && hubNameRe.MatchString(instance)
+}
+
 // AddHubWait records that agent waits on ticket of lock's instance. The same wait again is no
 // error (a Lock's run returns the same ticket when called again).
 func (s *Store) AddHubWait(agent, ticket, lock, instance string, now int64) error {

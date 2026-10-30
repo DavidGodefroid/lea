@@ -35,4 +35,5 @@ ok    egress allowlist: lea's default (forges, registries, model APIs; LEA_EGRES
 ok    telemetry: off (LEA_OTEL_UPSTREAM)
 ok    locksql image locksql:0.10.0
 ok    locksql-run volume
+warn  approval hub: LEA_HUB=1 but no facade socket to read (set LEA_HUB_SOCKET, or XDG_RUNTIME_DIR): agents are not suspended on a Lock call that waits for the hub (LEA_HUB=0 to silence this)
 warn  kubernetes token: none (optional): lea kube refresh

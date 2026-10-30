@@ -208,6 +208,9 @@ type Snapshot struct {
 	// Pressure is the container's pressure gauge (#132, P2), set by the daemon; nil without a
 	// recent sample.
 	Pressure *PressureView `json:"pressure,omitempty"`
+	// HubState is "down" when lea follows the hub (LEA_HUB=1) but cannot reach its facade, so no
+	// agent is suspended on a Lock call; set by the daemon.
+	HubState string `json:"hub_state,omitempty"`
 }
 
 // PressureView is what the deck shows of the pressure: a short gauge of the container and the

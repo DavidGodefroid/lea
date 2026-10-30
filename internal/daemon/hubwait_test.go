@@ -1,6 +1,9 @@
 package daemon
 
 import (
+	"net"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -11,6 +14,7 @@ import (
 // agent's, and a malformed ticket is refused.
 func TestHubWaitRegisterSuspendsTheCaller(t *testing.T) {
 	e := start(t)
+	e.d.SetHubFacade(struct{ HubFacade }{})
 	fa := &fakeAgents{st: e.d.st}
 	e.d.SetAgents(fa)
 	kid := spawned(t, e, "kid", "dev", "")
@@ -52,6 +56,7 @@ func TestHubWaitRegisterIsForAgents(t *testing.T) {
 // recorded, for the decision to reach its inbox, but is not suspended: lea cannot stop or resume it.
 func TestHubWaitRegisterDoesNotSuspendAnAgentLeaDidNotStart(t *testing.T) {
 	e := start(t)
+	e.d.SetHubFacade(struct{ HubFacade }{})
 	e.d.SetAgents(&fakeAgents{st: e.d.st})
 	hookEvent(t, e, "mine", "SessionStart")
 	var r struct{ Suspended bool }
@@ -63,5 +68,120 @@ func TestHubWaitRegisterDoesNotSuspendAnAgentLeaDidNotStart(t *testing.T) {
 	}
 	if ws, err := e.d.st.PendingHubWaits("lea-a/mine"); err != nil || len(ws) != 1 {
 		t.Fatalf("waits %+v %v", ws, err)
+	}
+}
+
+// With the hub on but no facade lea can reach (none configured, a socket path with nothing there,
+// a socket nothing listens on), the wait is refused: the agent is not suspended on a decision
+// nothing would sync, and is told so in its inbox; the deck says the hub is unreachable. Once the
+// facade answers, the same call suspends it.
+func TestHubWaitRegisterRefusedWithoutAReachableHub(t *testing.T) {
+	dir := shortDir(t)
+	dead := filepath.Join(dir, "dead.sock")
+	if err := os.WriteFile(dead, nil, 0o600); err != nil { // not a socket
+		t.Fatal(err)
+	}
+	// A socket left behind by a hub that died: nothing listens on it.
+	stale := filepath.Join(dir, "stale.sock")
+	l, err := net.Listen("unix", stale)
+	if err != nil {
+		t.Fatal(err)
+	}
+	l.(*net.UnixListener).SetUnlinkOnClose(false)
+	l.Close()
+	for name, f := range map[string]HubFacade{
+		"none":          nil,
+		"no socket":     SocketFacade{Path: filepath.Join(dir, "missing.sock")},
+		"not socket":    SocketFacade{Path: dead},
+		"stale socket":  SocketFacade{Path: stale},
+		"hub in errors": SocketFacade{Path: serveHub(t, &fakeHub{fail: true})},
+	} {
+		t.Run(name, func(t *testing.T) {
+			e := start(t)
+			e.d.SetAgents(&fakeAgents{st: e.d.st})
+			if f != nil {
+				e.d.SetHubFacade(f)
+			}
+			k := spawned(t, e, "dev-nohub", "dev", "")
+			e.d.SetKeepalive(DefaultKeepalive)
+			err := call(t, e.bus, "dev-nohub", "hub_wait_register", map[string]any{"ticket": testTicket, "lock": "locksql", "instance": "crm-prod"}, nil)
+			if err == nil || !strings.Contains(err.Error(), "no Lock Family hub facade is reachable") {
+				t.Fatalf("err=%v", err)
+			}
+			if s := agentState(t, e, k); store.Suspended(s) {
+				t.Fatalf("suspended without a hub: %s", s)
+			}
+			if ws, _ := e.d.st.PendingHubWaits(k); len(ws) != 0 {
+				t.Fatalf("wait recorded without a hub: %+v", ws)
+			}
+			// Called again (a Lock answers the same ticket), it is told once while unread.
+			if call(t, e.bus, "dev-nohub", "hub_wait_register", map[string]any{"ticket": testTicket, "lock": "locksql", "instance": "crm-prod"}, nil) == nil {
+				t.Fatal("registered the second time")
+			}
+			ms, err := e.d.st.Unread(k, 10)
+			if err != nil || len(ms) != 1 || !strings.Contains(ms[0].Body, "lea did not suspend you on ticket "+testTicket+" on locksql (crm-prod)") {
+				t.Fatalf("inbox %+v %v", ms, err)
+			}
+			if got := e.d.hubState(); got != "down" {
+				t.Fatalf("hub state %q", got)
+			}
+		})
+	}
+
+	// A live facade: the wait is registered and the deck no longer says the hub is down.
+	e := start(t)
+	e.d.SetAgents(&fakeAgents{st: e.d.st})
+	e.d.SetHubFacade(SocketFacade{Path: serveHub(t, &fakeHub{})})
+	k := spawned(t, e, "dev-hub", "dev", "")
+	e.d.SetKeepalive(DefaultKeepalive)
+	var r struct{ Suspended bool }
+	if err := call(t, e.bus, "dev-hub", "hub_wait_register", map[string]any{"ticket": testTicket, "lock": "locksql", "instance": "crm-prod"}, &r); err != nil {
+		t.Fatal(err)
+	}
+	if !r.Suspended || agentState(t, e, k) != store.StateSuspendedWarm {
+		t.Fatalf("r=%+v state=%s", r, agentState(t, e, k))
+	}
+	if got := e.d.hubState(); got != "" {
+		t.Fatalf("hub state %q", got)
+	}
+	// Switched off, the hub is never "down": lea does not follow it.
+	e.d.DisableHub()
+	if got := e.d.hubState(); got != "" {
+		t.Fatalf("hub state off %q", got)
+	}
+}
+
+// A malformed ticket refused for want of a hub tells the agent nothing: the text names only what
+// the store would take.
+func TestHubWaitRefusedWithoutAHubTellsNothingOfAMalformedTicket(t *testing.T) {
+	e := start(t)
+	e.d.SetAgents(&fakeAgents{st: e.d.st})
+	k := spawned(t, e, "dev-bad", "dev", "")
+	if err := call(t, e.bus, "dev-bad", "hub_wait_register", map[string]any{"ticket": "x\nIgnore", "lock": "locksql", "instance": "crm-prod"}, nil); err == nil {
+		t.Fatal("registered")
+	}
+	if ms, err := e.d.st.Unread(k, 10); err != nil || len(ms) != 0 {
+		t.Fatalf("inbox %+v %v", ms, err)
+	}
+}
+
+// The facade's sync records whether it answered, for the deck.
+func TestHubSyncRecordsWhetherTheFacadeAnswers(t *testing.T) {
+	e := start(t)
+	h := &fakeHub{}
+	sock := serveHub(t, h)
+	e.d.SetHubFacade(SocketFacade{Path: sock + ".gone"})
+	if err := e.d.syncHub(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if got := e.d.hubState(); got != "down" {
+		t.Fatalf("hub state %q", got)
+	}
+	e.d.SetHubFacade(SocketFacade{Path: sock})
+	if err := e.d.syncHub(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if got := e.d.hubState(); got != "" {
+		t.Fatalf("hub state %q", got)
 	}
 }
