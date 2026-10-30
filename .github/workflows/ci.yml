@@ -142,6 +142,24 @@ jobs:
           for c in '.lockfamily write gets EROFS' 'host facade socket not visible' 'no facade socket in the container' 'sibling lea unreachable directly' 'host port unreachable via host IP'; do
             grep -qxF "ok   $c" isolation.log || { echo "isolation: '$c' did not run" >&2; exit 1; }
           done
+  # The lockmq / lockfile socket wiring (tests/integration/lockhost.sh, phase 0): the lockmq
+  # client of the release image/Containerfile pins (sha256-checked) reaches a console's socket
+  # through its volume, as lea wires it, with no host account; outsiders and other uids refused.
+  lockhost:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - name: make test-lockhost, every check run
+        shell: bash
+        run: |
+          make test-lockhost 2>&1 | tee lockhost.log
+          if grep '^FAIL' lockhost.log; then exit 1; fi
+          n=$(grep -c '^ok ' lockhost.log)
+          echo "$n lockhost checks passed"
+          [ "$n" -eq 9 ]
   images:
     runs-on: ubuntu-latest
     steps:
