@@ -548,7 +548,46 @@ func (l *Launcher) runArgs(proj, pip string) ([]string, error) {
 		}
 		a = append(a, m...)
 	}
+	if err := l.noEngineSocket(a); err != nil {
+		return nil, err
+	}
 	return append(a, l.Cfg.Get("LEA_IMAGE")), nil
+}
+
+// engineSockets are where a container engine of the host may listen: DOCKER_HOST's unix socket,
+// Docker's default ones and a rootless Podman's or Docker's under XDG_RUNTIME_DIR.
+func (l *Launcher) engineSockets() []string {
+	s := []string{"/var/run/docker.sock", "/run/docker.sock", "/run/podman/podman.sock"}
+	if p, ok := strings.CutPrefix(l.Cfg.Get("DOCKER_HOST"), "unix://"); ok && p != "" {
+		s = append(s, p)
+	}
+	if run := l.Cfg.Get("XDG_RUNTIME_DIR"); run != "" {
+		s = append(s, run+"/podman/podman.sock", run+"/docker.sock")
+	}
+	return s
+}
+
+// noEngineSocket refuses agent run args with a bind mount that is an engine's socket or a
+// directory above one: whoever reaches the socket runs containers as the user, outside lea.
+func (l *Launcher) noEngineSocket(args []string) error {
+	socks := l.engineSockets()
+	for i := 0; i+1 < len(args); i++ {
+		if args[i] != "--mount" {
+			continue
+		}
+		for _, f := range strings.Split(args[i+1], ",") {
+			src, ok := strings.CutPrefix(f, "src=")
+			if !ok {
+				continue
+			}
+			for _, sock := range socks {
+				if under(phys(src), phys(sock)) || under(src, sock) {
+					return die("refusing to start: %s would give the agents the container engine's socket %s", src, sock)
+				}
+			}
+		}
+	}
+	return nil
 }
 
 // waitReady is lea_wait_ready: 60 tries a second apart, then the container's last logs and its
