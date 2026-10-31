@@ -3,6 +3,7 @@ package launcher
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -341,23 +342,49 @@ func TestLockUpSocketServedByAnotherComposeRun(t *testing.T) {
 	}
 	state := loxStateDir(cfg, upProjectOf(w))
 	mount := "type=volume,src=" + upProjectOf(w) + "_crm-run,dst=/run/locksql,readonly"
-	w.env["FAKE_DOCKER_OUT_PS___NO_TRUNC"] = "a1|" + upProjectOf(w) + "|" + state + "|-\nb2|||"
+	lox, lea, other := strings.Repeat("a1", 32), strings.Repeat("b2", 32), strings.Repeat("c3", 32)
+	labelsOf := func(id string, lb map[string]string) {
+		b, _ := json.Marshal(lb)
+		w.env["FAKE_DOCKER_OUT_INSPECT___TYPE_AT_"+fakeKey(id)] = string(b)
+	}
+	compose := func(p, wd, cf string) map[string]string {
+		return map[string]string{"com.docker.compose.project": p, "com.docker.compose.service": "lock-crm",
+			"com.docker.compose.project.working_dir": wd, "com.docker.compose.project.config_files": cf}
+	}
+	labelsOf(lox, compose(upProjectOf(w), state, "-"))
+	labelsOf(lea, map[string]string{"lea.role": "session"})
+	w.env["FAKE_DOCKER_OUT_PS___NO_TRUNC"] = lox + "\n" + lea
 	if !contains(lockArgs(t, w), mount) {
 		t.Fatalf("lox up's console and lea's own container: not mounted; %s", w.errb.String())
 	}
-	for name, row := range map[string]string{
-		"workspace compose file": "c3|" + upProjectOf(w) + "|" + w.proj + "|" + w.proj + "/compose.yaml",
-		"other project":          "c3|lockfamily-00000000|" + state + "|-",
-		"stdin, elsewhere":       "c3|" + upProjectOf(w) + "|/tmp|-",
+	for name, c := range map[string]struct {
+		lb   map[string]string
+		ps   string
+		want string
+	}{
+		"workspace compose file": {compose(upProjectOf(w), w.proj, w.proj+"/compose.yaml"), "", "lea trusts none of its socket"},
+		"other project":          {compose("lockfamily-00000000", state, "-"), "", "lea trusts none of its socket"},
+		"stdin, elsewhere":       {compose(upProjectOf(w), "/tmp", "-"), "", "lea trusts none of its socket"},
+		// A path with the separator of a joined format: decoded from JSON, still refused.
+		"a | in its paths": {compose(upProjectOf(w), state+"|x", state+"|-"), "", "lea trusts none of its socket"},
+		// Only the service label: still compose's, and not lox up's run.
+		"one compose label": {map[string]string{"com.docker.compose.service": "lock-crm"}, "", "lea trusts none of its socket"},
+		"malformed id":      {nil, lox + "\nnot-an-id", "cannot read the containers of"},
+		"unreadable labels": {nil, lox + "\n" + other, "cannot read the containers of"},
 	} {
 		w.errb.Reset()
-		w.env["FAKE_DOCKER_OUT_PS___NO_TRUNC"] = "a1|" + upProjectOf(w) + "|" + state + "|-\n" + row
-		if contains(lockArgs(t, w), mount) || !strings.Contains(w.errb.String(), "lea trusts none of its socket") {
-			t.Errorf("%s: mounted, or no warning: %s", name, w.errb.String())
+		delete(w.env, "FAKE_DOCKER_OUT_INSPECT___TYPE_AT_"+fakeKey(other))
+		if c.lb != nil {
+			labelsOf(other, c.lb)
+		} else {
+			w.env["FAKE_DOCKER_OUT_INSPECT___TYPE_AT_"+fakeKey(other)] = "not json|x"
+		}
+		w.env["FAKE_DOCKER_OUT_PS___NO_TRUNC"] = nonEmpty(c.ps, lox+"\n"+other)
+		if contains(lockArgs(t, w), mount) || !strings.Contains(w.errb.String(), c.want) {
+			t.Errorf("%s: mounted, or no warning %q: %s", name, c.want, w.errb.String())
 		}
 	}
 	w.env["FAKE_DOCKER_RC_PS___NO_TRUNC"] = "1"
-	w.errb.Reset()
 	if contains(lockArgs(t, w), mount) {
 		t.Error("mounted though docker ps failed")
 	}

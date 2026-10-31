@@ -11,6 +11,7 @@ import (
 	"os"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"syscall"
 )
@@ -218,19 +219,31 @@ func (l *Launcher) lockUpVolumeWrong(vol, project, proj, name, typ string) strin
 // socket from an image of the agent's. Containers no compose made (lea's own: its agents, its
 // gate) only reach the socket.
 func (l *Launcher) lockUpServersWrong(vol, project string) string {
-	o, err := l.output(false, "docker", "ps", "--no-trunc", "-a", "--filter", "volume="+vol, "--format",
-		`{{.ID}}|{{.Label "com.docker.compose.project"}}|{{.Label "com.docker.compose.project.working_dir"}}|{{.Label "com.docker.compose.project.config_files"}}`)
+	o, err := l.output(false, "docker", "ps", "--no-trunc", "-a", "--filter", "volume="+vol, "--format", "{{.ID}}")
 	if err != nil {
 		return "cannot list the containers of " + vol + " (docker ps)"
 	}
 	state := loxStateDir(l.Cfg, project)
-	for _, ln := range strings.Split(o, "\n") {
-		f := strings.Split(strings.TrimSpace(ln), "|")
-		if len(f) != 4 || f[1] == "" && f[2] == "" && f[3] == "" {
-			continue // not compose's
+	for _, id := range strings.Fields(o) {
+		// Each container's labels as JSON, decoded: no field separator a path could hold.
+		if !dockerID.MatchString(id) {
+			return "cannot read the containers of " + vol + " (docker ps gave " + strconv.Quote(id) + ")"
 		}
-		if f[1] != project || f[2] != state || (f[3] != "-" && f[3] != state+"/compose.yaml") {
-			return fmt.Sprintf("volume %s is mounted by container %s of compose project %q run from %q (%q), not by lox up from %s: lea trusts none of its socket", vol, f[0], f[1], f[2], f[3], state)
+		j, err := l.output(false, "docker", "inspect", "--type", "container", "-f", "{{json .Config.Labels}}", id)
+		var lb map[string]string
+		if err != nil || json.Unmarshal([]byte(j), &lb) != nil {
+			return "cannot read the containers of " + vol + " (docker inspect " + id + ")"
+		}
+		compose := false
+		for k := range lb {
+			compose = compose || strings.HasPrefix(k, "com.docker.compose.")
+		}
+		if !compose {
+			continue // no compose made it: lea's own, which only reach the socket
+		}
+		p, wd, cf := lb["com.docker.compose.project"], lb["com.docker.compose.project.working_dir"], lb["com.docker.compose.project.config_files"]
+		if p != project || wd != state || (cf != "-" && cf != state+"/compose.yaml") {
+			return fmt.Sprintf("volume %s is mounted by container %s of compose project %q run from %q (%q), not by lox up from %s: lea trusts none of its socket", vol, id, p, wd, cf, state)
 		}
 	}
 	return ""
