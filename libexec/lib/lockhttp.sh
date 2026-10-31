@@ -6,7 +6,7 @@
 # LEA_LOCKHTTP_RELEASE: the lockhttp release lea pins: the one this lea is tested with, whose gate
 # has every flag lea may pass (hub mode v0.3.0, devices v0.4.0, facade keys v0.5.0). lea runs the
 # image of the launcher installed on the host; lea doctor warns when it is older than this one.
-LEA_LOCKHTTP_RELEASE=v0.5.0
+LEA_LOCKHTTP_RELEASE=v0.5.1
 
 # lea__lockhttp_version BIN: the launcher_version line of lockhttp's launcher BIN (its first 64 KiB,
 # as internal/launcher/lockhttp.go reads it), empty when it has none.
