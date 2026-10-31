@@ -160,17 +160,17 @@ func TestLockRequestDeclinedFailedAndExpired(t *testing.T) {
 		t.Fatal(err)
 	}
 	fa.mu.Lock()
-	fa.lockOpenErr = errors.New("the locksql/prod console locksql-console-prod already runs in the deck of lea-b")
+	fa.lockOpenErr = errors.New("no locksql lock of lox up serves the profile \"prod\": run `lox up`")
 	fa.mu.Unlock()
-	if _, err := decideLock(t, e, "lea-a", r.Request, true); err == nil || !strings.Contains(err.Error(), "already runs") {
+	if _, err := decideLock(t, e, "lea-a", r.Request, true); err == nil || !strings.Contains(err.Error(), "run `lox up`") {
 		t.Fatalf("open failed: %v", err)
 	}
 	ms = inboxOf(t, e, "dev")
 	if len(ms) != 1 || !strings.Contains(ms[0].Text, "[status: fail] lock request #2 (locksql/prod): the user said yes, but the console did not open.") ||
-		strings.Contains(ms[0].Text, "lea-b") {
+		strings.Contains(ms[0].Text, "lox up") {
 		t.Fatalf("inbox=%+v", ms)
 	}
-	if got, _ := e.d.st.LockRequestByID(r.Request); got.State != "failed" || !strings.Contains(got.Result, "already runs") {
+	if got, _ := e.d.st.LockRequestByID(r.Request); got.State != "failed" || !strings.Contains(got.Result, "run `lox up`") {
 		t.Fatalf("audit: %+v", got)
 	}
 	fa.mu.Lock()

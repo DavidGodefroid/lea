@@ -216,7 +216,7 @@ func (d Docker) Pause(ctx context.Context, container, name string, paused bool) 
 	return nil
 }
 
-// DockerConsoles reaches the lock console containers through the docker CLI.
+// DockerConsoles reaches the console containers an earlier lea started, through the docker CLI.
 type DockerConsoles struct {
 	Bin string // "docker" when empty
 }
@@ -228,82 +228,8 @@ func (d DockerConsoles) bin() string {
 	return d.Bin
 }
 
-// ConsoleState inspects a console container: one docker does not know does not exist.
-func (d DockerConsoles) ConsoleState(ctx context.Context, name string) (ConsoleState, error) {
-	out, err := exec.CommandContext(ctx, d.bin(), "inspect", "-f",
-		`{{.State.Running}}|{{index .Config.Labels "`+lockOwnerLabel+`"}}`, name).Output()
-	if err != nil {
-		var ee *exec.ExitError
-		if errors.As(err, &ee) && noSuchContainer(string(ee.Stderr)) {
-			return ConsoleState{}, nil
-		}
-		return ConsoleState{}, fmt.Errorf("docker inspect %s: %w%s", name, err, stderrOf(err))
-	}
-	run, owner, ok := strings.Cut(strings.TrimSpace(string(out)), "|")
-	if !ok || run != "true" && run != "false" {
-		return ConsoleState{}, fmt.Errorf("docker inspect %s: unexpected state %q", name, out)
-	}
-	if owner == "<no value>" {
-		owner = ""
-	}
-	return ConsoleState{Exists: true, Running: run == "true", Owner: owner}, nil
-}
-
-func (d DockerConsoles) RemoveConsole(ctx context.Context, name string) error {
-	if out, err := exec.CommandContext(ctx, d.bin(), "rm", name).CombinedOutput(); err != nil && !noSuchContainer(string(out)) {
-		return fmt.Errorf("docker rm %s: %w: %s", name, err, strings.TrimSpace(string(out)))
-	}
-	return nil
-}
-
-func (d DockerConsoles) StopConsole(ctx context.Context, name string) error {
-	if out, err := exec.CommandContext(ctx, d.bin(), "stop", "-t", "5", name).CombinedOutput(); err != nil && !noSuchContainer(string(out)) {
-		return fmt.Errorf("docker stop %s: %w: %s", name, err, strings.TrimSpace(string(out)))
-	}
-	return nil
-}
-
-// Unconfined inspects the running agent containers (lea.role=session) of projects, or of a
-// projects directory above it (lea.projects), whose read-write mount holds dir: those whose mount
-// of dir is missing or writable. Any failure is an error, never "none".
-func (d DockerConsoles) Unconfined(ctx context.Context, projects, dir string) ([]string, error) {
-	out, err := exec.CommandContext(ctx, d.bin(), "ps", "--filter", "label=lea.role=session",
-		"--format", `{{.ID}} {{.Label "lea.projects"}}`).Output()
-	if err != nil {
-		return nil, fmt.Errorf("docker ps: %w%s", err, stderrOf(err))
-	}
-	var ids []string
-	for _, l := range strings.Split(string(out), "\n") {
-		id, p, _ := strings.Cut(l, " ")
-		if id != "" && p != "" && (p == projects || p == "/" || strings.HasPrefix(projects, p+"/")) {
-			ids = append(ids, id)
-		}
-	}
-	if len(ids) == 0 {
-		return nil, nil
-	}
-	f := `{{.Name}} {{range .Mounts}}{{if eq .Destination "` + dir + `"}}{{.RW}}{{end}}{{end}}`
-	out, err = exec.CommandContext(ctx, d.bin(), append([]string{"inspect", "-f", f}, ids...)...).Output()
-	if err != nil {
-		return nil, fmt.Errorf("docker inspect: %w%s", err, stderrOf(err))
-	}
-	lines := strings.Split(strings.TrimRight(string(out), "\n"), "\n")
-	if len(lines) != len(ids) {
-		return nil, fmt.Errorf("docker inspect: %d lines for %d containers", len(lines), len(ids))
-	}
-	var bad []string
-	for _, l := range lines {
-		name, rw, _ := strings.Cut(l, " ")
-		if name == "" {
-			return nil, fmt.Errorf("docker inspect: unexpected line %q", l)
-		}
-		if rw != "false" {
-			bad = append(bad, strings.TrimPrefix(name, "/"))
-		}
-	}
-	return bad, nil
-}
-
+// StopConsolesOf stops the console containers a deck of owner started (an earlier lea started
+// its own, labelled lea.lock-for=<owner>): never one of lox up's, which carry no such label.
 func (d DockerConsoles) StopConsolesOf(ctx context.Context, owner string) error {
 	out, err := exec.CommandContext(ctx, d.bin(), "ps", "-q", "--filter", "label="+lockOwnerLabel+"="+owner).Output()
 	if err != nil {

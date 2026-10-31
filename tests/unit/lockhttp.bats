@@ -10,7 +10,7 @@ setup() {
   launcher 0.5.1 "$D"
   export LEA_LOCKHTTP=1 LEA_GIT_SSH= LEA_PREFIX=lea
   export FAKE_DOCKER_OUT_INSPECT__F=true
-  export FAKE_DOCKER_OUT_INSPECT__F_AT_LEA_LOCKHTTP_GATE="true|ghcr.io/davidgodefroid/lockhttp@$D|gate|lockhttp-run/var/lib/docker/volumes/lockhttp-run/_data>/run/lockhttp;/home/u/.local/share/lea/lockhttp/gate>/etc/lockhttp-gate;"
+  export FAKE_DOCKER_OUT_INSPECT__F_AT_LEA_LOCKHTTP_GATE="true|ghcr.io/davidgodefroid/lockhttp@$D|gate|lockfamily-1a2b3c4d_web-run/var/lib/docker/volumes/lockfamily-1a2b3c4d_web-run/_data>/run/lockhttp;lockfamily-1a2b3c4d_web-gate/var/lib/docker/volumes/lockfamily-1a2b3c4d_web-gate/_data>/lockhttp-home;/home/u/.local/share/lea/lockhttp/gate>/etc/lockhttp-gate;"
   export FAKE_DOCKER_OUT_EXEC_LEA_PROXY_AT__LTN='tcp        0      0 127.0.0.1:3128          0.0.0.0:*               LISTEN
 tcp        0      0 :::3130                 :::*                    LISTEN'
   S=$(lea_data_dir)/lockhttp/status; mkdir -p "$S"
@@ -68,7 +68,7 @@ launcher() {
 
 @test "a launcher run from a clone pins the local image lockhttp" {
   launcher dev ""
-  export FAKE_DOCKER_OUT_INSPECT__F_AT_LEA_LOCKHTTP_GATE="true|lockhttp|gate|lockhttp-run/x>/run/lockhttp;"
+  export FAKE_DOCKER_OUT_INSPECT__F_AT_LEA_LOCKHTTP_GATE="true|lockhttp|gate|lockfamily-1a2b3c4d_web-run/x>/run/lockhttp;"
   run lea__doctor_lockhttp
   [ "$status" -eq 0 ]
   [[ "$output" == *"ok    lockhttp launcher (gate image lockhttp)"* ]]
@@ -91,7 +91,7 @@ launcher() {
 }
 
 @test "a gate of another image, user or mounts, a silent gate, squid on every address and a down console are reported" {
-  export FAKE_DOCKER_OUT_INSPECT__F_AT_LEA_LOCKHTTP_GATE="true|ghcr.io/davidgodefroid/lockhttp:0.2.0|root|lockhttp-home/x>/home/lockhttp;lockhttp-run/x>/run/lockhttp;"
+  export FAKE_DOCKER_OUT_INSPECT__F_AT_LEA_LOCKHTTP_GATE="true|ghcr.io/davidgodefroid/lockhttp:0.2.0|root|lockfamily-1a2b3c4d_web-home/x>/home/lockhttp;lockfamily-1a2b3c4d_web-run/x>/run/lockhttp;"
   export FAKE_DOCKER_OUT_EXEC_LEA_PROXY_AT__LTN='tcp        0      0 :::3128                 :::*                    LISTEN'
   export FAKE_DOCKER_RC_EXEC_LEA_LOCKHTTP_GATE=1
   printf '{"version":1,"console":"down"}\n' >"$S/status.json"
@@ -102,7 +102,7 @@ launcher() {
   [[ "$output" == *"FAIL  LockHTTP gate mounts: the console's home"* ]]
   [[ "$output" == *"FAIL  LockHTTP gate: does not answer"* ]]
   [[ "$output" == *"FAIL  squid: listens on ':::3128'"* ]]
-  [[ "$output" == *"warn  lockhttp console: down"*"lockhttp console"* ]]
+  [[ "$output" == *"warn  lockhttp console: down"*"run \`lox up\`"* ]]
 }
 
 @test "a gate left in the network namespace of a proxy started again is a failure" {
@@ -117,7 +117,11 @@ launcher() {
   export FAKE_DOCKER_OUT_INSPECT__F_AT_LEA_LOCKHTTP_GATE="true|ghcr.io/davidgodefroid/lockhttp@$D|gate|/tmp/run>/run/lockhttp;"
   run lea__doctor_lockhttp
   [ "$status" -eq 1 ]
-  [[ "$output" == *"FAIL  LockHTTP gate mounts: no lockhttp-run volume"* ]]
+  [[ "$output" == *"FAIL  LockHTTP gate mounts: no socket volume of lox up's lockhttp lock"*"run \`lox up\`"* ]]
+  # The fixed volume of a console of lockhttp's own launcher is not lox up's.
+  export FAKE_DOCKER_OUT_INSPECT__F_AT_LEA_LOCKHTTP_GATE="true|ghcr.io/davidgodefroid/lockhttp@$D|gate|lockhttp-run/x>/run/lockhttp;"
+  run lea__doctor_lockhttp
+  [[ "$output" == *"FAIL  LockHTTP gate mounts: no socket volume of lox up's lockhttp lock"* ]]
   export FAKE_DOCKER_OUT_INSPECT__F_AT_LEA_LOCKHTTP_GATE=
   export FAKE_DOCKER_RC_INSPECT__F_AT_LEA_LOCKHTTP_GATE=1
   run lea__doctor_lockhttp
@@ -186,4 +190,28 @@ launcher() {
   openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:P-256 -nodes -days 90 -subj /CN=t -keyout "$ca/ca-key.pem" -out "$ca/ca.pem" 2>/dev/null
   run lea__doctor_lockhttp
   [[ "$output" == *"ok    LockHTTP CA valid for more than 7 days"* ]]
+}
+
+@test "the gate's mounts are checked one entry at a time" {
+  ok=lockfamily-1a2b3c4d_web-run/var/lib/docker/volumes/lockfamily-1a2b3c4d_web-run/_data
+  # A later host path holding -home/ is no console home (an earlier pattern matched across mounts).
+  [ "$(lea__lockhttp_gate_mounts "$ok>/run/lockhttp;/home/u/my-home/lea/gate>/etc/lockhttp-gate;")" = ok ]
+  [ "$(lea__lockhttp_gate_mounts "/srv/lockfamily-x-home/y>/etc/x;$ok>/run/lockhttp;")" = ok ]
+  # lox up's socket volume must be the entry on /run/lockhttp, not a pattern spanning two entries.
+  [ "$(lea__lockhttp_gate_mounts "lockfamily-1a2b3c4d_web-run/v>/lockhttp-home;/tmp/run>/run/lockhttp;")" = none ]
+  [ "$(lea__lockhttp_gate_mounts "lockfamily-1a2b3c4d_web-gate/v>/lockhttp-home;lockhttp-run/v>/run/lockhttp;")" = none ]
+  [ "$(lea__lockhttp_gate_mounts "lockfamily-zz_web-run/v>/run/lockhttp;")" = none ]
+  [ "$(lea__lockhttp_gate_mounts "")" = none ]
+  # A console home, by its volume's name, or an engine socket anywhere, is bad.
+  [ "$(lea__lockhttp_gate_mounts "$ok>/run/lockhttp;lockfamily-1a2b3c4d_web-home/v>/home/lockhttp;")" = bad ]
+  [ "$(lea__lockhttp_gate_mounts "$ok>/run/lockhttp;lockhttp-home/v>/x;")" = bad ]
+  [ "$(lea__lockhttp_gate_mounts "$ok>/run/lockhttp;/run/docker.sock>/var/run/docker.sock;")" = bad ]
+  [ "$(lea__lockhttp_gate_mounts "$ok>/run/lockhttp;/run/user/1000/podman/podman.sock>/s;")" = bad ]
+}
+
+@test "lea doctor: a host path with -home/ after the socket volume is no failure" {
+  export FAKE_DOCKER_OUT_INSPECT__F_AT_LEA_LOCKHTTP_GATE="true|ghcr.io/davidgodefroid/lockhttp@$D|gate|lockfamily-1a2b3c4d_web-run/var/lib/docker/volumes/lockfamily-1a2b3c4d_web-run/_data>/run/lockhttp;lockfamily-1a2b3c4d_web-gate/var/lib/docker/volumes/lockfamily-1a2b3c4d_web-gate/_data>/lockhttp-home;/home/u/my-home/lea/lockhttp/gate>/etc/lockhttp-gate;"
+  run lea__doctor_lockhttp
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"ok    LockHTTP gate has the console's socket volume only"* ]]
 }

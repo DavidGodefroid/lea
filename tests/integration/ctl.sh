@@ -4,13 +4,13 @@
 # never sees it, and that lea-ctl sees lea's paths at their host paths. Then a full lea run there:
 # the daemon, lea's tmux and the deck run in lea-ctl, `docker exec -it lea-ctl tmux attach`
 # reaches them, an agent spawned by that daemon runs in the agent container, its call for the
-# user rings the bell of the attached terminal, and a Lock console (a stand-in image of locksql's
-# console: lea's side of it) starts in its standalone mode from lea-ctl, in the deck. Needs the
-# lea, lea-proxy and lea-ctl images (make build), build/lea and script(1). Linux hosts. Creates and
-# removes only lea-ctltest-* resources; the Lock console part also uses locksql's fixed names
-# (locksql-console, the locksql-run and locksql-home volumes), so it runs only on CI (CI=true,
-# where it must) or with LEA_CTL_E2E_LOCK=1, and only while none of them exists; otherwise the
-# test runs with locksql off (LEA_LOCKSQL=0), and touches none of them.
+# user rings the bell of the attached terminal, and the deck's Lock console pane (lea lock open
+# locksql) attaches, from lea-ctl, to the console of a lox up lock: a stand-in of lox up's state
+# (up.json, the lock's socket volume and console container, labelled as lox up labels them; lea's
+# side of it), never a console of lea's own. Needs the lea, lea-proxy and lea-ctl images (make
+# build), build/lea and script(1). Linux hosts. Creates and removes only lea-ctltest-* resources
+# and the stand-in's, named after the compose project lox up would give its temporary projects
+# directory (lockfamily-<hash>).
 set -eu
 root=$(cd "$(dirname "$0")/../.." && pwd -P)
 fail() { echo "ctl e2e: $*" >&2; exit 1; }
@@ -19,26 +19,34 @@ work=$(mktemp -d) || exit 1
 work=$(cd "$work" && pwd -P) || exit 1
 projects="$work/projects"; mkdir -p "$projects"
 export XDG_DATA_HOME="$work/data"
-lockstub=lea-ctltest-lockstub:dev
-# The Lock console part, decided before any lea command: lea's agent containers mount locksql-run
-# while locksql is on, which would create it. Off, locksql is off for the whole test.
-lockrun=0
-if { [ "${CI:-}" = true ] || [ "${LEA_CTL_E2E_LOCK:-0}" = 1 ]; } &&
-  ! docker container inspect locksql-console >/dev/null 2>&1 &&
-  ! docker volume inspect locksql-run >/dev/null 2>&1 && ! docker volume inspect locksql-home >/dev/null 2>&1; then
-  lockrun=1
-elif [ "${CI:-}" = true ]; then
-  fail "on CI the Lock console part must run, but locksql's console names are in use"
-fi
+# lox up's state for the projects directory, as lox up writes it (lockhub's docs/lox-up.md): its
+# compose project (from the directory's path), a locksql lock crm, its socket volume with lox up's
+# labels and its console container (compose's project and service labels, a terminal), made
+# before any lea command so that lea's agent containers mount that socket volume.
+lfp=lockfamily-$(printf '%s' "$projects" | sha256sum | cut -c1-8)
+lockvol=${lfp}_crm-run lockstub=lea-ctltest-lockstub
+mkdir -m 0755 "$projects/.lockfamily"
+printf '{"version":1,"project":"%s","workspace":"%s","locks":{"crm":{"type":"locksql","socket_volume":"%s","client_gid":"10000"}}}\n' \
+  "$lfp" "$projects" "$lockvol" >"$projects/.lockfamily/up.json"
+chmod 0644 "$projects/.lockfamily/up.json"
+docker volume create --label "com.docker.compose.project=$lfp" --label com.docker.compose.volume=crm-run \
+  --label dev.lockfamily.role=socket --label dev.lockfamily.instance=crm --label dev.lockfamily.type=locksql \
+  --label "dev.lockfamily.workspace=$projects" "$lockvol" >/dev/null || fail "could not create $lockvol"
+docker pull -q docker.io/library/alpine:3.22 >/dev/null || fail "could not pull alpine"
+# lox up runs compose from its state directory, the file on stdin: compose's labels say so.
+docker run -d -it --name "$lockstub" --label "com.docker.compose.project=$lfp" --label com.docker.compose.service=lock-crm \
+  --label "com.docker.compose.project.working_dir=${XDG_STATE_HOME:-$HOME/.local/state}/lockfamily/$lfp" \
+  --label com.docker.compose.project.config_files=- \
+  --network none -v "$lockvol:/run/locksql" docker.io/library/alpine:3.22 sh -c 'echo LOCK-CONSOLE-UP; exec sleep 600' >/dev/null ||
+  fail "could not start the stand-in console"
 cat >"$work/lea.conf" <<CONF
 LEA_PREFIX=lea-ctltest
 LEA_IMAGE=lea:dev
 LEA_PROXY_IMAGE=lea-proxy:dev
 LEA_CTL=1
 LEA_CTL_IMAGE=lea-ctl:dev
-LEA_LOCKSQL_IMAGE=$lockstub
 LEA_AUTONAME=0
-LEA_LOCKSQL=$lockrun
+LEA_LOCKSQL=1
 CONF
 export LEA_CONFIG="$work/lea.conf" LEA_PROJECTS_DIR="$projects"
 state="$XDG_DATA_HOME/lea/state"; mkdir -p "$state"; printf '{}\n' >"$state/claude.json"
@@ -48,13 +56,9 @@ ctl=lea-ctltest-ctl agent=lea-ctltest-$id
 # shellcheck disable=SC2317 # invoked via trap
 cleanup() {
   [ -z "${attach:-}" ] || kill "$attach" 2>/dev/null || true
-  [ "${lockrun:-0}" != 1 ] || docker rm -f locksql-console >/dev/null 2>&1 || true
-  docker rm -f "$agent" lea-ctltest-proxy "$ctl" >/dev/null 2>&1 || true
-  # Its volumes once no container mounts them.
-  if [ "${lockrun:-0}" = 1 ]; then
-    docker volume rm locksql-run locksql-home >/dev/null 2>&1 || true
-    docker image rm "$lockstub" >/dev/null 2>&1 || true
-  fi
+  docker rm -f "$agent" lea-ctltest-proxy "$ctl" "$lockstub" >/dev/null 2>&1 || true
+  # The stand-in's socket volume once no container mounts it.
+  docker volume rm "$lockvol" >/dev/null 2>&1 || true
   docker network rm "lea-ctltest-internal-$id" lea-ctltest-egress >/dev/null 2>&1 || true
   docker volume rm "lea-ctltest-podman-$id" >/dev/null 2>&1 || true
   rm -rf "$work"
@@ -158,37 +162,30 @@ for i in $(seq 20); do
   sleep 1
 done
 
-# A Lock console, standalone (its own TTY, no hub), opened in the deck by lea in lea-ctl.
-if [ "$lockrun" = 1 ]; then
-  # A stand-in of locksql's console image: its account, a console that waits at its terminal.
-  printf 'FROM lea-ctl:dev\nRUN useradd -u 10001 -U locksql && mkdir -p /run/locksql /home/locksql && chown locksql /run/locksql /home/locksql\nENTRYPOINT ["sh", "-c", "echo LOCK-CONSOLE-UP; exec sleep 600", "console"]\n' |
-    docker build -q -t "$lockstub" - >/dev/null || fail "could not build the stand-in console"
-  out=$("$root/bin/lea" lock open locksql </dev/null 2>&1) || fail "lea lock open failed: $out"
-  for i in $(seq 30); do
-    [ "$(docker inspect -f '{{.State.Running}}' locksql-console 2>/dev/null)" = true ] && break
-    [ "$i" -lt 30 ] || fail "the console did not start: $out"
-    sleep 1
-  done
-  [ "$(docker inspect -f '{{index .Config.Labels "lea.lock-for"}}' locksql-console)" = "$agent" ] || fail "the console is not the deck's of $agent"
-  mounts=$(docker inspect -f '{{range .Mounts}}{{.Name}}{{.Source}}->{{.Destination}} {{end}}' locksql-console)
-  case $mounts in *"locksql-run"*"->/run/locksql "*) ;; *) fail "the console lacks its socket volume: $mounts" ;; esac
-  case $mounts in *docker.sock*) fail "the console mounts the Docker socket: $mounts" ;; esac
-  docker exec locksql-console sh -c '[ ! -e /var/run/docker.sock ] && [ ! -e /run/docker.sock ]' || fail "the console sees the Docker socket"
-  panes=$(docker exec -u "$u" "$ctl" tmux -L lea list-panes -a -F '#{pane_start_command}')
-  case $panes in *"--name locksql-console"*) ;; *) fail "no console pane in $ctl: $panes" ;; esac
-  # The agents get its socket volume, never anything of its home.
-  docker inspect -f '{{range .Mounts}}{{.Name}} {{end}}' "$agent" | grep -q 'locksql-home' && fail "$agent mounts locksql-home"
-  "$root/bin/lea" lock close locksql </dev/null >/dev/null 2>&1 || fail "lea lock close failed"
-  for i in $(seq 20); do
-    [ "$(docker inspect -f '{{.State.Running}}' locksql-console 2>/dev/null)" = true ] || break
-    [ "$i" -lt 20 ] || fail "the console still runs after lea lock close"
-    sleep 1
-  done
-  docker exec -u "$u" "$ctl" tmux -L lea list-panes -a -F '#{pane_start_command}' | grep -q -- '--name locksql-console' &&
-    fail "the console's pane stays after lea lock close"
-else
-  echo "ctl e2e: the Lock console part is skipped (not on CI, or locksql's console names are in use): LEA_LOCKSQL=0" >&2
-fi
+# The deck's Lock console pane, opened by lea in lea-ctl: it attaches to lox up's console (the
+# stand-in), starts no console of its own, and closing it ends the attach only.
+stub=$(docker inspect -f '{{.Id}}' "$lockstub") || fail "no stand-in console"
+case $(docker inspect -f '{{range .Mounts}}{{.Name}}:{{.Destination}}:{{.RW}} {{end}}' "$agent") in
+  *"$lockvol:/run/locksql:false "*) ;;
+  *) fail "$agent lacks lox up's locksql socket volume, read-only: $(docker inspect -f '{{range .Mounts}}{{.Name}}:{{.Destination}}:{{.RW}} {{end}}' "$agent")" ;;
+esac
+out=$("$root/bin/lea" lock open locksql </dev/null 2>&1) || fail "lea lock open failed: $out"
+panes=$(docker exec -u "$u" "$ctl" tmux -L lea list-panes -a -F '#{pane_start_command}')
+case $panes in *"attach --sig-proxy=false --detach-keys ctrl-p,ctrl-q $stub"*) ;; *) fail "no pane attached to lox up's console in $ctl: $panes" ;; esac
+case $panes in *"docker run"*) fail "the deck started a console of its own: $panes" ;; esac
+[ -z "$(docker ps -aq --filter label=lea.lock-for)" ] || fail "a console container of lea's own exists: $(docker ps -a --filter label=lea.lock-for)"
+"$root/bin/lea" lock close locksql </dev/null >/dev/null 2>&1 || fail "lea lock close failed"
+for i in $(seq 20); do
+  docker exec -u "$u" "$ctl" tmux -L lea list-panes -a -F '#{pane_start_command}' | grep -q -- "--detach-keys ctrl-p,ctrl-q $stub" || break
+  [ "$i" -lt 20 ] || fail "the console's pane stays after lea lock close"
+  sleep 1
+done
+[ "$(docker inspect -f '{{.State.Running}}' "$lockstub")" = true ] || fail "lea lock close stopped lox up's console"
+# No console of lox up runs: lea says so, and opens no pane.
+docker stop -t 1 "$lockstub" >/dev/null
+if out=$("$root/bin/lea" lock open locksql </dev/null 2>&1); then fail "lea lock open said $out with no console running"; fi
+case $out in *"run \`lox up\`"*) ;; *) fail "lea lock open without a console: $out" ;; esac
+docker exec -u "$u" "$ctl" tmux -L lea list-panes -a -F '#{@lea_role}' | grep -qx lock && fail "a pane opened without a console"
 
 # Every container but lea-ctl, now with the agent running: no Docker socket mounted, none seen.
 for c in $(docker ps -q --filter label=lea.prefix=lea-ctltest); do

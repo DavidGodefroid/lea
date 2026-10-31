@@ -176,33 +176,33 @@ func TestConfigExportOutputFile(t *testing.T) {
 func TestConfigImportRefuses(t *testing.T) {
 	key := sshKey(t)
 	cases := map[string]struct{ in, msg string }{
-		"newer format":     {`{"lea_config_format":2,"keys":{}}`, "upgrade lea"},
-		"no format":        {`{"keys":{}}`, "format"},
-		"unknown field":    {`{"lea_config_format":1,"keys":{},"run":"x"}`, "unknown field"},
-		"two documents":    {`{"lea_config_format":1,"keys":{}} {}`, "one JSON object"},
-		"not shared key":   {`{"lea_config_format":1,"keys":{"LEA_PREFIX":"x"}}`, "LEA_PREFIX is not a shared key"},
-		"projects dir":     {`{"lea_config_format":1,"keys":{"LEA_PROJECTS_DIR":"/tmp"}}`, "LEA_PROJECTS_DIR is not a shared key"},
-		"approvals":        {`{"lea_config_format":1,"keys":{"LEA_APPROVALS":"both"}}`, "LEA_APPROVALS must be deck or pane"},
-		"timeout":          {`{"lea_config_format":1,"keys":{"LEA_APPROVAL_TIMEOUT":"601"}}`, "LEA_APPROVAL_TIMEOUT"},
-		"git ssh shell":    {`{"lea_config_format":1,"keys":{"LEA_GIT_SSH":"x; rm -rf ~"}}`, "LEA_GIT_SSH"},
-		"subshell":         {`{"lea_config_format":1,"keys":{"LEA_K8S_NAMESPACE":"$(id)"}}`, "LEA_K8S_NAMESPACE"},
-		"backquotes":       {"{\"lea_config_format\":1,\"keys\":{\"LEA_NESTED_NETWORKS\":\"`id`\"}}", "LEA_NESTED_NETWORKS"},
-		"quote breakout":   {`{"lea_config_format":1,"keys":{"LEA_OTEL_UPSTREAM":"x'; id; '"}}`, "LEA_OTEL_UPSTREAM"},
-		"new line":         {`{"lea_config_format":1,"keys":{"LEA_LOCKSQL":"1\nLEA_PREFIX=x"}}`, "one line"},
-		"image option":     {`{"lea_config_format":1,"keys":{"LEA_IMAGE":"-v/:/host"}}`, "LEA_IMAGE"},
-		"plain http":       {`{"lea_config_format":1,"keys":{"LEA_RELEASES_URL":"http://evil.example"}}`, "https"},
-		"no releases url":  {`{"lea_config_format":1,"keys":{"LEA_RELEASES_URL":""}}`, "LEA_RELEASES_URL"},
-		"locksql path":     {`{"lea_config_format":1,"keys":{"LEA_LOCKSQL_REF":"/home/x/locksql"}}`, "LEA_LOCKSQL_REF"},
-		"unknown file":     {`{"lea_config_format":1,"keys":{},"files":{"lea.conf":"x"}}`, "lea.conf is not a shared file"},
-		"ca marker":        {`{"lea_config_format":1,"keys":{},"files":{"git_known_hosts":"@cert-authority * ` + key + `\n"}}`, "git_known_hosts line 1"},
-		"wildcard host":    {`{"lea_config_format":1,"keys":{},"files":{"git_known_hosts":"*.corp ` + key + `\n"}}`, "git_known_hosts line 1"},
-		"bad key":          {`{"lea_config_format":1,"keys":{},"files":{"git_known_hosts":"h ssh-ed25519 AAAA\n"}}`, "git_known_hosts line 1"},
-		"bad port":         {`{"lea_config_format":1,"keys":{},"files":{"internal-hosts":"ok.example 443\nh.example 70000\n"}}`, "internal-hosts line 2"},
-		"bad internal ip":  {`{"lea_config_format":1,"keys":{},"files":{"internal-hosts":"10.0.0.300 443\n"}}`, "internal-hosts line 1"},
-		"internal shell":   {`{"lea_config_format":1,"keys":{},"files":{"internal-hosts":"$(id) 443\n"}}`, "internal-hosts line 1"},
-		"not json":         {`LEA_GIT_SSH=x`, "JSON"},
-		"egress wildcard":  {`{"lea_config_format":1,"keys":{"LEA_EGRESS_ALLOW":"*.github.com"}}`, "LEA_EGRESS_ALLOW"},
-		"vault plain http": {`{"lea_config_format":1,"keys":{"LEA_LOCKSQL_VAULT_ADDR":"http://vault"}}`, "https"},
+		"newer format":        {`{"lea_config_format":2,"keys":{}}`, "upgrade lea"},
+		"no format":           {`{"keys":{}}`, "format"},
+		"unknown field":       {`{"lea_config_format":1,"keys":{},"run":"x"}`, "unknown field"},
+		"two documents":       {`{"lea_config_format":1,"keys":{}} {}`, "one JSON object"},
+		"not shared key":      {`{"lea_config_format":1,"keys":{"LEA_PREFIX":"x"}}`, "LEA_PREFIX is not a shared key"},
+		"projects dir":        {`{"lea_config_format":1,"keys":{"LEA_PROJECTS_DIR":"/tmp"}}`, "LEA_PROJECTS_DIR is not a shared key"},
+		"approvals":           {`{"lea_config_format":1,"keys":{"LEA_APPROVALS":"both"}}`, "LEA_APPROVALS must be deck or pane"},
+		"timeout":             {`{"lea_config_format":1,"keys":{"LEA_APPROVAL_TIMEOUT":"601"}}`, "LEA_APPROVAL_TIMEOUT"},
+		"git ssh shell":       {`{"lea_config_format":1,"keys":{"LEA_GIT_SSH":"x; rm -rf ~"}}`, "LEA_GIT_SSH"},
+		"subshell":            {`{"lea_config_format":1,"keys":{"LEA_K8S_NAMESPACE":"$(id)"}}`, "LEA_K8S_NAMESPACE"},
+		"backquotes":          {"{\"lea_config_format\":1,\"keys\":{\"LEA_NESTED_NETWORKS\":\"`id`\"}}", "LEA_NESTED_NETWORKS"},
+		"quote breakout":      {`{"lea_config_format":1,"keys":{"LEA_OTEL_UPSTREAM":"x'; id; '"}}`, "LEA_OTEL_UPSTREAM"},
+		"new line":            {`{"lea_config_format":1,"keys":{"LEA_LOCKSQL":"1\nLEA_PREFIX=x"}}`, "one line"},
+		"image option":        {`{"lea_config_format":1,"keys":{"LEA_IMAGE":"-v/:/host"}}`, "LEA_IMAGE"},
+		"plain http":          {`{"lea_config_format":1,"keys":{"LEA_RELEASES_URL":"http://evil.example"}}`, "https"},
+		"no releases url":     {`{"lea_config_format":1,"keys":{"LEA_RELEASES_URL":""}}`, "LEA_RELEASES_URL"},
+		"locksql path":        {`{"lea_config_format":1,"keys":{"LEA_LOCKSQL_REF":"/home/x/locksql"}}`, "LEA_LOCKSQL_REF"},
+		"unknown file":        {`{"lea_config_format":1,"keys":{},"files":{"lea.conf":"x"}}`, "lea.conf is not a shared file"},
+		"ca marker":           {`{"lea_config_format":1,"keys":{},"files":{"git_known_hosts":"@cert-authority * ` + key + `\n"}}`, "git_known_hosts line 1"},
+		"wildcard host":       {`{"lea_config_format":1,"keys":{},"files":{"git_known_hosts":"*.corp ` + key + `\n"}}`, "git_known_hosts line 1"},
+		"bad key":             {`{"lea_config_format":1,"keys":{},"files":{"git_known_hosts":"h ssh-ed25519 AAAA\n"}}`, "git_known_hosts line 1"},
+		"bad port":            {`{"lea_config_format":1,"keys":{},"files":{"internal-hosts":"ok.example 443\nh.example 70000\n"}}`, "internal-hosts line 2"},
+		"bad internal ip":     {`{"lea_config_format":1,"keys":{},"files":{"internal-hosts":"10.0.0.300 443\n"}}`, "internal-hosts line 1"},
+		"internal shell":      {`{"lea_config_format":1,"keys":{},"files":{"internal-hosts":"$(id) 443\n"}}`, "internal-hosts line 1"},
+		"not json":            {`LEA_GIT_SSH=x`, "JSON"},
+		"egress wildcard":     {`{"lea_config_format":1,"keys":{"LEA_EGRESS_ALLOW":"*.github.com"}}`, "LEA_EGRESS_ALLOW"},
+		"releases plain http": {`{"lea_config_format":1,"keys":{"LEA_RELEASES_URL":"http://releases"}}`, "https"},
 	}
 	for name, c := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -357,13 +357,10 @@ func TestConfigImportKnownHostsConflictAndUnion(t *testing.T) {
 // ones stay.
 func TestConfigImportReplace(t *testing.T) {
 	w := newWorld(t, repoRoot(t))
-	w.writeConf("lea.conf", "LEA_PROJECTS_DIR='"+w.proj+"'\nLEA_LOCKSQL=0\nexport LEA_APPROVALS=pane\nLEA_SOUND=0\n")
+	w.writeConf("lea.conf", "LEA_PROJECTS_DIR='"+w.proj+"'\nLEA_LOCKSQL=1\nexport LEA_APPROVALS=pane\nLEA_SOUND=0\n")
 	in := w.shareFile(`{"lea_config_format":1,"keys":{"LEA_APPROVAL_TIMEOUT":"90"}}`)
-	// Removing LEA_LOCKSQL=0 wires locksql again (the default): that needs --allow-lock.
-	if code, _, errs := w.config("", "import", in, "--replace", "--yes"); code == 0 || !strings.Contains(errs, "--allow-lock") {
-		t.Fatalf("without --allow-lock: %d %s", code, errs)
-	}
-	if code, _, errs := w.config("", "import", in, "--replace", "--yes", "--allow-lock"); code != 0 {
+	// Removing LEA_LOCKSQL=1 turns locksql off (the default): no --allow-lock needed.
+	if code, _, errs := w.config("", "import", in, "--replace", "--yes"); code != 0 {
 		t.Fatalf("%d %s", code, errs)
 	}
 	got := w.read(w.userConf())
@@ -597,6 +594,12 @@ func TestConfigImportLocksqlNeedsAllowLock(t *testing.T) {
 	in = w.shareFile(`{"lea_config_format":1,"keys":{"LEA_LOCKSQL":"0"}}`)
 	if code, _, errs := w.config("", "import", in, "--yes"); code != 0 {
 		t.Fatalf("turning it off: %d %s", code, errs)
+	}
+	// --replace removing a user's LEA_LOCKSQL=0 leaves the default, off: no lock tool turned on.
+	w.writeConf("lea.conf", "LEA_LOCKSQL=0\n")
+	in = w.shareFile(`{"lea_config_format":1,"keys":{"LEA_APPROVAL_TIMEOUT":"90"}}`)
+	if code, out, errs := w.config("", "import", in, "--replace", "--yes"); code != 0 || strings.Contains(out+errs, "[lock tool]") {
+		t.Fatalf("removing LEA_LOCKSQL=0: %d %q %q", code, out, errs)
 	}
 	// The lock tools of later lea (LEA_LOCKMQ, LEA_LOCKFILE) are not shared at all.
 	in = w.shareFile(`{"lea_config_format":1,"keys":{"LEA_LOCKMQ":"1"}}`)

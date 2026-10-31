@@ -64,21 +64,20 @@ type shareKey struct {
 // shareKeys are the keys a share file may hold. Every other key, LEA_PROJECTS_DIR and the paths
 // included, stays on its workstation.
 var shareKeys = map[string]shareKey{
-	"LEA_GIT_SSH":            {classEgress, false, noteInit, func(_, v string) error { return CheckGitSSH(v) }},
-	"LEA_EGRESS_ALLOW":       {classEgress, false, noteProxy, func(_, v string) error { _, err := egressAllow(v); return err }},
-	"LEA_OTEL_UPSTREAM":      {classEgress, false, noteProxy, func(_, v string) error { return CheckOtelUpstream(v) }},
-	"LEA_IMAGE":              {classCode, false, noteInit, checkImage},
-	"LEA_PROXY_IMAGE":        {classCode, false, noteInit, checkImage},
-	"LEA_LOCKSQL_IMAGE":      {classCode, false, noteInit, checkImage},
-	"LEA_LOCKSQL_REF":        {classCode, false, noteInit, checkLocksqlRef},
-	"LEA_LOCKSQL_VAULT_ADDR": {classCode, false, noteInit, checkHTTPS},
-	"LEA_RELEASES_URL":       {classCode, false, "applies at the next lea update", checkReleases},
-	"LEA_LOCKSQL":            {"", false, noteInit, checkBit("LEA_LOCKSQL must be 1 (wire lea for a locksql console) or 0")},
-	"LEA_NESTED_NETWORKS":    {"", false, noteStop, checkNetworks},
-	"LEA_K8S_NAMESPACE":      {"", false, "applies at the next lea kube refresh", checkNamespace},
-	"LEA_APPROVALS":          {"", false, noteStop, checkApprovals},
-	"LEA_APPROVAL_TIMEOUT":   {"", false, noteStop, checkTimeout},
-	"LEA_SOUND":              {"", true, noteStop, checkBit("LEA_SOUND must be 1 or 0")},
+	"LEA_GIT_SSH":          {classEgress, false, noteInit, func(_, v string) error { return CheckGitSSH(v) }},
+	"LEA_EGRESS_ALLOW":     {classEgress, false, noteProxy, func(_, v string) error { _, err := egressAllow(v); return err }},
+	"LEA_OTEL_UPSTREAM":    {classEgress, false, noteProxy, func(_, v string) error { return CheckOtelUpstream(v) }},
+	"LEA_IMAGE":            {classCode, false, noteInit, checkImage},
+	"LEA_PROXY_IMAGE":      {classCode, false, noteInit, checkImage},
+	"LEA_LOCKSQL_IMAGE":    {classCode, false, noteInit, checkImage},
+	"LEA_LOCKSQL_REF":      {classCode, false, noteInit, checkLocksqlRef},
+	"LEA_RELEASES_URL":     {classCode, false, "applies at the next lea update", checkReleases},
+	"LEA_LOCKSQL":          {"", false, noteInit, checkBit("LEA_LOCKSQL must be 1 (wire lea for a locksql console) or 0")},
+	"LEA_NESTED_NETWORKS":  {"", false, noteStop, checkNetworks},
+	"LEA_K8S_NAMESPACE":    {"", false, "applies at the next lea kube refresh", checkNamespace},
+	"LEA_APPROVALS":        {"", false, noteStop, checkApprovals},
+	"LEA_APPROVAL_TIMEOUT": {"", false, noteStop, checkTimeout},
+	"LEA_SOUND":            {"", true, noteStop, checkBit("LEA_SOUND must be 1 or 0")},
 }
 
 // The files a share file may hold, by name, and the key that points at each one.
@@ -714,7 +713,7 @@ func (l *Launcher) importPlan(f *shareFile, replace bool) ([]keyChange, []fileCh
 		}
 		d := shareKeys[k]
 		ch := keyChange{key: k, old: old, had: had, new: v, set: set, class: d.class, note: d.note}
-		if k == "LEA_LOCKSQL" && nonEmpty(v, "1") == "1" && c.Get(k) != "1" {
+		if k == "LEA_LOCKSQL" && nonEmpty(v, "0") == "1" && c.Get(k) != "1" {
 			// Wiring a locksql console opens a lock tool's socket to the agents.
 			ch.class = classLock
 		}

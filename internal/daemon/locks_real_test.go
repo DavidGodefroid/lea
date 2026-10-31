@@ -31,23 +31,18 @@ func (realContainers) Pause(context.Context, string, string, bool) error {
 }
 func (realContainers) Projects(context.Context, string) (string, error) { return "/home/u/p", nil }
 
-// noConsoles: no console container exists or runs.
+// noConsoles: no console container of an earlier lea runs.
 type noConsoles struct{}
 
-func (noConsoles) ConsoleState(context.Context, string) (agents.ConsoleState, error) {
-	return agents.ConsoleState{}, nil
-}
-func (noConsoles) RemoveConsole(context.Context, string) error  { return nil }
-func (noConsoles) StopConsole(context.Context, string) error    { return nil }
 func (noConsoles) StopConsolesOf(context.Context, string) error { return nil }
-func (noConsoles) Unconfined(context.Context, string, string) ([]string, error) {
-	return nil, nil
-}
+
+// loxID is the container id of lox up's console in the test.
+const loxID = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
 
 // TestRealLockRequestOpensOnlyWhenTheUserSaysSo runs the whole path against a real tmux server,
-// with a stand-in for docker run: an agent asks over its bus; nothing opens, no console runs; the
-// user opens it through the host API; the console's pane sits under the agent's slot in the deck
-// window with the keyboard left on the deck, from the fixed template with the requested profile.
+// with a stand-in for docker attach: an agent asks over its bus; nothing opens, nothing attaches;
+// the user opens it through the host API; the pane, attached to lox up's console of the requested
+// profile, sits under the agent's slot in the deck window with the keyboard left on the deck.
 // The agent learns opened, and a second answer is refused.
 func TestRealLockRequestOpensOnlyWhenTheUserSaysSo(t *testing.T) {
 	if _, err := exec.LookPath("tmux"); err != nil {
@@ -79,8 +74,12 @@ func TestRealLockRequestOpensOnlyWhenTheUserSaysSo(t *testing.T) {
 		}
 		return strings.TrimSpace(string(out))
 	}
-	spec := agents.LockSpec{Enabled: true, Image: "locksql:0.8.0", AgentProfiles: []string{"prod"},
-		ConsoleDir: func(string) error { return nil },
+	var asked []string
+	spec := agents.LockSpec{Enabled: true, AgentProfiles: []string{"prod"},
+		Console: func(_ context.Context, projects, profile string) (agents.LockConsole, error) {
+			asked = append(asked, projects+" "+profile)
+			return agents.LockConsole{Instance: "crm", Container: loxID}, nil
+		},
 		ContainerName: func(p string) string {
 			if p == "/home/u/p" {
 				return C
@@ -145,12 +144,12 @@ func TestRealLockRequestOpensOnlyWhenTheUserSaysSo(t *testing.T) {
 	for len(a) == 0 {
 		a, _ = os.ReadFile(argv)
 		if time.Now().After(deadline) {
-			t.Fatal("the console never started")
+			t.Fatal("the attach never started")
 		}
 		time.Sleep(20 * time.Millisecond)
 	}
-	if s := string(a); !strings.HasPrefix(s, "run\n-it\n--rm\n--log-driver\nnone\n") || !strings.HasSuffix(s, "\nlocksql:0.8.0\nconsole\n--project\n/home/u/p\n--profile\nprod\n") {
-		t.Fatalf("console argv:\n%s", s)
+	if s := string(a); s != "attach\n--sig-proxy=false\n--detach-keys\nctrl-p,ctrl-q\n"+loxID+"\n" || len(asked) != 1 || asked[0] != "/home/u/p prod" {
+		t.Fatalf("attach argv:\n%s\nlox up asked %q", s, asked)
 	}
 	if _, err := decideLock(t, e, C, r.Request, true); err == nil || !strings.Contains(err.Error(), "already answered") {
 		t.Fatalf("replay: %v", err)

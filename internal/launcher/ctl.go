@@ -94,7 +94,10 @@ func (l *Launcher) ctlRunArgs(projects []string, sock string, sockGID int) ([]st
 		}
 	}
 	env := []string{"HOME=" + home, "XDG_DATA_HOME=" + nonEmpty(l.Cfg.Get("XDG_DATA_HOME"), home+"/.local/share"),
-		"XDG_CONFIG_HOME=" + nonEmpty(l.Cfg.Get("XDG_CONFIG_HOME"), home+"/.config"), "LEA_CTL_INSIDE=1",
+		"XDG_CONFIG_HOME=" + nonEmpty(l.Cfg.Get("XDG_CONFIG_HOME"), home+"/.config"),
+		// Only named: lox up's state directory, where lox up runs compose (loxStateDir), is what
+		// lea checks of a console's container; nothing of it is mounted.
+		"XDG_STATE_HOME=" + nonEmpty(l.Cfg.Get("XDG_STATE_HOME"), home+"/.local/state"), "LEA_CTL_INSIDE=1",
 		// No desktop session in lea-ctl: no clipboard loop (sounds are the terminal bell).
 		"LEA_CLIPBOARD=0"}
 	// The hub's facade socket, for the deck and the decision sync (never the hub's network).

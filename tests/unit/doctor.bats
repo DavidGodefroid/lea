@@ -5,6 +5,7 @@ setup() {
   : >"$S/claude.json"
   P="$BATS_TEST_TMPDIR/projects"; mkdir -p "$P"; export LEA_PROJECTS_DIR="$P"
   lea_user_config_set LEA_PROJECTS_DIR "$P"
+  locksql_on
 }
 
 @test "healthy workstation: no FAIL, warnings for optional parts" {
@@ -57,17 +58,33 @@ setup() {
   [[ "$output" == *"ok    state ssh/known_hosts"* ]]
 }
 
-@test "locksql: its image and volume are checked with LEA_LOCKSQL=1, never with 0" {
+@test "locksql: its image and lox up's lock are checked with LEA_LOCKSQL=1, never with 0" {
   export FAKE_DOCKER_RC_IMAGE_INSPECT_AT_LOCKSQL_0_11_5=1 FAKE_DOCKER_RC_VOLUME_INSPECT=1
   run lea_doctor
   [[ "$output" == *"warn  locksql image: locksql:0.11.5 absent: run lea init (or set LEA_LOCKSQL=0)"* ]]
-  [[ "$output" == *"warn  locksql-run volume"* ]]
-  unset FAKE_DOCKER_RC_IMAGE_INSPECT_AT_LOCKSQL_0_11_5 FAKE_DOCKER_RC_VOLUME_INSPECT
+  [[ "$output" == *"warn  locksql lock: no socket volume of a locksql lock of lox up for $LEA_PROJECTS_DIR"*"lox add locksql NAME"*"run \`lox up\`"* ]]
+  [[ "$output" != *"locksql-run"* ]]
+  grep -qF "docker [volume] [ls] [--filter] [label=dev.lockfamily.role=socket] [--filter] [label=dev.lockfamily.type=locksql] [--filter] [label=dev.lockfamily.workspace=$LEA_PROJECTS_DIR] [--format] [{{.Name}}]" "$FAKE_LOG"
+  unset FAKE_DOCKER_RC_IMAGE_INSPECT_AT_LOCKSQL_0_11_5
+  export FAKE_DOCKER_OUT_VOLUME_LS=lockfamily-1a2b3c4d_crm-run
   run lea_doctor
   [[ "$output" == *"ok    locksql image locksql:0.11.5"* ]]
-  [[ "$output" == *"ok    locksql-run volume"* ]]
+  [[ "$output" == *"ok    locksql lock of lox up (socket volume lockfamily-1a2b3c4d_crm-run)"* ]]
+  export FAKE_DOCKER_OUT_VOLUME_LS='lockfamily-1a2b3c4d_a-run
+lockfamily-1a2b3c4d_b-run'
+  run lea_doctor
+  [[ "$output" == *"warn  locksql lock: lox up runs 2 locksql locks"* ]]
   LEA_LOCKSQL=0 run lea_doctor
   [[ "$output" != *locksql* ]]
+}
+
+@test "locksql: a locksql-run volume of an earlier lea's standalone console is reported, never mounted" {
+  export FAKE_DOCKER_OUT_VOLUME_LS=lockfamily-1a2b3c4d_crm-run
+  run lea_doctor
+  [[ "$output" == *"warn  locksql-run volume: left by a standalone console of an earlier lea"* ]]
+  export FAKE_DOCKER_RC_VOLUME_INSPECT_AT_LOCKSQL_RUN=1
+  run lea_doctor
+  [[ "$output" != *"locksql-run"* ]]
 }
 
 @test "a non-isolated internal network is a warning" {

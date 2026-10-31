@@ -1,8 +1,8 @@
 # shellcheck shell=sh
-# lockmq and lockfile, lock tools whose console runs in its own container, started by the tool's
-# launcher (scripts/<tool>, installed by its install.sh; lockkit's isolation checks refuse a
-# console in lea's container). lea only lets its agents reach the console's socket, as locksql's:
-# the socket volume <tool>-run on /run/<tool> and the tool's clients group
+# lockmq and lockfile, lock tools whose console runs in its own container, hub-attached only:
+# lockhub's `lox up` runs it for the projects directory (lockkit's isolation checks refuse a
+# console in lea's container). lea only lets its agents reach the console's socket: the socket
+# volume of lox up's lock (.lockfamily/up.json) on /run/<tool> and the tool's clients group
 # (internal/launcher/lockhost.go). lea never starts, sees or drives a console, holds none of its
 # credentials, and runs no maintenance on its volumes.
 
@@ -72,26 +72,12 @@ lea__lockhost_install_hint() {
   lea_log "  V=$(lea__lockhost_get "$1" _REF); curl -fsSLO https://raw.githubusercontent.com/DavidGodefroid/$1/\$V/scripts/install.sh; less install.sh && sh install.sh"
 }
 
-# lea__lockhost_volume TOOL: the state of TOOL's socket volume <tool>-run: absent, old (lockfile
-# before 0.3: locksql's ids, until its launcher migrates it), ok, or unknown.
-lea__lockhost_volume() {
-  docker volume inspect "$1-run" >/dev/null 2>&1 || { printf absent; return 0; }
-  [ "$1" = lockfile ] || { printf ok; return 0; }
-  _lv_o=$(docker run --rm --network none --entrypoint stat --mount "type=volume,src=lockfile-run,dst=/r,readonly" \
-    "${LEA_IMAGE:-}" -c %u:%g /r 2>/dev/null) || { printf unknown; return 0; }
-  case $_lv_o in
-    10031:10030) printf ok ;;
-    10001:10000) printf old ;;
-    *) printf unknown ;;
-  esac
-}
-
-# lea__lockhost_console_hint TOOL: how to open TOOL's console (lea never starts it).
-# lea's agents run as your uid, which names no account in the console's image: the console serves
-# it only when told so (--allowed-uids, lockmq v0.4.1 and lockfile v0.5.1 on), by you, never by lea.
+# lea__lockhost_console_hint TOOL: how TOOL's console runs (lea never starts it): hub-attached
+# only, under lox up. lea's agents run as your uid, which names no account in the console's image:
+# the console serves it only when told so (the lock's allowed_uids), by you, never by lea.
 lea__lockhost_console_hint() {
-  lea_log "$1 console: start it with $1's launcher, in a terminal of yours: $1 console --profile PROFILE --allowed-uids $(id -u)"
-  lea_log "  (--allowed-uids $(id -u): lea's agents run as your uid, which has no account in the console's image; they reach it through the $1-run volume after their lea restarts: lea stop --all, then lea)"
+  lea_log "$1 console: it runs under lox up only: add a $1 lock to your projects directory (lox add $1 NAME, with allowed_uids: [$(id -u)] in .lockfamily/lockfamily.yaml), then run \`lox up\`"
+  lea_log "  (allowed_uids $(id -u): lea's agents run as your uid, which has no account in the console's image; they reach the lock's socket volume after their lea restarts: lea stop --all, then lea)"
 }
 
 # lea__init_lockhost TOOL: lea init's part for TOOL. Without a decision yet (no flag, not in the
@@ -113,9 +99,6 @@ lea__init_lockhost() {
   [ "$(lea__lockhost_get "$_ih_t")" = 1 ] || return 0
   if ! lea__lockhost_launcher "$_ih_t" >/dev/null; then
     lea__lockhost_install_hint "$_ih_t"
-  fi
-  if [ "$_ih_t" = lockfile ] && [ "$(lea__lockhost_volume lockfile)" = old ]; then
-    lea_log "lockfile: start \`lockfile console\` once: it migrates the volume (lockfile-run still has the ids of lockfile before 0.3; until then lea leaves lockfile out)"
   fi
   case $_ih_t in
     lockmq)
@@ -142,12 +125,12 @@ lea__init_lockhost() {
   lea__lockhost_console_hint "$_ih_t"
 }
 
-# lea lockmq | lea lockfile: whether lea's agents reach that tool's console, and how to open it.
-# It never starts a console: the tool's launcher does.
+# lea lockmq | lea lockfile: whether the tool is on, and how its console runs. It never starts a
+# console: lox up does.
 lea_lockhost() {
   _lh_t=$1
   shift
-  [ $# -eq 0 ] || lea_die "usage: lea $_lh_t (lea never starts the console: $_lh_t's launcher does, $_lh_t console)"
+  [ $# -eq 0 ] || lea_die "usage: lea $_lh_t (lea never starts the console: lox up does)"
   if [ "$(lea__lockhost_get "$_lh_t")" != 1 ]; then
     lea_log "$_lh_t is off ($(lea__lockhost_var "$_lh_t")=0): lea init --$_lh_t turns it on"
     return 0
@@ -157,12 +140,6 @@ lea_lockhost() {
   else
     lea__lockhost_install_hint "$_lh_t"
   fi
-  case $(lea__lockhost_volume "$_lh_t") in
-    ok) lea_log "$_lh_t: socket volume $_lh_t-run present" ;;
-    absent) lea_log "$_lh_t: no $_lh_t-run volume yet (the console makes it when it starts)" ;;
-    old) lea_log "$_lh_t: start \`$_lh_t console\` once: it migrates the volume (lea leaves $_lh_t out until then)" ;;
-    *) lea_log "$_lh_t: cannot read the owner of the $_lh_t-run volume" ;;
-  esac
   lea__lockhost_console_hint "$_lh_t"
 }
 
@@ -171,10 +148,4 @@ lea__doctor_lockhost() {
   [ "$(lea__lockhost_get "$1")" = 1 ] || return 0
   if _dl_b=$(lea__lockhost_launcher "$1"); then lea__ok "$1 launcher $_dl_b"
   else lea__warn "$1 launcher" "not installed: https://github.com/DavidGodefroid/$1#install"; fi
-  case $(lea__lockhost_volume "$1") in
-    ok) lea__ok "$1-run volume" ;;
-    absent) lea__warn "$1-run volume" "absent: start the console once ($1 console --profile PROFILE --allowed-uids $(id -u))" ;;
-    old) lea__warn "$1-run volume" "ids of lockfile before 0.3: start \`lockfile console\` once: it migrates the volume" ;;
-    *) lea__warn "$1-run volume" "owner unknown" ;;
-  esac
 }

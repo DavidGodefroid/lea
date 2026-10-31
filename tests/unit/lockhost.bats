@@ -54,20 +54,16 @@ launcher() {
   [ -z "$(calls)" ]
 }
 
-@test "lea lockfile: on, it reports the launcher, the volume and how to open the console" {
+@test "lea lockfile: on, it reports the launcher and that the console runs under lox up only" {
   LEA_LOCKFILE=1
-  export FAKE_DOCKER_RC_VOLUME_INSPECT=1
   run lea_lockhost lockfile
   [[ "$output" == *"lockfile: install its launcher"*"scripts/install.sh"* ]]
-  [[ "$output" == *"no lockfile-run volume yet"* ]]
-  [[ "$output" == *"lockfile console --profile PROFILE --allowed-uids $(id -u)"* ]]
+  [[ "$output" == *"lockfile console: it runs under lox up only: add a lockfile lock"*"allowed_uids: [$(id -u)]"*"run \`lox up\`"* ]]
+  [[ "$output" != *"lockfile-run"* ]]
   launcher lockfile
-  unset FAKE_DOCKER_RC_VOLUME_INSPECT
-  export FAKE_DOCKER_OUT_RUN___RM=10031:10030
   run lea_lockhost lockfile
   [[ "$output" == *"lockfile launcher: $B/lockfile"* ]]
-  [[ "$output" == *"socket volume lockfile-run present"* ]]
-  if calls | grep -q '^lockfile\|sudo\|migrate-ids'; then false; fi
+  if calls | grep -q '^lockfile\|sudo\|migrate-ids\|docker'; then false; fi
 }
 
 @test "lea lockmq takes no argument: no way to pass flags to a console" {
@@ -107,17 +103,8 @@ launcher() {
   LEA_INIT_NONINTERACTIVE=1 run lea__init_lockhost lockmq </dev/null
   [ "$status" -eq 0 ]
   [[ "$output" == *"lockmq: install its launcher"* ]]
-  [[ "$output" == *"lockmq console --profile PROFILE --allowed-uids $(id -u)"* ]]
+  [[ "$output" == *"lockmq console: it runs under lox up only"* ]]
   if calls | grep -q 'sudo\|install'; then false; fi
-}
-
-@test "lea init: a lockfile-run volume of lockfile before 0.3 is left to lockfile's launcher" {
-  lea__lockhost_set lockfile 1
-  launcher lockfile
-  export FAKE_DOCKER_OUT_RUN___RM=10001:10000
-  LEA_INIT_NONINTERACTIVE=1 run lea__init_lockhost lockfile </dev/null
-  [[ "$output" == *"start \`lockfile console\` once: it migrates the volume"* ]]
-  if calls | grep -q 'migrate-ids'; then false; fi
 }
 
 @test "lea init with lockmq offers the profile wizard as you, in lea's image with only the projects dir, then the console hint" {
@@ -126,7 +113,7 @@ launcher() {
   launcher lockmq
   run lea__init_lockhost lockmq <<<"y"
   [[ "$output" == *"lockmq has no broker profile for $P yet"* ]]
-  [[ "$output" == *"lockmq console --profile PROFILE --allowed-uids $(id -u)"* ]]
+  [[ "$output" == *"lockmq console: it runs under lox up only"* ]]
   run calls
   [ "$output" = "docker [run] [-it] [--rm] [--network] [none] [--user] [$(id -u):$(id -g)] [-e] [HOME=/tmp] [-v] [$P:$P] [-w] [$P] [--entrypoint] [lockmq] [$LEA_IMAGE] [setup] [--project] [$P]" ]
 }
@@ -149,14 +136,12 @@ launcher() {
   run lea__doctor_lockhost lockmq
   [ -z "$output" ]
   LEA_LOCKFILE=1
-  export FAKE_DOCKER_OUT_RUN___RM=10001:10000
   run lea__doctor_lockhost lockfile
   [[ "$output" == *"warn  lockfile launcher: not installed"* ]]
-  [[ "$output" == *"warn  lockfile-run volume: ids of lockfile before 0.3: start \`lockfile console\` once: it migrates the volume"* ]]
   launcher lockfile
-  export FAKE_DOCKER_OUT_RUN___RM=10031:10030
   run lea__doctor_lockhost lockfile
-  [[ "$output" == *"ok    lockfile launcher $B/lockfile"*"ok    lockfile-run volume"* ]]
+  [[ "$output" == *"ok    lockfile launcher $B/lockfile"* ]]
+  [[ "$output" != *"-run volume"* ]]
 }
 
 @test "the entrypoint refuses a session whose uid or gid is a lock console's id in the image" {

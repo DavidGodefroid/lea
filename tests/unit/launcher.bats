@@ -20,6 +20,7 @@ setup() {
   [ "$status" -eq 2 ]
   [[ "$output" == *"usage: lea-sh"*"refresh-images"* ]]
   export FAKE_DOCKER_RC_IMAGE_INSPECT=1
+  mkdir -p "$HOME/.config/lea"; echo LEA_LOCKSQL=1 >>"$HOME/.config/lea/lea.conf"
   locksql_release
   run "$LEA_ROOT/libexec/lea-sh" refresh-images
   [ "$status" -eq 0 ]

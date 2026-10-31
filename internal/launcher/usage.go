@@ -4,13 +4,12 @@ package launcher
 const Usage = `Usage:
   lea init [--no-locksql] [--lockmq] [--lockfile]
                               set up lea on this workstation (once; rerun at will)
-  lea locksql [vault ARGS]    the locksql console of your projects, on this terminal (also
-                              locksql; vault: the vault CLI as the console account)
+  lea locksql | lea lockmq | lea lockfile
+                              whether agents reach that tool's console, and how it runs
+                              (under lox up only; lea never starts it)
   lea lock open|close locksql [profile] | lea lock list
-                              a locksql console in a pane of the deck, under the agent (the
-                              deck's L); approvals are typed there, by you only
-  lea lockmq | lea lockfile   whether agents reach that tool's console, and how to open it
-                              (with the tool's own launcher; lea never starts it)
+                              lox up's locksql console in a pane of the deck, under the agent
+                              (the deck's L): its own questions, typed by you only
   lea                         open the deck: your agents on the left, the selected one on the right
                               (keys: j/k select, enter focus, ctrl+space back, n new, x stop, q quit)
   lea new [-r role] [-p provider] [-m model] [--repo R] [--branch B] [--brief file] [name] [-- args]

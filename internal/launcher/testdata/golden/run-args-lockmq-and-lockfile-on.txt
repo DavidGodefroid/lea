@@ -73,7 +73,7 @@ LEA_LOCKSQL=1
 --group-add
 10000
 --mount
-type=volume,src=locksql-run,dst=/run/locksql
+type=volume,src=lockfamily-$PROJECT_crm-run,dst=/run/locksql,readonly
 --mount
 type=bind,src=$W/projects/.locksql,dst=$W/projects/.locksql,readonly
 -e
@@ -81,13 +81,13 @@ LEA_LOCKMQ=1
 --group-add
 10010
 --mount
-type=volume,src=lockmq-run,dst=/run/lockmq
+type=volume,src=lockfamily-$PROJECT_events-run,dst=/run/lockmq,readonly
 -e
 LEA_LOCKFILE=1
 --group-add
 10030
 --mount
-type=volume,src=lockfile-run,dst=/run/lockfile
+type=volume,src=lockfamily-$PROJECT_docs-run,dst=/run/lockfile,readonly
 --cap-drop
 NET_RAW
 --cap-drop

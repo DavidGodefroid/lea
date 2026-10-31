@@ -402,11 +402,12 @@ func TestLockServers(t *testing.T) {
 		env  map[string]string
 		want string
 	}{
-		{nil, "locksql=1500"},
-		{map[string]string{"LEA_LOCKSQL": "0"}, ""},
-		{map[string]string{"LEA_LOCKMQ": "1", "LEA_LOCKFILE": "1", "LEA_LOCK_TOOL_TIMEOUT": "600"}, "locksql=600,lockmq=600,lockfile=600"},
-		{map[string]string{"LEA_LOCK_TOOL_TIMEOUT": "59"}, "locksql=1500"},
-		{map[string]string{"LEA_LOCK_TOOL_TIMEOUT": "x"}, "locksql=1500"},
+		{nil, ""},
+		{map[string]string{"LEA_LOCKSQL": "1"}, "locksql=1500"},
+		{map[string]string{"LEA_LOCKSQL": "1", "LEA_LOCKMQ": "1", "LEA_LOCKFILE": "1", "LEA_LOCK_TOOL_TIMEOUT": "600"}, "locksql=600,lockmq=600,lockfile=600"},
+		{map[string]string{"LEA_LOCKMQ": "1"}, "lockmq=1500"},
+		{map[string]string{"LEA_LOCKSQL": "1", "LEA_LOCK_TOOL_TIMEOUT": "59"}, "locksql=1500"},
+		{map[string]string{"LEA_LOCKSQL": "1", "LEA_LOCK_TOOL_TIMEOUT": "x"}, "locksql=1500"},
 	} {
 		var got []string
 		for _, l := range LockServers(func(k string) string { return c.env[k] }) {

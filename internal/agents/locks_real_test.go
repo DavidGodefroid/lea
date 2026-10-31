@@ -12,11 +12,11 @@ import (
 	"github.com/DavidGodefroid/lea/internal/tmux"
 )
 
-// TestRealLockConsolePane opens a lock console against a real tmux server, with a stand-in for
-// docker run: the pane sits under the slot in the deck window, red-bordered, with a short
+// TestRealLockConsolePane opens a lock console pane against a real tmux server, with a stand-in
+// for docker attach: the pane sits under the slot in the deck window, red-bordered, with a short
 // history and remain-on-exit off, the keyboard left on the deck; it survives the layout repair;
-// when the console exits its pane closes, leaving no dead pane (nor its screen) behind; lea lock
-// close stops the console and closes the pane.
+// when the attach ends its pane closes, leaving no dead pane (nor its screen) behind; lea lock
+// close closes the pane and touches no console; an attach that ends at once is a failure.
 func TestRealLockConsolePane(t *testing.T) {
 	if _, err := exec.LookPath("tmux"); err != nil {
 		t.Skip("tmux is not installed: make go-test-tmux runs this test")
@@ -38,12 +38,12 @@ func TestRealLockConsolePane(t *testing.T) {
 	if err := os.WriteFile(bin, []byte("#!/bin/sh\nexec sleep 600\n"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	// docker run …: records its argv, one per line, then runs as a console would; with the file
-	// fail present it exits at once, as a console whose image is missing.
+	// docker attach …: records its argv, one per line, then stays attached; with the file fail
+	// present it exits at once, as an attach to a console that stopped.
 	docker := filepath.Join(dir, "docker")
 	argv := filepath.Join(dir, "argv")
 	fail := filepath.Join(dir, "fail")
-	if err := os.WriteFile(docker, []byte("#!/bin/sh\nprintf '%s\\n' \"$@\" > "+argv+"\n[ -e "+fail+" ] && { echo 'Unable to find image'; exit 125; }\nexec sleep 600\n"), 0o755); err != nil {
+	if err := os.WriteFile(docker, []byte("#!/bin/sh\nprintf '%s\\n' \"$@\" > "+argv+"\n[ -e "+fail+" ] && { echo 'You cannot attach to a stopped container'; exit 1; }\nexec sleep 600\n"), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	const sock = "lea-test-locks"
@@ -61,11 +61,14 @@ func TestRealLockConsolePane(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { st.Close() })
-	fc := &fakeConsoles{state: map[string]ConsoleState{}}
+	fc := &fakeConsoles{}
+	fl := &fakeLox{c: LockConsole{Instance: "crm", Container: crmID}}
+	spec := sqlSpec
+	spec.Console = fl.console
 	m := NewManager(Config{Store: st, Term: Tmux(tmux.Server{Socket: sock, Conf: conf}),
 		Containers: &fakeContainers{live: map[string][]string{}, projects: map[string]string{C: "/home/u/p"}}, LeaBin: bin,
 		Docker: docker, UID: 1000, GID: 1000, Now: func() int64 { return 1000 }, Consoles: fc,
-		LockSpec: func(string) (LockSpec, error) { return sqlSpec, nil }})
+		LockSpec: func(string) (LockSpec, error) { return spec, nil }})
 	if err := m.Ensure(bg, C, "/"); err != nil {
 		t.Fatal(err)
 	}
@@ -102,8 +105,8 @@ func TestRealLockConsolePane(t *testing.T) {
 			time.Sleep(20 * time.Millisecond)
 		}
 	}
-	if a := waitArgv(); !strings.HasPrefix(a, "run\n-it\n--rm\n--log-driver\nnone\n") || !strings.HasSuffix(a, "\nconsole\n--project\n/home/u/p\n--profile\nprod\n") {
-		t.Fatalf("console argv:\n%s", a)
+	if a := waitArgv(); a != "attach\n--sig-proxy=false\n--detach-keys\nctrl-p,ctrl-q\n"+crmID+"\n" {
+		t.Fatalf("attach argv:\n%s", a)
 	}
 	lock := tm("list-panes", "-s", "-t", "="+C, "-f", "#{==:#{@lea_role},lock}", "-F", "#{pane_id}")
 	if b := tm("display-message", "-p", "-t", lock, "#{T:pane-border-format}"); !strings.Contains(b, " LOCK locksql/prod ") {
@@ -114,7 +117,7 @@ func TestRealLockConsolePane(t *testing.T) {
 	}
 	check("after a repair")
 
-	// The console exits: its pane closes, no dead pane is left.
+	// The attach ends: its pane closes, no dead pane is left.
 	time.Sleep(1500 * time.Millisecond) // let the new pane's notifications pass
 	pid := tm("display-message", "-p", "-t", lock, "#{pane_pid}")
 	if err := exec.Command("kill", pid).Run(); err != nil {
@@ -132,28 +135,28 @@ func TestRealLockConsolePane(t *testing.T) {
 	}
 	waitPanes("the console's pane after it exited", func(p string) bool { return !strings.Contains(p, roleLock) })
 
-	// Opened again, then closed by the user: the console is stopped, its pane closes.
+	// Opened again, then closed by the user: the pane closes, no console is touched.
 	os.Remove(argv)
 	if st, err := m.LockOpen(bg, C, "locksql", "prod"); err != nil || st != "opened" {
 		t.Fatalf("reopen: %q %v", st, err)
 	}
 	waitArgv()
-	fc.state["locksql-console-prod"] = ConsoleState{Exists: true, Running: true, Owner: C}
 	if st, err := m.LockClose(bg, C, "locksql", "prod"); err != nil || st != "closed" {
 		t.Fatalf("close: %q %v", st, err)
 	}
 	waitPanes("after lea lock close", func(p string) bool { return !strings.Contains(p, roleLock) })
-	if len(fc.calls) != 1 || fc.calls[0] != "stop locksql-console-prod" {
+	if len(fc.calls) != 0 {
 		t.Fatalf("consoles: %q", fc.calls)
 	}
 
-	// A console that exits at once: its pane closes with it, never left dead with its screen.
+	// An attach that ends at once: LockOpen says so (never "opened"), and its pane closes with
+	// it, never left dead with its screen.
 	os.Remove(argv)
 	if err := os.WriteFile(fail, nil, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if st, err := m.LockOpen(bg, C, "locksql", "prod"); err != nil || st != "opened" {
-		t.Fatalf("open of a failing console: %q %v", st, err)
+	if st, err := m.LockOpen(bg, C, "locksql", "prod"); err == nil || !strings.Contains(err.Error(), "did not attach") {
+		t.Fatalf("open of a failing attach: %q %v", st, err)
 	}
 	waitArgv()
 	waitPanes("after a console that exited at once", func(p string) bool { return !strings.Contains(p, roleLock) })

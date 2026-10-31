@@ -32,12 +32,21 @@ func lockHostWorld(t *testing.T) string {
 	return root
 }
 
-// lockHTTPWorld adds what lockhttp's install.sh leaves to lockHostWorld: its launcher, root-owned
-// in /usr/local/bin, pinning testDigest.
+// lockHTTPWorld adds what lockhttp's install.sh leaves to lockHostWorld (its launcher, root-owned
+// in /usr/local/bin, pinning testDigest) and what lox up leaves: the lockhttp lock web of the
+// projects directory (hubUp). The gate runs hub-attached only.
 func lockHTTPWorld(t *testing.T) (*world, string) {
 	t.Helper()
+	w, root := lockHTTPWorldNoUp(t)
+	hubUp(t, w, "", "", "")
+	return w, root
+}
+
+// lockHTTPWorldNoUp is lockHTTPWorld without lox up in the projects directory.
+func lockHTTPWorldNoUp(t *testing.T) (*world, string) {
+	t.Helper()
 	root := lockHostWorld(t)
-	if err := os.WriteFile(root+"/usr/local/bin/lockhttp", []byte(fakeLockHTTPLauncher("0.2.0", testDigest)), 0o755); err != nil {
+	if err := os.WriteFile(root+"/usr/local/bin/lockhttp", []byte(fakeLockHTTPLauncher("0.5.0", testDigest)), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	w := newWorld(t, repoRoot(t))
@@ -72,8 +81,8 @@ func TestLockHTTPOffByDefault(t *testing.T) {
 }
 
 // The proxy keeps squid and keyproxy; the gate runs beside it, from the launcher's pinned image,
-// in the proxy's network namespace, as gate, with the console's socket volume and nothing else
-// of the console's.
+// in the proxy's network namespace, as gate, with lox up's console socket volume and nothing
+// else of the console's.
 func TestLockHTTPProxyGetsTheGate(t *testing.T) {
 	w, _ := lockHTTPWorld(t)
 	if err := w.launcher().ensureProxy(w.proj); err != nil {
@@ -115,7 +124,7 @@ func TestLockHTTPProxyGetsTheGate(t *testing.T) {
 		"[--network] [container:lea-proxy]", "[--user] [gate]", "[--restart] [unless-stopped]",
 		"[--label] [lea.prefix=lea]", "[--label] [lea.role=lockhttp-gate]", "[--label] [lea.lockhttp-image=" + image + "]",
 		"[--cap-drop] [ALL]", "[--security-opt] [no-new-privileges]", "[--read-only]",
-		"[type=volume,src=lockhttp-run,dst=/run/lockhttp]",
+		"[type=volume,src=" + upProjectOf(w) + "_web-run,dst=/run/lockhttp]",
 		"[type=bind,src=" + lockhttp.GateDir(data) + ",dst=/etc/lockhttp-gate,readonly]",
 		"[type=volume,src=lea-lockhttp-audit,dst=/var/log/lockhttp]",
 		"[type=bind,src=" + lockhttp.StatusDir(data) + ",dst=/run/lockhttp-gate]",
@@ -173,8 +182,8 @@ func TestLockHTTPGateFollowsTheProxy(t *testing.T) {
 		rc      string
 		replace bool
 	}{
-		"current":          {"true|2026-10-28T10:00:00.5Z|\ntrue|2026-10-28T10:00:01Z|" + image, "", false},
-		"podman times":     {"true|2026-10-28 10:00:00.5 +0000 UTC|\ntrue|2026-10-28 10:00:01 +0000 UTC|" + image, "", false},
+		"current":          {"true|2026-10-28T10:00:00.5Z|\ntrue|2026-10-28T10:00:01Z|" + image + "HUB", "", false},
+		"podman times":     {"true|2026-10-28 10:00:00.5 +0000 UTC|\ntrue|2026-10-28 10:00:01 +0000 UTC|" + image + "HUB", "", false},
 		"older than proxy": {"true|2026-10-28T10:00:02Z|\ntrue|2026-10-28T10:00:01Z|" + image, "", true},
 		"other image":      {"true|2026-10-28T10:00:00Z|\ntrue|2026-10-28T10:00:01Z|ghcr.io/davidgodefroid/lockhttp@sha256:ff", "", true},
 		"stopped":          {"true|2026-10-28T10:00:00Z|\nfalse|2026-10-28T10:00:01Z|" + image, "", true},
@@ -185,7 +194,11 @@ func TestLockHTTPGateFollowsTheProxy(t *testing.T) {
 		// The proxy runs with the gate's label: kept.
 		w.env["FAKE_DOCKER_OUT_INSPECT__F"] = "true"
 		w.env["FAKE_DOCKER_OUT_INSPECT___FORMAT"] = "@" + w.launcher().proxyRules() + "^1"
-		w.env["FAKE_DOCKER_OUT_INSPECT___TYPE"] = c.inspect
+		g, err := w.launcher().lockUpGate(w.proj)
+		if err != nil {
+			t.Fatal(err)
+		}
+		w.env["FAKE_DOCKER_OUT_INSPECT___TYPE"] = strings.ReplaceAll(c.inspect, "HUB", " hub:"+g.stamp())
 		if c.rc != "" {
 			w.env["FAKE_DOCKER_RC_INSPECT___TYPE"] = c.rc
 			w.env["FAKE_DOCKER_RC_INSPECT___TYPE_AT_LEA_PROXY"] = "0" // the proxy's networks
@@ -326,7 +339,7 @@ func TestLockHTTPForgetsReleasedNetworks(t *testing.T) {
 func mitmWorld(t *testing.T) (*world, string) {
 	t.Helper()
 	w, root := lockHTTPWorld(t)
-	ca := fakeLockHTTPLauncher("0.2.0", testDigest) +
+	ca := fakeLockHTTPLauncher("0.5.0", testDigest) +
 		"if [ \"$1 $2 $3\" = \"ca init --dir\" ]; then mkdir -p \"$4\" && echo cert >\"$4/ca.pem\" && echo key >\"$4/ca-key.pem\"; fi\n"
 	if err := os.WriteFile(root+"/usr/local/bin/lockhttp", []byte(ca), 0o755); err != nil {
 		t.Fatal(err)
@@ -423,12 +436,16 @@ func TestLockHTTPMITMFollowsTheCA(t *testing.T) {
 		inspect string
 		replace bool
 	}{
-		"current":        {"true|2026-10-28T10:00:00Z|\ntrue|2026-10-28T10:00:01Z|" + image + " ca:" + stamp + "\ntrue|2026-10-28T09:00:00Z|" + image + " ca:" + stamp, false},
-		"signer stopped": {"true|2026-10-28T10:00:00Z|\ntrue|2026-10-28T10:00:01Z|" + image + " ca:" + stamp + "\nfalse|2026-10-28T09:00:00Z|" + image + " ca:" + stamp, true},
-		"signer absent":  {"true|2026-10-28T10:00:00Z|\ntrue|2026-10-28T10:00:01Z|" + image + " ca:" + stamp, true},
-		"gate of no CA":  {"true|2026-10-28T10:00:00Z|\ntrue|2026-10-28T10:00:01Z|" + image + "\ntrue|2026-10-28T09:00:00Z|" + image + " ca:" + stamp, true},
+		"current":        {"true|2026-10-28T10:00:00Z|\ntrue|2026-10-28T10:00:01Z|" + image + " ca:" + stamp + "HUB\ntrue|2026-10-28T09:00:00Z|" + image + " ca:" + stamp + "HUB", false},
+		"signer stopped": {"true|2026-10-28T10:00:00Z|\ntrue|2026-10-28T10:00:01Z|" + image + " ca:" + stamp + "HUB\nfalse|2026-10-28T09:00:00Z|" + image + " ca:" + stamp + "HUB", true},
+		"signer absent":  {"true|2026-10-28T10:00:00Z|\ntrue|2026-10-28T10:00:01Z|" + image + " ca:" + stamp + "HUB", true},
+		"gate of no CA":  {"true|2026-10-28T10:00:00Z|\ntrue|2026-10-28T10:00:01Z|" + image + "HUB\ntrue|2026-10-28T09:00:00Z|" + image + " ca:" + stamp + "HUB", true},
 	} {
-		w.env["FAKE_DOCKER_OUT_INSPECT___TYPE"] = c.inspect
+		g, err := w.launcher().lockUpGate(w.proj)
+		if err != nil {
+			t.Fatal(err)
+		}
+		w.env["FAKE_DOCKER_OUT_INSPECT___TYPE"] = strings.ReplaceAll(c.inspect, "HUB", " hub:"+g.stamp())
 		before := len(w.calls())
 		if err := w.launcher().ensureProxy(w.proj); err != nil {
 			t.Fatal(err)

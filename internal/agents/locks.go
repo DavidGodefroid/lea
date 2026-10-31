@@ -4,129 +4,86 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"io/fs"
 	"log"
-	"os"
-	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
-	"syscall"
+	"time"
 )
 
-// Lock consoles (issue #18, phases 0 and 1): the user opens a lock tool's console in a pane of
-// the deck. Only the user: the methods below are host-only (the daemon's deck methods), no MCP
-// tool reaches them, and the pane is never addressed by anything an agent can call. The console
-// runs in its own container, from a fixed argv template filled with the host configuration
-// (LockSpec) and a validated profile name; lea never types into it, reads it or relays an answer.
-// Of the lock tools, only locksql has a container console: lockmq and lockfile consoles run in
-// their own account's session on the host, which lockkit's isolation checks require (a pane of
-// the user's tmux is refused there by design).
+// Lock consoles (issue #18): the user shows a lock tool's console in a pane of the deck. Only the
+// user: the methods below are host-only (the daemon's deck methods), no MCP tool reaches them, and
+// the pane is never addressed by anything an agent can call. The consoles run hub-attached only,
+// under lockhub's `lox up`, each in its own compose service with a terminal (lockhub's
+// docs/lox-up.md): lea starts none. The pane attaches to lox up's running console (as `lox attach
+// <instance>` does), for the questions the console asks at its terminal: the policy review on a
+// first start or after a loosening, a production profile's typed name, the credentials its profile
+// does not take from Vault. The approvals of the agents' queries go through the hub (the deck's
+// hub view, lox approve), never through this pane. lea never types into the pane, reads it or
+// relays an answer. Of the lock tools, only locksql's console is shown here.
 
 const (
 	// optLock tags a lock console's pane with its id: "<tool>" or "<tool>/<profile>".
 	optLock  = "@lea_lock"
 	roleLock = "lock"
 	// lockHistory is a lock pane's scrollback: results the user chose to display must not pile
-	// up in the host's tmux; the pane and its history go when the console exits.
+	// up in the host's tmux; the pane and its history go when the attach ends.
 	lockHistory = "200"
-	// lockOwnerLabel names the lea container whose deck opened a console: lea stop stops them.
+	// lockOwnerLabel named the lea container whose deck started a console (an earlier lea started
+	// its own): lea stop still stops those.
 	lockOwnerLabel = "lea.lock-for"
 	// lockSlotSize is the lock slot's height, below the agent shown beside the deck.
 	lockSlotSize = "40%"
 )
 
 var (
-	lockProfileRe = regexp.MustCompile(`^[a-z0-9][a-z0-9_-]{0,31}$`)
-	lockImageRe   = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._/:@-]{0,254}$`)
-	lockVaultRe   = regexp.MustCompile(`^https?://[A-Za-z0-9._~:/?#\[\]@!$&'()*+,;=%-]{1,512}$`)
+	lockProfileRe   = regexp.MustCompile(`^[a-z0-9][a-z0-9_-]{0,31}$`)
+	lockInstanceRe  = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,62}$`)
+	lockContainerRe = regexp.MustCompile(`^[0-9a-f]{12,64}$`)
 )
 
-// LockTools are the lock tools whose console lea opens in a pane.
+// lockSettle is how long LockOpen waits, once the pane runs the attach, before it checks that the
+// pane is still there: an attach that fails (the console stopped meanwhile) closes its pane at
+// once, and LockOpen then reports the failure instead of "opened". Tests set it to 0.
+var lockSettle = 300 * time.Millisecond
+
+// LockTools are the lock tools whose console lea shows in a pane.
 var LockTools = []string{"locksql"}
+
+// LockConsole is lox up's running console of a lock: its instance (lockfamily.yaml's name) and
+// its container's id, which docker confirmed is lox up's service of that lock for the projects
+// directory.
+type LockConsole struct {
+	Instance  string
+	Container string
+}
 
 // LockSpec is the host configuration of a lock tool's console: lea's config files, which only
 // the user writes (never the projects directory's).
 type LockSpec struct {
-	Enabled   bool
-	Image     string // the console image
-	VaultAddr string // VAULT_ADDR for the console, "" for none
+	Enabled bool
 	// ContainerName is the lea container of a projects directory (launcher.Config.ContainerName
-	// of its physical path): a console opens on a deck's own projects directory only.
+	// of its physical path): a console shows on a deck's own projects directory only.
 	ContainerName func(projects string) string
 	// AgentProfiles are the profiles an agent may ask the user to open (lock_request): the
 	// user's allow-list in lea's own config (LEA_<TOOL>_AGENT_PROFILES), empty by default. An
 	// agent only asks; the user opens the console in the deck, or not.
 	AgentProfiles []string
-	// Projects is the console's --project: the deck's projects directory, which LockOpen takes
-	// from the deck's container (its lea.projects label), never from the daemon's environment.
+	// Projects is the deck's projects directory, which LockOpen takes from the deck's container
+	// (its lea.projects label), never from the daemon's environment.
 	Projects string
-	// ConsoleDir makes ready the one directory of the projects directory the console writes
-	// (<projects>/.<tool>), or refuses it (EnsureConsoleDir). nil: no console opens.
-	ConsoleDir func(dir string) error
+	// Console finds lox up's running console of the tool for projects that serves profile (""
+	// for the only lock of the tool), from lox up's state the user owns (.lockfamily/up.json)
+	// and docker's labels; an error says why there is none (and to run `lox up`). nil: no
+	// console shows.
+	Console func(ctx context.Context, projects, profile string) (LockConsole, error)
 }
 
-// lockHarden confines a console, which holds the database credentials: no capability, no
-// privilege gain, a read-only root with a small /tmp, bounded processes and memory (as
-// lea__locksql_harden in libexec/lib/locksql.sh).
-var lockHarden = []string{"--cap-drop", "ALL", "--security-opt", "no-new-privileges", "--read-only",
-	"--tmpfs", "/tmp:rw,nosuid,nodev,noexec,size=64m", "--pids-limit", "256", "--memory", "1g"}
-
-// lockConsoleDir is the directory of the projects directory a tool's console writes: the rest is
-// mounted read-only in the console, since the agents write it.
-func lockConsoleDir(tool, projects string) string { return projects + "/." + tool }
-
-// EnsureConsoleDir makes dir when it is missing and refuses anything but a directory: a bind
-// mount follows a symbolic link on the host, which an agent could point anywhere.
-func EnsureConsoleDir(dir string) error {
-	if err := os.Mkdir(dir, 0o755); err != nil && !errors.Is(err, os.ErrExist) {
-		return fmt.Errorf("could not create %s: %w", dir, err)
-	}
-	if fi, err := os.Lstat(dir); err != nil || !fi.IsDir() {
-		return fmt.Errorf("%s is not a directory (a symbolic link or a file): the console only writes there; remove it and retry", dir)
-	}
-	// A symbolic link (or a fifo, a device) left in it by an agent, before the agents got it
-	// read-only, would take the console's writes out of it, a hard link let the agent write in it:
-	// only regular files of a single name and directories.
-	return filepath.WalkDir(dir, func(p string, e fs.DirEntry, err error) error {
-		if err != nil {
-			return fmt.Errorf("could not read %s: %w", dir, err)
-		}
-		if !e.Type().IsRegular() && !e.IsDir() {
-			return fmt.Errorf("%s is not a regular file or directory: the console writes in %s; remove it and retry", p, dir)
-		}
-		// A hard link of a file: an agent would write it through its other name, outside.
-		if e.Type().IsRegular() {
-			fi, err := e.Info()
-			if err != nil {
-				return fmt.Errorf("could not read %s: %w", p, err)
-			}
-			if st, ok := fi.Sys().(*syscall.Stat_t); !ok || st.Nlink > 1 {
-				return fmt.Errorf("%s has another name (a hard link): the console writes in %s; remove it and retry", p, dir)
-			}
-		}
-		return nil
-	})
-}
-
-// ConsoleState is what the container runtime knows of a console container.
-type ConsoleState struct {
-	Exists, Running bool
-	Owner           string // its lea.lock-for label: the lea container whose deck opened it
-}
-
-// Consoles reaches the console containers (the real one is Docker's).
+// Consoles reaches the console containers an earlier lea's deck started (the real one is
+// Docker's): lea stop stops them. lea starts none.
 type Consoles interface {
-	ConsoleState(ctx context.Context, name string) (ConsoleState, error)
-	// RemoveConsole removes a stopped console container that is in the way of a new one.
-	RemoveConsole(ctx context.Context, name string) error
-	// StopConsole stops a console container; one that does not exist is not an error.
-	StopConsole(ctx context.Context, name string) error
-	// StopConsolesOf stops every console container a deck of owner opened.
+	// StopConsolesOf stops every console container a deck of owner started.
 	StopConsolesOf(ctx context.Context, owner string) error
-	// Unconfined names the running agent containers of projects without dir mounted read-only:
-	// started before locksql or before lea mounted it so, they can still swap it for a link.
-	Unconfined(ctx context.Context, projects, dir string) ([]string, error)
 }
 
 // LockRow is one console of a deck.
@@ -144,36 +101,28 @@ func lockTool(tool string) bool {
 	return false
 }
 
-// lockID checks tool and profile ("" for the console's own choice) and returns the pane's id
-// and the console container's name.
-func lockID(tool, profile string) (id, name string, err error) {
+// lockID checks tool and profile ("" for the tool's only lock) and returns the pane's id.
+func lockID(tool, profile string) (string, error) {
 	if !lockTool(tool) {
-		return "", "", fmt.Errorf("no lock console for %q: lea opens %s (lockmq and lockfile consoles run in their own account's session)",
+		return "", fmt.Errorf("no lock console for %q: lea shows %s (lox attach <instance> reaches the others)",
 			tool, strings.Join(LockTools, ", "))
 	}
 	if profile == "" {
-		return tool, tool + "-console", nil
+		return tool, nil
 	}
 	if !lockProfileRe.MatchString(profile) {
-		return "", "", fmt.Errorf("invalid profile name %q (lowercase letters, digits, _ and -, at most 32)", profile)
+		return "", fmt.Errorf("invalid profile name %q (lowercase letters, digits, _ and -, at most 32)", profile)
 	}
-	return tool + "/" + profile, tool + "-console-" + profile, nil
+	return tool + "/" + profile, nil
 }
 
-// checkSpec refuses a configuration value that would change the argv's meaning: an option where
-// the image goes, a mount separator in the projects directory.
+// checkSpec refuses a tool that is off and a projects directory that is not absolute and clean.
 func checkSpec(tool string, s LockSpec) error {
 	if !s.Enabled {
 		return fmt.Errorf("%s is off: lea init --%s turns it on", tool, tool)
 	}
-	if !lockImageRe.MatchString(s.Image) {
-		return fmt.Errorf("invalid %s console image %q", tool, s.Image)
-	}
-	if !strings.HasPrefix(s.Projects, "/") || strings.ContainsAny(s.Projects, ":,") || hasControl(s.Projects) {
+	if !strings.HasPrefix(s.Projects, "/") || hasControl(s.Projects) {
 		return fmt.Errorf("invalid projects directory %q for the %s console", s.Projects, tool)
-	}
-	if s.VaultAddr != "" && !lockVaultRe.MatchString(s.VaultAddr) {
-		return fmt.Errorf("invalid vault address %q for the %s console", s.VaultAddr, tool)
 	}
 	return nil
 }
@@ -187,24 +136,12 @@ func hasControl(s string) bool {
 	return false
 }
 
-// lockCmd is a console's pane: the fixed template of `lea locksql`, confined (lockHarden, the
-// projects directory read-only but for the console's own directory), with no log driver (with a
-// tty, docker's json-file log would keep every screen for docker logs), labelled with the lea
-// container whose deck opened it. Never a console flag: --auto, --allow-unmask, --show-results
-// and the like stay the user's to type in a terminal of their own (lea locksql).
-func (m *Manager) lockCmd(container, tool, profile, name string, s LockSpec) []string {
-	cmd := append([]string{m.cfg.Docker, "run", "-it", "--rm", "--log-driver", "none", "--user", tool}, lockHarden...)
-	dir := lockConsoleDir(tool, s.Projects)
-	cmd = append(cmd, "--name", name, "--label", lockOwnerLabel+"="+container, "--add-host=host.docker.internal:host-gateway",
-		"-v", s.Projects+":"+s.Projects+":ro", "-v", dir+":"+dir, "-v", tool+"-run:/run/"+tool, "-v", tool+"-home:/home/"+tool)
-	if s.VaultAddr != "" {
-		cmd = append(cmd, "-e", "VAULT_ADDR="+s.VaultAddr)
-	}
-	cmd = append(cmd, s.Image, "console", "--project", s.Projects)
-	if profile != "" {
-		cmd = append(cmd, "--profile", profile)
-	}
-	return cmd
+// lockCmd is a console's pane: docker attach to lox up's console container, as `lox attach`
+// does, without passing signals on (closing the pane ends the attach, never the console) and
+// with lox attach's detach keys (Ctrl-P Ctrl-Q). Never a console flag: the console runs as lox up
+// started it.
+func (m *Manager) lockCmd(c LockConsole) []string {
+	return []string{m.cfg.Docker, "attach", "--sig-proxy=false", "--detach-keys", "ctrl-p,ctrl-q", c.Container}
 }
 
 func byLock(ps []pane, id string) (pane, bool) {
@@ -214,19 +151,20 @@ func byLock(ps []pane, id string) (pane, bool) {
 // lockWindow is the parking window's name of a console.
 func lockWindow(id string) string { return "lock-" + strings.ReplaceAll(id, "/", "-") }
 
-// LockOpen opens tool's console for profile in the container's deck, or shows the one already
-// open: in the lock slot, under the agent beside the deck, without the keyboard (a console that
-// took it while the user typed into an agent would get stray keys). The console shown there
-// before parks in its own window. It returns "opened" or "already-open".
+// LockOpen shows tool's console for profile in the container's deck: a pane attached to lox up's
+// running console, or the one already open, in the lock slot under the agent beside the deck,
+// without the keyboard (a console that took it while the user typed into an agent would get stray
+// keys). The console shown there before parks in its own window. It returns "opened" or
+// "already-open", and an error when no console of lox up runs or the attach ended at once.
 func (m *Manager) LockOpen(ctx context.Context, container, tool, profile string) (string, error) {
 	if !containerRe.MatchString(container) {
 		return "", fmt.Errorf("invalid container name %q", container)
 	}
-	id, name, err := lockID(tool, profile)
+	id, err := lockID(tool, profile)
 	if err != nil {
 		return "", err
 	}
-	if m.cfg.LockSpec == nil || m.cfg.Consoles == nil {
+	if m.cfg.LockSpec == nil {
 		return "", errors.New("lock consoles are not available in this daemon")
 	}
 	spec, err := m.cfg.LockSpec(tool)
@@ -239,29 +177,16 @@ func (m *Manager) LockOpen(ctx context.Context, container, tool, profile string)
 	if err != nil {
 		return "", err
 	}
-	// One daemon serves every deck: the console mounts and serves the deck's own projects
-	// directory, and only one that maps back to this deck's container.
+	// One daemon serves every deck: the console of the deck's own projects directory, and only
+	// one that maps back to this deck's container.
 	if spec.Projects, err = m.cfg.Containers.Projects(ctx, container); err != nil {
 		return "", err
 	}
 	if spec.ContainerName == nil || spec.ContainerName(spec.Projects) != container {
-		return "", fmt.Errorf("the projects directory %s is not the one of %s: no console opens for it", spec.Projects, container)
+		return "", fmt.Errorf("the projects directory %s is not the one of %s: no console shows for it", spec.Projects, container)
 	}
 	if err := checkSpec(tool, spec); err != nil {
 		return "", err
-	}
-	if spec.ConsoleDir == nil {
-		return "", fmt.Errorf("no check of the console's directory for %s: no console opens", tool)
-	}
-	dir := lockConsoleDir(tool, spec.Projects)
-	if err := spec.ConsoleDir(dir); err != nil {
-		return "", err
-	}
-	if bad, err := m.cfg.Consoles.Unconfined(ctx, spec.Projects, dir); err != nil {
-		return "", err
-	} else if len(bad) > 0 {
-		return "", fmt.Errorf("%s running without %s read-only (started before %s or this lea): restart the agents (lea stop, then lea; they resume) and retry",
-			strings.Join(bad, " "), dir, tool)
 	}
 	ps, err := listPanes(ctx, s, container)
 	if err != nil {
@@ -276,33 +201,34 @@ func (m *Manager) LockOpen(ctx context.Context, container, tool, profile string)
 		ok = false
 	}
 	if !ok {
-		st, err := m.cfg.Consoles.ConsoleState(ctx, name)
+		if spec.Console == nil {
+			return "", fmt.Errorf("no way to find lox up's %s console in this daemon", tool)
+		}
+		c, err := spec.Console(ctx, spec.Projects, profile)
 		if err != nil {
 			return "", err
 		}
-		if st.Running {
-			// Not this deck's (no pane here): lea locksql in a terminal, another lea's deck, or
-			// a console left without its pane. lea neither takes it over nor stops it.
-			where := "outside lea's decks (lea locksql in a terminal?)"
-			if st.Owner == container {
-				where = "without its pane (lea lock close " + strings.TrimSpace(tool+" "+profile) + " stops it)"
-			} else if st.Owner != "" {
-				where = "in the deck of " + st.Owner
-			}
-			return "", fmt.Errorf("the %s console %s already runs %s", id, name, where)
+		if !lockInstanceRe.MatchString(c.Instance) || !lockContainerRe.MatchString(c.Container) {
+			return "", fmt.Errorf("lox up's %s console: invalid instance %q or container %q", tool, c.Instance, c.Container)
 		}
-		if st.Exists {
-			if err := m.cfg.Consoles.RemoveConsole(ctx, name); err != nil {
-				return "", err
-			}
-		}
-		if p, err = m.newLockPane(ctx, s, container, id, m.lockCmd(container, tool, profile, name, spec)); err != nil {
+		if p, err = m.newLockPane(ctx, s, container, id, m.lockCmd(c)); err != nil {
 			return "", err
 		}
-		status = "opened"
+		// An attach that fails (the console stopped since docker said it runs) ends at once and
+		// its pane closes (remain-on-exit off): that is a failure, never "opened".
+		if lockSettle > 0 {
+			time.Sleep(lockSettle)
+		}
 		if ps, err = listPanes(ctx, s, container); err != nil {
 			return "", err
 		}
+		if q, alive := findPane(ps, func(q pane) bool { return q.ID == p.ID }); !alive || q.Dead {
+			if alive {
+				s.Run(context.WithoutCancel(ctx), "kill-pane", "-t", p.ID)
+			}
+			return "", fmt.Errorf("the %s console of lock %s did not attach (docker attach ended at once): check that `lox up` runs it, then lox attach %s", id, c.Instance, c.Instance)
+		}
+		status = "opened"
 	}
 	if err := m.showLock(ctx, s, ps, p); err != nil {
 		return "", err
@@ -317,8 +243,8 @@ func (m *Manager) LockOpen(ctx context.Context, container, tool, profile string)
 // while the pane is made: tmux sizes a pane's history when it makes it; lea's conf sets
 // history-limit globally only, so unsetting the session's leaves it as it was), tagged and
 // closing when its process exits (remain-on-exit off) before the console runs in it: the pane is
-// made running the placeholder, then respawned into the console. A console that exits at once
-// (a missing image, Vault down) leaves no dead pane, nor its screen.
+// made running the placeholder, then respawned into the attach. An attach that ends at once leaves
+// no dead pane, nor its screen.
 func (m *Manager) newLockPane(ctx context.Context, s Session, container, id string, argv []string) (pane, error) {
 	target := "=" + container + ":"
 	if _, err := s.Run(ctx, "set-option", "-t", target, "history-limit", lockHistory); err != nil {
@@ -375,18 +301,16 @@ func (m *Manager) showLock(ctx context.Context, s Session, ps []pane, p pane) er
 	return err
 }
 
-// LockClose stops tool's console for profile and closes its pane. It returns "closed", or
-// "not-open" when the deck has no such console and none runs.
+// LockClose closes tool's console pane for profile: the attach ends (no signal reaches the
+// console), lox up's console keeps running. It returns "closed", or "not-open" when the deck has
+// no such pane.
 func (m *Manager) LockClose(ctx context.Context, container, tool, profile string) (string, error) {
 	if !containerRe.MatchString(container) {
 		return "", fmt.Errorf("invalid container name %q", container)
 	}
-	id, name, err := lockID(tool, profile)
+	id, err := lockID(tool, profile)
 	if err != nil {
 		return "", err
-	}
-	if m.cfg.Consoles == nil {
-		return "", errors.New("lock consoles are not available in this daemon")
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -399,30 +323,11 @@ func (m *Manager) LockClose(ctx context.Context, container, tool, profile string
 		return "", err
 	}
 	p, has := byLock(ps, id)
-	st, err := m.cfg.Consoles.ConsoleState(ctx, name)
-	if err != nil {
-		return "", err
-	}
-	if st.Exists && st.Owner != container && !has {
-		return "", fmt.Errorf("the %s console %s is not this deck's: stop it where it runs", id, name)
-	}
-	if !has && !st.Exists {
+	if !has {
 		return "not-open", nil
 	}
-	if st.Exists {
-		if err := m.cfg.Consoles.StopConsole(ctx, name); err != nil {
-			return "", err
-		}
-	}
-	if has {
-		if ps, err = listPanes(ctx, s, container); err != nil {
-			return "", err
-		}
-		if p, has = findPane(ps, func(q pane) bool { return q.ID == p.ID }); has {
-			if _, err := s.Run(ctx, "kill-pane", "-t", p.ID); err != nil {
-				return "", err
-			}
-		}
+	if _, err := s.Run(ctx, "kill-pane", "-t", p.ID); err != nil {
+		return "", err
 	}
 	if ps, err = listPanes(ctx, s, container); err == nil {
 		m.publish(container, ps)
@@ -466,7 +371,7 @@ func (m *Manager) LockCheckRequest(ctx context.Context, container, tool, profile
 	if profile == "" {
 		return errors.New("a profile is required: an agent asks for one of the profiles the user allowed")
 	}
-	if _, _, err := lockID(tool, profile); err != nil {
+	if _, err := lockID(tool, profile); err != nil {
 		return err
 	}
 	if m.cfg.LockSpec == nil {
@@ -515,7 +420,8 @@ func (m *Manager) deckSession(ctx context.Context, container string) (Session, e
 	return m.session(ctx, container)
 }
 
-// stopConsoles stops the consoles a deck of container opened (lea stop). Callers hold m.mu.
+// stopConsoles stops the consoles a deck of container started under an earlier lea (lea stop):
+// lox up's consoles are lox up's. Callers hold m.mu.
 func (m *Manager) stopConsoles(ctx context.Context, container string) {
 	if m.cfg.Consoles == nil {
 		return

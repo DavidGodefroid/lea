@@ -75,3 +75,9 @@ fake_uname() {
   chmod +x "$BATS_TEST_TMPDIR/ubin/uname"
   case ":$PATH:" in *":$BATS_TEST_TMPDIR/ubin:"*) ;; *) export PATH="$BATS_TEST_TMPDIR/ubin:$PATH" ;; esac
 }
+
+# locksql_on: locksql on (LEA_LOCKSQL=1 in the user configuration; off by default), loaded.
+locksql_on() {
+  lea_user_config_set LEA_LOCKSQL 1
+  lea_load_config
+}

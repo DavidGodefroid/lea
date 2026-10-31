@@ -8,6 +8,7 @@ setup() {
   OWNER=$(id -u)
   lea__lockhost_root() { printf '%s' "$R"; }
   lea__lockhost_owner() { printf '%s' "$OWNER"; }
+  LEA_LOCKSQL=1 # on, as the user config of lea init --locksql says (off by default)
   SHA=0123456789abcdef0123456789abcdef01234567
   D="$BATS_TEST_TMPDIR/rel"
   export FAKE_GIT_SHA=$SHA FAKE_CURL_DIR="$D"
@@ -24,7 +25,7 @@ latest() { export "FAKE_CURL_EFFECTIVE_$1=https://github.com/DavidGodefroid/$1/r
   [ "$status" -eq 0 ]
   [[ "$output" == *"locksql: v0.11.5 -> v0.12.0 (release notes: https://github.com/DavidGodefroid/locksql/releases/tag/v0.12.0)"* ]]
   [[ "$output" == *"Update locksql to v0.12.0 (its signature is checked first)? [y/N]"* ]]
-  [[ "$output" == *"locksql v0.12.0 recorded (profiles and the locksql-home volume kept); a running console keeps locksql:0.11.5 until you restart it"* ]]
+  [[ "$output" == *"locksql v0.12.0 recorded (profiles kept); lox up pins the console's own image: lox add locksql NAME again moves a lock to a newer release"* ]]
   run calls
   [[ "$output" == *"curl [-fsSLI] [-o] [/dev/null] [-w] [%{url_effective}] [https://github.com/DavidGodefroid/locksql/releases/latest]"* ]]
   [[ "$output" == *"[https://github.com/DavidGodefroid/locksql/releases/download/v0.12.0/checksums.txt]"* ]]

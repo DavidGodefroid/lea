@@ -30,16 +30,6 @@ jobs:
         with:
           persist-credentials: false
       - run: make test-proxy
-  # The locksql console's confinement (tests/integration/locksql-confine.sh): the real lea locksql
-  # with a stand-in console image, checked from docker inspect and from inside.
-  locksql-confine:
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-        with:
-          persist-credentials: false
-      - run: make test-locksql-confine
   # Load-aware admission (#132) on a real engine: a 64 MiB, half-CPU container under a real memory
   # then CPU load; the daemon's sampler reads its cgroup from the host. Docker, and rootless Podman.
   pressure:
@@ -142,7 +132,7 @@ jobs:
           for c in '.lockfamily write gets EROFS' 'host facade socket not visible' 'no facade socket in the container' 'sibling lea unreachable directly' 'host port unreachable via host IP' 'public HTTPS works through the proxy' 'nested HTTP between containers is direct'; do
             grep -qxF "ok   $c" isolation.log || { echo "isolation: '$c' did not run" >&2; exit 1; }
           done
-  # The phase-2 exit demo, lea's side (tests/integration/hubdeck.sh): lock up with the released,
+  # The phase-2 exit demo, lea's side (tests/integration/hubdeck.sh): lox up with the released,
   # cosign-verified lockhub and a LockHTTP lock; the gate holds an agent's write, lea's deck
   # approves its ticket through the real facade socket, and the gate lets the write out.
   hubdeck:
@@ -215,8 +205,9 @@ jobs:
           [ "$n" -eq 9 ]
   # The phase-0 exit demo with real consoles (tests/integration/phase0.sh): an agent in a real lea
   # (lea:dev) calls locksql_status, lockmq_status and lockfile_status, each reaching a running
-  # console of the release image/Containerfile pins (cosign-verified), wired as lea wires it. The
-  # two lea images come from the GitHub Actions cache when unchanged.
+  # console of the release image/Containerfile pins (cosign-verified) that lockhub's released
+  # lox up runs, wired as lea wires it. The two lea images come from the GitHub Actions cache
+  # when unchanged.
   phase0:
     runs-on: ubuntu-latest
     timeout-minutes: 40
@@ -260,6 +251,8 @@ jobs:
           fi
       - name: make test-phase0, every check run, the three status calls on running consoles
         shell: bash
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           make test-phase0 2>&1 | tee phase0.log
           if grep '^FAIL' phase0.log; then exit 1; fi
@@ -267,8 +260,10 @@ jobs:
             grep -qx "ok    lea's agent: ${t}_status reaches the running $t console" phase0.log || { echo "phase0: ${t}_status did not reach a running console" >&2; exit 1; }
           done
           n=$(grep -c '^ok ' phase0.log)
-          echo "$n phase0 checks passed"
-          [ "$n" -eq 26 ]
+          # The hub-only checks wait for each Lock's first hub-only release: a note until then.
+          h=$(grep -c '^note: .* the hub-only check is not run' phase0.log || true)
+          echo "$n phase0 checks passed, $h hub-only checks not run yet"
+          [ $((n + h)) -eq 31 ]
   images:
     runs-on: ubuntu-latest
     steps:
