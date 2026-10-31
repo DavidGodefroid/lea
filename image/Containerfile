@@ -52,11 +52,11 @@ RUN useradd -r -u 10001 -U -M -s /sbin/nologin locksql \
  && printf '%s\n' 'service_user = "locksql"' 'client_group = "locksql-clients"' 'socket_dir   = "/run/locksql"' 'x11          = "refuse"' > /etc/locksql/system.toml \
  && chmod 0644 /etc/locksql/system.toml \
  && case "$TARGETARCH" in \
-      amd64) sq=b038ae896b79653f5a80343e90738a40e0679f95ada23cb6d102d992a777da91 ;; \
-      arm64) sq=8f215c48302b3beae4d2d7d392360dad38b424dc3e2f3dcae0051046c5fcf0aa ;; \
+      amd64) sq=07facc68f8d7888388a7fe4e3b092c54ba12a90fad1012e6b5849c1fbfecc086 ;; \
+      arm64) sq=34bedbba85ea2bb04e33a73e6429136f1de7423ad316cbf902abb5ebae1f2b34 ;; \
       *) echo "unsupported architecture: $TARGETARCH" >&2; exit 1 ;; \
     esac \
- && cd /tmp && V=0.11.4 && A="locksql_${V}_linux_${TARGETARCH}.tar.gz" \
+ && cd /tmp && V=0.11.5 && A="locksql_${V}_linux_${TARGETARCH}.tar.gz" \
  && curl -fsSLO "https://github.com/DavidGodefroid/locksql/releases/download/v$V/$A" \
  && echo "$sq  $A" | sha256sum -c \
  && tar -xzf "$A" locksql && install -m 0755 -o root -g root locksql /usr/local/bin/locksql \
@@ -70,11 +70,11 @@ RUN useradd -r -u 10001 -U -M -s /sbin/nologin locksql \
 # of their release's checksums.txt, whose Sigstore signature by the tool's release workflow was
 # checked when the pin was set; they match LEA_LOCKMQ_REF and LEA_LOCKFILE_REF (config/lea.conf).
 RUN case "$TARGETARCH" in \
-      amd64) mq=863233743aa111873697c4a24ee8d28cc13872cde8c26380b11f885258c55949 lf=4449a3725ad4b7607e2e148aab2d511223aca9a03dc8dcad7bcd50e12e558697 ;; \
-      arm64) mq=b7dad04991714e8e8f36923fd944dce45e8c69b115c070ca8bdb860fc0d22507 lf=33a57883d75867fe4a4c82e75c16b1ab6db06c787574a42ceb29f72c2696ed26 ;; \
+      amd64) mq=d7ad5228c7efa28da2fbce57bf3972a1a07ce4b532cbb36a97b890418f63b1ea lf=335b480cccb5efc2b49318222d925547076679befdf064e9794c941323cf6da8 ;; \
+      arm64) mq=ca3d1af3e9b0651c9c9f76e0aa5e3053b3cdb39829bb38e8cde6d48b5fe3b278 lf=0c4c252eabb1b460f28e92e6cdf6fc08c793ddfd965b67367fb5e792ecfac127 ;; \
       *) echo "unsupported architecture: $TARGETARCH" >&2; exit 1 ;; \
     esac \
- && cd /tmp && MQ=0.4.2 LF=0.5.2 \
+ && cd /tmp && MQ=0.4.3 LF=0.5.3 \
  && curl -fsSLO "https://github.com/DavidGodefroid/lockmq/releases/download/v$MQ/lockmq_${MQ}_linux_${TARGETARCH}.tar.gz" \
  && echo "$mq  lockmq_${MQ}_linux_${TARGETARCH}.tar.gz" | sha256sum -c \
  && curl -fsSLO "https://github.com/DavidGodefroid/lockfile/releases/download/v$LF/lockfile_${LF}_linux_${TARGETARCH}.tar.gz" \
