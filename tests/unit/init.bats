@@ -157,37 +157,13 @@ release_install_sh() {
   printf '#!/bin/sh\necho "install.sh LOCKSQL_VERSION=$LOCKSQL_VERSION cosign=$(command -v cosign >/dev/null && echo yes)" >>"$FAKE_LOG"\nexit %s\n' "${1:-0}" >"$FAKE_GIT_INSTALL_SH"
 }
 
-@test "init installs locksql's launcher with the verified release's own install.sh" {
+@test "init installs no locksql launcher: lox up runs the console" {
   export FAKE_DOCKER_RC_IMAGE_INSPECT_AT_LOCKSQL_0_11_5=1
   release_install_sh
   run lea_init </dev/null
-  [[ "$output" == *"locksql v0.11.5: installing its launcher"* ]]
+  [[ "$output" != *"installing its launcher"* ]]
   run calls
-  [[ "$output" == *"cosign [verify-blob]"*"docker [build]"*"install.sh LOCKSQL_VERSION=v0.11.5 cosign=yes"* ]]
-  # Its failure is said, and the image stays.
-  release_install_sh 1
-  run lea_init </dev/null
-  [[ "$output" == *"warning: could not install locksql's launcher"*"lea init"* ]]
-  # A release without one says so.
-  unset FAKE_GIT_INSTALL_SH; : >"$FAKE_LOG"
-  run lea_init </dev/null
-  [[ "$output" == *"locksql v0.11.5 ships no launcher"* ]]
-  run calls
-  [[ "$output" != *"install.sh"* ]]
-}
-
-@test "init leaves a launcher of the pinned release in place, and never runs a signature-less source's" {
-  export FAKE_DOCKER_RC_IMAGE_INSPECT_AT_LOCKSQL_0_11_5=1
-  release_install_sh
-  mkdir -p "$BATS_TEST_TMPDIR/lbin"
-  printf '#!/bin/sh\n# --cap-drop ALL no-new-privileges --read-only LOCKSQL_READONLY_PROJECT LOCKSQL_CONSOLE_NAME\nlauncher_version=0.11.5\n' >"$BATS_TEST_TMPDIR/lbin/locksql"
-  chmod 0755 "$BATS_TEST_TMPDIR/lbin/locksql"
-  PATH="$BATS_TEST_TMPDIR/lbin:$PATH" run lea_init </dev/null
-  run calls
-  [[ "$output" != *"install.sh"* ]]
-  rm "$BATS_TEST_TMPDIR/lbin/locksql"; : >"$FAKE_LOG"
-  FAKE_COSIGN_RC=1 run lea_init </dev/null
-  run calls
+  [[ "$output" == *"cosign [verify-blob]"*"docker [build]"* ]]
   [[ "$output" != *"install.sh"* ]]
 }
 
@@ -743,7 +719,7 @@ EOT
 y"
   [ "$status" -eq 0 ]
   [[ "$output" == *"locksql has no database profile for $P yet"* ]]
-  [[ "$output" == *"run locksql (or lea locksql) in a terminal you keep in view"* ]]
+  [[ "$output" == *"locksql console: it runs under lox up only"*"run \`lox up\`"* ]]
   run calls
   [[ "$output" == *"docker [run] [-it] [--rm] [--user] [$(id -u):$(id -g)] [-e] [HOME=/tmp] [-v] [$P:$P] [-w] [$P] [locksql:0.11.5] [profile] [add] [--project] [$P]"* ]]
 }
@@ -771,21 +747,16 @@ y"
   [[ "$output" != *"[profile] [add]"* ]]
 }
 
-@test "a Vault profile: vault CLI built in, address saved, vault login as the console account" {
+@test "a Vault profile: lea says lox up does not pass Vault yet, and logs in to nothing" {
   interactive
   mkdir -p "$P/.locksql"
   printf '[profiles.uat]\nengine = "mariadb"\nhost = "db"\ncredentials = "vault"\nvault_path = "database/creds/uat"\n' >"$P/.locksql/config.toml"
-  export FAKE_DOCKER_RC_RUN___RM_AT_COMMAND__V_VAULT=1 FAKE_DOCKER_RC_RUN__I_AT_LOOKUP=1
-  run lea_init <<<"
-https://vault.example.com
-y
-"
+  run lea_init </dev/null
   [ "$status" -eq 0 ]
-  grep -qx "LEA_LOCKSQL_VAULT_ADDR='https://vault.example.com'" "$U"
+  [[ "$output" == *"a profile reads its login from Vault, which lox up does not pass to the console yet (lockhub#45)"* ]]
   run calls
-  [[ "$output" == *"docker [build] [--target] [vault] [-t] [locksql:0.11.5] [--build-arg] [ALLOWED_UIDS=$(id -u)] ["*"/src]"* ]]
-  [[ "$output" == *"[-e] [VAULT_ADDR=https://vault.example.com] [--entrypoint] [vault] [locksql:0.11.5] [token] [lookup]"* ]]
-  [[ "$output" == *"docker [run] [-i] [--rm] [--log-driver] [none] [--user] [locksql] [--cap-drop] [ALL] [--security-opt] [no-new-privileges] [--read-only] [--tmpfs] [/tmp:rw,nosuid,nodev,noexec,size=64m] [--pids-limit] [256] [--memory] [1g] [-v] [locksql-home:/home/locksql] [-e] [VAULT_ADDR=https://vault.example.com] [--entrypoint] [vault] [locksql:0.11.5] [login] [-method=oidc]"* ]]
+  [[ "$output" != *"[--entrypoint] [vault]"* ]]
+  [[ "$output" != *"locksql-home"* ]]
 }
 
 @test "without a terminal the guided locksql steps are skipped" {

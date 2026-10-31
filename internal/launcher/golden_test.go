@@ -39,6 +39,7 @@ func hostNeutral(s string) string {
 	s = strings.ReplaceAll(s, "/run/user/"+uid+"/", "/run/user/$UID/")
 	s = strings.ReplaceAll(s, "/run/user/"+uid+"]", "/run/user/$UID]")
 	s = strings.ReplaceAll(s, "/run/user/"+uid+"\n", "/run/user/$UID\n")
+	s = strings.ReplaceAll(s, "allowed_uids: ["+uid+"]", "allowed_uids: [$UID]")
 	return leaUser.ReplaceAllString(s, "LEA_USER=$$USER")
 }
 
@@ -169,11 +170,12 @@ func TestRunArgsMatchTheGoldenFile(t *testing.T) {
 	w.env["LEA_CLIPBOARD"] = "1"
 	w.env["FAKE_DOCKER_OUT_INFO___FORMAT"] = `[{"name=apparmor"},{"name=seccomp"}]`
 	claudeHome(t, w)
+	locksqlUp(t, w)
 	a, err := w.launcher().runArgs(w.proj, "172.18.0.5")
 	if err != nil {
 		t.Fatal(err)
 	}
-	g := strings.Join(a, "\n") + "\n"
+	g := strings.ReplaceAll(strings.Join(a, "\n")+"\n", upProjectOf(w), "lockfamily-$PROJECT")
 	for _, m := range []string{"apparmor=lea", ",dst=/lea/clipboard/copy", "/.claude/skills,readonly", "/.claude/CLAUDE.md,readonly"} {
 		if !strings.Contains(g, m) {
 			t.Errorf("the arguments lack %q", m)

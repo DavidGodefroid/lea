@@ -1,22 +1,25 @@
 package launcher
 
 import (
+	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"regexp"
 	"sort"
+	"strings"
 	"syscall"
 )
 
 // Locks started by `lock up` (lockhub's docs/lock-up.md): lock up runs each lock's console in its
 // own compose service, with its socket in the volume <project>_<instance>-run, and says so in
 // <proj>/.lockfamily/up.json, which the agents only read (lockfamilyDir). For a lock tool that is
-// on, lea mounts that volume on /run/<tool> instead of the fixed <tool>-run of a console started
-// by the tool's own launcher, once docker confirms it is that lock's socket volume (compose's
+// on, lea mounts that volume on /run/<tool> (the consoles run hub-attached only: there is no other
+// socket to mount), once docker confirms it is that lock's socket volume (compose's
 // project label and lock up's role label): never a lock's home (its private key) or another
 // volume, whatever up.json says. One instance per tool: with two, lea leaves the tool out.
 
@@ -202,4 +205,77 @@ func (l *Launcher) lockUpVolumeWrong(vol, project, proj, name, typ string) strin
 // directory; connecting needs no write).
 func lockUpMount(vol, tool string) string {
 	return "type=volume,src=" + vol + ",dst=/run/" + tool + ",readonly"
+}
+
+var dockerID = regexp.MustCompile(`^[0-9a-f]{64}$`)
+
+// LoxConsole is lox up's running console of a lock of type tool for the projects directory proj
+// (its physical path), that serves profile ("": the tool's only lock): the lock's instance and its
+// container's id, for the deck's pane that attaches to it (internal/agents' LockOpen). lea trusts
+// only what it trusts for the agents' sockets (lockUpSockets): up.json that is the user's, of this
+// projects directory, the lock's socket volume as docker labels it, and then the one container of
+// lox up's compose service lock-<instance> that runs and mounts that very volume on /run/<tool>.
+// An error says why there is none, and to run `lox up`.
+func LoxConsole(cfg *Config, environ []string, proj, tool, profile string) (instance, container string, err error) {
+	var warn bytes.Buffer
+	l := &Launcher{Cfg: cfg, Environ: environ, Stderr: &warn}
+	s, p := l.readLockUp(proj, proj+"/.lockfamily")
+	if s == nil {
+		why := strings.TrimSpace(strings.ReplaceAll(warn.String(), "lea: warning: ", ""))
+		if why == "" {
+			why = "no " + p
+		}
+		return "", "", fmt.Errorf("no %s console of lox up: %s; run `lox up`", tool, why)
+	}
+	var names []string
+	for name, lk := range s.Locks {
+		if lk.Type == tool && lockUpInstance.MatchString(name) && (profile == "" || lk.Profile == profile) {
+			names = append(names, name)
+		}
+	}
+	sort.Strings(names)
+	switch {
+	case len(names) == 0 && profile == "":
+		return "", "", fmt.Errorf("no %s lock of lox up for %s: add one with lox add %s <name>, then run `lox up`", tool, proj, tool)
+	case len(names) == 0:
+		return "", "", fmt.Errorf("no %s lock of lox up serves the profile %q (a lock's profile: in .lockfamily/lockfamily.yaml), then run `lox up`", tool, profile)
+	case len(names) > 1:
+		return "", "", fmt.Errorf("lox up runs %d %s locks (%s): name the profile of one", len(names), tool, strings.Join(names, ", "))
+	}
+	name := names[0]
+	vol := s.Project + "_" + name + "-run"
+	if s.Locks[name].Socket != vol {
+		return "", "", fmt.Errorf("lock %s: socket volume %q is not lox up's %q: run `lox up`", name, s.Locks[name].Socket, vol)
+	}
+	if why := l.lockUpVolumeWrong(vol, s.Project, proj, name, tool); why != "" {
+		return "", "", fmt.Errorf("lock %s (%s): %s", name, tool, why)
+	}
+	out, err := l.output(false, "docker", "ps", "-a", "--filter", "label=com.docker.compose.project="+s.Project,
+		"--filter", "label=com.docker.compose.service=lock-"+name, "--format", "{{.ID}} {{.State}}")
+	if err != nil {
+		return "", "", fmt.Errorf("lock %s: could not list lox up's containers (docker ps): %v", name, err)
+	}
+	var rows [][]string
+	for _, ln := range strings.Split(out, "\n") {
+		if f := strings.Fields(ln); len(f) > 0 {
+			rows = append(rows, f)
+		}
+	}
+	switch {
+	case len(rows) == 0:
+		return "", "", fmt.Errorf("lock %s: lox up runs no console for it: run `lox up`", name)
+	case len(rows) > 1:
+		return "", "", fmt.Errorf("lock %s: %d containers of lox up's service lock-%s: run `lox up`", name, len(rows), name)
+	case len(rows[0]) != 2 || rows[0][1] != "running":
+		return "", "", fmt.Errorf("lock %s: its console is not running (%s): run `lox up`", name, strings.Join(rows[0][1:], " "))
+	}
+	m, err := l.output(false, "docker", "inspect", "-f", `{{.Id}} {{range .Mounts}}{{if eq .Destination "/run/`+tool+`"}}{{.Name}}{{end}}{{end}}`, rows[0][0])
+	if err != nil {
+		return "", "", fmt.Errorf("lock %s: could not inspect its console (docker inspect): %v", name, err)
+	}
+	id, got, _ := strings.Cut(strings.TrimSpace(m), " ")
+	if !dockerID.MatchString(id) || got != vol {
+		return "", "", fmt.Errorf("lock %s: container %s does not serve lox up's socket volume %s on /run/%s: not its console", name, rows[0][0], vol, tool)
+	}
+	return name, id, nil
 }

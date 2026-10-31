@@ -531,17 +531,24 @@ func (l *Launcher) runArgs(proj, pip string) ([]string, error) {
 		}
 		return false
 	})
-	if v, ok := ups["locksql"]; ok && v == "" {
-		l.logf("warning: locksql: lea's agents get no locksql socket (see above)")
-	} else if l.Cfg.Locksql() {
-		// The locksql console's socket volume, and its client group (locksql-clients). Its own
-		// directory read-only (locksqlDir).
-		d, err := locksqlDir(proj)
-		if err != nil {
-			return nil, err
+	if l.Cfg.Locksql() {
+		// The socket volume of lox up's locksql lock and its clients group (locksql-clients), as
+		// for lockmq and lockfile (lockHostArgs): the console runs hub-attached only, under lox
+		// up. Without such a lock the agents get no locksql socket, never a fixed volume another
+		// console could serve. Its profile directory read-only (locksqlDir).
+		switch v, ok := ups["locksql"]; {
+		case !ok:
+			l.logf("warning: locksql: lea's agents get no locksql socket: no locksql lock of lox up for this projects directory (add one with lox add locksql <name>, then run `lox up`)")
+		case v == "":
+			l.logf("warning: locksql: lea's agents get no locksql socket (see above)")
+		default:
+			d, err := locksqlDir(proj)
+			if err != nil {
+				return nil, err
+			}
+			a = append(a, "-e", "LEA_LOCKSQL=1", "--group-add", "10000", "--mount", lockUpMount(v, "locksql"),
+				"--mount", "type=bind,src="+d+",dst="+d+",readonly")
 		}
-		a = append(a, "-e", "LEA_LOCKSQL=1", "--group-add", "10000", "--mount", locksqlMount(ups),
-			"--mount", "type=bind,src="+d+",dst="+d+",readonly")
 	}
 	a = append(a, lh...)
 	// lockmq and lockfile: only the socket of a console in its own container, in the tool's
@@ -628,9 +635,9 @@ func (l *Launcher) busAttach(proj string) error {
 	return l.run(l.Core, "attach-container", l.Cfg.ContainerName(proj))
 }
 
-// locksqlHint names the command that starts the locksql console (libexec/lib/locksql.sh).
+// locksqlHint says where the locksql console runs: under lox up only (lea starts none).
 func (l *Launcher) locksqlHint() {
-	l.logf("locksql console: run locksql (or lea locksql) in a terminal you keep in view")
+	l.logf("locksql console: it runs under lox up only; its queries wait for your approval in lea's deck (hub view) or lox approve, its own questions in lox attach <instance>")
 }
 
 // containerStart is lea_container_start: the run arguments, the start snapshot (lea-sh
@@ -695,19 +702,10 @@ func IsTerminal(x any) bool {
 	return term.IsTerminal(f.Fd())
 }
 
-// locksqlMount is the agents' mount of locksql's socket volume: lock up's (lockup.go), else the
-// fixed one of the console locksql's launcher starts.
-func locksqlMount(ups map[string]string) string {
-	if v := ups["locksql"]; v != "" {
-		return lockUpMount(v, "locksql")
-	}
-	return "type=volume,src=locksql-run,dst=/run/locksql"
-}
-
-// locksqlDir is the locksql console's own directory of the projects directory (<proj>/.locksql:
-// its config and PII rules), made when missing. The agents get it read-only: a mount point cannot
-// be removed, renamed or replaced, so no agent swaps it for a symbolic link, which the console's
-// read-write bind mount of it would follow on this host (#121). A link or a file is refused.
+// locksqlDir is locksql's profile directory of the projects directory (<proj>/.locksql: its
+// config and PII rules, which lox up reviews and copies into the lock), made when missing. The
+// agents get it read-only, so none rewrites a profile behind the user's back (#121). A link or a
+// file is refused.
 func locksqlDir(proj string) (string, error) {
 	return roDir(proj+"/.locksql", "the locksql console only writes there")
 }

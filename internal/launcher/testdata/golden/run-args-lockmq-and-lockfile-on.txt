@@ -73,7 +73,7 @@ LEA_LOCKSQL=1
 --group-add
 10000
 --mount
-type=volume,src=locksql-run,dst=/run/locksql
+type=volume,src=lockfamily-$PROJECT_crm-run,dst=/run/locksql,readonly
 --mount
 type=bind,src=$W/projects/.locksql,dst=$W/projects/.locksql,readonly
 -e

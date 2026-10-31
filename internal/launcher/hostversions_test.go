@@ -11,6 +11,7 @@ const engineFormat = "FAKE_DOCKER_OUT_VERSION___FORMAT"
 // Moby's default-profile fixes bring it nothing (#108).
 func TestRunArgsAnyDockerEngine(t *testing.T) {
 	w := newWorld(t, repoRoot(t))
+	locksqlUp(t, w)
 	for _, out := range []string{"Engine=29.4.1\ncontainerd=v2.1.4\nrunc=1.3.0", "Engine=28.10.3", "Engine=29.10.0\nrunc=1.3.0", ""} {
 		w.env[engineFormat] = out
 		w.errb.Reset()
@@ -24,6 +25,7 @@ func TestRunArgsAnyDockerEngine(t *testing.T) {
 // for Docker Engine, so a Podman below its minimum only warns (#108).
 func TestRunArgsLetPodmanThrough(t *testing.T) {
 	w := newWorld(t, repoRoot(t))
+	locksqlUp(t, w)
 	for _, c := range []struct{ components, version, warn string }{
 		{"", "podman version 5.8.9", ""},
 		{"Podman Engine=5.8.9\nConmon=conmon version 2.1.13\nOCI Runtime (crun)=crun version 1.28", "", ""},

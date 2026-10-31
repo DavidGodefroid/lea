@@ -175,7 +175,7 @@ func TestContainerStartSequence(t *testing.T) {
 	if _, err := os.Stat(w.hostDir() + "/scan/" + w.id() + ".start"); err != nil {
 		t.Fatalf("no start snapshot: %v", err)
 	}
-	if !strings.Contains(w.errb.String(), "run locksql (or lea locksql)") {
+	if !strings.Contains(w.errb.String(), "locksql console: it runs under lox up only") {
 		t.Fatalf("stderr %q", w.errb.String())
 	}
 }
@@ -221,6 +221,7 @@ func TestContainerExecAndAgentsLive(t *testing.T) {
 func TestRunArgsContents(t *testing.T) {
 	w := newWorld(t, repoRoot(t))
 	w.env["LEA_CLIPBOARD"] = "1"
+	locksqlUp(t, w)
 	st := w.data + "/lea/state"
 	args, err := w.launcher().runArgs(w.proj, "172.18.0.5")
 	if err != nil {
@@ -236,7 +237,7 @@ func TestRunArgsContents(t *testing.T) {
 		"type=bind,src=" + st + "/gh,dst=/lea/state/gh",
 		"type=bind,src=" + st + "/glab-cli,dst=/lea/state/glab-cli", "type=bind,src=" + st + "/containers,dst=/lea/state/containers",
 		"type=bind,src=" + st + "/go,dst=/lea/state/go",
-		"type=volume,src=locksql-run,dst=/run/locksql", "10000", "LEA_LOCKSQL=1", "LEA_GIT_SSH=",
+		"type=volume,src=" + upProjectOf(w) + "_crm-run,dst=/run/locksql,readonly", "10000", "LEA_LOCKSQL=1", "LEA_GIT_SSH=",
 		"type=bind,src=" + w.proj + "/.locksql,dst=" + w.proj + "/.locksql,readonly",
 		"type=bind,src=" + st + "/kube,dst=" + w.home + "/.kube/lea,readonly", "KUBECONFIG=" + w.home + "/.kube/lea/config",
 		"/dev/fuse", "/dev/net/tun", "seccomp=" + repoRoot(t) + "/image/seccomp.json",
@@ -913,11 +914,11 @@ func TestRunArgsLockfamilyDirReadOnly(t *testing.T) {
 	}
 }
 
-// The locksql console's own directory is read-only for the agents: a mount point cannot be
-// removed, renamed or replaced, so no agent swaps it for a symbolic link that the console's bind
-// mount would follow on the host (#121). Made when missing; a link or a file is refused.
+// locksql's profile directory is read-only for the agents, with lox up's locksql socket: no agent
+// rewrites the profile lox up reviews (#121). Made when missing; a link or a file is refused.
 func TestRunArgsLocksqlDirReadOnly(t *testing.T) {
 	w := newWorld(t, repoRoot(t))
+	locksqlUp(t, w)
 	d := w.proj + "/.locksql"
 	ro := "type=bind,src=" + d + ",dst=" + d + ",readonly"
 	args, err := w.launcher().runArgs(w.proj, "172.18.0.5")

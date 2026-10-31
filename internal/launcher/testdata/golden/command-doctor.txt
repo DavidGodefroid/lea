@@ -13,6 +13,7 @@ docker [ps] [--filter] [label=lea.prefix=lea] [--filter] [label=lea.role=session
 docker [ps] [--filter] [label=lea.prefix=lea] [--filter] [label=lea.role=session] [--format] [{{.Names}}]
 docker [ps] [--filter] [label=lea.prefix=lea] [--filter] [label=lea.role=session] [--format] [{{.Names}}]
 docker [image] [inspect] [locksql:0.11.5]
+docker [volume] [ls] [--filter] [label=dev.lockfamily.role=socket] [--filter] [label=dev.lockfamily.type=locksql] [--filter] [label=dev.lockfamily.workspace=$W/projects] [--format] [{{.Name}}]
 docker [volume] [inspect] [locksql-run]
 core [delivery] [--container] [lea-$ID] [--projects] [$W/projects] [check] [--state] [$W/data/lea/state]
 -- lea
@@ -34,6 +35,7 @@ ok    shedding: after 30 s at memory 95% (LEA_SHED_*)
 ok    egress allowlist: lea's default (forges, registries, model APIs; LEA_EGRESS_ALLOW extends it with 'default,<domain>')
 ok    telemetry: off (LEA_OTEL_UPSTREAM)
 ok    locksql image locksql:0.11.5
-ok    locksql-run volume
+warn  locksql lock: no socket volume of a locksql lock of lox up for $W/projects: lea's agents get no locksql socket; add one with lox add locksql NAME (allowed_uids: [$UID] in .lockfamily/lockfamily.yaml), then run `lox up`
+warn  locksql-run volume: left by a standalone console of an earlier lea, which lea no longer mounts: docker volume rm locksql-run once no console uses it
 warn  approval hub: LEA_HUB=1 but no facade socket to read (set LEA_HUB_SOCKET, or XDG_RUNTIME_DIR): agents are not suspended on a Lock call that waits for the hub (LEA_HUB=0 to silence this)
 warn  kubernetes token: none (optional): lea kube refresh

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"log"
@@ -58,8 +59,9 @@ func runLock(args []string, stdout, stderr io.Writer) int {
 	return 2
 }
 
-// lockSpec reads a lock tool's console configuration from lea's config files at each open, as
-// lea locksql does: config/lea.conf of the checkout the daemon runs from, then the user's.
+// lockSpec reads a lock tool's console configuration from lea's config files at each open:
+// config/lea.conf of the checkout the daemon runs from, then the user's. The console is lox up's
+// (launcher.LoxConsole).
 func lockSpec(exe string) func(tool string) (agents.LockSpec, error) {
 	root := filepath.Dir(filepath.Dir(exe)) // <root>/build/lea
 	return func(tool string) (agents.LockSpec, error) {
@@ -78,9 +80,11 @@ func lockSpec(exe string) func(tool string) (agents.LockSpec, error) {
 			if err != nil {
 				log.Printf("lea daemon: %v", err)
 			}
-			return agents.LockSpec{Enabled: cfg.Locksql(), Image: cfg.Get("LEA_LOCKSQL_IMAGE"),
-				VaultAddr: cfg.Get("LEA_LOCKSQL_VAULT_ADDR"), ContainerName: lockContainerName(cfg),
-				AgentProfiles: ps, ConsoleDir: agents.EnsureConsoleDir}, nil
+			return agents.LockSpec{Enabled: cfg.Locksql(), ContainerName: lockContainerName(cfg), AgentProfiles: ps,
+				Console: func(_ context.Context, projects, profile string) (agents.LockConsole, error) {
+					inst, id, err := launcher.LoxConsole(cfg, os.Environ(), projects, "locksql", profile)
+					return agents.LockConsole{Instance: inst, Container: id}, err
+				}}, nil
 		}
 		return agents.LockSpec{}, fmt.Errorf("no lock console for %q", tool)
 	}

@@ -3,59 +3,24 @@ package agents
 import (
 	"context"
 	"errors"
-	"os"
-	"path/filepath"
 	"reflect"
 	"slices"
 	"strings"
 	"sync"
-	"syscall"
 	"testing"
 	"time"
 )
 
 type fakeConsoles struct {
 	mu      sync.Mutex
-	state   map[string]ConsoleState
 	calls   []string
 	stopErr error
-	// unconfined: the agents Unconfined reports (unconfinedErr: its failure); dirs, what it was asked.
-	unconfined    []string
-	unconfinedErr error
-	dirs          []string
 }
 
-func (f *fakeConsoles) rec(s string) { f.calls = append(f.calls, s) }
-
-func (f *fakeConsoles) ConsoleState(ctx context.Context, name string) (ConsoleState, error) {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	return f.state[name], nil
-}
-func (f *fakeConsoles) RemoveConsole(ctx context.Context, name string) error {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	f.rec("rm " + name)
-	delete(f.state, name)
-	return nil
-}
-func (f *fakeConsoles) StopConsole(ctx context.Context, name string) error {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	f.rec("stop " + name)
-	delete(f.state, name)
-	return f.stopErr
-}
-func (f *fakeConsoles) Unconfined(ctx context.Context, projects, dir string) ([]string, error) {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	f.dirs = append(f.dirs, projects+" "+dir)
-	return f.unconfined, f.unconfinedErr
-}
 func (f *fakeConsoles) StopConsolesOf(ctx context.Context, owner string) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	f.rec("stop-of " + owner)
+	f.calls = append(f.calls, "stop-of "+owner)
 	return f.stopErr
 }
 
@@ -68,16 +33,45 @@ func nameOf(projects string) string {
 	return "lea-other"
 }
 
-var sqlSpec = LockSpec{Enabled: true, Image: "locksql:0.8.0", ContainerName: nameOf, ConsoleDir: okDir}
+// crmID is the container id of lox up's console of the lock crm in the tests.
+const crmID = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
 
-// okDir is a ConsoleDir that accepts any directory without touching the disk.
-func okDir(string) error { return nil }
+// fakeLox is lox up's state as LockSpec.Console finds it: the console it answers (or err), and the
+// calls (projects, profile).
+type fakeLox struct {
+	mu    sync.Mutex
+	calls []string
+	c     LockConsole
+	err   error
+}
+
+func (f *fakeLox) console(ctx context.Context, projects, profile string) (LockConsole, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.calls = append(f.calls, projects+" "+profile)
+	return f.c, f.err
+}
+
+var sqlSpec = LockSpec{Enabled: true, ContainerName: nameOf}
 
 func lockEnv(t *testing.T, spec LockSpec) (env, *fakeConsoles) {
+	e, fc, _ := lockEnvLox(t, spec)
+	return e, fc
+}
+
+// lockEnvLox is lockEnv with lox up's console of the lock crm, unless spec names its own.
+func lockEnvLox(t *testing.T, spec LockSpec) (env, *fakeConsoles, *fakeLox) {
 	t.Helper()
+	old := lockSettle
+	lockSettle = 0
+	t.Cleanup(func() { lockSettle = old })
 	e := newEnv(t)
 	e.ctr.projects[C] = "/home/u/p"
-	fc := &fakeConsoles{state: map[string]ConsoleState{}}
+	fc := &fakeConsoles{}
+	fl := &fakeLox{c: LockConsole{Instance: "crm", Container: crmID}}
+	if spec.Console == nil {
+		spec.Console = fl.console
+	}
 	e.m.cfg.Consoles = fc
 	e.m.cfg.LockSpec = func(tool string) (LockSpec, error) {
 		if tool != "locksql" {
@@ -85,18 +79,19 @@ func lockEnv(t *testing.T, spec LockSpec) (env, *fakeConsoles) {
 		}
 		return spec, nil
 	}
-	return e, fc
+	return e, fc, fl
 }
 
 func lockPane(s *fakeSession, id string) *fpane {
 	return s.find(func(p *fpane) bool { return p.role == roleLock && p.lock == id })
 }
 
-// A console opens from the fixed template only: no console flag, no log driver, labelled with the
-// deck's container; in the lock slot under the agent's slot, with a short history, closing when
-// the console exits, and without the keyboard.
-func TestLockOpenRunsTheTemplateUnderTheSlotWithoutFocus(t *testing.T) {
-	e, _ := lockEnv(t, LockSpec{Enabled: true, Image: "locksql:0.8.0", VaultAddr: "https://vault.example.com:8200", ContainerName: nameOf, ConsoleDir: okDir})
+// The pane attaches to lox up's console (never a console of lea's own): docker attach without
+// passing signals on, lox attach's detach keys, the container lox up's state names; in the lock
+// slot under the agent's slot, with a short history, closing when the attach ends, and without the
+// keyboard.
+func TestLockOpenAttachesToLoxUpsConsoleUnderTheSlotWithoutFocus(t *testing.T) {
+	e, fc, fl := lockEnvLox(t, sqlSpec)
 	s := e.ensure(t, "/p")
 	slot := s.slot()
 	n := len(s.log)
@@ -104,18 +99,16 @@ func TestLockOpenRunsTheTemplateUnderTheSlotWithoutFocus(t *testing.T) {
 	if err != nil || st != "opened" {
 		t.Fatalf("LockOpen: %q %v", st, err)
 	}
+	if !reflect.DeepEqual(fl.calls, []string{"/home/u/p prod"}) || len(fc.calls) != 0 {
+		t.Fatalf("lox up asked %q, consoles %q", fl.calls, fc.calls)
+	}
 	p := lockPane(s, "locksql/prod")
 	if p == nil {
 		t.Fatalf("no lock pane: %+v", s.panes)
 	}
-	want := []string{"docker", "run", "-it", "--rm", "--log-driver", "none", "--user", "locksql",
-		"--cap-drop", "ALL", "--security-opt", "no-new-privileges", "--read-only", "--tmpfs", "/tmp:rw,nosuid,nodev,noexec,size=64m",
-		"--pids-limit", "256", "--memory", "1g", "--name", "locksql-console-prod",
-		"--label", "lea.lock-for=" + C, "--add-host=host.docker.internal:host-gateway",
-		"-v", "/home/u/p:/home/u/p:ro", "-v", "/home/u/p/.locksql:/home/u/p/.locksql", "-v", "locksql-run:/run/locksql", "-v", "locksql-home:/home/locksql",
-		"-e", "VAULT_ADDR=https://vault.example.com:8200", "locksql:0.8.0", "console", "--project", "/home/u/p", "--profile", "prod"}
+	want := []string{"docker", "attach", "--sig-proxy=false", "--detach-keys", "ctrl-p,ctrl-q", crmID}
 	if !reflect.DeepEqual(p.cmd, want) {
-		t.Fatalf("console argv\n got %q\nwant %q", p.cmd, want)
+		t.Fatalf("pane argv\n got %q\nwant %q", p.cmd, want)
 	}
 	if !p.remainOff || p.dead {
 		t.Fatalf("lock pane %+v: remain-on-exit must be off", p)
@@ -132,7 +125,7 @@ func TestLockOpenRunsTheTemplateUnderTheSlotWithoutFocus(t *testing.T) {
 		t.Fatalf("history-limit is not set around the pane's creation: %q", log)
 	}
 	// The pane is made running the placeholder, tagged and set to close on exit, and only then
-	// respawned into the console: a console that exits at once leaves no dead pane.
+	// respawned into the attach: an attach that ends at once leaves no dead pane.
 	if !strings.HasSuffix(log[nw], " -- "+strings.Join(e.m.placeholderCmd(), " ")) {
 		t.Fatalf("the pane is not made on the placeholder: %q", log[nw])
 	}
@@ -140,7 +133,7 @@ func TestLockOpenRunsTheTemplateUnderTheSlotWithoutFocus(t *testing.T) {
 	resp := slices.Index(log, "respawn-pane -k -t "+p.id+" -- "+strings.Join(want, " "))
 	tag := slices.Index(log, "set-option -p -t "+p.id+" "+optRole+" "+roleLock)
 	if roe < nw || tag < nw || resp < roe || resp < tag {
-		t.Fatalf("the console runs before its pane is tagged and set to close: %q", log)
+		t.Fatalf("the attach runs before its pane is tagged and set to close: %q", log)
 	}
 	if !slices.Contains(log, "join-pane -d -v -l "+lockSlotSize+" -s "+p.id+" -t "+slot.id) {
 		t.Fatalf("not joined under the slot: %q", log)
@@ -155,16 +148,54 @@ func TestLockOpenRunsTheTemplateUnderTheSlotWithoutFocus(t *testing.T) {
 	}
 }
 
-// Without a profile the console chooses (as lea locksql does): no --profile, the default name.
-func TestLockOpenWithoutAProfile(t *testing.T) {
+// An attach that ends at once (the console stopped since docker said it runs) closes its pane:
+// LockOpen reports that, never "opened", and leaves no pane.
+func TestLockOpenReportsAnAttachThatEndsAtOnce(t *testing.T) {
 	e, _ := lockEnv(t, sqlSpec)
+	s := e.ensure(t, "/p")
+	n := len(s.panes)
+	s.locked(func() { s.exitOn = "attach" })
+	st, err := e.m.LockOpen(bg, C, "locksql", "prod")
+	if err == nil || st != "" || !strings.Contains(err.Error(), "did not attach") || !strings.Contains(err.Error(), "lox attach crm") {
+		t.Fatalf("LockOpen: %q %v", st, err)
+	}
+	if lockPane(s, "locksql/prod") != nil || len(s.panes) != n {
+		t.Fatalf("panes left: %+v", s.panes)
+	}
+}
+
+// No console of lox up: lea says why (lox up's words), starts nothing and makes no pane.
+func TestLockOpenWithoutLoxUpsConsole(t *testing.T) {
+	e, fc, fl := lockEnvLox(t, sqlSpec)
+	s := e.ensure(t, "/p")
+	n := len(s.panes)
+	fl.err = errors.New("no locksql lock of lox up for /home/u/p: add one with lox add locksql <name>, then run `lox up`")
+	if _, err := e.m.LockOpen(bg, C, "locksql", ""); err == nil || !strings.Contains(err.Error(), "run `lox up`") {
+		t.Fatalf("err=%v", err)
+	}
+	// What lox up's state answers is checked: an instance or a container id that is not one.
+	fl.err = nil
+	for _, c := range []LockConsole{{Instance: "crm", Container: "--privileged"}, {Instance: "-x", Container: crmID}, {Instance: "crm"}} {
+		fl.c = c
+		if _, err := e.m.LockOpen(bg, C, "locksql", ""); err == nil || !strings.Contains(err.Error(), "invalid instance") {
+			t.Errorf("%+v: %v", c, err)
+		}
+	}
+	if len(s.panes) != n || len(fc.calls) != 0 {
+		t.Fatalf("a refused open did something: %d panes (was %d), consoles %q", len(s.panes), n, fc.calls)
+	}
+}
+
+// Without a profile: the tool's only lock of lox up, whatever its profile.
+func TestLockOpenWithoutAProfile(t *testing.T) {
+	e, _, fl := lockEnvLox(t, sqlSpec)
 	s := e.ensure(t, "/p")
 	if _, err := e.m.LockOpen(bg, C, "locksql", ""); err != nil {
 		t.Fatal(err)
 	}
 	p := lockPane(s, "locksql")
-	if p == nil || slices.Contains(p.cmd, "--profile") || !slices.Contains(p.cmd, "locksql-console") || slices.Contains(p.cmd, "-e") {
-		t.Fatalf("pane %+v", p)
+	if p == nil || !slices.Contains(p.cmd, crmID) || !reflect.DeepEqual(fl.calls, []string{"/home/u/p "}) {
+		t.Fatalf("pane %+v, lox up asked %q", p, fl.calls)
 	}
 }
 
@@ -276,25 +307,19 @@ func TestLockOpenRefusals(t *testing.T) {
 		want                string
 		projects            string // the deck container's lea.projects ("": /home/u/p)
 	}{
-		{"lockmq has no container console", "lockmq", "", sqlSpec, "no lock console", ""},
+		{"lockmq is not shown here", "lockmq", "", sqlSpec, "no lock console", ""},
 		{"an unknown tool", "bash", "", sqlSpec, "no lock console", ""},
 		{"a flag as profile", "locksql", "--auto", sqlSpec, "invalid profile", ""},
 		{"a path as profile", "locksql", "../x", sqlSpec, "invalid profile", ""},
 		{"upper case", "locksql", "Prod", sqlSpec, "invalid profile", ""},
 		{"too long", "locksql", strings.Repeat("a", 33), sqlSpec, "invalid profile", ""},
 		{"a newline", "locksql", "a\nb", sqlSpec, "invalid profile", ""},
-		{"off", "locksql", "", LockSpec{Image: "locksql:0.8.0", ContainerName: nameOf}, "locksql is off", ""},
-		{"an option as image", "locksql", "", LockSpec{Enabled: true, Image: "--privileged", ContainerName: nameOf}, "invalid locksql console image", ""},
-		{"a relative projects dir", "locksql", "", LockSpec{Enabled: true, Image: "locksql:1", ContainerName: anyIsC}, "invalid projects directory", "p"},
-		{"a mount spec in the projects dir", "locksql", "", LockSpec{Enabled: true, Image: "locksql:1", ContainerName: anyIsC}, "invalid projects directory", "/p:/etc"},
-		{"a vault address with a space", "locksql", "", LockSpec{Enabled: true, Image: "locksql:1", VaultAddr: "https://v x", ContainerName: nameOf}, "invalid vault address", ""},
+		{"off", "locksql", "", LockSpec{ContainerName: nameOf}, "locksql is off", ""},
+		{"a relative projects dir", "locksql", "", LockSpec{Enabled: true, ContainerName: anyIsC}, "invalid projects directory", "p"},
+		{"a control character in the projects dir", "locksql", "", LockSpec{Enabled: true, ContainerName: anyIsC}, "invalid projects directory", "/p\x1b"},
 		// One daemon, several decks: a deck's console serves its own projects directory only.
 		{"another deck's projects dir", "locksql", "", sqlSpec, "is not the one of " + C, "/home/u/other"},
-		{"no container mapping", "locksql", "", LockSpec{Enabled: true, Image: "locksql:1"}, "is not the one of " + C, ""},
-		// The console's writable directory: checked by the host, or no console.
-		{"no console dir check", "locksql", "", LockSpec{Enabled: true, Image: "locksql:1", ContainerName: nameOf}, "no check of the console's directory", ""},
-		{"a console dir refused", "locksql", "", LockSpec{Enabled: true, Image: "locksql:1", ContainerName: nameOf,
-			ConsoleDir: func(d string) error { return errors.New("refused " + d) }}, "refused /home/u/p/.locksql", ""},
+		{"no container mapping", "locksql", "", LockSpec{Enabled: true}, "is not the one of " + C, ""},
 	}
 	for _, c := range cases {
 		e, fc := lockEnv(t, c.spec)
@@ -338,56 +363,28 @@ func TestLockNeedsARunningDeck(t *testing.T) {
 	}
 }
 
-// A console that already runs without this deck's pane is neither taken over nor stopped; a
-// stopped one in the way is removed.
-func TestLockOpenNeverTakesOverARunningConsole(t *testing.T) {
-	for owner, want := range map[string]string{"": "outside lea's decks", "lea-other": "in the deck of lea-other", C: "without its pane"} {
-		e, fc := lockEnv(t, sqlSpec)
-		s := e.ensure(t, "/p")
-		fc.state["locksql-console-prod"] = ConsoleState{Exists: true, Running: true, Owner: owner}
-		_, err := e.m.LockOpen(bg, C, "locksql", "prod")
-		if err == nil || !strings.Contains(err.Error(), want) || lockPane(s, "locksql/prod") != nil || len(fc.calls) != 0 {
-			t.Errorf("owner %q: err=%v, calls %q", owner, err, fc.calls)
-		}
-	}
-	e, fc := lockEnv(t, sqlSpec)
-	s := e.ensure(t, "/p")
-	fc.state["locksql-console-prod"] = ConsoleState{Exists: true}
-	if st, err := e.m.LockOpen(bg, C, "locksql", "prod"); err != nil || st != "opened" || lockPane(s, "locksql/prod") == nil {
-		t.Fatalf("over a stopped console: %q %v", st, err)
-	}
-	if !reflect.DeepEqual(fc.calls, []string{"rm locksql-console-prod"}) {
-		t.Fatalf("calls %q", fc.calls)
-	}
-}
-
-func TestLockCloseStopsTheConsoleAndClosesItsPane(t *testing.T) {
+// Closing the pane ends the attach only: lox up's console is neither stopped nor touched.
+func TestLockCloseClosesThePaneOnly(t *testing.T) {
 	e, fc := lockEnv(t, sqlSpec)
 	s := e.ensure(t, "/p")
 	if _, err := e.m.LockOpen(bg, C, "locksql", "prod"); err != nil {
 		t.Fatal(err)
 	}
-	fc.state["locksql-console-prod"] = ConsoleState{Exists: true, Running: true, Owner: C}
 	if st, err := e.m.LockClose(bg, C, "locksql", "prod"); err != nil || st != "closed" {
 		t.Fatalf("close: %q %v", st, err)
 	}
-	if lockPane(s, "locksql/prod") != nil || !reflect.DeepEqual(fc.calls, []string{"stop locksql-console-prod"}) {
-		t.Fatalf("pane left or calls %q", fc.calls)
+	if lockPane(s, "locksql/prod") != nil || len(fc.calls) != 0 {
+		t.Fatalf("pane left or consoles %q", fc.calls)
 	}
 	if st, err := e.m.LockClose(bg, C, "locksql", "prod"); err != nil || st != "not-open" {
 		t.Fatalf("second close: %q %v", st, err)
 	}
-	// Another deck's console, or one of a terminal, is not this deck's to stop.
-	fc.state["locksql-console"] = ConsoleState{Exists: true, Running: true, Owner: "lea-other"}
-	if _, err := e.m.LockClose(bg, C, "locksql", ""); err == nil || !strings.Contains(err.Error(), "not this deck's") {
-		t.Fatalf("foreign close: %v", err)
-	}
-	if slices.Contains(fc.calls, "stop locksql-console") {
-		t.Fatal("a foreign console was stopped")
+	if st, err := e.m.LockClose(bg, C, "locksql", ""); err != nil || st != "not-open" {
+		t.Fatalf("close of no pane: %q %v", st, err)
 	}
 }
 
-// lea stop stops the consoles the deck opened.
+// lea stop stops the consoles a deck of an earlier lea started (labelled with its container).
 func TestMarkStoppedStopsTheDecksConsoles(t *testing.T) {
 	e, fc := lockEnv(t, sqlSpec)
 	e.ensure(t, "/p")
@@ -499,110 +496,5 @@ func TestSnapshotCarriesTheOldestLockRequest(t *testing.T) {
 		if a.Key == k1 && a.LockAsk != nil {
 			t.Fatalf("expired request shown: %+v", a.LockAsk)
 		}
-	}
-}
-
-// The console writes only its own directory of the projects directory, which agents also write:
-// a missing one is made, a symbolic link (a bind mount follows it on the host) or a file refused.
-func TestEnsureConsoleDir(t *testing.T) {
-	p := t.TempDir()
-	d := filepath.Join(p, ".locksql")
-	if err := EnsureConsoleDir(d); err != nil {
-		t.Fatalf("missing: %v", err)
-	}
-	if fi, err := os.Lstat(d); err != nil || !fi.IsDir() {
-		t.Fatalf("not made: %v %v", fi, err)
-	}
-	if err := EnsureConsoleDir(d); err != nil {
-		t.Fatalf("existing: %v", err)
-	}
-	if err := os.Remove(d); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Symlink(t.TempDir(), d); err != nil {
-		t.Fatal(err)
-	}
-	if err := EnsureConsoleDir(d); err == nil || !strings.Contains(err.Error(), "is not a directory") {
-		t.Fatalf("symlink to a directory: %v", err)
-	}
-	if err := os.Remove(d); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(d, nil, 0o600); err != nil {
-		t.Fatal(err)
-	}
-	if err := EnsureConsoleDir(d); err == nil || !strings.Contains(err.Error(), "is not a directory") {
-		t.Fatalf("file: %v", err)
-	}
-	// What an agent left in it before it got the directory read-only: regular files and
-	// directories only, at any depth (pii/).
-	if err := os.Remove(d); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.MkdirAll(filepath.Join(d, "pii", "a"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	for _, f := range []string{"pii.toml", "pii/a/x.toml"} {
-		if err := os.WriteFile(filepath.Join(d, f), nil, 0o600); err != nil {
-			t.Fatal(err)
-		}
-	}
-	if err := EnsureConsoleDir(d); err != nil {
-		t.Fatalf("regular files and directories: %v", err)
-	}
-	for _, c := range []struct {
-		name string
-		make func(string) error
-	}{
-		{"pii/a/k", func(f string) error { return os.Symlink(t.TempDir(), f) }},
-		{"pii.d", func(f string) error { return os.Symlink("/etc", f) }},
-		{"f", func(f string) error { return syscall.Mkfifo(f, 0o600) }},
-	} {
-		f := filepath.Join(d, c.name)
-		if err := c.make(f); err != nil {
-			t.Fatal(err)
-		}
-		if err := EnsureConsoleDir(d); err == nil || !strings.Contains(err.Error(), f+" is not a regular file or directory") {
-			t.Fatalf("%s: %v", c.name, err)
-		}
-		if err := os.Remove(f); err != nil {
-			t.Fatal(err)
-		}
-	}
-	// A hard link: an agent writes the console's file through its other name, outside it.
-	x := filepath.Join(d, "pii", "a", "x.toml")
-	if err := os.Link(x, filepath.Join(p, "x")); err != nil {
-		t.Fatal(err)
-	}
-	if err := EnsureConsoleDir(d); err == nil || !strings.Contains(err.Error(), x+" has another name (a hard link)") {
-		t.Fatalf("hard link: %v", err)
-	}
-}
-
-// An agent started before locksql, or before lea mounted the console's directory read-only in
-// it, can still swap that directory for a symbolic link: no console opens while one runs.
-func TestLockOpenRefusesAnAgentWithoutTheReadOnlyDir(t *testing.T) {
-	e, fc := lockEnv(t, sqlSpec)
-	s := e.ensure(t, "/p")
-	n := len(s.panes)
-	fc.unconfined = []string{"lea-b", "lea-c"}
-	_, err := e.m.LockOpen(bg, C, "locksql", "")
-	if err == nil || !strings.Contains(err.Error(), "lea-b lea-c running without /home/u/p/.locksql read-only") ||
-		!strings.Contains(err.Error(), "restart the agents") {
-		t.Fatalf("err=%v", err)
-	}
-	if !reflect.DeepEqual(fc.dirs, []string{"/home/u/p /home/u/p/.locksql"}) {
-		t.Fatalf("asked %q", fc.dirs)
-	}
-	fc.unconfined, fc.unconfinedErr = nil, errors.New("docker ps: boom")
-	if _, err := e.m.LockOpen(bg, C, "locksql", ""); err == nil || !strings.Contains(err.Error(), "boom") {
-		t.Fatalf("a failed check: %v", err)
-	}
-	if len(s.panes) != n || len(fc.calls) != 0 {
-		t.Fatalf("a refused open did something: %d panes (was %d), consoles %q", len(s.panes), n, fc.calls)
-	}
-	fc.unconfinedErr = nil
-	if st, err := e.m.LockOpen(bg, C, "locksql", ""); err != nil || st != "opened" {
-		t.Fatalf("every agent confined: %q %v", st, err)
 	}
 }

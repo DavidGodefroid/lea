@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -44,6 +45,7 @@ type fakeSession struct {
 	stacked map[string]bool   // window id → panes split top to bottom
 	fail    string            // a command name that fails
 	onFail  func()            // called when fail triggers (e.g. to cancel the request)
+	exitOn  string            // a pane respawned into an argv holding it exits at once (and closes)
 }
 
 func newFakeSession(deckCmd []string) *fakeSession {
@@ -349,6 +351,9 @@ func (f *fakeSession) Run(ctx context.Context, args ...string) ([]string, error)
 			return nil, err
 		}
 		p.dead, p.cmd = false, argv()
+		if f.exitOn != "" && slices.Contains(p.cmd, f.exitOn) {
+			f.panes = slices.DeleteFunc(f.panes, func(q *fpane) bool { return q == p })
+		}
 		return nil, nil
 	case "list-clients":
 		return append([]string(nil), f.clients...), nil

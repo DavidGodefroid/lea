@@ -109,8 +109,7 @@ lea_doctor() {
   if [ "$LEA_LOCKSQL" = 1 ]; then
     if docker image inspect "$LEA_LOCKSQL_IMAGE" >/dev/null 2>&1; then lea__ok "locksql image $LEA_LOCKSQL_IMAGE"
     else lea__warn "locksql image" "$LEA_LOCKSQL_IMAGE absent: run lea init (or set LEA_LOCKSQL=0)"; fi
-    if docker volume inspect locksql-run >/dev/null 2>&1; then lea__ok "locksql-run volume"
-    else lea__warn "locksql-run volume" "absent: start the locksql console once (see the hint printed by lea)"; fi
+    lea__doctor_locksql_lock
   fi
   lea__doctor_lockhost lockmq
   lea__doctor_lockhost lockfile
@@ -124,6 +123,29 @@ lea_doctor() {
     lea__warn "kubernetes token" "none (optional): lea kube refresh"
   fi
   return "$_drc"
+}
+
+# lea__doctor_locksql_lock: the locksql console runs hub-attached only, under lox up: lea's agents
+# reach the socket volume of lox up's locksql lock of the projects directory (docker's labels say
+# whose), never a fixed one. A locksql-run volume is what a standalone console of an earlier lea
+# left: lea mounts it no more.
+lea__doctor_locksql_lock() {
+  _dl_hint="add one with lox add locksql NAME (allowed_uids: [$(id -u)] in .lockfamily/lockfamily.yaml), then run \`lox up\`"
+  if [ -z "${LEA_PROJECTS_DIR:-}" ]; then
+    lea__warn "locksql lock" "no projects directory (lea init): lox up runs the console for one"
+  elif ! _dl_v=$(docker volume ls --filter label=dev.lockfamily.role=socket --filter label=dev.lockfamily.type=locksql \
+    --filter "label=dev.lockfamily.workspace=$LEA_PROJECTS_DIR" --format '{{.Name}}' 2>/dev/null); then
+    lea__warn "locksql lock" "could not list lox up's volumes (docker volume ls)"
+  else
+    case $(printf '%s\n' "$_dl_v" | grep -c .) in
+      0) lea__warn "locksql lock" "no socket volume of a locksql lock of lox up for $LEA_PROJECTS_DIR: lea's agents get no locksql socket; $_dl_hint" ;;
+      1) lea__ok "locksql lock of lox up (socket volume $_dl_v)" ;;
+      *) lea__warn "locksql lock" "lox up runs $(printf '%s\n' "$_dl_v" | grep -c .) locksql locks for $LEA_PROJECTS_DIR: lea's agents reach one per tool, so none of them" ;;
+    esac
+  fi
+  if docker volume inspect locksql-run >/dev/null 2>&1; then
+    lea__warn "locksql-run volume" "left by a standalone console of an earlier lea, which lea no longer mounts: docker volume rm locksql-run once no console uses it"
+  fi
 }
 
 # lea__doctor_hub: with LEA_HUB=1 (the default), whether the Lock Family hub's facade socket is

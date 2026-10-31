@@ -30,7 +30,8 @@ func TestLockHostOffByDefault(t *testing.T) {
 func TestLockHostWired(t *testing.T) {
 	w := newWorld(t, repoRoot(t))
 	writeUserConf(t, w, "LEA_LOCKMQ=1\nLEA_LOCKFILE=1\n")
-	writeUp(t, w, lockUp("events", "lockmq")+","+lockUp("docs", "lockfile"))
+	writeUp(t, w, lockUp("crm", "locksql")+","+lockUp("events", "lockmq")+","+lockUp("docs", "lockfile"))
+	labels(w, "crm", "locksql", "socket")
 	labels(w, "events", "lockmq", "socket")
 	labels(w, "docs", "lockfile", "socket")
 	args := lockArgs(t, w)
@@ -65,7 +66,8 @@ func TestLockHostWired(t *testing.T) {
 func TestLockHostNeedsLoxUp(t *testing.T) {
 	w := newWorld(t, repoRoot(t))
 	writeUserConf(t, w, "LEA_LOCKMQ=1\nLEA_LOCKFILE=1\n")
-	writeUp(t, w, lockUp("events", "lockmq"))
+	writeUp(t, w, lockUp("crm", "locksql")+","+lockUp("events", "lockmq"))
+	labels(w, "crm", "locksql", "socket")
 	labels(w, "events", "lockmq", "socket")
 	args := lockArgs(t, w)
 	if !contains(args, "LEA_LOCKMQ=1") || contains(args, "LEA_LOCKFILE=1") || contains(args, "10030") {
@@ -86,7 +88,7 @@ func TestLockHostNeedsLoxUp(t *testing.T) {
 	if contains(args, "LEA_LOCKMQ=1") || contains(args, "LEA_LOCKFILE=1") || w.hasCall("stat") {
 		t.Fatalf("args %v", args)
 	}
-	if e := w.errb.String(); strings.Count(e, "run `lox up`") != 2 {
+	if e := w.errb.String(); strings.Count(e, "run `lox up`") != 3 {
 		t.Errorf("warnings: %s", e)
 	}
 }
@@ -136,7 +138,8 @@ func must(t *testing.T, err error) {
 func TestRunArgsLocksOnMatchTheGoldenFile(t *testing.T) {
 	w := newWorld(t, copyRoot(t))
 	writeUserConf(t, w, "LEA_LOCKMQ=1\nLEA_LOCKFILE=1\n")
-	writeUp(t, w, lockUp("events", "lockmq")+","+lockUp("docs", "lockfile"))
+	writeUp(t, w, lockUp("crm", "locksql")+","+lockUp("events", "lockmq")+","+lockUp("docs", "lockfile"))
+	labels(w, "crm", "locksql", "socket")
 	labels(w, "events", "lockmq", "socket")
 	labels(w, "docs", "lockfile", "socket")
 	a, err := w.launcher().runArgs(w.proj, "172.18.0.5")

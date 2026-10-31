@@ -43,8 +43,8 @@ lea__init_known_hosts() {
   printf '%s' "$_in_all" | lea_write_file "$(lea_data_dir)" "$1/ssh/known_hosts"
 }
 
-# Links the launcher into ~/.local/bin (LEA_BIN_DIR) unless another file already has that name, and
-# with locksql (LEA_LOCKSQL=1) the locksql command next to it, which starts the console container.
+# Links the launcher into ~/.local/bin (LEA_BIN_DIR) unless another file already has that name. The
+# locksql link an older lea made goes (lea__unlink_locksql).
 lea__init_launcher() {
   _in_bd=${LEA_BIN_DIR:-$HOME/.local/bin}
   _in_l=$_in_bd/lea
@@ -64,7 +64,7 @@ lea__init_launcher() {
 
 # lea__unlink_locksql DIR: removes DIR/locksql when it is the link an older lea made to its own
 # bin/locksql (in an installation that still holds a lea, or one lea update has since pruned):
-# locksql on the host is locksql's own launcher, which lea locksql delegates to. Any other file,
+# locksql on the host is locksql's own launcher (lea uses it no more). Any other file,
 # such as that launcher, is left as is.
 lea__unlink_locksql() {
   _ul_l=$1/locksql
@@ -186,35 +186,12 @@ lea__locksql_build() {
   lea_log "locksql $_lsb_r: signature verified (commit $_lsb_sha); building $_lsb_i${1:+ with the vault CLI}"
   docker build "$@" -t "$_lsb_i" --build-arg "ALLOWED_UIDS=$(id -u)" "$_lsb_tmp/src" >&2
   _lsb_rc=$?
-  if [ "$_lsb_rc" = 0 ]; then lea__locksql_install_launcher "$_lsb_tmp/src" "$_lsb_r" "$_lsb_co"; fi
   rm -rf "$_lsb_tmp"
   return "$_lsb_rc"
 }
 
-# lea__locksql_install_launcher SRC TAG COSIGN: installs locksql's launcher, which lea locksql hands
-# the console to, with the install.sh of SRC, the source of the release TAG whose signature
-# lea__locksql_build just verified. That script checks the release's signatures itself (COSIGN on
-# its PATH), pins the release's images by digest and installs the launcher in /usr/local/bin (sudo
-# when needed). A trusted launcher of that release already on PATH is left as is. Its failure
-# leaves the console image: lea locksql then says to run lea init again.
-lea__locksql_install_launcher() {
-  _lil=$(lea__locksql_launcher)
-  if [ -n "$_lil" ] && grep -qx "launcher_version=${2#v}" "$_lil" 2>/dev/null; then return 0; fi
-  if [ ! -f "$1/scripts/install.sh" ]; then
-    lea_log "locksql $2 ships no launcher: lea locksql needs a release that does (v0.9.0 or later)"
-    return 0
-  fi
-  lea_log "locksql $2: installing its launcher (its own install.sh: signatures checked, sudo for /usr/local/bin)"
-  # lea__cosign's own copy (a path) when none is on PATH.
-  _lip=$PATH
-  case $3 in */*) _lip=$(dirname "$3"):$PATH ;; esac
-  if ! PATH=$_lip LOCKSQL_VERSION=$2 sh "$1/scripts/install.sh" >&2; then
-    lea_log "warning: could not install locksql's launcher: lea locksql needs it (rerun lea init)"
-  fi
-  return 0
-}
-
-# The locksql configuration of the projects directory, read by the console.
+# The locksql configuration of the projects directory: lox up reviews it and copies it into the
+# lock (lockhub's docs/lox-up.md).
 lea__locksql_config() { printf '%s' "$LEA_PROJECTS_DIR/.locksql/config.toml"; }
 
 # Whether a profile of the projects directory reads its login from Vault: the console image then
@@ -282,44 +259,17 @@ lea__init_locksql_profile() {
       return 0
     fi
   fi
-  if lea__locksql_wants_vault; then lea__init_locksql_vault; fi
-  lea_log "locksql: run locksql (or lea locksql) in a terminal you keep in view to open the console"
+  if lea__locksql_wants_vault; then
+    lea_log "locksql: a profile reads its login from Vault, which lox up does not pass to the console yet (lockhub#45)"
+  fi
+  lea__locksql_console_hint
 }
 
-# A Vault profile: the vault CLI in the console image (rebuilt with locksql's vault target when it
-# lacks it), the Vault address (LEA_LOCKSQL_VAULT_ADDR, passed to the console) and a vault login as
-# the console account, whose token stays in the locksql-home volume, out of the agents' reach.
-lea__init_locksql_vault() {
-  if ! docker run --rm --entrypoint sh "$LEA_LOCKSQL_IMAGE" -c 'command -v vault' >/dev/null 2>&1; then
-    lea_log "a profile reads its login from Vault: rebuilding $LEA_LOCKSQL_IMAGE with the vault CLI"
-    if ! lea__locksql_build "$LEA_LOCKSQL_REF" "$LEA_LOCKSQL_IMAGE" vault; then
-      lea_log "warning: could not build $LEA_LOCKSQL_IMAGE with the vault CLI (lea init again to retry)"
-      return 0
-    fi
-  fi
-  printf 'Vault address [%s]: ' "${LEA_LOCKSQL_VAULT_ADDR:-}" >&2
-  IFS= read -r _iv_a || _iv_a=
-  _iv_a=${_iv_a:-${LEA_LOCKSQL_VAULT_ADDR:-}}
-  case $_iv_a in
-    http://*|https://*) ;;
-    '') lea_log "no Vault address: set LEA_LOCKSQL_VAULT_ADDR in $(lea_user_config_path), then lea init again"; return 0 ;;
-    *) lea_log "warning: '$_iv_a' is not an http(s) URL; Vault address not saved (lea init again)"; return 0 ;;
-  esac
-  lea_user_config_set LEA_LOCKSQL_VAULT_ADDR "$_iv_a"
-  LEA_LOCKSQL_VAULT_ADDR=$_iv_a
-  if lea_locksql vault token lookup >/dev/null 2>&1 </dev/null; then
-    lea_log "Vault: the locksql console account is logged in to $_iv_a"
-    return 0
-  fi
-  lea__ask "Log in to Vault ($_iv_a) as the locksql console account now?" || {
-    lea_log "later: locksql vault login"
-    return 0
-  }
-  printf 'Vault login method [oidc]: ' >&2
-  IFS= read -r _iv_m || _iv_m=
-  if ! lea_locksql vault login -method="${_iv_m:-oidc}"; then
-    lea_log "warning: vault login failed (later: locksql vault login)"
-  fi
+# lea__locksql_console_hint: how the locksql console runs (lea never starts it): hub-attached
+# only, under lox up, as lockmq's and lockfile's (lea__lockhost_console_hint).
+lea__locksql_console_hint() {
+  lea_log "locksql console: it runs under lox up only: add a locksql lock to your projects directory (lox add locksql NAME, with allowed_uids: [$(id -u)] in .lockfamily/lockfamily.yaml), then run \`lox up\`"
+  lea_log "  its own questions (policy review, credentials): lox attach NAME, or lea lock open locksql in the deck; each query of an agent: lea's deck (hub view) or lox approve"
 }
 
 lea_init() {
