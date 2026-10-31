@@ -1,19 +1,19 @@
 #!/bin/sh
 # The phase-2 exit demo, lea's side: a ticket approved from lea's deck in a real lockhub.
-#   - the lock CLI of lockhub's release LOCKHUB_VERSION (cosign-verified checksums), lock up on a
+#   - the lox CLI of lockhub's release LOCKHUB_VERSION (cosign-verified checksums), lox up on a
 #     lockfamily.yaml with a LockHTTP lock (release LOCKHTTP_VERSION) and the released hub image
 #     (cosign-verified, pinned by digest), the console's policy approved at its terminal;
-#   - LockHTTP's gate, as lock up's docs and lea run it, holds an agent's write and asks the hub;
+#   - LockHTTP's gate, as lox up's docs and lea run it, holds an agent's write and asks the hub;
 #   - lea's deck (TestHubDeckApprovesARealLockhubTicket, internal/daemon) reads the queue from the
 #     real facade socket, shows the ticket on its agent and approves it (facade "deck");
 #   - the gate then lets the write out, and the hub's audit holds that one signed decision.
 # Linux hosts with docker (compose), cosign, curl, jq, python3, script (util-linux), Go, and
 # network access to GitHub, ghcr.io and example.com. Its own XDG_RUNTIME_DIR and XDG_STATE_HOME;
-# creates only lea-hubdeck-<pid>* resources and the compose project lock up makes for its
+# creates only lea-hubdeck-<pid>* resources and the compose project lox up makes for its
 # temporary workspace, and removes them.
 set -eu
 root=$(cd "$(dirname "$0")/../.." && pwd -P)
-LOCKHUB_VERSION=${LOCKHUB_VERSION:-0.2.7}
+LOCKHUB_VERSION=${LOCKHUB_VERSION:-0.3.0}
 LOCKHTTP_VERSION=${LOCKHTTP_VERSION:-0.5.1}
 case $(uname -m) in x86_64) arch=amd64 ;; aarch64) arch=arm64 ;; *) echo "hubdeck: no release for $(uname -m)" >&2; exit 1 ;; esac
 id=lea-hubdeck-$$
@@ -32,7 +32,7 @@ cleanup() {
   [ -d "$work" ] || return 0
   if [ -n "$cpid" ]; then kill "$cpid" 2>/dev/null || true; fi
   docker rm -f "$id-agent" "$id-gate" >/dev/null 2>&1 || true
-  # Every compose project of this run's own state directory, a lock up that failed half-way too.
+  # Every compose project of this run's own state directory, a lox up that failed half-way too.
   for c in "$XDG_STATE_HOME"/lockfamily/*/compose.yaml; do
     [ -f "$c" ] || continue
     d=$(dirname "$c")
@@ -45,21 +45,21 @@ cleanup() {
 }
 trap cleanup EXIT
 trap 'exit 130' INT TERM
-# tty INPUT CMD...: CMD at a pseudo-terminal (lock up refuses a pipe), INPUT typed in.
+# tty INPUT CMD...: CMD at a pseudo-terminal (lox up refuses a pipe), INPUT typed in.
 tty() { in=$1; shift; printf '%b' "$in" | script -qefc "$*" /dev/null; }
 
-say "the lock CLI of lockhub v$LOCKHUB_VERSION, its checksums signed by lockhub's release workflow"
+say "the lox CLI of lockhub v$LOCKHUB_VERSION, its checksums signed by lockhub's release workflow"
 rel=https://github.com/DavidGodefroid/lockhub/releases/download/v$LOCKHUB_VERSION
-a=lock_${LOCKHUB_VERSION}_linux_$arch.tar.gz
+a=lox_${LOCKHUB_VERSION}_linux_$arch.tar.gz
 for f in "$a" checksums.txt checksums.txt.sigstore.json; do curl -fsSL -o "$work/$f" "$rel/$f"; done
 cosign verify-blob --bundle "$work/checksums.txt.sigstore.json" \
   --certificate-oidc-issuer https://token.actions.githubusercontent.com \
   --certificate-identity "https://github.com/DavidGodefroid/lockhub/.github/workflows/release.yml@refs/tags/v$LOCKHUB_VERSION" \
   "$work/checksums.txt" || die "lockhub's checksums are not signed by its release"
 (cd "$work" && grep "  $a\$" checksums.txt | sha256sum -c) || die "$a does not match its signed checksum"
-tar -xzf "$work/$a" -C "$work/bin" lock
-lock=$work/bin/lock
-"$lock" version
+tar -xzf "$work/$a" -C "$work/bin" lox
+lox=$work/bin/lox
+"$lox" version
 
 say "the hub image of lockhub v$LOCKHUB_VERSION, pinned by digest, signed by its release workflow"
 tok=$(curl -fsS "https://ghcr.io/token?scope=repository:davidgodefroid/lockhub:pull" | jq -r .token)
@@ -76,9 +76,9 @@ echo "$hub"
 say "lea's deck, built before any ticket waits on it"
 (cd "$root" && go test -c -o "$work/daemon.test" ./internal/daemon)
 
-say "lock up: a LockHTTP lock (v$LOCKHTTP_VERSION) and the hub"
+say "lox up: a LockHTTP lock (v$LOCKHTTP_VERSION) and the hub"
 cd "$ws"
-"$lock" add lockhttp web --version "v$LOCKHTTP_VERSION" --hub-image "$hub"
+"$lox" add lockhttp web --version "v$LOCKHTTP_VERSION" --hub-image "$hub"
 mkdir -p .lockhttp
 cat >.lockhttp/config.toml <<'TOML'
 [profiles.default]
@@ -94,9 +94,9 @@ TOML
 chmod 0644 .lockhttp/config.toml
 cat .lockfamily/lockfamily.yaml
 grep -qxF "  image: $hub" .lockfamily/lockfamily.yaml || die "the hub of lockfamily.yaml is not $hub"
-tty 'y\n' "$lock" up >"$work/up.out" 2>&1 || { cat "$work/up.out"; die "lock up failed"; }
+tty 'y\n' "$lox" up >"$work/up.out" 2>&1 || { cat "$work/up.out"; die "lox up failed"; }
 cat "$work/up.out"
-grep -q "up: project " "$work/up.out" || die "lock up did not finish"
+grep -q "up: project " "$work/up.out" || die "lox up did not finish"
 p=$(jq -r .project .lockfamily/up.json)
 if [ -z "$p" ] || [ "$p" = null ]; then die "no project in up.json"; fi
 got=$(docker inspect -f '{{.Config.Image}}' "$p-lockhub-1") || die "no hub container $p-lockhub-1"
@@ -104,7 +104,7 @@ got=$(docker inspect -f '{{.Config.Image}}' "$p-lockhub-1") || die "no hub conta
 facade=$XDG_RUNTIME_DIR/lockhub/facade.sock
 [ -S "$facade" ] || die "no facade socket at $facade"
 
-say "the console asks its policy at its terminal: lock attach web"
+say "the console asks its policy at its terminal: lox attach web"
 cat >"$work/attach.py" <<'PY'
 import os, pty, select, sys, time
 # attach.py TIMEOUT UNTIL CMD...: CMD at a pseudo-terminal, y typed once attached; detaches
@@ -142,10 +142,10 @@ except OSError:
     pass
 sys.exit(0 if ok else 1)
 PY
-python3 -I "$work/attach.py" 60 '(approved policy)' "$lock" attach web >"$work/attach.out" 2>&1 ||
+python3 -I "$work/attach.py" 60 '(approved policy)' "$lox" attach web >"$work/attach.out" 2>&1 ||
   { cat "$work/attach.out"; die "the console of web did not approve its policy"; }
 
-say "the gate, as lock up's docs run it: on the hub's network, beside the agents"
+say "the gate, as lox up's docs run it: on the hub's network, beside the agents"
 docker network create "$id-agents" >/dev/null
 hubnet=$(jq -r .hub_network .lockfamily/up.json)
 subnet=$(docker network inspect -f '{{(index .IPAM.Config 0).Subnet}}' "$hubnet")
@@ -191,7 +191,7 @@ docker logs "$id-gate" 2>&1 | grep -q '"decision":"approved"' || { docker logs "
 
 say "the hub's audit holds the deck's one decision"
 state=$XDG_STATE_HOME/lockfamily/$p
-"$lock" audit verify --data "$state/hub" --hub-key-file "$state/hub.pub" >"$work/audit.out" 2>&1 || { cat "$work/audit.out"; die "lock audit verify failed"; }
+"$lox" audit verify --data "$state/hub" --hub-key-file "$state/hub.pub" >"$work/audit.out" 2>&1 || { cat "$work/audit.out"; die "lox audit verify failed"; }
 cat "$work/audit.out"
 grep -q " 1 decisions signed" "$work/audit.out" || die "the deck's approval is not in the hub's audit"
 echo "hubdeck: OK"
