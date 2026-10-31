@@ -655,3 +655,48 @@ func TestLockHTTPGateRefusedSwitchChangesNothing(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+// A standalone gate of an earlier lea (no hub label: it asks the console of lockhttp-run) that
+// still runs when lea cannot run its gate under lox up: lea says so, precisely. It removes the gate
+// only when it is lea's own and no agent runs through it; with agents it stays, and a gate lea
+// did not label is left alone.
+func TestLockHTTPGateNeedsLoxUpTellsOfAStaleGate(t *testing.T) {
+	const at = "FAKE_DOCKER_OUT_INSPECT___TYPE_AT_LEA_LOCKHTTP_GATE"
+	stale := "true|lea|lockhttp-gate||lockhttp-run"
+	removed := func(w *world) bool { return w.hasCall("docker [rm] [-f] [lea-lockhttp-gate] [lea-lockhttp-signer]") }
+	// Agents run: kept, and named.
+	w, _ := lockHTTPWorldNoUp(t)
+	w.env[at] = stale
+	w.env["FAKE_DOCKER_OUT_PS___FILTER"] = "lea-0123456789 /home/u/other"
+	err := w.launcher().ensureProxy(w.proj)
+	if err == nil || !strings.Contains(err.Error(), "run `lox up`") ||
+		!strings.Contains(err.Error(), "the standalone LockHTTP gate lea-lockhttp-gate of an earlier lea still runs: it asks the console of the volume lockhttp-run, not lox up's hub, for the agents of lea-0123456789 /home/u/other") ||
+		!strings.Contains(err.Error(), "lea stop --all") || removed(w) {
+		t.Fatalf("with agents: %v", err)
+	}
+	// No agent: lea's own stale gate goes, and lea says so.
+	w, _ = lockHTTPWorldNoUp(t)
+	w.env[at] = stale
+	err = w.launcher().ensureProxy(w.proj)
+	if err == nil || !strings.Contains(err.Error(), "run `lox up`") || !removed(w) ||
+		!strings.Contains(w.errb.String(), "removed the standalone LockHTTP gate lea-lockhttp-gate of an earlier lea") {
+		t.Fatalf("without agents: %v, %s", err, w.errb.String())
+	}
+	// Not lea's (labels), a stopped one, or one that asks a hub: never removed.
+	for name, out := range map[string]string{
+		"not lea's":    "true|other|lockhttp-gate||lockhttp-run",
+		"stopped":      "false|lea|lockhttp-gate||lockhttp-run",
+		"asks a hub":   "true|lea|lockhttp-gate|abc|lockfamily-0badc0de_web-run",
+		"no container": "",
+	} {
+		w, _ = lockHTTPWorldNoUp(t)
+		w.env[at] = out
+		err = w.launcher().ensureProxy(w.proj)
+		if err == nil || !strings.Contains(err.Error(), "run `lox up`") || removed(w) {
+			t.Errorf("%s: %v", name, err)
+		}
+		if name == "not lea's" && !strings.Contains(err.Error(), "not a gate lea started") {
+			t.Errorf("%s: %v", name, err)
+		}
+	}
+}

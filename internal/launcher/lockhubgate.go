@@ -7,6 +7,7 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/netip"
@@ -460,3 +461,57 @@ func (l *Launcher) joinHubNetwork(proxy string, g *gateHub, connect bool) error 
 }
 
 var lockUpHubNet = regexp.MustCompile(`^lockfamily-[0-9a-f]{8}_lockhub$`)
+
+// staleGate is err (lea cannot run the gate under lox up: it stops before it changes anything),
+// told with what still runs: a standalone gate of an earlier lea (no lea.lockhttp-hub label: it
+// asks a console of its own, on lockhttp-run, not lox up's hub) keeps serving the agents that
+// run. lea removes it only when it is lea's own (its prefix and role labels) and no lea agent of
+// this prefix runs, so that nothing goes through it; with agents running it stays (removing it
+// would cut their web in the middle of their work) and lea says which agents and how to stop it.
+func (l *Launcher) staleGate(err error) error {
+	name := l.lockHTTPGateName()
+	o, ierr := l.output(false, "docker", "inspect", "--type", "container", "-f",
+		`{{.State.Running}}|{{index .Config.Labels "lea.prefix"}}|{{index .Config.Labels "lea.role"}}|{{index .Config.Labels "lea.lockhttp-hub"}}|{{range .Mounts}}{{if eq .Destination "/run/lockhttp"}}{{.Name}}{{end}}{{end}}`, name)
+	f := strings.Split(strings.TrimSpace(o), "|")
+	if ierr != nil || len(f) != 5 || f[0] != "true" || f[3] != "" {
+		return err // no gate, a stopped one, or one that asks a hub: nothing serves without lox up
+	}
+	if f[1] != l.prefix() || f[2] != "lockhttp-gate" {
+		return die("%v. The container %s runs, and it is not a gate lea started (labels lea.prefix, lea.role): lea leaves it alone; look at it (docker inspect %s)", dieMsg(err), name, name)
+	}
+	vol := f[4]
+	if vol == "" {
+		vol = "none"
+	}
+	ps, perr := l.output(false, "docker", "ps", "--filter", "label=lea.prefix="+l.prefix(), "--filter", "label=lea.role=session",
+		"--format", `{{.Names}} {{.Label "lea.projects"}}`)
+	var running []string
+	for _, ln := range strings.Split(ps, "\n") {
+		if ln = strings.TrimSpace(ln); ln != "" {
+			running = append(running, ln)
+		}
+	}
+	if perr == nil && len(running) == 0 {
+		if rerr := l.quiet("docker", "rm", "-f", name, l.lockHTTPSignerName()); rerr == nil {
+			l.logf("removed the standalone LockHTTP gate %s of an earlier lea (it asked the console of the volume %s, not a hub); no agent ran through it", name, vol)
+			return err
+		}
+	}
+	who := "lea's agents"
+	if perr != nil {
+		who = "lea's agents (lea could not list them)"
+	} else if len(running) > 0 {
+		who = "the agents of " + strings.Join(running, ", ")
+	}
+	return die("%s. Meanwhile the standalone LockHTTP gate %s of an earlier lea still runs: it asks the console of the volume %s, not lox up's hub, for %s; lea leaves it, since removing it would cut their web. Once `lox up` runs, lea stop --all (it stops the gate with the proxy), then lea",
+		dieMsg(err), name, vol, who)
+}
+
+// dieMsg is the message of an error lea dies with, without its wrapping.
+func dieMsg(err error) string {
+	var d dieError
+	if errors.As(err, &d) {
+		return d.msg
+	}
+	return err.Error()
+}
