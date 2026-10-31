@@ -150,3 +150,22 @@ func TestRunArgsLocksOnMatchTheGoldenFile(t *testing.T) {
 	got := strings.ReplaceAll(strings.Join(a, "\n")+"\n", upProjectOf(w), "lockfamily-$PROJECT")
 	checkGolden(t, "run-args", "lockmq and lockfile on", hostNeutral(normalize(w, got)))
 }
+
+// A lock lox up runs for a tool that is off (locksql too, off by default): one line says how to
+// turn it on; the agents get none of its socket.
+func TestLockUpLockOfAToolThatIsOff(t *testing.T) {
+	w := newWorld(t, repoRoot(t))
+	writeUp(t, w, lockUp("crm", "locksql")+","+lockUp("events", "lockmq"))
+	labels(w, "crm", "locksql", "socket")
+	labels(w, "events", "lockmq", "socket")
+	for _, a := range lockArgs(t, w) {
+		if strings.Contains(a, upProjectOf(w)+"_") || a == "LEA_LOCKSQL=1" {
+			t.Errorf("a socket of a tool that is off: %s", a)
+		}
+	}
+	e := w.errb.String()
+	if strings.Count(e, "locksql is off (LEA_LOCKSQL=0), though lox up runs a locksql lock here: `lea init --locksql` turns it on") != 1 ||
+		strings.Count(e, "lockmq is off (LEA_LOCKMQ=0)") != 1 || strings.Contains(e, "lockfile") {
+		t.Errorf("stderr: %s", e)
+	}
+}

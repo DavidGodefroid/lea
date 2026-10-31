@@ -471,15 +471,15 @@ var lockUpHubNet = regexp.MustCompile(`^lockfamily-[0-9a-f]{8}_lockhub$`)
 func (l *Launcher) staleGate(err error) error {
 	name := l.lockHTTPGateName()
 	o, ierr := l.output(false, "docker", "inspect", "--type", "container", "-f",
-		`{{.State.Running}}|{{index .Config.Labels "lea.prefix"}}|{{index .Config.Labels "lea.role"}}|{{index .Config.Labels "lea.lockhttp-hub"}}|{{range .Mounts}}{{if eq .Destination "/run/lockhttp"}}{{.Name}}{{end}}{{end}}`, name)
+		`{{.Id}}|{{.State.Running}}|{{index .Config.Labels "lea.prefix"}}|{{index .Config.Labels "lea.role"}}|{{index .Config.Labels "lea.lockhttp-hub"}}|{{range .Mounts}}{{if eq .Destination "/run/lockhttp"}}{{.Name}}{{end}}{{end}}`, name)
 	f := strings.Split(strings.TrimSpace(o), "|")
-	if ierr != nil || len(f) != 5 || f[0] != "true" || f[3] != "" {
+	if ierr != nil || len(f) != 6 || f[1] != "true" || f[4] != "" {
 		return err // no gate, a stopped one, or one that asks a hub: nothing serves without lox up
 	}
-	if f[1] != l.prefix() || f[2] != "lockhttp-gate" {
+	if f[2] != l.prefix() || f[3] != "lockhttp-gate" || !dockerID.MatchString(f[0]) {
 		return die("%v. The container %s runs, and it is not a gate lea started (labels lea.prefix, lea.role): lea leaves it alone; look at it (docker inspect %s)", dieMsg(err), name, name)
 	}
-	vol := f[4]
+	gateID, vol := f[0], f[5]
 	if vol == "" {
 		vol = "none"
 	}
@@ -492,10 +492,26 @@ func (l *Launcher) staleGate(err error) error {
 		}
 	}
 	if perr == nil && len(running) == 0 {
-		if rerr := l.quiet("docker", "rm", "-f", name, l.lockHTTPSignerName()); rerr == nil {
-			l.logf("removed the standalone LockHTTP gate %s of an earlier lea (it asked the console of the volume %s, not a hub); no agent ran through it", name, vol)
-			return err
+		// By the id lea inspected (never the name, which another container could take meanwhile);
+		// its signer only when it is lea's too, each removal told on its own.
+		if rerr := l.quiet("docker", "rm", "-f", gateID); rerr != nil {
+			return die("%s. The standalone LockHTTP gate %s of an earlier lea still runs (it asks the console of the volume %s, not a hub), and lea could not remove it: docker rm -f %s", dieMsg(err), name, vol, gateID)
 		}
+		l.logf("removed the standalone LockHTTP gate %s of an earlier lea (it asked the console of the volume %s, not a hub); no agent ran through it", name, vol)
+		signer := l.lockHTTPSignerName()
+		so, serr := l.output(false, "docker", "inspect", "--type", "container", "-f",
+			`{{.Id}}|{{index .Config.Labels "lea.prefix"}}|{{index .Config.Labels "lea.role"}}`, signer)
+		if g := strings.Split(strings.TrimSpace(so), "|"); serr == nil && len(g) == 3 {
+			switch {
+			case g[1] != l.prefix() || g[2] != "lockhttp-signer" || !dockerID.MatchString(g[0]):
+				l.logf("warning: %s is not a signer lea started (labels lea.prefix, lea.role): left alone", signer)
+			case l.quiet("docker", "rm", "-f", g[0]) != nil:
+				l.logf("warning: could not remove its signer %s: docker rm -f %s", signer, g[0])
+			default:
+				l.logf("removed its signer %s", signer)
+			}
+		}
+		return err
 	}
 	who := "lea's agents"
 	if perr != nil {

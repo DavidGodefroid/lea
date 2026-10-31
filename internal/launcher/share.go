@@ -713,7 +713,7 @@ func (l *Launcher) importPlan(f *shareFile, replace bool) ([]keyChange, []fileCh
 		}
 		d := shareKeys[k]
 		ch := keyChange{key: k, old: old, had: had, new: v, set: set, class: d.class, note: d.note}
-		if k == "LEA_LOCKSQL" && nonEmpty(v, "1") == "1" && c.Get(k) != "1" {
+		if k == "LEA_LOCKSQL" && nonEmpty(v, "0") == "1" && c.Get(k) != "1" {
 			// Wiring a locksql console opens a lock tool's socket to the agents.
 			ch.class = classLock
 		}

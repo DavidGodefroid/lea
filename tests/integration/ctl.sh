@@ -33,7 +33,10 @@ docker volume create --label "com.docker.compose.project=$lfp" --label com.docke
   --label dev.lockfamily.role=socket --label dev.lockfamily.instance=crm --label dev.lockfamily.type=locksql \
   --label "dev.lockfamily.workspace=$projects" "$lockvol" >/dev/null || fail "could not create $lockvol"
 docker pull -q docker.io/library/alpine:3.22 >/dev/null || fail "could not pull alpine"
+# lox up runs compose from its state directory, the file on stdin: compose's labels say so.
 docker run -d -it --name "$lockstub" --label "com.docker.compose.project=$lfp" --label com.docker.compose.service=lock-crm \
+  --label "com.docker.compose.project.working_dir=${XDG_STATE_HOME:-$HOME/.local/state}/lockfamily/$lfp" \
+  --label com.docker.compose.project.config_files=- \
   --network none -v "$lockvol:/run/locksql" docker.io/library/alpine:3.22 sh -c 'echo LOCK-CONSOLE-UP; exec sleep 600' >/dev/null ||
   fail "could not start the stand-in console"
 cat >"$work/lea.conf" <<CONF

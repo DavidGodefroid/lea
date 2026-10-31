@@ -357,13 +357,10 @@ func TestConfigImportKnownHostsConflictAndUnion(t *testing.T) {
 // ones stay.
 func TestConfigImportReplace(t *testing.T) {
 	w := newWorld(t, repoRoot(t))
-	w.writeConf("lea.conf", "LEA_PROJECTS_DIR='"+w.proj+"'\nLEA_LOCKSQL=0\nexport LEA_APPROVALS=pane\nLEA_SOUND=0\n")
+	w.writeConf("lea.conf", "LEA_PROJECTS_DIR='"+w.proj+"'\nLEA_LOCKSQL=1\nexport LEA_APPROVALS=pane\nLEA_SOUND=0\n")
 	in := w.shareFile(`{"lea_config_format":1,"keys":{"LEA_APPROVAL_TIMEOUT":"90"}}`)
-	// Removing LEA_LOCKSQL=0 wires locksql again (the default): that needs --allow-lock.
-	if code, _, errs := w.config("", "import", in, "--replace", "--yes"); code == 0 || !strings.Contains(errs, "--allow-lock") {
-		t.Fatalf("without --allow-lock: %d %s", code, errs)
-	}
-	if code, _, errs := w.config("", "import", in, "--replace", "--yes", "--allow-lock"); code != 0 {
+	// Removing LEA_LOCKSQL=1 turns locksql off (the default): no --allow-lock needed.
+	if code, _, errs := w.config("", "import", in, "--replace", "--yes"); code != 0 {
 		t.Fatalf("%d %s", code, errs)
 	}
 	got := w.read(w.userConf())
@@ -597,6 +594,12 @@ func TestConfigImportLocksqlNeedsAllowLock(t *testing.T) {
 	in = w.shareFile(`{"lea_config_format":1,"keys":{"LEA_LOCKSQL":"0"}}`)
 	if code, _, errs := w.config("", "import", in, "--yes"); code != 0 {
 		t.Fatalf("turning it off: %d %s", code, errs)
+	}
+	// --replace removing a user's LEA_LOCKSQL=0 leaves the default, off: no lock tool turned on.
+	w.writeConf("lea.conf", "LEA_LOCKSQL=0\n")
+	in = w.shareFile(`{"lea_config_format":1,"keys":{"LEA_APPROVAL_TIMEOUT":"90"}}`)
+	if code, out, errs := w.config("", "import", in, "--replace", "--yes"); code != 0 || strings.Contains(out+errs, "[lock tool]") {
+		t.Fatalf("removing LEA_LOCKSQL=0: %d %q %q", code, out, errs)
 	}
 	// The lock tools of later lea (LEA_LOCKMQ, LEA_LOCKFILE) are not shared at all.
 	in = w.shareFile(`{"lea_config_format":1,"keys":{"LEA_LOCKMQ":"1"}}`)

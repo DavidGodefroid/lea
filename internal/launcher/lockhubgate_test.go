@@ -662,8 +662,15 @@ func TestLockHTTPGateRefusedSwitchChangesNothing(t *testing.T) {
 // did not label is left alone.
 func TestLockHTTPGateNeedsLoxUpTellsOfAStaleGate(t *testing.T) {
 	const at = "FAKE_DOCKER_OUT_INSPECT___TYPE_AT_LEA_LOCKHTTP_GATE"
-	stale := "true|lea|lockhttp-gate||lockhttp-run"
-	removed := func(w *world) bool { return w.hasCall("docker [rm] [-f] [lea-lockhttp-gate] [lea-lockhttp-signer]") }
+	const signerAt = "FAKE_DOCKER_OUT_INSPECT___TYPE_AT_LEA_LOCKHTTP_SIGNER"
+	gid, sid := strings.Repeat("a1", 32), strings.Repeat("b2", 32)
+	stale := gid + "|true|lea|lockhttp-gate||lockhttp-run"
+	// Removed by the id lea inspected, never by name; the signer on its own, by its id.
+	removed := func(w *world) bool { return w.hasCall("docker [rm] [-f] [" + gid + "]") }
+	signerRemoved := func(w *world) bool { return w.hasCall("docker [rm] [-f] [" + sid + "]") }
+	byName := func(w *world) bool {
+		return w.hasCall("[rm] [-f] [lea-lockhttp-gate]") || w.hasCall("[lea-lockhttp-signer]") && w.hasCall("[rm] [-f] [lea-lockhttp-signer]")
+	}
 	// Agents run: kept, and named.
 	w, _ := lockHTTPWorldNoUp(t)
 	w.env[at] = stale
@@ -674,19 +681,44 @@ func TestLockHTTPGateNeedsLoxUpTellsOfAStaleGate(t *testing.T) {
 		!strings.Contains(err.Error(), "lea stop --all") || removed(w) {
 		t.Fatalf("with agents: %v", err)
 	}
-	// No agent: lea's own stale gate goes, and lea says so.
+	// No agent: lea's own stale gate goes, and its signer when it is lea's, each said.
 	w, _ = lockHTTPWorldNoUp(t)
 	w.env[at] = stale
+	w.env[signerAt] = sid + "|lea|lockhttp-signer"
 	err = w.launcher().ensureProxy(w.proj)
-	if err == nil || !strings.Contains(err.Error(), "run `lox up`") || !removed(w) ||
-		!strings.Contains(w.errb.String(), "removed the standalone LockHTTP gate lea-lockhttp-gate of an earlier lea") {
+	if err == nil || !strings.Contains(err.Error(), "run `lox up`") || !removed(w) || !signerRemoved(w) || byName(w) ||
+		!strings.Contains(w.errb.String(), "removed the standalone LockHTTP gate lea-lockhttp-gate of an earlier lea") ||
+		!strings.Contains(w.errb.String(), "removed its signer lea-lockhttp-signer") {
 		t.Fatalf("without agents: %v, %s", err, w.errb.String())
+	}
+	// No signer (Podman's rm -f of a missing one fails): only the gate's removal is told.
+	w, _ = lockHTTPWorldNoUp(t)
+	w.env[at] = stale
+	w.env["FAKE_DOCKER_RC_INSPECT___TYPE_AT_LEA_LOCKHTTP_SIGNER"] = "1"
+	err = w.launcher().ensureProxy(w.proj)
+	if err == nil || !removed(w) || signerRemoved(w) || strings.Contains(w.errb.String(), "signer") {
+		t.Fatalf("no signer: %v, %s", err, w.errb.String())
+	}
+	// A signer lea did not label: left alone.
+	w, _ = lockHTTPWorldNoUp(t)
+	w.env[at] = stale
+	w.env[signerAt] = sid + "|other|lockhttp-signer"
+	if err = w.launcher().ensureProxy(w.proj); err == nil || signerRemoved(w) || !strings.Contains(w.errb.String(), "is not a signer lea started") {
+		t.Fatalf("foreign signer: %v, %s", err, w.errb.String())
+	}
+	// The gate's removal fails: lea says so, and claims nothing.
+	w, _ = lockHTTPWorldNoUp(t)
+	w.env[at] = stale
+	w.env["FAKE_DOCKER_RC_RM__F"] = "1"
+	err = w.launcher().ensureProxy(w.proj)
+	if err == nil || !strings.Contains(err.Error(), "could not remove it: docker rm -f "+gid) || strings.Contains(w.errb.String(), "removed") {
+		t.Fatalf("failed removal: %v, %s", err, w.errb.String())
 	}
 	// Not lea's (labels), a stopped one, or one that asks a hub: never removed.
 	for name, out := range map[string]string{
-		"not lea's":    "true|other|lockhttp-gate||lockhttp-run",
-		"stopped":      "false|lea|lockhttp-gate||lockhttp-run",
-		"asks a hub":   "true|lea|lockhttp-gate|abc|lockfamily-0badc0de_web-run",
+		"not lea's":    gid + "|true|other|lockhttp-gate||lockhttp-run",
+		"stopped":      gid + "|false|lea|lockhttp-gate||lockhttp-run",
+		"asks a hub":   gid + "|true|lea|lockhttp-gate|abc|lockfamily-0badc0de_web-run",
 		"no container": "",
 	} {
 		w, _ = lockHTTPWorldNoUp(t)
