@@ -191,3 +191,27 @@ launcher() {
   run lea__doctor_lockhttp
   [[ "$output" == *"ok    LockHTTP CA valid for more than 7 days"* ]]
 }
+
+@test "the gate's mounts are checked one entry at a time" {
+  ok=lockfamily-1a2b3c4d_web-run/var/lib/docker/volumes/lockfamily-1a2b3c4d_web-run/_data
+  # A later host path holding -home/ is no console home (an earlier pattern matched across mounts).
+  [ "$(lea__lockhttp_gate_mounts "$ok>/run/lockhttp;/home/u/my-home/lea/gate>/etc/lockhttp-gate;")" = ok ]
+  [ "$(lea__lockhttp_gate_mounts "/srv/lockfamily-x-home/y>/etc/x;$ok>/run/lockhttp;")" = ok ]
+  # lox up's socket volume must be the entry on /run/lockhttp, not a pattern spanning two entries.
+  [ "$(lea__lockhttp_gate_mounts "lockfamily-1a2b3c4d_web-run/v>/lockhttp-home;/tmp/run>/run/lockhttp;")" = none ]
+  [ "$(lea__lockhttp_gate_mounts "lockfamily-1a2b3c4d_web-gate/v>/lockhttp-home;lockhttp-run/v>/run/lockhttp;")" = none ]
+  [ "$(lea__lockhttp_gate_mounts "lockfamily-zz_web-run/v>/run/lockhttp;")" = none ]
+  [ "$(lea__lockhttp_gate_mounts "")" = none ]
+  # A console home, by its volume's name, or an engine socket anywhere, is bad.
+  [ "$(lea__lockhttp_gate_mounts "$ok>/run/lockhttp;lockfamily-1a2b3c4d_web-home/v>/home/lockhttp;")" = bad ]
+  [ "$(lea__lockhttp_gate_mounts "$ok>/run/lockhttp;lockhttp-home/v>/x;")" = bad ]
+  [ "$(lea__lockhttp_gate_mounts "$ok>/run/lockhttp;/run/docker.sock>/var/run/docker.sock;")" = bad ]
+  [ "$(lea__lockhttp_gate_mounts "$ok>/run/lockhttp;/run/user/1000/podman/podman.sock>/s;")" = bad ]
+}
+
+@test "lea doctor: a host path with -home/ after the socket volume is no failure" {
+  export FAKE_DOCKER_OUT_INSPECT__F_AT_LEA_LOCKHTTP_GATE="true|ghcr.io/davidgodefroid/lockhttp@$D|gate|lockfamily-1a2b3c4d_web-run/var/lib/docker/volumes/lockfamily-1a2b3c4d_web-run/_data>/run/lockhttp;lockfamily-1a2b3c4d_web-gate/var/lib/docker/volumes/lockfamily-1a2b3c4d_web-gate/_data>/lockhttp-home;/home/u/my-home/lea/lockhttp/gate>/etc/lockhttp-gate;"
+  run lea__doctor_lockhttp
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"ok    LockHTTP gate has the console's socket volume only"* ]]
+}

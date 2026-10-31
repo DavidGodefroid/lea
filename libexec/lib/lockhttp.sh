@@ -50,6 +50,36 @@ lea__lockhttp_image() {
   printf 'ghcr.io/davidgodefroid/lockhttp@%s' "$_lhi_d"
 }
 
+# lea__lockhttp_gate_mounts MOUNTS: bad, ok or none, for the gate's mounts as docker inspect
+# lists them (MOUNTS: one NAMESOURCE>DESTINATION; entry per mount; NAME is empty for a bind mount,
+# else the volume's name, and SOURCE an absolute path). Each entry on its own, never a pattern
+# across entries: lox up's volumes are the console's socket <project>_<lock>-run on /run/lockhttp
+# and the gate's own <project>_<lock>-gate; a console's home (the launcher's lockhttp-home, lox
+# up's <project>_<lock>-home) or an engine's socket is bad; ok needs lox up's socket volume on
+# /run/lockhttp.
+lea__lockhttp_gate_mounts() {
+  _gm_r=none
+  _gm_ifs=$IFS
+  IFS=';'
+  set -f
+  # shellcheck disable=SC2086 # split on ; only, no glob
+  set -- $1
+  set +f
+  IFS=$_gm_ifs
+  for _gm_e in "$@"; do
+    [ -n "$_gm_e" ] || continue
+    _gm_d=${_gm_e##*>} _gm_ns=${_gm_e%>*}
+    _gm_n=${_gm_ns%%/*}
+    case $_gm_ns in */*) _gm_s=/${_gm_ns#*/} ;; *) _gm_s= ;; esac
+    case $_gm_n in lockhttp-home | lockfamily-*_*-home) printf bad; return 0 ;; esac
+    case $_gm_s$_gm_d in *docker.sock* | *podman.sock*) printf bad; return 0 ;; esac
+    if [ "$_gm_d" = /run/lockhttp ]; then
+      case $_gm_n in lockfamily-[0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]_?*-run) _gm_r=ok ;; esac
+    fi
+  done
+  printf '%s' "$_gm_r"
+}
+
 lea__doctor_lockhttp() {
   [ "${LEA_LOCKHTTP:-0}" = 1 ] || return 0
   _dh_rc=0 _dh_g=$LEA_PREFIX-lockhttp-gate
@@ -78,13 +108,9 @@ lea__doctor_lockhttp() {
       elif [ -n "$_dh_img" ]; then lea__ok "LockHTTP gate runs the pinned image"; fi
       if [ "$_dh_user" = gate ]; then lea__ok "LockHTTP gate runs as gate"
       else lea__fail "LockHTTP gate user" "'$_dh_user', not gate ($_dh_restart)"; _dh_rc=1; fi
-      # lox up's volumes: the console's socket <project>_<lock>-run on /run/lockhttp, the gate's
-      # own <project>_<lock>-gate; never a console's home (the launcher's lockhttp-home, lox up's
-      # <project>_<lock>-home) or an engine's socket.
-      case ";$_dh_mounts" in
-        *";lockhttp-home"*|*";lockfamily-"*"-home/"*|*docker.sock*|*podman.sock*)
-          lea__fail "LockHTTP gate mounts" "the console's home or an engine socket: $_dh_mounts ($_dh_restart)"; _dh_rc=1 ;;
-        *";lockfamily-"*"_"*"-run"*">/run/lockhttp;"*) lea__ok "LockHTTP gate has the console's socket volume only" ;;
+      case $(lea__lockhttp_gate_mounts "$_dh_mounts") in
+        bad) lea__fail "LockHTTP gate mounts" "the console's home or an engine socket: $_dh_mounts ($_dh_restart)"; _dh_rc=1 ;;
+        ok) lea__ok "LockHTTP gate has the console's socket volume only" ;;
         *) lea__fail "LockHTTP gate mounts" "no socket volume of lox up's lockhttp lock on /run/lockhttp: run \`lox up\`, then $_dh_restart"; _dh_rc=1 ;;
       esac
       if docker exec "$_dh_g" lockhttp gate --check --listen 127.0.0.1:3130 >/dev/null 2>&1; then lea__ok "LockHTTP gate answers"
