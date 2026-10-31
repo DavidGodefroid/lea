@@ -199,8 +199,8 @@ func TestLockHTTPGateDevicesOnlyForALockThatPinsThem(t *testing.T) {
 	}
 }
 
-// What up.json says of the hub is checked: anything lea cannot trust leaves the gate as without
-// lock up (its own console, no hub, the proxy on no hub network), and lea says why.
+// What up.json says of the hub is checked: anything lea cannot trust stops lea, which says why and
+// to run `lox up`: no gate, no proxy on a hub network, no hub input written.
 func TestLockHTTPGateRefusesAnUntrustedHub(t *testing.T) {
 	for name, c := range map[string]struct {
 		mod  func(w *world)
@@ -253,18 +253,15 @@ func TestLockHTTPGateRefusesAnUntrustedHub(t *testing.T) {
 			if c.mod != nil {
 				c.mod(w)
 			}
-			if err := w.launcher().ensureProxy(w.proj); err != nil {
-				t.Fatal(err)
+			err := w.launcher().ensureProxy(w.proj)
+			if err == nil || !strings.Contains(err.Error(), c.want) || !strings.Contains(err.Error(), "run `lox up`") {
+				t.Fatalf("error %v", err)
 			}
-			run := gateRun(t, w)
-			if strings.Contains(run, "[--hub]") || !strings.Contains(run, "src=lockhttp-run,dst=/run/lockhttp") || strings.Contains(run, "/lockhttp-home") {
-				t.Errorf("hub mode: %s", run)
+			if len(gateRuns(w)) != 0 {
+				t.Errorf("a gate started:\n%s", strings.Join(w.calls(), "\n"))
 			}
 			if w.hasCall("[network] [connect]") {
 				t.Errorf("the proxy joined a network")
-			}
-			if !strings.Contains(w.errb.String(), c.want) {
-				t.Errorf("warning: %s", w.errb.String())
 			}
 			if _, ok := hubFile(t, w, "hub.pub"); ok {
 				t.Error("hub.pub written")
@@ -285,28 +282,56 @@ func rewriteUp(t *testing.T, w *world, old, new string) {
 	}
 }
 
-// Without lock up, the proxy leaves a hub network an earlier gate joined; with it, the proxy
-// already on the hub's network is not joined again. A running gate without the hub's stamp (or
-// with another) is replaced; one with it is kept.
+// The gate runs hub-attached only: without lox up's trusted up.json naming a lockhttp lock, lea
+// stops before it changes anything (no proxy, no gate, no hub input) and says to run `lox up`.
+func TestLockHTTPGateNeedsLoxUp(t *testing.T) {
+	for name, c := range map[string]struct {
+		mod  func(t *testing.T, w *world)
+		want string
+	}{
+		"no up.json": {nil, "no trusted"},
+		"no lockhttp lock": {func(t *testing.T, w *world) {
+			hubUp(t, w, "", "", "")
+			rewriteUp(t, w, `"type":"lockhttp"`, `"type":"lockmq"`)
+		}, "names no lockhttp lock"},
+		"up.json others may write": {func(t *testing.T, w *world) {
+			hubUp(t, w, "", "", "")
+			if err := os.Chmod(w.proj+"/.lockfamily/up.json", 0o666); err != nil {
+				t.Fatal(err)
+			}
+		}, "no trusted"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			w, _ := lockHTTPWorldNoUp(t)
+			if c.mod != nil {
+				c.mod(t, w)
+			}
+			err := w.launcher().ensureProxy(w.proj)
+			if err == nil || !strings.Contains(err.Error(), c.want) || !strings.Contains(err.Error(), "run `lox up`") {
+				t.Fatalf("error %v", err)
+			}
+			for _, c := range w.calls() {
+				if strings.HasPrefix(c, "docker [run]") || strings.Contains(c, "[network] [connect]") || strings.Contains(c, "[rm] [-f]") {
+					t.Errorf("changed: %s", c)
+				}
+			}
+			if _, ok := hubFile(t, w, "hub.pub"); ok {
+				t.Error("hub.pub written")
+			}
+		})
+	}
+}
+
+// The proxy already on the hub's network is not joined again. A running gate without the hub's
+// stamp (or with another) is replaced; one with it is kept.
 func TestLockHTTPGateFollowsTheHub(t *testing.T) {
 	image := "ghcr.io/davidgodefroid/lockhttp@" + testDigest
+	// lox up's hub: the gate with the hub's stamp is kept, on a proxy already joined.
 	w, _ := lockHTTPWorld(t)
-	stale := "lockfamily-0badc0de_lockhub"
-	w.env["FAKE_DOCKER_OUT_INSPECT___TYPE_AT_LEA_PROXY"] = "lea-egress " + stale + " "
-	if err := w.launcher().ensureProxy(w.proj); err != nil {
-		t.Fatal(err)
-	}
-	if !w.hasCall("docker [network] [disconnect] [" + stale + "] [lea-proxy]") {
-		t.Errorf("the proxy stays on %s:\n%s", stale, strings.Join(w.calls(), "\n"))
-	}
-
-	// lock up's hub: the gate with the hub's stamp is kept, on a proxy already joined.
-	w, _ = lockHTTPWorld(t)
-	hubUp(t, w, "", "", "")
 	pr := upProjectOf(w)
-	g := w.launcher().lockUpGate(w.proj)
-	if g == nil {
-		t.Fatalf("no hub: %s", w.errb.String())
+	g, err := w.launcher().lockUpGate(w.proj)
+	if err != nil {
+		t.Fatalf("no hub: %v", err)
 	}
 	w.env["FAKE_DOCKER_OUT_INSPECT__F"] = "true"
 	w.env["FAKE_DOCKER_OUT_INSPECT___FORMAT"] = "@" + w.launcher().proxyRules() + "^1"
@@ -335,9 +360,9 @@ func TestLockHTTPGateFollowsTheHub(t *testing.T) {
 	}
 }
 
-// The pinned gate's release decides: before v0.3.0 no hub mode at all; before v0.4.0 no device
-// flags; before v0.5.0 no facade keys (each a flag that gate would refuse, and stop on); dev (a
-// clone) has them all.
+// The pinned gate's release decides: before v0.3.0 no hub mode, hence no gate (lea stops); before
+// v0.4.0 no device flags; before v0.5.0 no facade keys (each a flag that gate would refuse, and
+// stop on); dev (a clone) has them all.
 func TestLockHTTPGateFollowsThePinnedRelease(t *testing.T) {
 	for _, c := range []struct {
 		version               string
@@ -356,7 +381,14 @@ func TestLockHTTPGateFollowsThePinnedRelease(t *testing.T) {
 			if err := os.WriteFile(root+"/usr/local/bin/lockhttp", []byte(fakeLockHTTPLauncher(c.version, testDigest)), 0o755); err != nil {
 				t.Fatal(err)
 			}
-			if err := w.launcher().ensureProxy(w.proj); err != nil {
+			err := w.launcher().ensureProxy(w.proj)
+			if !c.hub {
+				if err == nil || !strings.Contains(err.Error(), "has no hub mode") || len(gateRuns(w)) != 0 {
+					t.Errorf("no hub mode: %v\n%s", err, strings.Join(w.calls(), "\n"))
+				}
+				return
+			}
+			if err != nil {
 				t.Fatal(err)
 			}
 			run := gateRun(t, w)
@@ -366,24 +398,18 @@ func TestLockHTTPGateFollowsThePinnedRelease(t *testing.T) {
 					t.Errorf("%s: %v, want %v: %s", flag, !want, want, run)
 				}
 			}
-			if !c.hub && !strings.Contains(w.errb.String(), "has no hub mode") {
-				t.Errorf("warning: %s", w.errb.String())
-			}
 		})
 	}
 	// Devices that must sign a risk class, or seal the clear screens, and a release without those
-	// flags: no hub mode.
+	// flags: no gate.
 	for _, lock := range []string{`,"devices":true,"require_device":["write"]`, `,"devices":true,"seal_clear":true`} {
 		w, root := lockHTTPWorld(t)
 		hubUp(t, w, lock, "", testDevices)
 		if err := os.WriteFile(root+"/usr/local/bin/lockhttp", []byte(fakeLockHTTPLauncher("0.3.0", testDigest)), 0o755); err != nil {
 			t.Fatal(err)
 		}
-		if err := w.launcher().ensureProxy(w.proj); err != nil {
-			t.Fatal(err)
-		}
-		if run := gateRun(t, w); strings.Contains(run, "[--hub]") || !strings.Contains(w.errb.String(), "needs lockhttp v0.4.0") {
-			t.Errorf("%s: hub mode without its device flags: %s\n%s", lock, run, w.errb.String())
+		if err := w.launcher().ensureProxy(w.proj); err == nil || !strings.Contains(err.Error(), "needs lockhttp v0.4.0") || len(gateRuns(w)) != 0 {
+			t.Errorf("%s: a gate without its device flags: %v\n%s", lock, err, strings.Join(w.calls(), "\n"))
 		}
 	}
 	for v, want := range map[string]bool{"0.10.0": true, "v0.5.1": true, "1.0.0": true, "0.4.9": false, "": false, "x": false, "0.5": false,
@@ -439,13 +465,13 @@ func TestLockHTTPGateStopsOnAHubNetworkItCannotLeave(t *testing.T) {
 	}
 }
 
-// A reused proxy joins the hub's network only once the old gate (standalone, or another hub's,
-// which does not refuse this network's addresses) is gone: from standalone, and from another hub,
-// which it leaves first.
+// A reused proxy joins the hub's network only once the old gate (an earlier lea's, which asked a
+// console of its own, or another hub's, which does not refuse this network's addresses) is gone:
+// from an earlier lea's gate, and from another hub, which it leaves first.
 func TestLockHTTPGateLeavesNoOldGateOnTheHubNetwork(t *testing.T) {
 	image := "ghcr.io/davidgodefroid/lockhttp@" + testDigest
 	for name, c := range map[string]struct{ nets, label string }{
-		"from standalone":  {"lea-egress ", ""},
+		"from an earlier lea's gate": {"lea-egress ", ""},
 		"from another hub": {"lea-egress lockfamily-0badc0de_lockhub ", " hub:0123456789ab"},
 	} {
 		t.Run(name, func(t *testing.T) {
@@ -480,34 +506,28 @@ func TestLockHTTPGateLeavesNoOldGateOnTheHubNetwork(t *testing.T) {
 	}
 }
 
-// The one gate of a prefix changes whose hub it asks (or none) only while no agent of another
-// projects directory runs: their requests would be approved by another hub, or none. Agents of
-// this directory only, or a gate already asking this hub, switch nothing.
+// The one gate of a prefix changes whose hub it asks only while no agent of another projects
+// directory runs: their requests would be approved by another hub. Agents of this directory only,
+// or a gate already asking this hub, switch nothing.
 func TestLockHTTPGateDoesNotSwitchUnderAnotherDirectorysAgents(t *testing.T) {
 	for name, c := range map[string]struct {
-		up       bool
 		gateFor  string
 		sessions string
 		refused  bool
 	}{
-		"hub to none":              {false, "for=/other|hub=x", "/other\n", true},
-		"hub to another hub":       {true, "for=/other|hub=x", "/other\n", true},
-		"none to a hub":            {true, "for=-|hub=", "/other\n", true},
-		"earlier lea to a hub":     {true, "for=|hub=", "/other\n", true},
-		"a hub but whose":          {false, "for=|hub=x", "/other\n", true},
-		"unreadable":               {false, "", "/other\n", true},
-		"only this directory":      {true, "for=/other|hub=x", "PROJ\n", false},
-		"no agent runs":            {true, "for=/other|hub=x", "", false},
-		"standalone to standalone": {false, "for=-|hub=", "/other\n", false},
-		"earlier lea standalone":   {false, "for=|hub=", "/other\n", false},
+		"hub to another hub":     {"for=/other|hub=x", "/other\n", true},
+		"earlier lea to a hub":   {"for=-|hub=", "/other\n", true},
+		"earlier lea, no label":  {"for=|hub=", "/other\n", true},
+		"a hub but whose":        {"for=|hub=x", "/other\n", true},
+		"unreadable":             {"", "/other\n", true},
+		"only this directory":    {"for=/other|hub=x", "PROJ\n", false},
+		"no agent runs":          {"for=/other|hub=x", "", false},
+		"already this directory": {"for=PROJ|hub=x", "/other\n", false},
 	} {
 		t.Run(name, func(t *testing.T) {
 			w, _ := lockHTTPWorld(t)
-			if c.up {
-				hubUp(t, w, "", "", "")
-			}
 			w.env["FAKE_DOCKER_OUT_PS__A"] = "lea-lockhttp-gate"
-			w.env["FAKE_DOCKER_OUT_INSPECT___TYPE_AT_LEA_LOCKHTTP_GATE"] = c.gateFor
+			w.env["FAKE_DOCKER_OUT_INSPECT___TYPE_AT_LEA_LOCKHTTP_GATE"] = strings.ReplaceAll(c.gateFor, "PROJ", w.proj)
 			w.env["FAKE_DOCKER_OUT_PS___FILTER"] = strings.ReplaceAll(c.sessions, "PROJ", w.proj)
 			err := w.launcher().ensureProxy(w.proj)
 			if got := err != nil; got != c.refused {
@@ -536,8 +556,10 @@ func TestLockHTTPGateJoinsOnlyBehindAGateThatRefusesTheHub(t *testing.T) {
 	}
 
 	w, _ = lockHTTPWorld(t)
-	hubUp(t, w, "", "", "")
-	g := w.launcher().lockUpGate(w.proj)
+	g, err := w.launcher().lockUpGate(w.proj)
+	if err != nil {
+		t.Fatal(err)
+	}
 	image := "ghcr.io/davidgodefroid/lockhttp@" + testDigest
 	w.env["FAKE_DOCKER_OUT_INSPECT__F"] = "true"
 	w.env["FAKE_DOCKER_OUT_INSPECT___FORMAT"] = "@" + w.launcher().proxyRules() + "^1"
@@ -592,8 +614,8 @@ func TestLockHTTPGateRefusedSwitchChangesNothing(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	// This directory has no lock up; the gate asks /other's hub, whose agents run; the proxy is
-	// on /other's hub network, and stale (another image).
+	// The gate asks /other's hub, whose agents run; the proxy is on /other's hub network, and
+	// stale (another image).
 	w.env["FAKE_DOCKER_OUT_PS__A"] = "lea-lockhttp-gate"
 	w.env["FAKE_DOCKER_OUT_INSPECT___TYPE_AT_LEA_LOCKHTTP_GATE"] = "for=/other|hub=x"
 	w.env["FAKE_DOCKER_OUT_PS___FILTER"] = "/other"

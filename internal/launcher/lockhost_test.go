@@ -1,7 +1,6 @@
 package launcher
 
 import (
-	"os"
 	"strings"
 	"testing"
 )
@@ -15,12 +14,6 @@ func lockArgs(t *testing.T, w *world) []string {
 	return args
 }
 
-// The fake docker's answers for the lockfile-run volume: absent, or present with an owner.
-const (
-	volInspectLockfile = "FAKE_DOCKER_RC_VOLUME_INSPECT_AT_LOCKFILE_RUN"
-	volOwner           = "FAKE_DOCKER_OUT_RUN___RM_AT__R"
-)
-
 // Off by default: no trace of lockmq or lockfile in the container.
 func TestLockHostOffByDefault(t *testing.T) {
 	w := newWorld(t, repoRoot(t))
@@ -31,15 +24,18 @@ func TestLockHostOffByDefault(t *testing.T) {
 	}
 }
 
-// On: each tool's socket volume on /run/<tool> and its own clients group, as locksql's; nothing
-// of the host (no system.toml, no host directory, no console account's files).
+// On: each tool's socket volume of lox up's lock on /run/<tool>, read-only, and its own clients
+// group, as locksql's; nothing of the host (no system.toml, no host directory, no console
+// account's files).
 func TestLockHostWired(t *testing.T) {
 	w := newWorld(t, repoRoot(t))
 	writeUserConf(t, w, "LEA_LOCKMQ=1\nLEA_LOCKFILE=1\n")
-	w.env[volInspectLockfile] = "1" // no volume yet: lea's image initialises it
+	writeUp(t, w, lockUp("events", "lockmq")+","+lockUp("docs", "lockfile"))
+	labels(w, "events", "lockmq", "socket")
+	labels(w, "docs", "lockfile", "socket")
 	args := lockArgs(t, w)
-	for _, m := range []string{"LEA_LOCKMQ=1", "LEA_LOCKFILE=1", "type=volume,src=lockmq-run,dst=/run/lockmq",
-		"type=volume,src=lockfile-run,dst=/run/lockfile"} {
+	for _, m := range []string{"LEA_LOCKMQ=1", "LEA_LOCKFILE=1", "type=volume,src=" + upProjectOf(w) + "_events-run,dst=/run/lockmq,readonly",
+		"type=volume,src=" + upProjectOf(w) + "_docs-run,dst=/run/lockfile,readonly"} {
 		if !contains(args, m) {
 			t.Errorf("missing %q in %v", m, args)
 		}
@@ -63,56 +59,35 @@ func TestLockHostWired(t *testing.T) {
 	}
 }
 
-// A lockfile-run volume of lockfile before 0.3 (locksql's ids) leaves lockfile out until its
-// launcher migrates it; lockmq is wired all the same. Lea never migrates it itself.
-func TestLockfileVolumeOldIDs(t *testing.T) {
+// The consoles run hub-attached only, under lox up: a tool that is on, and has no lock of lox up
+// for the projects directory, gets no socket (never the fixed <tool>-run volume of a console of
+// its own launcher), and lea says to run `lox up`.
+func TestLockHostNeedsLoxUp(t *testing.T) {
 	w := newWorld(t, repoRoot(t))
 	writeUserConf(t, w, "LEA_LOCKMQ=1\nLEA_LOCKFILE=1\n")
-	w.env[volOwner] = "10001:10000"
+	writeUp(t, w, lockUp("events", "lockmq"))
+	labels(w, "events", "lockmq", "socket")
 	args := lockArgs(t, w)
-	if contains(args, "LEA_LOCKFILE=1") || !contains(args, "LEA_LOCKMQ=1") {
+	if !contains(args, "LEA_LOCKMQ=1") || contains(args, "LEA_LOCKFILE=1") || contains(args, "10030") {
 		t.Fatalf("args %v", args)
 	}
-	if !strings.Contains(w.errb.String(), "lockfile console") || !w.hasCall("stat") || w.hasCall("migrate-ids") {
-		t.Errorf("warning %q, calls %v", w.errb.String(), w.calls())
-	}
-	if _, err := os.Stat(w.hostDir() + "/lockfile-run-ids"); err == nil {
-		t.Error("an old volume was marked checked")
-	}
-}
-
-// A volume of any other owner (root, a foreign uid) is not lockfile's console's: left out.
-func TestLockfileVolumeUnknownOwner(t *testing.T) {
-	for _, owner := range []string{"0:0", "1000:1000", "10031:10000", ""} {
-		w := newWorld(t, repoRoot(t))
-		writeUserConf(t, w, "LEA_LOCKFILE=1\n")
-		w.env[volOwner] = owner
-		if args := lockArgs(t, w); contains(args, "LEA_LOCKFILE=1") {
-			t.Errorf("owner %q: lockfile wired", owner)
-		}
-		if !strings.Contains(w.errb.String(), "warning: lockfile") {
-			t.Errorf("owner %q: no warning: %s", owner, w.errb.String())
-		}
-		if owner == "0:0" && !strings.Contains(w.errb.String(), "owned by 0:0") {
-			t.Errorf("warning %q", w.errb.String())
-		}
-		if _, err := os.Stat(w.hostDir() + "/lockfile-run-ids"); err == nil {
-			t.Errorf("owner %q: marked checked", owner)
+	for _, a := range args {
+		if strings.Contains(a, "src=lockmq-run") || strings.Contains(a, "src=lockfile-run") {
+			t.Errorf("fixed socket volume: %s", a)
 		}
 	}
-}
-
-// A volume with lockfile's own ids is wired, and not checked again.
-func TestLockfileVolumeChecked(t *testing.T) {
-	w := newWorld(t, repoRoot(t))
-	writeUserConf(t, w, "LEA_LOCKFILE=1\n")
-	w.env[volOwner] = "10031:10030"
-	if args := lockArgs(t, w); !contains(args, "LEA_LOCKFILE=1") {
+	if e := w.errb.String(); !strings.Contains(e, "no lockfile lock of lox up") || !strings.Contains(e, "run `lox up`") || strings.Contains(e, "lockmq") {
+		t.Errorf("warnings: %s", e)
+	}
+	// No up.json at all: neither.
+	w = newWorld(t, repoRoot(t))
+	writeUserConf(t, w, "LEA_LOCKMQ=1\nLEA_LOCKFILE=1\n")
+	args = lockArgs(t, w)
+	if contains(args, "LEA_LOCKMQ=1") || contains(args, "LEA_LOCKFILE=1") || w.hasCall("stat") {
 		t.Fatalf("args %v", args)
 	}
-	w.env[volOwner] = "10001:10000"
-	if args := lockArgs(t, w); !contains(args, "LEA_LOCKFILE=1") {
-		t.Fatalf("checked again: %v\n%s", args, w.errb.String())
+	if e := w.errb.String(); strings.Count(e, "run `lox up`") != 2 {
+		t.Errorf("warnings: %s", e)
 	}
 }
 
@@ -157,14 +132,18 @@ func must(t *testing.T, err error) {
 }
 
 // TestRunArgsLocksOnMatchTheGoldenFile: the docker run arguments with lockmq and lockfile on (their
-// socket volumes and clients groups, nothing of the host).
+// lox up socket volumes and clients groups, nothing of the host).
 func TestRunArgsLocksOnMatchTheGoldenFile(t *testing.T) {
 	w := newWorld(t, copyRoot(t))
 	writeUserConf(t, w, "LEA_LOCKMQ=1\nLEA_LOCKFILE=1\n")
-	w.env[volInspectLockfile] = "1"
+	writeUp(t, w, lockUp("events", "lockmq")+","+lockUp("docs", "lockfile"))
+	labels(w, "events", "lockmq", "socket")
+	labels(w, "docs", "lockfile", "socket")
 	a, err := w.launcher().runArgs(w.proj, "172.18.0.5")
 	if err != nil {
 		t.Fatal(err)
 	}
-	checkGolden(t, "run-args", "lockmq and lockfile on", hostNeutral(normalize(w, strings.Join(a, "\n")+"\n")))
+	// lox up's project derives from the projects directory's path.
+	got := strings.ReplaceAll(strings.Join(a, "\n")+"\n", upProjectOf(w), "lockfamily-$PROJECT")
+	checkGolden(t, "run-args", "lockmq and lockfile on", hostNeutral(normalize(w, got)))
 }

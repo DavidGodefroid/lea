@@ -21,15 +21,16 @@ import (
 	"github.com/DavidGodefroid/lockkit/ticket"
 )
 
-// LockHTTP's gate in hub mode (lockhub's docs/lock-up.md, "Why lockhttp is different"): when lock
-// up runs a lockhttp lock for the projects directory, lea's gate (beside lea's proxy, in its
-// network namespace) asks the hub instead of a console of its own. It mounts that lock's socket
-// volume on /run/lockhttp and its gate volume as its --home, reads the hub's key, the host
-// facades' keys and, for a lock that pins them (locks.<name>.devices), the approval devices from
-// lea's own read-only copies under /run/lockfamily, and only the proxy joins the hub's network,
-// whose addresses the gate refuses as targets: no agent reaches the hub through it. Everything
-// up.json names is checked first (the volumes' and the network's labels, the key's form); lea
-// then runs the standalone gate, as without lock up, and says why.
+// LockHTTP's gate asks the hub (lockhub's docs/lox-up.md, "Why lockhttp is different"): the gate
+// runs hub-attached only, for the lockhttp lock `lox up` runs for the projects directory. lea's
+// gate (beside lea's proxy, in its network namespace) mounts that lock's socket volume on
+// /run/lockhttp and its gate volume as its --home, reads the hub's key, the host facades' keys
+// and, for a lock that pins them (locks.<name>.devices), the approval devices from lea's own
+// read-only copies under /run/lockfamily, and only the proxy joins the hub's network, whose
+// addresses the gate refuses as targets: no agent reaches the hub through it. Everything up.json
+// names is checked first (the volumes' and the network's labels, the key's form); anything lea
+// cannot trust, or no up.json naming a lockhttp lock, stops lea with why, and says to run `lox
+// up`: there is no gate without the hub.
 
 // gateHubDir is where the gate reads lea's copies of the hub's inputs (read-only).
 const gateHubDir = "/run/lockfamily"
@@ -54,16 +55,17 @@ var gateProfile = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$`)
 // network is asked for), on a port.
 var gateHubURL = regexp.MustCompile(`^http://lockhub:([1-9][0-9]{0,3}|[1-5][0-9]{4}|6[0-4][0-9]{3}|65[0-4][0-9]{2}|655[0-2][0-9]|6553[0-5])$`)
 
-// lockUpGate is the hub mode of the gate for the projects directory proj, nil without lock up, a
-// lockhttp lock in it, or when lea cannot trust what up.json says of it (lea says why).
-func (l *Launcher) lockUpGate(proj string) *gateHub {
+// lockUpGate is what the gate needs to ask the hub of the projects directory proj; an error (why,
+// and to run `lox up`) without lox up's trusted up.json naming a lockhttp lock, or when lea cannot
+// trust what it says of it.
+func (l *Launcher) lockUpGate(proj string) (*gateHub, error) {
 	lf, err := lockfamilyDir(proj)
 	if err != nil {
-		return nil
+		return nil, err
 	}
 	s, p := l.readLockUp(proj, lf)
 	if s == nil {
-		return nil
+		return nil, die("LEA_LOCKHTTP=1: no trusted %s naming a lockhttp lock: run `lox up` (the LockHTTP gate asks its hub only)", p)
 	}
 	var names []string
 	for n, lk := range s.Locks {
@@ -72,12 +74,11 @@ func (l *Launcher) lockUpGate(proj string) *gateHub {
 		}
 	}
 	if len(names) == 0 {
-		return nil
+		return nil, die("LEA_LOCKHTTP=1: %s names no lockhttp lock: add one (lox add lockhttp <name>) and run `lox up` (the LockHTTP gate asks its hub only)", p)
 	}
 	sort.Strings(names)
-	warn := func(why string) *gateHub {
-		l.logf("warning: %s: lockhttp: %s: lea's LockHTTP gate does not ask the hub (it asks a lockhttp console of its own)", p, why)
-		return nil
+	warn := func(why string) (*gateHub, error) {
+		return nil, die("LEA_LOCKHTTP=1: %s: lockhttp: %s: lea's LockHTTP gate cannot ask the hub, and asks nothing else (fix it, then run `lox up`)", p, why)
 	}
 	if len(names) > 1 {
 		return warn(fmt.Sprintf("lock up runs %q: lea's gate asks for one", names))
@@ -164,9 +165,8 @@ func (l *Launcher) lockUpGate(proj string) *gateHub {
 		if g.devices, err = devicesFile(s.Devices); err != nil {
 			return warn("devices: " + err.Error())
 		}
-		// Risk classes that must be device-signed, and lea cannot say so to the gate: no hub mode,
-		// or the gate would take the hub's approvals of them from any facade (lock up refuses that
-		// too). The standalone gate asks its own console.
+		// Risk classes that must be device-signed, and lea cannot say so to the gate: no gate, or
+		// it would take the hub's approvals of them from any facade (lox up refuses that too).
 		switch {
 		case g.devices == nil && len(lk.RequireDevice) > 0:
 			return warn("require_device " + strings.Join(lk.RequireDevice, ",") + " but no device is paired")
@@ -175,7 +175,7 @@ func (l *Launcher) lockUpGate(proj string) *gateHub {
 			l.logf("warning: %s: lockhttp: the lock pins the paired devices, but none is paired: decisions from a phone are refused", p)
 		case !lockHTTPAtLeast(ver, "0.4.0") && (len(lk.RequireDevice) > 0 || lk.SealClear):
 			// Unsealed clear screens to a hub that routes them to the phones, or approvals taken
-			// from any facade: the standalone gate instead.
+			// from any facade: no gate.
 			return warn("require_device or seal_clear needs lockhttp v0.4.0 or later, and the pinned one is " + orUnknown(ver))
 		case !lockHTTPAtLeast(ver, "0.4.0"):
 			g.devices = nil
@@ -184,7 +184,7 @@ func (l *Launcher) lockUpGate(proj string) *gateHub {
 			g.requireDevice, g.sealClear = lk.RequireDevice, lk.SealClear
 		}
 	}
-	return g
+	return g, nil
 }
 
 // facadesFile is up.json's facade keys as the gate reads them (ticket.ParseFacades), in canonical
