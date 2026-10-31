@@ -23,7 +23,5 @@ core [attach-container] [lea-$ID]
 core [deck-open] [--container] [lea-$ID] [--workdir] [$W/projects] [--fresh]
 tmux [-L] [lea] [-f] [$W/data/lea/host/tmux.conf] [attach-session] [-t] [=lea-$ID]
 -- lea
-lea: warning: locksql: lea's agents get no locksql socket: no locksql lock of lox up for this projects directory (add one with lox add locksql <name>, then run `lox up`)
 lea: warning: the container's bus socket could not be bound; agents run without lea messaging
-lea: locksql console: it runs under lox up only; its queries wait for your approval in lea's deck (hub view) or lox approve, its own questions in lox attach <instance>
 -- stdout

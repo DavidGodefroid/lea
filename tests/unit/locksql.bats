@@ -3,6 +3,7 @@ setup() {
   setup_fakes; load_lea
   P="$BATS_TEST_TMPDIR/projects"; mkdir -p "$P"
   export LEA_PROJECTS_DIR="$P"
+  locksql_on
 }
 
 @test "lea locksql starts no console: it says the console runs under lox up only" {

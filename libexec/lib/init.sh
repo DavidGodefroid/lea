@@ -1,6 +1,6 @@
 # shellcheck shell=sh
 # lea init: launcher link, projects dir, lea's git SSH key (only with LEA_GIT_SSH), Claude
-# configuration copy, images, the locksql console image (unless LEA_LOCKSQL=0), lockmq and lockfile
+# configuration copy, images, the locksql console image (with LEA_LOCKSQL=1), lockmq and lockfile
 # wiring (asked; their consoles run from their own launchers, libexec/lib/lockhost.sh), AppArmor profile.
 
 lea_init_apparmor() {

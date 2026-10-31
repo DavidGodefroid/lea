@@ -23,6 +23,4 @@ core [attach-container] [lea-$ID]
 core [deck-open] [--container] [lea-$ID] [--workdir] [$W/projects] [--no-default] [--fresh]
 core [new] [--container] [lea-$ID] [--workdir] [$W/projects]
 -- lea
-lea: warning: locksql: lea's agents get no locksql socket: no locksql lock of lox up for this projects directory (add one with lox add locksql <name>, then run `lox up`)
-lea: locksql console: it runs under lox up only; its queries wait for your approval in lea's deck (hub view) or lox approve, its own questions in lox attach <instance>
 -- stdout

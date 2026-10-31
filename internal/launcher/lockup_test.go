@@ -4,6 +4,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -38,10 +39,20 @@ func labelsWith(w *world, name, typ, role, project, inst, ws string) {
 		`","dev.lockfamily.type":"` + typ + `","dev.lockfamily.workspace":"` + ws + `"}`
 }
 
-// locksqlUp is lox up running a locksql lock, crm, for w's projects directory (locksql is on by
-// default: its socket comes from lox up only).
+// locksqlOn turns locksql on (LEA_LOCKSQL=1, off by default) in w's user configuration, keeping
+// what it already sets.
+func locksqlOn(t *testing.T, w *world) {
+	t.Helper()
+	p := filepath.Join(w.env["XDG_CONFIG_HOME"], "lea", "lea.conf")
+	b, _ := os.ReadFile(p)
+	writeUserConf(t, w, string(b)+"LEA_LOCKSQL=1\n")
+}
+
+// locksqlUp is lox up running a locksql lock, crm, for w's projects directory, with locksql on
+// (its socket comes from lox up only).
 func locksqlUp(t *testing.T, w *world) {
 	t.Helper()
+	locksqlOn(t, w)
 	writeUp(t, w, lockUp("crm", "locksql"))
 	labels(w, "crm", "locksql", "socket")
 }
@@ -54,7 +65,7 @@ func lockUp(name, typ string) string {
 // Locks of lock up: their socket volumes replace the fixed ones, for the tools that are on.
 func TestLockUpSocketVolumes(t *testing.T) {
 	w := newWorld(t, repoRoot(t))
-	writeUserConf(t, w, "LEA_LOCKMQ=1\nLEA_LOCKFILE=1\n")
+	writeUserConf(t, w, "LEA_LOCKSQL=1\nLEA_LOCKMQ=1\nLEA_LOCKFILE=1\n")
 	writeUp(t, w, lockUp("crm", "locksql")+","+lockUp("events", "lockmq")+","+lockUp("docs", "lockfile"))
 	labels(w, "crm", "locksql", "socket")
 	labels(w, "events", "lockmq", "socket")
@@ -93,6 +104,7 @@ func TestLockUpRefusesOtherVolumes(t *testing.T) {
 	} {
 		t.Run(name, func(t *testing.T) {
 			w := newWorld(t, repoRoot(t))
+			locksqlOn(t, w)
 			writeUp(t, w, c.up)
 			switch c.role {
 			case "":
@@ -127,6 +139,7 @@ func TestLockUpRefusesOtherVolumes(t *testing.T) {
 // Two locks of one tool: the agents reach neither (lea mounts one socket per tool).
 func TestLockUpTwoOfATool(t *testing.T) {
 	w := newWorld(t, repoRoot(t))
+	locksqlOn(t, w)
 	writeUp(t, w, lockUp("a", "locksql")+","+lockUp("b", "locksql"))
 	labels(w, "a", "locksql", "socket")
 	labels(w, "b", "locksql", "socket")

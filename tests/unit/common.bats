@@ -102,7 +102,7 @@ setup() { setup_fakes; load_lea; }
   [ "$LEA_PREFIX" = "lea" ]
   [ -z "$LEA_GIT_SSH" ]
   [ "$LEA_GIT_KNOWN_HOSTS" = "$HOME/.config/lea/git_known_hosts" ]
-  [ "$LEA_LOCKSQL" = 1 ]
+  [ "$LEA_LOCKSQL" = 0 ]
   printf 'LEA_IMAGE=lea:test\n' >"$BATS_TEST_TMPDIR/t.conf"
   LEA_CONFIG="$BATS_TEST_TMPDIR/t.conf" lea_load_config
   [ "$LEA_IMAGE" = "lea:test" ]

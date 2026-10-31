@@ -152,6 +152,7 @@ func contains(xs []string, s string) bool {
 // a fresh container, ready, the bus socket bound, the locksql hint.
 func TestContainerStartSequence(t *testing.T) {
 	w := newWorld(t, repoRoot(t))
+	locksqlOn(t, w)
 	l := w.launcher()
 	if err := l.containerStart(w.proj, "172.18.0.5"); err != nil {
 		t.Fatalf("%v\n%s", err, w.errb.String())

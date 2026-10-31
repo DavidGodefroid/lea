@@ -271,7 +271,8 @@ directory (`lox add locksql NAME`, with `allowed_uids: [<your uid>]` in
 `.lockfamily/lockfamily.yaml`: lea's agents run as your uid, which has no account in locksql's
 image) and run `lox up`. lea's agents then reach that lock's socket volume (read-only, once docker
 confirms it is lox up's, see below); without such a lock they get no locksql socket and lea says to
-run `lox up`. `lea locksql` and `lea doctor` say which applies.
+run `lox up`. `lea locksql` and `lea doctor` say which applies. locksql is off by default, as
+lockmq and lockfile: `lea init --locksql` (or `LEA_LOCKSQL=1`) turns it on.
 
 `lea init` builds lea's locksql image (from the source of the release lea pins, cloned at its tag
 and built only once cosign proves that locksql's release workflow signed that release on that very
@@ -314,7 +315,7 @@ minute per container (counted from your answer too), and one pending at a time. 
 outcome) in lea's database.
 
 The two projects are independent: lea runs without locksql, and locksql works with any agent.
-`lea init --no-locksql` (or `LEA_LOCKSQL=0`) leaves no trace of locksql in lea.
+Off (the default, `lea init --no-locksql` or `LEA_LOCKSQL=0`), lea leaves no trace of locksql.
 
 ## Queues and files, with lockmq and lockfile
 
@@ -764,8 +765,7 @@ read-only. The screen runs in the deck on the host: agents cannot open or drive 
 | `LEA_PROJECTS_DIR` | asked by `lea init` | the directory lea's agents see |
 | `LEA_GIT_SSH` | empty | git SSH endpoints (`host:port …`) |
 | `LEA_GIT_KNOWN_HOSTS` | `~/.config/lea/git_known_hosts` | their pinned host keys |
-| `LEA_LOCKSQL` | `1` | wire lea for the locksql console of `lox up` (`0`: no locksql) |
-| `LEA_LOCKSQL_VAULT_ADDR` | empty | no longer used: `lox up` does not pass Vault to the console yet (lockhub#45) |
+| `LEA_LOCKSQL` | `0` | `1`: wire lea for the locksql console of `lox up` (`lea init --locksql`) |
 | `LEA_LOCKMQ`, `LEA_LOCKFILE` | `0`, asked by `lea init` | let the agents reach a lockmq / lockfile console on this host |
 | `LEA_LOCKMQ_REF`, `LEA_LOCKFILE_REF` | the pinned releases | the release `lea init` installs on the host (lockfile v0.1.1 or later); `lea update` records a newer one you accept |
 | `LEA_LOCKHTTP` | `0` | send the agents' web requests through a LockHTTP gate (refuses `LEA_GIT_SSH` and `LEA_OTEL_UPSTREAM`) |
@@ -795,7 +795,7 @@ read-only. The screen runs in the deck on the host: agents cannot open or drive 
 configuration as one JSON file, fit to commit in a team repository: the keys your
 `~/.config/lea/lea.conf` sets among `LEA_GIT_SSH`, `LEA_EGRESS_ALLOW`, `LEA_OTEL_UPSTREAM`,
 `LEA_IMAGE`, `LEA_PROXY_IMAGE`, `LEA_LOCKSQL`, `LEA_LOCKSQL_IMAGE`, `LEA_LOCKSQL_REF`,
-`LEA_LOCKSQL_VAULT_ADDR`, `LEA_RELEASES_URL`, `LEA_NESTED_NETWORKS`, `LEA_K8S_NAMESPACE`,
+`LEA_RELEASES_URL`, `LEA_NESTED_NETWORKS`, `LEA_K8S_NAMESPACE`,
 `LEA_APPROVALS` and `LEA_APPROVAL_TIMEOUT` (`LEA_SOUND` too with `--include-personal`), and the
 content of your pinned `git_known_hosts` and of your `internal-hosts` file. Never exported:
 `LEA_PROJECTS_DIR` and every path, any other key (skipped with a warning), lea's SSH key, forge
@@ -814,7 +814,7 @@ It prints what changes (`KEY: old -> new`, `+` and `-` lines of the files), then
 
 - a change that widens what the agents reach (`[egress]`: `LEA_GIT_SSH`, `LEA_EGRESS_ALLOW`,
   `LEA_OTEL_UPSTREAM`, `internal-hosts` lines), pins SSH host keys (`[host key]`) or chooses the
-  code lea runs (`[code]`: images, `LEA_LOCKSQL_REF`, `LEA_LOCKSQL_VAULT_ADDR`,
+  code lea runs (`[code]`: images, `LEA_LOCKSQL_REF`,
   `LEA_RELEASES_URL`) or wires a lock tool (`[lock tool]`: `LEA_LOCKSQL` turned on) needs its own
   flag, `--allow-egress`, `--allow-host-keys`, `--allow-code` or `--allow-lock`, on top of `--yes`;
   `--dry-run` shows which and writes nothing (`LEA_LOCKMQ` and `LEA_LOCKFILE` are not shared);

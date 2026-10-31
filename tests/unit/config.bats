@@ -191,14 +191,14 @@ setup() { setup_fakes; load_lea; U="$HOME/.config/lea/lea.conf"; }
   [ "$LEA_GIT_KNOWN_HOSTS" = "$BATS_TEST_TMPDIR/xdg/lea/git_known_hosts" ]
 }
 
-@test "LEA_LOCKSQL is 1 by default, 0 or 1 only" {
-  lea_load_config
-  [ "$LEA_LOCKSQL" = 1 ]
-  [ "$LEA_LOCKSQL_IMAGE" = locksql:0.11.5 ]
-  [ "$LEA_LOCKSQL_REF" = v0.11.5 ]
-  mkdir -p "${U%/*}"; printf "LEA_LOCKSQL='0'\n" >"$U"
+@test "LEA_LOCKSQL is 0 by default (as lockmq and lockfile), 0 or 1 only" {
   lea_load_config
   [ "$LEA_LOCKSQL" = 0 ]
+  [ "$LEA_LOCKSQL_IMAGE" = locksql:0.11.5 ]
+  [ "$LEA_LOCKSQL_REF" = v0.11.5 ]
+  mkdir -p "${U%/*}"; printf "LEA_LOCKSQL='1'\n" >"$U"
+  lea_load_config
+  [ "$LEA_LOCKSQL" = 1 ]
   printf 'LEA_LOCKSQL=yes\n' >"$U"
   run lea_load_config
   [ "$status" -eq 1 ]

@@ -13,6 +13,7 @@ setup() {
   U="$HOME/.config/lea/lea.conf"
   echo '{"a":1}' >"$HOME/.claude.json"
   S=$(lea_state_dir); H=$(lea_host_dir)
+  LEA_LOCKSQL=1 # on, as the user config of lea init --locksql says (off by default)
   locksql_release
 }
 # interactive: lea init as on a terminal (the guided locksql steps need one).
@@ -425,7 +426,8 @@ release_install_sh() {
 # fake git that logs) or a release install (no .git).
 update_root() {
   R="$BATS_TEST_TMPDIR/root"; mkdir -p "$R/config" "$BATS_TEST_TMPDIR/gbin"
-  cp "$LEA_ROOT/config/lea.conf" "$R/config/"
+  # locksql on (off by default), as lea init --locksql records it.
+  sed 's/^LEA_LOCKSQL=0$/LEA_LOCKSQL=1/' "$LEA_ROOT/config/lea.conf" >"$R/config/lea.conf"
   if [ "${1:-}" = checkout ]; then
     mkdir -p "$R/.git"
     fake_git
@@ -466,7 +468,8 @@ mkdir -p "$NEW"
 cp -R "$src/bin" "$src/libexec" "$src/config" "$NEW/"
 sed -i -e 's|^LEA_IMAGE=.*|LEA_IMAGE=ghcr.io/davidgodefroid/lea:${1#v}|' \\
   -e 's|^LEA_PROXY_IMAGE=.*|LEA_PROXY_IMAGE=ghcr.io/davidgodefroid/lea-proxy:${1#v}|' \\
-  -e 's|^LEA_LOCKSQL_IMAGE=.*|LEA_LOCKSQL_IMAGE=locksql:9.0.0|' -e 's|^LEA_LOCKSQL_REF=.*|LEA_LOCKSQL_REF=v9.0.0|' "$NEW/config/lea.conf"
+  -e 's|^LEA_LOCKSQL_IMAGE=.*|LEA_LOCKSQL_IMAGE=locksql:9.0.0|' -e 's|^LEA_LOCKSQL_REF=.*|LEA_LOCKSQL_REF=v9.0.0|' \\
+  -e 's|^LEA_LOCKSQL=0\$|LEA_LOCKSQL=1|' "$NEW/config/lea.conf"
 mkdir -p "$LEA_BIN_DIR"
 ln -sfn "$NEW/bin/lea" "$LEA_BIN_DIR/lea"
 EOT

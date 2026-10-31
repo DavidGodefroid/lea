@@ -30,7 +30,7 @@ var protectedKeys = map[string]bool{
 // ExportedKeys are the keys lea_load_config exports to every child: the daemon, docker, the
 // core subcommands and libexec/lea-sh.
 var ExportedKeys = []string{
-	"LEA_PREFIX", "LEA_IMAGE", "LEA_PROXY_IMAGE", "LEA_CTL", "LEA_CTL_IMAGE", "LEA_GIT_SSH", "LEA_GIT_KNOWN_HOSTS", "LEA_LOCKSQL", "LEA_LOCKSQL_IMAGE", "LEA_LOCKSQL_REF", "LEA_LOCKSQL_VAULT_ADDR",
+	"LEA_PREFIX", "LEA_IMAGE", "LEA_PROXY_IMAGE", "LEA_CTL", "LEA_CTL_IMAGE", "LEA_GIT_SSH", "LEA_GIT_KNOWN_HOSTS", "LEA_LOCKSQL", "LEA_LOCKSQL_IMAGE", "LEA_LOCKSQL_REF",
 	"LEA_LOCKMQ", "LEA_LOCKFILE", "LEA_LOCK_TOOL_TIMEOUT", "LEA_LOCKMQ_REF", "LEA_LOCKFILE_REF", "LEA_LOCKHTTP", "LEA_LOCKHTTP_MITM", "LEA_HUB", "LEA_HUB_KEEPALIVE",
 	"LEA_OTEL_UPSTREAM", "LEA_NESTED_NETWORKS", "LEA_K8S_NAMESPACE", "LEA_INTERNAL_HOSTS", "LEA_EGRESS_ALLOW", "LEA_PROJECTS_DIR",
 	"LEA_APPROVALS", "LEA_APPROVAL_TIMEOUT", "LEA_SOUND", "LEA_SOUND_ATTENTION", "LEA_SOUND_DONE",
@@ -225,7 +225,7 @@ func (c *Config) resolve(root string) error {
 	if err := CheckOtelUpstream(c.Get("LEA_OTEL_UPSTREAM")); err != nil {
 		return err
 	}
-	ls := nonEmpty(c.Get("LEA_LOCKSQL"), "1")
+	ls := nonEmpty(c.Get("LEA_LOCKSQL"), "0")
 	if ls != "0" && ls != "1" {
 		return fmt.Errorf("LEA_LOCKSQL must be 1 (wire lea for a locksql console) or 0, not '%s'", ls)
 	}
@@ -610,8 +610,9 @@ func (c *Config) Ctl() bool { return c.Get("LEA_CTL") == "1" }
 // LEA_LOCKHTTP=1; off by default).
 func (c *Config) LockHTTPMITM() bool { return c.LockHTTP() && c.Get("LEA_LOCKHTTP_MITM") == "1" }
 
-// Locksql reports whether lea is wired for a locksql console (LEA_LOCKSQL=1, the default).
-func (c *Config) Locksql() bool { return c.Get("LEA_LOCKSQL") != "0" }
+// Locksql reports whether lea is wired for lox up's locksql console (LEA_LOCKSQL=1; off by
+// default, as lockmq and lockfile).
+func (c *Config) Locksql() bool { return c.Get("LEA_LOCKSQL") == "1" }
 
 // LockHost reports whether lea's agents may reach the host console of the lock tool whose switch
 // is env (LEA_LOCKMQ, LEA_LOCKFILE; off by default).

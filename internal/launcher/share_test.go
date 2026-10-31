@@ -202,7 +202,7 @@ func TestConfigImportRefuses(t *testing.T) {
 		"internal shell":   {`{"lea_config_format":1,"keys":{},"files":{"internal-hosts":"$(id) 443\n"}}`, "internal-hosts line 1"},
 		"not json":         {`LEA_GIT_SSH=x`, "JSON"},
 		"egress wildcard":  {`{"lea_config_format":1,"keys":{"LEA_EGRESS_ALLOW":"*.github.com"}}`, "LEA_EGRESS_ALLOW"},
-		"vault plain http": {`{"lea_config_format":1,"keys":{"LEA_LOCKSQL_VAULT_ADDR":"http://vault"}}`, "https"},
+		"releases plain http": {`{"lea_config_format":1,"keys":{"LEA_RELEASES_URL":"http://releases"}}`, "https"},
 	}
 	for name, c := range cases {
 		t.Run(name, func(t *testing.T) {

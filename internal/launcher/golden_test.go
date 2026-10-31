@@ -558,7 +558,7 @@ func TestCommandsMatchTheGoldenFiles(t *testing.T) {
 				os.WriteFile(w.home+"/.claude/"+n, []byte("x"), 0o600)
 			}
 		}, want: []string{"[type=bind,src=$W/home/.claude/B.md,dst=$W/home/.claude/B.md,readonly] [--mount] [type=bind,src=$W/home/.claude/Z.md"}},
-		{name: "update", args: []string{"update"}, setup: fakeRelease,
+		{name: "update", args: []string{"update"}, setup: func(w *world) { fakeRelease(w); locksqlOn(w.t, w) },
 			env: map[string]string{"FAKE_CURL_DIR": "$W/release", "FAKE_CURL_EFFECTIVE": "https://github.com/DavidGodefroid/lea/releases/tag/v9.9.9"},
 			want: []string{"curl [-fsSL] [-o] [$W/data/lea/host/update/install.sh] [https://github.com/DavidGodefroid/lea/releases/download/v9.9.9/install.sh]",
 				"cosign [verify-blob] [--bundle] [$W/data/lea/host/update/checksums.txt.sigstore.json]",

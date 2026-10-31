@@ -71,7 +71,6 @@ var shareKeys = map[string]shareKey{
 	"LEA_PROXY_IMAGE":        {classCode, false, noteInit, checkImage},
 	"LEA_LOCKSQL_IMAGE":      {classCode, false, noteInit, checkImage},
 	"LEA_LOCKSQL_REF":        {classCode, false, noteInit, checkLocksqlRef},
-	"LEA_LOCKSQL_VAULT_ADDR": {classCode, false, noteInit, checkHTTPS},
 	"LEA_RELEASES_URL":       {classCode, false, "applies at the next lea update", checkReleases},
 	"LEA_LOCKSQL":            {"", false, noteInit, checkBit("LEA_LOCKSQL must be 1 (wire lea for a locksql console) or 0")},
 	"LEA_NESTED_NETWORKS":    {"", false, noteStop, checkNetworks},

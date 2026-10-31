@@ -5,6 +5,7 @@ setup() {
   : >"$S/claude.json"
   P="$BATS_TEST_TMPDIR/projects"; mkdir -p "$P"; export LEA_PROJECTS_DIR="$P"
   lea_user_config_set LEA_PROJECTS_DIR "$P"
+  locksql_on
 }
 
 @test "healthy workstation: no FAIL, warnings for optional parts" {

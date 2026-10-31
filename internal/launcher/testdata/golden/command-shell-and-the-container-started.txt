@@ -26,6 +26,4 @@ docker [network] [disconnect] [-f] [lea-internal-$ID] [lea-proxy]
 docker [network] [rm] [lea-internal-$ID]
 tmux [-L] [lea] [-f] [$W/data/lea/host/tmux.conf] [list-sessions]
 -- lea
-lea: warning: locksql: lea's agents get no locksql socket: no locksql lock of lox up for this projects directory (add one with lox add locksql <name>, then run `lox up`)
-lea: locksql console: it runs under lox up only; its queries wait for your approval in lea's deck (hub view) or lox approve, its own questions in lox attach <instance>
 -- stdout

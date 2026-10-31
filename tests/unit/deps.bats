@@ -8,6 +8,7 @@ setup() {
   OWNER=$(id -u)
   lea__lockhost_root() { printf '%s' "$R"; }
   lea__lockhost_owner() { printf '%s' "$OWNER"; }
+  LEA_LOCKSQL=1 # on, as the user config of lea init --locksql says (off by default)
   SHA=0123456789abcdef0123456789abcdef01234567
   D="$BATS_TEST_TMPDIR/rel"
   export FAKE_GIT_SHA=$SHA FAKE_CURL_DIR="$D"
