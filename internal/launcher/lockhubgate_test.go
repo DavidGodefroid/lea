@@ -472,7 +472,7 @@ func TestLockHTTPGateLeavesNoOldGateOnTheHubNetwork(t *testing.T) {
 	image := "ghcr.io/davidgodefroid/lockhttp@" + testDigest
 	for name, c := range map[string]struct{ nets, label string }{
 		"from an earlier lea's gate": {"lea-egress ", ""},
-		"from another hub": {"lea-egress lockfamily-0badc0de_lockhub ", " hub:0123456789ab"},
+		"from another hub":           {"lea-egress lockfamily-0badc0de_lockhub ", " hub:0123456789ab"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			w, _ := lockHTTPWorld(t)
