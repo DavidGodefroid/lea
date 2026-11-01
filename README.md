@@ -107,7 +107,7 @@ lea`. When the projects directory has no `.lockfamily/up.json` yet, lea starts t
 hub for it with `lox init`, on your terminal (`lox` on your `PATH`, 0.5.0 or later:
 `brew install davidgodefroid/tap/lox`; `LEA_HUB=0` runs lea without the hub).
 
-[`lox add`](https://github.com/DavidGodefroid/lockhub/blob/main/docs/lox-init.md) is how a Lock
+[`lox add`](https://github.com/DavidGodefroid/lockhub/blob/main/docs/lox-add.md) is how a Lock
 gets set up for lea's agents, run in lea's projects directory (lea reads `.lockfamily/up.json`
 only there; a plain `claude` on the host uses the nearest one from the project up). A tool
 (locksql, lockmq, lockfile) is on for lea once `lox up` runs a lock of its type there: you
@@ -122,8 +122,9 @@ lea
 ```
 
 The installer checks the requirements, downloads the release for your platform and verifies its
-checksum and the release's signature (see [Verify a release](#verify-a-release)), links `~/.local/bin/lea`, then runs `lea init`, which asks for your projects directory
-and pulls the images. In the first agent, run `/login` once (Claude Code's own login, kept per
+checksum and the release's signature (see [Verify a release](#verify-a-release)), links
+`~/.local/bin/lea`, then runs `lea init`, which asks for your projects directory and pulls the
+images. In the first agent, run `/login` once (Claude Code's own login, kept per
 projects directory). Press `n` for another agent.
 
 ### Requirements
@@ -302,9 +303,9 @@ between your agents and your databases. The agents propose SQL; you approve each
 the console alone holds the credentials. The console runs hub-attached only, under the Lock
 Family's `lox up` ([lockhub's docs/lox-up.md](https://github.com/DavidGodefroid/lockhub/blob/main/docs/lox-up.md)),
 in a compose service of its own: lea starts no locksql console. Add a locksql lock to your projects
-directory (`lox add locksql NAME`, with `allowed_uids: [<your uid>]` in
-`.lockfamily/lockfamily.yaml`: lea's agents run as your uid, which has no account in locksql's
-image) and run `lox up`. lea's agents then reach that lock's socket volume (read-only, once docker
+directory (`lox add locksql NAME`: with lea on your `PATH`, `lox add` puts your uid in the lock's
+`allowed_uids` in `.lockfamily/lockfamily.yaml`, because lea's agents run as your uid, which has
+no account in locksql's image) and run `lox up`. lea's agents then reach that lock's socket volume (read-only, once docker
 confirms it is lox up's, see below); without such a lock they get no locksql socket and lea says
 "no such lock yet: `lox add locksql`". locksql is on for lea as soon as `lox up` runs a locksql
 lock for the projects directory: `lox add locksql`, then `lox up`, is all there is to it
@@ -317,7 +318,8 @@ container the mount. `lea locksql` and `lea doctor` say which applies. With seve
 locks, each reaches the agents on `/run/locksql/<instance>`; a Codex agent gets one MCP server
 per lock (`locksql-<instance>`), and lea's MCP server tells a Claude agent, which calls the
 client itself, "several locksql locks: orders stock; pass --instance NAME" (the lock names are
-yours).
+yours). The lock clients themselves also refuse a call that names no lock when several are
+mounted: "several locksql locks: orders stock; pass --instance NAME (or set LOCKSQL_INSTANCE)".
 
 `lea init` builds lea's locksql image (from the source of the release lea pins, cloned at its tag
 and built only once cosign proves that locksql's release workflow signed that release on that very
@@ -376,9 +378,10 @@ your projects directory (`lox add lockmq` or `lox add lockfile`, then `lox up`; 
 Their console runs hub-attached only, in a container of its own that the Lock Family's `lox up`
 starts for your projects directory (`lox add lockmq <name>` or `lox add lockfile <name>`, then
 `lox up`; lockhub's `docs/lox-up.md`): no host account, no `sudo <tool> install`. lea's agents run
-as your uid, which has no account in the console's image: the console serves it only when you name
-it in the lock's `allowed_uids` (`allowed_uids: [<your uid>]` in `.lockfamily/lockfamily.yaml`;
-`lox up` reviews it with you); without it the agents get no console. You set it; no agent can.
+as your uid, which has no account in the console's image: the console serves it
+only when your uid is in the lock's `allowed_uids` (`.lockfamily/lockfamily.yaml`). `lox add` puts
+it there when lea is on your `PATH`; `lox up` reviews it with you; without it the agents get no
+console. Edit it by hand only for a lock added without lea on your `PATH`. No agent can.
 lea installs nothing for them; their launchers update themselves (`lockmq update`,
 `lockfile update`). `lea init` points to the launcher when it is missing, then runs lockmq's
 profile wizard (`lockmq profile add`, never a password); for lockfile it names `lockfile profile
