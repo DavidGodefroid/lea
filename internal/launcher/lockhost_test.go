@@ -62,7 +62,7 @@ func TestLockHostWired(t *testing.T) {
 
 // The consoles run hub-attached only, under lox up: a tool that is on, and has no lock of lox up
 // for the projects directory, gets no socket (never the fixed <tool>-run volume of a console of
-// its own launcher), and lea says to run `lox up`.
+// its own launcher), and lea says to add one (`lox add <tool>`).
 func TestLockHostNeedsLoxUp(t *testing.T) {
 	w := newWorld(t, repoRoot(t))
 	writeUserConf(t, w, "LEA_LOCKSQL=1\nLEA_LOCKMQ=1\nLEA_LOCKFILE=1\n")
@@ -78,7 +78,7 @@ func TestLockHostNeedsLoxUp(t *testing.T) {
 			t.Errorf("fixed socket volume: %s", a)
 		}
 	}
-	if e := w.errb.String(); !strings.Contains(e, "no lockfile lock of lox up") || !strings.Contains(e, "run `lox up`") || strings.Contains(e, "lockmq") {
+	if e := w.errb.String(); !strings.Contains(e, "no such lock yet: `lox add lockfile`") || !strings.Contains(e, "(lea's agents get its socket at their next start)") || strings.Contains(e, "lockmq") {
 		t.Errorf("warnings: %s", e)
 	}
 	// No up.json at all: neither.
@@ -88,7 +88,7 @@ func TestLockHostNeedsLoxUp(t *testing.T) {
 	if contains(args, "LEA_LOCKMQ=1") || contains(args, "LEA_LOCKFILE=1") || w.hasCall("stat") {
 		t.Fatalf("args %v", args)
 	}
-	if e := w.errb.String(); strings.Count(e, "run `lox up`") != 3 {
+	if e := w.errb.String(); strings.Count(e, "no such lock yet: `lox add ") != 3 {
 		t.Errorf("warnings: %s", e)
 	}
 }

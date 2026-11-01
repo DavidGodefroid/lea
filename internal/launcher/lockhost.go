@@ -37,7 +37,7 @@ func lockfileSafe(v string) bool {
 // the lock tools that are on: the socket volume of the tool's lock that `lox up` runs for the
 // projects directory (ups, lockup.go) on /run/<name>, read-only, and the tool's clients group.
 // The consoles run hub-attached only, under lox up: without such a lock the agents get no socket
-// of the tool, and lea says to run `lox up`.
+// of the tool, and lea says to add one (`lox add <tool>`).
 func (l *Launcher) lockHostArgs(ups map[string]string) []string {
 	var a []string
 	for _, t := range lockHostTools {
@@ -47,7 +47,7 @@ func (l *Launcher) lockHostArgs(ups map[string]string) []string {
 		v, ok := ups[t.name]
 		switch {
 		case !ok:
-			l.logf("warning: %s: lea's agents get no %s socket: no %s lock of lox up for this projects directory (add one with lox add %s <name>, then run `lox up`)", t.name, t.name, t.name, t.name)
+			l.logf("warning: %s: no such lock yet: `lox add %s` (lea's agents get its socket at their next start)", t.name, t.name)
 		case v == "":
 			l.logf("warning: %s: lea's agents get no %s socket (see above)", t.name, t.name)
 		default:

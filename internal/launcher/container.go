@@ -538,7 +538,7 @@ func (l *Launcher) runArgs(proj, pip string) ([]string, error) {
 		// console could serve. Its profile directory read-only (locksqlDir).
 		switch v, ok := ups["locksql"]; {
 		case !ok:
-			l.logf("warning: locksql: lea's agents get no locksql socket: no locksql lock of lox up for this projects directory (add one with lox add locksql <name>, then run `lox up`)")
+			l.logf("warning: locksql: no such lock yet: `lox add locksql` (lea's agents get its socket at their next start)")
 		case v == "":
 			l.logf("warning: locksql: lea's agents get no locksql socket (see above)")
 		default:

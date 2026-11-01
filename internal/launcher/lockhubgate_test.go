@@ -288,18 +288,20 @@ func TestLockHTTPGateNeedsLoxUp(t *testing.T) {
 	for name, c := range map[string]struct {
 		mod  func(t *testing.T, w *world)
 		want string
+		// noLock: the refusal names no lockhttp lock of lox up; it says to add one, not to run lox up.
+		noLock bool
 	}{
-		"no up.json": {nil, "no trusted"},
+		"no up.json": {nil, "no trusted", false},
 		"no lockhttp lock": {func(t *testing.T, w *world) {
 			hubUp(t, w, "", "", "")
 			rewriteUp(t, w, `"type":"lockhttp"`, `"type":"lockmq"`)
-		}, "names no lockhttp lock"},
+		}, "LEA_LOCKHTTP=1: no such lock yet: `lox add lockhttp` (the LockHTTP gate asks its hub only)", true},
 		"up.json others may write": {func(t *testing.T, w *world) {
 			hubUp(t, w, "", "", "")
 			if err := os.Chmod(w.proj+"/.lockfamily/up.json", 0o666); err != nil {
 				t.Fatal(err)
 			}
-		}, "no trusted"},
+		}, "no trusted", false},
 	} {
 		t.Run(name, func(t *testing.T) {
 			w, _ := lockHTTPWorldNoUp(t)
@@ -307,7 +309,7 @@ func TestLockHTTPGateNeedsLoxUp(t *testing.T) {
 				c.mod(t, w)
 			}
 			err := w.launcher().ensureProxy(w.proj)
-			if err == nil || !strings.Contains(err.Error(), c.want) || !strings.Contains(err.Error(), "run `lox up`") {
+			if err == nil || !strings.Contains(err.Error(), c.want) || !(c.noLock || strings.Contains(err.Error(), "run `lox up`")) {
 				t.Fatalf("error %v", err)
 			}
 			for _, c := range w.calls() {
