@@ -6,6 +6,8 @@
   installs its AppArmor profile, records the projects directory and starts the Lock Family hub
   with `lox init`. The journey is `brew install davidgodefroid/tap/lockfamily`, `lea`, then
   `lox add` for each Lock. `lox` must be on the `PATH`, 0.5.0 or later (`config/host-minimums`).
+- An image lea cannot pull stops it with the command to retry; lea no longer builds an unverified
+  `lea:dev` in its place and records it.
 - The projects directory of a first run is `LEA_PROJECTS_DIR` when it is preset, else the
   working directory.
 - A lock tool (locksql, lockmq, lockfile) is on as soon as `lox up` runs a lock of its type, unless

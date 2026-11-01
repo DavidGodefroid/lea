@@ -398,23 +398,22 @@ release_install_sh() {
   [[ "$output" != *"docker [build] [-t] [lea"* ]]
 }
 
-@test "images that cannot be pulled are built locally and recorded in the user config" {
+@test "an image that cannot be pulled stops init with the command to retry, never a local build" {
   export FAKE_DOCKER_RC_IMAGE_INSPECT=1
   LEA_IMAGE=reg/a:1 LEA_PROXY_IMAGE=reg/b:1
   export FAKE_DOCKER_RC_PULL_REG_A_1=1 FAKE_DOCKER_RC_PULL_REG_B_1=1
   run lea_init </dev/null
-  [ "$status" -eq 0 ]
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"cannot pull reg/a:1: check your network or registry (docker pull reg/a:1), then run lea again"* ]]
   run calls
-  [[ "$output" == *"docker [build] [-t] [lea:dev] [--build-arg] [LEA_VERSION=dev] [-f] [$LEA_ROOT/image/Containerfile] [$LEA_ROOT]"* ]]
-  [[ "$output" == *"docker [build] [-t] [lea-proxy:dev] [-f] [$LEA_ROOT/proxy/Containerfile] [$LEA_ROOT]"* ]]
-  grep -qx "LEA_IMAGE='lea:dev'" "$U"
-  grep -qx "LEA_PROXY_IMAGE='lea-proxy:dev'" "$U"
+  [[ "$output" != *"docker [build]"* ]]
+  if grep -q ':dev' "$U" 2>/dev/null; then false; fi
 }
 
 @test "a failing local build stops init before sudo" {
   export FAKE_DOCKER_OUT_INFO___FORMAT='["name=apparmor"]'
-  export FAKE_DOCKER_RC_IMAGE_INSPECT=1 FAKE_DOCKER_RC_PULL_REG_A_1=1 FAKE_DOCKER_RC_BUILD__T=1
-  LEA_IMAGE=reg/a:1
+  export FAKE_DOCKER_RC_IMAGE_INSPECT=1 FAKE_DOCKER_RC_BUILD__T=1
+  LEA_IMAGE=lea:dev
   run lea_init </dev/null
   [ "$status" -eq 1 ]
   [[ "$output" == *"could not build lea:dev"* ]]

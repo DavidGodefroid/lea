@@ -427,14 +427,14 @@ no_cosign_on_path() {
 @test "lea__ensure_image without any cosign pulls nothing" {
   no_cosign_on_path
   lea__cosign_pin() { return 1; }
-  FAKE_DOCKER_RC_IMAGE_INSPECT=1 run lea__ensure_image lea "$REL" LEA_IMAGE
+  FAKE_DOCKER_RC_IMAGE_INSPECT=1 run lea__ensure_image lea "$REL"
   [ "$status" -eq 1 ]
   ! calls | grep -qF 'docker [pull]'
   ! calls | grep -qF '[image] [rm]'
 }
 
 @test "lea__ensure_image verifies a pulled image and builds nothing for it" {
-  FAKE_DOCKER_RC_IMAGE_INSPECT=1 run lea__ensure_image lea "$REL" LEA_IMAGE
+  FAKE_DOCKER_RC_IMAGE_INSPECT=1 run lea__ensure_image lea "$REL"
   [ "$status" -eq 0 ]
   calls | grep -qF "docker [pull] [$REL]"
   calls | grep -qF "[ghcr.io/davidgodefroid/lea@sha256:"

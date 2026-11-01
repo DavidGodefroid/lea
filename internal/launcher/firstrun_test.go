@@ -214,3 +214,26 @@ func TestEnsureHubLoxInitFails(t *testing.T) {
 		t.Fatalf("ensureHub() = %v, want %q", err, want)
 	}
 }
+
+// A pull that fails stops lea with the command to retry: lea never builds the image instead, and
+// never records lea:dev (unverified, and skipped by every later check) in the user config.
+func TestFirstRunFailedPullStops(t *testing.T) {
+	w := newWorld(t, repoRoot(t))
+	writeUserConf(t, w, "LEA_IMAGE=reg/a:1\nLEA_PROXY_IMAGE=reg/b:1\n")
+	w.env["FAKE_DOCKER_RC_IMAGE_INSPECT"] = "1"
+	w.env["FAKE_DOCKER_RC_PULL_REG_A_1"] = "1"
+	err := w.launcher().firstRun()
+	if err == nil {
+		t.Fatal("firstRun succeeded")
+	}
+	if e := w.errb.String(); !strings.Contains(e, "cannot pull reg/a:1: check your network or registry (docker pull reg/a:1), then run lea again") {
+		t.Errorf("stderr: %s", e)
+	}
+	if w.hasCall("docker [build]") || w.hasCall("docker [pull] [reg/b:1]") {
+		t.Errorf("calls: %v", w.calls())
+	}
+	b, _ := os.ReadFile(w.env["XDG_CONFIG_HOME"] + "/lea/lea.conf")
+	if strings.Contains(string(b), ":dev") {
+		t.Errorf("user config: %s", b)
+	}
+}
