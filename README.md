@@ -84,6 +84,19 @@ flowchart LR
 ## Quick start
 
 ```sh
+brew install davidgodefroid/tap/lockfamily   # the Lock Family: lea, lox and the Locks' launchers
+cd ~/projects/shop
+lox init                                      # sets up the Locks lea's agents use (databases, queues...)
+lea
+```
+
+`brew install davidgodefroid/tap/lea` installs lea alone.
+[`lox init`](https://github.com/DavidGodefroid/lockhub/blob/main/docs/lox-init.md) is how
+Locks get set up for lea's agents: it finds the project's databases and brokers, declares one
+lock each and runs `lox up` (`lox init --manual` adds lockfile and LockHTTP). Without Homebrew,
+lea's own installer:
+
+```sh
 curl -fsSL https://leadeck.dev/install.sh | sh
 lea
 ```
