@@ -84,16 +84,18 @@ flowchart LR
 ## Quick start
 
 ```sh
+brew trust davidgodefroid/tap                # Homebrew asks you to trust a third-party tap once
 brew install davidgodefroid/tap/lockfamily   # the Lock Family: lea, lox and the Locks' launchers
-cd ~/projects/shop
+cd ~/projects                                 # lea's projects directory, not a project inside it
 lox init                                      # sets up the Locks lea's agents use (databases, queues...)
 lea
 ```
 
 `brew install davidgodefroid/tap/lea` installs lea alone.
 [`lox init`](https://github.com/DavidGodefroid/lockhub/blob/main/docs/lox-init.md) is how
-Locks get set up for lea's agents: it finds the project's databases and brokers, declares one
-lock each and runs `lox up` (`lox init --manual` adds lockfile and LockHTTP). Without Homebrew,
+Locks get set up for lea's agents: run it in lea's projects directory (lea reads
+`.lockfamily/up.json` only there; a plain `claude` on the host uses the nearest one from the
+project up). It finds the databases and brokers, declares one lock each and runs `lox up` (`lox init --manual` adds lockfile and LockHTTP). Without Homebrew,
 lea's own installer:
 
 ```sh
@@ -132,8 +134,8 @@ checksum alone. The only exception is v0.1.0 and v0.1.1, which predate signing: 
 otherwise), and the install goes on by checksum, with a warning. `LEA_REQUIRE_COSIGN=1` removes
 that exception too. `lea update` and the background update verify the signature the same way
 before they run the new release's installer. Each tag also bumps the `lea` formula of the
-[Homebrew tap](https://github.com/DavidGodefroid/homebrew-tap) (`brew install
-davidgodefroid/tap/lea`), from the same signed `checksums.txt`.
+[Homebrew tap](https://github.com/DavidGodefroid/homebrew-tap) (`brew trust
+davidgodefroid/tap`, then `brew install davidgodefroid/tap/lea`), from the same signed `checksums.txt`.
 
 ```sh
 curl -fsSL https://leadeck.dev/install.sh | LEA_REQUIRE_COSIGN=1 sh
