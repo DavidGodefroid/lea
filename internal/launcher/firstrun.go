@@ -10,16 +10,19 @@ import (
 	"strings"
 )
 
+// noHub is the escape every refusal about lox names: lea without the Lock Family hub.
+const noHub = " (LEA_HUB=0 lea runs without the hub)"
+
 // loxCheck is the lox lea needs to start the Lock Family hub: on PATH and at least the version
 // of config/host-minimums. A dev build is not compared.
 func (l *Launcher) loxCheck() error {
-	const reinstall = "reinstall lox (brew reinstall davidgodefroid/tap/lox), then run lea again"
+	const reinstall = "reinstall lox (brew reinstall davidgodefroid/tap/lox), then run lea again" + noHub
 	c := l.cmd("lox", "version")
 	var o bytes.Buffer
 	c.Stdout, c.Stderr = &o, l.Stderr
 	if err := l.exec(c); err != nil {
 		if errors.Is(err, exec.ErrNotFound) {
-			return errors.New("lox not found: lea starts the Lock Family hub with it: brew install davidgodefroid/tap/lox, then run lea again")
+			return errors.New("lox not found: lea starts the Lock Family hub with it: brew install davidgodefroid/tap/lox, then run lea again" + noHub)
 		}
 		return errors.New("lox version failed (above): " + reinstall)
 	}
@@ -32,7 +35,7 @@ func (l *Launcher) loxCheck() error {
 		return nil
 	}
 	if min := l.hostMinimum("lox"); min != "" && !versionAtLeast(v, min) {
-		return fmt.Errorf("lox %s is older than %s, which lea needs to start the hub: brew upgrade lox, then run lea again", v, min)
+		return fmt.Errorf("lox %s is older than %s, which lea needs to start the hub: brew upgrade lox, then run lea again"+noHub, v, min)
 	}
 	return nil
 }
@@ -124,7 +127,7 @@ func (l *Launcher) ensureHub(proj string) error {
 	c.Dir = proj
 	c.Stdin, c.Stdout, c.Stderr = l.Stdin, l.Stdout, l.Stderr
 	if err := l.exec(c); err != nil {
-		return die("lox init failed (above): fix it, then run lea again (LEA_HUB=0 lea runs without the hub)")
+		return die("lox init failed (above): fix it, then run lea again" + noHub)
 	}
 	return nil
 }

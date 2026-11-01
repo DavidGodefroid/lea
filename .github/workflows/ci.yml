@@ -159,9 +159,10 @@ jobs:
   # lea's first run on a machine without images (tests/integration/firstrun.sh): a fresh HOME and
   # XDG_* directories, no lea images, the lox CLI of the checksum-verified lockhub release on
   # PATH; `lea shell -- true` pulls both release images (cosign-verified), starts the hub with
-  # `lox init`, and a second run pulls nothing and starts no hub. The lox release is the plan's
-  # 0.5.0: until lockhub's v0.5.0 is tagged the first step finds no release, every other step is
-  # skipped and the job succeeds with a notice; once it exists the test runs with no soft-fail.
+  # `lox init`, and a second run pulls nothing and starts no hub. The lox release is 0.5.0, the
+  # floor of config/host-minimums: until lockhub's v0.5.0 is tagged the first step finds no
+  # release, every other step is skipped and the job succeeds with a notice; once it exists the
+  # test runs with no soft-fail.
   firstrun:
     runs-on: ubuntu-latest
     timeout-minutes: 20

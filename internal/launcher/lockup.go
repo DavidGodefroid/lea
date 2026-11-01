@@ -225,7 +225,7 @@ type UpLock struct{ Instance, Type, Volume string }
 // ReadUpLocks are the locks of the trusted up.json of the projects directory proj (readLockUp's
 // checks, its warnings through logf) that an agent container started now would mount: those of a
 // tool on reports on that lockUsable passes, by instance. It runs no docker: lockUpSockets' checks of the
-// volume's labels run at the container's start. The daemon's watch of up.json (E11) reads it.
+// volume's labels run at the container's start. The daemon's watch of up.json reads it.
 func ReadUpLocks(proj string, logf func(string, ...any), on func(tool string) bool) []UpLock {
 	s, _ := readLockUpState(logf, proj, proj+"/.lockfamily")
 	if s == nil {
@@ -248,6 +248,27 @@ func (c *Config) UpLocks(proj string, logf func(string, ...any)) []UpLock {
 		key := lockToolKeys[tool]
 		return key != "" && c.toolOn(key, true)
 	})
+}
+
+// UpLocksMounted is UpLocks without the locks whose socket volume docker does not label as lox
+// up's (lockUpVolumeWrong, which lockUpSockets warns about at a container's start): the locks an
+// agent container started now really mounts. The daemon's watch reads it, so a lock lea cannot
+// mount gets its reason (through logf) instead of a restart hint a restart never clears. environ
+// is the environment docker runs with.
+func (c *Config) UpLocksMounted(environ []string, proj string, logf func(string, ...any)) []UpLock {
+	var discard bytes.Buffer
+	l := &Launcher{Cfg: c, Environ: environ, Stderr: &discard}
+	var out []UpLock
+	for _, lk := range c.UpLocks(proj, logf) {
+		// lockUsable passed it: its volume is <project>_<instance>-run.
+		project := strings.TrimSuffix(lk.Volume, "_"+lk.Instance+"-run")
+		if why := l.lockUpVolumeWrong(lk.Volume, project, proj, lk.Instance, lk.Type); why != "" {
+			logf("lock %s (%s): %s: lea's agents cannot reach it", lk.Instance, lk.Type, why)
+			continue
+		}
+		out = append(out, lk)
+	}
+	return out
 }
 
 // lockUpArgs are the docker run arguments of the sockets socks of a lock tool, switched by
@@ -396,7 +417,7 @@ func LoxConsole(cfg *Config, environ []string, proj, tool, profile string) (inst
 	sort.Strings(names)
 	switch {
 	case len(names) == 0 && profile == "":
-		return "", "", fmt.Errorf("no %s lock of lox up for %s: add one with lox add %s <name>, then run `lox up`", tool, proj, tool)
+		return "", "", fmt.Errorf("no %s lock of lox up for %s: no such lock yet: `lox add %s`", tool, proj, tool)
 	case len(names) == 0:
 		return "", "", fmt.Errorf("no %s lock of lox up serves the profile %q (a lock's profile: in .lockfamily/lockfamily.yaml), then run `lox up`", tool, profile)
 	case len(names) > 1:

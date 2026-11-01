@@ -10,7 +10,7 @@ func TestLoxCheckMissing(t *testing.T) {
 	w := newWorld(t, repoRoot(t))
 	w.env["PATH"] = w.dir + "/bin:/usr/bin:/bin"
 	err := w.launcher().loxCheck()
-	want := "lox not found: lea starts the Lock Family hub with it: brew install davidgodefroid/tap/lox, then run lea again"
+	want := "lox not found: lea starts the Lock Family hub with it: brew install davidgodefroid/tap/lox, then run lea again (LEA_HUB=0 lea runs without the hub)"
 	if err == nil || err.Error() != want {
 		t.Fatalf("loxCheck() = %v, want %q", err, want)
 	}
@@ -20,7 +20,7 @@ func TestLoxCheckTooOld(t *testing.T) {
 	w := newWorld(t, repoRoot(t))
 	w.env["FAKE_LOX_VERSION"] = "0.4.0"
 	err := w.launcher().loxCheck()
-	want := "lox 0.4.0 is older than 0.5.0, which lea needs to start the hub: brew upgrade lox, then run lea again"
+	want := "lox 0.4.0 is older than 0.5.0, which lea needs to start the hub: brew upgrade lox, then run lea again (LEA_HUB=0 lea runs without the hub)"
 	if err == nil || err.Error() != want {
 		t.Fatalf("loxCheck() = %v, want %q", err, want)
 	}
@@ -120,7 +120,7 @@ func TestLoxCheckVersionFails(t *testing.T) {
 	w := newWorld(t, repoRoot(t))
 	w.env["FAKE_LOX_RC"] = "3"
 	err := w.launcher().loxCheck()
-	want := "lox version failed (above): reinstall lox (brew reinstall davidgodefroid/tap/lox), then run lea again"
+	want := "lox version failed (above): reinstall lox (brew reinstall davidgodefroid/tap/lox), then run lea again (LEA_HUB=0 lea runs without the hub)"
 	if err == nil || err.Error() != want {
 		t.Fatalf("loxCheck() = %v, want %q", err, want)
 	}
@@ -130,7 +130,7 @@ func TestLoxCheckPrintsNoVersion(t *testing.T) {
 	w := newWorld(t, repoRoot(t))
 	w.env["FAKE_LOX_VERSION"] = ""
 	err := w.launcher().loxCheck()
-	want := "lox version printed no version: reinstall lox (brew reinstall davidgodefroid/tap/lox), then run lea again"
+	want := "lox version printed no version: reinstall lox (brew reinstall davidgodefroid/tap/lox), then run lea again (LEA_HUB=0 lea runs without the hub)"
 	if err == nil || err.Error() != want {
 		t.Fatalf("loxCheck() = %v, want %q", err, want)
 	}
@@ -235,5 +235,32 @@ func TestFirstRunFailedPullStops(t *testing.T) {
 	b, _ := os.ReadFile(w.env["XDG_CONFIG_HOME"] + "/lea/lea.conf")
 	if strings.Contains(string(b), ":dev") {
 		t.Errorf("user config: %s", b)
+	}
+}
+
+// docker pull's progress is one line per step on success (lea's "pulling" line), and shown in
+// full when the pull fails.
+func TestFirstRunPullOutputOnlyOnFailure(t *testing.T) {
+	w := newWorld(t, repoRoot(t))
+	writeUserConf(t, w, "LEA_IMAGE=reg/a:1\nLEA_PROXY_IMAGE=reg/b:1\n")
+	w.env["FAKE_DOCKER_RC_IMAGE_INSPECT"] = "1"
+	w.env["FAKE_DOCKER_OUT_PULL_REG_A_1"] = "layer progress of a"
+	w.env["FAKE_DOCKER_OUT_PULL_REG_B_1"] = "layer progress of b"
+	if err := w.launcher().firstRun(); err != nil {
+		t.Fatalf("firstRun: %v\n%s", err, w.errb.String())
+	}
+	if e := w.errb.String(); strings.Contains(e, "layer progress") || !strings.Contains(e, "pulling reg/a:1") {
+		t.Errorf("stderr on success: %s", e)
+	}
+	w = newWorld(t, repoRoot(t))
+	writeUserConf(t, w, "LEA_IMAGE=reg/a:1\nLEA_PROXY_IMAGE=reg/b:1\n")
+	w.env["FAKE_DOCKER_RC_IMAGE_INSPECT"] = "1"
+	w.env["FAKE_DOCKER_OUT_PULL_REG_A_1"] = "registry unreachable"
+	w.env["FAKE_DOCKER_RC_PULL_REG_A_1"] = "1"
+	if err := w.launcher().firstRun(); err == nil {
+		t.Fatal("firstRun succeeded")
+	}
+	if e := w.errb.String(); !strings.Contains(e, "registry unreachable") {
+		t.Errorf("stderr on failure: %s", e)
 	}
 }

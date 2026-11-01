@@ -169,8 +169,8 @@ func TestLockOpenWithoutLoxUpsConsole(t *testing.T) {
 	e, fc, fl := lockEnvLox(t, sqlSpec)
 	s := e.ensure(t, "/p")
 	n := len(s.panes)
-	fl.err = errors.New("no locksql lock of lox up for /home/u/p: add one with lox add locksql <name>, then run `lox up`")
-	if _, err := e.m.LockOpen(bg, C, "locksql", ""); err == nil || !strings.Contains(err.Error(), "run `lox up`") {
+	fl.err = errors.New("no locksql lock of lox up for /home/u/p: no such lock yet: `lox add locksql`")
+	if _, err := e.m.LockOpen(bg, C, "locksql", ""); err == nil || !strings.Contains(err.Error(), "no such lock yet: `lox add locksql`") {
 		t.Fatalf("err=%v", err)
 	}
 	// What lox up's state answers is checked: an instance or a container id that is not one.

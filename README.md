@@ -305,10 +305,10 @@ Family's `lox up` ([lockhub's docs/lox-up.md](https://github.com/DavidGodefroid/
 in a compose service of its own: lea starts no locksql console. Add a locksql lock to your projects
 directory (`lox add locksql NAME`: with lea on your `PATH`, `lox add` puts your uid in the lock's
 `allowed_uids` in `.lockfamily/lockfamily.yaml`, because lea's agents run as your uid, which has
-no account in locksql's image) and run `lox up`. lea's agents then reach that lock's socket volume (read-only, once docker
+no account in locksql's image); `lox add` applies it at once. lea's agents then reach that lock's socket volume (read-only, once docker
 confirms it is lox up's, see below); without such a lock they get no locksql socket and lea says
 "no such lock yet: `lox add locksql`". locksql is on for lea as soon as `lox up` runs a locksql
-lock for the projects directory: `lox add locksql`, then `lox up`, is all there is to it
+lock for the projects directory: `lox add locksql` is all there is to it
 (`LEA_LOCKSQL=0` in your configuration keeps it off; `lea init --locksql` or `LEA_LOCKSQL=1`
 turns it on without a lock). A lock added while lea runs reaches the containers started afterwards
 only (Docker cannot add a mount to a running container): the deck says "lock NAME added: restart
@@ -371,14 +371,14 @@ Off (the default, `lea init --no-locksql` or `LEA_LOCKSQL=0`), lea leaves no tra
 keep a human between the agents and production the same way: the agents ask, a console that alone
 holds the credentials shows each request and waits for your approval. Both are pre-releases, so
 they are **off** by default, and on for lea as soon as `lox up` runs a lock of their type for
-your projects directory (`lox add lockmq` or `lox add lockfile`, then `lox up`; `LEA_LOCKMQ=0` /
+your projects directory (`lox add lockmq` or `lox add lockfile`; `LEA_LOCKMQ=0` /
 `LEA_LOCKFILE=0` in your configuration keeps one off). `lea init` asks (no by default; a no
 records nothing, so `lox add` still turns the tool on), or `lea init --lockmq` /
 `lea init --lockfile`; `lea init --no-lockmq` / `--no-lockfile` record the opt-out.
 
 Their console runs hub-attached only, in a container of its own that the Lock Family's `lox up`
-starts for your projects directory (`lox add lockmq <name>` or `lox add lockfile <name>`, then
-`lox up`; lockhub's `docs/lox-up.md`): no host account, no `sudo <tool> install`. lea's agents run
+starts for your projects directory (`lox add lockmq <name>` or `lox add lockfile <name>`, which
+applies at once; lockhub's `docs/lox-up.md`): no host account, no `sudo <tool> install`. lea's agents run
 as your uid, which has no account in the console's image: the console serves it
 only when your uid is in the lock's `allowed_uids` (`.lockfamily/lockfamily.yaml`). `lox add` puts
 it there when lea is on your `PATH`; `lox up` reviews it with you; without it the agents get no

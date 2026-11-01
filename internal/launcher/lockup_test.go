@@ -4,6 +4,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -234,7 +235,7 @@ func TestLockUpArgsSeveralFromTheFlag(t *testing.T) {
 			t.Errorf("one lock: %v", one)
 		}
 	}
-	several := lockUpArgs("LEA_LOCKSQL", "10000",[]lockUpSocket{{Instance: "orders", Volume: "v", Dst: "/run/locksql", Several: true}})
+	several := lockUpArgs("LEA_LOCKSQL", "10000", []lockUpSocket{{Instance: "orders", Volume: "v", Dst: "/run/locksql", Several: true}})
 	if !contains(several, "LEA_LOCKSQL_INSTANCES=orders") {
 		t.Errorf("several: %v", several)
 	}
@@ -369,7 +370,7 @@ func TestLoxConsole(t *testing.T) {
 		want           string
 	}{
 		"no up.json":          {"", "", nil, nil, "no locksql console of lox up"},
-		"no locksql lock":     {lockUp("events", "lockmq"), "", nil, nil, "no locksql lock of lox up"},
+		"no locksql lock":     {lockUp("events", "lockmq"), "", nil, nil, "no locksql lock of lox up for $P: no such lock yet: `lox add locksql`"},
 		"no lock of profile":  {crmProd, "uat", nil, nil, `serves the profile "uat"`},
 		"default not prod":    {crmProd, "default", nil, nil, `serves the profile "default"`},
 		"two locks":           {crm + "," + lockUp("uat", "locksql"), "", nil, nil, "lox up runs 2 locksql locks (crm, uat)"},
@@ -399,6 +400,7 @@ func TestLoxConsole(t *testing.T) {
 				w.env[k] = v
 			}
 			inst, id, err := LoxConsole(cfg, w.environ(), w.proj, "locksql", c.profile)
+			c.want = strings.ReplaceAll(c.want, "$P", w.proj)
 			if err == nil || !strings.Contains(err.Error(), c.want) || inst != "" || id != "" {
 				t.Fatalf("%q %q %v, want %q", inst, id, err, c.want)
 			}
@@ -515,5 +517,28 @@ func TestLockUsable(t *testing.T) {
 		if why != want || (want == "" && vol != "lockfamily-0123abcd_orders-run") || (want != "" && vol != "") {
 			t.Errorf("%s: vol %q why %q, want why %q", name, vol, why, want)
 		}
+	}
+}
+
+// The daemon's watch reads the locks a container started now really mounts: a lock whose socket
+// volume docker does not label as lox up's is left out, with why, so it never asks for a restart
+// that cannot give it.
+func TestUpLocksMountedLeavesOutRejectedVolumes(t *testing.T) {
+	w := newWorld(t, repoRoot(t))
+	t.Setenv("PATH", w.env["PATH"])
+	writeUp(t, w, lockUp("orders", "locksql")+","+lockUp("stock", "locksql"))
+	labels(w, "orders", "locksql", "socket")
+	labels(w, "stock", "locksql", "gate-home")
+	cfg, err := LoadConfig(w.getenv, w.root, w.proj)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var warns []string
+	got := cfg.UpLocksMounted(w.environ(), w.proj, func(f string, a ...any) { warns = append(warns, fmt.Sprintf(f, a...)) })
+	if len(got) != 1 || got[0].Instance != "orders" {
+		t.Fatalf("locks %v", got)
+	}
+	if len(warns) != 1 || !strings.Contains(warns[0], "lock stock (locksql)") || !strings.Contains(warns[0], "not lox up's socket volume") {
+		t.Fatalf("warnings %q", warns)
 	}
 }

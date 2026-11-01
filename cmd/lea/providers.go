@@ -48,8 +48,9 @@ func loadLeaConfig(exe string) (*launcher.Config, error) {
 }
 
 // daemonLockWatch is the up.json of the configured projects directory (its physical path) the
-// daemon watches for a lock added while lea runs (E11): read with the launcher's trust checks and
-// the tools on as a container started now gets them (Config.UpLocks), compared with the volumes
+// daemon watches for a lock added while lea runs: read with the launcher's trust checks and
+// the tools on as a container started now gets them, without a lock whose socket volume docker
+// does not label as lox up's (Config.UpLocksMounted), compared with the volumes
 // each container of that projects directory mounts (docker inspect). ok is false without a
 // projects directory or a configuration that loads.
 func daemonLockWatch(exe string, docker agents.Docker) (w daemon.LockWatch, ok bool) {
@@ -68,7 +69,7 @@ func daemonLockWatch(exe string, docker agents.Docker) (w daemon.LockWatch, ok b
 		Dir: proj + "/.lockfamily",
 		Read: func(logf func(string, ...any)) []daemon.UpLock {
 			var out []daemon.UpLock
-			for _, l := range cfg.UpLocks(proj, logf) {
+			for _, l := range cfg.UpLocksMounted(os.Environ(), proj, logf) {
 				out = append(out, daemon.UpLock{Instance: l.Instance, Volume: l.Volume})
 			}
 			return out

@@ -78,11 +78,13 @@ lea__ensure_image() {
   lea__co_get
   _ei_new=$_LEA_CO_NEW
   lea_log "${LEA_FIRST_RUN:+first run: }pulling $2"
-  if docker pull "$2" >&2; then
+  # One line per step: docker's progress is shown only when the pull fails.
+  if _ei_out=$(docker pull "$2" 2>&1); then
     lea__verify_image "$2"
     if [ "$_ei_new" = 1 ]; then lea__co_put; fi
     return 0
   fi
+  printf '%s\n' "$_ei_out" >&2
   if [ "$_ei_new" = 1 ]; then lea__co_put; fi
   lea_die "cannot pull $2: check your network or registry (docker pull $2), then run lea again"
 }
@@ -94,12 +96,26 @@ lea_ensure_images() {
 
 # lea_refresh_images: lea update. Rebuilds local images, pulls registry ones, and builds the
 # locksql console image when it is absent (with LEA_LOCKSQL=1; never fatal).
+# The registry images are pulled first, then the local ones built: a failure (the shell's set -e, a
+# lea_die) never leaves the cosign lea downloaded behind.
 lea_refresh_images() {
   # cosign first: without one, nothing is pulled.
   _ri_new=0
   case $LEA_IMAGE:$LEA_PROXY_IMAGE in lea:dev:lea-proxy:dev) ;; *) lea__co_get; _ri_new=$_LEA_CO_NEW ;; esac
-  case $LEA_IMAGE in lea:dev) lea__build_image lea ;; *) docker pull "$LEA_IMAGE"; lea__verify_image "$LEA_IMAGE" ;; esac
-  case $LEA_PROXY_IMAGE in lea-proxy:dev) lea__build_image proxy ;; *) docker pull "$LEA_PROXY_IMAGE"; lea__verify_image "$LEA_PROXY_IMAGE" ;; esac
+  case $LEA_IMAGE in lea:dev) ;; *) lea__refresh_pull "$LEA_IMAGE" ;; esac
+  case $LEA_PROXY_IMAGE in lea-proxy:dev) ;; *) lea__refresh_pull "$LEA_PROXY_IMAGE" ;; esac
   if [ "$_ri_new" = 1 ]; then lea__co_put; fi
+  case $LEA_IMAGE in lea:dev) lea__build_image lea ;; esac
+  case $LEA_PROXY_IMAGE in lea-proxy:dev) lea__build_image proxy ;; esac
   if [ "$LEA_LOCKSQL" = 1 ]; then lea__init_locksql; fi
+}
+
+# lea__refresh_pull IMAGE: lea update's pull of IMAGE, verified; a failed pull removes the cosign
+# lea downloaded and dies with what to retry.
+lea__refresh_pull() {
+  if ! docker pull "$1" >&2; then
+    lea__co_put
+    lea_die "cannot pull $1: check your network or registry (docker pull $1), then run lea update again"
+  fi
+  lea__verify_image "$1"
 }

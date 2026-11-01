@@ -178,7 +178,7 @@ func (d Docker) Projects(ctx context.Context, container string) (string, error) 
 
 // Volumes is the projects directory the launcher started the container for (its lea.projects
 // label) and the names of the volumes the container mounts, as docker inspect reports them: what
-// the daemon compares with the locks lox up runs (a lock added while lea runs, E11).
+// the daemon compares with the locks lox up runs (a lock added while lea runs).
 func (d Docker) Volumes(ctx context.Context, container string) (string, []string, error) {
 	out, err := exec.CommandContext(ctx, d.bin(), "inspect", "--type", "container", "-f",
 		`{{index .Config.Labels "lea.projects"}}{{range .Mounts}}{{if eq .Type "volume"}}{{"\n"}}{{.Name}}{{end}}{{end}}`, container).Output()

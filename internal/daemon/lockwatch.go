@@ -12,7 +12,7 @@ import (
 	"github.com/fsnotify/fsnotify"
 )
 
-// A lock added while lea runs (E11): lox up rewrites <projects>/.lockfamily/up.json, the daemon
+// A lock added while lea runs: lox up rewrites <projects>/.lockfamily/up.json, the daemon
 // sees it (RunLockWatch) and reads it again with the launcher's trust checks (LockWatch.Read).
 // Docker cannot add a mount to a running container: an agent container started from now on gets
 // the lock at its start (the launcher's runArgs), and each running container whose real mounts
@@ -101,9 +101,9 @@ func (d *Daemon) runLockWatch(ctx context.Context, ready chan<- struct{}) error 
 			if !ok {
 				return nil
 			}
-			if d.lockWatchError(lw.Dir, err) {
-				timer.Reset(debounce)
-			}
+			// Events may have been dropped (fsnotify.ErrEventOverflow): up.json is read again.
+			d.lockWatchError(lw.Dir, err)
+			timer.Reset(debounce)
 		case ev, ok := <-w.Events:
 			if !ok {
 				return nil
@@ -123,9 +123,9 @@ func (d *Daemon) runLockWatch(ctx context.Context, ready chan<- struct{}) error 
 	}
 }
 
-// lockWatchError is an error of the watch of dir (fsnotify.ErrEventOverflow: events were
-// dropped): said once while it stays the same, and up.json is read again (it reports true).
-func (d *Daemon) lockWatchError(dir string, err error) bool {
+// lockWatchError says an error of the watch of dir (fsnotify.ErrEventOverflow: events were
+// dropped) once while it stays the same.
+func (d *Daemon) lockWatchError(dir string, err error) {
 	msg := fmt.Sprintf("lea daemon: watching %s: %v", dir, err)
 	d.mu.Lock()
 	say := msg != d.lockLastErr
@@ -134,7 +134,6 @@ func (d *Daemon) lockWatchError(dir string, err error) bool {
 	if say {
 		d.lockWarn("%s", msg)
 	}
-	return true
 }
 
 // readUpLocks reads up.json again. A lock that was not in the last trusted state is an event

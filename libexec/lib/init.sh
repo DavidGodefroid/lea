@@ -286,7 +286,7 @@ lea__init_locksql_profile() {
 # lea__locksql_console_hint: how the locksql console runs (lea never starts it): hub-attached
 # only, under lox up, as lockmq's and lockfile's (lea__lockhost_console_hint).
 lea__locksql_console_hint() {
-  lea_log "locksql console: it runs under lox up only: no such lock yet: \`lox add locksql\` (with allowed_uids: [$(id -u)] in .lockfamily/lockfamily.yaml; lea's agents get its socket once lea restarts: lea stop, then lea)"
+  lea_log "locksql console: it runs under lox up only: no such lock yet: \`lox add locksql\` (lox add fills allowed_uids: [$(id -u)] in .lockfamily/lockfamily.yaml when lea is on your PATH; lea's agents get its socket once lea restarts: lea stop, then lea)"
   lea_log "  its own questions (policy review, credentials): lox attach NAME, or lea lock open locksql in the deck; each query of an agent: lea's deck (hub view) or lox approve"
 }
 

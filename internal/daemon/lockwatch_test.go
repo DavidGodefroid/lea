@@ -211,8 +211,8 @@ func TestDeckRestartHint(t *testing.T) {
 	}
 }
 
-// A watch error (an overflow drops events) reads up.json again; each distinct error is said once.
-func TestLockWatchErrorRereads(t *testing.T) {
+// A watch error (an overflow drops events): each distinct error is said once.
+func TestLockWatchErrorSaidOnce(t *testing.T) {
 	e := start(t)
 	rec := &watchRec{}
 	e.d.lockWarnf = func(format string, a ...any) {
@@ -221,9 +221,7 @@ func TestLockWatchErrorRereads(t *testing.T) {
 		rec.mu.Unlock()
 	}
 	for _, err := range []error{fsnotify.ErrEventOverflow, fsnotify.ErrEventOverflow, os.ErrClosed} {
-		if !e.d.lockWatchError("/p/.lockfamily", err) {
-			t.Fatalf("%v: up.json not read again", err)
-		}
+		e.d.lockWatchError("/p/.lockfamily", err)
 	}
 	if _, w := rec.snapshot(); len(w) != 2 {
 		t.Fatalf("warnings %q", w)

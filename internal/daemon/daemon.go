@@ -160,7 +160,7 @@ type Daemon struct {
 	shed     Shed
 	shedding map[string]*shedState
 	shedBusy bool
-	// A lock added while lea runs (lockwatch.go, E11): the up.json watched, its locks as last
+	// A lock added while lea runs (lockwatch.go): the up.json watched, its locks as last
 	// read (none when lea cannot trust it), the instances of the last trusted one, its last
 	// warnings (said once), each container's mounts, and test seams (the debounce, the events,
 	// the warnings' logger).
