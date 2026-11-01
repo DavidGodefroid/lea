@@ -58,7 +58,7 @@ launcher() {
   LEA_LOCKFILE=1
   run lea_lockhost lockfile
   [[ "$output" == *"lockfile: install its launcher"*"scripts/install.sh"* ]]
-  [[ "$output" == *"lockfile console: it runs under lox up only: add a lockfile lock"*"allowed_uids: [$(id -u)]"*"run \`lox up\`"* ]]
+  [[ "$output" == *"lockfile console: it runs under lox up only: no such lock yet: \`lox add lockfile\`"*"allowed_uids: [$(id -u)]"* ]]
   [[ "$output" != *"lockfile-run"* ]]
   launcher lockfile
   run lea_lockhost lockfile

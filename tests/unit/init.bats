@@ -722,7 +722,7 @@ EOT
 y"
   [ "$status" -eq 0 ]
   [[ "$output" == *"locksql has no database profile for $P yet"* ]]
-  [[ "$output" == *"locksql console: it runs under lox up only"*"run \`lox up\`"* ]]
+  [[ "$output" == *"locksql console: it runs under lox up only: no such lock yet: \`lox add locksql\`"* ]]
   run calls
   [[ "$output" == *"docker [run] [-it] [--rm] [--user] [$(id -u):$(id -g)] [-e] [HOME=/tmp] [-v] [$P:$P] [-w] [$P] [locksql:0.13.0] [profile] [add] [--project] [$P]"* ]]
 }

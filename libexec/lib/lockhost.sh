@@ -76,7 +76,7 @@ lea__lockhost_install_hint() {
 # only, under lox up. lea's agents run as your uid, which names no account in the console's image:
 # the console serves it only when told so (the lock's allowed_uids), by you, never by lea.
 lea__lockhost_console_hint() {
-  lea_log "$1 console: it runs under lox up only: add a $1 lock to your projects directory (lox add $1 NAME, with allowed_uids: [$(id -u)] in .lockfamily/lockfamily.yaml), then run \`lox up\`"
+  lea_log "$1 console: it runs under lox up only: no such lock yet: \`lox add $1\` (with allowed_uids: [$(id -u)] in .lockfamily/lockfamily.yaml; lea's agents get its socket at their next start)"
   lea_log "  (allowed_uids $(id -u): lea's agents run as your uid, which has no account in the console's image; they reach the lock's socket volume after their lea restarts: lea stop --all, then lea)"
 }
 

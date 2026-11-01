@@ -130,7 +130,7 @@ lea_doctor() {
 # whose), never a fixed one. A locksql-run volume is what a standalone console of an earlier lea
 # left: lea mounts it no more.
 lea__doctor_locksql_lock() {
-  _dl_hint="add one with lox add locksql NAME (allowed_uids: [$(id -u)] in .lockfamily/lockfamily.yaml), then run \`lox up\`"
+  _dl_hint="no such lock yet: \`lox add locksql\` (allowed_uids: [$(id -u)] in .lockfamily/lockfamily.yaml; lea's agents get its socket at their next start)"
   if [ -z "${LEA_PROJECTS_DIR:-}" ]; then
     lea__warn "locksql lock" "no projects directory (lea init): lox up runs the console for one"
   elif ! _dl_v=$(docker volume ls --filter label=dev.lockfamily.role=socket --filter label=dev.lockfamily.type=locksql \
