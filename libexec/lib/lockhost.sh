@@ -77,7 +77,7 @@ lea__lockhost_install_hint() {
 # the console serves it only when told so (the lock's allowed_uids), by you, never by lea.
 lea__lockhost_console_hint() {
   lea_log "$1 console: it runs under lox up only: no such lock yet: \`lox add $1\` (with allowed_uids: [$(id -u)] in .lockfamily/lockfamily.yaml; lea's agents get its socket once lea restarts: lea stop, then lea)"
-  lea_log "  (allowed_uids $(id -u): lea's agents run as your uid, which has no account in the console's image; they reach the lock's socket volume after their lea restarts: lea stop --all, then lea)"
+  lea_log "  (allowed_uids $(id -u): lea's agents run as your uid, which has no account in the console's image; they reach the lock's socket volume once lea restarts: lea stop, then lea)"
 }
 
 # lea__init_lockhost TOOL: lea init's part for TOOL. Without a decision yet (no flag, not in the

@@ -51,8 +51,9 @@ const (
 )
 
 type mountsEntry struct {
-	at   time.Time
-	vols map[string]bool
+	at     time.Time
+	failed bool // docker inspect failed: no hint until it is asked again
+	vols   map[string]bool
 }
 
 // SetLockWatch sets the up.json the daemon watches (RunLockWatch).
@@ -100,7 +101,9 @@ func (d *Daemon) runLockWatch(ctx context.Context, ready chan<- struct{}) error 
 			if !ok {
 				return nil
 			}
-			d.lockWarn("lea daemon: watching %s: %v", lw.Dir, err)
+			if d.lockWatchError(lw.Dir, err) {
+				timer.Reset(debounce)
+			}
 		case ev, ok := <-w.Events:
 			if !ok {
 				return nil
@@ -118,6 +121,20 @@ func (d *Daemon) runLockWatch(ctx context.Context, ready chan<- struct{}) error 
 			d.readUpLocks(lw, false)
 		}
 	}
+}
+
+// lockWatchError is an error of the watch of dir (fsnotify.ErrEventOverflow: events were
+// dropped): said once while it stays the same, and up.json is read again (it reports true).
+func (d *Daemon) lockWatchError(dir string, err error) bool {
+	msg := fmt.Sprintf("lea daemon: watching %s: %v", dir, err)
+	d.mu.Lock()
+	say := msg != d.lockLastErr
+	d.lockLastErr = msg
+	d.mu.Unlock()
+	if say {
+		d.lockWarn("%s", msg)
+	}
+	return true
 }
 
 // readUpLocks reads up.json again. A lock that was not in the last trusted state is an event
@@ -185,7 +202,8 @@ func (d *Daemon) upLockNames() []string {
 }
 
 // locksAdded are the locks up.json names that the container does not mount: its real mounts
-// (docker inspect), kept mountsTTL. None when they cannot be read.
+// (docker inspect), kept mountsTTL, a failed read too (none then: the status line's budget is
+// short). Expired entries go when one is written.
 func (d *Daemon) locksAdded(ctx context.Context, container string) []string {
 	d.mu.Lock()
 	locks, mounts := d.upLocks, d.lockWatch.Mounts
@@ -198,10 +216,8 @@ func (d *Daemon) locksAdded(ctx context.Context, container string) []string {
 		ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 		defer cancel()
 		vols, err := mounts(ctx, container)
-		if err != nil {
-			return nil
-		}
-		e = mountsEntry{at: time.Now(), vols: map[string]bool{}}
+		now := time.Now()
+		e = mountsEntry{at: now, failed: err != nil, vols: map[string]bool{}}
 		for _, v := range vols {
 			e.vols[v] = true
 		}
@@ -209,8 +225,16 @@ func (d *Daemon) locksAdded(ctx context.Context, container string) []string {
 		if d.mountsCache == nil {
 			d.mountsCache = map[string]mountsEntry{}
 		}
+		for c, old := range d.mountsCache {
+			if now.Sub(old.at) > mountsTTL {
+				delete(d.mountsCache, c)
+			}
+		}
 		d.mountsCache[container] = e
 		d.mu.Unlock()
+	}
+	if e.failed {
+		return nil
 	}
 	var out []string
 	for _, l := range locks {

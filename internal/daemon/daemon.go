@@ -168,6 +168,7 @@ type Daemon struct {
 	upLocks        []UpLock
 	upKnown        map[string]bool
 	lockLastWarn   string
+	lockLastErr    string
 	mountsCache    map[string]mountsEntry
 	lockDebounce   time.Duration
 	afterLockEvent func(LockEvent)

@@ -455,3 +455,25 @@ func TestToolOnWhenUpJSONNamesIt(t *testing.T) {
 		}
 	}
 }
+
+// lockUsable is the one place that says whether a lock of up.json can reach the agents without
+// asking docker: lockUpSockets (with its warnings) and ReadUpLocks (the daemon's watch) share it.
+func TestLockUsable(t *testing.T) {
+	s := &lockUpState{Project: "lockfamily-0123abcd", Locks: map[string]lockUpLock{
+		"orders":    {Type: "locksql", Socket: "lockfamily-0123abcd_orders-run"},
+		"Bad Name":  {Type: "locksql", Socket: "lockfamily-0123abcd_Bad Name-run"},
+		"inventory": {Type: "locksql", Socket: "other-volume"},
+		"shop":      {Type: "lockmq", Socket: "lockfamily-0123abcd_shop-run", GID: "4242"},
+	}}
+	for name, want := range map[string]string{
+		"orders":    "",
+		"Bad Name":  `lock "Bad Name": not an instance name: locksql left out`,
+		"inventory": `lock inventory: socket volume "other-volume" is not lox up's "lockfamily-0123abcd_inventory-run": left out`,
+		"shop":      "lock shop (lockmq): clients group 4242, lea's image knows 10010: left out (update lea)",
+	} {
+		vol, why := lockUsable(s, name)
+		if why != want || (want == "" && vol != "lockfamily-0123abcd_orders-run") || (want != "" && vol != "") {
+			t.Errorf("%s: vol %q why %q, want why %q", name, vol, why, want)
+		}
+	}
+}

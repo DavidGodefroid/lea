@@ -14,6 +14,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/fsnotify/fsnotify"
+
 	"github.com/DavidGodefroid/lea/internal/agents"
 	"github.com/DavidGodefroid/lea/internal/launcher"
 )
@@ -206,5 +208,45 @@ func TestDeckRestartHint(t *testing.T) {
 	}
 	if !slices.Equal(ans.LocksAdded, []string{"orders"}) {
 		t.Fatalf("status_report answer %v", ans.LocksAdded)
+	}
+}
+
+// A watch error (an overflow drops events) reads up.json again; each distinct error is said once.
+func TestLockWatchErrorRereads(t *testing.T) {
+	e := start(t)
+	rec := &watchRec{}
+	e.d.lockWarnf = func(format string, a ...any) {
+		rec.mu.Lock()
+		rec.warns = append(rec.warns, fmt.Sprintf(format, a...))
+		rec.mu.Unlock()
+	}
+	for _, err := range []error{fsnotify.ErrEventOverflow, fsnotify.ErrEventOverflow, os.ErrClosed} {
+		if !e.d.lockWatchError("/p/.lockfamily", err) {
+			t.Fatalf("%v: up.json not read again", err)
+		}
+	}
+	if _, w := rec.snapshot(); len(w) != 2 {
+		t.Fatalf("warnings %q", w)
+	}
+}
+
+// A container whose mounts cannot be read is asked again only after mountsTTL (the status line's
+// budget is short), and expired entries go when the cache is written.
+func TestLockMountsCache(t *testing.T) {
+	e := start(t)
+	calls := 0
+	e.d.lockWatch.Mounts = func(context.Context, string) ([]string, error) { calls++; return nil, fmt.Errorf("no such container") }
+	e.d.upLocks = []UpLock{{Instance: "orders", Volume: "v_orders-run"}}
+	e.d.mountsCache = map[string]mountsEntry{"lea-old": {at: time.Now().Add(-2 * mountsTTL)}}
+	for range 3 {
+		if got := e.d.locksAdded(context.Background(), "lea-a"); got != nil {
+			t.Fatalf("hint %v from unreadable mounts", got)
+		}
+	}
+	if calls != 1 {
+		t.Fatalf("mounts read %d times", calls)
+	}
+	if _, ok := e.d.mountsCache["lea-old"]; ok {
+		t.Fatal("an expired entry was kept")
 	}
 }

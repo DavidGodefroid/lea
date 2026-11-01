@@ -157,13 +157,13 @@ func TestPostReachesTheDaemon(t *testing.T) {
 	pctx, pcancel := context.WithTimeout(ctx, 2*time.Second)
 	defer pcancel()
 	if added, err := Post(pctx, bus, "dev", Report{CtxPct: 7, CostUSD: 0.5, Paths: []string{"cost.total_cost_usd"}}); err != nil || len(added) != 0 {
-		t.Fatal(err)
+		t.Fatalf("added %q, err %v", added, err)
 	}
 	if u, _ := st.Usages("lea-a"); u["lea-a/dev"] != (store.Usage{CtxPct: 7, CostUSD: 0.5}) {
 		t.Fatalf("usages=%+v", u)
 	}
-	if _, err := Post(pctx, bus, "", Report{}); err != nil {
-		t.Fatalf("no identity must be a silent no-op: %v", err)
+	if added, err := Post(pctx, bus, "", Report{}); err != nil || added != nil {
+		t.Fatalf("no identity must be a silent no-op: added %q, err %v", added, err)
 	}
 }
 

@@ -139,11 +139,6 @@ func (l *Launcher) lockUpSockets(proj, lf string, on func(tool string) bool) map
 			continue
 		}
 		count[lk.Type]++
-		if !lockUpInstance.MatchString(name) {
-			l.logf("warning: %s: lock %q: not an instance name: %s left out", p, name, lk.Type)
-			byType[lk.Type] = append(byType[lk.Type], "")
-			continue
-		}
 		byType[lk.Type] = append(byType[lk.Type], name)
 	}
 	// A lock lox up runs for a tool lea leaves off (locksql, lockmq and lockfile are off by
@@ -158,16 +153,9 @@ func (l *Launcher) lockUpSockets(proj, lf string, on func(tool string) bool) map
 		out[typ] = []lockUpSocket{}
 		sort.Strings(names)
 		for _, name := range names {
-			if name == "" {
-				continue
-			}
-			vol := s.Project + "_" + name + "-run"
-			if s.Locks[name].Socket != vol {
-				l.logf("warning: %s: lock %s: socket volume %q is not lox up's %q: left out", p, name, s.Locks[name].Socket, vol)
-				continue
-			}
-			if g, ok := lockGID[typ]; ok && s.Locks[name].GID != "" && s.Locks[name].GID != g {
-				l.logf("warning: lock %s (%s): clients group %s, lea's image knows %s: left out (update lea)", name, typ, s.Locks[name].GID, g)
+			vol, why := lockUsable(s, name)
+			if why != "" {
+				l.logf("warning: %s: %s", p, why)
 				continue
 			}
 			if why := l.lockUpVolumeWrong(vol, s.Project, proj, name, typ); why != "" {
@@ -186,14 +174,32 @@ func (l *Launcher) lockUpSockets(proj, lf string, on func(tool string) bool) map
 	return out
 }
 
+// lockUsable is the socket volume of the lock name of up.json s, or why lea leaves it out without
+// asking docker: a name that is not an instance name, a socket volume that is not lox up's
+// (<project>_<instance>-run), a clients group lea's image does not know. lockUpSockets says why
+// and checks the volume's labels on top; ReadUpLocks keeps the locks it passes.
+func lockUsable(s *lockUpState, name string) (vol, why string) {
+	lk := s.Locks[name]
+	if !lockUpInstance.MatchString(name) {
+		return "", fmt.Sprintf("lock %q: not an instance name: %s left out", name, lk.Type)
+	}
+	vol = s.Project + "_" + name + "-run"
+	if lk.Socket != vol {
+		return "", fmt.Sprintf("lock %s: socket volume %q is not lox up's %q: left out", name, lk.Socket, vol)
+	}
+	if g, ok := lockGID[lk.Type]; ok && lk.GID != "" && lk.GID != g {
+		return "", fmt.Sprintf("lock %s (%s): clients group %s, lea's image knows %s: left out (update lea)", name, lk.Type, lk.GID, g)
+	}
+	return vol, ""
+}
+
 // UpLock is a lock lox up runs that an agent container started now would mount: its instance,
 // its type and its socket volume.
 type UpLock struct{ Instance, Type, Volume string }
 
 // ReadUpLocks are the locks of the trusted up.json of the projects directory proj (readLockUp's
 // checks, its warnings through logf) that an agent container started now would mount: those of a
-// tool on reports on, with an instance name and lox up's socket volume name and clients group,
-// as lockUpSockets checks them, by instance. It runs no docker: lockUpSockets' checks of the
+// tool on reports on that lockUsable passes, by instance. It runs no docker: lockUpSockets' checks of the
 // volume's labels run at the container's start. The daemon's watch of up.json (E11) reads it.
 func ReadUpLocks(proj string, logf func(string, ...any), on func(tool string) bool) []UpLock {
 	s, _ := readLockUpState(logf, proj, proj+"/.lockfamily")
@@ -202,14 +208,13 @@ func ReadUpLocks(proj string, logf func(string, ...any), on func(tool string) bo
 	}
 	var out []UpLock
 	for name, lk := range s.Locks {
-		vol := s.Project + "_" + name + "-run"
-		if !on(lk.Type) || !lockUpInstance.MatchString(name) || lk.Socket != vol {
+		if !on(lk.Type) {
 			continue
 		}
-		if g, ok := lockGID[lk.Type]; ok && lk.GID != "" && lk.GID != g {
-			continue
+		// What lockUpSockets leaves out with a warning at the container's start.
+		if vol, why := lockUsable(s, name); why == "" {
+			out = append(out, UpLock{Instance: name, Type: lk.Type, Volume: vol})
 		}
-		out = append(out, UpLock{Instance: name, Type: lk.Type, Volume: vol})
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Instance < out[j].Instance })
 	return out
