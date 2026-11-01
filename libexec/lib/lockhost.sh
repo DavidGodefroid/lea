@@ -81,7 +81,9 @@ lea__lockhost_console_hint() {
 }
 
 # lea__init_lockhost TOOL: lea init's part for TOOL. Without a decision yet (no flag, not in the
-# user config) and on a terminal, it asks, no by default (pre-release tools). When on: whether
+# user config) and on a terminal, it asks, no by default (pre-release tools): a yes records
+# LEA_<TOOL>=1; a no records nothing, so a lock of TOOL that lox add adds still turns it on (only
+# --no-<tool> records the opt-out, LEA_<TOOL>=0). When on: whether
 # TOOL's launcher is installed (how to install it otherwise), the guided profile setup when TOOL
 # offers one, and how to open the console. Never fatal.
 lea__init_lockhost() {
@@ -91,8 +93,6 @@ lea__init_lockhost() {
     if [ -z "${LEA_INIT_NONINTERACTIVE:-}" ] && lea__init_tty; then
       if lea__ask_no "Let lea's agents query $(lea__lockhost_what "$_ih_t") through a $_ih_t console (pre-release; a human approves every read)?"; then
         lea__lockhost_set "$_ih_t" 1
-      else
-        lea__lockhost_set "$_ih_t" 0
       fi
     fi
   fi

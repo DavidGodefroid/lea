@@ -1,6 +1,8 @@
 package launcher
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -168,5 +170,28 @@ func TestLockUpLockOfAToolThatIsOff(t *testing.T) {
 	if strings.Count(e, "locksql is off (LEA_LOCKSQL=0), though lox up runs a locksql lock here: `lea init --locksql` turns it on") != 1 ||
 		strings.Count(e, "lockmq is off (LEA_LOCKMQ=0)") != 1 || strings.Contains(e, "lockfile") {
 		t.Errorf("stderr: %s", e)
+	}
+}
+
+// Interactive lea init's default "no" (lockmq, lockfile) writes nothing: a user assignment would
+// count as an explicit opt-out, so a later lox add would never reach the agents.
+func TestInitDefaultNoLeavesToolUnset(t *testing.T) {
+	w := newWorld(t, repoRoot(t))
+	so, se, sc := shellEval(t, w.root, w.environ(), w.proj,
+		"lea_load_config; lea__init_tty() { true; }; printf '\\n' | lea__init_lockhost lockmq; printf '\\n' | lea__init_lockhost lockfile")
+	if sc != 0 || !strings.Contains(se, "through a lockmq console") || !strings.Contains(se, "through a lockfile console") {
+		t.Fatalf("status %d\nstdout %s\nstderr %s", sc, so, se)
+	}
+	b, _ := os.ReadFile(filepath.Join(w.env["XDG_CONFIG_HOME"], "lea", "lea.conf"))
+	if strings.Contains(string(b), "LEA_LOCKMQ") || strings.Contains(string(b), "LEA_LOCKFILE") {
+		t.Fatalf("user config: %s", b)
+	}
+	writeUp(t, w, lockUp("events", "lockmq")+","+lockUp("docs", "lockfile"))
+	cfg, err := LoadConfig(w.getenv, w.root, w.proj)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if on := cfg.ToolsOn(w.proj, func(string, ...any) {}); !on["lockmq"] || !on["lockfile"] {
+		t.Fatalf("after lox add: %v", on)
 	}
 }

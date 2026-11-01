@@ -372,8 +372,9 @@ keep a human between the agents and production the same way: the agents ask, a c
 holds the credentials shows each request and waits for your approval. Both are pre-releases, so
 they are **off** by default, and on for lea as soon as `lox up` runs a lock of their type for
 your projects directory (`lox add lockmq` or `lox add lockfile`, then `lox up`; `LEA_LOCKMQ=0` /
-`LEA_LOCKFILE=0` in your configuration keeps one off). `lea init` asks (no by default), or
-`lea init --lockmq` / `lea init --lockfile`.
+`LEA_LOCKFILE=0` in your configuration keeps one off). `lea init` asks (no by default; a no
+records nothing, so `lox add` still turns the tool on), or `lea init --lockmq` /
+`lea init --lockfile`; `lea init --no-lockmq` / `--no-lockfile` record the opt-out.
 
 Their console runs hub-attached only, in a container of its own that the Lock Family's `lox up`
 starts for your projects directory (`lox add lockmq <name>` or `lox add lockfile <name>`, then

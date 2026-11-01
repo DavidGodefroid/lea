@@ -88,12 +88,15 @@ launcher() {
   [ -z "$(calls)" ]
 }
 
-@test "lea init asks once, no by default, and remembers the answer" {
+@test "lea init asks, no by default, and records only a yes (a no leaves lox add to turn it on)" {
   lea__init_tty() { true; }
   run lea__init_lockhost lockmq <<<""
   [[ "$output" == *"through a lockmq console"*"[y/N]"* ]]
-  grep -qx "LEA_LOCKMQ='0'" "$LEA_CONFIG"
+  if grep -q '^LEA_LOCKMQ=' "$LEA_CONFIG" 2>/dev/null; then false; fi
   run lea__init_lockhost lockmq <<<"y"
+  [[ "$output" == *"through a lockmq console"*"[y/N]"* ]]
+  grep -qx "LEA_LOCKMQ='1'" "$LEA_CONFIG"
+  run lea__init_lockhost lockmq <<<""
   [[ "$output" != *"[y/N]"* ]]
   [ -z "$(calls)" ]
 }
