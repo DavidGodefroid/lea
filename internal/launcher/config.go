@@ -43,11 +43,12 @@ var ExportedKeys = []string{
 // Config is what lea_load_config gives the shell: the environment, overlaid by the assignments of
 // config/lea.conf and of the user configuration, then resolved and validated.
 type Config struct {
-	getenv func(string) string
-	file   map[string]string // assignments of both files, the later one winning
-	from   map[string]string // the file each assignment of file comes from
-	final  map[string]string // resolved keys
-	extra  []string          // keys exported by the launcher at run time (LEA_TMUX_BIN)
+	getenv   func(string) string
+	file     map[string]string // assignments of both files, the later one winning
+	from     map[string]string // the file each assignment of file comes from
+	final    map[string]string // resolved keys
+	extra    []string          // keys exported by the launcher at run time (LEA_TMUX_BIN)
+	defaults string            // path of config/lea.conf: an assignment from it is a default, not the user's
 }
 
 // Get is the value the shell would see for key after lea_load_config: a resolved key, else the
@@ -129,7 +130,8 @@ func hasKey(m map[string]string, k string) bool { _, ok := m[k]; return ok }
 // cwd), and validates the result as lea_load_config does, with the same messages.
 func LoadConfig(getenv func(string) string, root, cwd string) (*Config, error) {
 	c := &Config{getenv: getenv, file: map[string]string{}, from: map[string]string{}, final: map[string]string{}}
-	if err := c.readFile(filepath.Join(root, "config", "lea.conf")); err != nil {
+	c.defaults = filepath.Join(root, "config", "lea.conf")
+	if err := c.readFile(c.defaults); err != nil {
 		return nil, err
 	}
 	user := c.UserConfigFile(cwd)
@@ -610,13 +612,25 @@ func (c *Config) Ctl() bool { return c.Get("LEA_CTL") == "1" }
 // LEA_LOCKHTTP=1; off by default).
 func (c *Config) LockHTTPMITM() bool { return c.LockHTTP() && c.Get("LEA_LOCKHTTP_MITM") == "1" }
 
-// Locksql reports whether lea is wired for lox up's locksql console (LEA_LOCKSQL=1; off by
-// default, as lockmq and lockfile).
+// Locksql reports whether the configuration turns locksql on (LEA_LOCKSQL=1; off by default).
+// Where lox up's up.json names a locksql lock, use toolOn.
 func (c *Config) Locksql() bool { return c.Get("LEA_LOCKSQL") == "1" }
 
-// LockHost reports whether lea's agents may reach the host console of the lock tool whose switch
-// is env (LEA_LOCKMQ, LEA_LOCKFILE; off by default).
+// LockHost reports whether the configuration turns on the lock tool whose switch is env
+// (LEA_LOCKMQ, LEA_LOCKFILE; off by default). Where lox up's up.json names a lock of the tool,
+// use toolOn.
 func (c *Config) LockHost(env string) bool { return c.Get(env) == "1" }
+
+// toolOn is whether the lock tool switched by key (LEA_LOCKSQL, LEA_LOCKMQ, LEA_LOCKFILE) is on:
+// what the user's configuration sets for it, and when it does not set the key (only the shipped
+// default speaks), on when the trusted up.json names a lock of that type (upNames): a lock the
+// user added with lox add is the sign they want it. An explicit LEA_<TOOL>=0 keeps it off.
+func (c *Config) toolOn(key string, upNames bool) bool {
+	if _, file, ok := c.Assignment(key); ok && file != c.defaults {
+		return c.Get(key) == "1"
+	}
+	return upNames || c.Get(key) == "1"
+}
 
 // gitStateDirs are the state sub-directories (relative to the state dir) where the forge tools
 // inside lea keep their credentials: git's credential store, gh and glab.

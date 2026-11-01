@@ -151,10 +151,11 @@ func TestRunArgsLocksOnMatchTheGoldenFile(t *testing.T) {
 	checkGolden(t, "run-args", "lockmq and lockfile on", hostNeutral(normalize(w, got)))
 }
 
-// A lock lox up runs for a tool that is off (locksql too, off by default): one line says how to
-// turn it on; the agents get none of its socket.
+// A lock lox up runs for a tool the user turned off (LEA_<TOOL>=0): one line says how to turn it
+// on; the agents get none of its socket.
 func TestLockUpLockOfAToolThatIsOff(t *testing.T) {
 	w := newWorld(t, repoRoot(t))
+	writeUserConf(t, w, "LEA_LOCKSQL=0\nLEA_LOCKMQ=0\n")
 	writeUp(t, w, lockUp("crm", "locksql")+","+lockUp("events", "lockmq"))
 	labels(w, "crm", "locksql", "socket")
 	labels(w, "events", "lockmq", "socket")

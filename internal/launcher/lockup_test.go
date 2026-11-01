@@ -159,9 +159,10 @@ func TestLockUpTwoOfATool(t *testing.T) {
 	}
 }
 
-// A tool that is off stays off, lox up or not.
+// A tool the user turned off stays off, lox up or not.
 func TestLockUpToolOff(t *testing.T) {
 	w := newWorld(t, repoRoot(t))
+	writeUserConf(t, w, "LEA_LOCKMQ=0\n")
 	writeUp(t, w, lockUp("events", "lockmq"))
 	labels(w, "events", "lockmq", "socket")
 	for _, a := range lockArgs(t, w) {
@@ -387,5 +388,29 @@ func TestLockUpSocketServedByAnotherComposeRun(t *testing.T) {
 	w.env["FAKE_DOCKER_RC_PS___NO_TRUNC"] = "1"
 	if contains(lockArgs(t, w), mount) {
 		t.Error("mounted though docker ps failed")
+	}
+}
+
+// A tool is on when the trusted up.json names a lock of its type and the user config does not set
+// the key; an explicit LEA_<TOOL>=0 keeps it off.
+func TestToolOnWhenUpJSONNamesIt(t *testing.T) {
+	for _, c := range []struct{ tool, key, gid string }{{"locksql", "LEA_LOCKSQL", "10000"}, {"lockmq", "LEA_LOCKMQ", "10010"}, {"lockfile", "LEA_LOCKFILE", "10030"}} {
+		w := newWorld(t, repoRoot(t))
+		writeUp(t, w, lockUp("x", c.tool))
+		labels(w, "x", c.tool, "socket")
+		if !contains(lockArgs(t, w), c.gid) {
+			t.Errorf("%s: no key and a lock must give --group-add %s", c.tool, c.gid)
+		}
+		w = newWorld(t, repoRoot(t))
+		writeUserConf(t, w, c.key+"=0\n")
+		writeUp(t, w, lockUp("x", c.tool))
+		labels(w, "x", c.tool, "socket")
+		if contains(lockArgs(t, w), c.gid) {
+			t.Errorf("%s: %s=0 must give no --group-add %s", c.tool, c.key, c.gid)
+		}
+		w = newWorld(t, repoRoot(t))
+		if contains(lockArgs(t, w), c.gid) {
+			t.Errorf("%s: no lock, no key: must stay off", c.tool)
+		}
 	}
 }

@@ -520,18 +520,17 @@ func (l *Launcher) runArgs(proj, pip string) ([]string, error) {
 		return nil, err
 	}
 	a = append(a, "--mount", "type=bind,src="+lf+",dst="+lf+",readonly")
+	// A tool is on when the user's configuration turns it on, or lox up runs a lock of its type
+	// and the user did not turn it off (Config.toolOn): a lock the user added is meant for the agents.
 	ups := l.lockUpSockets(proj, lf, func(tool string) bool {
-		if tool == "locksql" {
-			return l.Cfg.Locksql()
-		}
-		for _, t := range lockHostTools {
-			if t.name == tool {
-				return l.Cfg.LockHost(t.env)
-			}
+		if key := lockToolKeys[tool]; key != "" {
+			return l.Cfg.toolOn(key, true)
 		}
 		return false
 	})
-	if l.Cfg.Locksql() {
+	_, upSql := ups["locksql"]
+	l.locksqlWired = l.Cfg.toolOn("LEA_LOCKSQL", upSql)
+	if l.locksqlWired {
 		// The socket volume of lox up's locksql lock and its clients group (locksql-clients), as
 		// for lockmq and lockfile (lockHostArgs): the console runs hub-attached only, under lox
 		// up. Without such a lock the agents get no locksql socket, never a fixed volume another
@@ -670,7 +669,7 @@ func (l *Launcher) containerStart(proj, pip string) error {
 		}
 		l.logf("warning: the container's bus socket could not be bound; agents run without lea messaging")
 	}
-	if l.Cfg.Locksql() {
+	if l.locksqlWired {
 		l.locksqlHint()
 	}
 	return nil

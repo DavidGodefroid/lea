@@ -15,6 +15,9 @@ type lockHostTool struct {
 	gid  string // the tool's clients group in its image (and in lea's)
 }
 
+// lockToolKeys are the switches of the lock tools lea wires, by tool.
+var lockToolKeys = map[string]string{"locksql": "LEA_LOCKSQL", "lockmq": "LEA_LOCKMQ", "lockfile": "LEA_LOCKFILE"}
+
 var lockHostTools = []lockHostTool{{"lockmq", "LEA_LOCKMQ", "10010"}, {"lockfile", "LEA_LOCKFILE", "10030"}}
 
 var lockVersion = regexp.MustCompile(`^v?([0-9]+)\.([0-9]+)\.([0-9]+)$`)
@@ -41,7 +44,8 @@ func lockfileSafe(v string) bool {
 func (l *Launcher) lockHostArgs(ups map[string]string) []string {
 	var a []string
 	for _, t := range lockHostTools {
-		if !l.Cfg.LockHost(t.env) {
+		_, up := ups[t.name]
+		if !l.Cfg.toolOn(t.env, up) {
 			continue
 		}
 		v, ok := ups[t.name]

@@ -784,8 +784,8 @@ read-only. The screen runs in the deck on the host: agents cannot open or drive 
 | `LEA_PROJECTS_DIR` | asked by `lea init` | the directory lea's agents see |
 | `LEA_GIT_SSH` | empty | git SSH endpoints (`host:port …`) |
 | `LEA_GIT_KNOWN_HOSTS` | `~/.config/lea/git_known_hosts` | their pinned host keys |
-| `LEA_LOCKSQL` | `0` | `1`: wire lea for the locksql console of `lox up` (`lea init --locksql`) |
-| `LEA_LOCKMQ`, `LEA_LOCKFILE` | `0`, asked by `lea init` | let the agents reach a lockmq / lockfile console on this host |
+| `LEA_LOCKSQL` | `0`, on when `lox up` runs a locksql lock | `1`: wire lea for the locksql console of `lox up` (`lea init --locksql`) |
+| `LEA_LOCKMQ`, `LEA_LOCKFILE` | `0`, asked by `lea init`; on when `lox up` runs a lock of the type and the key is unset (`=0` keeps it off) | let the agents reach a lockmq / lockfile console on this host |
 | `LEA_LOCKMQ_REF`, `LEA_LOCKFILE_REF` | the pinned releases | the release `lea init` installs on the host (lockfile v0.1.1 or later); `lea update` records a newer one you accept |
 | `LEA_LOCKHTTP` | `0` | send the agents' web requests through a LockHTTP gate (refuses `LEA_GIT_SSH` and `LEA_OTEL_UPSTREAM`) |
 | `LEA_HUB` | `1` | follow the Lock Family approval hub (lockhub's facade socket: `LEA_HUB_SOCKET`, else `$XDG_RUNTIME_DIR/lockhub/facade.sock`): an agent whose Lock call waits for a decision there is suspended until it comes, and the deck shows and answers the hub's tickets; while no hub answers, no agent is suspended, the deck says `lockhub unreachable` and `lea doctor` warns. `0`: lea reads no hub and resumes the agents it suspended. **Upgrading from v0.2**: the default was `0`; put `LEA_HUB=0` in `~/.config/lea/lea.conf` to keep that, then restart lea |
