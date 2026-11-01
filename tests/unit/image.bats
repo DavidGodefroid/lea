@@ -1,5 +1,5 @@
 load helpers
-setup() { setup_fakes; I="$LEA_ROOT/image"; }
+setup() { setup_fakes; load_lea; I="$LEA_ROOT/image"; }
 
 @test "containers.conf gives nested containers HTTPS_PROXY only" {
   grep -q '"HTTPS_PROXY=@LEA_NESTED_PROXY@"' "$I/containers.conf.tmpl"
@@ -336,7 +336,7 @@ reset_runtime() {
 }
 
 # lea__verify_image: a pulled release image is checked by digest against lea's release workflow.
-verify_image() { load_lea; lea__verify_image "$@"; }
+verify_image() { lea__verify_image "$@"; }
 REL=ghcr.io/davidgodefroid/lea:0.5.0
 DIGEST=ghcr.io/davidgodefroid/lea@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
 
@@ -374,20 +374,66 @@ DIGEST=ghcr.io/davidgodefroid/lea@sha256:0123456789abcdef0123456789abcdef0123456
   [ -z "$(calls)" ]
 }
 
-@test "lea__verify_image without cosign removes the image and says how to install it" {
+# no_cosign_on_path: PATH with the fakes but no cosign (skips when the test image ships one).
+no_cosign_on_path() {
   d=$BATS_TEST_TMPDIR/nocosign
   mkdir -p "$d"
   for f in "$LEA_ROOT"/tests/fakes/*; do [ "${f##*/}" = cosign ] || ln -s "$f" "$d/"; done
   PATH="$d:/usr/bin:/bin"
   if command -v cosign >/dev/null 2>&1; then skip "cosign is installed in the test image"; fi
+}
+
+@test "lea__verify_image without cosign and without a pinned one says how to install it, removes nothing" {
+  no_cosign_on_path
+  lea__cosign_pin() { return 1; }
   run verify_image "$REL"
   [ "$status" -eq 1 ]
   [[ "$output" == *"lea: error: cosign not found: brew install cosign (lea verifies its images)"* ]]
-  calls | grep -qF "docker [image] [rm] [$REL]"
+  ! calls | grep -qF '[image] [rm]'
+}
+
+@test "lea__verify_image uses lea's pinned cosign when none is on PATH, and cleans it up" {
+  no_cosign_on_path
+  mkdir -p "$BATS_TEST_TMPDIR/rel"
+  cp "$LEA_ROOT/tests/fakes/cosign" "$BATS_TEST_TMPDIR/rel/cosign-linux-amd64"
+  pin=$(sha256sum "$BATS_TEST_TMPDIR/rel/cosign-linux-amd64" | cut -d' ' -f1)
+  eval "lea__cosign_pin() { [ \"\$1\" = linux-amd64 ] && echo $pin; }"
+  uname() { case $1 in -s) echo Linux ;; -m) echo x86_64 ;; esac; }
+  export FAKE_CURL_DIR="$BATS_TEST_TMPDIR/rel" TMPDIR="$BATS_TEST_TMPDIR/tmp"
+  mkdir -p "$TMPDIR"
+  FAKE_DOCKER_OUT_IMAGE_INSPECT_FORMAT=$DIGEST run verify_image "$REL"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"signature verified"* ]]
+  calls | grep -qF "[https://github.com/sigstore/cosign/releases/download/v3.0.6/cosign-linux-amd64]"
+  [ -z "$(ls -A "$TMPDIR")" ]
+}
+
+@test "lea__verify_image says so when the unverified image cannot be removed" {
+  FAKE_COSIGN_RC=1 FAKE_DOCKER_RC_IMAGE_RM=1 FAKE_DOCKER_OUT_IMAGE_INSPECT_FORMAT=$DIGEST run verify_image "$REL"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"is not signed by lea's release v0.5.0"*"; could not remove it: docker image rm $REL"* ]]
+}
+
+@test "lea__verify_image checks a tag that is not a release against any release tag" {
+  L=ghcr.io/davidgodefroid/lea:latest
+  FAKE_DOCKER_OUT_IMAGE_INSPECT_FORMAT=$DIGEST run verify_image "$L"
+  [ "$status" -eq 0 ]
+  calls | grep -qF '@refs/tags/v[0-9]+\.[0-9]+\.[0-9]+$]'
+  FAKE_COSIGN_RC=1 FAKE_DOCKER_OUT_IMAGE_INSPECT_FORMAT=$DIGEST run verify_image "$L"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"image $L is not signed by lea's release a release: removed"* ]]
+}
+
+@test "lea__ensure_image without any cosign pulls nothing" {
+  no_cosign_on_path
+  lea__cosign_pin() { return 1; }
+  FAKE_DOCKER_RC_IMAGE_INSPECT=1 run lea__ensure_image lea "$REL" LEA_IMAGE
+  [ "$status" -eq 1 ]
+  ! calls | grep -qF 'docker [pull]'
+  ! calls | grep -qF '[image] [rm]'
 }
 
 @test "lea__ensure_image verifies a pulled image and builds nothing for it" {
-  load_lea
   FAKE_DOCKER_RC_IMAGE_INSPECT=1 run lea__ensure_image lea "$REL" LEA_IMAGE
   [ "$status" -eq 0 ]
   calls | grep -qF "docker [pull] [$REL]"

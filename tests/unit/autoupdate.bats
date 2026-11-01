@@ -142,8 +142,8 @@ pinned_cosign() {
 @test "without cosign the pinned cosign v3.0.6 is downloaded, checked, and verifies the release" {
   bg_release v1.3.0
   pinned_cosign
-  # The images' own check needs cosign on PATH: the installer (which runs after the release's
-  # signature is checked with the pinned download) leaves one there.
+  # The new release's images are refreshed by its own process, which pins the real cosign
+  # (tests/unit/image.bats covers that download): the installer leaves the fake one on PATH.
   echo "ln -s \"$BATS_TEST_DIRNAME/../fakes/cosign\" \"$B/cosign\"" >>"$REL/install.sh"
   (cd "$REL" && sha256sum install.sh >checksums.txt)
   run lea_update --background </dev/null
