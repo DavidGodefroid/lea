@@ -118,7 +118,9 @@ checksum alone. The only exception is v0.1.0 and v0.1.1, which predate signing: 
 `checksums.txt` must then be the genuine one, whose SHA-256 the installer pins (it stops
 otherwise), and the install goes on by checksum, with a warning. `LEA_REQUIRE_COSIGN=1` removes
 that exception too. `lea update` and the background update verify the signature the same way
-before they run the new release's installer.
+before they run the new release's installer. Each tag also bumps the `lea` formula of the
+[Homebrew tap](https://github.com/DavidGodefroid/homebrew-tap) (`brew install
+davidgodefroid/tap/lea`), from the same signed `checksums.txt`.
 
 ```sh
 curl -fsSL https://leadeck.dev/install.sh | LEA_REQUIRE_COSIGN=1 sh

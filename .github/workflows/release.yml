@@ -76,3 +76,27 @@ jobs:
       - env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: gh release create "$GITHUB_REF_NAME" dist/*.tar.gz dist/checksums.txt dist/checksums.txt.sigstore.json dist/install.sh --title "lea $GITHUB_REF_NAME" --generate-notes
+
+  # Asks the Homebrew tap (DavidGodefroid/homebrew-tap) to bump the lea
+  # formula to this release, once the archives are published and signed: the
+  # tap's bump workflow verifies them with cosign before rewriting the
+  # formula. Needs the secret TAP_DISPATCH_TOKEN, a fine-grained token limited
+  # to the tap (Contents: read and write); without it the step is skipped. The
+  # token is in this job only, which runs no action.
+  tap:
+    name: homebrew tap
+    needs: release
+    runs-on: ubuntu-latest
+    permissions: {}
+    env:
+      TAP_DISPATCH_TOKEN: ${{ secrets.TAP_DISPATCH_TOKEN }}
+    steps:
+      - name: Bump the Homebrew formula
+        env:
+          GH_TOKEN: ${{ secrets.TAP_DISPATCH_TOKEN }}
+        if: ${{ env.TAP_DISPATCH_TOKEN != '' }}
+        run: |
+          gh api repos/DavidGodefroid/homebrew-tap/dispatches \
+            -f event_type=bump \
+            -f "client_payload[formula]=lea" \
+            -f "client_payload[version]=${GITHUB_REF_NAME}"
