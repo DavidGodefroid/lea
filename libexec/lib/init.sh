@@ -91,9 +91,20 @@ lea__init_projects() {
   # A leading ~ typed at the prompt is not expanded by read: expand it here.
   # shellcheck disable=SC2088
   case $_in_p in "~") _in_p=$HOME ;; "~/"*) _in_p=$HOME/${_in_p#"~/"} ;; esac
-  [ -d "$_in_p" ] || lea_die "$_in_p is not a directory"
-  _in_p=$(lea_abspath "$_in_p")
-  lea__guard_projects "$_in_p"
+  if [ -n "${LEA_FIRST_RUN:-}" ]; then
+    _in_why="$_in_p is not a directory"
+    if [ -d "$_in_p" ]; then
+      _in_p=$(lea_abspath "$_in_p")
+      _in_why=
+      # The guard dies with its reason: take it, and say what to run instead.
+      _in_g=$( (lea__guard_projects "$_in_p") 2>&1 ) || _in_why=${_in_g#lea: error: }
+    fi
+    [ -z "$_in_why" ] || lea_die "first run: $_in_why: cd into the directory that holds your projects and run lea again, or LEA_PROJECTS_DIR=DIR lea"
+  else
+    [ -d "$_in_p" ] || lea_die "$_in_p is not a directory"
+    _in_p=$(lea_abspath "$_in_p")
+    lea__guard_projects "$_in_p"
+  fi
   lea_user_config_set LEA_PROJECTS_DIR "$_in_p"
   LEA_PROJECTS_DIR=$_in_p
   export LEA_PROJECTS_DIR

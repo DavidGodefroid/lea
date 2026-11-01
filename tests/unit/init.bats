@@ -859,5 +859,21 @@ y"
   cd "$HOME"
   run lea_init --first-run </dev/null
   [ "$status" -eq 1 ]
-  [[ "$output" == *"cannot be a projects directory"* ]]
+  [[ "$output" == *"first run: $HOME cannot be a projects directory: it is / or contains your home directory: cd into the directory that holds your projects and run lea again, or LEA_PROJECTS_DIR=DIR lea"* ]]
+  [ ! -e "$U" ] || ! grep -q LEA_PROJECTS_DIR "$U"
+}
+
+@test "init --first-run refuses a LEA_PROJECTS_DIR that is not a directory, saving nothing" {
+  export LEA_PROJECTS_DIR="$BATS_TEST_TMPDIR/missing"
+  run lea_init --first-run </dev/null
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"first run: $BATS_TEST_TMPDIR/missing is not a directory: cd into the directory that holds your projects and run lea again, or LEA_PROJECTS_DIR=DIR lea"* ]]
+  [ ! -e "$U" ] || ! grep -q LEA_PROJECTS_DIR "$U"
+}
+
+@test "init --first-run keeps a preset LEA_PROJECTS_DIR over the working directory" {
+  mkdir -p "$BATS_TEST_TMPDIR/elsewhere"
+  cd "$BATS_TEST_TMPDIR/elsewhere"
+  lea_init --first-run </dev/null 2>/dev/null
+  grep -qx "LEA_PROJECTS_DIR='$P'" "$U"
 }
