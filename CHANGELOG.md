@@ -1,7 +1,9 @@
 # Changelog
 
-## Unreleased
+## v0.5.0 (2026-11-01)
 
+- The image ships locksql 0.14.0, lockmq 0.7.0 and lockfile 0.7.0, which reach one lock among
+  several with `--instance`.
 - lea initialises itself on its first run: it checks Docker, pulls and verifies its images,
   installs its AppArmor profile, records the projects directory and starts the Lock Family hub
   with `lox init`. The journey is `brew install davidgodefroid/tap/lockfamily`, `lea`, then
