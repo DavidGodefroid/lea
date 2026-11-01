@@ -251,6 +251,10 @@ func commandSetup(t *testing.T, root string, sc commandScenario) (*world, []stri
 	if r := (&Launcher{Root: w.root}).proxyRules(); r != "" {
 		w.env["FAKE_DOCKER_OUT_INSPECT___FORMAT"] = "@" + r
 	}
+	// The recorded scenarios run without the hub: `lox init` is the business of the hub scenarios,
+	// which turn it back on (and the daemon's matching record) in their setup.
+	writeUserConf(t, w, "LEA_HUB=0\n")
+	os.WriteFile(w.data+"/lea/host/daemon.hub", []byte("off"), 0o600)
 	for k, v := range sc.env {
 		v = strings.ReplaceAll(strings.ReplaceAll(v, "$W", w.dir), "$ID", w.id())
 		w.env[strings.ReplaceAll(k, "$ID", fakeKey(w.id()))] = v
@@ -507,6 +511,19 @@ func TestCommandsMatchTheGoldenFiles(t *testing.T) {
 		{name: "first run home is not a projects dir", cwd: "../home", unset: []string{"LEA_PROJECTS_DIR"}, exit: 1,
 			want:   []string{"lea: error: first run: $W/home cannot be a projects directory: it is / or contains your home directory: cd into the directory that holds your projects and run lea again, or LEA_PROJECTS_DIR=DIR lea"},
 			absent: []string{"lea-sh [init]", "docker [run]"}},
+		// The workspace has no hub yet (no up.json) and the hub is on: lea starts it with lox init.
+		{name: "hub started by lox init", setup: hubOn,
+			want:   []string{"lox [version]\nlox [init]", "lea: first run: starting the Lock Family hub (lox init)", open},
+			absent: []string{"lea: error"}},
+		{name: "hub lox missing", setup: func(w *world) { hubOn(w); withoutLox(w) }, exit: 1,
+			want:   []string{"lea: error: lox not found: lea starts the Lock Family hub with it: brew install davidgodefroid/tap/lox, then run lea again"},
+			absent: []string{"lox [", "docker [run]", "attach-session"}},
+		{name: "hub lox too old", setup: hubOn, env: map[string]string{"FAKE_LOX_VERSION": "0.4.0"}, exit: 1,
+			want:   []string{"lox [version]", "lea: error: lox 0.4.0 is older than 0.5.0, which lea needs to start the hub: brew upgrade lox, then run lea again"},
+			absent: []string{"lox [init]", "first run:", "attach-session"}},
+		{name: "hub lox init fails", setup: hubOn, env: map[string]string{"FAKE_LOX_RC_INIT": "1"}, exit: 1,
+			want:   []string{"lox [version]\nlox [init]", "lea: error: lox init failed (above): fix it, then run lea again (LEA_HUB=0 lea runs without the hub)"},
+			absent: []string{"attach-session"}},
 		{name: "old form refused", args: []string{"$W/projects"}, exit: 2,
 			want: []string{"lea: error: lea no longer takes a directory"}, absent: []string{"docker"}},
 		// The usage goes to stderr, which only the lea: lines of are compared.
@@ -593,6 +610,7 @@ func TestCommandsMatchTheGoldenFiles(t *testing.T) {
 			env: map[string]string{"LEA_OS_RELEASE": "$W/os-release", "FAKE_DOCKER_OUT_VERSION___FORMAT": "Engine=29.4.2\ncontainerd=v2.1.4\nrunc=1.3.0",
 				"LEA_DOCTOR_PROC": "$W/proc"},
 			setup: func(w *world) {
+				os.Remove(w.env["XDG_CONFIG_HOME"] + "/lea/lea.conf") // doctor reads the machine's own state: no user file
 				os.WriteFile(w.dir+"/os-release", []byte("ID=ubuntu\nVERSION_ID=\"24.04\"\n"), 0o644)
 				os.WriteFile(w.dir+"/bin/uname", []byte("#!/bin/sh\necho 7.0.0-38-generic\n"), 0o755)
 			},
@@ -604,6 +622,7 @@ func TestCommandsMatchTheGoldenFiles(t *testing.T) {
 		{name: "doctor without a projects dir", args: []string{"doctor"}, exit: 1,
 			env: map[string]string{"LEA_PROJECTS_DIR": "$W/none", "LEA_OS_RELEASE": "$W/os-release", "LEA_DOCTOR_PROC": "$W/proc"},
 			setup: func(w *world) {
+				os.Remove(w.env["XDG_CONFIG_HOME"] + "/lea/lea.conf") // doctor reads the machine's own state: no user file
 				os.WriteFile(w.dir+"/os-release", []byte("ID=ubuntu\nVERSION_ID=\"24.04\"\n"), 0o644)
 				os.WriteFile(w.dir+"/bin/uname", []byte("#!/bin/sh\necho 7.0.0-38-generic\n"), 0o755)
 			},
@@ -731,7 +750,7 @@ const leaShLog = "#!/bin/sh\n{ printf lea-sh; for a in \"$@\"; do printf ' [%s]'
 // initSetsProjects is a stand-in lea-sh whose init writes this world's projects dir into the
 // user configuration, as `lea init --first-run` does.
 func initSetsProjects(w *world) string {
-	return leaShLog + "mkdir -p \"$XDG_CONFIG_HOME/lea\"\nprintf 'LEA_PROJECTS_DIR=%s\\n' '" + w.proj + "' >\"$XDG_CONFIG_HOME/lea/lea.conf\"\n"
+	return leaShLog + "mkdir -p \"$XDG_CONFIG_HOME/lea\"\nprintf 'LEA_PROJECTS_DIR=%s\\n' '" + w.proj + "' >>\"$XDG_CONFIG_HOME/lea/lea.conf\"\n"
 }
 
 func fakeLeaSh(w *world, script string) {
@@ -745,4 +764,28 @@ func fakeLeaSh(w *world, script string) {
 		w.t.Fatal(err)
 	}
 	w.t.Cleanup(func() { os.WriteFile(p, orig, 0o755) })
+}
+
+// hubOn is a world whose hub is on (the recorded scenarios turn it off, see commandSetup) with no
+// up.json yet.
+func hubOn(w *world) {
+	os.Remove(w.env["XDG_CONFIG_HOME"] + "/lea/lea.conf")
+	os.WriteFile(w.data+"/lea/host/daemon.hub", []byte("on 300"), 0o600)
+}
+
+// withoutLox puts every fake but lox on the PATH.
+func withoutLox(w *world) {
+	w.t.Helper()
+	d := w.dir + "/fakes-without-lox"
+	os.MkdirAll(d, 0o755)
+	ents, err := os.ReadDir(repoRoot(w.t) + "/tests/fakes")
+	if err != nil {
+		w.t.Fatal(err)
+	}
+	for _, e := range ents {
+		if e.Name() != "lox" {
+			os.Symlink(repoRoot(w.t)+"/tests/fakes/"+e.Name(), d+"/"+e.Name())
+		}
+	}
+	w.env["PATH"] = d + ":" + w.dir + "/bin:/usr/local/bin:/usr/bin:/bin"
 }

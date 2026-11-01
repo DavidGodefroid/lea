@@ -1,0 +1,9 @@
+status 1
+-- calls
+tmux [-V]
+docker [image] [inspect] [-f] [{{.Id}}] [lea:dev]
+docker [image] [inspect] [-f] [{{.Id}}] [lea-proxy:dev]
+lox [version]
+-- lea
+lea: error: lox 0.4.0 is older than 0.5.0, which lea needs to start the hub: brew upgrade lox, then run lea again
+-- stdout

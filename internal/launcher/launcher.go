@@ -435,6 +435,9 @@ func (l *Launcher) dispatch(args []string) error {
 		if err != nil {
 			return err
 		}
+		if err := l.ensureHub(proj); err != nil {
+			return err
+		}
 		l.autoUpdate()
 		return l.session(proj, args)
 	}
@@ -509,6 +512,9 @@ func (l *Launcher) shell(args []string) error {
 	}
 	proj, err := l.projectsDir()
 	if err != nil {
+		return err
+	}
+	if err := l.ensureHub(proj); err != nil {
 		return err
 	}
 	if len(args) > 0 && args[0] == "--" {

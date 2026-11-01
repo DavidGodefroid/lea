@@ -115,3 +115,102 @@ func TestCheapRefusalsComeBeforeTheFirstRun(t *testing.T) {
 		})
 	}
 }
+
+func TestLoxCheckVersionFails(t *testing.T) {
+	w := newWorld(t, repoRoot(t))
+	w.env["FAKE_LOX_RC"] = "3"
+	err := w.launcher().loxCheck()
+	want := "lox version failed (above): reinstall lox (brew reinstall davidgodefroid/tap/lox), then run lea again"
+	if err == nil || err.Error() != want {
+		t.Fatalf("loxCheck() = %v, want %q", err, want)
+	}
+}
+
+func TestLoxCheckPrintsNoVersion(t *testing.T) {
+	w := newWorld(t, repoRoot(t))
+	w.env["FAKE_LOX_VERSION"] = ""
+	err := w.launcher().loxCheck()
+	want := "lox version printed no version: reinstall lox (brew reinstall davidgodefroid/tap/lox), then run lea again"
+	if err == nil || err.Error() != want {
+		t.Fatalf("loxCheck() = %v, want %q", err, want)
+	}
+}
+
+func upJSON(t *testing.T, w *world) {
+	t.Helper()
+	if err := os.MkdirAll(w.proj+"/.lockfamily", 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(w.proj+"/.lockfamily/up.json", []byte("{}"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestEnsureHubRunsLoxInit(t *testing.T) {
+	w := newWorld(t, repoRoot(t))
+	if err := w.launcher().ensureHub(w.proj); err != nil {
+		t.Fatal(err)
+	}
+	if got, want := strings.Join(w.calls(), "\n"), "lox [version]\nlox [init]"; got != want {
+		t.Fatalf("calls: %q, want %q", got, want)
+	}
+	if got := w.errb.String(); got != "lea: first run: starting the Lock Family hub (lox init)\n" {
+		t.Fatalf("stderr = %q", got)
+	}
+}
+
+func TestEnsureHubSkippedWithUpJSON(t *testing.T) {
+	w := newWorld(t, repoRoot(t))
+	upJSON(t, w)
+	if err := w.launcher().ensureHub(w.proj); err != nil {
+		t.Fatal(err)
+	}
+	if w.hasCall("lox") {
+		t.Fatalf("calls: %v", w.calls())
+	}
+}
+
+func TestEnsureHubSkippedWithoutTheHub(t *testing.T) {
+	w := newWorld(t, repoRoot(t))
+	writeUserConf(t, w, "LEA_HUB=0\n")
+	if err := w.launcher().ensureHub(w.proj); err != nil {
+		t.Fatal(err)
+	}
+	if w.hasCall("lox") {
+		t.Fatalf("calls: %v", w.calls())
+	}
+}
+
+func TestEnsureHubLoxMissing(t *testing.T) {
+	w := newWorld(t, repoRoot(t))
+	w.env["PATH"] = w.dir + "/bin:/usr/bin:/bin"
+	err := w.launcher().ensureHub(w.proj)
+	if err == nil || !strings.HasPrefix(err.Error(), "lox not found:") {
+		t.Fatalf("ensureHub() = %v", err)
+	}
+	if w.hasCall("docker [run]") || w.hasCall("lox") {
+		t.Fatalf("calls: %v", w.calls())
+	}
+}
+
+func TestEnsureHubLoxTooOld(t *testing.T) {
+	w := newWorld(t, repoRoot(t))
+	w.env["FAKE_LOX_VERSION"] = "0.4.0"
+	err := w.launcher().ensureHub(w.proj)
+	if err == nil || !strings.Contains(err.Error(), "lox 0.4.0 is older than 0.5.0") {
+		t.Fatalf("ensureHub() = %v", err)
+	}
+	if w.hasCall("lox [init]") {
+		t.Fatalf("calls: %v", w.calls())
+	}
+}
+
+func TestEnsureHubLoxInitFails(t *testing.T) {
+	w := newWorld(t, repoRoot(t))
+	w.env["FAKE_LOX_RC_INIT"] = "1"
+	err := w.launcher().ensureHub(w.proj)
+	want := "lox init failed (above): fix it, then run lea again (LEA_HUB=0 lea runs without the hub)"
+	if err == nil || err.Error() != want {
+		t.Fatalf("ensureHub() = %v, want %q", err, want)
+	}
+}

@@ -1,8 +1,11 @@
 package launcher
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
+	"os"
+	"os/exec"
 	"runtime"
 	"strings"
 )
@@ -10,11 +13,20 @@ import (
 // loxCheck is the lox lea needs to start the Lock Family hub: on PATH and at least the version
 // of config/host-minimums. A dev build is not compared.
 func (l *Launcher) loxCheck() error {
-	out, err := l.output(false, "lox", "version")
-	if err != nil {
-		return errors.New("lox not found: lea starts the Lock Family hub with it: brew install davidgodefroid/tap/lox, then run lea again")
+	const reinstall = "reinstall lox (brew reinstall davidgodefroid/tap/lox), then run lea again"
+	c := l.cmd("lox", "version")
+	var o bytes.Buffer
+	c.Stdout, c.Stderr = &o, l.Stderr
+	if err := l.exec(c); err != nil {
+		if errors.Is(err, exec.ErrNotFound) {
+			return errors.New("lox not found: lea starts the Lock Family hub with it: brew install davidgodefroid/tap/lox, then run lea again")
+		}
+		return errors.New("lox version failed (above): " + reinstall)
 	}
-	v := strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(out), "lox"))
+	v := strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(o.String()), "lox"))
+	if v == "" {
+		return errors.New("lox version printed no version: " + reinstall)
+	}
 	if v == "dev" {
 		l.logf("warning: lox dev: its version is not checked")
 		return nil
@@ -92,5 +104,27 @@ func (l *Launcher) firstRun() error {
 		return err
 	}
 	l.Cfg = cfg
+	return nil
+}
+
+// ensureHub starts the workspace's Lock Family hub with `lox init` when it has none: LEA_HUB is on
+// and proj/.lockfamily/up.json is missing. lox init runs in the foreground, on the user's terminal.
+func (l *Launcher) ensureHub(proj string) error {
+	if l.Cfg.Get("LEA_HUB") != "1" {
+		return nil
+	}
+	if _, err := os.Lstat(proj + "/.lockfamily/up.json"); err == nil {
+		return nil
+	}
+	if err := l.loxCheck(); err != nil {
+		return die("%v", err)
+	}
+	l.logf("first run: starting the Lock Family hub (lox init)")
+	c := l.cmd("lox", "init")
+	c.Dir = proj
+	c.Stdin, c.Stdout, c.Stderr = l.Stdin, l.Stdout, l.Stderr
+	if err := l.exec(c); err != nil {
+		return die("lox init failed (above): fix it, then run lea again (LEA_HUB=0 lea runs without the hub)")
+	}
 	return nil
 }
