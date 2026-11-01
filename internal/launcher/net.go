@@ -162,8 +162,14 @@ func (l *Launcher) ensureProxy(proj string) error {
 	a = append(a, "-e", "LEA_GIT_SSH="+l.Cfg.GitSSH(), "-e", "LEA_OTEL_UPSTREAM="+l.Cfg.Get("LEA_OTEL_UPSTREAM"),
 		"-e", "LEA_EGRESS_ALLOW="+allow,
 		l.Cfg.Get("LEA_PROXY_IMAGE"))
-	if err := l.run("docker", a...); err != nil || lh == nil {
-		return err
+	if err := l.run("docker", a...); err != nil {
+		if l.isInterrupted() {
+			return errInterrupted
+		}
+		return die("could not start the proxy %s (docker's message above): lea doctor checks the setup", name)
+	}
+	if lh == nil {
+		return nil
 	}
 	return l.ensureLockHTTPGate(true, gateImage, hub, proj)
 }

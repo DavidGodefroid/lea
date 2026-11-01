@@ -652,14 +652,14 @@ func (l *Launcher) containerStart(proj, pip string) error {
 		if l.isInterrupted() {
 			return errInterrupted
 		}
-		return exitError{1}
+		return die("the start snapshot failed (above): lea doctor checks the setup")
 	}
 	_ = l.quiet("docker", "rm", "-f", name)
 	if err := l.run("docker", append([]string{"run"}, args...)...); err != nil {
 		if l.isInterrupted() {
 			return errInterrupted
 		}
-		return exitError{1}
+		return die("could not start the container %s (docker's message above): lea doctor checks the setup", name)
 	}
 	if err := l.waitReady(name); err != nil {
 		return err
