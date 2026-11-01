@@ -40,7 +40,7 @@ export LEA_HUB_SOCKET="$facade"
 hold() {
   # shellcheck disable=SC2016 # expanded by the inner shell
   LEA_PROJECTS_DIR="$1" "$root/bin/lea" shell -- sh -c 'python3 -m http.server 8765 >/dev/null 2>&1 & p=$!
-    while [ ! -e "$1" ]; do sleep 1; done; kill "$p"' sh "$1/.lea-release" >/dev/null 2>&1 &
+    while [ ! -e "$1" ]; do sleep 1; done; kill "$p"' sh "$1/.lea-release" >"$1.log" 2>&1 &
   holders="$holders $!"
 }
 # shellcheck disable=SC2317 # invoked from the cleanup trap
@@ -57,7 +57,11 @@ wait_for() {
   what=$1; shift; i=0
   until v=$("$@" 2>/dev/null) && [ -n "$v" ] && [ "$v" != "<no value>" ]; do
     i=$((i + 1))
-    if [ "$i" -ge 180 ]; then echo "isolation: $what did not appear" >&2; exit 1; fi
+    if [ "$i" -ge 180 ]; then
+      echo "isolation: $what did not appear" >&2
+      for l in "$projects.log" "$sibling.log"; do [ ! -f "$l" ] || { echo "--- output of lea ($l):" >&2; tail -40 "$l" >&2; }; done
+      exit 1
+    fi
     sleep 1
   done
   printf '%s\n' "$v"
