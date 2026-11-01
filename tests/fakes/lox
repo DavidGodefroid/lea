@@ -1,0 +1,5 @@
+#!/bin/sh
+# Fake lox: records argv; `lox version` prints FAKE_LOX_VERSION (default 0.5.0); exits FAKE_LOX_RC.
+{ printf 'lox'; for a in "$@"; do printf ' [%s]' "$a"; done; printf '\n'; } >>"${FAKE_LOG:?}"
+if [ "${1:-}" = version ]; then echo "lox ${FAKE_LOX_VERSION:-0.5.0}"; fi
+exit "${FAKE_LOX_RC:-0}"
