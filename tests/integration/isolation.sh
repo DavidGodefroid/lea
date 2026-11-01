@@ -116,8 +116,14 @@ cp "$root/tests/integration/inside-isolation.sh" "$projects/"
 # gateway of this one and the address of the sibling.
 hold "$projects"
 hold "$sibling"
-gw_ip=$(wait_for "the gateway of lea-test-internal-$id" \
-  docker network inspect -f '{{range .IPAM.Config}}{{.Gateway}}{{end}}' "lea-test-internal-$id")
+# Recent Docker releases leave the gateway out of the IPAM config of an internal network: the
+# bridge address is then the first host address of the subnet.
+subnet=$(wait_for "the subnet of lea-test-internal-$id" \
+  docker network inspect -f '{{range .IPAM.Config}}{{.Subnet}}{{end}}' "lea-test-internal-$id")
+gw_ip=$(docker network inspect -f '{{range .IPAM.Config}}{{.Gateway}}{{end}}' "lea-test-internal-$id" 2>/dev/null || true)
+if [ -z "$gw_ip" ] || [ "$gw_ip" = "<no value>" ]; then
+  gw_ip=$(python3 -I -c 'import ipaddress, sys; print(next(ipaddress.ip_network(sys.argv[1], strict=False).hosts()))' "$subnet")
+fi
 sibling_ip=$(wait_for "the address of lea-test-$sid" \
   docker container inspect -f "{{with index .NetworkSettings.Networks \"lea-test-internal-$sid\"}}{{.IPAddress}}{{end}}" "lea-test-$sid")
 wait_for "lea-test-$id running" sh -c "docker container inspect -f '{{.State.Running}}' lea-test-$id | grep -x true" >/dev/null
