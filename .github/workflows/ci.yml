@@ -156,6 +156,40 @@ jobs:
           make test-hubdeck 2>&1 | tee hubdeck.log
           grep -q -- '^--- PASS: TestHubDeckApprovesARealLockhubTicket ' hubdeck.log
           grep -qx 'hubdeck: OK' hubdeck.log
+  # lea's first run on a machine without images (tests/integration/firstrun.sh): a fresh HOME and
+  # XDG_* directories, no lea images, the lox CLI of the checksum-verified lockhub release on
+  # PATH; `lea shell -- true` pulls both release images (cosign-verified), starts the hub with
+  # `lox init`, and a second run pulls nothing and starts no hub. The lox release is the plan's
+  # 0.5.0: the job fails until lockhub's v0.5.0 is tagged.
+  firstrun:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+        with:
+          go-version-file: go.mod
+      - run: go build -o build/lea ./cmd/lea
+      - uses: sigstore/cosign-installer@7e8b541eb2e61bf99390e1afd4be13a184e9ebc5 # v3.10.1
+        with:
+          cosign-release: v2.6.1
+      - name: AppArmor profile (as lea init loads it)
+        run: |
+          if docker info --format '{{json .SecurityOptions}}' | grep -q 'name=apparmor'; then
+            if [ -e /etc/apparmor.d/abi/4.0 ]; then abi=4.0 userns='  userns,'; else abi=3.0 userns=''; fi
+            sed -e "s|@ABI@|$abi|" -e "s|^@USERNS@\$|$userns|" apparmor/lea.tmpl | sudo tee /etc/apparmor.d/lea >/dev/null
+            sudo apparmor_parser -r /etc/apparmor.d/lea
+          fi
+      - name: tests/integration/firstrun.sh
+        shell: bash
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          LOCKHUB_VERSION: "0.5.0"
+        run: |
+          tests/integration/firstrun.sh 2>&1 | tee firstrun.log
+          grep -qx 'firstrun: OK' firstrun.log
   # The real Claude Code (the image's pinned version) with lea's hooks on a fake Messages API, and
   # lea's daemon: usage-limit resume, truncated transcripts, and the phase-3 suspend/resume demo
   # (a suspended agent stopped, resumed by its approval or a message). No secret, no real model.
