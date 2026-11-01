@@ -52,7 +52,7 @@ func (l *Launcher) lockHostArgs(ups map[string][]lockUpSocket) []string {
 		v, ok := ups[t.name]
 		switch {
 		case !ok:
-			l.logf("warning: %s: no such lock yet: `lox add %s` (lea's agents get its socket at their next start)", t.name, t.name)
+			l.logf("warning: %s: no such lock yet: `lox add %s` (lea's agents get its socket once lea restarts: lea stop, then lea)", t.name, t.name)
 		case len(v) == 0:
 			l.logf("warning: %s: lea's agents get no %s socket (see above)", t.name, t.name)
 		default:

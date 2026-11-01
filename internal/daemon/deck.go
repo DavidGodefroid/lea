@@ -298,6 +298,8 @@ func (d *Daemon) dispatchDeck(ctx context.Context, o Origin, req wire.Request) (
 		d.addHubCards(&snap)
 		snap.Pressure = d.deckPressure(p.Container)
 		snap.HubState = d.hubState()
+		// Locks lox up runs that this container does not mount: restart lea to use them.
+		snap.LocksAdded = d.locksAdded(ctx, p.Container)
 		return snap, err
 	}
 	return nil, fmt.Errorf("unknown method %q", req.Method)

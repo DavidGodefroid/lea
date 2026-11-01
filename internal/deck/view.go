@@ -290,6 +290,32 @@ func (m Model) lockLine() string {
 
 var lockNameRe = regexp.MustCompile(`^[a-z][a-z0-9-]{0,31}$`)
 
+// lockInstanceRe is a lock's instance name, as lox up names it (internal/launcher's
+// lockUpInstance).
+var lockInstanceRe = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,62}$`)
+
+// lockAddedHint is the deck's hint for a lock lox up runs that the container does not mount:
+// Docker cannot add a mount to a running container.
+func lockAddedHint(name string) string {
+	return "lock " + name + " added: restart lea to use it (lea stop, then lea)"
+}
+
+// lockHintLines are the hints of the locks added while the container runs, wrapped to the rows'
+// width (inner cells, indented as a row's detail); a name that is not an instance is left out.
+func (m Model) lockHintLines(inner int) []string {
+	st := lipgloss.NewStyle().Foreground(theme.Working)
+	var out []string
+	for _, n := range m.locksAdded {
+		if !lockInstanceRe.MatchString(n) {
+			continue
+		}
+		for _, l := range wrapWords(lockAddedHint(n), inner-4, 0) {
+			out = append(out, padRight("    "+st.Render(head(l, inner-4)), inner))
+		}
+	}
+	return out
+}
+
 func (m Model) bottom(w int) string {
 	c := m.cs()
 	hint := fmt.Sprintf("n new %[1]s m msg %[1]s ? keys", c.dot)
@@ -363,6 +389,11 @@ func (m Model) rowLines(inner int) ([]string, []lineOwner) {
 			rendered[i] = m.folderRow(e.in, inner)
 		} else {
 			rendered[i] = m.row(m.agents[e.agent], inner, e.in >= 0)
+		}
+		// A lock added while lea runs, on the selected agent: the same for every agent of the
+		// container (its mounts), said once.
+		if e.agent >= 0 && e.key == m.selected && !isShell(m.agents[e.agent]) {
+			rendered[i] = append(rendered[i], m.lockHintLines(inner)...)
 		}
 		for range rendered[i] {
 			owners[i] = append(owners[i], lineOwner{e.key, -1})

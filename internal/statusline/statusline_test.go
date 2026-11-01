@@ -21,7 +21,7 @@ func run(t *testing.T, in string) (string, []Report) {
 	t.Setenv("NO_COLOR", "1")
 	var out bytes.Buffer
 	var got []Report
-	if err := Run(strings.NewReader(in), &out, "", func(r Report) { got = append(got, r) }); err != nil {
+	if err := Run(strings.NewReader(in), &out, "", func(r Report) []string { got = append(got, r); return nil }); err != nil {
 		t.Fatal(err)
 	}
 	return strings.TrimSpace(out.String()), got
@@ -156,13 +156,13 @@ func TestPostReachesTheDaemon(t *testing.T) {
 	}
 	pctx, pcancel := context.WithTimeout(ctx, 2*time.Second)
 	defer pcancel()
-	if err := Post(pctx, bus, "dev", Report{CtxPct: 7, CostUSD: 0.5, Paths: []string{"cost.total_cost_usd"}}); err != nil {
+	if added, err := Post(pctx, bus, "dev", Report{CtxPct: 7, CostUSD: 0.5, Paths: []string{"cost.total_cost_usd"}}); err != nil || len(added) != 0 {
 		t.Fatal(err)
 	}
 	if u, _ := st.Usages("lea-a"); u["lea-a/dev"] != (store.Usage{CtxPct: 7, CostUSD: 0.5}) {
 		t.Fatalf("usages=%+v", u)
 	}
-	if err := Post(pctx, bus, "", Report{}); err != nil {
+	if _, err := Post(pctx, bus, "", Report{}); err != nil {
 		t.Fatalf("no identity must be a silent no-op: %v", err)
 	}
 }
@@ -283,5 +283,19 @@ func TestRunReportsRateLimitWindows(t *testing.T) {
 	_, got = run(t, `{"rate_limits":{"five_hour":{"used_percentage":101,"resets_at":1},"seven_day":{"used_percentage":3}}}`)
 	if len(got) != 1 || !reflect.DeepEqual(got[0].Limits, []Limit{{Window: "7d", Pct: 3}}) {
 		t.Fatalf("reports=%+v", got)
+	}
+}
+
+// The daemon names the locks lox up runs that the agent's container does not mount: the line says
+// to restart lea, a name it should never send is left out.
+func TestStatusLineSaysRestartLea(t *testing.T) {
+	t.Setenv("NO_COLOR", "1")
+	var out bytes.Buffer
+	post := func(Report) []string { return []string{"orders", "Bad\x1b[2J"} }
+	if err := Run(strings.NewReader(`{"model":{"display_name":"Opus"}}`), &out, "", post); err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.TrimSpace(out.String()); got != "Opus · +lock orders: restart lea" {
+		t.Fatalf("out=%q", got)
 	}
 }

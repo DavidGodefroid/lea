@@ -160,6 +160,18 @@ type Daemon struct {
 	shed     Shed
 	shedding map[string]*shedState
 	shedBusy bool
+	// A lock added while lea runs (lockwatch.go, E11): the up.json watched, its locks as last
+	// read (none when lea cannot trust it), the instances of the last trusted one, its last
+	// warnings (said once), each container's mounts, and test seams (the debounce, the events,
+	// the warnings' logger).
+	lockWatch      LockWatch
+	upLocks        []UpLock
+	upKnown        map[string]bool
+	lockLastWarn   string
+	mountsCache    map[string]mountsEntry
+	lockDebounce   time.Duration
+	afterLockEvent func(LockEvent)
+	lockWarnf      func(string, ...any)
 }
 
 func New(st *store.Store, runDir string, now func() int64) *Daemon {
@@ -1203,7 +1215,7 @@ func (d *Daemon) dispatchHooks(ctx context.Context, o Origin, me string, req wir
 	case "grant_check":
 		return d.grantCheck(o, me, req.Params)
 	case "status_report":
-		return d.statusReport(o, me, req.Params)
+		return d.statusReport(ctx, o, me, req.Params)
 	case "lock_request":
 		return d.lockRequest(ctx, o, me, req.Params)
 	default:

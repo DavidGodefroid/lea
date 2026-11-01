@@ -211,6 +211,9 @@ type Snapshot struct {
 	// HubState is "down" when lea follows the hub (LEA_HUB=1) but cannot reach its facade, so no
 	// agent is suspended on a Lock call; set by the daemon.
 	HubState string `json:"hub_state,omitempty"`
+	// LocksAdded are the locks lox up runs that the container does not mount (added while it
+	// runs): restart lea to use them. Set by the daemon.
+	LocksAdded []string `json:"locks_added,omitempty"`
 }
 
 // PressureView is what the deck shows of the pressure: a short gauge of the container and the

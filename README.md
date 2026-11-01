@@ -288,7 +288,9 @@ directory (`lox add locksql NAME`, with `allowed_uids: [<your uid>]` in
 `.lockfamily/lockfamily.yaml`: lea's agents run as your uid, which has no account in locksql's
 image) and run `lox up`. lea's agents then reach that lock's socket volume (read-only, once docker
 confirms it is lox up's, see below); without such a lock they get no locksql socket and lea says to
-run `lox up`. `lea locksql` and `lea doctor` say which applies. locksql is off by default, as
+run `lox up`. A lock added while lea runs reaches the containers started afterwards only (Docker
+cannot add a mount to a running container): the deck and the agents' status lines then say to
+restart lea (`lea stop`, then `lea`). `lea locksql` and `lea doctor` say which applies. locksql is off by default, as
 lockmq and lockfile: `lea init --locksql` (or `LEA_LOCKSQL=1`) turns it on.
 
 `lea init` builds lea's locksql image (from the source of the release lea pins, cloned at its tag

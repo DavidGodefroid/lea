@@ -297,6 +297,15 @@ func runDaemon(stderr io.Writer) int {
 	})
 	d.SetAgents(m)
 	d.SweepLockRequestsLater()
+	// A lock lox up adds while lea runs: running containers that lack it are told to restart lea.
+	if w, ok := daemonLockWatch(exe, agents.Docker{UID: os.Getuid(), GID: os.Getgid()}); ok {
+		d.SetLockWatch(w)
+		go func() {
+			if err := d.RunLockWatch(ctx); err != nil {
+				fmt.Fprintln(stderr, "lea daemon: locks added while lea runs are not seen:", clean(err.Error(), false))
+			}
+		}()
+	}
 	// A sound when an agent waits for the user and when a turn ends, while a deck shows its
 	// container; LEA_SOUND=0 starts with the sounds off (lea sound and the deck's S switch them).
 	if files, on := soundFiles(os.Getenv); len(files) > 0 {

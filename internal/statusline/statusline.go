@@ -48,9 +48,10 @@ const (
 var keyName = regexp.MustCompile(`^[A-Za-z0-9_]{1,40}$`)
 
 // Run prints the status line for the JSON on stdin and hands post (when not nil) what lea needs
-// from it. When dump is set the raw JSON is also written there (mode 0600). Nothing here may
-// fail Claude: bad input prints "lea" and reports nothing.
-func Run(stdin io.Reader, stdout io.Writer, dump string, post func(Report)) error {
+// from it; post answers the locks lox up runs that the agent's container does not mount, which
+// the line names ("+lock orders: restart lea"). When dump is set the raw JSON is also written
+// there (mode 0600). Nothing here may fail Claude: bad input prints "lea" and reports nothing.
+func Run(stdin io.Reader, stdout io.Writer, dump string, post func(Report) []string) error {
 	in, err := io.ReadAll(io.LimitReader(stdin, 1<<20))
 	if err != nil {
 		fmt.Fprintln(stdout, "lea")
@@ -69,24 +70,39 @@ func Run(stdin io.Reader, stdout io.Writer, dump string, post func(Report)) erro
 	r := parse(doc)
 	ws := windows(doc)
 	r.Limits = limits(ws)
-	fmt.Fprintln(stdout, line(doc, r, ws, os.Getenv("NO_COLOR") == "", time.Now()))
+	var added []string
 	if post != nil {
-		post(r)
+		added = post(r)
 	}
+	ln := line(doc, r, ws, os.Getenv("NO_COLOR") == "", time.Now())
+	for _, n := range added {
+		if lockInstance.MatchString(n) {
+			ln += " · +lock " + n + ": restart lea"
+		}
+	}
+	fmt.Fprintln(stdout, ln)
 	return dumpErr
 }
 
-// Post sends r to the daemon on the container's bus. Without an agent identity it does nothing.
-// The caller bounds it with ctx: the status line must never hold Claude up.
-func Post(ctx context.Context, sock, agent string, r Report) error {
+// lockInstance is a lock's instance name, as lox up names it (internal/launcher's lockUpInstance).
+var lockInstance = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,62}$`)
+
+// Post sends r to the daemon on the container's bus and returns the locks the daemon says the
+// container does not mount (a lock added while lea runs). Without an agent identity it does
+// nothing. The caller bounds it with ctx: the status line must never hold Claude up.
+func Post(ctx context.Context, sock, agent string, r Report) ([]string, error) {
 	if agent == "" {
-		return nil
+		return nil, nil
 	}
 	raw, err := json.Marshal(r)
 	if err != nil {
-		return err
+		return nil, err
 	}
-	return client.Call(ctx, sock, wire.Request{Method: "status_report", Agent: agent, Params: raw}, nil)
+	var ans struct {
+		LocksAdded []string `json:"locks_added"`
+	}
+	err = client.Call(ctx, sock, wire.Request{Method: "status_report", Agent: agent, Params: raw}, &ans)
+	return ans.LocksAdded, err
 }
 
 // parse reads the context % and the cost. The status-line fields are not a documented contract

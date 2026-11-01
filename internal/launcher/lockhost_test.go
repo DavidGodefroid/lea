@@ -78,7 +78,7 @@ func TestLockHostNeedsLoxUp(t *testing.T) {
 			t.Errorf("fixed socket volume: %s", a)
 		}
 	}
-	if e := w.errb.String(); !strings.Contains(e, "no such lock yet: `lox add lockfile`") || !strings.Contains(e, "(lea's agents get its socket at their next start)") || strings.Contains(e, "lockmq") {
+	if e := w.errb.String(); !strings.Contains(e, "no such lock yet: `lox add lockfile`") || !strings.Contains(e, "(lea's agents get its socket once lea restarts: lea stop, then lea)") || strings.Contains(e, "lockmq") {
 		t.Errorf("warnings: %s", e)
 	}
 	// No up.json at all: neither.

@@ -186,6 +186,44 @@ func (l *Launcher) lockUpSockets(proj, lf string, on func(tool string) bool) map
 	return out
 }
 
+// UpLock is a lock lox up runs that an agent container started now would mount: its instance,
+// its type and its socket volume.
+type UpLock struct{ Instance, Type, Volume string }
+
+// ReadUpLocks are the locks of the trusted up.json of the projects directory proj (readLockUp's
+// checks, its warnings through logf) that an agent container started now would mount: those of a
+// tool on reports on, with an instance name and lox up's socket volume name and clients group,
+// as lockUpSockets checks them, by instance. It runs no docker: lockUpSockets' checks of the
+// volume's labels run at the container's start. The daemon's watch of up.json (E11) reads it.
+func ReadUpLocks(proj string, logf func(string, ...any), on func(tool string) bool) []UpLock {
+	s, _ := readLockUpState(logf, proj, proj+"/.lockfamily")
+	if s == nil {
+		return nil
+	}
+	var out []UpLock
+	for name, lk := range s.Locks {
+		vol := s.Project + "_" + name + "-run"
+		if !on(lk.Type) || !lockUpInstance.MatchString(name) || lk.Socket != vol {
+			continue
+		}
+		if g, ok := lockGID[lk.Type]; ok && lk.GID != "" && lk.GID != g {
+			continue
+		}
+		out = append(out, UpLock{Instance: name, Type: lk.Type, Volume: vol})
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Instance < out[j].Instance })
+	return out
+}
+
+// UpLocks is ReadUpLocks for the projects directory proj with the tools on as an agent container
+// gets them (runArgs: a lock lox up runs turns its tool on unless the user turned it off).
+func (c *Config) UpLocks(proj string, logf func(string, ...any)) []UpLock {
+	return ReadUpLocks(proj, logf, func(tool string) bool {
+		key := lockToolKeys[tool]
+		return key != "" && c.toolOn(key, true)
+	})
+}
+
 // lockUpArgs are the docker run arguments of the sockets socks of the lock tool tool, switched by
 // env (LEA_LOCKSQL, LEA_LOCKMQ, LEA_LOCKFILE), with its clients group gid: the switch, the group
 // and each socket's read-only mount; with several locks of the tool, <env>_INSTANCES names the
