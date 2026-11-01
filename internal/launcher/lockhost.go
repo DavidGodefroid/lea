@@ -56,7 +56,7 @@ func (l *Launcher) lockHostArgs(ups map[string][]lockUpSocket) []string {
 		case len(v) == 0:
 			l.logf("warning: %s: lea's agents get no %s socket (see above)", t.name, t.name)
 		default:
-			a = append(a, lockUpArgs(t.name, t.env, t.gid, v)...)
+			a = append(a, lockUpArgs(t.env, t.gid, v)...)
 		}
 	}
 	return a

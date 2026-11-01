@@ -20,7 +20,7 @@ func session(t *testing.T, bus, agent string) *mcp.ClientSession {
 	t.Helper()
 	ctx := context.Background()
 	st, ct := mcp.NewInMemoryTransports()
-	if _, err := New(bus, agent, "test").Connect(ctx, st, nil); err != nil {
+	if _, err := New(bus, agent, "test", "").Connect(ctx, st, nil); err != nil {
 		t.Fatal(err)
 	}
 	cs, err := mcp.NewClient(&mcp.Implementation{Name: "t", Version: "0"}, nil).Connect(ctx, ct, nil)
@@ -94,6 +94,33 @@ func TestToolsRoundTrip(t *testing.T) {
 	r, err = dev.CallTool(ctx, &mcp.CallToolParams{Name: "msg_send", Arguments: map[string]any{"to": "ghost", "body": "x", "kind": "note"}})
 	if err != nil || !r.IsError || !strings.Contains(text(r), "known:") {
 		t.Fatalf("unknown recipient not reported: %s", text(r))
+	}
+}
+
+// Several locks of one tool (LEA_<TOOL>_INSTANCES, two or more): lea's MCP server tells the agent
+// to choose, one sentence per tool; none with one lock.
+func TestLockGuidance(t *testing.T) {
+	env := map[string]string{"LEA_LOCKSQL_INSTANCES": "orders stock", "LEA_LOCKMQ_INSTANCES": "events", "LEA_LOCKFILE_INSTANCES": "invoices reports"}
+	got := LockGuidance(func(k string) string { return env[k] })
+	if want := "several locksql locks: orders stock; pass --instance NAME\nseveral lockfile locks: invoices reports; pass --instance NAME"; got != want {
+		t.Fatalf("guidance %q, want %q", got, want)
+	}
+	if got := LockGuidance(func(string) string { return "" }); got != "" {
+		t.Fatalf("no several: %q", got)
+	}
+	ctx := context.Background()
+	g := LockGuidance(func(k string) string { return env[k] })
+	st, ct := mcp.NewInMemoryTransports()
+	if _, err := New("/nowhere", "dev", "test", g).Connect(ctx, st, nil); err != nil {
+		t.Fatal(err)
+	}
+	cs, err := mcp.NewClient(&mcp.Implementation{Name: "t", Version: "0"}, nil).Connect(ctx, ct, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer cs.Close()
+	if cs.InitializeResult().Instructions != g {
+		t.Fatalf("instructions %q", cs.InitializeResult().Instructions)
 	}
 }
 

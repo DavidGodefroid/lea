@@ -18,16 +18,18 @@ func (l *Launcher) daemonAnswers() bool { return l.quiet(l.Core, "agents") == ni
 // providersStamp is what a daemon records of the provider settings: one started with others is
 // restarted (DaemonProvidersStamp, the same line).
 func (l *Launcher) providersStamp() string {
-	return DaemonProvidersStamp(l.Cfg.ProjectsToolsOn(), l.Cfg.Get)
+	on, several := l.Cfg.ProjectsLockTools()
+	return DaemonProvidersStamp(on, several, l.Cfg.Get)
 }
 
 // DaemonProvidersStamp is the provider settings as one line: the default provider and model, the
-// providers file and the internal-hosts file it is checked against, and the lock tools that are
-// on (Config.ToolsOn), so a `lox add` that turns one on restarts the daemon.
-func DaemonProvidersStamp(on map[string]bool, get func(string) string) string {
+// providers file and the internal-hosts file it is checked against, and the Codex lock servers
+// (LockServers of Config.LockTools), so a `lox add` that turns a tool on or adds an instance
+// restarts the daemon.
+func DaemonProvidersStamp(on map[string]bool, several map[string][]string, get func(string) string) string {
 	var locks []string
-	for _, l := range LockServers(on, get) {
-		locks = append(locks, l.Name+"="+strconv.Itoa(l.TimeoutSec))
+	for _, l := range LockServers(on, several, get) {
+		locks = append(locks, l.Server()+"="+strconv.Itoa(l.TimeoutSec))
 	}
 	return strings.Join([]string{get("LEA_PROVIDER"), get("LEA_MODEL"), get("LEA_PROVIDERS"), get("LEA_INTERNAL_HOSTS"), strings.Join(locks, ",")}, " ")
 }

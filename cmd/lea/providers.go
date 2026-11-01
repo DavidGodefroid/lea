@@ -15,22 +15,26 @@ import (
 // hostProviders is the daemon's registry: the providers file read again at each spawn, so that an
 // edit needs no restart (the proxy's forwarder is restarted by the next lea).
 func hostProviders(exe string, getenv func(string) string) func() (*providers.Registry, error) {
-	return func() (*providers.Registry, error) { return launcher.LoadProviders(daemonToolsOn(exe), getenv) }
+	return func() (*providers.Registry, error) {
+		on, several := daemonLockTools(exe)
+		return launcher.LoadProviders(on, several, getenv)
+	}
 }
 
 func daemonProvidersStamp(exe string) string {
-	return launcher.DaemonProvidersStamp(daemonToolsOn(exe), os.Getenv)
+	on, several := daemonLockTools(exe)
+	return launcher.DaemonProvidersStamp(on, several, os.Getenv)
 }
 
-// daemonToolsOn is the lock tools lea wires for the configured projects directory, from lea's
-// config files and its up.json, read at each call (launcher.Config.ProjectsToolsOn); nil when the
-// configuration does not load.
-func daemonToolsOn(exe string) map[string]bool {
+// daemonLockTools is the lock tools lea wires for the configured projects directory and the
+// instances of each tool lox up runs several locks of, from lea's config files and its up.json,
+// read at each call (launcher.Config.ProjectsLockTools); nil when the configuration does not load.
+func daemonLockTools(exe string) (map[string]bool, map[string][]string) {
 	cfg, err := loadLeaConfig(exe)
 	if err != nil {
-		return nil
+		return nil, nil
 	}
-	return cfg.ProjectsToolsOn()
+	return cfg.ProjectsLockTools()
 }
 
 // loadLeaConfig reads lea's config files as the launcher does, for the checkout the daemon runs

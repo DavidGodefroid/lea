@@ -632,28 +632,55 @@ var gitStateDirs = []string{"git", "gh", "glab-cli"}
 // readLockUp; its warnings go to logf). The one decision the mounts, the Codex MCP list, the
 // daemon's stamp and the deck's lock console share.
 func (c *Config) ToolsOn(proj string, logf func(string, ...any)) map[string]bool {
+	on, _ := c.LockTools(proj, logf)
+	return on
+}
+
+// LockTools is ToolsOn and, for each tool on that lox up runs several locks of, the instances an
+// agent container started now reaches (upTools: those lockUpSockets mounts on
+// /run/<tool>/<instance>, before docker's checks), sorted; a tool with one lock has no entry.
+// up.json is read once for both.
+func (c *Config) LockTools(proj string, logf func(string, ...any)) (on map[string]bool, several map[string][]string) {
+	var s *lockUpState
 	named := map[string]bool{}
 	if proj != "" {
-		if s, _ := readLockUpState(logf, proj, proj+"/.lockfamily"); s != nil {
+		if s, _ = readLockUpState(logf, proj, proj+"/.lockfamily"); s != nil {
 			for _, lk := range s.Locks {
 				named[lk.Type] = true
 			}
 		}
 	}
-	out := map[string]bool{}
+	on = map[string]bool{}
 	for tool, key := range lockToolKeys {
-		out[tool] = c.toolOn(key, named[tool])
+		on[tool] = c.toolOn(key, named[tool])
 	}
-	return out
+	if s == nil {
+		return on, nil
+	}
+	tools, _ := upTools(s, func(tool string) bool { return on[tool] })
+	for typ, t := range tools {
+		if !t.several {
+			continue
+		}
+		if several == nil {
+			several = map[string][]string{}
+		}
+		names := []string{}
+		for _, lk := range t.locks {
+			names = append(names, lk.Instance)
+		}
+		several[typ] = names
+	}
+	return on, several
 }
 
-// ProjectsToolsOn is ToolsOn for the configured projects directory (LEA_PROJECTS_DIR, its
+// ProjectsLockTools is LockTools for the configured projects directory (LEA_PROJECTS_DIR, its
 // physical path), silently: what the daemon and the launcher both compute for the provider
 // settings and the lock consoles.
-func (c *Config) ProjectsToolsOn() map[string]bool {
+func (c *Config) ProjectsLockTools() (on map[string]bool, several map[string][]string) {
 	p := c.Get("LEA_PROJECTS_DIR")
 	if r, err := filepath.EvalSymlinks(p); err == nil {
 		p = r
 	}
-	return c.ToolsOn(p, func(string, ...any) {})
+	return c.LockTools(p, func(string, ...any) {})
 }

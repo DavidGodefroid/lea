@@ -544,7 +544,7 @@ func (l *Launcher) runArgs(proj, pip string) ([]string, error) {
 			if err != nil {
 				return nil, err
 			}
-			a = append(a, lockUpArgs("locksql", "LEA_LOCKSQL", "10000", v)...)
+			a = append(a, lockUpArgs("LEA_LOCKSQL", "10000", v)...)
 			a = append(a, "--mount", "type=bind,src="+d+",dst="+d+",readonly")
 		}
 	}

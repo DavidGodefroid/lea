@@ -114,9 +114,49 @@ func readLockUpState(logf func(string, ...any), proj, lf string) (*lockUpState, 
 
 // lockUpSocket is a lock's socket volume as the agents mount it: the lock's instance, its volume
 // and where the agents find it (Dst): /run/<tool> when lox up runs one lock of the tool, and
-// /run/<tool>/<instance> for each of several.
+// /run/<tool>/<instance> for each of several (Several).
 type lockUpSocket struct {
 	Instance, Volume, Dst string
+	Several               bool
+}
+
+// upTool is what up.json says of a lock tool that is on: whether lox up runs several locks of it
+// (the agents then find each on /run/<tool>/<instance>, and Codex gets one server per instance),
+// the locks lockUsable passes (by instance) and why each other one is left out.
+type upTool struct {
+	several bool
+	locks   []UpLock
+	dropped []string
+}
+
+// upTools is upTool by tool for up.json s, for the tools on reports on, and the tools lox up runs
+// a lock of that are off. "Several" follows what up.json declares, not what passes: a lock left
+// out does not move the others to /run/<tool>. The one reading of up.json's locks that the mounts
+// (lockUpSockets), the daemon's watch (ReadUpLocks) and the Codex servers (Config.LockTools) share.
+func upTools(s *lockUpState, on func(tool string) bool) (map[string]*upTool, map[string]bool) {
+	names := map[string][]string{}
+	off := map[string]bool{}
+	for name, lk := range s.Locks {
+		if !on(lk.Type) {
+			off[lk.Type] = true
+			continue
+		}
+		names[lk.Type] = append(names[lk.Type], name)
+	}
+	out := map[string]*upTool{}
+	for typ, ns := range names {
+		sort.Strings(ns)
+		t := &upTool{several: len(ns) > 1}
+		for _, name := range ns {
+			if vol, why := lockUsable(s, name); why != "" {
+				t.dropped = append(t.dropped, why)
+			} else {
+				t.locks = append(t.locks, UpLock{Instance: name, Type: typ, Volume: vol})
+			}
+		}
+		out[typ] = t
+	}
+	return out, off
 }
 
 // lockUpSockets are the socket volumes lox up runs for the projects directory proj (its Lock
@@ -130,17 +170,7 @@ func (l *Launcher) lockUpSockets(proj, lf string, on func(tool string) bool) map
 	if s == nil {
 		return nil
 	}
-	byType := map[string][]string{}
-	count := map[string]int{}
-	off := map[string]bool{}
-	for name, lk := range s.Locks {
-		if !on(lk.Type) {
-			off[lk.Type] = true
-			continue
-		}
-		count[lk.Type]++
-		byType[lk.Type] = append(byType[lk.Type], name)
-	}
+	tools, off := upTools(s, on)
 	// A lock lox up runs for a tool lea leaves off (locksql, lockmq and lockfile are off by
 	// default): said once, the agents get none of its socket.
 	for _, t := range []struct{ typ, env string }{{"locksql", "LEA_LOCKSQL"}, {"lockmq", "LEA_LOCKMQ"}, {"lockfile", "LEA_LOCKFILE"}} {
@@ -149,26 +179,21 @@ func (l *Launcher) lockUpSockets(proj, lf string, on func(tool string) bool) map
 		}
 	}
 	out := map[string][]lockUpSocket{}
-	for typ, names := range byType {
+	for typ, t := range tools {
 		out[typ] = []lockUpSocket{}
-		sort.Strings(names)
-		for _, name := range names {
-			vol, why := lockUsable(s, name)
-			if why != "" {
-				l.logf("warning: %s: %s", p, why)
+		for _, why := range t.dropped {
+			l.logf("warning: %s: %s", p, why)
+		}
+		for _, lk := range t.locks {
+			if why := l.lockUpVolumeWrong(lk.Volume, s.Project, proj, lk.Instance, typ); why != "" {
+				l.logf("warning: lock %s (%s): %s: lea's agents cannot reach it", lk.Instance, typ, why)
 				continue
 			}
-			if why := l.lockUpVolumeWrong(vol, s.Project, proj, name, typ); why != "" {
-				l.logf("warning: lock %s (%s): %s: lea's agents cannot reach it", name, typ, why)
-				continue
-			}
-			// The path follows what up.json declares, not what passed: a lock left out does not
-			// move the others to /run/<tool>.
 			dst := "/run/" + typ
-			if count[typ] > 1 {
-				dst += "/" + name
+			if t.several {
+				dst += "/" + lk.Instance
 			}
-			out[typ] = append(out[typ], lockUpSocket{Instance: name, Volume: vol, Dst: dst})
+			out[typ] = append(out[typ], lockUpSocket{Instance: lk.Instance, Volume: lk.Volume, Dst: dst, Several: t.several})
 		}
 	}
 	return out
@@ -206,15 +231,11 @@ func ReadUpLocks(proj string, logf func(string, ...any), on func(tool string) bo
 	if s == nil {
 		return nil
 	}
+	// Without the locks lockUpSockets leaves out with a warning at the container's start.
+	tools, _ := upTools(s, on)
 	var out []UpLock
-	for name, lk := range s.Locks {
-		if !on(lk.Type) {
-			continue
-		}
-		// What lockUpSockets leaves out with a warning at the container's start.
-		if vol, why := lockUsable(s, name); why == "" {
-			out = append(out, UpLock{Instance: name, Type: lk.Type, Volume: vol})
-		}
+	for _, t := range tools {
+		out = append(out, t.locks...)
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Instance < out[j].Instance })
 	return out
@@ -229,16 +250,17 @@ func (c *Config) UpLocks(proj string, logf func(string, ...any)) []UpLock {
 	})
 }
 
-// lockUpArgs are the docker run arguments of the sockets socks of the lock tool tool, switched by
+// lockUpArgs are the docker run arguments of the sockets socks of a lock tool, switched by
 // env (LEA_LOCKSQL, LEA_LOCKMQ, LEA_LOCKFILE), with its clients group gid: the switch, the group
-// and each socket's read-only mount; with several locks of the tool, <env>_INSTANCES names the
-// instances the agents reach (each on /run/<tool>/<instance>), space separated.
-func lockUpArgs(tool, env, gid string, socks []lockUpSocket) []string {
+// and each socket's read-only mount; with several locks of the tool (lockUpSockets' Several),
+// <env>_INSTANCES names the instances the agents reach (each on /run/<tool>/<instance>), space
+// separated.
+func lockUpArgs(env, gid string, socks []lockUpSocket) []string {
 	a := []string{"-e", env + "=1", "--group-add", gid}
 	var names []string
 	for _, s := range socks {
 		a = append(a, "--mount", lockUpMount(s))
-		if s.Dst != "/run/"+tool {
+		if s.Several {
 			names = append(names, s.Instance)
 		}
 	}

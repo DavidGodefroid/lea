@@ -141,8 +141,10 @@ func TestLockUpRefusesOtherVolumes(t *testing.T) {
 // LEA_<TOOL>_INSTANCES names them; one lock keeps today's /run/<tool>, with no such variable.
 func TestLockUpSocketsSeveralOfOneType(t *testing.T) {
 	w := newWorld(t, repoRoot(t))
-	writeUp(t, w, lockUp("orders", "locksql")+","+lockUp("stock", "locksql")+","+lockUp("events", "lockmq")+","+lockUp("audit", "lockmq"))
-	for _, l := range []struct{ name, typ string }{{"orders", "locksql"}, {"stock", "locksql"}, {"events", "lockmq"}, {"audit", "lockmq"}} {
+	writeUp(t, w, lockUp("orders", "locksql")+","+lockUp("stock", "locksql")+","+lockUp("events", "lockmq")+","+lockUp("audit", "lockmq")+
+		","+lockUp("invoices", "lockfile")+","+lockUp("reports", "lockfile"))
+	for _, l := range []struct{ name, typ string }{{"orders", "locksql"}, {"stock", "locksql"}, {"events", "lockmq"}, {"audit", "lockmq"},
+		{"invoices", "lockfile"}, {"reports", "lockfile"}} {
 		labels(w, l.name, l.typ, "socket")
 	}
 	args := lockArgs(t, w)
@@ -150,13 +152,16 @@ func TestLockUpSocketsSeveralOfOneType(t *testing.T) {
 		"type=volume,src=" + upProjectOf(w) + "_stock-run,dst=/run/locksql/stock,readonly",
 		"type=volume,src=" + upProjectOf(w) + "_audit-run,dst=/run/lockmq/audit,readonly",
 		"type=volume,src=" + upProjectOf(w) + "_events-run,dst=/run/lockmq/events,readonly",
-		"LEA_LOCKSQL_INSTANCES=orders stock", "LEA_LOCKMQ_INSTANCES=audit events", "LEA_LOCKSQL=1", "LEA_LOCKMQ=1"} {
+		"type=volume,src=" + upProjectOf(w) + "_invoices-run,dst=/run/lockfile/invoices,readonly",
+		"type=volume,src=" + upProjectOf(w) + "_reports-run,dst=/run/lockfile/reports,readonly",
+		"LEA_LOCKSQL_INSTANCES=orders stock", "LEA_LOCKMQ_INSTANCES=audit events", "LEA_LOCKFILE_INSTANCES=invoices reports",
+		"LEA_LOCKSQL=1", "LEA_LOCKMQ=1", "LEA_LOCKFILE=1"} {
 		if !contains(args, m) {
 			t.Errorf("missing %q in %v", m, args)
 		}
 	}
 	for _, a := range args {
-		if strings.HasSuffix(a, "dst=/run/locksql,readonly") || strings.HasSuffix(a, "dst=/run/lockmq,readonly") {
+		if strings.HasSuffix(a, "dst=/run/locksql,readonly") || strings.HasSuffix(a, "dst=/run/lockmq,readonly") || strings.HasSuffix(a, "dst=/run/lockfile,readonly") {
 			t.Errorf("a socket on the one-lock path: %s", a)
 		}
 	}
@@ -197,6 +202,41 @@ func TestLockUpSocketsEachChecked(t *testing.T) {
 	}
 	if !strings.Contains(w.errb.String(), "warning: lock stock (locksql): volume "+upProjectOf(w)+"_stock-run is not lox up's socket volume") {
 		t.Errorf("warning: %s", w.errb.String())
+	}
+}
+
+// A lock whose name is not an instance name, among several of the tool: left out with the
+// warning, the good one still on its instance path, no mount with the bad name.
+func TestLockUpSocketsBadInstanceAmongSeveral(t *testing.T) {
+	w := newWorld(t, repoRoot(t))
+	writeUp(t, w, lockUp("orders", "locksql")+","+lockUp("Bad", "locksql"))
+	labels(w, "orders", "locksql", "socket")
+	labels(w, "Bad", "locksql", "socket")
+	args := lockArgs(t, w)
+	if !contains(args, "type=volume,src="+upProjectOf(w)+"_orders-run,dst=/run/locksql/orders,readonly") || !contains(args, "LEA_LOCKSQL_INSTANCES=orders") {
+		t.Errorf("orders not on /run/locksql/orders: %v", args)
+	}
+	for _, a := range args {
+		if strings.Contains(a, "dst=/run/locksql/Bad") || strings.Contains(a, "_Bad-run") {
+			t.Errorf("the bad name reached a mount: %s", a)
+		}
+	}
+	if !strings.Contains(w.errb.String(), `warning: `+w.proj+`/.lockfamily/up.json: lock "Bad": not an instance name: locksql left out`) {
+		t.Errorf("warning: %s", w.errb.String())
+	}
+}
+
+// lockUpArgs takes "several" from lockUpSockets' flag, never from a socket's path.
+func TestLockUpArgsSeveralFromTheFlag(t *testing.T) {
+	one := lockUpArgs("LEA_LOCKSQL", "10000", []lockUpSocket{{Instance: "orders", Volume: "v", Dst: "/run/locksql/x"}})
+	for _, a := range one {
+		if strings.Contains(a, "_INSTANCES=") {
+			t.Errorf("one lock: %v", one)
+		}
+	}
+	several := lockUpArgs("LEA_LOCKSQL", "10000",[]lockUpSocket{{Instance: "orders", Volume: "v", Dst: "/run/locksql", Several: true}})
+	if !contains(several, "LEA_LOCKSQL_INSTANCES=orders") {
+		t.Errorf("several: %v", several)
 	}
 }
 

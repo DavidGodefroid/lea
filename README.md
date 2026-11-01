@@ -867,9 +867,11 @@ so. Changes apply after `lea init` (endpoints, keys, images, locksql) or `lea st
   `docs/lock-up.md`) on `/run/<tool>`, read-only, once docker confirms it is that lock's socket
   volume for this projects directory (compose project, `dev.lockfamily.role=socket`, instance and
   workspace labels): never a lock's home or the hub's network. lea ignores an `up.json` that is a
-  link, that others than you can write, or that names another projects directory. A tool that
-  `lox up` runs but lea cannot use (two locks of it, a volume docker does not confirm) gets no
-  socket at all, never the fixed one of another console; a warning says so.
+  link, that others than you can write, or that names another projects directory. Several locks
+  of one tool each get `/run/<tool>/<instance>`, `LEA_<TOOL>_INSTANCES` names them, a Codex agent
+  gets one MCP server per lock (`<tool>-<instance>`, run with `--instance`), and lea's MCP server
+  tells every agent to pass `--instance NAME`. A lock lea cannot use (a bad name, a volume docker
+  does not confirm) gets no socket at all, never the fixed one of another console; a warning says so.
 - Egress goes through a proxy: HTTPS (and plain HTTP) to an allowlist of public domains (plus
   `LEA_INTERNAL_HOSTS`), SSH only to `LEA_GIT_SSH`. Private and link-local addresses are refused.
 - By default the allowlist is lea's own: `github.com`, `githubusercontent.com`, `ghcr.io`,
