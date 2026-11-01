@@ -25,6 +25,12 @@ LEA_IMAGE=lea:dev
 LEA_PROXY_IMAGE=lea-proxy:dev
 CONF
 export LEA_CONFIG="$work/lea.conf"
+# lea checks that lox is installed before it starts. This test follows no real hub (the stand-in
+# facade socket below is the only hub), so a stand-in lox that reports a dev build satisfies the
+# check on a host without one (CI).
+mkdir -p "$work/bin"
+printf '#!/bin/sh\necho "lox dev"\n' >"$work/bin/lox"; chmod +x "$work/bin/lox"
+PATH="$work/bin:$PATH"; export PATH
 state="$XDG_DATA_HOME/lea/state"; mkdir -p "$state"; printf '{}\n' >"$state/claude.json"
 slug=$(printf '%s' "$projects" | sed 's/[^A-Za-z0-9]/-/g')
 id=$(printf '%s' "$projects" | sha256sum | cut -c1-10)
