@@ -11,6 +11,17 @@ for last in "$@"; do :; done
 at=$(printf '%s_AT_%s' "$key" "${last:-}" | tr '[:lower:]' '[:upper:]' | tr -c 'A-Z0-9_' '_')
 eval "[ -z \"\${FAKE_DOCKER_OUT_$at+x}\" ] || out=\$FAKE_DOCKER_OUT_$at"
 eval "[ -z \"\${FAKE_DOCKER_RC_$at+x}\" ] || rc=\$FAKE_DOCKER_RC_$at"
+# `image inspect --format …` (the digest lea__verify_image asks for) is its own key,
+# IMAGE_INSPECT_FORMAT, so a missing image (RC_IMAGE_INSPECT) still has a digest once pulled: it
+# prints IMAGE's repository at FAKE_DOCKER_DIGEST (default sha256:aa…aa).
+if [ "$key" = IMAGE_INSPECT ] && [ "${3:-}" = --format ]; then
+  key=IMAGE_INSPECT_FORMAT
+  eval "out=\${FAKE_DOCKER_OUT_$key:-}"
+  eval "rc=\${FAKE_DOCKER_RC_$key:-0}"
+  if [ -z "$out" ]; then
+    out="${last%:*}@${FAKE_DOCKER_DIGEST:-sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa}"
+  fi
+fi
 # FAKE_DOCKER_OUTSEQ_<KEY>="a|b|…": the n-th call with <KEY> prints the n-th field (empty: nothing).
 eval "oseq=\${FAKE_DOCKER_OUTSEQ_$key:-}"
 # shellcheck disable=SC2154

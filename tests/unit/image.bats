@@ -334,3 +334,63 @@ reset_runtime() {
   # The bus directory is the daemon's bind mount: never touched.
   [ -f "$r/run/lea/bus/keep" ]
 }
+
+# lea__verify_image: a pulled release image is checked by digest against lea's release workflow.
+verify_image() { load_lea; lea__verify_image "$@"; }
+REL=ghcr.io/davidgodefroid/lea:0.5.0
+DIGEST=ghcr.io/davidgodefroid/lea@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+
+@test "lea__verify_image checks the digest against the release workflow at that tag" {
+  FAKE_DOCKER_OUT_IMAGE_INSPECT_FORMAT=$DIGEST run verify_image "$REL"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"lea: image $DIGEST: signature verified"* ]]
+  calls | grep -qF "docker [image] [inspect] [--format] [{{index .RepoDigests 0}}] [$REL]"
+  calls | grep -qF "[--certificate-oidc-issuer] [https://token.actions.githubusercontent.com]"
+  calls | grep -qF '[--certificate-identity-regexp] [^https://github\.com/DavidGodefroid/lea/\.github/workflows/release\.yml@refs/tags/v0\.5\.0$]'
+  calls | grep -qF "[$DIGEST]"
+  ! calls | grep -qF '[image] [rm]'
+}
+
+@test "lea__verify_image removes an image whose signature does not verify and dies" {
+  FAKE_COSIGN_RC=1 FAKE_DOCKER_OUT_IMAGE_INSPECT_FORMAT=$DIGEST run verify_image "$REL"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"lea: error: image $REL is not signed by lea's release v0.5.0: removed; check your network or registry, then run lea again"* ]]
+  calls | grep -qF "docker [image] [rm] [$REL]"
+}
+
+@test "lea__verify_image refuses an image without a registry digest" {
+  FAKE_DOCKER_RC_IMAGE_INSPECT_FORMAT=1 run verify_image "$REL"
+  [ "$status" -eq 1 ]
+  ! calls | grep -q '^cosign'
+  calls | grep -qF "docker [image] [rm] [$REL]"
+}
+
+@test "lea__verify_image skips a locally built :dev image" {
+  run verify_image lea:dev
+  [ "$status" -eq 0 ]
+  [ -z "$(calls)" ]
+  run verify_image lea-proxy:dev
+  [ "$status" -eq 0 ]
+  [ -z "$(calls)" ]
+}
+
+@test "lea__verify_image without cosign removes the image and says how to install it" {
+  d=$BATS_TEST_TMPDIR/nocosign
+  mkdir -p "$d"
+  for f in "$LEA_ROOT"/tests/fakes/*; do [ "${f##*/}" = cosign ] || ln -s "$f" "$d/"; done
+  PATH="$d:/usr/bin:/bin"
+  if command -v cosign >/dev/null 2>&1; then skip "cosign is installed in the test image"; fi
+  run verify_image "$REL"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"lea: error: cosign not found: brew install cosign (lea verifies its images)"* ]]
+  calls | grep -qF "docker [image] [rm] [$REL]"
+}
+
+@test "lea__ensure_image verifies a pulled image and builds nothing for it" {
+  load_lea
+  FAKE_DOCKER_RC_IMAGE_INSPECT=1 run lea__ensure_image lea "$REL" LEA_IMAGE
+  [ "$status" -eq 0 ]
+  calls | grep -qF "docker [pull] [$REL]"
+  calls | grep -qF "[ghcr.io/davidgodefroid/lea@sha256:"
+  ! calls | grep -q 'docker \[build\]'
+}
