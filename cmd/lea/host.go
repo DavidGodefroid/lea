@@ -186,9 +186,14 @@ func runDaemon(stderr io.Writer) int {
 		fmt.Fprintln(stderr, "lea:", clean(err.Error(), false))
 		return 1
 	}
+	exe, err := os.Executable()
+	if err != nil {
+		fmt.Fprintln(stderr, "lea:", clean(err.Error(), false))
+		return 1
+	}
 	// Same pattern for the provider settings.
 	_ = os.Remove(filepath.Join(host, "daemon.providers"))
-	if err := os.WriteFile(filepath.Join(host, "daemon.providers"), []byte(daemonProvidersStamp()), 0o600); err != nil {
+	if err := os.WriteFile(filepath.Join(host, "daemon.providers"), []byte(daemonProvidersStamp(exe)), 0o600); err != nil {
 		fmt.Fprintln(stderr, "lea:", clean(err.Error(), false))
 		return 1
 	}
@@ -245,12 +250,7 @@ func runDaemon(stderr io.Writer) int {
 	} else {
 		fmt.Fprintln(stderr, "lea daemon: LEA_HUB=1 but no hub facade socket (LEA_HUB_SOCKET, XDG_RUNTIME_DIR): no agent is suspended on a Lock call")
 	}
-	exe, err := os.Executable()
-	if err != nil {
-		fmt.Fprintln(stderr, "lea:", clean(err.Error(), false))
-		return 1
-	}
-	reg := hostProviders(os.Getenv)
+	reg := hostProviders(exe, os.Getenv)
 	d.SetProviders(reg)
 	d.SetDefaultProvider(os.Getenv("LEA_PROVIDER"))
 	// LockHTTP (LEA_LOCKHTTP=1): each agent gets its own proxy password, and the gate learns who

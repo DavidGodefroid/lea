@@ -113,7 +113,7 @@ func TestLockHostConfig(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cfg.LockHost("LEA_LOCKMQ") || cfg.LockHost("LEA_LOCKFILE") {
+	if on := cfg.ToolsOn(w.proj, func(string, ...any) {}); on["lockmq"] || on["lockfile"] || on["locksql"] {
 		t.Fatal("lockmq and lockfile must be off by default")
 	}
 }

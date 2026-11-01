@@ -276,7 +276,7 @@ func providerName(v string) error {
 	if v == "" {
 		return nil
 	}
-	reg, err := launcher.LoadProviders(os.Getenv)
+	reg, err := launcher.LoadProviders(nil, os.Getenv)
 	if err != nil {
 		return err
 	}

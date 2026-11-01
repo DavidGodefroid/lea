@@ -529,8 +529,7 @@ func (l *Launcher) runArgs(proj, pip string) ([]string, error) {
 		return false
 	})
 	_, upSql := ups["locksql"]
-	l.locksqlWired = l.Cfg.toolOn("LEA_LOCKSQL", upSql)
-	if l.locksqlWired {
+	if l.Cfg.toolOn("LEA_LOCKSQL", upSql) {
 		// The socket volume of lox up's locksql lock and its clients group (locksql-clients), as
 		// for lockmq and lockfile (lockHostArgs): the console runs hub-attached only, under lox
 		// up. Without such a lock the agents get no locksql socket, never a fixed volume another
@@ -669,7 +668,7 @@ func (l *Launcher) containerStart(proj, pip string) error {
 		}
 		l.logf("warning: the container's bus socket could not be bound; agents run without lea messaging")
 	}
-	if l.locksqlWired {
+	if l.Cfg.ToolsOn(proj, func(string, ...any) {})["locksql"] {
 		l.locksqlHint()
 	}
 	return nil

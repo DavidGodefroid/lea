@@ -498,3 +498,27 @@ func TestSnapshotCarriesTheOldestLockRequest(t *testing.T) {
 		}
 	}
 }
+
+// EnabledFor decides, for the deck's projects directory, whether the tool is on: a tool lox up
+// runs a lock of is on without the user's switch.
+func TestLockEnabledForDecidesPerProjectsDirectory(t *testing.T) {
+	on := LockSpec{EnabledFor: func(p string) bool { return p == "/home/u/p" }, ContainerName: nameOf, AgentProfiles: []string{"prod"}}
+	e, _ := lockEnv(t, on)
+	e.ensure(t, "/p")
+	if st, err := e.m.LockOpen(bg, C, "locksql", "prod"); err != nil || st != "opened" {
+		t.Fatalf("on: %q %v", st, err)
+	}
+	if err := e.m.LockCheckRequest(bg, C, "locksql", "prod"); err != nil {
+		t.Fatalf("request, on: %v", err)
+	}
+	off := on
+	off.EnabledFor = func(string) bool { return false }
+	e2, _ := lockEnv(t, off)
+	e2.ensure(t, "/p")
+	if _, err := e2.m.LockOpen(bg, C, "locksql", "prod"); err == nil || !strings.Contains(err.Error(), "off") {
+		t.Fatalf("open, off: %v", err)
+	}
+	if err := e2.m.LockCheckRequest(bg, C, "locksql", "prod"); err == nil || !strings.Contains(err.Error(), "locksql is off") {
+		t.Fatalf("request, off: %v", err)
+	}
+}

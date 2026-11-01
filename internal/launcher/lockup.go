@@ -74,13 +74,18 @@ var (
 // and its path; nil (lea says why) when there is none lea can trust: a link, a file not the user's
 // or others may write, not version 1, or of another projects directory.
 func (l *Launcher) readLockUp(proj, lf string) (*lockUpState, string) {
+	return readLockUpState(l.logf, proj, lf)
+}
+
+// readLockUpState is readLockUp saying its warnings through logf.
+func readLockUpState(logf func(string, ...any), proj, lf string) (*lockUpState, string) {
 	p := lf + "/" + lockUpFile
 	f, err := os.OpenFile(p, os.O_RDONLY|syscall.O_NOFOLLOW|syscall.O_NONBLOCK, 0)
 	if errors.Is(err, os.ErrNotExist) {
 		return nil, p
 	}
 	if err != nil {
-		l.logf("warning: %s: %v (a link?): lea ignores it", p, err)
+		logf("warning: %s: %v (a link?): lea ignores it", p, err)
 		return nil, p
 	}
 	defer f.Close()
@@ -89,18 +94,18 @@ func (l *Launcher) readLockUp(proj, lf string) (*lockUpState, string) {
 		return nil, p
 	}
 	if why := lockUpUntrusted(lf, p, fi); why != "" {
-		l.logf("warning: %s: %s: lea ignores it", p, why)
+		logf("warning: %s: %s: lea ignores it", p, why)
 		return nil, p
 	}
 	var s lockUpState
 	if err := json.NewDecoder(io.LimitReader(f, 1<<20)).Decode(&s); err != nil || s.Version != 1 || !lockUpProject.MatchString(s.Project) {
-		l.logf("warning: %s: not lox up's state (version 1): lea ignores it", p)
+		logf("warning: %s: not lox up's state (version 1): lea ignores it", p)
 		return nil, p
 	}
 	// lox up's compose project of this very projects directory (lockhub's family.Project).
 	h := sha256.Sum256([]byte(proj))
 	if want := "lockfamily-" + hex.EncodeToString(h[:4]); s.Project != want || s.Workspace != proj {
-		l.logf("warning: %s: project %s of %q, not this projects directory's (%s of %q): lea ignores it", p, s.Project, s.Workspace, want, proj)
+		logf("warning: %s: project %s of %q, not this projects directory's (%s of %q): lea ignores it", p, s.Project, s.Workspace, want, proj)
 		return nil, p
 	}
 	return &s, p

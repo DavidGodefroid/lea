@@ -612,15 +612,6 @@ func (c *Config) Ctl() bool { return c.Get("LEA_CTL") == "1" }
 // LEA_LOCKHTTP=1; off by default).
 func (c *Config) LockHTTPMITM() bool { return c.LockHTTP() && c.Get("LEA_LOCKHTTP_MITM") == "1" }
 
-// Locksql reports whether the configuration turns locksql on (LEA_LOCKSQL=1; off by default).
-// Where lox up's up.json names a locksql lock, use toolOn.
-func (c *Config) Locksql() bool { return c.Get("LEA_LOCKSQL") == "1" }
-
-// LockHost reports whether the configuration turns on the lock tool whose switch is env
-// (LEA_LOCKMQ, LEA_LOCKFILE; off by default). Where lox up's up.json names a lock of the tool,
-// use toolOn.
-func (c *Config) LockHost(env string) bool { return c.Get(env) == "1" }
-
 // toolOn is whether the lock tool switched by key (LEA_LOCKSQL, LEA_LOCKMQ, LEA_LOCKFILE) is on:
 // what the user's configuration sets for it, and when it does not set the key (only the shipped
 // default speaks), on when the trusted up.json names a lock of that type (upNames): a lock the
@@ -635,3 +626,34 @@ func (c *Config) toolOn(key string, upNames bool) bool {
 // gitStateDirs are the state sub-directories (relative to the state dir) where the forge tools
 // inside lea keep their credentials: git's credential store, gh and glab.
 var gitStateDirs = []string{"git", "gh", "glab-cli"}
+
+// ToolsOn is, by tool (locksql, lockmq, lockfile), whether lea wires it for the projects
+// directory proj: toolOn, with the locks of the trusted up.json of proj (the checks of
+// readLockUp; its warnings go to logf). The one decision the mounts, the Codex MCP list, the
+// daemon's stamp and the deck's lock console share.
+func (c *Config) ToolsOn(proj string, logf func(string, ...any)) map[string]bool {
+	named := map[string]bool{}
+	if proj != "" {
+		if s, _ := readLockUpState(logf, proj, proj+"/.lockfamily"); s != nil {
+			for _, lk := range s.Locks {
+				named[lk.Type] = true
+			}
+		}
+	}
+	out := map[string]bool{}
+	for tool, key := range lockToolKeys {
+		out[tool] = c.toolOn(key, named[tool])
+	}
+	return out
+}
+
+// ProjectsToolsOn is ToolsOn for the configured projects directory (LEA_PROJECTS_DIR, its
+// physical path), silently: what the daemon and the launcher both compute for the provider
+// settings and the lock consoles.
+func (c *Config) ProjectsToolsOn() map[string]bool {
+	p := c.Get("LEA_PROJECTS_DIR")
+	if r, err := filepath.EvalSymlinks(p); err == nil {
+		p = r
+	}
+	return c.ToolsOn(p, func(string, ...any) {})
+}

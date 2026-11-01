@@ -15,15 +15,14 @@ import (
 
 // Launcher is one run of the host launcher.
 type Launcher struct {
-	Root         string // the lea checkout (LEA_ROOT)
-	Core         string // the lea binary, <Root>/build/lea: agents, daemon, deck-open, new, attach-container
-	Cwd          string // the physical working directory
-	Cfg          *Config
-	locksqlWired bool     // runArgs: locksql is on for this start (Config.toolOn)
-	Environ      []string // the process environment
-	Stdin        io.Reader
-	Stdout       io.Writer
-	Stderr       io.Writer
+	Root    string // the lea checkout (LEA_ROOT)
+	Core    string // the lea binary, <Root>/build/lea: agents, daemon, deck-open, new, attach-container
+	Cwd     string // the physical working directory
+	Cfg     *Config
+	Environ []string // the process environment
+	Stdin   io.Reader
+	Stdout  io.Writer
+	Stderr  io.Writer
 	// Exec replaces the process (syscall.Exec in production; tests record the argv).
 	Exec   func(argv0 string, argv, env []string) error
 	Sleep  func(time.Duration)
