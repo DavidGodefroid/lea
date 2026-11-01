@@ -10,7 +10,7 @@
 # (docker image rm) and runs with a fresh HOME and XDG_RUNTIME_DIR.
 # Linux hosts with docker (compose), cosign, curl, the lea binary (build/lea, from
 # `go build -o build/lea ./cmd/lea`) and network access to GitHub and ghcr.io. Its own HOME,
-# XDG_* and TMUX_TMPDIR; creates only lea-fr-<pid>* resources and the compose project lox init
+# XDG_*, TMUX_TMPDIR and LEA_CONFIG; creates only lea-fr-<pid>* resources and the compose project lox init
 # makes for its temporary projects directory, and removes them (by name, then by that compose
 # project's label).
 set -eu
@@ -20,7 +20,6 @@ LEA_RELEASE=${LEA_RELEASE:-0.4.0}
 LEA_IMAGE=${LEA_IMAGE:-ghcr.io/davidgodefroid/lea:$LEA_RELEASE}
 LEA_PROXY_IMAGE=${LEA_PROXY_IMAGE:-ghcr.io/davidgodefroid/lea-proxy:$LEA_RELEASE}
 LEA_PREFIX=lea-fr-$$
-export LEA_IMAGE LEA_PROXY_IMAGE LEA_PREFIX
 case $(uname -m) in x86_64) arch=amd64 ;; aarch64) arch=arm64 ;; *) echo "firstrun: no release for $(uname -m)" >&2; exit 1 ;; esac
 [ -x "$root/build/lea" ] || { echo "firstrun: no build/lea: go build -o build/lea ./cmd/lea" >&2; exit 1; }
 for c in cosign curl; do command -v "$c" >/dev/null 2>&1 || { echo "firstrun: $c is missing" >&2; exit 1; }; done
@@ -31,6 +30,16 @@ work=$(cd "$work" && pwd -P)
 projects=$work/projects
 mkdir -p "$projects" "$work/bin" "$work/home" "$work/run" "$work/state" "$work/data"
 chmod 700 "$work/run"
+# The images and prefix go in this run's own user configuration, not the environment: lea's
+# configuration files beat the environment for these keys, and a source checkout's config/lea.conf
+# names lea:dev, which lea would build instead of pulling. No LEA_PROJECTS_DIR here, so the first
+# run still triggers; lea init --first-run records it in this same file.
+cat >"$work/lea.conf" <<CONF
+LEA_PREFIX=$LEA_PREFIX
+LEA_IMAGE=$LEA_IMAGE
+LEA_PROXY_IMAGE=$LEA_PROXY_IMAGE
+CONF
+export LEA_CONFIG="$work/lea.conf"
 export HOME="$work/home" XDG_RUNTIME_DIR="$work/run" XDG_STATE_HOME="$work/state" XDG_DATA_HOME="$work/data"
 # lea's tmux server (socket "lea" under TMUX_TMPDIR) is this run's own, never the user's.
 export TMUX_TMPDIR="$work"
