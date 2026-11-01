@@ -52,7 +52,7 @@ type gateHub struct {
 // gateProfile is a console profile's name (lockhub's lockfamily.yaml rule).
 var gateProfile = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$`)
 
-// gateHubURL is the hub on its network: lock up's service lockhub (a name no resolver outside the
+// gateHubURL is the hub on its network: lox up's service lockhub (a name no resolver outside the
 // network is asked for), on a port.
 var gateHubURL = regexp.MustCompile(`^http://lockhub:([1-9][0-9]{0,3}|[1-5][0-9]{4}|6[0-4][0-9]{3}|65[0-4][0-9]{2}|655[0-2][0-9]|6553[0-5])$`)
 
@@ -82,20 +82,20 @@ func (l *Launcher) lockUpGate(proj string) (*gateHub, error) {
 		return nil, die("LEA_LOCKHTTP=1: %s: lockhttp: %s: lea's LockHTTP gate cannot ask the hub, and asks nothing else (fix it, then run `lox up`)", p, why)
 	}
 	if len(names) > 1 {
-		return warn(fmt.Sprintf("lock up runs %q: lea's gate asks for one", names))
+		return warn(fmt.Sprintf("lox up runs %q: lea's gate asks for one", names))
 	}
-	// lock up says what the gate pins (its devices, required and sealed, its reveals) only from
+	// lox up says what the gate pins (its devices, required and sealed, its reveals) only from
 	// lockhttp_gate 1 on: before, a lock's devices: true in lockfamily.yaml would not reach the
 	// gate, and it would take the hub's approvals the human meant to be device-signed.
 	if s.LockHTTPGate != 1 {
-		return warn("lock up does not say what this lock's gate pins (lockhttp_gate 1; update lockhub)")
+		return warn("lox up does not say what this lock's gate pins (lockhttp_gate 1; update lockhub)")
 	}
 	name, lk := names[0], s.Locks[names[0]]
 	if !lockUpInstance.MatchString(name) {
 		return warn("not an instance name")
 	}
 	if lk.Socket != s.Project+"_"+name+"-run" || lk.GateHome != s.Project+"_"+name+"-gate" {
-		return warn("its volumes are not lock up's")
+		return warn("its volumes are not lox up's")
 	}
 	if why := l.lockUpVolumeWrong(lk.Socket, s.Project, proj, name, "lockhttp"); why != "" {
 		return warn(why)
@@ -106,7 +106,7 @@ func (l *Launcher) lockUpGate(proj string) (*gateHub, error) {
 		return warn(why)
 	}
 	if s.HubNetwork != s.Project+"_lockhub" {
-		return warn(fmt.Sprintf("hub network %q is not lock up's", s.HubNetwork))
+		return warn(fmt.Sprintf("hub network %q is not lox up's", s.HubNetwork))
 	}
 	why, subnets := l.lockUpLabelsWrong("network", s.HubNetwork, "{{range .IPAM.Config}}{{.Subnet}} {{end}}", map[string]string{
 		"com.docker.compose.project": s.Project, "com.docker.compose.network": "lockhub", "dev.lockfamily.role": "hub",
@@ -129,7 +129,7 @@ func (l *Launcher) lockUpGate(proj string) (*gateHub, error) {
 	if !lockHTTPAtLeast(ver, "0.3.0") {
 		return warn("the pinned lockhttp " + orUnknown(ver) + " has no hub mode (v0.3.0 or later)")
 	}
-	// The console's profile, as lock up runs it (its socket's name derives from it).
+	// The console's profile, as lox up runs it (its socket's name derives from it).
 	prof := lk.Profile
 	if prof == "" {
 		prof = "default"
@@ -148,7 +148,7 @@ func (l *Launcher) lockUpGate(proj string) (*gateHub, error) {
 	if len(g.subnets) == 0 {
 		return warn(s.HubNetwork + " has no subnet")
 	}
-	// The facade keys only for a lock lock up lets reveal (locks.<name>.reveal), checked as the gate
+	// The facade keys only for a lock lox up lets reveal (locks.<name>.reveal), checked as the gate
 	// reads them, written in canonical form.
 	if lk.Reveal && len(s.FacadeKeys) > 0 && string(s.FacadeKeys) != "null" {
 		if !lockHTTPAtLeast(ver, "0.5.0") {
@@ -314,7 +314,7 @@ func orUnknown(v string) string {
 func (l *Launcher) lockUpLabelsWrong(kind, name, more string, labels map[string]string) (string, string) {
 	o, err := l.output(false, "docker", kind, "inspect", "--format", "{{json .Labels}}|"+more, name)
 	if err != nil {
-		return "no " + kind + " " + name + " (run lock up)", ""
+		return "no " + kind + " " + name + " (run lox up)", ""
 	}
 	js, rest, _ := strings.Cut(o, "|")
 	var lb map[string]string
@@ -328,7 +328,7 @@ func (l *Launcher) lockUpLabelsWrong(kind, name, more string, labels map[string]
 	sort.Strings(keys)
 	for _, k := range keys {
 		if lb[k] != labels[k] {
-			return kind + " " + name + " is not lock up's (label " + k + ")", ""
+			return kind + " " + name + " is not lox up's (label " + k + ")", ""
 		}
 	}
 	return "", rest
@@ -431,7 +431,7 @@ func (l *Launcher) writeGateHub(g *gateHub) (string, error) {
 	return dir, nil
 }
 
-// joinHubNetwork disconnects the proxy from any lock up hub network but g's and, with connect,
+// joinHubNetwork disconnects the proxy from any lox up hub network but g's and, with connect,
 // connects it (only it: the gate shares its namespace) to g's; nil g leaves none.
 func (l *Launcher) joinHubNetwork(proxy string, g *gateHub, connect bool) error {
 	// The proxy (the gate's namespace) on a hub network whose subnets the gate does not refuse

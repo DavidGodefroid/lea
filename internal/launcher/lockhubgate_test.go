@@ -22,7 +22,7 @@ var testHubKey = base64.StdEncoding.EncodeToString([]byte("0123456789abcdef01234
 var testFacades = `{"v": 1, "facades": [{"key": "` + base64.StdEncoding.EncodeToString(bytes.Repeat([]byte{1}, 32)) +
 	`", "facade": "tty"}, {"facade": "deck", "key": "` + base64.StdEncoding.EncodeToString(bytes.Repeat([]byte{2}, 32)) + `"}]}`
 
-// testDevices is one paired phone (lockkit's ticket.DeviceSet) as lock up would embed it: "v"
+// testDevices is one paired phone (lockkit's ticket.DeviceSet) as lox up would embed it: "v"
 // before "devices", not lockkit's canonical form.
 var testDevices = func() string {
 	p, err := ecdh.P256().GenerateKey(rand.Reader)
@@ -47,8 +47,8 @@ var testDevices = func() string {
 	return string(b)
 }()
 
-// hubUp writes lock up's up.json with the hub and the lockhttp lock web (its extra fields: lock),
-// with facade keys and devices when given, and makes the fake docker answer lock up's labels of
+// hubUp writes lox up's up.json with the hub and the lockhttp lock web (its extra fields: lock),
+// with facade keys and devices when given, and makes the fake docker answer lox up's labels of
 // its volumes and network.
 func hubUp(t *testing.T, w *world, lock, facades, devices string) {
 	t.Helper()
@@ -103,7 +103,7 @@ func hubFile(t *testing.T, w *world, name string) (string, bool) {
 	return string(b), true
 }
 
-// lock up runs a lockhttp lock that pins the paired devices: lea's gate asks the hub, from lock
+// lox up runs a lockhttp lock that pins the paired devices: lea's gate asks the hub, from lock
 // up's socket volume and gate volume, with the hub's key, the facade keys and the devices in its
 // read-only /run/lockfamily, the hub's subnets refused, sealed and device-signed as hub.mobile
 // says; only the proxy joins the hub's network.
@@ -209,11 +209,11 @@ func TestLockHTTPGateRefusesAnUntrustedHub(t *testing.T) {
 	}{
 		"hub network labels": {mod: func(w *world) {
 			w.env["FAKE_DOCKER_OUT_NETWORK_INSPECT_AT_"+fakeKey(upProjectOf(w)+"_lockhub")] = `{"com.docker.compose.project":"x"}|10.0.0.0/8`
-		}, want: "is not lock up's"},
+		}, want: "is not lox up's"},
 		"gate volume role": {mod: func(w *world) {
 			w.env["FAKE_DOCKER_OUT_VOLUME_INSPECT_AT_"+fakeKey(upProjectOf(w)+"_web-gate")] = `{"dev.lockfamily.role":"socket"}|`
-		}, want: "is not lock up's"},
-		"socket volume role": {mod: func(w *world) { labels(w, "web", "lockhttp", "gate-home") }, want: "is not lock up's"},
+		}, want: "is not lox up's"},
+		"socket volume role": {mod: func(w *world) { labels(w, "web", "lockhttp", "gate-home") }, want: "is not lox up's"},
 		"no subnet": {mod: func(w *world) {
 			k := "FAKE_DOCKER_OUT_NETWORK_INSPECT_AT_" + fakeKey(upProjectOf(w)+"_lockhub")
 			w.env[k] = strings.SplitN(w.env[k], "|", 2)[0] + "|"
@@ -420,7 +420,7 @@ func TestLockHTTPGateFollowsThePinnedRelease(t *testing.T) {
 	}
 }
 
-// The gate asks the console of the profile lock up runs (its socket is named after it).
+// The gate asks the console of the profile lox up runs (its socket is named after it).
 func TestLockHTTPGateAsksTheConsolesProfile(t *testing.T) {
 	for prof, want := range map[string]string{"": "default", "crm.prod": "crm.prod"} {
 		w, _ := lockHTTPWorld(t)

@@ -224,7 +224,7 @@ func TestHubTicketApprovedFromTheDeck(t *testing.T) {
 
 // An agent cannot answer a ticket: hub_decide is the host's alone. A typed name longer than the
 // hub takes, or with control characters, never reaches it. A screen lea had to cut is marked,
-// so the deck sends it to lock approve; the claimed name shows.
+// so the deck sends it to lox approve; the claimed name shows.
 func TestHubDecideIsTheHostsAndTheScreenIsNeverCutSilently(t *testing.T) {
 	long := queued(ticketA, "crm", "locksql", "dev-1\x1b[2J", "", true, "crm")
 	var body []string

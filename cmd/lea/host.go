@@ -237,7 +237,7 @@ func runDaemon(stderr io.Writer) int {
 		d.DisableHub()
 	} else if sock := hubFacadeSocket(os.Getenv); sock != "" {
 		d.SetHubFacade(daemon.SocketFacade{Path: sock})
-		// The deck's facade key and the lock keys lock up pinned: the deck's Ctrl-O (lockhub#29).
+		// The deck's facade key and the lock keys lox up pinned: the deck's Ctrl-O (lockhub#29).
 		d.SetHubKeys(hubFacadeKeys(os.Getenv))
 		go d.RunHubSync(ctx)
 		// The deck shows the hub's pending tickets on their agents and answers them (#158).
@@ -909,7 +909,7 @@ func soundFiles(getenv func(string) string) (files map[string]string, on bool) {
 
 // hubFacadeSocket is the Lock Family hub's host facade socket: LEA_HUB_SOCKET, else
 // $XDG_RUNTIME_DIR/lockhub/facade.sock; "" without either.
-// hubFacadeKeys is the directory of the host facades' keys lock up writes (deck.key, locks.json):
+// hubFacadeKeys is the directory of the host facades' keys lox up writes (deck.key, locks.json):
 // LEA_HUB_FACADE_KEYS, else $XDG_STATE_HOME/lockfamily/facades ("" when there is no home).
 func hubFacadeKeys(get func(string) string) string {
 	if p := get("LEA_HUB_FACADE_KEYS"); p != "" {

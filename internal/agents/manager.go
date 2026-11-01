@@ -250,7 +250,7 @@ type HubCard struct {
 	Warnings   []string `json:"warnings,omitempty"`
 	Expires    int64    `json:"expires,omitempty"`
 	// Claimed is the agent name the ticket's requester gives (cleaned); Truncated: lea had to cut
-	// the Lock's screen, so the deck cannot show all of it and sends the user to lock approve.
+	// the Lock's screen, so the deck cannot show all of it and sends the user to lox approve.
 	Claimed   string `json:"claimed,omitempty"`
 	Truncated bool   `json:"truncated,omitempty"`
 	// Expired: the ticket expired at the hub (its queue's expired list): the deck offers to ask

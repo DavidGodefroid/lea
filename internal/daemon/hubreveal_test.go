@@ -30,7 +30,7 @@ import (
 // secret is the clear value only a reveal shows: the masked screen has "a***@example.com".
 const secret = "ann.secret@example.com"
 
-// facadeKeys is what lock up writes for the host facades: the deck's key and the pinned lock keys.
+// facadeKeys is what lox up writes for the host facades: the deck's key and the pinned lock keys.
 type facadeKeys struct {
 	dir      string
 	deck     ed25519.PrivateKey
@@ -265,7 +265,7 @@ func TestHubRevealRefusesBadKeysAndAnswers(t *testing.T) {
 			os.Symlink(k.deckPath+".real", k.deckPath)
 		}, want: "not a regular file"},
 		"directory writable by others": {prep: func(t *testing.T, k facadeKeys) { os.Chmod(k.dir, 0o777) }, want: "others can write"},
-		"key missing":                  {prep: func(t *testing.T, k facadeKeys) { os.Remove(k.deckPath) }, want: "run lock up"},
+		"key missing":                  {prep: func(t *testing.T, k facadeKeys) { os.Remove(k.deckPath) }, want: "run lox up"},
 		"key not PEM":                  {prep: func(t *testing.T, k facadeKeys) { os.WriteFile(k.deckPath, []byte("x"), 0o600) }, want: "not a PEM"},
 		"lock keys writable by others": {prep: func(t *testing.T, k facadeKeys) {
 			os.Chmod(filepath.Join(k.dir, "locks.json"), 0o666)
@@ -273,8 +273,8 @@ func TestHubRevealRefusesBadKeysAndAnswers(t *testing.T) {
 		"another lock key pinned": {prep: func(t *testing.T, k facadeKeys) {
 			pub, _, _ := ed25519.GenerateKey(rand.Reader)
 			k.pin(t, "crm", pub)
-		}, want: "not the one lock up pinned"},
-		"instance not pinned": {prep: func(t *testing.T, k facadeKeys) { k.pin(t, "other", k.lockPub) }, want: "not the one lock up pinned"},
+		}, want: "not the one lox up pinned"},
+		"instance not pinned": {prep: func(t *testing.T, k facadeKeys) { k.pin(t, "other", k.lockPub) }, want: "not the one lox up pinned"},
 		"answer signed by another key": {signer: func(k facadeKeys) ed25519.PrivateKey {
 			_, other, _ := ed25519.GenerateKey(rand.Reader)
 			return other
@@ -463,7 +463,7 @@ func TestHubExpiredTicketRenewedFromTheDeck(t *testing.T) {
 	}
 }
 
-// Both files lock up writes are where the daemon looks: the deck's key and the lock keys.
+// Both files lox up writes are where the daemon looks: the deck's key and the lock keys.
 func TestFacadeKeysLoad(t *testing.T) {
 	k := writeFacadeKeys(t)
 	priv, err := loadFacadeKey(k.deckPath)
