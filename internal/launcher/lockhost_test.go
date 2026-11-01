@@ -195,3 +195,40 @@ func TestInitDefaultNoLeavesToolUnset(t *testing.T) {
 		t.Fatalf("after lox add: %v", on)
 	}
 }
+
+// lea locksql, lea lockmq and lea lockfile take the launcher's decision (ToolsOn): a lock of lox
+// up for the projects directory turns a tool on that the user's configuration does not set, and
+// an explicit LEA_<TOOL>=0 keeps it off.
+func TestToolStatusFollowsUpJSON(t *testing.T) {
+	for tool, key := range map[string]string{"locksql": "LEA_LOCKSQL", "lockmq": "LEA_LOCKMQ", "lockfile": "LEA_LOCKFILE"} {
+		w := newWorld(t, repoRoot(t))
+		writeUp(t, w, lockUp("orders", tool))
+		if st := w.launcher().Main([]string{tool}); st != 0 {
+			t.Fatalf("%s: status %d: %s", tool, st, w.errb.String())
+		}
+		if e := w.errb.String(); !strings.Contains(e, tool+" is on for lea while lox up runs a "+tool+" lock here") || strings.Contains(e, " is off") {
+			t.Errorf("%s with a lock of lox up: %s", tool, e)
+		}
+		w = newWorld(t, repoRoot(t))
+		writeUp(t, w, lockUp("orders", tool))
+		writeUserConf(t, w, key+"=0\n")
+		if st := w.launcher().Main([]string{tool}); st != 0 {
+			t.Fatalf("%s: status %d: %s", tool, st, w.errb.String())
+		}
+		if e := w.errb.String(); !strings.Contains(e, tool+" is off ("+key+"=0)") {
+			t.Errorf("%s with %s=0: %s", tool, key, e)
+		}
+	}
+}
+
+// lea doctor checks the lock of a tool that a lock of lox up turns on, as the launcher does.
+func TestDoctorFollowsUpJSON(t *testing.T) {
+	w := newWorld(t, repoRoot(t))
+	writeUp(t, w, lockUp("orders", "locksql")+","+lockUp("events", "lockmq"))
+	w.env["FAKE_DOCKER_OUT_VOLUME_LS"] = upProjectOf(w) + "_orders-run"
+	w.launcher().Main([]string{"doctor"})
+	if o := w.out.String(); !strings.Contains(o, "ok    locksql lock of lox up (socket volume "+upProjectOf(w)+"_orders-run)") ||
+		!strings.Contains(o, "lockmq launcher") || strings.Contains(o, "lockfile") || strings.Contains(o, "locksql image") {
+		t.Errorf("doctor: %s", o)
+	}
+}

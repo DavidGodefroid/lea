@@ -25,6 +25,32 @@ lea__lockhost_get() {
   esac
 }
 
+# lea__tool_on TOOL: whether lea wires TOOL (locksql, lockmq, lockfile) for the projects directory.
+# The launcher decides (Config.ToolsOn) and passes the tools that are on in LEA_TOOLS_ON; lea-sh run
+# without it (no launcher) reads LEA_<TOOL> alone.
+lea__tool_on() {
+  if [ -n "${LEA_TOOLS_ON+x}" ]; then
+    case " $LEA_TOOLS_ON " in *" $1 "*) return 0 ;; *) return 1 ;; esac
+  fi
+  case $1 in
+    locksql) [ "${LEA_LOCKSQL:-0}" = 1 ] ;;
+    *) [ "$(lea__lockhost_get "$1")" = 1 ] ;;
+  esac
+}
+
+# lea__tool_by_lock TOOL: TOOL is on although LEA_<TOOL> is not 1: the launcher turned it on for a
+# lock of TOOL that lox up runs for the projects directory. Logs so and succeeds; fails otherwise.
+lea__tool_by_lock() {
+  case $1 in locksql) _tb_v=${LEA_LOCKSQL:-0} ;; *) _tb_v=$(lea__lockhost_get "$1") ;; esac
+  [ "$_tb_v" != 1 ] || return 1
+  lea_log "$1 is on for lea while lox up runs a $1 lock here (lea's agents reach it; $(lea__tool_var "$1")=0 in your configuration keeps it off)"
+}
+
+# lea__tool_var TOOL: TOOL's switch, LEA_LOCKSQL, LEA_LOCKMQ or LEA_LOCKFILE.
+lea__tool_var() {
+  case $1 in locksql) printf LEA_LOCKSQL ;; *) lea__lockhost_var "$1" ;; esac
+}
+
 # lea__lockhost_set TOOL 0|1: the switch, in the user config and in this run.
 lea__lockhost_set() {
   lea_user_config_set "$(lea__lockhost_var "$1")" "$2"
@@ -131,21 +157,22 @@ lea_lockhost() {
   _lh_t=$1
   shift
   [ $# -eq 0 ] || lea_die "usage: lea $_lh_t (lea never starts the console: lox up does)"
-  if [ "$(lea__lockhost_get "$_lh_t")" != 1 ]; then
+  if ! lea__tool_on "$_lh_t"; then
     lea_log "$_lh_t is off ($(lea__lockhost_var "$_lh_t")=0): lea init --$_lh_t turns it on"
     return 0
   fi
+  lea__tool_by_lock "$_lh_t" && _lh_l=1 || _lh_l=0
   if _lh_b=$(lea__lockhost_launcher "$_lh_t"); then
     lea_log "$_lh_t launcher: $_lh_b (lea's image has the $(lea__lockhost_get "$_lh_t" _REF) client)"
   else
     lea__lockhost_install_hint "$_lh_t"
   fi
-  lea__lockhost_console_hint "$_lh_t"
+  [ "$_lh_l" = 1 ] || lea__lockhost_console_hint "$_lh_t"
 }
 
 # lea__doctor_lockhost TOOL: lea doctor's lines for TOOL when it is on.
 lea__doctor_lockhost() {
-  [ "$(lea__lockhost_get "$1")" = 1 ] || return 0
+  lea__tool_on "$1" || return 0
   if _dl_b=$(lea__lockhost_launcher "$1"); then lea__ok "$1 launcher $_dl_b"
   else lea__warn "$1 launcher" "not installed: https://github.com/DavidGodefroid/$1#install"; fi
 }

@@ -376,9 +376,8 @@ func (l *Launcher) dispatch(args []string) error {
 		return err
 	case "init":
 		return l.sh("init", rest...)
-	case "locksql":
-		return l.sh("locksql", rest...)
-	case "lockmq", "lockfile":
+	case "locksql", "lockmq", "lockfile":
+		l.exportToolsOn()
 		return l.sh(a0, rest...)
 	case "lock":
 		return l.lockConsole(rest)
@@ -443,6 +442,24 @@ func (l *Launcher) dispatch(args []string) error {
 	}
 }
 
+// ToolsOnVar names, in lea-sh, the lock tools the launcher wires for the projects directory
+// (ToolsOn), space separated: lea locksql, lea lockmq, lea lockfile and lea doctor take this
+// decision instead of making their own.
+const ToolsOnVar = "LEA_TOOLS_ON"
+
+// exportToolsOn exports ToolsOnVar for lea-sh: the tools on for the configured projects directory
+// (ProjectsLockTools, silently: up.json's warnings belong to the session's start).
+func (l *Launcher) exportToolsOn() {
+	on, _ := l.Cfg.ProjectsLockTools()
+	var ts []string
+	for _, t := range []string{"locksql", "lockmq", "lockfile"} {
+		if on[t] {
+			ts = append(ts, t)
+		}
+	}
+	l.Cfg.Export(ToolsOnVar, strings.Join(ts, " "))
+}
+
 // lockConsole is lea lock: a lock console in this projects dir's deck, through the core (the
 // daemon opens the pane), which the launcher tells the container's name.
 func (l *Launcher) lockConsole(args []string) error {
@@ -464,6 +481,7 @@ func (l *Launcher) lockConsole(args []string) error {
 // directory resolves, its lea's delivery (issue #92) through the core, which reads the grants
 // from the daemon and the credentials from lea's state. The worst of the two is the status.
 func (l *Launcher) doctor() error {
+	l.exportToolsOn()
 	err := l.sh("doctor")
 	proj, perr := l.projectsDir()
 	if perr != nil {

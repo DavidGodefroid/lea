@@ -106,9 +106,13 @@ lea_doctor() {
   if [ -n "$LEA_OTEL_UPSTREAM" ]; then lea__ok "telemetry upstream $LEA_OTEL_UPSTREAM"
   else lea__ok "telemetry: off (LEA_OTEL_UPSTREAM)"; fi
 
-  if [ "$LEA_LOCKSQL" = 1 ]; then
-    if docker image inspect "$LEA_LOCKSQL_IMAGE" >/dev/null 2>&1; then lea__ok "locksql image $LEA_LOCKSQL_IMAGE"
-    else lea__warn "locksql image" "$LEA_LOCKSQL_IMAGE absent: run lea init (or set LEA_LOCKSQL=0)"; fi
+  # On through a lock of lox up alone, locksql needs no image of lea's (lea init builds it for
+  # LEA_LOCKSQL=1): only the lock is checked.
+  if lea__tool_on locksql; then
+    if [ "$LEA_LOCKSQL" = 1 ]; then
+      if docker image inspect "$LEA_LOCKSQL_IMAGE" >/dev/null 2>&1; then lea__ok "locksql image $LEA_LOCKSQL_IMAGE"
+      else lea__warn "locksql image" "$LEA_LOCKSQL_IMAGE absent: run lea init (or set LEA_LOCKSQL=0)"; fi
+    fi
     lea__doctor_locksql_lock
   fi
   lea__doctor_lockhost lockmq
