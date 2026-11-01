@@ -38,10 +38,11 @@ func lockfileSafe(v string) bool {
 
 // lockHostArgs are the docker run arguments that let the session's agents reach the consoles of
 // the lock tools that are on: the socket volume of the tool's lock that `lox up` runs for the
-// projects directory (ups, lockup.go) on /run/<name>, read-only, and the tool's clients group.
+// projects directory (ups, lockup.go) on /run/<name> (each of several on /run/<name>/<instance>,
+// lockUpArgs), read-only, and the tool's clients group.
 // The consoles run hub-attached only, under lox up: without such a lock the agents get no socket
 // of the tool, and lea says to add one (`lox add <tool>`).
-func (l *Launcher) lockHostArgs(ups map[string]string) []string {
+func (l *Launcher) lockHostArgs(ups map[string][]lockUpSocket) []string {
 	var a []string
 	for _, t := range lockHostTools {
 		_, up := ups[t.name]
@@ -52,10 +53,10 @@ func (l *Launcher) lockHostArgs(ups map[string]string) []string {
 		switch {
 		case !ok:
 			l.logf("warning: %s: no such lock yet: `lox add %s` (lea's agents get its socket at their next start)", t.name, t.name)
-		case v == "":
+		case len(v) == 0:
 			l.logf("warning: %s: lea's agents get no %s socket (see above)", t.name, t.name)
 		default:
-			a = append(a, "-e", t.env+"=1", "--group-add", t.gid, "--mount", lockUpMount(v, t.name))
+			a = append(a, lockUpArgs(t.name, t.env, t.gid, v)...)
 		}
 	}
 	return a

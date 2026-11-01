@@ -140,7 +140,7 @@ lea__doctor_locksql_lock() {
     case $(printf '%s\n' "$_dl_v" | grep -c .) in
       0) lea__warn "locksql lock" "no socket volume of a locksql lock of lox up for $LEA_PROJECTS_DIR: lea's agents get no locksql socket; $_dl_hint" ;;
       1) lea__ok "locksql lock of lox up (socket volume $_dl_v)" ;;
-      *) lea__warn "locksql lock" "lox up runs $(printf '%s\n' "$_dl_v" | grep -c .) locksql locks for $LEA_PROJECTS_DIR: lea's agents reach one per tool, so none of them" ;;
+      *) lea__ok "$(printf '%s\n' "$_dl_v" | grep -c .) locksql locks of lox up (lea's agents reach each on /run/locksql/<instance>)" ;;
     esac
   fi
   if docker volume inspect locksql-run >/dev/null 2>&1; then

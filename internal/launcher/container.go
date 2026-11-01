@@ -537,15 +537,15 @@ func (l *Launcher) runArgs(proj, pip string) ([]string, error) {
 		switch v, ok := ups["locksql"]; {
 		case !ok:
 			l.logf("warning: locksql: no such lock yet: `lox add locksql` (lea's agents get its socket at their next start)")
-		case v == "":
+		case len(v) == 0:
 			l.logf("warning: locksql: lea's agents get no locksql socket (see above)")
 		default:
 			d, err := locksqlDir(proj)
 			if err != nil {
 				return nil, err
 			}
-			a = append(a, "-e", "LEA_LOCKSQL=1", "--group-add", "10000", "--mount", lockUpMount(v, "locksql"),
-				"--mount", "type=bind,src="+d+",dst="+d+",readonly")
+			a = append(a, lockUpArgs("locksql", "LEA_LOCKSQL", "10000", v)...)
+			a = append(a, "--mount", "type=bind,src="+d+",dst="+d+",readonly")
 		}
 	}
 	a = append(a, lh...)

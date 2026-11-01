@@ -22,7 +22,8 @@ import (
 // on, lea mounts that volume on /run/<tool> (the consoles run hub-attached only: there is no other
 // socket to mount), once docker confirms it is that lock's socket volume (compose's
 // project label and lox up's role label): never a lock's home (its private key) or another
-// volume, whatever up.json says. One instance per tool: with two, lea leaves the tool out.
+// volume, whatever up.json says. Several locks of one tool each reach the agents, on
+// /run/<tool>/<instance> (lockUpSocket).
 
 // lockUpFile is lox up's state in the Lock Family's directory.
 const lockUpFile = "up.json"
@@ -111,22 +112,33 @@ func readLockUpState(logf func(string, ...any), proj, lf string) (*lockUpState, 
 	return &s, p
 }
 
+// lockUpSocket is a lock's socket volume as the agents mount it: the lock's instance, its volume
+// and where the agents find it (Dst): /run/<tool> when lox up runs one lock of the tool, and
+// /run/<tool>/<instance> for each of several.
+type lockUpSocket struct {
+	Instance, Volume, Dst string
+}
+
 // lockUpSockets are the socket volumes lox up runs for the projects directory proj (its Lock
-// Family directory lf), by tool, for the tools on reports on; nil without lox up. A tool lox up
-// runs maps to "" when lea cannot use its lock (two instances, a volume docker does not confirm):
-// the agents then get no socket of that tool, never the fixed one of another console.
-func (l *Launcher) lockUpSockets(proj, lf string, on func(tool string) bool) map[string]string {
+// Family directory lf), by tool, for the tools on reports on; nil without lox up. Each lock of a
+// tool is checked on its own (its instance name, its volume as docker labels it): one lea cannot
+// use is left out with a warning, the others still reach the agents. A tool lox up runs maps to
+// no socket when lea can use none of its locks: the agents then get no socket of that tool, never
+// the fixed one of another console.
+func (l *Launcher) lockUpSockets(proj, lf string, on func(tool string) bool) map[string][]lockUpSocket {
 	s, p := l.readLockUp(proj, lf)
 	if s == nil {
 		return nil
 	}
 	byType := map[string][]string{}
+	count := map[string]int{}
 	off := map[string]bool{}
 	for name, lk := range s.Locks {
 		if !on(lk.Type) {
 			off[lk.Type] = true
 			continue
 		}
+		count[lk.Type]++
 		if !lockUpInstance.MatchString(name) {
 			l.logf("warning: %s: lock %q: not an instance name: %s left out", p, name, lk.Type)
 			byType[lk.Type] = append(byType[lk.Type], "")
@@ -141,34 +153,56 @@ func (l *Launcher) lockUpSockets(proj, lf string, on func(tool string) bool) map
 			l.logf("%s is off (%s=0), though lox up runs a %s lock here: `lea init --%s` turns it on", t.typ, t.env, t.typ, t.typ)
 		}
 	}
-	out := map[string]string{}
+	out := map[string][]lockUpSocket{}
 	for typ, names := range byType {
-		out[typ] = ""
+		out[typ] = []lockUpSocket{}
 		sort.Strings(names)
-		if len(names) > 1 {
-			l.logf("warning: lox up runs %d %s locks: lea's agents reach one per tool, so none of them", len(names), typ)
-			continue
+		for _, name := range names {
+			if name == "" {
+				continue
+			}
+			vol := s.Project + "_" + name + "-run"
+			if s.Locks[name].Socket != vol {
+				l.logf("warning: %s: lock %s: socket volume %q is not lox up's %q: left out", p, name, s.Locks[name].Socket, vol)
+				continue
+			}
+			if g, ok := lockGID[typ]; ok && s.Locks[name].GID != "" && s.Locks[name].GID != g {
+				l.logf("warning: lock %s (%s): clients group %s, lea's image knows %s: left out (update lea)", name, typ, s.Locks[name].GID, g)
+				continue
+			}
+			if why := l.lockUpVolumeWrong(vol, s.Project, proj, name, typ); why != "" {
+				l.logf("warning: lock %s (%s): %s: lea's agents cannot reach it", name, typ, why)
+				continue
+			}
+			// The path follows what up.json declares, not what passed: a lock left out does not
+			// move the others to /run/<tool>.
+			dst := "/run/" + typ
+			if count[typ] > 1 {
+				dst += "/" + name
+			}
+			out[typ] = append(out[typ], lockUpSocket{Instance: name, Volume: vol, Dst: dst})
 		}
-		name := names[0]
-		if name == "" {
-			continue
-		}
-		vol := s.Project + "_" + name + "-run"
-		if s.Locks[name].Socket != vol {
-			l.logf("warning: %s: lock %s: socket volume %q is not lox up's %q: left out", p, name, s.Locks[name].Socket, vol)
-			continue
-		}
-		if g, ok := lockGID[typ]; ok && s.Locks[name].GID != "" && s.Locks[name].GID != g {
-			l.logf("warning: lock %s (%s): clients group %s, lea's image knows %s: left out (update lea)", name, typ, s.Locks[name].GID, g)
-			continue
-		}
-		if why := l.lockUpVolumeWrong(vol, s.Project, proj, name, typ); why != "" {
-			l.logf("warning: lock %s (%s): %s: lea's agents cannot reach it", name, typ, why)
-			continue
-		}
-		out[typ] = vol
 	}
 	return out
+}
+
+// lockUpArgs are the docker run arguments of the sockets socks of the lock tool tool, switched by
+// env (LEA_LOCKSQL, LEA_LOCKMQ, LEA_LOCKFILE), with its clients group gid: the switch, the group
+// and each socket's read-only mount; with several locks of the tool, <env>_INSTANCES names the
+// instances the agents reach (each on /run/<tool>/<instance>), space separated.
+func lockUpArgs(tool, env, gid string, socks []lockUpSocket) []string {
+	a := []string{"-e", env + "=1", "--group-add", gid}
+	var names []string
+	for _, s := range socks {
+		a = append(a, "--mount", lockUpMount(s))
+		if s.Dst != "/run/"+tool {
+			names = append(names, s.Instance)
+		}
+	}
+	if len(names) > 0 {
+		a = append(a, "-e", env+"_INSTANCES="+strings.Join(names, " "))
+	}
+	return a
 }
 
 // lockGID are the clients groups of the lock tools' images, as lea's image names them.
@@ -256,8 +290,8 @@ func (l *Launcher) lockUpServersWrong(vol, project string) string {
 
 // lockUpMount is the agents' mount of a lox up socket volume: read-only (the console made the
 // directory; connecting needs no write).
-func lockUpMount(vol, tool string) string {
-	return "type=volume,src=" + vol + ",dst=/run/" + tool + ",readonly"
+func lockUpMount(s lockUpSocket) string {
+	return "type=volume,src=" + s.Volume + ",dst=" + s.Dst + ",readonly"
 }
 
 var dockerID = regexp.MustCompile(`^[0-9a-f]{64}$`)

@@ -137,24 +137,65 @@ func TestLockUpRefusesOtherVolumes(t *testing.T) {
 	}
 }
 
-// Two locks of one tool: the agents reach neither (lea mounts one socket per tool).
-func TestLockUpTwoOfATool(t *testing.T) {
+// Several locks of one tool: each reaches the agents, read-only on /run/<tool>/<instance>, and
+// LEA_<TOOL>_INSTANCES names them; one lock keeps today's /run/<tool>, with no such variable.
+func TestLockUpSocketsSeveralOfOneType(t *testing.T) {
 	w := newWorld(t, repoRoot(t))
-	locksqlOn(t, w)
-	writeUp(t, w, lockUp("a", "locksql")+","+lockUp("b", "locksql"))
-	labels(w, "a", "locksql", "socket")
-	labels(w, "b", "locksql", "socket")
-	for _, a := range lockArgs(t, w) {
-		if strings.Contains(a, upProjectOf(w)) {
-			t.Errorf("mounted %s", a)
+	writeUp(t, w, lockUp("orders", "locksql")+","+lockUp("stock", "locksql")+","+lockUp("events", "lockmq")+","+lockUp("audit", "lockmq"))
+	for _, l := range []struct{ name, typ string }{{"orders", "locksql"}, {"stock", "locksql"}, {"events", "lockmq"}, {"audit", "lockmq"}} {
+		labels(w, l.name, l.typ, "socket")
+	}
+	args := lockArgs(t, w)
+	for _, m := range []string{"type=volume,src=" + upProjectOf(w) + "_orders-run,dst=/run/locksql/orders,readonly",
+		"type=volume,src=" + upProjectOf(w) + "_stock-run,dst=/run/locksql/stock,readonly",
+		"type=volume,src=" + upProjectOf(w) + "_audit-run,dst=/run/lockmq/audit,readonly",
+		"type=volume,src=" + upProjectOf(w) + "_events-run,dst=/run/lockmq/events,readonly",
+		"LEA_LOCKSQL_INSTANCES=orders stock", "LEA_LOCKMQ_INSTANCES=audit events", "LEA_LOCKSQL=1", "LEA_LOCKMQ=1"} {
+		if !contains(args, m) {
+			t.Errorf("missing %q in %v", m, args)
 		}
 	}
-	for _, a := range lockArgs(t, w) {
-		if strings.Contains(a, "locksql-run") {
-			t.Errorf("fixed locksql-run mounted: %s", a)
+	for _, a := range args {
+		if strings.HasSuffix(a, "dst=/run/locksql,readonly") || strings.HasSuffix(a, "dst=/run/lockmq,readonly") {
+			t.Errorf("a socket on the one-lock path: %s", a)
 		}
 	}
-	if !strings.Contains(w.errb.String(), "2 locksql locks") {
+	if strings.Contains(w.errb.String(), "warning") {
+		t.Errorf("warnings: %s", w.errb.String())
+	}
+
+	// One lock: today's single mount, unchanged.
+	w = newWorld(t, repoRoot(t))
+	writeUp(t, w, lockUp("orders", "locksql"))
+	labels(w, "orders", "locksql", "socket")
+	args = lockArgs(t, w)
+	if !contains(args, "type=volume,src="+upProjectOf(w)+"_orders-run,dst=/run/locksql,readonly") {
+		t.Errorf("one lock: not on /run/locksql: %v", args)
+	}
+	for _, a := range args {
+		if strings.Contains(a, "_INSTANCES=") || strings.Contains(a, "/run/locksql/") {
+			t.Errorf("one lock: %s", a)
+		}
+	}
+}
+
+// Each lock of a tool is checked on its own: a forged socket volume is left out with the
+// warning, the other lock still reaches the agents (on its instance path).
+func TestLockUpSocketsEachChecked(t *testing.T) {
+	w := newWorld(t, repoRoot(t))
+	writeUp(t, w, lockUp("orders", "locksql")+","+lockUp("stock", "locksql"))
+	labels(w, "orders", "locksql", "socket")
+	labelsWith(w, "stock", "locksql", "socket", "lockfamily-00000000", "stock", w.proj)
+	args := lockArgs(t, w)
+	if !contains(args, "type=volume,src="+upProjectOf(w)+"_orders-run,dst=/run/locksql/orders,readonly") || !contains(args, "LEA_LOCKSQL_INSTANCES=orders") {
+		t.Errorf("orders not mounted alone: %v", args)
+	}
+	for _, a := range args {
+		if strings.Contains(a, "_stock-run") {
+			t.Errorf("forged volume mounted: %s", a)
+		}
+	}
+	if !strings.Contains(w.errb.String(), "warning: lock stock (locksql): volume "+upProjectOf(w)+"_stock-run is not lox up's socket volume") {
 		t.Errorf("warning: %s", w.errb.String())
 	}
 }

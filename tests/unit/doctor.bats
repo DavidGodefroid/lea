@@ -73,7 +73,7 @@ setup() {
   export FAKE_DOCKER_OUT_VOLUME_LS='lockfamily-1a2b3c4d_a-run
 lockfamily-1a2b3c4d_b-run'
   run lea_doctor
-  [[ "$output" == *"warn  locksql lock: lox up runs 2 locksql locks"* ]]
+  [[ "$output" == *"ok    2 locksql locks of lox up (lea's agents reach each on /run/locksql/<instance>)"* ]]
   LEA_LOCKSQL=0 run lea_doctor
   [[ "$output" != *locksql* ]]
 }
