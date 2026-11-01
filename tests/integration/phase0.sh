@@ -19,8 +19,9 @@
 #   - each call goes through the tool's MCP server (<tool> mcp) over stdio in lea's container:
 #     initialize, notifications/initialized, tools/call; no model is involved.
 # The Locks run hub-attached only (lockkit v0.9.0): a console started without lox up's hub flags
-# exits 3. That check needs released hub-only images; for a release that still has a standalone
-# console it is reported as a note, not run (see "hub-only" below).
+# exits with its usage code (3; lockfile 64). That check needs released hub-only images; for a
+# release that still has a standalone console it is reported as a note, not run (see "hub-only"
+# below).
 # Negative control: lea's image without the clients groups is refused by the kernel.
 # Linux hosts with docker (compose), cosign, curl, jq, python3, script (util-linux), the images
 # lea:dev and lea-proxy:dev (make build), build/lea, and network access to GitHub and ghcr.io. Its
@@ -256,19 +257,23 @@ tar -xzf "$work/rel-lockhub/$a" -C "$work/bin" lox
 lox=$work/bin/lox
 "$lox" version
 
-say "hub-only: a console started without lox up's hub flags refuses to run (exit 3)"
+say "hub-only: a console started without lox up's hub flags refuses to run (its usage exit code)"
 # lockkit v0.9.0's consoles run hub-attached only. A release built on an earlier lockkit still has
 # a standalone console: that check waits for its first hub-only release (a note, not a failure).
-for x in "locksql $sq_v $sq_img" "lockmq $mq_v $mq_img" "lockfile $lf_v $lf_img"; do
-  # shellcheck disable=SC2086 # three words
+# lockfile's console checks its required --profile before the hub flags, and its usage exit code
+# is 64 (locksql's and lockmq's: 3).
+for x in "locksql $sq_v $sq_img 3" "lockmq $mq_v $mq_img 3" "lockfile $lf_v $lf_img 64 --profile samples"; do
+  # shellcheck disable=SC2086 # four words, then the console's own arguments
   set -- $x
   docker pull -q "$3" >/dev/null
-  rc=0
-  out=$(timeout 60 docker run --rm --name "$id-hubonly" --network none "$3" console </dev/null 2>&1) || rc=$?
+  rc=0 want=$4 t=$1 v=$2 img=$3
+  shift 4
+  out=$(timeout 60 docker run --rm --name "$id-hubonly" --network none "$img" console "$@" </dev/null 2>&1) || rc=$?
   docker rm -f "$id-hubonly" >/dev/null 2>&1 || true
+  set -- "$t" "$v"
   # shellcheck disable=SC2016 # the console's words, backquotes included
-  if [ "$rc" = 3 ] && printf '%s' "$out" | grep -q 'launched by `lox up` only'; then
-    ok "$1 v$2: its console refuses to start without lox up (exit 3)"
+  if [ "$rc" = "$want" ] && printf '%s' "$out" | grep -q 'launched by `lox up` only'; then
+    ok "$1 v$2: its console refuses to start without lox up (exit $want)"
   else
     note "$1 v$2 has no hub-only console yet (exit $rc): the hub-only check is not run for it"
   fi

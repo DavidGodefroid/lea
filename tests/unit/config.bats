@@ -194,8 +194,8 @@ setup() { setup_fakes; load_lea; U="$HOME/.config/lea/lea.conf"; }
 @test "LEA_LOCKSQL is 0 by default (as lockmq and lockfile), 0 or 1 only" {
   lea_load_config
   [ "$LEA_LOCKSQL" = 0 ]
-  [ "$LEA_LOCKSQL_IMAGE" = locksql:0.11.5 ]
-  [ "$LEA_LOCKSQL_REF" = v0.11.5 ]
+  [ "$LEA_LOCKSQL_IMAGE" = locksql:0.13.0 ]
+  [ "$LEA_LOCKSQL_REF" = v0.13.0 ]
   mkdir -p "${U%/*}"; printf "LEA_LOCKSQL='1'\n" >"$U"
   lea_load_config
   [ "$LEA_LOCKSQL" = 1 ]

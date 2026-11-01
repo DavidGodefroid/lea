@@ -96,7 +96,7 @@ lea_doctor() {
 
   # The domains the proxy always allows: EGRESS_ALWAYS of proxy/render-squid-conf.sh.
   if [ "${LEA_LOCKHTTP:-0}" = 1 ]; then
-    lea__ok "egress: the LockHTTP gate decides (its policy's trusted reads replace LEA_EGRESS_ALLOW: lockhttp init --trusted)"
+    lea__ok "egress: the LockHTTP gate decides (its policy's trusted reads replace LEA_EGRESS_ALLOW: lockhttp profile add --trusted)"
   else case ${LEA_EGRESS_ALLOW:-} in
     '') lea__ok "egress allowlist: lea's default (forges, registries, model APIs; LEA_EGRESS_ALLOW extends it with 'default,<domain>')" ;;
     '*') lea__warn "egress allowlist" "off (LEA_EGRESS_ALLOW='*'): agents reach any public web domain; only DoH resolvers and IP literals are refused" ;;

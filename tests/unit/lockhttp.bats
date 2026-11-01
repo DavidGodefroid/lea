@@ -7,7 +7,7 @@ setup() {
   lea__lockhost_root() { printf '%s' "$R"; }
   lea__lockhost_owner() { printf '%s' "$OWNER"; }
   D=sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
-  launcher 0.5.1 "$D"
+  launcher 0.7.0 "$D"
   export LEA_LOCKHTTP=1 LEA_GIT_SSH= LEA_PREFIX=lea
   export FAKE_DOCKER_OUT_INSPECT__F=true
   export FAKE_DOCKER_OUT_INSPECT__F_AT_LEA_LOCKHTTP_GATE="true|ghcr.io/davidgodefroid/lockhttp@$D|gate|lockfamily-1a2b3c4d_web-run/var/lib/docker/volumes/lockfamily-1a2b3c4d_web-run/_data>/run/lockhttp;lockfamily-1a2b3c4d_web-gate/var/lib/docker/volumes/lockfamily-1a2b3c4d_web-gate/_data>/lockhttp-home;/home/u/.local/share/lea/lockhttp/gate>/etc/lockhttp-gate;"
@@ -24,15 +24,15 @@ launcher() {
 }
 
 @test "a launcher older than the release lea pins is a warning, not a failure; the pin or later, or a clone's, says nothing" {
-  [ "$LEA_LOCKHTTP_RELEASE" = v0.5.1 ]
-  for v in 0.4.0 0.2.1 0.5.0 0.5.1-rc.1 garbage; do
+  [ "$LEA_LOCKHTTP_RELEASE" = v0.7.0 ]
+  for v in 0.4.0 0.5.1 0.6.0 0.7.0-rc.1 garbage; do
     launcher "$v" "$D"
     run lea__doctor_lockhttp
     [ "$status" -eq 0 ]
-    [[ "$output" == *"warn  lockhttp launcher: v$v, older than v0.5.1, the release lea pins"*"LOCKHTTP_VERSION=v0.5.1 sh install.sh"* ]]
+    [[ "$output" == *"warn  lockhttp launcher: v$v, older than v0.7.0, the release lea pins"*"LOCKHTTP_VERSION=v0.7.0 sh install.sh"* ]]
     [[ "$output" != *FAIL* ]]
   done
-  for v in 0.5.1 0.5.2 1.0.0 0.6.0-rc.1 0.5.1+build v0.5.1; do
+  for v in 0.7.0 0.7.1 1.0.0 0.8.0-rc.1 0.7.0+build v0.7.0; do
     launcher "$v" "$D"
     run lea__doctor_lockhttp
     [ "$status" -eq 0 ]

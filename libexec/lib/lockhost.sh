@@ -102,25 +102,25 @@ lea__init_lockhost() {
   fi
   case $_ih_t in
     lockmq)
-      # lockmq setup asks for a broker profile, never its password, and writes it to the project,
+      # lockmq profile add asks for a broker profile, never its password, and writes it to the project,
       # a tree the agents can write: a symlink there (even one planted after any check) could send
       # what it writes elsewhere. So it runs as you in lea's image (its pinned lockmq client) with
       # only the projects directory mounted, where no symlink can reach anything else.
       if [ -L "${LEA_PROJECTS_DIR:-}/.lockmq" ] || [ -L "${LEA_PROJECTS_DIR:-}/.lockmq/config.toml" ]; then
-        lea_log "warning: $LEA_PROJECTS_DIR/.lockmq or its config.toml is a symbolic link: lockmq setup not offered (remove it, then lea init)"
+        lea_log "warning: $LEA_PROJECTS_DIR/.lockmq or its config.toml is a symbolic link: lockmq profile add not offered (remove it, then lea init)"
       elif [ -n "${LEA_PROJECTS_DIR:-}" ] && [ ! -f "$LEA_PROJECTS_DIR/.lockmq/config.toml" ] &&
         [ -z "${LEA_INIT_NONINTERACTIVE:-}" ] && lea__init_tty; then
         lea_log "lockmq has no broker profile for $LEA_PROJECTS_DIR yet"
         if lea__ask "Add one now (URLs, vhosts, user, where the password comes from; never the password)?"; then
           docker run -it --rm --network none --user "$(id -u):$(id -g)" -e HOME=/tmp -v "$LEA_PROJECTS_DIR:$LEA_PROJECTS_DIR" \
-            -w "$LEA_PROJECTS_DIR" --entrypoint lockmq "$LEA_IMAGE" setup --project "$LEA_PROJECTS_DIR" ||
+            -w "$LEA_PROJECTS_DIR" --entrypoint lockmq "$LEA_IMAGE" profile add --project "$LEA_PROJECTS_DIR" ||
             lea_log "warning: no profile added (lea init again to retry)"
         else
-          lea_log "later: lockmq setup --project $LEA_PROJECTS_DIR"
+          lea_log "later: lockmq profile add --project $LEA_PROJECTS_DIR"
         fi
       fi ;;
     lockfile)
-      lea_log "lockfile: its profiles and plugins live in its console's volume; with its launcher, run lockfile profile add NAME --source s3|sftp|local ... and lockfile plugin install NAME@VERSION" ;;
+      lea_log "lockfile: with its launcher, in your projects directory, run lockfile profile add --profile NAME --source s3|sftp|local ... (it writes .lockfile/config.toml, which lox up reviews), then, once lox up runs, lockfile plugin install NAME@VERSION" ;;
   esac
   lea__lockhost_console_hint "$_ih_t"
 }
