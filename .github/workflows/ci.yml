@@ -191,10 +191,12 @@ jobs:
           go-version-file: go.mod
       - if: steps.release.outputs.released == 'true'
         run: go build -o build/lea ./cmd/lea
+      # cosign 3: lea's release images are signed in the new bundle format, which cosign 2 does
+      # not find (lea init would reject them as unsigned).
       - if: steps.release.outputs.released == 'true'
-        uses: sigstore/cosign-installer@7e8b541eb2e61bf99390e1afd4be13a184e9ebc5 # v3.10.1
+        uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
         with:
-          cosign-release: v2.6.1
+          cosign-release: v3.1.3
       - name: AppArmor profile (as lea init loads it)
         if: steps.release.outputs.released == 'true'
         run: |
