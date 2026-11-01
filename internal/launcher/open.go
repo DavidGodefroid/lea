@@ -168,6 +168,9 @@ func (l *Launcher) newAgent(args []string) error {
 	if err != nil {
 		return err
 	}
+	if err := l.ensureHub(proj); err != nil {
+		return err
+	}
 	u, err := l.up(proj)
 	if err != nil {
 		return err

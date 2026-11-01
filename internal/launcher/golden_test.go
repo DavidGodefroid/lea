@@ -254,7 +254,9 @@ func commandSetup(t *testing.T, root string, sc commandScenario) (*world, []stri
 	// The recorded scenarios run without the hub: `lox init` is the business of the hub scenarios,
 	// which turn it back on (and the daemon's matching record) in their setup.
 	writeUserConf(t, w, "LEA_HUB=0\n")
-	os.WriteFile(w.data+"/lea/host/daemon.hub", []byte("off"), 0o600)
+	if err := os.WriteFile(w.data+"/lea/host/daemon.hub", []byte("off"), 0o600); err != nil {
+		t.Fatal(err)
+	}
 	for k, v := range sc.env {
 		v = strings.ReplaceAll(strings.ReplaceAll(v, "$W", w.dir), "$ID", w.id())
 		w.env[strings.ReplaceAll(k, "$ID", fakeKey(w.id()))] = v
@@ -515,6 +517,14 @@ func TestCommandsMatchTheGoldenFiles(t *testing.T) {
 		{name: "hub started by lox init", setup: hubOn,
 			want:   []string{"lox [version]\nlox [init]", "lea: first run: starting the Lock Family hub (lox init)", open},
 			absent: []string{"lea: error"}},
+		{name: "hub up and up.json present", setup: hubWithUpJSON, absent: []string{"lox [", "first run:"}, want: []string{open}},
+		{name: "new starts the hub by lox init", args: []string{"new"}, setup: hubOn,
+			want:   []string{"lox [version]\nlox [init]", "lea: first run: starting the Lock Family hub (lox init)", "core [deck-open]", "core [new]"},
+			absent: []string{"lea: error"}},
+		{name: "new without the hub", args: []string{"new"}, absent: []string{"lox [", "first run:"}, want: []string{"core [new]"}},
+		{name: "shell starts the hub by lox init", args: []string{"shell"}, setup: hubOn,
+			want:   []string{"lox [version]\nlox [init]", "lea: first run: starting the Lock Family hub (lox init)", "[lea-session] [--shell]"},
+			absent: []string{"lea: error"}},
 		{name: "hub lox missing", setup: func(w *world) { hubOn(w); withoutLox(w) }, exit: 1,
 			want:   []string{"lea: error: lox not found: lea starts the Lock Family hub with it: brew install davidgodefroid/tap/lox, then run lea again"},
 			absent: []string{"lox [", "docker [run]", "attach-session"}},
@@ -769,8 +779,25 @@ func fakeLeaSh(w *world, script string) {
 // hubOn is a world whose hub is on (the recorded scenarios turn it off, see commandSetup) with no
 // up.json yet.
 func hubOn(w *world) {
-	os.Remove(w.env["XDG_CONFIG_HOME"] + "/lea/lea.conf")
-	os.WriteFile(w.data+"/lea/host/daemon.hub", []byte("on 300"), 0o600)
+	w.t.Helper()
+	if err := os.Remove(w.env["XDG_CONFIG_HOME"] + "/lea/lea.conf"); err != nil {
+		w.t.Fatal(err)
+	}
+	if err := os.WriteFile(w.data+"/lea/host/daemon.hub", []byte("on 300"), 0o600); err != nil {
+		w.t.Fatal(err)
+	}
+}
+
+// hubWithUpJSON is a hub that already runs: lox init wrote up.json (its content is not read by ensureHub).
+func hubWithUpJSON(w *world) {
+	w.t.Helper()
+	hubOn(w)
+	if err := os.MkdirAll(w.proj+"/.lockfamily", 0o755); err != nil {
+		w.t.Fatal(err)
+	}
+	if err := os.WriteFile(w.proj+"/.lockfamily/up.json", []byte("{}"), 0o600); err != nil {
+		w.t.Fatal(err)
+	}
 }
 
 // withoutLox puts every fake but lox on the PATH.
