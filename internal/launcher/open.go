@@ -159,6 +159,9 @@ func (l *Launcher) deck(proj string, args []string) error {
 
 // newAgent is lea_new: one more agent in this projects dir's deck.
 func (l *Launcher) newAgent(args []string) error {
+	if err := l.firstRun(); err != nil {
+		return err
+	}
 	proj, err := l.projectsDir()
 	if err != nil {
 		return err

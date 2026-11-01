@@ -280,7 +280,7 @@ func runGoSide(t *testing.T, root string, sc commandScenario) (commandSide, *wor
 	l := w.launcher()
 	l.Cwd = cwd
 	status := l.Main(args)
-	return commandSide{status, normalize(w, strings.Join(w.calls(), "\n")), normalize(w, leaLines(w.errb.String())), normalize(w, w.out.String())}, w
+	return commandSide{status, normalize(w, strings.Join(withoutFirstRunProbes(w.calls()), "\n")), normalize(w, leaLines(w.errb.String())), normalize(w, w.out.String())}, w
 }
 
 // symlinkDir replaces the directory p with a symlink to a copy of it elsewhere in the world.
@@ -416,8 +416,9 @@ func TestCommandsMatchTheGoldenFiles(t *testing.T) {
 			os.MkdirAll(d, 0o755)
 			os.WriteFile(d+"/"+strconv.Itoa(other.Process.Pid), nil, 0o600)
 		}, want: []string{"[lea-session] [--shell]"}, absent: []string{"docker [stop]", "[network] [rm]"}},
+		// A first run whose init sets no projects directory ends on the old message.
 		{name: "shell without a projects directory", args: []string{"shell"}, unset: []string{"LEA_PROJECTS_DIR"}, exit: 1,
-			want: []string{"lea: error: no projects directory: run 'lea init', or set LEA_PROJECTS_DIR"}, absent: []string{"docker"}},
+			setup: func(w *world) { fakeLeaSh(w, "#!/bin/sh\nexit 0\n") }, want: []string{"lea: error: no projects directory: run 'lea init', or set LEA_PROJECTS_DIR"}, absent: []string{"docker [run]"}},
 		{name: "stop without a projects directory", args: []string{"stop"}, unset: []string{"LEA_PROJECTS_DIR"}, exit: 1,
 			want: []string{"lea: error: no projects directory"}, absent: []string{"docker"}},
 		{name: "new with role and repo and branch and brief", args: []string{"new", "-r", "lead", "--repo", "shop", "--branch", "feat/x", "--brief", "b.md", "rev"},
@@ -464,7 +465,7 @@ func TestCommandsMatchTheGoldenFiles(t *testing.T) {
 		{name: "stop old form refused", args: []string{"stop", "$W/projects"}, exit: 2,
 			want: []string{"lea no longer takes a directory"}, absent: []string{"docker"}},
 		{name: "no projects directory", unset: []string{"LEA_PROJECTS_DIR"}, exit: 1,
-			want: []string{"lea: error: no projects directory: run 'lea init', or set LEA_PROJECTS_DIR"}},
+			setup: func(w *world) { fakeLeaSh(w, "#!/bin/sh\nexit 0\n") }, want: []string{"lea: error: no projects directory: run 'lea init', or set LEA_PROJECTS_DIR"}},
 		{name: "projects directory missing", env: map[string]string{"LEA_PROJECTS_DIR": "$W/nowhere"}, exit: 1,
 			want: []string{"lea: error: LEA_PROJECTS_DIR=$W/nowhere is not a directory"}},
 		{name: "projects directory is HOME", env: map[string]string{"LEA_PROJECTS_DIR": "$W/home"}, exit: 1,
@@ -487,8 +488,18 @@ func TestCommandsMatchTheGoldenFiles(t *testing.T) {
 			os.MkdirAll(w.hostDir()+"/sessions", 0o755)
 			os.Symlink(w.dir, w.hostDir()+"/sessions/"+w.id())
 		}, exit: 1, want: []string{"$W/data/lea/host/sessions/$ID is a symbolic link"}, absent: []string{"docker"}},
-		{name: "not initialised", setup: func(w *world) { os.Remove(w.data + "/lea/state/claude.json") }, exit: 1,
-			want: []string{"lea: error: lea is not initialised on this workstation: run 'lea init' first"}, absent: []string{"docker"}},
+		// lea initialises itself: a stand-in lea-sh logs the call, and the fake docker has no image.
+		{name: "first run on a machine without images", env: map[string]string{"FAKE_DOCKER_RC_IMAGE_INSPECT": "1"},
+			setup: func(w *world) {
+				fakeLeaSh(w, "#!/bin/sh\n{ printf lea-sh; for a in \"$@\"; do printf ' [%s]' \"$a\"; done; printf '\\n'; } >>\"$FAKE_LOG\"\n")
+			}, want: []string{"lea-sh [init] [--first-run]"}},
+		{name: "first run docker down", env: map[string]string{"FAKE_DOCKER_RC_VERSION___FORMAT": "1"},
+			setup: func(w *world) { os.Remove(w.data + "/lea/state/claude.json") }, exit: 1,
+			want:   []string{"lea: error: Docker does not answer: start the Docker engine (sudo systemctl start docker), then run lea again"},
+			absent: []string{"docker [run]", "lea-sh [init]"}},
+		{name: "first run home is not a projects dir", cwd: "../home", unset: []string{"LEA_PROJECTS_DIR"}, exit: 1,
+			want:   []string{"lea: error: first run: $W/home cannot be a projects directory: it is / or contains your home directory: cd into the directory that holds your projects and run lea again, or LEA_PROJECTS_DIR=DIR lea"},
+			absent: []string{"lea-sh [init]", "docker [run]"}},
 		{name: "old form refused", args: []string{"$W/projects"}, exit: 2,
 			want: []string{"lea: error: lea no longer takes a directory"}, absent: []string{"docker"}},
 		// The usage goes to stderr, which only the lea: lines of are compared.
@@ -705,4 +716,28 @@ func liveProcess(pid int) bool {
 	}
 	_, st, _ := strings.Cut(string(b), ") ")
 	return !strings.HasPrefix(st, "Z")
+}
+
+// fakeLeaSh replaces this world's libexec/lea-sh with script until the test ends.
+func fakeLeaSh(w *world, script string) {
+	w.t.Helper()
+	p := w.root + "/libexec/lea-sh"
+	orig, err := os.ReadFile(p)
+	if err != nil {
+		w.t.Fatal(err)
+	}
+	if err := os.WriteFile(p, []byte(script), 0o755); err != nil {
+		w.t.Fatal(err)
+	}
+	w.t.Cleanup(func() { os.WriteFile(p, orig, 0o755) })
+}
+
+// withoutFirstRunProbes drops the image checks firstRun opens every command with (one per
+// image, none after the first that fails), which no scenario pins: the goldens start at the
+// command's own calls. TestFirstRunNotNeededMakesNoCall pins the probes.
+func withoutFirstRunProbes(calls []string) []string {
+	for n := 0; n < 2 && len(calls) > 0 && strings.HasPrefix(calls[0], "docker [image] [inspect] [-f] [{{.Id}}] ["); n++ {
+		calls = calls[1:]
+	}
+	return calls
 }

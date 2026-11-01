@@ -425,6 +425,9 @@ func (l *Launcher) dispatch(args []string) error {
 				return err
 			}
 		}
+		if err := l.firstRun(); err != nil {
+			return err
+		}
 		proj, err := l.projectsDir()
 		if err != nil {
 			return err
@@ -495,6 +498,9 @@ func (l *Launcher) delivery(args []string) error {
 
 // shell is lea_shell: a shell, or a command, in the same lea.
 func (l *Launcher) shell(args []string) error {
+	if err := l.firstRun(); err != nil {
+		return err
+	}
 	proj, err := l.projectsDir()
 	if err != nil {
 		return err
