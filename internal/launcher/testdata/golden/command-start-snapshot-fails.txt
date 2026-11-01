@@ -1,0 +1,24 @@
+status 1
+-- calls
+tmux [-V]
+docker [image] [inspect] [-f] [{{.Id}}] [lea:dev]
+docker [image] [inspect] [-f] [{{.Id}}] [lea-proxy:dev]
+tmux [-V]
+core [agents]
+core [version]
+docker [network] [inspect] [lea-egress]
+docker [network] [inspect] [-f] [{{.Internal}}] [lea-internal-$ID]
+docker [inspect] [-f] [{{.State.Running}}] [lea-proxy]
+docker [inspect] [--format] [{{index .Config.Labels "lea.git-ssh"}}{{with index .Config.Labels "lea.egress-allow"}}|{{.}}{{end}}{{with index .Config.Labels "lea.providers"}}#{{.}}{{end}}{{with index .Config.Labels "lea.rules"}}@{{.}}{{end}}{{with index .Config.Labels "lea.lockhttp"}}^{{.}}{{end}}!{{.Image}}] [lea-proxy]
+docker [image] [inspect] [-f] [{{.Id}}] [lea-proxy:dev]
+docker [container] [inspect] [--format] [{{with index .NetworkSettings.Networks "lea-internal-$ID"}}{{.IPAddress}}{{end}}] [lea-proxy]
+docker [inspect] [-f] [{{.State.Running}}] [lea-$ID]
+docker [version] [--format] [{{range .Server.Components}}{{.Name}}={{.Version}}{{"\n"}}{{end}}]
+docker [--version]
+docker [info] [--format] [{{json .SecurityOptions}}]
+docker [system] [info] [--format] [{{.NCPU}}]
+docker [system] [info] [--format] [{{.MemTotal}}]
+lea-sh [scan-begin] [$W/projects]
+-- lea
+lea: error: the start snapshot failed (above): lea doctor checks the setup
+-- stdout

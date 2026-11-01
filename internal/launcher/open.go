@@ -126,9 +126,8 @@ func (l *Launcher) endSession(proj string) {
 // deck is lea__deck: deck-open, then the terminal attaches to the container's tmux session. No
 // session is recorded: the deck's agents keep the container until lea stop.
 func (l *Launcher) deck(proj string, args []string) error {
-	if len(args) > 0 {
-		a := strings.Join(args, " ")
-		return die("with the deck, claude arguments go to a new agent: lea new -- %s", a)
+	if err := deckArgsRefused(args); err != nil {
+		return err
 	}
 	if err := l.tmuxCheck(); err != nil {
 		return err
@@ -159,11 +158,17 @@ func (l *Launcher) deck(proj string, args []string) error {
 
 // newAgent is lea_new: one more agent in this projects dir's deck.
 func (l *Launcher) newAgent(args []string) error {
+	if err := l.refuseEarly(nil, true); err != nil {
+		return err
+	}
+	if err := l.firstRun(); err != nil {
+		return err
+	}
 	proj, err := l.projectsDir()
 	if err != nil {
 		return err
 	}
-	if err := l.tmuxCheck(); err != nil {
+	if err := l.ensureHub(proj); err != nil {
 		return err
 	}
 	u, err := l.up(proj)
@@ -276,5 +281,13 @@ func (l *Launcher) stopAll(forget bool) error {
 		return err
 	}
 	l.stopDaemon()
+	return nil
+}
+
+// deckArgsRefused: the deck takes no claude argument.
+func deckArgsRefused(args []string) error {
+	if len(args) > 0 {
+		return die("with the deck, claude arguments go to a new agent: lea new -- %s", strings.Join(args, " "))
+	}
 	return nil
 }

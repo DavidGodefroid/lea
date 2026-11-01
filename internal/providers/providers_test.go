@@ -266,6 +266,31 @@ func TestArgvCodexLockServers(t *testing.T) {
 	}
 }
 
+// Several locks of one tool: one Codex server per instance, <tool>-<instance>, its client run
+// with --instance; an instance that is not an instance name is left out.
+func TestArgvCodexLockServerPerInstance(t *testing.T) {
+	r := Builtin()
+	r.SetLocks([]Lock{{Name: "locksql", Instance: "orders", TimeoutSec: 1500}, {Name: "locksql", Instance: "stock", TimeoutSec: 1500},
+		{Name: "locksql", Instance: "../x", TimeoutSec: 1500}, {Name: "lockmq", Instance: "Bad", TimeoutSec: 1500}})
+	p, _ := r.Get(Codex)
+	got, err := p.Argv("dev-1", "/p", "", "", nil, "go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	j := strings.Join(got, " ")
+	for _, w := range []string{
+		`-c mcp_servers.locksql-orders.command="/usr/local/bin/locksql" -c mcp_servers.locksql-orders.args=["mcp","--instance","orders"] -c mcp_servers.locksql-orders.tool_timeout_sec=1500 -c mcp_servers.locksql-orders.default_tools_approval_mode="approve"`,
+		`-c mcp_servers.locksql-stock.command="/usr/local/bin/locksql" -c mcp_servers.locksql-stock.args=["mcp","--instance","stock"] -c mcp_servers.locksql-stock.tool_timeout_sec=1500 -c mcp_servers.locksql-stock.default_tools_approval_mode="approve"`,
+	} {
+		if !strings.Contains(j, w) {
+			t.Errorf("missing %s in %s", w, j)
+		}
+	}
+	if strings.Contains(j, "mcp_servers.locksql.") || strings.Contains(j, "../x") || strings.Contains(j, "lockmq") {
+		t.Errorf("a server of the one-lock form or a bad instance reached the argv: %s", j)
+	}
+}
+
 func TestArgvCodex(t *testing.T) {
 	p, _ := Builtin().Get(Codex)
 	got, err := p.Argv("dev-1", "/home/u/projects", "gpt-5.1-codex", "", nil, "read your brief")

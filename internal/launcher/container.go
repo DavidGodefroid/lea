@@ -520,34 +520,32 @@ func (l *Launcher) runArgs(proj, pip string) ([]string, error) {
 		return nil, err
 	}
 	a = append(a, "--mount", "type=bind,src="+lf+",dst="+lf+",readonly")
+	// A tool is on when the user's configuration turns it on, or lox up runs a lock of its type
+	// and the user did not turn it off (Config.toolOn): a lock the user added is meant for the agents.
 	ups := l.lockUpSockets(proj, lf, func(tool string) bool {
-		if tool == "locksql" {
-			return l.Cfg.Locksql()
-		}
-		for _, t := range lockHostTools {
-			if t.name == tool {
-				return l.Cfg.LockHost(t.env)
-			}
+		if key := lockToolKeys[tool]; key != "" {
+			return l.Cfg.toolOn(key, true)
 		}
 		return false
 	})
-	if l.Cfg.Locksql() {
+	_, upSql := ups["locksql"]
+	if l.Cfg.toolOn("LEA_LOCKSQL", upSql) {
 		// The socket volume of lox up's locksql lock and its clients group (locksql-clients), as
 		// for lockmq and lockfile (lockHostArgs): the console runs hub-attached only, under lox
 		// up. Without such a lock the agents get no locksql socket, never a fixed volume another
 		// console could serve. Its profile directory read-only (locksqlDir).
 		switch v, ok := ups["locksql"]; {
 		case !ok:
-			l.logf("warning: locksql: lea's agents get no locksql socket: no locksql lock of lox up for this projects directory (add one with lox add locksql <name>, then run `lox up`)")
-		case v == "":
+			l.logf("warning: locksql: no such lock yet: `lox add locksql` (lea's agents get its socket once lea restarts: lea stop, then lea)")
+		case len(v) == 0:
 			l.logf("warning: locksql: lea's agents get no locksql socket (see above)")
 		default:
 			d, err := locksqlDir(proj)
 			if err != nil {
 				return nil, err
 			}
-			a = append(a, "-e", "LEA_LOCKSQL=1", "--group-add", "10000", "--mount", lockUpMount(v, "locksql"),
-				"--mount", "type=bind,src="+d+",dst="+d+",readonly")
+			a = append(a, lockUpArgs("LEA_LOCKSQL", "10000", v)...)
+			a = append(a, "--mount", "type=bind,src="+d+",dst="+d+",readonly")
 		}
 	}
 	a = append(a, lh...)
@@ -652,14 +650,14 @@ func (l *Launcher) containerStart(proj, pip string) error {
 		if l.isInterrupted() {
 			return errInterrupted
 		}
-		return exitError{1}
+		return die("the start snapshot failed (above): lea doctor checks the setup")
 	}
 	_ = l.quiet("docker", "rm", "-f", name)
 	if err := l.run("docker", append([]string{"run"}, args...)...); err != nil {
 		if l.isInterrupted() {
 			return errInterrupted
 		}
-		return exitError{1}
+		return die("could not start the container %s (docker's message above): lea doctor checks the setup", name)
 	}
 	if err := l.waitReady(name); err != nil {
 		return err
@@ -670,7 +668,7 @@ func (l *Launcher) containerStart(proj, pip string) error {
 		}
 		l.logf("warning: the container's bus socket could not be bound; agents run without lea messaging")
 	}
-	if l.Cfg.Locksql() {
+	if l.Cfg.ToolsOn(proj, func(string, ...any) {})["locksql"] {
 		l.locksqlHint()
 	}
 	return nil

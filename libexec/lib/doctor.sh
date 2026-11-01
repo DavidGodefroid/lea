@@ -106,9 +106,13 @@ lea_doctor() {
   if [ -n "$LEA_OTEL_UPSTREAM" ]; then lea__ok "telemetry upstream $LEA_OTEL_UPSTREAM"
   else lea__ok "telemetry: off (LEA_OTEL_UPSTREAM)"; fi
 
-  if [ "$LEA_LOCKSQL" = 1 ]; then
-    if docker image inspect "$LEA_LOCKSQL_IMAGE" >/dev/null 2>&1; then lea__ok "locksql image $LEA_LOCKSQL_IMAGE"
-    else lea__warn "locksql image" "$LEA_LOCKSQL_IMAGE absent: run lea init (or set LEA_LOCKSQL=0)"; fi
+  # On through a lock of lox up alone, locksql needs no image of lea's (lea init builds it for
+  # LEA_LOCKSQL=1): only the lock is checked.
+  if lea__tool_on locksql; then
+    if [ "$LEA_LOCKSQL" = 1 ]; then
+      if docker image inspect "$LEA_LOCKSQL_IMAGE" >/dev/null 2>&1; then lea__ok "locksql image $LEA_LOCKSQL_IMAGE"
+      else lea__warn "locksql image" "$LEA_LOCKSQL_IMAGE absent: run lea init (or set LEA_LOCKSQL=0)"; fi
+    fi
     lea__doctor_locksql_lock
   fi
   lea__doctor_lockhost lockmq
@@ -130,7 +134,7 @@ lea_doctor() {
 # whose), never a fixed one. A locksql-run volume is what a standalone console of an earlier lea
 # left: lea mounts it no more.
 lea__doctor_locksql_lock() {
-  _dl_hint="add one with lox add locksql NAME (allowed_uids: [$(id -u)] in .lockfamily/lockfamily.yaml), then run \`lox up\`"
+  _dl_hint="no such lock yet: \`lox add locksql\` (lox add fills allowed_uids: [$(id -u)] in .lockfamily/lockfamily.yaml when lea is on your PATH; lea's agents get its socket once lea restarts: lea stop, then lea)"
   if [ -z "${LEA_PROJECTS_DIR:-}" ]; then
     lea__warn "locksql lock" "no projects directory (lea init): lox up runs the console for one"
   elif ! _dl_v=$(docker volume ls --filter label=dev.lockfamily.role=socket --filter label=dev.lockfamily.type=locksql \
@@ -140,7 +144,7 @@ lea__doctor_locksql_lock() {
     case $(printf '%s\n' "$_dl_v" | grep -c .) in
       0) lea__warn "locksql lock" "no socket volume of a locksql lock of lox up for $LEA_PROJECTS_DIR: lea's agents get no locksql socket; $_dl_hint" ;;
       1) lea__ok "locksql lock of lox up (socket volume $_dl_v)" ;;
-      *) lea__warn "locksql lock" "lox up runs $(printf '%s\n' "$_dl_v" | grep -c .) locksql locks for $LEA_PROJECTS_DIR: lea's agents reach one per tool, so none of them" ;;
+      *) lea__ok "$(printf '%s\n' "$_dl_v" | grep -c .) locksql locks of lox up (lea's agents reach each on /run/locksql/<instance>)" ;;
     esac
   fi
   if docker volume inspect locksql-run >/dev/null 2>&1; then

@@ -156,6 +156,63 @@ jobs:
           make test-hubdeck 2>&1 | tee hubdeck.log
           grep -q -- '^--- PASS: TestHubDeckApprovesARealLockhubTicket ' hubdeck.log
           grep -qx 'hubdeck: OK' hubdeck.log
+  # lea's first run on a machine without images (tests/integration/firstrun.sh): a fresh HOME and
+  # XDG_* directories, no lea images, the lox CLI of the checksum-verified lockhub release on
+  # PATH; `lea shell -- true` pulls both release images (cosign-verified), starts the hub with
+  # `lox init`, and a second run pulls nothing and starts no hub. The lox release is 0.5.0, the
+  # floor of config/host-minimums: until lockhub's v0.5.0 is tagged the first step finds no
+  # release, every other step is skipped and the job succeeds with a notice; once it exists the
+  # test runs with no soft-fail.
+  firstrun:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      LOCKHUB_VERSION: "0.5.0"
+    steps:
+      - name: is lockhub's release there yet
+        id: release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          if gh release view "v$LOCKHUB_VERSION" -R DavidGodefroid/lockhub >/dev/null 2>&1; then
+            echo "released=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "released=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::lockhub v$LOCKHUB_VERSION not released yet: first-run integration skipped"
+          fi
+      - if: steps.release.outputs.released == 'true'
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - if: steps.release.outputs.released == 'true'
+        uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+        with:
+          go-version-file: go.mod
+      - if: steps.release.outputs.released == 'true'
+        run: go build -o build/lea ./cmd/lea
+      # cosign 3: lea's release images are signed in the new bundle format, which cosign 2 does
+      # not find (lea init would reject them as unsigned).
+      - if: steps.release.outputs.released == 'true'
+        uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+        with:
+          cosign-release: v3.1.3
+      - name: AppArmor profile (as lea init loads it)
+        if: steps.release.outputs.released == 'true'
+        run: |
+          if docker info --format '{{json .SecurityOptions}}' | grep -q 'name=apparmor'; then
+            if [ -e /etc/apparmor.d/abi/4.0 ]; then abi=4.0 userns='  userns,'; else abi=3.0 userns=''; fi
+            sed -e "s|@ABI@|$abi|" -e "s|^@USERNS@\$|$userns|" apparmor/lea.tmpl | sudo tee /etc/apparmor.d/lea >/dev/null
+            sudo apparmor_parser -r /etc/apparmor.d/lea
+          fi
+      - name: tests/integration/firstrun.sh
+        if: steps.release.outputs.released == 'true'
+        shell: bash
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          tests/integration/firstrun.sh 2>&1 | tee firstrun.log
+          grep -qx 'firstrun: OK' firstrun.log
   # The real Claude Code (the image's pinned version) with lea's hooks on a fake Messages API, and
   # lea's daemon: usage-limit resume, truncated transcripts, and the phase-3 suspend/resume demo
   # (a suspended agent stopped, resumed by its approval or a message). No secret, no real model.

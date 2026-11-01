@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"strings"
 	"syscall"
 	"time"
 
@@ -84,8 +85,24 @@ func proxy(parent context.Context, sock, agent, method string, timeout time.Dura
 	return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: string(res)}}}
 }
 
-func New(sock, agent, version string) *mcp.Server {
-	s := mcp.NewServer(&mcp.Implementation{Name: "lea", Version: version}, nil)
+// LockGuidance is what lea's MCP server tells the agent of the lock tools lox up runs several
+// locks of (LEA_<TOOL>_INSTANCES, set by the launcher with each lock on /run/<tool>/<instance>):
+// one sentence per tool with two or more instances, "" otherwise. A Claude agent gets no lock
+// MCP server from lea (a Codex agent gets one per instance): it calls the clients itself.
+func LockGuidance(get func(string) string) string {
+	var out []string
+	for _, t := range []struct{ tool, env string }{{"locksql", "LEA_LOCKSQL_INSTANCES"}, {"lockmq", "LEA_LOCKMQ_INSTANCES"}, {"lockfile", "LEA_LOCKFILE_INSTANCES"}} {
+		if names := strings.Fields(get(t.env)); len(names) > 1 {
+			out = append(out, "several "+t.tool+" locks: "+strings.Join(names, " ")+"; pass --instance NAME")
+		}
+	}
+	return strings.Join(out, "\n")
+}
+
+// New is lea's MCP server for agent, on the bus socket sock; instructions ("" for none) are the
+// server's instructions to the agent (LockGuidance).
+func New(sock, agent, version, instructions string) *mcp.Server {
+	s := mcp.NewServer(&mcp.Implementation{Name: "lea", Version: version}, &mcp.ServerOptions{Instructions: instructions})
 	const short = 10 * time.Second
 	mcp.AddTool(s, &mcp.Tool{Name: "agents_list", Description: "List the agents of this lea: name, label (the name the user sees in the deck, your container only), role, profile, state, parent, branch, ctx_pct (percent of its context window used, when known; your container only); you=true is you. Never their screens."},
 		func(ctx context.Context, _ *mcp.CallToolRequest, in empty) (*mcp.CallToolResult, any, error) {

@@ -1,6 +1,9 @@
 status 1
 -- calls
 tmux [-V]
+docker [image] [inspect] [-f] [{{.Id}}] [lea:dev]
+docker [image] [inspect] [-f] [{{.Id}}] [lea-proxy:dev]
+tmux [-V]
 core [agents]
 core [agents]
 core [agents]

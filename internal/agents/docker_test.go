@@ -229,3 +229,25 @@ func TestDockerPark(t *testing.T) {
 		t.Fatalf("log=%q", logged(t, log))
 	}
 }
+
+// Volumes: the lea.projects label, then the names of the volumes the container mounts, one
+// docker inspect of the container.
+func TestDockerVolumes(t *testing.T) {
+	bin, log := fakeDocker(t, `printf '/home/u/projects\nlockfamily-0123abcd_orders-run\nlea-podman-1\n'`)
+	p, vols, err := Docker{Bin: bin}.Volumes(context.Background(), "lea-a")
+	if err != nil || p != "/home/u/projects" || !reflect.DeepEqual(vols, []string{"lockfamily-0123abcd_orders-run", "lea-podman-1"}) {
+		t.Fatalf("projects %q volumes %q err %v", p, vols, err)
+	}
+	if l := logged(t, log); !strings.HasPrefix(l, "inspect --type container -f ") || !strings.HasSuffix(strings.TrimSpace(l), " lea-a") {
+		t.Fatalf("log=%q", l)
+	}
+	// No label (not a container lea started): an empty projects directory, the volumes still.
+	bin, _ = fakeDocker(t, `printf '\nlockfamily-0123abcd_orders-run\n'`)
+	if p, vols, err := (Docker{Bin: bin}).Volumes(context.Background(), "lea-a"); err != nil || p != "" || !reflect.DeepEqual(vols, []string{"lockfamily-0123abcd_orders-run"}) {
+		t.Fatalf("projects %q volumes %q err %v", p, vols, err)
+	}
+	bin, _ = fakeDocker(t, `exit 1`)
+	if _, _, err := (Docker{Bin: bin}).Volumes(context.Background(), "lea-a"); err == nil {
+		t.Fatal("a failed inspect is no error")
+	}
+}

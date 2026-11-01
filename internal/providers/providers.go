@@ -84,13 +84,27 @@ type Provider struct {
 
 // Lock is a Lock's MCP server in the lea container: its name (locksql, lockmq, lockfile), the
 // client binary that serves it (`<binary> mcp`) and how long Codex waits on one of its calls.
+// Instance is set when lox up runs several locks of the tool: the server is then
+// <name>-<instance>, its client run with --instance <instance>.
 type Lock struct {
 	Name       string
+	Instance   string
 	TimeoutSec int
+}
+
+// Server is the Lock's MCP server name: <name>, or <name>-<instance>.
+func (l Lock) Server() string {
+	if l.Instance == "" {
+		return l.Name
+	}
+	return l.Name + "-" + l.Instance
 }
 
 // LockNames are the Locks whose client is in the lea image, in that order.
 var LockNames = []string{"locksql", "lockmq", "lockfile"}
+
+// lockInstanceRe is a lock's instance name (lox up's, lea's launcher's lockUpInstance).
+var lockInstanceRe = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,62}$`)
 
 // Registry is the built-in providers and the endpoints of the providers file.
 type Registry struct {
@@ -99,12 +113,12 @@ type Registry struct {
 }
 
 // SetLocks gives every provider the Lock MCP servers its agents get; a name not of LockNames,
-// or a timeout out of 1 to 86400 seconds, is left out.
+// an instance that is not an instance name, or a timeout out of 1 to 86400 seconds, is left out.
 func (r *Registry) SetLocks(ls []Lock) {
 	r.locks = nil
 	for _, l := range ls {
 		for _, n := range LockNames {
-			if l.Name == n && l.TimeoutSec >= 1 && l.TimeoutSec <= 86400 {
+			if l.Name == n && (l.Instance == "" || lockInstanceRe.MatchString(l.Instance)) && l.TimeoutSec >= 1 && l.TimeoutSec <= 86400 {
 				r.locks = append(r.locks, l)
 			}
 		}

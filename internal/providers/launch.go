@@ -117,16 +117,21 @@ func (p Provider) Argv(agent, workdir, model, session string, user []string, pro
 		// Codex's default tool timeout. An entry with the timeout alone (a server the user did not
 		// declare) would be no valid server, so lea declares it, with the image's own client. Its
 		// tools need no approval in Codex: the human approves each call at the Lock, and Codex's
-		// own prompt would hold the call before it reaches the Lock.
+		// own prompt would hold the call before it reaches the Lock. Several locks of one tool:
+		// one server per instance, <tool>-<instance>, its client run with --instance.
 		for _, l := range p.Locks {
-			if !slices.Contains(LockNames, l.Name) || l.TimeoutSec < 1 {
+			if !slices.Contains(LockNames, l.Name) || l.TimeoutSec < 1 || (l.Instance != "" && !lockInstanceRe.MatchString(l.Instance)) {
 				continue
 			}
+			s, args := l.Server(), `["mcp"]`
+			if l.Instance != "" {
+				args = `["mcp","--instance","` + l.Instance + `"]`
+			}
 			a = append(a,
-				"-c", `mcp_servers.`+l.Name+`.command="/usr/local/bin/`+l.Name+`"`,
-				"-c", `mcp_servers.`+l.Name+`.args=["mcp"]`,
-				"-c", `mcp_servers.`+l.Name+`.tool_timeout_sec=`+strconv.Itoa(l.TimeoutSec),
-				"-c", `mcp_servers.`+l.Name+`.default_tools_approval_mode="approve"`)
+				"-c", `mcp_servers.`+s+`.command="/usr/local/bin/`+l.Name+`"`,
+				"-c", `mcp_servers.`+s+`.args=`+args,
+				"-c", `mcp_servers.`+s+`.tool_timeout_sec=`+strconv.Itoa(l.TimeoutSec),
+				"-c", `mcp_servers.`+s+`.default_tools_approval_mode="approve"`)
 		}
 		if p.Endpoint != nil {
 			if !nameRe.MatchString(p.Name) || reserved[p.Name] {

@@ -4,6 +4,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -137,31 +138,113 @@ func TestLockUpRefusesOtherVolumes(t *testing.T) {
 	}
 }
 
-// Two locks of one tool: the agents reach neither (lea mounts one socket per tool).
-func TestLockUpTwoOfATool(t *testing.T) {
+// Several locks of one tool: each reaches the agents, read-only on /run/<tool>/<instance>, and
+// LEA_<TOOL>_INSTANCES names them; one lock keeps today's /run/<tool>, with no such variable.
+func TestLockUpSocketsSeveralOfOneType(t *testing.T) {
 	w := newWorld(t, repoRoot(t))
-	locksqlOn(t, w)
-	writeUp(t, w, lockUp("a", "locksql")+","+lockUp("b", "locksql"))
-	labels(w, "a", "locksql", "socket")
-	labels(w, "b", "locksql", "socket")
-	for _, a := range lockArgs(t, w) {
-		if strings.Contains(a, upProjectOf(w)) {
-			t.Errorf("mounted %s", a)
+	writeUp(t, w, lockUp("orders", "locksql")+","+lockUp("stock", "locksql")+","+lockUp("events", "lockmq")+","+lockUp("audit", "lockmq")+
+		","+lockUp("invoices", "lockfile")+","+lockUp("reports", "lockfile"))
+	for _, l := range []struct{ name, typ string }{{"orders", "locksql"}, {"stock", "locksql"}, {"events", "lockmq"}, {"audit", "lockmq"},
+		{"invoices", "lockfile"}, {"reports", "lockfile"}} {
+		labels(w, l.name, l.typ, "socket")
+	}
+	args := lockArgs(t, w)
+	for _, m := range []string{"type=volume,src=" + upProjectOf(w) + "_orders-run,dst=/run/locksql/orders,readonly",
+		"type=volume,src=" + upProjectOf(w) + "_stock-run,dst=/run/locksql/stock,readonly",
+		"type=volume,src=" + upProjectOf(w) + "_audit-run,dst=/run/lockmq/audit,readonly",
+		"type=volume,src=" + upProjectOf(w) + "_events-run,dst=/run/lockmq/events,readonly",
+		"type=volume,src=" + upProjectOf(w) + "_invoices-run,dst=/run/lockfile/invoices,readonly",
+		"type=volume,src=" + upProjectOf(w) + "_reports-run,dst=/run/lockfile/reports,readonly",
+		"LEA_LOCKSQL_INSTANCES=orders stock", "LEA_LOCKMQ_INSTANCES=audit events", "LEA_LOCKFILE_INSTANCES=invoices reports",
+		"LEA_LOCKSQL=1", "LEA_LOCKMQ=1", "LEA_LOCKFILE=1"} {
+		if !contains(args, m) {
+			t.Errorf("missing %q in %v", m, args)
 		}
 	}
-	for _, a := range lockArgs(t, w) {
-		if strings.Contains(a, "locksql-run") {
-			t.Errorf("fixed locksql-run mounted: %s", a)
+	for _, a := range args {
+		if strings.HasSuffix(a, "dst=/run/locksql,readonly") || strings.HasSuffix(a, "dst=/run/lockmq,readonly") || strings.HasSuffix(a, "dst=/run/lockfile,readonly") {
+			t.Errorf("a socket on the one-lock path: %s", a)
 		}
 	}
-	if !strings.Contains(w.errb.String(), "2 locksql locks") {
+	if strings.Contains(w.errb.String(), "warning") {
+		t.Errorf("warnings: %s", w.errb.String())
+	}
+
+	// One lock: today's single mount, unchanged.
+	w = newWorld(t, repoRoot(t))
+	writeUp(t, w, lockUp("orders", "locksql"))
+	labels(w, "orders", "locksql", "socket")
+	args = lockArgs(t, w)
+	if !contains(args, "type=volume,src="+upProjectOf(w)+"_orders-run,dst=/run/locksql,readonly") {
+		t.Errorf("one lock: not on /run/locksql: %v", args)
+	}
+	for _, a := range args {
+		if strings.Contains(a, "_INSTANCES=") || strings.Contains(a, "/run/locksql/") {
+			t.Errorf("one lock: %s", a)
+		}
+	}
+}
+
+// Each lock of a tool is checked on its own: a forged socket volume is left out with the
+// warning, the other lock still reaches the agents (on its instance path).
+func TestLockUpSocketsEachChecked(t *testing.T) {
+	w := newWorld(t, repoRoot(t))
+	writeUp(t, w, lockUp("orders", "locksql")+","+lockUp("stock", "locksql"))
+	labels(w, "orders", "locksql", "socket")
+	labelsWith(w, "stock", "locksql", "socket", "lockfamily-00000000", "stock", w.proj)
+	args := lockArgs(t, w)
+	if !contains(args, "type=volume,src="+upProjectOf(w)+"_orders-run,dst=/run/locksql/orders,readonly") || !contains(args, "LEA_LOCKSQL_INSTANCES=orders") {
+		t.Errorf("orders not mounted alone: %v", args)
+	}
+	for _, a := range args {
+		if strings.Contains(a, "_stock-run") {
+			t.Errorf("forged volume mounted: %s", a)
+		}
+	}
+	if !strings.Contains(w.errb.String(), "warning: lock stock (locksql): volume "+upProjectOf(w)+"_stock-run is not lox up's socket volume") {
 		t.Errorf("warning: %s", w.errb.String())
 	}
 }
 
-// A tool that is off stays off, lox up or not.
+// A lock whose name is not an instance name, among several of the tool: left out with the
+// warning, the good one still on its instance path, no mount with the bad name.
+func TestLockUpSocketsBadInstanceAmongSeveral(t *testing.T) {
+	w := newWorld(t, repoRoot(t))
+	writeUp(t, w, lockUp("orders", "locksql")+","+lockUp("Bad", "locksql"))
+	labels(w, "orders", "locksql", "socket")
+	labels(w, "Bad", "locksql", "socket")
+	args := lockArgs(t, w)
+	if !contains(args, "type=volume,src="+upProjectOf(w)+"_orders-run,dst=/run/locksql/orders,readonly") || !contains(args, "LEA_LOCKSQL_INSTANCES=orders") {
+		t.Errorf("orders not on /run/locksql/orders: %v", args)
+	}
+	for _, a := range args {
+		if strings.Contains(a, "dst=/run/locksql/Bad") || strings.Contains(a, "_Bad-run") {
+			t.Errorf("the bad name reached a mount: %s", a)
+		}
+	}
+	if !strings.Contains(w.errb.String(), `warning: `+w.proj+`/.lockfamily/up.json: lock "Bad": not an instance name: locksql left out`) {
+		t.Errorf("warning: %s", w.errb.String())
+	}
+}
+
+// lockUpArgs takes "several" from lockUpSockets' flag, never from a socket's path.
+func TestLockUpArgsSeveralFromTheFlag(t *testing.T) {
+	one := lockUpArgs("LEA_LOCKSQL", "10000", []lockUpSocket{{Instance: "orders", Volume: "v", Dst: "/run/locksql/x"}})
+	for _, a := range one {
+		if strings.Contains(a, "_INSTANCES=") {
+			t.Errorf("one lock: %v", one)
+		}
+	}
+	several := lockUpArgs("LEA_LOCKSQL", "10000", []lockUpSocket{{Instance: "orders", Volume: "v", Dst: "/run/locksql", Several: true}})
+	if !contains(several, "LEA_LOCKSQL_INSTANCES=orders") {
+		t.Errorf("several: %v", several)
+	}
+}
+
+// A tool the user turned off stays off, lox up or not.
 func TestLockUpToolOff(t *testing.T) {
 	w := newWorld(t, repoRoot(t))
+	writeUserConf(t, w, "LEA_LOCKMQ=0\n")
 	writeUp(t, w, lockUp("events", "lockmq"))
 	labels(w, "events", "lockmq", "socket")
 	for _, a := range lockArgs(t, w) {
@@ -287,7 +370,7 @@ func TestLoxConsole(t *testing.T) {
 		want           string
 	}{
 		"no up.json":          {"", "", nil, nil, "no locksql console of lox up"},
-		"no locksql lock":     {lockUp("events", "lockmq"), "", nil, nil, "no locksql lock of lox up"},
+		"no locksql lock":     {lockUp("events", "lockmq"), "", nil, nil, "no locksql lock of lox up for $P: no such lock yet: `lox add locksql`"},
 		"no lock of profile":  {crmProd, "uat", nil, nil, `serves the profile "uat"`},
 		"default not prod":    {crmProd, "default", nil, nil, `serves the profile "default"`},
 		"two locks":           {crm + "," + lockUp("uat", "locksql"), "", nil, nil, "lox up runs 2 locksql locks (crm, uat)"},
@@ -317,6 +400,7 @@ func TestLoxConsole(t *testing.T) {
 				w.env[k] = v
 			}
 			inst, id, err := LoxConsole(cfg, w.environ(), w.proj, "locksql", c.profile)
+			c.want = strings.ReplaceAll(c.want, "$P", w.proj)
 			if err == nil || !strings.Contains(err.Error(), c.want) || inst != "" || id != "" {
 				t.Fatalf("%q %q %v, want %q", inst, id, err, c.want)
 			}
@@ -387,5 +471,74 @@ func TestLockUpSocketServedByAnotherComposeRun(t *testing.T) {
 	w.env["FAKE_DOCKER_RC_PS___NO_TRUNC"] = "1"
 	if contains(lockArgs(t, w), mount) {
 		t.Error("mounted though docker ps failed")
+	}
+}
+
+// A tool is on when the trusted up.json names a lock of its type and the user config does not set
+// the key; an explicit LEA_<TOOL>=0 keeps it off.
+func TestToolOnWhenUpJSONNamesIt(t *testing.T) {
+	for _, c := range []struct{ tool, key, gid string }{{"locksql", "LEA_LOCKSQL", "10000"}, {"lockmq", "LEA_LOCKMQ", "10010"}, {"lockfile", "LEA_LOCKFILE", "10030"}} {
+		w := newWorld(t, repoRoot(t))
+		writeUp(t, w, lockUp("x", c.tool))
+		labels(w, "x", c.tool, "socket")
+		if !contains(lockArgs(t, w), c.gid) {
+			t.Errorf("%s: no key and a lock must give --group-add %s", c.tool, c.gid)
+		}
+		w = newWorld(t, repoRoot(t))
+		writeUserConf(t, w, c.key+"=0\n")
+		writeUp(t, w, lockUp("x", c.tool))
+		labels(w, "x", c.tool, "socket")
+		if contains(lockArgs(t, w), c.gid) {
+			t.Errorf("%s: %s=0 must give no --group-add %s", c.tool, c.key, c.gid)
+		}
+		w = newWorld(t, repoRoot(t))
+		if contains(lockArgs(t, w), c.gid) {
+			t.Errorf("%s: no lock, no key: must stay off", c.tool)
+		}
+	}
+}
+
+// lockUsable is the one place that says whether a lock of up.json can reach the agents without
+// asking docker: lockUpSockets (with its warnings) and ReadUpLocks (the daemon's watch) share it.
+func TestLockUsable(t *testing.T) {
+	s := &lockUpState{Project: "lockfamily-0123abcd", Locks: map[string]lockUpLock{
+		"orders":    {Type: "locksql", Socket: "lockfamily-0123abcd_orders-run"},
+		"Bad Name":  {Type: "locksql", Socket: "lockfamily-0123abcd_Bad Name-run"},
+		"inventory": {Type: "locksql", Socket: "other-volume"},
+		"shop":      {Type: "lockmq", Socket: "lockfamily-0123abcd_shop-run", GID: "4242"},
+	}}
+	for name, want := range map[string]string{
+		"orders":    "",
+		"Bad Name":  `lock "Bad Name": not an instance name: locksql left out`,
+		"inventory": `lock inventory: socket volume "other-volume" is not lox up's "lockfamily-0123abcd_inventory-run": left out`,
+		"shop":      "lock shop (lockmq): clients group 4242, lea's image knows 10010: left out (update lea)",
+	} {
+		vol, why := lockUsable(s, name)
+		if why != want || (want == "" && vol != "lockfamily-0123abcd_orders-run") || (want != "" && vol != "") {
+			t.Errorf("%s: vol %q why %q, want why %q", name, vol, why, want)
+		}
+	}
+}
+
+// The daemon's watch reads the locks a container started now really mounts: a lock whose socket
+// volume docker does not label as lox up's is left out, with why, so it never asks for a restart
+// that cannot give it.
+func TestUpLocksMountedLeavesOutRejectedVolumes(t *testing.T) {
+	w := newWorld(t, repoRoot(t))
+	t.Setenv("PATH", w.env["PATH"])
+	writeUp(t, w, lockUp("orders", "locksql")+","+lockUp("stock", "locksql"))
+	labels(w, "orders", "locksql", "socket")
+	labels(w, "stock", "locksql", "gate-home")
+	cfg, err := LoadConfig(w.getenv, w.root, w.proj)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var warns []string
+	got := cfg.UpLocksMounted(w.environ(), w.proj, func(f string, a ...any) { warns = append(warns, fmt.Sprintf(f, a...)) })
+	if len(got) != 1 || got[0].Instance != "orders" {
+		t.Fatalf("locks %v", got)
+	}
+	if len(warns) != 1 || !strings.Contains(warns[0], "lock stock (locksql)") || !strings.Contains(warns[0], "not lox up's socket volume") {
+		t.Fatalf("warnings %q", warns)
 	}
 }

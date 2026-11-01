@@ -15,6 +15,9 @@ type lockHostTool struct {
 	gid  string // the tool's clients group in its image (and in lea's)
 }
 
+// lockToolKeys are the switches of the lock tools lea wires, by tool.
+var lockToolKeys = map[string]string{"locksql": "LEA_LOCKSQL", "lockmq": "LEA_LOCKMQ", "lockfile": "LEA_LOCKFILE"}
+
 var lockHostTools = []lockHostTool{{"lockmq", "LEA_LOCKMQ", "10010"}, {"lockfile", "LEA_LOCKFILE", "10030"}}
 
 var lockVersion = regexp.MustCompile(`^v?([0-9]+)\.([0-9]+)\.([0-9]+)$`)
@@ -35,23 +38,25 @@ func lockfileSafe(v string) bool {
 
 // lockHostArgs are the docker run arguments that let the session's agents reach the consoles of
 // the lock tools that are on: the socket volume of the tool's lock that `lox up` runs for the
-// projects directory (ups, lockup.go) on /run/<name>, read-only, and the tool's clients group.
+// projects directory (ups, lockup.go) on /run/<name> (each of several on /run/<name>/<instance>,
+// lockUpArgs), read-only, and the tool's clients group.
 // The consoles run hub-attached only, under lox up: without such a lock the agents get no socket
-// of the tool, and lea says to run `lox up`.
-func (l *Launcher) lockHostArgs(ups map[string]string) []string {
+// of the tool, and lea says to add one (`lox add <tool>`).
+func (l *Launcher) lockHostArgs(ups map[string][]lockUpSocket) []string {
 	var a []string
 	for _, t := range lockHostTools {
-		if !l.Cfg.LockHost(t.env) {
+		_, up := ups[t.name]
+		if !l.Cfg.toolOn(t.env, up) {
 			continue
 		}
 		v, ok := ups[t.name]
 		switch {
 		case !ok:
-			l.logf("warning: %s: lea's agents get no %s socket: no %s lock of lox up for this projects directory (add one with lox add %s <name>, then run `lox up`)", t.name, t.name, t.name, t.name)
-		case v == "":
+			l.logf("warning: %s: no such lock yet: `lox add %s` (lea's agents get its socket once lea restarts: lea stop, then lea)", t.name, t.name)
+		case len(v) == 0:
 			l.logf("warning: %s: lea's agents get no %s socket (see above)", t.name, t.name)
 		default:
-			a = append(a, "-e", t.env+"=1", "--group-add", t.gid, "--mount", lockUpMount(v, t.name))
+			a = append(a, lockUpArgs(t.env, t.gid, v)...)
 		}
 	}
 	return a

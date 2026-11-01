@@ -80,7 +80,9 @@ func lockSpec(exe string) func(tool string) (agents.LockSpec, error) {
 			if err != nil {
 				log.Printf("lea daemon: %v", err)
 			}
-			return agents.LockSpec{Enabled: cfg.Locksql(), ContainerName: lockContainerName(cfg), AgentProfiles: ps,
+			return agents.LockSpec{
+				EnabledFor:    func(projects string) bool { return cfg.ToolsOn(projects, log.Printf)["locksql"] },
+				ContainerName: lockContainerName(cfg), AgentProfiles: ps,
 				Console: func(_ context.Context, projects, profile string) (agents.LockConsole, error) {
 					inst, id, err := launcher.LoxConsole(cfg, os.Environ(), projects, "locksql", profile)
 					return agents.LockConsole{Instance: inst, Container: id}, err

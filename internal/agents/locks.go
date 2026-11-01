@@ -62,6 +62,9 @@ type LockConsole struct {
 // the user writes (never the projects directory's).
 type LockSpec struct {
 	Enabled bool
+	// EnabledFor, when set, decides Enabled for the deck's projects directory (a tool is on when
+	// the user turned it on, or lox up runs a lock of its type: launcher.Config.ToolsOn).
+	EnabledFor func(projects string) bool
 	// ContainerName is the lea container of a projects directory (launcher.Config.ContainerName
 	// of its physical path): a console shows on a deck's own projects directory only.
 	ContainerName func(projects string) string
@@ -184,6 +187,9 @@ func (m *Manager) LockOpen(ctx context.Context, container, tool, profile string)
 	}
 	if spec.ContainerName == nil || spec.ContainerName(spec.Projects) != container {
 		return "", fmt.Errorf("the projects directory %s is not the one of %s: no console shows for it", spec.Projects, container)
+	}
+	if spec.EnabledFor != nil {
+		spec.Enabled = spec.EnabledFor(spec.Projects)
 	}
 	if err := checkSpec(tool, spec); err != nil {
 		return "", err
@@ -380,6 +386,13 @@ func (m *Manager) LockCheckRequest(ctx context.Context, container, tool, profile
 	spec, err := m.cfg.LockSpec(tool)
 	if err != nil {
 		return err
+	}
+	if spec.EnabledFor != nil {
+		projects, err := m.cfg.Containers.Projects(ctx, container)
+		if err != nil {
+			return err
+		}
+		spec.Enabled = spec.EnabledFor(projects)
 	}
 	if !spec.Enabled {
 		return fmt.Errorf("%s is off", tool)

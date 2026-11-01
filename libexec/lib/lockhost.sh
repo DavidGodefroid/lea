@@ -25,6 +25,32 @@ lea__lockhost_get() {
   esac
 }
 
+# lea__tool_on TOOL: whether lea wires TOOL (locksql, lockmq, lockfile) for the projects directory.
+# The launcher decides (Config.ToolsOn) and passes the tools that are on in LEA_TOOLS_ON; lea-sh run
+# without it (no launcher) reads LEA_<TOOL> alone.
+lea__tool_on() {
+  if [ -n "${LEA_TOOLS_ON+x}" ]; then
+    case " $LEA_TOOLS_ON " in *" $1 "*) return 0 ;; *) return 1 ;; esac
+  fi
+  case $1 in
+    locksql) [ "${LEA_LOCKSQL:-0}" = 1 ] ;;
+    *) [ "$(lea__lockhost_get "$1")" = 1 ] ;;
+  esac
+}
+
+# lea__tool_by_lock TOOL: TOOL is on although LEA_<TOOL> is not 1: the launcher turned it on for a
+# lock of TOOL that lox up runs for the projects directory. Logs so and succeeds; fails otherwise.
+lea__tool_by_lock() {
+  case $1 in locksql) _tb_v=${LEA_LOCKSQL:-0} ;; *) _tb_v=$(lea__lockhost_get "$1") ;; esac
+  [ "$_tb_v" != 1 ] || return 1
+  lea_log "$1 is on for lea while lox up runs a $1 lock here (lea's agents reach it; $(lea__tool_var "$1")=0 in your configuration keeps it off)"
+}
+
+# lea__tool_var TOOL: TOOL's switch, LEA_LOCKSQL, LEA_LOCKMQ or LEA_LOCKFILE.
+lea__tool_var() {
+  case $1 in locksql) printf LEA_LOCKSQL ;; *) lea__lockhost_var "$1" ;; esac
+}
+
 # lea__lockhost_set TOOL 0|1: the switch, in the user config and in this run.
 lea__lockhost_set() {
   lea_user_config_set "$(lea__lockhost_var "$1")" "$2"
@@ -74,14 +100,17 @@ lea__lockhost_install_hint() {
 
 # lea__lockhost_console_hint TOOL: how TOOL's console runs (lea never starts it): hub-attached
 # only, under lox up. lea's agents run as your uid, which names no account in the console's image:
-# the console serves it only when told so (the lock's allowed_uids), by you, never by lea.
+# the console serves it only when told so (the lock's allowed_uids: lox add fills it when lea is on
+# your PATH; lea never edits it).
 lea__lockhost_console_hint() {
-  lea_log "$1 console: it runs under lox up only: add a $1 lock to your projects directory (lox add $1 NAME, with allowed_uids: [$(id -u)] in .lockfamily/lockfamily.yaml), then run \`lox up\`"
-  lea_log "  (allowed_uids $(id -u): lea's agents run as your uid, which has no account in the console's image; they reach the lock's socket volume after their lea restarts: lea stop --all, then lea)"
+  lea_log "$1 console: it runs under lox up only: no such lock yet: \`lox add $1\` (lox add fills allowed_uids: [$(id -u)] in .lockfamily/lockfamily.yaml when lea is on your PATH; lea's agents get its socket once lea restarts: lea stop, then lea)"
+  lea_log "  (allowed_uids $(id -u): lea's agents run as your uid, which has no account in the console's image; edit it by hand only for a lock added without lea on your PATH)"
 }
 
 # lea__init_lockhost TOOL: lea init's part for TOOL. Without a decision yet (no flag, not in the
-# user config) and on a terminal, it asks, no by default (pre-release tools). When on: whether
+# user config) and on a terminal, it asks, no by default (pre-release tools): a yes records
+# LEA_<TOOL>=1; a no records nothing, so a lock of TOOL that lox add adds still turns it on (only
+# --no-<tool> records the opt-out, LEA_<TOOL>=0). When on: whether
 # TOOL's launcher is installed (how to install it otherwise), the guided profile setup when TOOL
 # offers one, and how to open the console. Never fatal.
 lea__init_lockhost() {
@@ -91,8 +120,6 @@ lea__init_lockhost() {
     if [ -z "${LEA_INIT_NONINTERACTIVE:-}" ] && lea__init_tty; then
       if lea__ask_no "Let lea's agents query $(lea__lockhost_what "$_ih_t") through a $_ih_t console (pre-release; a human approves every read)?"; then
         lea__lockhost_set "$_ih_t" 1
-      else
-        lea__lockhost_set "$_ih_t" 0
       fi
     fi
   fi
@@ -131,21 +158,22 @@ lea_lockhost() {
   _lh_t=$1
   shift
   [ $# -eq 0 ] || lea_die "usage: lea $_lh_t (lea never starts the console: lox up does)"
-  if [ "$(lea__lockhost_get "$_lh_t")" != 1 ]; then
+  if ! lea__tool_on "$_lh_t"; then
     lea_log "$_lh_t is off ($(lea__lockhost_var "$_lh_t")=0): lea init --$_lh_t turns it on"
     return 0
   fi
+  lea__tool_by_lock "$_lh_t" && _lh_l=1 || _lh_l=0
   if _lh_b=$(lea__lockhost_launcher "$_lh_t"); then
     lea_log "$_lh_t launcher: $_lh_b (lea's image has the $(lea__lockhost_get "$_lh_t" _REF) client)"
   else
     lea__lockhost_install_hint "$_lh_t"
   fi
-  lea__lockhost_console_hint "$_lh_t"
+  [ "$_lh_l" = 1 ] || lea__lockhost_console_hint "$_lh_t"
 }
 
 # lea__doctor_lockhost TOOL: lea doctor's lines for TOOL when it is on.
 lea__doctor_lockhost() {
-  [ "$(lea__lockhost_get "$1")" = 1 ] || return 0
+  lea__tool_on "$1" || return 0
   if _dl_b=$(lea__lockhost_launcher "$1"); then lea__ok "$1 launcher $_dl_b"
   else lea__warn "$1 launcher" "not installed: https://github.com/DavidGodefroid/$1#install"; fi
 }

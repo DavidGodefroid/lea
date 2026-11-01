@@ -6,7 +6,7 @@
 set -eu
 LEA_ROOT=$(cd "$(dirname "$0")/.." && pwd -P)
 export LEA_ROOT
-usage() { echo "usage: lea-sh scan-begin DIR | scan-finish DIR | init [ARGS] | locksql [ARGS] | lockmq | lockfile | update [--background | --deps ask|all|none] | update-deps ask|all|none | rollback | refresh-images | doctor | kube-refresh" >&2; exit 2; }
+usage() { echo "usage: lea-sh scan-begin DIR | scan-finish DIR | init [ARGS] | locksql [ARGS] | lockmq | lockfile | update [--background | --deps ask|all|none] | update-deps ask|all|none | rollback | refresh-images | ensure-images | doctor | kube-refresh" >&2; exit 2; }
 [ $# -gt 0 ] || usage
 cmd=$1; shift
 case $cmd in
@@ -20,7 +20,7 @@ case $cmd in
     [ $# -eq 0 ] || { [ $# -eq 1 ] && [ "$1" = --background ]; } ||
       { [ $# -eq 2 ] && [ "$1" = --deps ] && case $2 in ask|all|none) true ;; *) false ;; esac; } || usage ;;
   update-deps) { [ $# -eq 1 ] && case $1 in ask|all|none) true ;; *) false ;; esac; } || usage ;;
-  rollback|refresh-images|doctor|kube-refresh) [ $# -eq 0 ] || usage ;;
+  rollback|refresh-images|ensure-images|doctor|kube-refresh) [ $# -eq 0 ] || usage ;;
   *) usage ;;
 esac
 for lib in "$LEA_ROOT"/libexec/lib/*.sh; do
@@ -45,6 +45,7 @@ case $cmd in
   update-deps) lea_update_deps "$1" ;;
   rollback) lea_rollback ;;
   refresh-images) lea_refresh_images ;;
+  ensure-images) lea_ensure_images ;;
   doctor) lea_doctor ;;
   kube-refresh) lea_kube_refresh ;;
 esac

@@ -15,7 +15,8 @@ import (
 // (LEA_INTERNAL_HOSTS): a private upstream must be listed there. No key file may sit in a host
 // directory the agents' container mounts (the projects directory, lea's data, ~/.claude,
 // ~/.codex), real paths compared, and each must be the user's own, readable by them only.
-func LoadProviders(get func(string) string) (*providers.Registry, error) {
+// on and several are Config.LockTools' (LockServers).
+func LoadProviders(on map[string]bool, several map[string][]string, get func(string) string) (*providers.Registry, error) {
 	o := providers.Options{Internal: providers.Hosts{}, UID: os.Getuid()}
 	if f, err := os.Open(get("LEA_INTERNAL_HOSTS")); err == nil {
 		o.Internal = providers.ParseHosts(f)
@@ -34,26 +35,32 @@ func LoadProviders(get func(string) string) (*providers.Registry, error) {
 	if err != nil {
 		return nil, err
 	}
-	r.SetLocks(LockServers(get))
+	r.SetLocks(LockServers(on, several, get))
 	return r, nil
 }
 
-// LockServers are the enabled Locks a Codex agent gets as MCP servers (locksql, lockmq and
-// lockfile with LEA_LOCKSQL=1 / LEA_LOCKMQ=1 / LEA_LOCKFILE=1), each with Codex's tool
-// timeout LEA_LOCK_TOOL_TIMEOUT seconds (1500 when unset or invalid; 60 to 86400): a Lock call
-// waits for a human.
-func LockServers(get func(string) string) []providers.Lock {
+// LockServers are the enabled Locks a Codex agent gets as MCP servers (on and several:
+// Config.LockTools, in the order locksql, lockmq, lockfile), each with Codex's tool timeout
+// LEA_LOCK_TOOL_TIMEOUT seconds (1500 when unset or invalid; 60 to 86400): a Lock call waits for
+// a human. A tool lox up runs several locks of gets one server per instance its agents reach
+// (none when they reach none); otherwise the tool's one server.
+func LockServers(on map[string]bool, several map[string][]string, get func(string) string) []providers.Lock {
 	t := 1500
 	if n, err := strconv.Atoi(get("LEA_LOCK_TOOL_TIMEOUT")); err == nil && n >= 60 && n <= 86400 {
 		t = n
 	}
 	var out []providers.Lock
-	if get("LEA_LOCKSQL") == "1" {
-		out = append(out, providers.Lock{Name: "locksql", TimeoutSec: t})
-	}
-	for _, k := range []struct{ name, env string }{{"lockmq", "LEA_LOCKMQ"}, {"lockfile", "LEA_LOCKFILE"}} {
-		if get(k.env) == "1" {
-			out = append(out, providers.Lock{Name: k.name, TimeoutSec: t})
+	for _, name := range []string{"locksql", "lockmq", "lockfile"} {
+		if !on[name] {
+			continue
+		}
+		insts, ok := several[name]
+		if !ok {
+			out = append(out, providers.Lock{Name: name, TimeoutSec: t})
+			continue
+		}
+		for _, inst := range insts {
+			out = append(out, providers.Lock{Name: name, Instance: inst, TimeoutSec: t})
 		}
 	}
 	return out
@@ -78,7 +85,8 @@ func (l *Launcher) forwarder(proj string) (forwarderSetup, error) {
 		}
 		return l.Cfg.Get(k)
 	}
-	reg, err := LoadProviders(get)
+	on, several := l.Cfg.LockTools(proj, func(string, ...any) {})
+	reg, err := LoadProviders(on, several, get)
 	if err != nil {
 		return forwarderSetup{}, die("%v", err)
 	}

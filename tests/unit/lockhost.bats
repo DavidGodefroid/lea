@@ -58,12 +58,22 @@ launcher() {
   LEA_LOCKFILE=1
   run lea_lockhost lockfile
   [[ "$output" == *"lockfile: install its launcher"*"scripts/install.sh"* ]]
-  [[ "$output" == *"lockfile console: it runs under lox up only: add a lockfile lock"*"allowed_uids: [$(id -u)]"*"run \`lox up\`"* ]]
+  [[ "$output" == *"lockfile console: it runs under lox up only: no such lock yet: \`lox add lockfile\`"*"allowed_uids: [$(id -u)]"* ]]
   [[ "$output" != *"lockfile-run"* ]]
   launcher lockfile
   run lea_lockhost lockfile
   [[ "$output" == *"lockfile launcher: $B/lockfile"* ]]
   if calls | grep -q '^lockfile\|sudo\|migrate-ids\|docker'; then false; fi
+}
+
+@test "lea lockmq follows the launcher's decision (LEA_TOOLS_ON): on for a lock of lox up, off when it says so" {
+  LEA_TOOLS_ON="locksql lockmq" run lea_lockhost lockmq
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"lockmq is on for lea while lox up runs a lockmq lock here"*"LEA_LOCKMQ=0 in your configuration keeps it off"* ]]
+  [[ "$output" != *"no such lock yet"* ]]
+  LEA_LOCKMQ=1 LEA_TOOLS_ON="" run lea_lockhost lockmq
+  [[ "$output" == *"lockmq is off (LEA_LOCKMQ=0)"* ]]
+  [ -z "$(calls)" ]
 }
 
 @test "lea lockmq takes no argument: no way to pass flags to a console" {
@@ -88,12 +98,15 @@ launcher() {
   [ -z "$(calls)" ]
 }
 
-@test "lea init asks once, no by default, and remembers the answer" {
+@test "lea init asks, no by default, and records only a yes (a no leaves lox add to turn it on)" {
   lea__init_tty() { true; }
   run lea__init_lockhost lockmq <<<""
   [[ "$output" == *"through a lockmq console"*"[y/N]"* ]]
-  grep -qx "LEA_LOCKMQ='0'" "$LEA_CONFIG"
+  if grep -q '^LEA_LOCKMQ=' "$LEA_CONFIG" 2>/dev/null; then false; fi
   run lea__init_lockhost lockmq <<<"y"
+  [[ "$output" == *"through a lockmq console"*"[y/N]"* ]]
+  grep -qx "LEA_LOCKMQ='1'" "$LEA_CONFIG"
+  run lea__init_lockhost lockmq <<<""
   [[ "$output" != *"[y/N]"* ]]
   [ -z "$(calls)" ]
 }

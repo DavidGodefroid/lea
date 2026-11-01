@@ -9,7 +9,7 @@ setup() {
 @test "lea locksql starts no console: it says the console runs under lox up only" {
   run lea_locksql </dev/null
   [ "$status" -eq 0 ]
-  [[ "$output" == *"locksql console: it runs under lox up only"*"lox add locksql NAME, with allowed_uids: [$(id -u)]"*"run \`lox up\`"* ]]
+  [[ "$output" == *"locksql console: it runs under lox up only: no such lock yet: \`lox add locksql\`"*"allowed_uids: [$(id -u)]"* ]]
   [[ "$output" == *"lox attach NAME"*"lea lock open locksql"*"hub view"*"lox approve"* ]]
   run calls
   [[ "$output" != *"docker"* ]]

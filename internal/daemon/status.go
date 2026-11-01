@@ -1,6 +1,7 @@
 package daemon
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -22,8 +23,9 @@ const (
 
 // statusReport stores an agent's context % and cost from its status line, and records the key
 // paths of Claude's status-line JSON whenever they change, so the field names can be checked.
-// Only agents report: the user has no status line.
-func (d *Daemon) statusReport(o Origin, me string, raw json.RawMessage) (any, error) {
+// Only agents report: the user has no status line. The answer names the locks lox up runs that
+// the agent's container does not mount (locks_added): its status line says to restart lea.
+func (d *Daemon) statusReport(ctx context.Context, o Origin, me string, raw json.RawMessage) (any, error) {
 	if o.Container == "" {
 		return nil, errors.New("status_report: agents only")
 	}
@@ -86,7 +88,7 @@ func (d *Daemon) statusReport(o Origin, me string, raw json.RawMessage) (any, er
 		d.mu.Unlock()
 		if !same {
 			if prev, err := d.st.EventPayloads(me, "paths"); err == nil && len(prev) >= maxPathEvents {
-				return struct{}{}, nil
+				return d.statusAnswer(ctx, o.Container), nil
 			}
 			b, err := json.Marshal(map[string]any{"paths": p.Paths})
 			if err != nil {
@@ -97,5 +99,13 @@ func (d *Daemon) statusReport(o Origin, me string, raw json.RawMessage) (any, er
 			}
 		}
 	}
-	return struct{}{}, nil
+	return d.statusAnswer(ctx, o.Container), nil
+}
+
+// statusAnswer is status_report's answer for an agent of container.
+func (d *Daemon) statusAnswer(ctx context.Context, container string) any {
+	if added := d.locksAdded(ctx, container); len(added) > 0 {
+		return map[string][]string{"locks_added": added}
+	}
+	return struct{}{}
 }

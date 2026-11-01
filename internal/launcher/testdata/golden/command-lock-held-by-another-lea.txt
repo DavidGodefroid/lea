@@ -1,6 +1,9 @@
 status 1
 -- calls
 tmux [-V]
+docker [image] [inspect] [-f] [{{.Id}}] [lea:dev]
+docker [image] [inspect] [-f] [{{.Id}}] [lea-proxy:dev]
+tmux [-V]
 -- lea
 lea: error: another lea holds the '$ID' lock (remove $W/data/lea/host/locks/$ID if it is stale)
 -- stdout

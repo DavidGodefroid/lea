@@ -169,8 +169,8 @@ func TestLockOpenWithoutLoxUpsConsole(t *testing.T) {
 	e, fc, fl := lockEnvLox(t, sqlSpec)
 	s := e.ensure(t, "/p")
 	n := len(s.panes)
-	fl.err = errors.New("no locksql lock of lox up for /home/u/p: add one with lox add locksql <name>, then run `lox up`")
-	if _, err := e.m.LockOpen(bg, C, "locksql", ""); err == nil || !strings.Contains(err.Error(), "run `lox up`") {
+	fl.err = errors.New("no locksql lock of lox up for /home/u/p: no such lock yet: `lox add locksql`")
+	if _, err := e.m.LockOpen(bg, C, "locksql", ""); err == nil || !strings.Contains(err.Error(), "no such lock yet: `lox add locksql`") {
 		t.Fatalf("err=%v", err)
 	}
 	// What lox up's state answers is checked: an instance or a container id that is not one.
@@ -496,5 +496,29 @@ func TestSnapshotCarriesTheOldestLockRequest(t *testing.T) {
 		if a.Key == k1 && a.LockAsk != nil {
 			t.Fatalf("expired request shown: %+v", a.LockAsk)
 		}
+	}
+}
+
+// EnabledFor decides, for the deck's projects directory, whether the tool is on: a tool lox up
+// runs a lock of is on without the user's switch.
+func TestLockEnabledForDecidesPerProjectsDirectory(t *testing.T) {
+	on := LockSpec{EnabledFor: func(p string) bool { return p == "/home/u/p" }, ContainerName: nameOf, AgentProfiles: []string{"prod"}}
+	e, _ := lockEnv(t, on)
+	e.ensure(t, "/p")
+	if st, err := e.m.LockOpen(bg, C, "locksql", "prod"); err != nil || st != "opened" {
+		t.Fatalf("on: %q %v", st, err)
+	}
+	if err := e.m.LockCheckRequest(bg, C, "locksql", "prod"); err != nil {
+		t.Fatalf("request, on: %v", err)
+	}
+	off := on
+	off.EnabledFor = func(string) bool { return false }
+	e2, _ := lockEnv(t, off)
+	e2.ensure(t, "/p")
+	if _, err := e2.m.LockOpen(bg, C, "locksql", "prod"); err == nil || !strings.Contains(err.Error(), "off") {
+		t.Fatalf("open, off: %v", err)
+	}
+	if err := e2.m.LockCheckRequest(bg, C, "locksql", "prod"); err == nil || !strings.Contains(err.Error(), "locksql is off") {
+		t.Fatalf("request, off: %v", err)
 	}
 }

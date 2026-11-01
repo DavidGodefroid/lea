@@ -398,24 +398,103 @@ func TestAdmitSettings(t *testing.T) {
 
 // The Locks a Codex agent gets as MCP servers and their tool timeout (#152).
 func TestLockServers(t *testing.T) {
+	sql, mq, file := map[string]bool{"locksql": true}, map[string]bool{"lockmq": true}, map[string]bool{"locksql": true, "lockmq": true, "lockfile": true}
 	for _, c := range []struct {
-		env  map[string]string
-		want string
+		on      map[string]bool
+		timeout string
+		want    string
 	}{
-		{nil, ""},
-		{map[string]string{"LEA_LOCKSQL": "1"}, "locksql=1500"},
-		{map[string]string{"LEA_LOCKSQL": "1", "LEA_LOCKMQ": "1", "LEA_LOCKFILE": "1", "LEA_LOCK_TOOL_TIMEOUT": "600"}, "locksql=600,lockmq=600,lockfile=600"},
-		{map[string]string{"LEA_LOCKMQ": "1"}, "lockmq=1500"},
-		{map[string]string{"LEA_LOCKSQL": "1", "LEA_LOCK_TOOL_TIMEOUT": "59"}, "locksql=1500"},
-		{map[string]string{"LEA_LOCKSQL": "1", "LEA_LOCK_TOOL_TIMEOUT": "x"}, "locksql=1500"},
+		{nil, "", ""},
+		{sql, "", "locksql=1500"},
+		{file, "600", "locksql=600,lockmq=600,lockfile=600"},
+		{mq, "", "lockmq=1500"},
+		{sql, "59", "locksql=1500"},
+		{sql, "x", "locksql=1500"},
 	} {
 		var got []string
-		for _, l := range LockServers(func(k string) string { return c.env[k] }) {
+		for _, l := range LockServers(c.on, nil, func(string) string { return c.timeout }) {
 			got = append(got, l.Name+"="+strconv.Itoa(l.TimeoutSec))
 		}
 		if strings.Join(got, ",") != c.want {
-			t.Errorf("%v: %v, want %s", c.env, got, c.want)
+			t.Errorf("%v: %v, want %s", c.on, got, c.want)
 		}
+	}
+}
+
+// A tool turned on only by up.json reaches the Codex MCP list and the daemon's stamp (so a
+// `lox add` restarts the daemon); LEA_<TOOL>=0 keeps it out of both.
+func TestToolsOnUpJSONReachesCodexAndStamp(t *testing.T) {
+	get := func(string) string { return "" }
+	stamp := func(w *world) (string, []string) {
+		cfg, err := LoadConfig(w.getenv, w.root, w.proj)
+		if err != nil {
+			t.Fatal(err)
+		}
+		on, several := cfg.ProjectsLockTools()
+		var names []string
+		for _, l := range LockServers(on, several, get) {
+			names = append(names, l.Name)
+		}
+		return DaemonProvidersStamp(on, several, get), names
+	}
+	w := newWorld(t, repoRoot(t))
+	bare, names := stamp(w)
+	if len(names) != 0 {
+		t.Fatalf("no lock: %v", names)
+	}
+	writeUp(t, w, lockUp("crm", "locksql"))
+	with, names := stamp(w)
+	if strings.Join(names, ",") != "locksql" || with == bare {
+		t.Errorf("up.json lock: servers %v, stamp %q vs %q", names, with, bare)
+	}
+	writeUserConf(t, w, "LEA_LOCKSQL=0\n")
+	off, names := stamp(w)
+	if len(names) != 0 || off != bare {
+		t.Errorf("LEA_LOCKSQL=0: servers %v, stamp %q vs %q", names, off, bare)
+	}
+}
+
+// Several locks of one tool: one Codex server per lock lea's agents reach (the instances the
+// mounts use), each run with --instance; one lock keeps today's single server, with no instance;
+// the daemon's stamp follows the instances; a lock lockUsable leaves out gets no server.
+func TestLockServersPerInstance(t *testing.T) {
+	get := func(string) string { return "" }
+	servers := func(w *world) (string, []string) {
+		cfg, err := LoadConfig(w.getenv, w.root, w.proj)
+		if err != nil {
+			t.Fatal(err)
+		}
+		on, several := cfg.ProjectsLockTools()
+		var got []string
+		for _, l := range LockServers(on, several, get) {
+			got = append(got, l.Name+"/"+l.Instance)
+		}
+		return DaemonProvidersStamp(on, several, get), got
+	}
+	w := newWorld(t, repoRoot(t))
+	writeUp(t, w, lockUp("orders", "locksql"))
+	one, got := servers(w)
+	if strings.Join(got, ",") != "locksql/" {
+		t.Errorf("one lock: %v, want the single locksql server", got)
+	}
+	writeUp(t, w, lockUp("orders", "locksql")+","+lockUp("stock", "locksql"))
+	two, got := servers(w)
+	if strings.Join(got, ",") != "locksql/orders,locksql/stock" {
+		t.Errorf("two locks: %v", got)
+	}
+	if two == one || !strings.Contains(two, "locksql-orders=1500,locksql-stock=1500") {
+		t.Errorf("stamp: one %q, two %q", one, two)
+	}
+	// stock's socket volume is not lox up's: lockUsable leaves it out, and no server runs it.
+	writeUp(t, w, lockUp("orders", "locksql")+","+`"stock":{"type":"locksql","socket_volume":"other-volume"}`)
+	dropped, got := servers(w)
+	if strings.Join(got, ",") != "locksql/orders" || dropped == two {
+		t.Errorf("a lock lockUsable leaves out: %v, stamp %q", got, dropped)
+	}
+	// No lock of the tool usable: no server of it.
+	writeUp(t, w, `"orders":{"type":"locksql","socket_volume":"other-volume"},"stock":{"type":"locksql","socket_volume":"other-volume"}`)
+	if _, got := servers(w); len(got) != 0 {
+		t.Errorf("no usable lock: %v", got)
 	}
 }
 

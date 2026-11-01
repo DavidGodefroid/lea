@@ -1,0 +1,11 @@
+status 1
+-- calls
+tmux [-V]
+docker [image] [inspect] [-f] [{{.Id}}] [lea:dev]
+docker [image] [inspect] [-f] [{{.Id}}] [lea-proxy:dev]
+lox [version]
+lox [init]
+-- lea
+lea: first run: starting the Lock Family hub (lox init)
+lea: error: lox init failed (above): fix it, then run lea again (LEA_HUB=0 lea runs without the hub)
+-- stdout

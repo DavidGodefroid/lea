@@ -8,9 +8,9 @@
 # lea locksql: whether locksql is on, and how its console runs. It never starts a console.
 lea_locksql() {
   [ $# -eq 0 ] || lea_die "usage: lea locksql (lea never starts the console: lox up does; lox attach NAME reaches it)"
-  if [ "$LEA_LOCKSQL" != 1 ]; then
+  if ! lea__tool_on locksql; then
     lea_log "locksql is off (LEA_LOCKSQL=0): lea init --locksql turns it on"
     return 0
   fi
-  lea__locksql_console_hint
+  lea__tool_by_lock locksql || lea__locksql_console_hint
 }

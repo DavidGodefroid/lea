@@ -15,6 +15,17 @@ setup() {
   [ "$status" -eq 2 ]
 }
 
+@test "lea-sh ensure-images pulls a missing image without the first-run prefix, and takes no argument" {
+  run "$LEA_ROOT/libexec/lea-sh" ensure-images extra
+  [ "$status" -eq 2 ]
+  mkdir -p "$HOME/.config/lea"
+  printf "LEA_IMAGE=ghcr.io/davidgodefroid/lea:0.5.0\nLEA_PROXY_IMAGE=ghcr.io/davidgodefroid/lea-proxy:0.5.0\n" >"$HOME/.config/lea/lea.conf"
+  FAKE_DOCKER_RC_IMAGE_INSPECT=1 run "$LEA_ROOT/libexec/lea-sh" ensure-images
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"lea: pulling ghcr.io/davidgodefroid/lea:0.5.0"* ]]
+  [[ "$output" != *"first run"* ]]
+}
+
 @test "lea-sh refresh-images takes no argument, and refreshes the images and the locksql image" {
   run "$LEA_ROOT/libexec/lea-sh" refresh-images extra
   [ "$status" -eq 2 ]
@@ -27,7 +38,7 @@ setup() {
   run calls
   [[ "$output" == *"docker [build] [-t] [lea:dev]"* ]]
   [[ "$output" == *"docker [build] [-t] [lea-proxy:dev]"* ]]
-  [[ "$output" == *"docker [build] [-t] [locksql:0.13.0] [--build-arg] [ALLOWED_UIDS=$(id -u)] ["*"/src]"* ]]
+  [[ "$output" == *"docker [build] [-t] [locksql:0.14.0] [--build-arg] [ALLOWED_UIDS=$(id -u)] ["*"/src]"* ]]
 }
 
 @test "lea-sh scan-begin takes exactly one directory" {

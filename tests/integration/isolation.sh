@@ -25,6 +25,12 @@ LEA_IMAGE=lea:dev
 LEA_PROXY_IMAGE=lea-proxy:dev
 CONF
 export LEA_CONFIG="$work/lea.conf"
+# lea checks that lox is installed before it starts. This test follows no real hub (the stand-in
+# facade socket below is the only hub), so a stand-in lox that reports a dev build satisfies the
+# check on a host without one (CI).
+mkdir -p "$work/bin"
+printf '#!/bin/sh\necho "lox dev"\n' >"$work/bin/lox"; chmod +x "$work/bin/lox"
+PATH="$work/bin:$PATH"; export PATH
 state="$XDG_DATA_HOME/lea/state"; mkdir -p "$state"; printf '{}\n' >"$state/claude.json"
 slug=$(printf '%s' "$projects" | sed 's/[^A-Za-z0-9]/-/g')
 id=$(printf '%s' "$projects" | sha256sum | cut -c1-10)
@@ -40,7 +46,7 @@ export LEA_HUB_SOCKET="$facade"
 hold() {
   # shellcheck disable=SC2016 # expanded by the inner shell
   LEA_PROJECTS_DIR="$1" "$root/bin/lea" shell -- sh -c 'python3 -m http.server 8765 >/dev/null 2>&1 & p=$!
-    while [ ! -e "$1" ]; do sleep 1; done; kill "$p"' sh "$1/.lea-release" >/dev/null 2>&1 &
+    while [ ! -e "$1" ]; do sleep 1; done; kill "$p"' sh "$1/.lea-release" >"$1.log" 2>&1 &
   holders="$holders $!"
 }
 # shellcheck disable=SC2317 # invoked from the cleanup trap
@@ -57,7 +63,11 @@ wait_for() {
   what=$1; shift; i=0
   until v=$("$@" 2>/dev/null) && [ -n "$v" ] && [ "$v" != "<no value>" ]; do
     i=$((i + 1))
-    if [ "$i" -ge 180 ]; then echo "isolation: $what did not appear" >&2; exit 1; fi
+    if [ "$i" -ge 180 ]; then
+      echo "isolation: $what did not appear" >&2
+      for l in "$projects.log" "$sibling.log"; do [ ! -f "$l" ] || { echo "--- output of lea ($l):" >&2; tail -40 "$l" >&2; }; done
+      exit 1
+    fi
     sleep 1
   done
   printf '%s\n' "$v"
@@ -116,8 +126,14 @@ cp "$root/tests/integration/inside-isolation.sh" "$projects/"
 # gateway of this one and the address of the sibling.
 hold "$projects"
 hold "$sibling"
-gw_ip=$(wait_for "the gateway of lea-test-internal-$id" \
-  docker network inspect -f '{{range .IPAM.Config}}{{.Gateway}}{{end}}' "lea-test-internal-$id")
+# Recent Docker releases leave the gateway out of the IPAM config of an internal network: the
+# bridge address is then the first host address of the subnet.
+subnet=$(wait_for "the subnet of lea-test-internal-$id" \
+  docker network inspect -f '{{range .IPAM.Config}}{{.Subnet}}{{end}}' "lea-test-internal-$id")
+gw_ip=$(docker network inspect -f '{{range .IPAM.Config}}{{.Gateway}}{{end}}' "lea-test-internal-$id" 2>/dev/null || true)
+if [ -z "$gw_ip" ] || [ "$gw_ip" = "<no value>" ]; then
+  gw_ip=$(python3 -I -c 'import ipaddress, sys; print(next(ipaddress.ip_network(sys.argv[1], strict=False).hosts()))' "$subnet")
+fi
 sibling_ip=$(wait_for "the address of lea-test-$sid" \
   docker container inspect -f "{{with index .NetworkSettings.Networks \"lea-test-internal-$sid\"}}{{.IPAddress}}{{end}}" "lea-test-$sid")
 wait_for "lea-test-$id running" sh -c "docker container inspect -f '{{.State.Running}}' lea-test-$id | grep -x true" >/dev/null

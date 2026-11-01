@@ -43,11 +43,12 @@ var ExportedKeys = []string{
 // Config is what lea_load_config gives the shell: the environment, overlaid by the assignments of
 // config/lea.conf and of the user configuration, then resolved and validated.
 type Config struct {
-	getenv func(string) string
-	file   map[string]string // assignments of both files, the later one winning
-	from   map[string]string // the file each assignment of file comes from
-	final  map[string]string // resolved keys
-	extra  []string          // keys exported by the launcher at run time (LEA_TMUX_BIN)
+	getenv   func(string) string
+	file     map[string]string // assignments of both files, the later one winning
+	from     map[string]string // the file each assignment of file comes from
+	final    map[string]string // resolved keys
+	extra    []string          // keys exported by the launcher at run time (LEA_TMUX_BIN)
+	defaults string            // path of config/lea.conf: an assignment from it is a default, not the user's
 }
 
 // Get is the value the shell would see for key after lea_load_config: a resolved key, else the
@@ -129,7 +130,8 @@ func hasKey(m map[string]string, k string) bool { _, ok := m[k]; return ok }
 // cwd), and validates the result as lea_load_config does, with the same messages.
 func LoadConfig(getenv func(string) string, root, cwd string) (*Config, error) {
 	c := &Config{getenv: getenv, file: map[string]string{}, from: map[string]string{}, final: map[string]string{}}
-	if err := c.readFile(filepath.Join(root, "config", "lea.conf")); err != nil {
+	c.defaults = filepath.Join(root, "config", "lea.conf")
+	if err := c.readFile(c.defaults); err != nil {
 		return nil, err
 	}
 	user := c.UserConfigFile(cwd)
@@ -610,14 +612,75 @@ func (c *Config) Ctl() bool { return c.Get("LEA_CTL") == "1" }
 // LEA_LOCKHTTP=1; off by default).
 func (c *Config) LockHTTPMITM() bool { return c.LockHTTP() && c.Get("LEA_LOCKHTTP_MITM") == "1" }
 
-// Locksql reports whether lea is wired for lox up's locksql console (LEA_LOCKSQL=1; off by
-// default, as lockmq and lockfile).
-func (c *Config) Locksql() bool { return c.Get("LEA_LOCKSQL") == "1" }
-
-// LockHost reports whether lea's agents may reach the host console of the lock tool whose switch
-// is env (LEA_LOCKMQ, LEA_LOCKFILE; off by default).
-func (c *Config) LockHost(env string) bool { return c.Get(env) == "1" }
+// toolOn is whether the lock tool switched by key (LEA_LOCKSQL, LEA_LOCKMQ, LEA_LOCKFILE) is on:
+// what the user's configuration sets for it, and when it does not set the key (only the shipped
+// default speaks), on when the trusted up.json names a lock of that type (upNames): a lock the
+// user added with lox add is the sign they want it. An explicit LEA_<TOOL>=0 keeps it off.
+func (c *Config) toolOn(key string, upNames bool) bool {
+	if _, file, ok := c.Assignment(key); ok && file != c.defaults {
+		return c.Get(key) == "1"
+	}
+	return upNames || c.Get(key) == "1"
+}
 
 // gitStateDirs are the state sub-directories (relative to the state dir) where the forge tools
 // inside lea keep their credentials: git's credential store, gh and glab.
 var gitStateDirs = []string{"git", "gh", "glab-cli"}
+
+// ToolsOn is, by tool (locksql, lockmq, lockfile), whether lea wires it for the projects
+// directory proj: toolOn, with the locks of the trusted up.json of proj (the checks of
+// readLockUp; its warnings go to logf). The one decision the mounts, the Codex MCP list, the
+// daemon's stamp and the deck's lock console share.
+func (c *Config) ToolsOn(proj string, logf func(string, ...any)) map[string]bool {
+	on, _ := c.LockTools(proj, logf)
+	return on
+}
+
+// LockTools is ToolsOn and, for each tool on that lox up runs several locks of, the instances an
+// agent container started now reaches (upTools: those lockUpSockets mounts on
+// /run/<tool>/<instance>, before docker's checks), sorted; a tool with one lock has no entry.
+// up.json is read once for both.
+func (c *Config) LockTools(proj string, logf func(string, ...any)) (on map[string]bool, several map[string][]string) {
+	var s *lockUpState
+	named := map[string]bool{}
+	if proj != "" {
+		if s, _ = readLockUpState(logf, proj, proj+"/.lockfamily"); s != nil {
+			for _, lk := range s.Locks {
+				named[lk.Type] = true
+			}
+		}
+	}
+	on = map[string]bool{}
+	for tool, key := range lockToolKeys {
+		on[tool] = c.toolOn(key, named[tool])
+	}
+	if s == nil {
+		return on, nil
+	}
+	tools, _ := upTools(s, func(tool string) bool { return on[tool] })
+	for typ, t := range tools {
+		if !t.several {
+			continue
+		}
+		if several == nil {
+			several = map[string][]string{}
+		}
+		names := []string{}
+		for _, lk := range t.locks {
+			names = append(names, lk.Instance)
+		}
+		several[typ] = names
+	}
+	return on, several
+}
+
+// ProjectsLockTools is LockTools for the configured projects directory (LEA_PROJECTS_DIR, its
+// physical path), silently: what the daemon and the launcher both compute for the provider
+// settings and the lock consoles.
+func (c *Config) ProjectsLockTools() (on map[string]bool, several map[string][]string) {
+	p := c.Get("LEA_PROJECTS_DIR")
+	if r, err := filepath.EvalSymlinks(p); err == nil {
+		p = r
+	}
+	return c.LockTools(p, func(string, ...any) {})
+}

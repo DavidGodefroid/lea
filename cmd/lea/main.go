@@ -129,7 +129,7 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	case "repair-transcript":
 		return runRepairTranscript(args[1:], stderr, os.Getenv)
 	case "mcp":
-		s := mcpserver.New(identity.BusSock(os.Getenv), identity.Agent(os.Getenv), version)
+		s := mcpserver.New(identity.BusSock(os.Getenv), identity.Agent(os.Getenv), version, mcpserver.LockGuidance(os.Getenv))
 		if err := s.Run(context.Background(), &mcp.StdioTransport{}); err != nil {
 			fmt.Fprintln(stderr, "lea mcp:", err)
 			return 1
@@ -140,10 +140,11 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		if len(args) == 3 && args[1] == "--dump" {
 			dump = args[2]
 		}
-		post := func(r statusline.Report) {
+		post := func(r statusline.Report) []string {
 			ctx, cancel := context.WithTimeout(context.Background(), statusBudget)
 			defer cancel()
-			_ = statusline.Post(ctx, identity.BusSock(os.Getenv), identity.Agent(os.Getenv), r)
+			added, _ := statusline.Post(ctx, identity.BusSock(os.Getenv), identity.Agent(os.Getenv), r)
+			return added
 		}
 		if err := statusline.Run(stdin, stdout, dump, post); err != nil {
 			fmt.Fprintln(stderr, "lea statusline:", err)

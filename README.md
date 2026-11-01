@@ -87,15 +87,33 @@ flowchart LR
 brew trust davidgodefroid/tap                # Homebrew asks you to trust a third-party tap once
 brew install davidgodefroid/tap/lockfamily   # the Lock Family: lea, lox and the Locks' launchers
 cd ~/projects                                 # lea's projects directory, not a project inside it
-lox init                                      # sets up the Locks lea's agents use (databases, queues...)
-lea
+lea                                           # the first run sets everything up
+lox add locksql                               # when your agents need a database (lockmq, lockfile, lockhttp likewise)
 ```
 
-`brew install davidgodefroid/tap/lea` installs lea alone.
-[`lox init`](https://github.com/DavidGodefroid/lockhub/blob/main/docs/lox-init.md) is how
-Locks get set up for lea's agents: run it in lea's projects directory (lea reads
-`.lockfamily/up.json` only there; a plain `claude` on the host uses the nearest one from the
-project up). It finds the databases and brokers, declares one lock each and runs `lox up` (`lox init --manual` adds lockfile and LockHTTP). Without Homebrew,
+`brew install davidgodefroid/tap/lea` installs lea alone. The journey is **brew, `lea`,
+`lox add`**: there is no separate setup command to run first.
+
+On a first run lea initialises itself: it checks that Docker answers, pulls and verifies the
+images, installs its AppArmor profile on Linux hosts that use it (it needs `sudo` once: when
+`sudo` would prompt, lea stops with "the AppArmor profile 'lea' needs sudo once: run lea init,
+then lea"), records the projects directory, then opens the deck. The projects directory is `LEA_PROJECTS_DIR`
+when you preset it (in the environment or in `~/.config/lea/lea.conf`: a preset value wins over
+the working directory); when it is unset, it is the directory you ran `lea` from. If that
+directory cannot be one (`/`, your home directory or a parent of it, or one that overlaps
+`~/.claude` or a credentials directory), lea says why and to
+`cd` into the directory that holds your projects and run `lea` again, or `LEA_PROJECTS_DIR=DIR
+lea`. When the projects directory has no `.lockfamily/up.json` yet, lea starts the Lock Family
+hub for it with `lox init`, on your terminal (`lox` on your `PATH`, 0.5.0 or later:
+`brew install davidgodefroid/tap/lox`; `LEA_HUB=0` runs lea without the hub).
+
+[`lox add`](https://github.com/DavidGodefroid/lockhub/blob/main/docs/lox-add.md) is how a Lock
+gets set up for lea's agents, run in lea's projects directory (lea reads `.lockfamily/up.json`
+only there; a plain `claude` on the host uses the nearest one from the project up). A tool
+(locksql, lockmq, lockfile) is on for lea once `lox up` runs a lock of its type there: you
+need not turn it on, and `LEA_<TOOL>=0` in `~/.config/lea/lea.conf` keeps it off. A lock added
+while lea runs reaches the agents once lea restarts (`lea stop`, then `lea`): restarting an
+agent or the deck does not give a running container a new mount. Without Homebrew,
 lea's own installer:
 
 ```sh
@@ -104,8 +122,9 @@ lea
 ```
 
 The installer checks the requirements, downloads the release for your platform and verifies its
-checksum and the release's signature (see [Verify a release](#verify-a-release)), links `~/.local/bin/lea`, then runs `lea init`, which asks for your projects directory
-and pulls the images. In the first agent, run `/login` once (Claude Code's own login, kept per
+checksum and the release's signature (see [Verify a release](#verify-a-release)), links
+`~/.local/bin/lea`, then runs `lea init`, which asks for your projects directory and pulls the
+images. In the first agent, run `/login` once (Claude Code's own login, kept per
 projects directory). Press `n` for another agent.
 
 ### Requirements
@@ -284,12 +303,23 @@ between your agents and your databases. The agents propose SQL; you approve each
 the console alone holds the credentials. The console runs hub-attached only, under the Lock
 Family's `lox up` ([lockhub's docs/lox-up.md](https://github.com/DavidGodefroid/lockhub/blob/main/docs/lox-up.md)),
 in a compose service of its own: lea starts no locksql console. Add a locksql lock to your projects
-directory (`lox add locksql NAME`, with `allowed_uids: [<your uid>]` in
-`.lockfamily/lockfamily.yaml`: lea's agents run as your uid, which has no account in locksql's
-image) and run `lox up`. lea's agents then reach that lock's socket volume (read-only, once docker
-confirms it is lox up's, see below); without such a lock they get no locksql socket and lea says to
-run `lox up`. `lea locksql` and `lea doctor` say which applies. locksql is off by default, as
-lockmq and lockfile: `lea init --locksql` (or `LEA_LOCKSQL=1`) turns it on.
+directory (`lox add locksql NAME`: with lea on your `PATH`, `lox add` puts your uid in the lock's
+`allowed_uids` in `.lockfamily/lockfamily.yaml`, because lea's agents run as your uid, which has
+no account in locksql's image); `lox add` applies it at once. lea's agents then reach that lock's socket volume (read-only, once docker
+confirms it is lox up's, see below); without such a lock they get no locksql socket and lea says
+"no such lock yet: `lox add locksql`". locksql is on for lea as soon as `lox up` runs a locksql
+lock for the projects directory: `lox add locksql` is all there is to it
+(`LEA_LOCKSQL=0` in your configuration keeps it off; `lea init --locksql` or `LEA_LOCKSQL=1`
+turns it on without a lock). A lock added while lea runs reaches the containers started afterwards
+only (Docker cannot add a mount to a running container): the deck says "lock NAME added: restart
+lea to use it (lea stop, then lea)", the agents' status lines say "+lock NAME: restart lea", and
+the fix is `lea stop`, then `lea`: restarting an agent or the deck does not give a running
+container the mount. `lea locksql` and `lea doctor` say which applies. With several locksql
+locks, each reaches the agents on `/run/locksql/<instance>`; a Codex agent gets one MCP server
+per lock (`locksql-<instance>`), and lea's MCP server tells a Claude agent, which calls the
+client itself, "several locksql locks: orders stock; pass --instance NAME" (the lock names are
+yours). The lock clients themselves also refuse a call that names no lock when several are
+mounted: "several locksql locks: orders stock; pass --instance NAME (or set LOCKSQL_INSTANCE)".
 
 `lea init` builds lea's locksql image (from the source of the release lea pins, cloned at its tag
 and built only once cosign proves that locksql's release workflow signed that release on that very
@@ -340,15 +370,19 @@ Off (the default, `lea init --no-locksql` or `LEA_LOCKSQL=0`), lea leaves no tra
 [lockfile](https://github.com/DavidGodefroid/lockfile) (files on S3, SFTP or a local directory)
 keep a human between the agents and production the same way: the agents ask, a console that alone
 holds the credentials shows each request and waits for your approval. Both are pre-releases, so
-they are **off** by default; `lea init` asks (no by default), or `lea init --lockmq` /
-`lea init --lockfile`.
+they are **off** by default, and on for lea as soon as `lox up` runs a lock of their type for
+your projects directory (`lox add lockmq` or `lox add lockfile`; `LEA_LOCKMQ=0` /
+`LEA_LOCKFILE=0` in your configuration keeps one off). `lea init` asks (no by default; a no
+records nothing, so `lox add` still turns the tool on), or `lea init --lockmq` /
+`lea init --lockfile`; `lea init --no-lockmq` / `--no-lockfile` record the opt-out.
 
 Their console runs hub-attached only, in a container of its own that the Lock Family's `lox up`
-starts for your projects directory (`lox add lockmq <name>` or `lox add lockfile <name>`, then
-`lox up`; lockhub's `docs/lox-up.md`): no host account, no `sudo <tool> install`. lea's agents run
-as your uid, which has no account in the console's image: the console serves it only when you name
-it in the lock's `allowed_uids` (`allowed_uids: [<your uid>]` in `.lockfamily/lockfamily.yaml`;
-`lox up` reviews it with you); without it the agents get no console. You set it; no agent can.
+starts for your projects directory (`lox add lockmq <name>` or `lox add lockfile <name>`, which
+applies at once; lockhub's `docs/lox-up.md`): no host account, no `sudo <tool> install`. lea's agents run
+as your uid, which has no account in the console's image: the console serves it
+only when your uid is in the lock's `allowed_uids` (`.lockfamily/lockfamily.yaml`). `lox add` puts
+it there when lea is on your `PATH`; `lox up` reviews it with you; without it the agents get no
+console. Edit it by hand only for a lock added without lea on your `PATH`. No agent can.
 lea installs nothing for them; their launchers update themselves (`lockmq update`,
 `lockfile update`). `lea init` points to the launcher when it is missing, then runs lockmq's
 profile wizard (`lockmq profile add`, never a password); for lockfile it names `lockfile profile
@@ -356,14 +390,15 @@ add --profile NAME --source ...`, which writes the profile `lox up` reviews. loc
 v0.1.1 is refused (a plugin sandbox escape).
 
 lea never starts, sees or drives these consoles. Its containers get only the socket volume of
-`lox up`'s lock of the tool (`.lockfamily/up.json`) on `/run/<tool>`, read-only, and the tool's
+`lox up`'s lock of the tool (`.lockfamily/up.json`) on `/run/<tool>` (each of several locks on
+`/run/<tool>/<instance>`), read-only, and the tool's
 clients group (`lockmq-clients` 10010, `lockfile-clients` 10030): lea's image names the console
 accounts with the ids of the tools' images, so the client checks that the socket is the console's.
 The agents reach the socket and nothing else (no credential, no profile, no audit log). A tool
 that is on without a lock of `lox up` in the projects directory gets no socket, with a warning
-that says to run `lox up`: there is no fixed `<tool>-run` volume of a console started by the
+that says "no such lock yet: `lox add <tool>`": there is no fixed `<tool>-run` volume of a console started by the
 tool's own launcher any more. `lea lockmq` / `lea lockfile` tell you whether the tool is on and how
-its console runs. Restart lea (`lea stop --all`, then `lea`) after turning one on.
+its console runs. Restart lea (`lea stop`, then `lea`) after adding a lock or turning one on.
 
 ## Web requests, with LockHTTP
 
@@ -377,9 +412,9 @@ LockHTTP runs in Docker only (`docs/docker.md` in the lockhttp repository). To t
 install the launcher of the lockhttp release lea pins, v0.7.0 (`LOCKHTTP_VERSION=v0.7.0 sh
 install.sh` with lockhttp's `scripts/install.sh`, which checks the release's signatures and
 pins its image by digest; `lea doctor` warns about an older one), add a lockhttp lock to your
-projects directory (`lox add lockhttp <name>`; its policy in `.lockhttp/config.toml`, which
-`lockhttp profile add --trusted "<your LEA_EGRESS_ALLOW>"` writes) and run
-`lox up`, which runs the hub and the lockhttp console. Then set
+projects directory (`lox add lockhttp <name>`, which applies at once and starts the hub and the lockhttp
+console; its policy in `.lockhttp/config.toml`, which
+`lockhttp profile add --trusted "<your LEA_EGRESS_ALLOW>"` writes). Then set
 `LEA_LOCKHTTP=1` in `~/.config/lea/lea.conf` and restart lea (`lea stop --all`, then `lea`);
 `lea doctor` checks each step. The gate runs hub-attached only: without a trusted
 `.lockfamily/up.json` naming a lockhttp lock, lea does not start (it says to run `lox up`). Nothing else on the host: no account, group or socket directory.
@@ -718,7 +753,7 @@ directory of the projects directory; `--branch B` has it work in its own git wor
 ## Commands
 
 ```sh
-lea                          # the deck, for $LEA_PROJECTS_DIR
+lea                          # the deck, for $LEA_PROJECTS_DIR (unset: the working directory, on the first run)
 lea new [name] [-- args]     # one more agent (its CLI's arguments after --; -p provider, -m model)
 lea shell [-- cmd...]        # a shell, or one command, in the same lea
 lea stop [--all] [--forget] # stop this lea (--all: every lea); the next lea resumes its agents
@@ -784,8 +819,8 @@ read-only. The screen runs in the deck on the host: agents cannot open or drive 
 | `LEA_PROJECTS_DIR` | asked by `lea init` | the directory lea's agents see |
 | `LEA_GIT_SSH` | empty | git SSH endpoints (`host:port …`) |
 | `LEA_GIT_KNOWN_HOSTS` | `~/.config/lea/git_known_hosts` | their pinned host keys |
-| `LEA_LOCKSQL` | `0` | `1`: wire lea for the locksql console of `lox up` (`lea init --locksql`) |
-| `LEA_LOCKMQ`, `LEA_LOCKFILE` | `0`, asked by `lea init` | let the agents reach a lockmq / lockfile console on this host |
+| `LEA_LOCKSQL` | `0`, on when `lox up` runs a locksql lock | `1`: wire lea for the locksql console of `lox up` (`lea init --locksql`) |
+| `LEA_LOCKMQ`, `LEA_LOCKFILE` | `0`, asked by `lea init`; on when `lox up` runs a lock of the type and the key is unset (`=0` keeps it off) | let the agents reach a lockmq / lockfile console on this host |
 | `LEA_LOCKMQ_REF`, `LEA_LOCKFILE_REF` | the pinned releases | the release `lea init` installs on the host (lockfile v0.1.1 or later); `lea update` records a newer one you accept |
 | `LEA_LOCKHTTP` | `0` | send the agents' web requests through a LockHTTP gate (refuses `LEA_GIT_SSH` and `LEA_OTEL_UPSTREAM`) |
 | `LEA_HUB` | `1` | follow the Lock Family approval hub (lockhub's facade socket: `LEA_HUB_SOCKET`, else `$XDG_RUNTIME_DIR/lockhub/facade.sock`): an agent whose Lock call waits for a decision there is suspended until it comes, and the deck shows and answers the hub's tickets; while no hub answers, no agent is suspended, the deck says `lockhub unreachable` and `lea doctor` warns. `0`: lea reads no hub and resumes the agents it suspended. **Upgrading from v0.2**: the default was `0`; put `LEA_HUB=0` in `~/.config/lea/lea.conf` to keep that, then restart lea |
@@ -865,9 +900,11 @@ so. Changes apply after `lea init` (endpoints, keys, images, locksql) or `lea st
   `docs/lock-up.md`) on `/run/<tool>`, read-only, once docker confirms it is that lock's socket
   volume for this projects directory (compose project, `dev.lockfamily.role=socket`, instance and
   workspace labels): never a lock's home or the hub's network. lea ignores an `up.json` that is a
-  link, that others than you can write, or that names another projects directory. A tool that
-  `lox up` runs but lea cannot use (two locks of it, a volume docker does not confirm) gets no
-  socket at all, never the fixed one of another console; a warning says so.
+  link, that others than you can write, or that names another projects directory. Several locks
+  of one tool each get `/run/<tool>/<instance>`, `LEA_<TOOL>_INSTANCES` names them, a Codex agent
+  gets one MCP server per lock (`<tool>-<instance>`, run with `--instance`), and lea's MCP server
+  tells every agent to pass `--instance NAME`. A lock lea cannot use (a bad name, a volume docker
+  does not confirm) gets no socket at all, never the fixed one of another console; a warning says so.
 - Egress goes through a proxy: HTTPS (and plain HTTP) to an allowlist of public domains (plus
   `LEA_INTERNAL_HOSTS`), SSH only to `LEA_GIT_SSH`. Private and link-local addresses are refused.
 - By default the allowlist is lea's own: `github.com`, `githubusercontent.com`, `ghcr.io`,

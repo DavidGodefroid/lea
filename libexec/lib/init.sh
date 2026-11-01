@@ -15,8 +15,11 @@ $_in_prof
 EOT
   _in_dst=${LEA_APPARMOR_DIR:-/etc/apparmor.d}/lea
   if cmp -s "$_in_out" "$_in_dst"; then
-    lea_log "the AppArmor profile 'lea' is up to date"
+    if [ -n "${LEA_FIRST_RUN:-}" ]; then lea_log "first run: AppArmor profile 'lea' up to date"; else lea_log "the AppArmor profile 'lea' is up to date"; fi
     return 0
+  fi
+  if [ -n "${LEA_FIRST_RUN:-}" ] && ! sudo -n true 2>/dev/null; then
+    lea_die "the AppArmor profile 'lea' needs sudo once: run lea init, then lea"
   fi
   lea_log "installing the AppArmor profile 'lea' in ${_in_dst%/*} (needs sudo)"
   sudo install -m 0644 "$_in_out" "$_in_dst"
@@ -88,13 +91,28 @@ lea__init_projects() {
   # A leading ~ typed at the prompt is not expanded by read: expand it here.
   # shellcheck disable=SC2088
   case $_in_p in "~") _in_p=$HOME ;; "~/"*) _in_p=$HOME/${_in_p#"~/"} ;; esac
-  [ -d "$_in_p" ] || lea_die "$_in_p is not a directory"
-  _in_p=$(lea_abspath "$_in_p")
-  lea__guard_projects "$_in_p"
+  if [ -n "${LEA_FIRST_RUN:-}" ]; then
+    _in_why="$_in_p is not a directory"
+    if [ -d "$_in_p" ]; then
+      _in_p=$(lea_abspath "$_in_p")
+      _in_why=
+      # The guard dies with its reason: take it, and say what to run instead.
+      _in_g=$( (lea__guard_projects "$_in_p") 2>&1 ) || _in_why=${_in_g#lea: error: }
+    fi
+    [ -z "$_in_why" ] || lea_die "first run: $_in_why: cd into the directory that holds your projects and run lea again, or LEA_PROJECTS_DIR=DIR lea"
+  else
+    [ -d "$_in_p" ] || lea_die "$_in_p is not a directory"
+    _in_p=$(lea_abspath "$_in_p")
+    lea__guard_projects "$_in_p"
+  fi
   lea_user_config_set LEA_PROJECTS_DIR "$_in_p"
   LEA_PROJECTS_DIR=$_in_p
   export LEA_PROJECTS_DIR
-  lea_log "projects directory: $_in_p (saved in $(lea_user_config_path))"
+  if [ -n "${LEA_FIRST_RUN:-}" ]; then
+    lea_log "first run: projects directory $_in_p (saved in $(lea_user_config_path))"
+  else
+    lea_log "projects directory: $_in_p (saved in $(lea_user_config_path))"
+  fi
 }
 
 lea__init_ssh_key() {
@@ -260,7 +278,7 @@ lea__init_locksql_profile() {
     fi
   fi
   if lea__locksql_wants_vault; then
-    lea_log "locksql: a profile reads its login from Vault, which lox up does not pass to the console yet (lockhub#45)"
+    lea_log "locksql: a profile reads its login from Vault: lox up passes VAULT_ADDR to locks with vault: true (lox add locksql)"
   fi
   lea__locksql_console_hint
 }
@@ -268,7 +286,7 @@ lea__init_locksql_profile() {
 # lea__locksql_console_hint: how the locksql console runs (lea never starts it): hub-attached
 # only, under lox up, as lockmq's and lockfile's (lea__lockhost_console_hint).
 lea__locksql_console_hint() {
-  lea_log "locksql console: it runs under lox up only: add a locksql lock to your projects directory (lox add locksql NAME, with allowed_uids: [$(id -u)] in .lockfamily/lockfamily.yaml), then run \`lox up\`"
+  lea_log "locksql console: it runs under lox up only: no such lock yet: \`lox add locksql\` (lox add fills allowed_uids: [$(id -u)] in .lockfamily/lockfamily.yaml when lea is on your PATH; lea's agents get its socket once lea restarts: lea stop, then lea)"
   lea_log "  its own questions (policy review, credentials): lox attach NAME, or lea lock open locksql in the deck; each query of an agent: lea's deck (hub view) or lox approve"
 }
 
@@ -281,7 +299,8 @@ lea_init() {
       --no-lockmq) lea__lockhost_set lockmq 0 ;;
       --lockfile) lea__lockhost_set lockfile 1 ;;
       --no-lockfile) lea__lockhost_set lockfile 0 ;;
-      *) lea_die "usage: lea init [--no-locksql | --locksql] [--lockmq | --no-lockmq] [--lockfile | --no-lockfile]" ;;
+      --first-run) LEA_INIT_NONINTERACTIVE=1 LEA_FIRST_RUN=1 ;;
+      *) lea_die "usage: lea init [--no-locksql | --locksql] [--lockmq | --no-lockmq] [--lockfile | --no-lockfile] [--first-run]" ;;
     esac
   done
   _in_s=$(lea_state_dir)
@@ -302,6 +321,6 @@ lea_init() {
   lea__init_lockhost lockmq
   lea__init_lockhost lockfile
   lea_init_apparmor
-  lea_log "ready. Run: lea"
+  if [ -z "${LEA_FIRST_RUN:-}" ]; then lea_log "ready. Run: lea"; fi
   umask "$_in_um"
 }

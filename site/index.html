@@ -134,7 +134,7 @@ footer a { display:inline-block; line-height:44px; }
       <code id="cmd">brew trust davidgodefroid/tap &amp;&amp; brew install davidgodefroid/tap/lockfamily</code>
       <button class="copy" data-copy="cmd">Copy</button>
     </div>
-    <p class="ctas">or <code>curl -fsSL https://leadeck.dev/install.sh | sh</code> · then <code>lox init</code> in lea’s projects directory and run <code>lea</code> ·<a href="https://github.com/DavidGodefroid/lea#readme">read the docs</a> · Apache 2.0</p>
+    <p class="ctas">or <code>curl -fsSL https://leadeck.dev/install.sh | sh</code> · then run <code>lea</code> in your projects directory ·<a href="https://github.com/DavidGodefroid/lea#readme">read the docs</a> · Apache 2.0</p>
     <div class="demo"><a href="assets/demo.svg">
       <img src="assets/demo.svg" width="1200" height="640"
         alt="Three agents work in the lea container. One pushes to github.com through the proxy; its attempts to read ~/.ssh and to reach 192.168.1.10 are blocked. Another asks for a permission, answered from the deck.">
@@ -219,22 +219,26 @@ footer a { display:inline-block; line-height:44px; }
     <h2>Install, then run</h2>
     <p class="sub">Needs Docker (Engine on Linux, Desktop elsewhere), <code>curl</code>, <code>tar</code>,
       <code>ssh-keygen</code>, and a Claude subscription or API key. lea never runs <code>sudo</code>, except once
-      to install its AppArmor profile on Linux hosts that use it.</p>
+      to install its AppArmor profile on Linux hosts that use it. The journey is brew, <code>lea</code>, <code>lox add</code>.</p>
     <ol class="steps">
       <li><strong>Install.</strong> With Homebrew, the whole Lock Family (lea, <code>lox</code> and the Locks’
         launchers), or <code>brew install davidgodefroid/tap/lea</code> for lea alone. Homebrew asks you to trust a
         third-party tap once, hence <code>brew trust</code> first:
         <div class="install" style="margin:12px 0 0;max-width:none"><code id="cmd3">brew trust davidgodefroid/tap &amp;&amp; brew install davidgodefroid/tap/lockfamily</code><button class="copy" data-copy="cmd3">Copy</button></div>
         Or lea’s own installer, which checks the requirements, verifies the release checksum, links
-        <code>~/.local/bin/lea</code> and asks for your projects directory:
+        <code>~/.local/bin/lea</code> and runs <code>lea init</code>:
         <div class="install" style="margin:12px 0 0;max-width:none"><code id="cmd2">curl -fsSL https://leadeck.dev/install.sh | sh</code><button class="copy" data-copy="cmd2">Copy</button></div></li>
-      <li><strong>Run <code>lea</code>.</strong> In the first agent, type <code>/login</code> once. Press
+      <li><strong>Run <code>lea</code>.</strong> From the directory that holds your projects (not a project inside
+        it): lea initialises itself on the first run, pulls and verifies its images, and starts the Lock Family hub with
+        <code>lox init</code>. A projects directory you set in <code>LEA_PROJECTS_DIR</code> wins over the working
+        directory; unset, the working directory is used. In the first agent, type <code>/login</code> once. Press
         <kbd>n</kbd> for the next agent.</li>
-      <li><strong>Optional: Locks.</strong> In lea’s projects directory (not a project inside it), run
-        <a href="https://github.com/DavidGodefroid/lockhub/blob/main/docs/lox-init.md"><code>lox init</code></a>: it
-        sets up a Lock per database or broker it finds (<code>lox init --manual</code> adds lockfile and LockHTTP) and
-        runs <code>lox up</code>. You approve what your agents propose with <code>lox approve</code> or in the deck; each
-        Lock alone holds its credentials.</li>
+      <li><strong>Optional: Locks.</strong> When your agents need a database, a queue, files or the web, run
+        <a href="https://github.com/DavidGodefroid/lockhub/blob/main/docs/lox-add.md"><code>lox add</code></a>
+        (<code>locksql</code>, <code>lockmq</code>, <code>lockfile</code> or <code>lockhttp</code>) in the projects
+        directory; <code>lox</code> must be on your <code>PATH</code>, 0.5.0 or later. A Lock you add while lea runs reaches
+        the agents after <code>lea stop</code>, then <code>lea</code>. You approve what your agents propose with
+        <code>lox approve</code> or in the deck; each Lock alone holds its credentials.</li>
       <li><strong>Optional: git over SSH.</strong> List your forges in <code>~/.config/lea/lea.conf</code>, rerun
         <code>lea init</code>, add the printed key to your forge. HTTPS works out of the box.</li>
     </ol>

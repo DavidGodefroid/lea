@@ -186,9 +186,14 @@ func runDaemon(stderr io.Writer) int {
 		fmt.Fprintln(stderr, "lea:", clean(err.Error(), false))
 		return 1
 	}
+	exe, err := os.Executable()
+	if err != nil {
+		fmt.Fprintln(stderr, "lea:", clean(err.Error(), false))
+		return 1
+	}
 	// Same pattern for the provider settings.
 	_ = os.Remove(filepath.Join(host, "daemon.providers"))
-	if err := os.WriteFile(filepath.Join(host, "daemon.providers"), []byte(daemonProvidersStamp()), 0o600); err != nil {
+	if err := os.WriteFile(filepath.Join(host, "daemon.providers"), []byte(daemonProvidersStamp(exe)), 0o600); err != nil {
 		fmt.Fprintln(stderr, "lea:", clean(err.Error(), false))
 		return 1
 	}
@@ -245,12 +250,7 @@ func runDaemon(stderr io.Writer) int {
 	} else {
 		fmt.Fprintln(stderr, "lea daemon: LEA_HUB=1 but no hub facade socket (LEA_HUB_SOCKET, XDG_RUNTIME_DIR): no agent is suspended on a Lock call")
 	}
-	exe, err := os.Executable()
-	if err != nil {
-		fmt.Fprintln(stderr, "lea:", clean(err.Error(), false))
-		return 1
-	}
-	reg := hostProviders(os.Getenv)
+	reg := hostProviders(exe, os.Getenv)
 	d.SetProviders(reg)
 	d.SetDefaultProvider(os.Getenv("LEA_PROVIDER"))
 	// LockHTTP (LEA_LOCKHTTP=1): each agent gets its own proxy password, and the gate learns who
@@ -297,6 +297,15 @@ func runDaemon(stderr io.Writer) int {
 	})
 	d.SetAgents(m)
 	d.SweepLockRequestsLater()
+	// A lock lox up adds while lea runs: running containers that lack it are told to restart lea.
+	if w, ok := daemonLockWatch(exe, agents.Docker{UID: os.Getuid(), GID: os.Getgid()}); ok {
+		d.SetLockWatch(w)
+		go func() {
+			if err := d.RunLockWatch(ctx); err != nil {
+				fmt.Fprintln(stderr, "lea daemon: locks added while lea runs are not seen:", clean(err.Error(), false))
+			}
+		}()
+	}
 	// A sound when an agent waits for the user and when a turn ends, while a deck shows its
 	// container; LEA_SOUND=0 starts with the sounds off (lea sound and the deck's S switch them).
 	if files, on := soundFiles(os.Getenv); len(files) > 0 {

@@ -75,7 +75,7 @@ func (l *Launcher) lockUpGate(proj string) (*gateHub, error) {
 		}
 	}
 	if len(names) == 0 {
-		return nil, die("LEA_LOCKHTTP=1: %s names no lockhttp lock: add one (lox add lockhttp <name>) and run `lox up` (the LockHTTP gate asks its hub only)", p)
+		return nil, die("LEA_LOCKHTTP=1: no such lock yet: `lox add lockhttp` (the LockHTTP gate asks its hub only)")
 	}
 	sort.Strings(names)
 	warn := func(why string) (*gateHub, error) {

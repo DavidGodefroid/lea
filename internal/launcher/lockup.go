@@ -22,7 +22,8 @@ import (
 // on, lea mounts that volume on /run/<tool> (the consoles run hub-attached only: there is no other
 // socket to mount), once docker confirms it is that lock's socket volume (compose's
 // project label and lox up's role label): never a lock's home (its private key) or another
-// volume, whatever up.json says. One instance per tool: with two, lea leaves the tool out.
+// volume, whatever up.json says. Several locks of one tool each reach the agents, on
+// /run/<tool>/<instance> (lockUpSocket).
 
 // lockUpFile is lox up's state in the Lock Family's directory.
 const lockUpFile = "up.json"
@@ -74,13 +75,18 @@ var (
 // and its path; nil (lea says why) when there is none lea can trust: a link, a file not the user's
 // or others may write, not version 1, or of another projects directory.
 func (l *Launcher) readLockUp(proj, lf string) (*lockUpState, string) {
+	return readLockUpState(l.logf, proj, lf)
+}
+
+// readLockUpState is readLockUp saying its warnings through logf.
+func readLockUpState(logf func(string, ...any), proj, lf string) (*lockUpState, string) {
 	p := lf + "/" + lockUpFile
 	f, err := os.OpenFile(p, os.O_RDONLY|syscall.O_NOFOLLOW|syscall.O_NONBLOCK, 0)
 	if errors.Is(err, os.ErrNotExist) {
 		return nil, p
 	}
 	if err != nil {
-		l.logf("warning: %s: %v (a link?): lea ignores it", p, err)
+		logf("warning: %s: %v (a link?): lea ignores it", p, err)
 		return nil, p
 	}
 	defer f.Close()
@@ -89,46 +95,82 @@ func (l *Launcher) readLockUp(proj, lf string) (*lockUpState, string) {
 		return nil, p
 	}
 	if why := lockUpUntrusted(lf, p, fi); why != "" {
-		l.logf("warning: %s: %s: lea ignores it", p, why)
+		logf("warning: %s: %s: lea ignores it", p, why)
 		return nil, p
 	}
 	var s lockUpState
 	if err := json.NewDecoder(io.LimitReader(f, 1<<20)).Decode(&s); err != nil || s.Version != 1 || !lockUpProject.MatchString(s.Project) {
-		l.logf("warning: %s: not lox up's state (version 1): lea ignores it", p)
+		logf("warning: %s: not lox up's state (version 1): lea ignores it", p)
 		return nil, p
 	}
 	// lox up's compose project of this very projects directory (lockhub's family.Project).
 	h := sha256.Sum256([]byte(proj))
 	if want := "lockfamily-" + hex.EncodeToString(h[:4]); s.Project != want || s.Workspace != proj {
-		l.logf("warning: %s: project %s of %q, not this projects directory's (%s of %q): lea ignores it", p, s.Project, s.Workspace, want, proj)
+		logf("warning: %s: project %s of %q, not this projects directory's (%s of %q): lea ignores it", p, s.Project, s.Workspace, want, proj)
 		return nil, p
 	}
 	return &s, p
 }
 
-// lockUpSockets are the socket volumes lox up runs for the projects directory proj (its Lock
-// Family directory lf), by tool, for the tools on reports on; nil without lox up. A tool lox up
-// runs maps to "" when lea cannot use its lock (two instances, a volume docker does not confirm):
-// the agents then get no socket of that tool, never the fixed one of another console.
-func (l *Launcher) lockUpSockets(proj, lf string, on func(tool string) bool) map[string]string {
-	s, p := l.readLockUp(proj, lf)
-	if s == nil {
-		return nil
-	}
-	byType := map[string][]string{}
+// lockUpSocket is a lock's socket volume as the agents mount it: the lock's instance, its volume
+// and where the agents find it (Dst): /run/<tool> when lox up runs one lock of the tool, and
+// /run/<tool>/<instance> for each of several (Several).
+type lockUpSocket struct {
+	Instance, Volume, Dst string
+	Several               bool
+}
+
+// upTool is what up.json says of a lock tool that is on: whether lox up runs several locks of it
+// (the agents then find each on /run/<tool>/<instance>, and Codex gets one server per instance),
+// the locks lockUsable passes (by instance) and why each other one is left out.
+type upTool struct {
+	several bool
+	locks   []UpLock
+	dropped []string
+}
+
+// upTools is upTool by tool for up.json s, for the tools on reports on, and the tools lox up runs
+// a lock of that are off. "Several" follows what up.json declares, not what passes: a lock left
+// out does not move the others to /run/<tool>. The one reading of up.json's locks that the mounts
+// (lockUpSockets), the daemon's watch (ReadUpLocks) and the Codex servers (Config.LockTools) share.
+func upTools(s *lockUpState, on func(tool string) bool) (map[string]*upTool, map[string]bool) {
+	names := map[string][]string{}
 	off := map[string]bool{}
 	for name, lk := range s.Locks {
 		if !on(lk.Type) {
 			off[lk.Type] = true
 			continue
 		}
-		if !lockUpInstance.MatchString(name) {
-			l.logf("warning: %s: lock %q: not an instance name: %s left out", p, name, lk.Type)
-			byType[lk.Type] = append(byType[lk.Type], "")
-			continue
-		}
-		byType[lk.Type] = append(byType[lk.Type], name)
+		names[lk.Type] = append(names[lk.Type], name)
 	}
+	out := map[string]*upTool{}
+	for typ, ns := range names {
+		sort.Strings(ns)
+		t := &upTool{several: len(ns) > 1}
+		for _, name := range ns {
+			if vol, why := lockUsable(s, name); why != "" {
+				t.dropped = append(t.dropped, why)
+			} else {
+				t.locks = append(t.locks, UpLock{Instance: name, Type: typ, Volume: vol})
+			}
+		}
+		out[typ] = t
+	}
+	return out, off
+}
+
+// lockUpSockets are the socket volumes lox up runs for the projects directory proj (its Lock
+// Family directory lf), by tool, for the tools on reports on; nil without lox up. Each lock of a
+// tool is checked on its own (its instance name, its volume as docker labels it): one lea cannot
+// use is left out with a warning, the others still reach the agents. A tool lox up runs maps to
+// no socket when lea can use none of its locks: the agents then get no socket of that tool, never
+// the fixed one of another console.
+func (l *Launcher) lockUpSockets(proj, lf string, on func(tool string) bool) map[string][]lockUpSocket {
+	s, p := l.readLockUp(proj, lf)
+	if s == nil {
+		return nil
+	}
+	tools, off := upTools(s, on)
 	// A lock lox up runs for a tool lea leaves off (locksql, lockmq and lockfile are off by
 	// default): said once, the agents get none of its socket.
 	for _, t := range []struct{ typ, env string }{{"locksql", "LEA_LOCKSQL"}, {"lockmq", "LEA_LOCKMQ"}, {"lockfile", "LEA_LOCKFILE"}} {
@@ -136,34 +178,117 @@ func (l *Launcher) lockUpSockets(proj, lf string, on func(tool string) bool) map
 			l.logf("%s is off (%s=0), though lox up runs a %s lock here: `lea init --%s` turns it on", t.typ, t.env, t.typ, t.typ)
 		}
 	}
-	out := map[string]string{}
-	for typ, names := range byType {
-		out[typ] = ""
-		sort.Strings(names)
-		if len(names) > 1 {
-			l.logf("warning: lox up runs %d %s locks: lea's agents reach one per tool, so none of them", len(names), typ)
-			continue
+	out := map[string][]lockUpSocket{}
+	for typ, t := range tools {
+		out[typ] = []lockUpSocket{}
+		for _, why := range t.dropped {
+			l.logf("warning: %s: %s", p, why)
 		}
-		name := names[0]
-		if name == "" {
-			continue
+		for _, lk := range t.locks {
+			if why := l.lockUpVolumeWrong(lk.Volume, s.Project, proj, lk.Instance, typ); why != "" {
+				l.logf("warning: lock %s (%s): %s: lea's agents cannot reach it", lk.Instance, typ, why)
+				continue
+			}
+			dst := "/run/" + typ
+			if t.several {
+				dst += "/" + lk.Instance
+			}
+			out[typ] = append(out[typ], lockUpSocket{Instance: lk.Instance, Volume: lk.Volume, Dst: dst, Several: t.several})
 		}
-		vol := s.Project + "_" + name + "-run"
-		if s.Locks[name].Socket != vol {
-			l.logf("warning: %s: lock %s: socket volume %q is not lox up's %q: left out", p, name, s.Locks[name].Socket, vol)
-			continue
-		}
-		if g, ok := lockGID[typ]; ok && s.Locks[name].GID != "" && s.Locks[name].GID != g {
-			l.logf("warning: lock %s (%s): clients group %s, lea's image knows %s: left out (update lea)", name, typ, s.Locks[name].GID, g)
-			continue
-		}
-		if why := l.lockUpVolumeWrong(vol, s.Project, proj, name, typ); why != "" {
-			l.logf("warning: lock %s (%s): %s: lea's agents cannot reach it", name, typ, why)
-			continue
-		}
-		out[typ] = vol
 	}
 	return out
+}
+
+// lockUsable is the socket volume of the lock name of up.json s, or why lea leaves it out without
+// asking docker: a name that is not an instance name, a socket volume that is not lox up's
+// (<project>_<instance>-run), a clients group lea's image does not know. lockUpSockets says why
+// and checks the volume's labels on top; ReadUpLocks keeps the locks it passes.
+func lockUsable(s *lockUpState, name string) (vol, why string) {
+	lk := s.Locks[name]
+	if !lockUpInstance.MatchString(name) {
+		return "", fmt.Sprintf("lock %q: not an instance name: %s left out", name, lk.Type)
+	}
+	vol = s.Project + "_" + name + "-run"
+	if lk.Socket != vol {
+		return "", fmt.Sprintf("lock %s: socket volume %q is not lox up's %q: left out", name, lk.Socket, vol)
+	}
+	if g, ok := lockGID[lk.Type]; ok && lk.GID != "" && lk.GID != g {
+		return "", fmt.Sprintf("lock %s (%s): clients group %s, lea's image knows %s: left out (update lea)", name, lk.Type, lk.GID, g)
+	}
+	return vol, ""
+}
+
+// UpLock is a lock lox up runs that an agent container started now would mount: its instance,
+// its type and its socket volume.
+type UpLock struct{ Instance, Type, Volume string }
+
+// ReadUpLocks are the locks of the trusted up.json of the projects directory proj (readLockUp's
+// checks, its warnings through logf) that an agent container started now would mount: those of a
+// tool on reports on that lockUsable passes, by instance. It runs no docker: lockUpSockets' checks of the
+// volume's labels run at the container's start. The daemon's watch of up.json reads it.
+func ReadUpLocks(proj string, logf func(string, ...any), on func(tool string) bool) []UpLock {
+	s, _ := readLockUpState(logf, proj, proj+"/.lockfamily")
+	if s == nil {
+		return nil
+	}
+	// Without the locks lockUpSockets leaves out with a warning at the container's start.
+	tools, _ := upTools(s, on)
+	var out []UpLock
+	for _, t := range tools {
+		out = append(out, t.locks...)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Instance < out[j].Instance })
+	return out
+}
+
+// UpLocks is ReadUpLocks for the projects directory proj with the tools on as an agent container
+// gets them (runArgs: a lock lox up runs turns its tool on unless the user turned it off).
+func (c *Config) UpLocks(proj string, logf func(string, ...any)) []UpLock {
+	return ReadUpLocks(proj, logf, func(tool string) bool {
+		key := lockToolKeys[tool]
+		return key != "" && c.toolOn(key, true)
+	})
+}
+
+// UpLocksMounted is UpLocks without the locks whose socket volume docker does not label as lox
+// up's (lockUpVolumeWrong, which lockUpSockets warns about at a container's start): the locks an
+// agent container started now really mounts. The daemon's watch reads it, so a lock lea cannot
+// mount gets its reason (through logf) instead of a restart hint a restart never clears. environ
+// is the environment docker runs with.
+func (c *Config) UpLocksMounted(environ []string, proj string, logf func(string, ...any)) []UpLock {
+	var discard bytes.Buffer
+	l := &Launcher{Cfg: c, Environ: environ, Stderr: &discard}
+	var out []UpLock
+	for _, lk := range c.UpLocks(proj, logf) {
+		// lockUsable passed it: its volume is <project>_<instance>-run.
+		project := strings.TrimSuffix(lk.Volume, "_"+lk.Instance+"-run")
+		if why := l.lockUpVolumeWrong(lk.Volume, project, proj, lk.Instance, lk.Type); why != "" {
+			logf("lock %s (%s): %s: lea's agents cannot reach it", lk.Instance, lk.Type, why)
+			continue
+		}
+		out = append(out, lk)
+	}
+	return out
+}
+
+// lockUpArgs are the docker run arguments of the sockets socks of a lock tool, switched by
+// env (LEA_LOCKSQL, LEA_LOCKMQ, LEA_LOCKFILE), with its clients group gid: the switch, the group
+// and each socket's read-only mount; with several locks of the tool (lockUpSockets' Several),
+// <env>_INSTANCES names the instances the agents reach (each on /run/<tool>/<instance>), space
+// separated.
+func lockUpArgs(env, gid string, socks []lockUpSocket) []string {
+	a := []string{"-e", env + "=1", "--group-add", gid}
+	var names []string
+	for _, s := range socks {
+		a = append(a, "--mount", lockUpMount(s))
+		if s.Several {
+			names = append(names, s.Instance)
+		}
+	}
+	if len(names) > 0 {
+		a = append(a, "-e", env+"_INSTANCES="+strings.Join(names, " "))
+	}
+	return a
 }
 
 // lockGID are the clients groups of the lock tools' images, as lea's image names them.
@@ -251,8 +376,8 @@ func (l *Launcher) lockUpServersWrong(vol, project string) string {
 
 // lockUpMount is the agents' mount of a lox up socket volume: read-only (the console made the
 // directory; connecting needs no write).
-func lockUpMount(vol, tool string) string {
-	return "type=volume,src=" + vol + ",dst=/run/" + tool + ",readonly"
+func lockUpMount(s lockUpSocket) string {
+	return "type=volume,src=" + s.Volume + ",dst=" + s.Dst + ",readonly"
 }
 
 var dockerID = regexp.MustCompile(`^[0-9a-f]{64}$`)
@@ -292,7 +417,7 @@ func LoxConsole(cfg *Config, environ []string, proj, tool, profile string) (inst
 	sort.Strings(names)
 	switch {
 	case len(names) == 0 && profile == "":
-		return "", "", fmt.Errorf("no %s lock of lox up for %s: add one with lox add %s <name>, then run `lox up`", tool, proj, tool)
+		return "", "", fmt.Errorf("no %s lock of lox up for %s: no such lock yet: `lox add %s`", tool, proj, tool)
 	case len(names) == 0:
 		return "", "", fmt.Errorf("no %s lock of lox up serves the profile %q (a lock's profile: in .lockfamily/lockfamily.yaml), then run `lox up`", tool, profile)
 	case len(names) > 1:

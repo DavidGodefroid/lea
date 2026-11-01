@@ -408,7 +408,7 @@ LEA_PROJECTS_DIR="$projects" "$root/bin/lea" shell -- sh "$projects/.phase0/insi
 cat "$work/agent.out"
 call() { sed -n "s/^call $1 //p" "$work/agent.out"; }
 case $(cat "$work/agent.out") in
-  *"no locksql socket"* | *"no lockmq socket"* | *"no lockfile socket"*) ko "lea warned that a tool's agents get no socket of lox up" ;;
+  *"no such lock yet"* | *"lea's agents get no "*) ko "lea warned that a tool's agents get no socket of lox up" ;;
   *) ok "lea gave every tool's agents lox up's socket (no warning)" ;;
 esac
 c=$id-$lid

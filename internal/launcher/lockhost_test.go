@@ -1,6 +1,8 @@
 package launcher
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -62,7 +64,7 @@ func TestLockHostWired(t *testing.T) {
 
 // The consoles run hub-attached only, under lox up: a tool that is on, and has no lock of lox up
 // for the projects directory, gets no socket (never the fixed <tool>-run volume of a console of
-// its own launcher), and lea says to run `lox up`.
+// its own launcher), and lea says to add one (`lox add <tool>`).
 func TestLockHostNeedsLoxUp(t *testing.T) {
 	w := newWorld(t, repoRoot(t))
 	writeUserConf(t, w, "LEA_LOCKSQL=1\nLEA_LOCKMQ=1\nLEA_LOCKFILE=1\n")
@@ -78,7 +80,7 @@ func TestLockHostNeedsLoxUp(t *testing.T) {
 			t.Errorf("fixed socket volume: %s", a)
 		}
 	}
-	if e := w.errb.String(); !strings.Contains(e, "no lockfile lock of lox up") || !strings.Contains(e, "run `lox up`") || strings.Contains(e, "lockmq") {
+	if e := w.errb.String(); !strings.Contains(e, "no such lock yet: `lox add lockfile`") || !strings.Contains(e, "(lea's agents get its socket once lea restarts: lea stop, then lea)") || strings.Contains(e, "lockmq") {
 		t.Errorf("warnings: %s", e)
 	}
 	// No up.json at all: neither.
@@ -88,7 +90,7 @@ func TestLockHostNeedsLoxUp(t *testing.T) {
 	if contains(args, "LEA_LOCKMQ=1") || contains(args, "LEA_LOCKFILE=1") || w.hasCall("stat") {
 		t.Fatalf("args %v", args)
 	}
-	if e := w.errb.String(); strings.Count(e, "run `lox up`") != 3 {
+	if e := w.errb.String(); strings.Count(e, "no such lock yet: `lox add ") != 3 {
 		t.Errorf("warnings: %s", e)
 	}
 }
@@ -113,7 +115,7 @@ func TestLockHostConfig(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cfg.LockHost("LEA_LOCKMQ") || cfg.LockHost("LEA_LOCKFILE") {
+	if on := cfg.ToolsOn(w.proj, func(string, ...any) {}); on["lockmq"] || on["lockfile"] || on["locksql"] {
 		t.Fatal("lockmq and lockfile must be off by default")
 	}
 }
@@ -151,10 +153,11 @@ func TestRunArgsLocksOnMatchTheGoldenFile(t *testing.T) {
 	checkGolden(t, "run-args", "lockmq and lockfile on", hostNeutral(normalize(w, got)))
 }
 
-// A lock lox up runs for a tool that is off (locksql too, off by default): one line says how to
-// turn it on; the agents get none of its socket.
+// A lock lox up runs for a tool the user turned off (LEA_<TOOL>=0): one line says how to turn it
+// on; the agents get none of its socket.
 func TestLockUpLockOfAToolThatIsOff(t *testing.T) {
 	w := newWorld(t, repoRoot(t))
+	writeUserConf(t, w, "LEA_LOCKSQL=0\nLEA_LOCKMQ=0\n")
 	writeUp(t, w, lockUp("crm", "locksql")+","+lockUp("events", "lockmq"))
 	labels(w, "crm", "locksql", "socket")
 	labels(w, "events", "lockmq", "socket")
@@ -167,5 +170,65 @@ func TestLockUpLockOfAToolThatIsOff(t *testing.T) {
 	if strings.Count(e, "locksql is off (LEA_LOCKSQL=0), though lox up runs a locksql lock here: `lea init --locksql` turns it on") != 1 ||
 		strings.Count(e, "lockmq is off (LEA_LOCKMQ=0)") != 1 || strings.Contains(e, "lockfile") {
 		t.Errorf("stderr: %s", e)
+	}
+}
+
+// Interactive lea init's default "no" (lockmq, lockfile) writes nothing: a user assignment would
+// count as an explicit opt-out, so a later lox add would never reach the agents.
+func TestInitDefaultNoLeavesToolUnset(t *testing.T) {
+	w := newWorld(t, repoRoot(t))
+	so, se, sc := shellEval(t, w.root, w.environ(), w.proj,
+		"lea_load_config; lea__init_tty() { true; }; printf '\\n' | lea__init_lockhost lockmq; printf '\\n' | lea__init_lockhost lockfile")
+	if sc != 0 || !strings.Contains(se, "through a lockmq console") || !strings.Contains(se, "through a lockfile console") {
+		t.Fatalf("status %d\nstdout %s\nstderr %s", sc, so, se)
+	}
+	b, _ := os.ReadFile(filepath.Join(w.env["XDG_CONFIG_HOME"], "lea", "lea.conf"))
+	if strings.Contains(string(b), "LEA_LOCKMQ") || strings.Contains(string(b), "LEA_LOCKFILE") {
+		t.Fatalf("user config: %s", b)
+	}
+	writeUp(t, w, lockUp("events", "lockmq")+","+lockUp("docs", "lockfile"))
+	cfg, err := LoadConfig(w.getenv, w.root, w.proj)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if on := cfg.ToolsOn(w.proj, func(string, ...any) {}); !on["lockmq"] || !on["lockfile"] {
+		t.Fatalf("after lox add: %v", on)
+	}
+}
+
+// lea locksql, lea lockmq and lea lockfile take the launcher's decision (ToolsOn): a lock of lox
+// up for the projects directory turns a tool on that the user's configuration does not set, and
+// an explicit LEA_<TOOL>=0 keeps it off.
+func TestToolStatusFollowsUpJSON(t *testing.T) {
+	for tool, key := range map[string]string{"locksql": "LEA_LOCKSQL", "lockmq": "LEA_LOCKMQ", "lockfile": "LEA_LOCKFILE"} {
+		w := newWorld(t, repoRoot(t))
+		writeUp(t, w, lockUp("orders", tool))
+		if st := w.launcher().Main([]string{tool}); st != 0 {
+			t.Fatalf("%s: status %d: %s", tool, st, w.errb.String())
+		}
+		if e := w.errb.String(); !strings.Contains(e, tool+" is on for lea while lox up runs a "+tool+" lock here") || strings.Contains(e, " is off") {
+			t.Errorf("%s with a lock of lox up: %s", tool, e)
+		}
+		w = newWorld(t, repoRoot(t))
+		writeUp(t, w, lockUp("orders", tool))
+		writeUserConf(t, w, key+"=0\n")
+		if st := w.launcher().Main([]string{tool}); st != 0 {
+			t.Fatalf("%s: status %d: %s", tool, st, w.errb.String())
+		}
+		if e := w.errb.String(); !strings.Contains(e, tool+" is off ("+key+"=0)") {
+			t.Errorf("%s with %s=0: %s", tool, key, e)
+		}
+	}
+}
+
+// lea doctor checks the lock of a tool that a lock of lox up turns on, as the launcher does.
+func TestDoctorFollowsUpJSON(t *testing.T) {
+	w := newWorld(t, repoRoot(t))
+	writeUp(t, w, lockUp("orders", "locksql")+","+lockUp("events", "lockmq"))
+	w.env["FAKE_DOCKER_OUT_VOLUME_LS"] = upProjectOf(w) + "_orders-run"
+	w.launcher().Main([]string{"doctor"})
+	if o := w.out.String(); !strings.Contains(o, "ok    locksql lock of lox up (socket volume "+upProjectOf(w)+"_orders-run)") ||
+		!strings.Contains(o, "lockmq launcher") || strings.Contains(o, "lockfile") || strings.Contains(o, "locksql image") {
+		t.Errorf("doctor: %s", o)
 	}
 }
