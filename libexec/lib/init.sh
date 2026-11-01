@@ -15,8 +15,11 @@ $_in_prof
 EOT
   _in_dst=${LEA_APPARMOR_DIR:-/etc/apparmor.d}/lea
   if cmp -s "$_in_out" "$_in_dst"; then
-    lea_log "the AppArmor profile 'lea' is up to date"
+    if [ -n "${LEA_FIRST_RUN:-}" ]; then lea_log "first run: AppArmor profile 'lea' up to date"; else lea_log "the AppArmor profile 'lea' is up to date"; fi
     return 0
+  fi
+  if [ -n "${LEA_FIRST_RUN:-}" ] && ! sudo -n true 2>/dev/null; then
+    lea_die "the AppArmor profile 'lea' needs sudo once: run lea init, then lea"
   fi
   lea_log "installing the AppArmor profile 'lea' in ${_in_dst%/*} (needs sudo)"
   sudo install -m 0644 "$_in_out" "$_in_dst"
@@ -94,7 +97,11 @@ lea__init_projects() {
   lea_user_config_set LEA_PROJECTS_DIR "$_in_p"
   LEA_PROJECTS_DIR=$_in_p
   export LEA_PROJECTS_DIR
-  lea_log "projects directory: $_in_p (saved in $(lea_user_config_path))"
+  if [ -n "${LEA_FIRST_RUN:-}" ]; then
+    lea_log "first run: projects directory $_in_p (saved in $(lea_user_config_path))"
+  else
+    lea_log "projects directory: $_in_p (saved in $(lea_user_config_path))"
+  fi
 }
 
 lea__init_ssh_key() {
@@ -260,7 +267,7 @@ lea__init_locksql_profile() {
     fi
   fi
   if lea__locksql_wants_vault; then
-    lea_log "locksql: a profile reads its login from Vault, which lox up does not pass to the console yet (lockhub#45)"
+    lea_log "locksql: a profile reads its login from Vault: lox up passes VAULT_ADDR to locks with vault: true (lox add locksql)"
   fi
   lea__locksql_console_hint
 }
@@ -281,7 +288,8 @@ lea_init() {
       --no-lockmq) lea__lockhost_set lockmq 0 ;;
       --lockfile) lea__lockhost_set lockfile 1 ;;
       --no-lockfile) lea__lockhost_set lockfile 0 ;;
-      *) lea_die "usage: lea init [--no-locksql | --locksql] [--lockmq | --no-lockmq] [--lockfile | --no-lockfile]" ;;
+      --first-run) LEA_INIT_NONINTERACTIVE=1 LEA_FIRST_RUN=1 ;;
+      *) lea_die "usage: lea init [--no-locksql | --locksql] [--lockmq | --no-lockmq] [--lockfile | --no-lockfile] [--first-run]" ;;
     esac
   done
   _in_s=$(lea_state_dir)
@@ -302,6 +310,6 @@ lea_init() {
   lea__init_lockhost lockmq
   lea__init_lockhost lockfile
   lea_init_apparmor
-  lea_log "ready. Run: lea"
+  if [ -z "${LEA_FIRST_RUN:-}" ]; then lea_log "ready. Run: lea"; fi
   umask "$_in_um"
 }

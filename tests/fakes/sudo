@@ -1,3 +1,4 @@
 #!/bin/sh
-# Fake sudo: records the call and runs nothing.
+# Fake sudo: records the call and runs nothing; FAKE_SUDO_RC makes it fail.
 { printf 'sudo'; for a in "$@"; do printf ' [%s]' "$a"; done; printf '\n'; } >>"${FAKE_LOG:?}"
+exit "${FAKE_SUDO_RC:-0}"

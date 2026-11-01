@@ -750,13 +750,13 @@ y"
   [[ "$output" != *"[profile] [add]"* ]]
 }
 
-@test "a Vault profile: lea says lox up does not pass Vault yet, and logs in to nothing" {
+@test "a Vault profile: lea says lox up passes VAULT_ADDR, and logs in to nothing" {
   interactive
   mkdir -p "$P/.locksql"
   printf '[profiles.uat]\nengine = "mariadb"\nhost = "db"\ncredentials = "vault"\nvault_path = "database/creds/uat"\n' >"$P/.locksql/config.toml"
   run lea_init </dev/null
   [ "$status" -eq 0 ]
-  [[ "$output" == *"a profile reads its login from Vault, which lox up does not pass to the console yet (lockhub#45)"* ]]
+  [[ "$output" == *"locksql: a profile reads its login from Vault: lox up passes VAULT_ADDR to locks with vault: true (lox add locksql)"* ]]
   run calls
   [[ "$output" != *"[--entrypoint] [vault]"* ]]
   [[ "$output" != *"locksql-home"* ]]
@@ -813,4 +813,51 @@ y"
   lea_init </dev/null 2>/dev/null
   [ ! -e "$LEA_BIN_DIR/locksql" ]
   [ ! -L "$LEA_BIN_DIR/locksql" ]
+}
+
+# lea init --first-run: what the launcher runs when lea has never been set up.
+@test "init --first-run asks nothing and prints one prefixed line per step" {
+  unset LEA_INIT_NONINTERACTIVE LEA_PROJECTS_DIR
+  export FAKE_DOCKER_OUT_INFO___FORMAT='["name=apparmor"]'
+  export LEA_APPARMOR_ABI_DIR="$BATS_TEST_TMPDIR/none" LEA_APPARMOR_DIR="$BATS_TEST_TMPDIR/aa"
+  mkdir -p "$LEA_APPARMOR_DIR"
+  lea_init_apparmor 2>/dev/null
+  cp "$H/apparmor-lea" "$LEA_APPARMOR_DIR/lea"
+  cd "$P"
+  export LEA_IMAGE=ghcr.io/davidgodefroid/lea:0.5.0 LEA_PROXY_IMAGE=ghcr.io/davidgodefroid/lea-proxy:0.5.0
+  FAKE_DOCKER_RC_IMAGE_INSPECT=1 run lea_init --first-run </dev/null
+  [ "$status" -eq 0 ]
+  [[ "$output" != *"[Y/n]"* ]]
+  [[ "$output" != *"[y/N]"* ]]
+  [[ "$output" == *"first run: pulling "* ]]
+  [[ "$output" == *"first run: projects directory $P (saved in $U)"* ]]
+  [[ "$output" == *"first run: AppArmor profile 'lea' up to date"* ]]
+  [[ "$output" != *"ready. Run: lea"* ]]
+}
+
+@test "init --first-run stops with the sudo message when AppArmor needs an update" {
+  export FAKE_DOCKER_OUT_INFO___FORMAT='["name=apparmor"]'
+  export LEA_APPARMOR_ABI_DIR="$BATS_TEST_TMPDIR/none" LEA_APPARMOR_DIR="$BATS_TEST_TMPDIR/aa"
+  mkdir -p "$LEA_APPARMOR_DIR"
+  FAKE_SUDO_RC=1 run lea_init --first-run </dev/null
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"the AppArmor profile 'lea' needs sudo once: run lea init, then lea"* ]]
+  run calls
+  [[ "$output" == *"sudo [-n] [true]"* ]]
+  [[ "$output" != *"sudo [install]"* ]]
+}
+
+@test "init --first-run saves the working directory as the projects directory" {
+  unset LEA_PROJECTS_DIR
+  cd "$P"
+  lea_init --first-run </dev/null 2>/dev/null
+  grep -qx "LEA_PROJECTS_DIR='$P'" "$U"
+}
+
+@test "init --first-run refuses a working directory the projects-dir guard rejects" {
+  unset LEA_PROJECTS_DIR
+  cd "$HOME"
+  run lea_init --first-run </dev/null
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"cannot be a projects directory"* ]]
 }
