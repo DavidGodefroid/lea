@@ -280,7 +280,7 @@ func runGoSide(t *testing.T, root string, sc commandScenario) (commandSide, *wor
 	l := w.launcher()
 	l.Cwd = cwd
 	status := l.Main(args)
-	return commandSide{status, normalize(w, strings.Join(withoutFirstRunProbes(w.calls()), "\n")), normalize(w, leaLines(w.errb.String())), normalize(w, w.out.String())}, w
+	return commandSide{status, normalize(w, strings.Join(w.calls(), "\n")), normalize(w, leaLines(w.errb.String())), normalize(w, w.out.String())}, w
 }
 
 // symlinkDir replaces the directory p with a symlink to a copy of it elsewhere in the world.
@@ -416,9 +416,10 @@ func TestCommandsMatchTheGoldenFiles(t *testing.T) {
 			os.MkdirAll(d, 0o755)
 			os.WriteFile(d+"/"+strconv.Itoa(other.Process.Pid), nil, 0o600)
 		}, want: []string{"[lea-session] [--shell]"}, absent: []string{"docker [stop]", "[network] [rm]"}},
-		// A first run whose init sets no projects directory ends on the old message.
-		{name: "shell without a projects directory", args: []string{"shell"}, unset: []string{"LEA_PROJECTS_DIR"}, exit: 1,
-			setup: func(w *world) { fakeLeaSh(w, "#!/bin/sh\nexit 0\n") }, want: []string{"lea: error: no projects directory: run 'lea init', or set LEA_PROJECTS_DIR"}, absent: []string{"docker [run]"}},
+		// lea initialises itself: the stand-in init records the working directory as the projects directory.
+		{name: "first run sets the projects directory for shell", args: []string{"shell"}, unset: []string{"LEA_PROJECTS_DIR"},
+			setup: func(w *world) { fakeLeaSh(w, initSetsProjects(w)) },
+			want:  []string{"lea-sh [init] [--first-run]", "[-w] [$W/projects] [lea-$ID] [lea-session] [--shell]"}},
 		{name: "stop without a projects directory", args: []string{"stop"}, unset: []string{"LEA_PROJECTS_DIR"}, exit: 1,
 			want: []string{"lea: error: no projects directory"}, absent: []string{"docker"}},
 		{name: "new with role and repo and branch and brief", args: []string{"new", "-r", "lead", "--repo", "shop", "--branch", "feat/x", "--brief", "b.md", "rev"},
@@ -464,8 +465,9 @@ func TestCommandsMatchTheGoldenFiles(t *testing.T) {
 			want: []string{"lea: error: usage: lea stop [--all] [--forget]"}, absent: []string{"docker"}},
 		{name: "stop old form refused", args: []string{"stop", "$W/projects"}, exit: 2,
 			want: []string{"lea no longer takes a directory"}, absent: []string{"docker"}},
-		{name: "no projects directory", unset: []string{"LEA_PROJECTS_DIR"}, exit: 1,
-			setup: func(w *world) { fakeLeaSh(w, "#!/bin/sh\nexit 0\n") }, want: []string{"lea: error: no projects directory: run 'lea init', or set LEA_PROJECTS_DIR"}},
+		{name: "first run sets the projects directory for the deck", unset: []string{"LEA_PROJECTS_DIR"},
+			setup: func(w *world) { fakeLeaSh(w, initSetsProjects(w)) },
+			want:  []string{"lea-sh [init] [--first-run]", "core [deck-open] [--container] [lea-$ID] [--workdir] [$W/projects]"}},
 		{name: "projects directory missing", env: map[string]string{"LEA_PROJECTS_DIR": "$W/nowhere"}, exit: 1,
 			want: []string{"lea: error: LEA_PROJECTS_DIR=$W/nowhere is not a directory"}},
 		{name: "projects directory is HOME", env: map[string]string{"LEA_PROJECTS_DIR": "$W/home"}, exit: 1,
@@ -491,8 +493,13 @@ func TestCommandsMatchTheGoldenFiles(t *testing.T) {
 		// lea initialises itself: a stand-in lea-sh logs the call, and the fake docker has no image.
 		{name: "first run on a machine without images", env: map[string]string{"FAKE_DOCKER_RC_IMAGE_INSPECT": "1"},
 			setup: func(w *world) {
-				fakeLeaSh(w, "#!/bin/sh\n{ printf lea-sh; for a in \"$@\"; do printf ' [%s]' \"$a\"; done; printf '\\n'; } >>\"$FAKE_LOG\"\n")
+				os.Remove(w.data + "/lea/state/claude.json")
+				fakeLeaSh(w, leaShLog+"printf '{}\\n' >\"$XDG_DATA_HOME/lea/state/claude.json\"\n")
 			}, want: []string{"lea-sh [init] [--first-run]"}},
+		// A machine that is set up and only lacks its images pulls and verifies them: no full init.
+		{name: "first run pulls only the missing images", env: map[string]string{"FAKE_DOCKER_RC_IMAGE_INSPECT": "1"},
+			setup: func(w *world) { fakeLeaSh(w, leaShLog) },
+			want:  []string{"docker [version] [--format]", "lea-sh [ensure-images]"}, absent: []string{"lea-sh [init]", "first run:"}},
 		{name: "first run docker down", env: map[string]string{"FAKE_DOCKER_RC_VERSION___FORMAT": "1"},
 			setup: func(w *world) { os.Remove(w.data + "/lea/state/claude.json") }, exit: 1,
 			want:   []string{"lea: error: Docker does not answer: start the Docker engine (sudo systemctl start docker), then run lea again"},
@@ -515,12 +522,12 @@ func TestCommandsMatchTheGoldenFiles(t *testing.T) {
 		// daemon to stop, then die with the same message after the same 51 calls.
 		{name: "daemon records differ and the old daemon never stops", setup: func(w *world) {
 			os.WriteFile(w.hostDir()+"/daemon.approvals", []byte("pane 5"), 0o600)
-		}, exit: 1, want: []string{"lea: error: the running lea daemon did not stop (kill it, then retry)"}, absent: []string{"docker"}},
+		}, exit: 1, want: []string{"lea: error: the running lea daemon did not stop (kill it, then retry)"}, absent: []string{"docker [network]", "docker [run]", "docker [inspect]"}},
 		{name: "daemon not running and never starts", env: map[string]string{"FAKE_CORE_RC_agents": "1"}, exit: 1,
-			want: []string{"core [agents]\ncore [agents]", "the lea daemon did not start in 5 s"}, absent: []string{"docker", "[daemon]"},
+			want: []string{"core [agents]\ncore [agents]", "the lea daemon did not start in 5 s"}, absent: []string{"docker [network]", "docker [run]", "[daemon]"},
 			goSide: daemonStarted},
 		{name: "internal network exists but is not internal", env: map[string]string{"FAKE_DOCKER_OUT_NETWORK_INSPECT": "false"}, exit: 1,
-			want: []string{"network lea-internal-$ID exists but is not an internal network"}, absent: []string{"lea-proxy"}},
+			want: []string{"network lea-internal-$ID exists but is not an internal network"}, absent: []string{"docker [inspect] [-f] [{{.State.Running}}] [lea-proxy]"}},
 		{name: "docker run fails", env: stopped("FAKE_DOCKER_RC_RUN__D_AT_LEA_DEV", "1"), exit: 1,
 			want: []string{started}, absent: []string{"[/run/lea/ready]", "deck-open"}},
 		{name: "proxy run fails", env: map[string]string{"FAKE_DOCKER_OUT_INSPECT__F_AT_LEA_PROXY": "false", "FAKE_DOCKER_RC_RUN__D": "1"},
@@ -719,6 +726,14 @@ func liveProcess(pid int) bool {
 }
 
 // fakeLeaSh replaces this world's libexec/lea-sh with script until the test ends.
+const leaShLog = "#!/bin/sh\n{ printf lea-sh; for a in \"$@\"; do printf ' [%s]' \"$a\"; done; printf '\\n'; } >>\"$FAKE_LOG\"\n"
+
+// initSetsProjects is a stand-in lea-sh whose init writes this world's projects dir into the
+// user configuration, as `lea init --first-run` does.
+func initSetsProjects(w *world) string {
+	return leaShLog + "mkdir -p \"$XDG_CONFIG_HOME/lea\"\nprintf 'LEA_PROJECTS_DIR=%s\\n' '" + w.proj + "' >\"$XDG_CONFIG_HOME/lea/lea.conf\"\n"
+}
+
 func fakeLeaSh(w *world, script string) {
 	w.t.Helper()
 	p := w.root + "/libexec/lea-sh"
@@ -730,14 +745,4 @@ func fakeLeaSh(w *world, script string) {
 		w.t.Fatal(err)
 	}
 	w.t.Cleanup(func() { os.WriteFile(p, orig, 0o755) })
-}
-
-// withoutFirstRunProbes drops the image checks firstRun opens every command with (one per
-// image, none after the first that fails), which no scenario pins: the goldens start at the
-// command's own calls. TestFirstRunNotNeededMakesNoCall pins the probes.
-func withoutFirstRunProbes(calls []string) []string {
-	for n := 0; n < 2 && len(calls) > 0 && strings.HasPrefix(calls[0], "docker [image] [inspect] [-f] [{{.Id}}] ["); n++ {
-		calls = calls[1:]
-	}
-	return calls
 }

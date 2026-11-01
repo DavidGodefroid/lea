@@ -1,5 +1,6 @@
 status 1
 -- calls
+tmux [-V]
 docker [version] [--format] [{{.Server.Version}}]
 -- lea
 lea: error: Docker does not answer: start the Docker engine (sudo systemctl start docker), then run lea again

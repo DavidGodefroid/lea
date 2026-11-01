@@ -1,5 +1,6 @@
 status 1
 -- calls
+tmux [-V]
 docker [version] [--format] [{{.Server.Version}}]
 -- lea
 lea: error: first run: $W/home cannot be a projects directory: it is / or contains your home directory: cd into the directory that holds your projects and run lea again, or LEA_PROJECTS_DIR=DIR lea

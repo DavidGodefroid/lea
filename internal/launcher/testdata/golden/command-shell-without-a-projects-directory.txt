@@ -1,6 +1,0 @@
-status 1
--- calls
-docker [version] [--format] [{{.Server.Version}}]
--- lea
-lea: error: no projects directory: run 'lea init', or set LEA_PROJECTS_DIR
--- stdout

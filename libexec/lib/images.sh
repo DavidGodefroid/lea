@@ -75,7 +75,7 @@ lea__ensure_image() {
   # cosign first: without one, nothing is pulled.
   lea__co_get
   _ei_new=$_LEA_CO_NEW
-  if [ -n "${LEA_FIRST_RUN:-}" ]; then lea_log "first run: pulling $2"; fi
+  lea_log "${LEA_FIRST_RUN:+first run: }pulling $2"
   if docker pull "$2" >&2; then
     lea__verify_image "$2"
     if [ "$_ei_new" = 1 ]; then lea__co_put; fi

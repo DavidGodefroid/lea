@@ -50,7 +50,7 @@ func TestDeckRefusesClaudeArgumentsBeforeDocker(t *testing.T) {
 	if got := l.Main([]string{"--resume"}); got != 1 || !strings.Contains(w.errb.String(), "lea new -- --resume") {
 		t.Fatalf("%d %q", got, w.errb.String())
 	}
-	if w.dockerCalledBeyondFirstRunProbes() {
+	if w.hasCall("docker") {
 		t.Fatal("docker was called")
 	}
 }
@@ -522,7 +522,7 @@ func TestDeckNeedsAUsableTmux(t *testing.T) {
 		!strings.Contains(w.errb.String(), "found 'tmux 3.1c'. Upgrade it with: sudo dnf install tmux, or build a static one with: make -C") {
 		t.Fatalf("old tmux: %d %q", got, w.errb.String())
 	}
-	if w.dockerCalledBeyondFirstRunProbes() {
+	if w.hasCall("docker") {
 		t.Fatal("docker was called")
 	}
 	w.errb.Reset()

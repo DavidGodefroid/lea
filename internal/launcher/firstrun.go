@@ -25,35 +25,66 @@ func (l *Launcher) loxCheck() error {
 	return nil
 }
 
-// firstRun makes lea initialise itself: with no claude.json, no projects directory or a missing
-// image, it checks Docker, checks the working directory when it must become the projects
-// directory, then runs `lea init --first-run` and reads the configuration it wrote.
+// hostOS is the host's operating system, a variable so a test can try both Docker hints.
+var hostOS = runtime.GOOS
+
+// refuseEarly is what refuses without Docker, whatever the machine's state: the deck's claude
+// arguments, a missing tmux (deck or new) and, once a projects directory is set, its guards and
+// a planted symlink. A machine that is not set up gets these answers before its first run.
+func (l *Launcher) refuseEarly(deckArgs []string, tmux bool) error {
+	if err := deckArgsRefused(deckArgs); err != nil {
+		return err
+	}
+	if tmux {
+		if err := l.tmuxCheck(); err != nil {
+			return err
+		}
+	}
+	if p := l.Cfg.Get("LEA_PROJECTS_DIR"); p != "" && isDir(p) {
+		p = physDir(p)
+		if err := l.guardProjects(p); err != nil {
+			return err
+		}
+		return l.checkPaths(p)
+	}
+	return nil
+}
+
+// firstRun makes lea initialise itself. With no claude.json or no projects directory it checks
+// Docker, checks the working directory when it must become the projects directory, then runs
+// `lea init --first-run`. On a machine that is set up, a missing image is only pulled and verified.
+// The configuration is read again afterwards.
 func (l *Launcher) firstRun() error {
-	need := !isRegular(l.Cfg.StateDir()+"/claude.json") || l.Cfg.Get("LEA_PROJECTS_DIR") == ""
+	full := !isRegular(l.Cfg.StateDir()+"/claude.json") || l.Cfg.Get("LEA_PROJECTS_DIR") == ""
+	missing := false
 	for _, k := range []string{"LEA_IMAGE", "LEA_PROXY_IMAGE"} {
-		if need {
+		if full || missing {
 			break
 		}
 		if _, err := l.output(false, "docker", "image", "inspect", "-f", "{{.Id}}", l.Cfg.Get(k)); err != nil {
-			need = true
+			missing = true
 		}
 	}
-	if !need {
+	if !full && !missing {
 		return nil
 	}
 	if _, err := l.output(false, "docker", "version", "--format", "{{.Server.Version}}"); err != nil {
 		hint := "start the Docker engine (sudo systemctl start docker), then run lea again"
-		if runtime.GOOS == "darwin" {
+		if hostOS == "darwin" {
 			hint = "start Docker Desktop (open -a Docker), then run lea again"
 		}
 		return die("Docker does not answer: %s", hint)
 	}
-	if l.Cfg.Get("LEA_PROJECTS_DIR") == "" {
-		if _, err := CheckProjectsDir(l.Cfg, l.Root, l.Cwd, l.Cwd); err != nil {
-			return die("first run: %v: cd into the directory that holds your projects and run lea again, or LEA_PROJECTS_DIR=DIR lea", err)
+	if full {
+		if l.Cfg.Get("LEA_PROJECTS_DIR") == "" {
+			if _, err := CheckProjectsDir(l.Cfg, l.Root, l.Cwd, l.Cwd); err != nil {
+				return die("first run: %v: cd into the directory that holds your projects and run lea again, or LEA_PROJECTS_DIR=DIR lea", err)
+			}
 		}
-	}
-	if err := l.sh("init", "--first-run"); err != nil {
+		if err := l.sh("init", "--first-run"); err != nil {
+			return err
+		}
+	} else if err := l.sh("ensure-images"); err != nil {
 		return err
 	}
 	cfg, err := LoadConfig(l.Cfg.getenv, l.Root, l.Cwd)

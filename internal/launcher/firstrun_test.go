@@ -2,7 +2,6 @@ package launcher
 
 import (
 	"os"
-	"runtime"
 	"strings"
 	"testing"
 )
@@ -62,29 +61,57 @@ func TestFirstRunNotNeededMakesNoCall(t *testing.T) {
 }
 
 func TestFirstRunDockerDownSaysHow(t *testing.T) {
-	w := newWorld(t, repoRoot(t))
-	os.Remove(w.data + "/lea/state/claude.json")
-	w.env["FAKE_DOCKER_RC_VERSION___FORMAT"] = "1"
-	want := "Docker does not answer: start the Docker engine (sudo systemctl start docker), then run lea again"
-	if runtime.GOOS == "darwin" {
-		want = "Docker does not answer: start Docker Desktop (open -a Docker), then run lea again"
-	}
-	err := w.launcher().firstRun()
-	if err == nil || err.Error() != want {
-		t.Fatalf("firstRun() = %v, want %q", err, want)
-	}
-	if w.hasCall("docker [run]") || w.hasCall("lea-sh") {
-		t.Fatalf("calls: %v", w.calls())
+	for os_, want := range map[string]string{
+		"linux":  "Docker does not answer: start the Docker engine (sudo systemctl start docker), then run lea again",
+		"darwin": "Docker does not answer: start Docker Desktop (open -a Docker), then run lea again",
+	} {
+		t.Run(os_, func(t *testing.T) {
+			saved := hostOS
+			hostOS = os_
+			t.Cleanup(func() { hostOS = saved })
+			w := newWorld(t, repoRoot(t))
+			os.Remove(w.data + "/lea/state/claude.json")
+			w.env["FAKE_DOCKER_RC_VERSION___FORMAT"] = "1"
+			err := w.launcher().firstRun()
+			if err == nil || err.Error() != want {
+				t.Fatalf("firstRun() = %v, want %q", err, want)
+			}
+			if w.hasCall("docker [run]") || w.hasCall("lea-sh") {
+				t.Fatalf("calls: %v", w.calls())
+			}
+		})
 	}
 }
 
-// dockerCalledBeyondFirstRunProbes: the world called docker for more than the image checks every
-// command opens with (the tests that say "before docker" mean before anything docker does).
-func (w *world) dockerCalledBeyondFirstRunProbes() bool {
-	for _, c := range withoutFirstRunProbes(w.calls()) {
-		if strings.HasPrefix(c, "docker") {
-			return true
-		}
+// On a machine that is not set up, the cheap refusals answer before any docker call or init.
+func TestCheapRefusalsComeBeforeTheFirstRun(t *testing.T) {
+	for _, name := range []string{"claude args", "no tmux", "planted symlink"} {
+		t.Run(name, func(t *testing.T) {
+			w := newWorld(t, copyRoot(t))
+			fakeLeaSh(w, leaShLog)
+			os.Remove(w.data + "/lea/state/claude.json")
+			w.env["FAKE_DOCKER_RC_IMAGE_INSPECT"] = "1"
+			args, want := []string(nil), ""
+			switch name {
+			case "claude args":
+				args, want = []string{"--resume"}, "lea new -- --resume"
+			case "no tmux":
+				w.env["LEA_TMUX_BIN"] = w.dir + "/none"
+				want = "is not an executable file"
+			default:
+				target := w.dir + "/target"
+				os.MkdirAll(target, 0o755)
+				p := w.data + "/lea/state/go"
+				os.RemoveAll(p)
+				os.Symlink(target, p)
+				args, want = []string{"shell"}, p+" is a symbolic link"
+			}
+			if got := w.launcher().Main(args); got != 1 || !strings.Contains(w.errb.String(), want) {
+				t.Fatalf("status %d: %q", got, w.errb.String())
+			}
+			if w.hasCall("docker") || w.hasCall("lea-sh") {
+				t.Fatalf("calls: %v", w.calls())
+			}
+		})
 	}
-	return false
 }

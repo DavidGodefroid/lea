@@ -1,6 +1,8 @@
 status 1
 -- calls
-
+tmux [-V]
+docker [image] [inspect] [-f] [{{.Id}}] [lea:dev]
+docker [image] [inspect] [-f] [{{.Id}}] [lea-proxy:dev]
 -- lea
 lea: error: LEA_PROJECTS_DIR=$W/nowhere is not a directory
 -- stdout

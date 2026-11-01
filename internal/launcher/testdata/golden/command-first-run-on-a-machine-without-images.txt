@@ -1,5 +1,6 @@
 status 0
 -- calls
+tmux [-V]
 docker [version] [--format] [{{.Server.Version}}]
 lea-sh [init] [--first-run]
 tmux [-V]

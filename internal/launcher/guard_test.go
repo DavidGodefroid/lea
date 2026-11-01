@@ -125,7 +125,7 @@ func TestPlantedSymlinksStopTheSessionBeforeDocker(t *testing.T) {
 			if got := w.launcher().Main([]string{"shell"}); got == 0 || !strings.Contains(w.errb.String(), p+" is a symbolic link") {
 				t.Fatalf("status %d: %q", got, w.errb.String())
 			}
-			if w.dockerCalledBeyondFirstRunProbes() {
+			if w.hasCall("docker") {
 				t.Fatalf("docker was called:\n%s", strings.Join(w.calls(), "\n"))
 			}
 			ents, _ := os.ReadDir(w.dir + "/target")

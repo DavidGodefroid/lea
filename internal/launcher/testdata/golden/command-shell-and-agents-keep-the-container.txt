@@ -1,5 +1,7 @@
 status 0
 -- calls
+docker [image] [inspect] [-f] [{{.Id}}] [lea:dev]
+docker [image] [inspect] [-f] [{{.Id}}] [lea-proxy:dev]
 core [agents]
 core [version]
 docker [network] [inspect] [lea-egress]
