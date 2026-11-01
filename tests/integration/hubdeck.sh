@@ -14,7 +14,7 @@
 set -eu
 root=$(cd "$(dirname "$0")/../.." && pwd -P)
 LOCKHUB_VERSION=${LOCKHUB_VERSION:-0.3.0}
-LOCKHTTP_VERSION=${LOCKHTTP_VERSION:-0.5.1}
+LOCKHTTP_VERSION=${LOCKHTTP_VERSION:-0.7.0}
 case $(uname -m) in x86_64) arch=amd64 ;; aarch64) arch=arm64 ;; *) echo "hubdeck: no release for $(uname -m)" >&2; exit 1 ;; esac
 id=lea-hubdeck-$$
 work=$(mktemp -d)

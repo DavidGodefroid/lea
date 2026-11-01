@@ -107,6 +107,16 @@ launcher() {
   if calls | grep -q 'sudo\|install'; then false; fi
 }
 
+@test "lea init --lockfile names lockfile's profile add with --profile NAME, and runs nothing" {
+  lea__lockhost_set lockfile 1
+  launcher lockfile
+  LEA_INIT_NONINTERACTIVE=1 run lea__init_lockhost lockfile </dev/null
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"lockfile profile add --profile NAME --source s3|sftp|local"* ]]
+  [[ "$output" != *"profile add NAME"* ]]
+  [ -z "$(calls)" ]
+}
+
 @test "lea init with lockmq offers the profile wizard as you, in lea's image with only the projects dir, then the console hint" {
   lea__init_tty() { true; }
   lea__lockhost_set lockmq 1
@@ -115,20 +125,20 @@ launcher() {
   [[ "$output" == *"lockmq has no broker profile for $P yet"* ]]
   [[ "$output" == *"lockmq console: it runs under lox up only"* ]]
   run calls
-  [ "$output" = "docker [run] [-it] [--rm] [--network] [none] [--user] [$(id -u):$(id -g)] [-e] [HOME=/tmp] [-v] [$P:$P] [-w] [$P] [--entrypoint] [lockmq] [$LEA_IMAGE] [setup] [--project] [$P]" ]
+  [ "$output" = "docker [run] [-it] [--rm] [--network] [none] [--user] [$(id -u):$(id -g)] [-e] [HOME=/tmp] [-v] [$P:$P] [-w] [$P] [--entrypoint] [lockmq] [$LEA_IMAGE] [profile] [add] [--project] [$P]" ]
 }
 
-@test "lea init never runs lockmq setup through a symlink the agents planted" {
+@test "lea init never runs lockmq profile add through a symlink the agents planted" {
   lea__init_tty() { true; }
   lea__lockhost_set lockmq 1
   launcher lockmq
   ln -s "$BATS_TEST_TMPDIR/elsewhere" "$P/.lockmq"
   run lea__init_lockhost lockmq <<<"y"
-  [[ "$output" == *".lockmq or its config.toml is a symbolic link: lockmq setup not offered"* ]]
+  [[ "$output" == *".lockmq or its config.toml is a symbolic link: lockmq profile add not offered"* ]]
   [ -z "$(calls)" ]
   rm "$P/.lockmq"; mkdir "$P/.lockmq"; ln -s "$BATS_TEST_TMPDIR/elsewhere.toml" "$P/.lockmq/config.toml"
   run lea__init_lockhost lockmq <<<"y"
-  [[ "$output" == *"symbolic link: lockmq setup not offered"* ]]
+  [[ "$output" == *"symbolic link: lockmq profile add not offered"* ]]
   [ -z "$(calls)" ]
 }
 

@@ -59,16 +59,16 @@ setup() {
 }
 
 @test "locksql: its image and lox up's lock are checked with LEA_LOCKSQL=1, never with 0" {
-  export FAKE_DOCKER_RC_IMAGE_INSPECT_AT_LOCKSQL_0_11_5=1 FAKE_DOCKER_RC_VOLUME_INSPECT=1
+  export FAKE_DOCKER_RC_IMAGE_INSPECT_AT_LOCKSQL_0_13_0=1 FAKE_DOCKER_RC_VOLUME_INSPECT=1
   run lea_doctor
-  [[ "$output" == *"warn  locksql image: locksql:0.11.5 absent: run lea init (or set LEA_LOCKSQL=0)"* ]]
+  [[ "$output" == *"warn  locksql image: locksql:0.13.0 absent: run lea init (or set LEA_LOCKSQL=0)"* ]]
   [[ "$output" == *"warn  locksql lock: no socket volume of a locksql lock of lox up for $LEA_PROJECTS_DIR"*"lox add locksql NAME"*"run \`lox up\`"* ]]
   [[ "$output" != *"locksql-run"* ]]
   grep -qF "docker [volume] [ls] [--filter] [label=dev.lockfamily.role=socket] [--filter] [label=dev.lockfamily.type=locksql] [--filter] [label=dev.lockfamily.workspace=$LEA_PROJECTS_DIR] [--format] [{{.Name}}]" "$FAKE_LOG"
-  unset FAKE_DOCKER_RC_IMAGE_INSPECT_AT_LOCKSQL_0_11_5
+  unset FAKE_DOCKER_RC_IMAGE_INSPECT_AT_LOCKSQL_0_13_0
   export FAKE_DOCKER_OUT_VOLUME_LS=lockfamily-1a2b3c4d_crm-run
   run lea_doctor
-  [[ "$output" == *"ok    locksql image locksql:0.11.5"* ]]
+  [[ "$output" == *"ok    locksql image locksql:0.13.0"* ]]
   [[ "$output" == *"ok    locksql lock of lox up (socket volume lockfamily-1a2b3c4d_crm-run)"* ]]
   export FAKE_DOCKER_OUT_VOLUME_LS='lockfamily-1a2b3c4d_a-run
 lockfamily-1a2b3c4d_b-run'

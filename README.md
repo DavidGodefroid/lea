@@ -334,8 +334,9 @@ it in the lock's `allowed_uids` (`allowed_uids: [<your uid>]` in `.lockfamily/lo
 `lox up` reviews it with you); without it the agents get no console. You set it; no agent can.
 lea installs nothing for them; their launchers update themselves (`lockmq update`,
 `lockfile update`). `lea init` points to the launcher when it is missing, then runs lockmq's
-profile wizard (`lockmq setup`, never a password). lockfile below v0.1.1 is refused (a plugin
-sandbox escape).
+profile wizard (`lockmq profile add`, never a password); for lockfile it names `lockfile profile
+add --profile NAME --source ...`, which writes the profile `lox up` reviews. lockfile below
+v0.1.1 is refused (a plugin sandbox escape).
 
 lea never starts, sees or drives these consoles. Its containers get only the socket volume of
 `lox up`'s lock of the tool (`.lockfamily/up.json`) on `/run/<tool>`, read-only, and the tool's
@@ -356,10 +357,11 @@ deck, a paired phone), about the rest.
 It is **off** by default (`LEA_LOCKHTTP=0`): lea then behaves as before.
 
 LockHTTP runs in Docker only (`docs/docker.md` in the lockhttp repository). To turn it on,
-install the launcher of the lockhttp release lea pins, v0.5.1 (`LOCKHTTP_VERSION=v0.5.1 sh
+install the launcher of the lockhttp release lea pins, v0.7.0 (`LOCKHTTP_VERSION=v0.7.0 sh
 install.sh` with lockhttp's `scripts/install.sh`, which checks the release's signatures and
 pins its image by digest; `lea doctor` warns about an older one), add a lockhttp lock to your
-projects directory (`lox add lockhttp <name>`; its policy in `.lockhttp/config.toml`) and run
+projects directory (`lox add lockhttp <name>`; its policy in `.lockhttp/config.toml`, which
+`lockhttp profile add --trusted "<your LEA_EGRESS_ALLOW>"` writes) and run
 `lox up`, which runs the hub and the lockhttp console. Then set
 `LEA_LOCKHTTP=1` in `~/.config/lea/lea.conf` and restart lea (`lea stop --all`, then `lea`);
 `lea doctor` checks each step. The gate runs hub-attached only: without a trusted
