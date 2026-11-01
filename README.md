@@ -412,9 +412,9 @@ LockHTTP runs in Docker only (`docs/docker.md` in the lockhttp repository). To t
 install the launcher of the lockhttp release lea pins, v0.7.0 (`LOCKHTTP_VERSION=v0.7.0 sh
 install.sh` with lockhttp's `scripts/install.sh`, which checks the release's signatures and
 pins its image by digest; `lea doctor` warns about an older one), add a lockhttp lock to your
-projects directory (`lox add lockhttp <name>`; its policy in `.lockhttp/config.toml`, which
-`lockhttp profile add --trusted "<your LEA_EGRESS_ALLOW>"` writes) and run
-`lox up`, which runs the hub and the lockhttp console. Then set
+projects directory (`lox add lockhttp <name>`, which applies at once and starts the hub and the lockhttp
+console; its policy in `.lockhttp/config.toml`, which
+`lockhttp profile add --trusted "<your LEA_EGRESS_ALLOW>"` writes). Then set
 `LEA_LOCKHTTP=1` in `~/.config/lea/lea.conf` and restart lea (`lea stop --all`, then `lea`);
 `lea doctor` checks each step. The gate runs hub-attached only: without a trusted
 `.lockfamily/up.json` naming a lockhttp lock, lea does not start (it says to run `lox up`). Nothing else on the host: no account, group or socket directory.
