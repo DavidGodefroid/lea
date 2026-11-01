@@ -120,7 +120,7 @@ func TestHubCardView(t *testing.T) {
 
 // A ticket longer than the folded card (more lines, or a line wider than the deck) is approved only
 // once v showed all of it; nothing of it is cut, it wraps. One too long for the deck, one the
-// daemon had to cut, or a production one with no name to type, is refused: lock approve answers
+// daemon had to cut, or a production one with no name to type, is refused: lox approve answers
 // it; d still denies.
 func TestHubTicketIsReadWholeBeforeApproval(t *testing.T) {
 	long := ticketed("b", false)
@@ -154,7 +154,7 @@ func TestHubTicketIsReadWholeBeforeApproval(t *testing.T) {
 		}
 		m := readable(loaded(t, &fakeAPI{}, "lea-a/b", a))
 		m, _ = step(t, m, key("v"))
-		if m2, cmd := step(t, m, key("a")); cmd != nil || !strings.Contains(m2.status, "lock approve") {
+		if m2, cmd := step(t, m, key("a")); cmd != nil || !strings.Contains(m2.status, "lox approve") {
 			t.Fatalf("%s: approved from the deck, status %q", name, m2.status)
 		}
 		if _, cmd := step(t, m, key("d")); cmd == nil {
@@ -180,10 +180,10 @@ func TestHubTicketTallerThanTheDeckGoesToLockApprove(t *testing.T) {
 	if strings.Contains(m.View(), "DROP hidden") {
 		t.Fatalf("the test's card fits:\n%s", m.View())
 	}
-	if !strings.Contains(m.status, "lock approve") {
+	if !strings.Contains(m.status, "lox approve") {
 		t.Fatalf("status %q", m.status)
 	}
-	if m, cmd := step(t, m, key("a")); cmd != nil || !strings.Contains(m.status, "lock approve") {
+	if m, cmd := step(t, m, key("a")); cmd != nil || !strings.Contains(m.status, "lox approve") {
 		t.Fatalf("approved a ticket not all on screen: status %q", m.status)
 	}
 	// Tall enough: v shows it all, a approves.
@@ -247,7 +247,7 @@ func TestHubRevealShowsTheClearValuesUntilTheCardChanges(t *testing.T) {
 		}
 	}
 	// The daemon's refusal is one line in the status, nothing shows.
-	api := &fakeAPI{err: errors.New("no clear values: the lock does not pin the deck's facade key (run lock up)")}
+	api := &fakeAPI{err: errors.New("no clear values: the lock does not pin the deck's facade key (run lox up)")}
 	m := readable(loaded(t, api, "lea-a/b", ticketed("b", false)))
 	m, cmd := step(t, m, key("o"))
 	m, _ = step(t, m, cmd())
@@ -360,7 +360,7 @@ func TestHubRenewNeedsTheTicketReadLikeAnApproval(t *testing.T) {
 		api := &fakeAPI{}
 		m := wide(t, readable(loaded(t, api, "lea-a/b", a)))
 		m, _ = step(t, m, key("v"))
-		if m2, cmd := step(t, m, key("r")); cmd != nil || !strings.Contains(m2.status, "lock approve") {
+		if m2, cmd := step(t, m, key("r")); cmd != nil || !strings.Contains(m2.status, "lox approve") {
 			t.Fatalf("%s: renewed from the deck, status %q", name, m2.status)
 		}
 	}
@@ -369,7 +369,7 @@ func TestHubRenewNeedsTheTicketReadLikeAnApproval(t *testing.T) {
 	api := &fakeAPI{}
 	m := readable(loaded(t, api, "lea-a/b", tall))
 	m, _ = step(t, m, tea.WindowSizeMsg{Width: 60, Height: 8})
-	if m2, cmd := step(t, m, key("r")); cmd != nil || !strings.Contains(m2.status, "lock approve") {
+	if m2, cmd := step(t, m, key("r")); cmd != nil || !strings.Contains(m2.status, "lox approve") {
 		t.Fatalf("taller than the deck: renewed, status %q", m2.status)
 	}
 	// Long: v first.

@@ -391,7 +391,7 @@ agents' Claude Code (WebSearch and WebFetch stay).
 directory (its `.lockfamily/up.json`), and the gate asks the Lock Family hub about every held
 request. It mounts that lock's socket volume and gate volume (`--home`), and reads
 lea's read-only copies (in `/run/lockfamily`) of the hub's key; of the host facades' keys, for a
-lock lock up lets reveal (`reveal: true`: `--facade-keys-file`, so that a reveal, Ctrl-O, is
+lock lox up lets reveal (`reveal: true`: `--facade-keys-file`, so that a reveal, Ctrl-O, is
 sealed only to them); and of the paired phones, for a lock that pins them (`devices: true`:
 `/run/lockfamily/devices.json`, with `--require-device` and `--seal-clear` as `hub.mobile` says;
 without it, a phone's decision is refused). Only the proxy joins the hub's network, whose
@@ -847,7 +847,7 @@ so. Changes apply after `lea init` (endpoints, keys, images, locksql) or `lea st
   volume for this projects directory (compose project, `dev.lockfamily.role=socket`, instance and
   workspace labels): never a lock's home or the hub's network. lea ignores an `up.json` that is a
   link, that others than you can write, or that names another projects directory. A tool that
-  `lock up` runs but lea cannot use (two locks of it, a volume docker does not confirm) gets no
+  `lox up` runs but lea cannot use (two locks of it, a volume docker does not confirm) gets no
   socket at all, never the fixed one of another console; a warning says so.
 - Egress goes through a proxy: HTTPS (and plain HTTP) to an allowlist of public domains (plus
   `LEA_INTERNAL_HOSTS`), SSH only to `LEA_GIT_SSH`. Private and link-local addresses are refused.

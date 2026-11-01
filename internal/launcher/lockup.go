@@ -16,15 +16,15 @@ import (
 	"syscall"
 )
 
-// Locks started by `lock up` (lockhub's docs/lock-up.md): lock up runs each lock's console in its
+// Locks started by `lox up` (lockhub's docs/lock-up.md): lox up runs each lock's console in its
 // own compose service, with its socket in the volume <project>_<instance>-run, and says so in
 // <proj>/.lockfamily/up.json, which the agents only read (lockfamilyDir). For a lock tool that is
 // on, lea mounts that volume on /run/<tool> (the consoles run hub-attached only: there is no other
 // socket to mount), once docker confirms it is that lock's socket volume (compose's
-// project label and lock up's role label): never a lock's home (its private key) or another
+// project label and lox up's role label): never a lock's home (its private key) or another
 // volume, whatever up.json says. One instance per tool: with two, lea leaves the tool out.
 
-// lockUpFile is lock up's state in the Lock Family's directory.
+// lockUpFile is lox up's state in the Lock Family's directory.
 const lockUpFile = "up.json"
 
 type lockUpState struct {
@@ -34,12 +34,12 @@ type lockUpState struct {
 	Locks     map[string]lockUpLock `json:"locks"`
 	// The hub, for lea's LockHTTP gate in hub mode (lockhubgate.go): its network (only lea's proxy
 	// joins it), its URL there and its public key; the host facades' keys the locks pin (a reveal
-	// is sealed only to them); the approval devices lock up pinned (none paired: absent).
+	// is sealed only to them); the approval devices lox up pinned (none paired: absent).
 	HubNetwork string          `json:"hub_network"`
 	HubURL     string          `json:"hub_url"`
 	HubKey     string          `json:"hub_key"`
 	FacadeKeys json.RawMessage `json:"facade_keys,omitempty"`
-	// LockHTTPGate is the version of what lock up says of a lockhttp lock's gate (1: the reveal,
+	// LockHTTPGate is the version of what lox up says of a lockhttp lock's gate (1: the reveal,
 	// devices, require_device and seal_clear of each lock, the paired devices): lea's gate asks
 	// the hub only then.
 	LockHTTPGate int             `json:"lockhttp_gate,omitempty"`
@@ -55,7 +55,7 @@ type lockUpLock struct {
 	Profile string `json:"profile,omitempty"`
 	// GateHome is a lockhttp lock's gate volume (role gate-home), lea's gate's --home.
 	GateHome string `json:"gate_home_volume,omitempty"`
-	// Reveal: lock up lets the lock reveal a ticket's clear values (locks.<name>.reveal): the gate
+	// Reveal: lox up lets the lock reveal a ticket's clear values (locks.<name>.reveal): the gate
 	// pins the facade keys (--facade-keys-file, lockhttp v0.5.0).
 	Reveal bool `json:"reveal,omitempty"`
 	// DevicesOn: the lock pins the paired devices (locks.<name>.devices in lockfamily.yaml);
@@ -70,7 +70,7 @@ var (
 	lockUpInstance = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,62}$`)
 )
 
-// readLockUp is lock up's state for the projects directory proj (its Lock Family directory lf),
+// readLockUp is lox up's state for the projects directory proj (its Lock Family directory lf),
 // and its path; nil (lea says why) when there is none lea can trust: a link, a file not the user's
 // or others may write, not version 1, or of another projects directory.
 func (l *Launcher) readLockUp(proj, lf string) (*lockUpState, string) {
@@ -94,10 +94,10 @@ func (l *Launcher) readLockUp(proj, lf string) (*lockUpState, string) {
 	}
 	var s lockUpState
 	if err := json.NewDecoder(io.LimitReader(f, 1<<20)).Decode(&s); err != nil || s.Version != 1 || !lockUpProject.MatchString(s.Project) {
-		l.logf("warning: %s: not lock up's state (version 1): lea ignores it", p)
+		l.logf("warning: %s: not lox up's state (version 1): lea ignores it", p)
 		return nil, p
 	}
-	// lock up's compose project of this very projects directory (lockhub's family.Project).
+	// lox up's compose project of this very projects directory (lockhub's family.Project).
 	h := sha256.Sum256([]byte(proj))
 	if want := "lockfamily-" + hex.EncodeToString(h[:4]); s.Project != want || s.Workspace != proj {
 		l.logf("warning: %s: project %s of %q, not this projects directory's (%s of %q): lea ignores it", p, s.Project, s.Workspace, want, proj)
@@ -106,8 +106,8 @@ func (l *Launcher) readLockUp(proj, lf string) (*lockUpState, string) {
 	return &s, p
 }
 
-// lockUpSockets are the socket volumes lock up runs for the projects directory proj (its Lock
-// Family directory lf), by tool, for the tools on reports on; nil without lock up. A tool lock up
+// lockUpSockets are the socket volumes lox up runs for the projects directory proj (its Lock
+// Family directory lf), by tool, for the tools on reports on; nil without lox up. A tool lox up
 // runs maps to "" when lea cannot use its lock (two instances, a volume docker does not confirm):
 // the agents then get no socket of that tool, never the fixed one of another console.
 func (l *Launcher) lockUpSockets(proj, lf string, on func(tool string) bool) map[string]string {
@@ -141,7 +141,7 @@ func (l *Launcher) lockUpSockets(proj, lf string, on func(tool string) bool) map
 		out[typ] = ""
 		sort.Strings(names)
 		if len(names) > 1 {
-			l.logf("warning: lock up runs %d %s locks: lea's agents reach one per tool, so none of them", len(names), typ)
+			l.logf("warning: lox up runs %d %s locks: lea's agents reach one per tool, so none of them", len(names), typ)
 			continue
 		}
 		name := names[0]
@@ -150,7 +150,7 @@ func (l *Launcher) lockUpSockets(proj, lf string, on func(tool string) bool) map
 		}
 		vol := s.Project + "_" + name + "-run"
 		if s.Locks[name].Socket != vol {
-			l.logf("warning: %s: lock %s: socket volume %q is not lock up's %q: left out", p, name, s.Locks[name].Socket, vol)
+			l.logf("warning: %s: lock %s: socket volume %q is not lox up's %q: left out", p, name, s.Locks[name].Socket, vol)
 			continue
 		}
 		if g, ok := lockGID[typ]; ok && s.Locks[name].GID != "" && s.Locks[name].GID != g {
@@ -170,7 +170,7 @@ func (l *Launcher) lockUpSockets(proj, lf string, on func(tool string) bool) map
 var lockGID = map[string]string{"locksql": "10000", "lockmq": "10010", "lockfile": "10030"}
 
 // lockUpUntrusted is why up.json (p, described by fi, in the Lock Family's directory lf) cannot be
-// lock up's: not a regular file, or the file or its directory not the user's or writable by others.
+// lox up's: not a regular file, or the file or its directory not the user's or writable by others.
 func lockUpUntrusted(lf, p string, fi os.FileInfo) string {
 	if !fi.Mode().IsRegular() {
 		return "not a regular file"
@@ -190,12 +190,12 @@ func lockUpUntrusted(lf, p string, fi os.FileInfo) string {
 	return ""
 }
 
-// lockUpVolumeWrong is why vol is not the socket volume lock up made for the lock name of type typ
+// lockUpVolumeWrong is why vol is not the socket volume lox up made for the lock name of type typ
 // in compose project project, or "".
 func (l *Launcher) lockUpVolumeWrong(vol, project, proj, name, typ string) string {
 	o, err := l.output(false, "docker", "volume", "inspect", "--format", "{{json .Labels}}", vol)
 	if err != nil {
-		return "no volume " + vol + " (run lock up)"
+		return "no volume " + vol + " (run lox up)"
 	}
 	var lb map[string]string
 	if json.Unmarshal([]byte(o), &lb) != nil {
@@ -205,7 +205,7 @@ func (l *Launcher) lockUpVolumeWrong(vol, project, proj, name, typ string) strin
 		"dev.lockfamily.role": "socket", "dev.lockfamily.instance": name, "dev.lockfamily.type": typ,
 		"dev.lockfamily.workspace": proj} {
 		if lb[k] != v {
-			return "volume " + vol + " is not lock up's socket volume (label " + k + ")"
+			return "volume " + vol + " is not lox up's socket volume (label " + k + ")"
 		}
 	}
 	return l.lockUpServersWrong(vol, project)
@@ -249,7 +249,7 @@ func (l *Launcher) lockUpServersWrong(vol, project string) string {
 	return ""
 }
 
-// lockUpMount is the agents' mount of a lock up socket volume: read-only (the console made the
+// lockUpMount is the agents' mount of a lox up socket volume: read-only (the console made the
 // directory; connecting needs no write).
 func lockUpMount(vol, tool string) string {
 	return "type=volume,src=" + vol + ",dst=/run/" + tool + ",readonly"

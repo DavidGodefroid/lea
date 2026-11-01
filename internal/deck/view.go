@@ -782,7 +782,7 @@ func (m Model) clearLines(cl HubClear, wide int, row func(lipgloss.Style, string
 	}
 	end := rule + " end of clear values (o hides them) " + rule
 	if cl.Truncated {
-		end = rule + " cut: lock approve shows them all " + rule
+		end = rule + " cut: lox approve shows them all " + rule
 	}
 	return append(out, row(mark, end))
 }

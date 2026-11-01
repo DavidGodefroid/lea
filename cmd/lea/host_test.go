@@ -706,7 +706,7 @@ func TestLockSendsTheRequest(t *testing.T) {
 	}
 }
 
-// The deck's facade keys are where lock up writes them: $XDG_STATE_HOME/lockfamily/facades, or
+// The deck's facade keys are where lox up writes them: $XDG_STATE_HOME/lockfamily/facades, or
 // ~/.local/state's; LEA_HUB_FACADE_KEYS overrides.
 func TestHubFacadeKeys(t *testing.T) {
 	for _, tc := range []struct {

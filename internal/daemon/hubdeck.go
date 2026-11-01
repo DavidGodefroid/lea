@@ -29,7 +29,7 @@ import (
 // (a long poll), shows each one on the agent it is for, and answers it there with the user's
 // approval or denial (facade "deck"). A ticket is for the agent whose own wait names it (hub_waits,
 // verified), else for the agent its requester claims (the requester is the agent's own words:
-// unverified). A ticket no agent of lea claims shows nowhere: `lock approve` answers it; nor does
+// unverified). A ticket no agent of lea claims shows nowhere: `lox approve` answers it; nor does
 // one lea stopped waiting on (its agent forgotten, the hub switched off: hub_abandoned) until an
 // agent waits on it again. Each Lock's counter (#153) follows the queue.
 
@@ -141,7 +141,7 @@ func (f SocketFacade) Queue(ctx context.Context, since uint64, wait int) ([]HubT
 			break
 		}
 		if !slices.Contains(it.Facades, "deck") {
-			continue // the deck may not ask again for it: lock approve, or nothing
+			continue // the deck may not ask again for it: lox approve, or nothing
 		}
 		if t, ok := it.ticket(); ok {
 			t.Expired = true
@@ -162,7 +162,7 @@ type queueItem struct {
 }
 
 // ticket reads the fields of the item's signed ticket the deck uses; false: not a ticket lea can
-// name (`lock approve` answers it).
+// name (`lox approve` answers it).
 func (it queueItem) ticket() (HubTicket, bool) {
 	var tk struct {
 		ID     string `json:"id"`
@@ -231,7 +231,7 @@ func (it queueItem) ticket() (HubTicket, bool) {
 var (
 	ErrHubDecided   = errors.New("this ticket was decided already")
 	ErrHubRetype    = errors.New("the typed name does not match: approving this production ticket needs it typed exactly")
-	ErrHubNotRouted = errors.New("this ticket is not routed to the deck: answer it with lock approve")
+	ErrHubNotRouted = errors.New("this ticket is not routed to the deck: answer it with lox approve")
 )
 
 func (f SocketFacade) Decide(ctx context.Context, instance, id string, v HubVerdict) error {

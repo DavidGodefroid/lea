@@ -25,9 +25,9 @@ import (
 
 // Ctrl-O and one-click re-approval from the deck (lockhub#29, lockkit v0.5.0). A reveal shows the
 // clear values of a pending ticket: the daemon makes an ephemeral X25519 key signed by the deck's
-// facade key (which the Locks pin, written by lock up), the hub carries it to the Lock, the Lock
+// facade key (which the Locks pin, written by lox up), the hub carries it to the Lock, the Lock
 // seals the clear screen to it and signs the answer, and the daemon opens it under the Lock key
-// lock up pinned. The ephemeral key does not outlive the call; the clear screen goes to the deck
+// lox up pinned. The ephemeral key does not outlive the call; the clear screen goes to the deck
 // that asked, as the method's answer, and nowhere else: not lea.db, not a log, not the bus, not
 // a snapshot. A renewal asks the Lock again for an expired ticket; the hub approves it at once
 // when nothing changed (not for production), otherwise the renewal waits in the queue.
@@ -72,7 +72,7 @@ var hubCode = regexp.MustCompile(`^[a-z][a-z_]{0,31}$`)
 
 // lockAnswers are the human words of a Lock's answer codes (lockkit hubclient Code*).
 var lockAnswers = map[string]string{
-	"facade_refused":  "the lock does not pin the deck's facade key (run lock up)",
+	"facade_refused":  "the lock does not pin the deck's facade key (run lox up)",
 	"not_pending":     "the ticket is no longer pending at the lock: nothing to reveal",
 	"no_clear_screen": "the lock kept no clear screen for this ticket",
 	"not_renewable":   "the lock cannot ask again for this ticket (not expired there, or gone)",
@@ -85,7 +85,7 @@ var lockAnswers = map[string]string{
 // hubKinds are the human words of the hub's error kinds on these routes.
 var hubKinds = map[string]string{
 	"timeout":          "the lock did not answer in time (is it running?)",
-	"not_routed":       "this ticket is not routed to the deck: use lock approve",
+	"not_routed":       "this ticket is not routed to the deck: use lox approve",
 	"foreign_key":      "the hub refused the deck's reveal key: it is for another ticket or lock",
 	"expired":          "the ticket expired",
 	"not_found":        "the hub no longer knows this ticket",
@@ -190,7 +190,7 @@ func (f SocketFacade) Renew(ctx context.Context, instance, id string) (HubRenewe
 	return out, err
 }
 
-// SetHubKeys sets the directory of the host facades' keys lock up writes ($XDG_STATE_HOME/
+// SetHubKeys sets the directory of the host facades' keys lox up writes ($XDG_STATE_HOME/
 // lockfamily/facades): the deck's key (deck.key) and the pinned lock keys (locks.json). "": no
 // reveal.
 func (d *Daemon) SetHubKeys(dir string) {
@@ -266,7 +266,7 @@ func ownedBy(path string, fi os.FileInfo) error {
 	return nil
 }
 
-// loadFacadeKey reads a facade's Ed25519 key (PKCS#8 PEM) as lock up writes it, 0600: a key any
+// loadFacadeKey reads a facade's Ed25519 key (PKCS#8 PEM) as lox up writes it, 0600: a key any
 // other user could read is refused.
 func loadFacadeKey(path string) (ed25519.PrivateKey, error) {
 	b, err := privateFile(path, 0o077)
@@ -288,7 +288,7 @@ func loadFacadeKey(path string) (ed25519.PrivateKey, error) {
 	return priv, nil
 }
 
-// loadLockKeys reads the lock keys lock up pinned ({"locks": {"<instance>": {"public_key":
+// loadLockKeys reads the lock keys lox up pinned ({"locks": {"<instance>": {"public_key":
 // "<base64>"}}}), by instance. A file another user could change is refused.
 func loadLockKeys(path string) (map[string]ed25519.PublicKey, error) {
 	b, err := privateFile(path, 0o022)
@@ -343,19 +343,19 @@ func (d *Daemon) hubReveal(ctx context.Context, params json.RawMessage) (HubClea
 		return HubClear{}, err
 	}
 	if dir == "" {
-		return HubClear{}, errors.New("no facade keys: clear values cannot be shown here (run lock up)")
+		return HubClear{}, errors.New("no facade keys: clear values cannot be shown here (run lox up)")
 	}
 	fk, err := loadFacadeKey(filepath.Join(dir, ticket.FacadeDeck+".key"))
 	if err != nil {
-		return HubClear{}, fmt.Errorf("the deck's facade key (run lock up): %w", err)
+		return HubClear{}, fmt.Errorf("the deck's facade key (run lox up): %w", err)
 	}
 	locks, err := loadLockKeys(filepath.Join(dir, "locks.json"))
 	if err != nil {
-		return HubClear{}, fmt.Errorf("the pinned lock keys (run lock up): %w", err)
+		return HubClear{}, fmt.Errorf("the pinned lock keys (run lox up): %w", err)
 	}
 	lockPub := locks[e.t.Instance]
 	if lockPub == nil || ticket.KeyID(lockPub) != e.t.KeyID {
-		return HubClear{}, errors.New("this lock's key is not the one lock up pinned: clear values cannot be shown")
+		return HubClear{}, errors.New("this lock's key is not the one lox up pinned: clear values cannot be shown")
 	}
 	t := &ticket.Ticket{ID: e.t.ID, Source: ticket.Source{Lock: e.t.Lock, Instance: e.t.Instance, KeyID: e.t.KeyID}}
 	rk, priv, err := ticket.NewRevealKey(fk, ticket.FacadeDeck, t, time.Now())

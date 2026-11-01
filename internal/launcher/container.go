@@ -715,7 +715,7 @@ func locksqlDir(proj string) (string, error) {
 // when missing. The agents get it read-only, so none rewrites what the locks and the hub trust
 // (the hub plan's I11); a link or a file is refused, as for locksqlDir.
 func lockfamilyDir(proj string) (string, error) {
-	return roDir(proj+"/.lockfamily", "lock up writes there, on the host only")
+	return roDir(proj+"/.lockfamily", "lox up writes there, on the host only")
 }
 
 // roDir makes d when missing and refuses a d that is not a directory of its own; why says who

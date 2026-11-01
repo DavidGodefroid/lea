@@ -159,7 +159,7 @@ lea__doctor_hub() {
     lea__warn "approval hub" "LEA_HUB=1 but no facade socket to read (set LEA_HUB_SOCKET, or XDG_RUNTIME_DIR): agents are not suspended on a Lock call that waits for the hub (LEA_HUB=0 to silence this)"
   elif [ -S "$_dhs" ]; then lea__ok "approval hub facade $_dhs"
   else
-    lea__warn "approval hub" "LEA_HUB=1 but no lockhub facade at $_dhs (lock up starts it): agents are not suspended on a Lock call that waits for the hub (LEA_HUB=0 to silence this)"
+    lea__warn "approval hub" "LEA_HUB=1 but no lockhub facade at $_dhs (lox up starts it): agents are not suspended on a Lock call that waits for the hub (LEA_HUB=0 to silence this)"
   fi
 }
 

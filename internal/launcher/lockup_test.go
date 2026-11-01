@@ -10,7 +10,7 @@ import (
 	"testing"
 )
 
-// upProject is lock up's compose project of w's projects directory (lockhub's family.Project).
+// upProject is lox up's compose project of w's projects directory (lockhub's family.Project).
 func upProjectOf(w *world) string {
 	h := sha256.Sum256([]byte(w.proj))
 	return "lockfamily-" + hex.EncodeToString(h[:4])
@@ -28,7 +28,7 @@ func writeUp(t *testing.T, w *world, locks string) {
 	}
 }
 
-// labels makes the fake docker answer lock up's labels for the socket volume of name (type typ).
+// labels makes the fake docker answer lox up's labels for the socket volume of name (type typ).
 func labels(w *world, name, typ, role string) {
 	labelsWith(w, name, typ, role, upProjectOf(w), name, w.proj)
 }
@@ -63,7 +63,7 @@ func lockUp(name, typ string) string {
 	return `"` + name + `":{"type":"` + typ + `","socket_volume":"PROJECT_` + name + `-run"}`
 }
 
-// Locks of lock up: their socket volumes replace the fixed ones, for the tools that are on.
+// Locks of lox up: their socket volumes replace the fixed ones, for the tools that are on.
 func TestLockUpSocketVolumes(t *testing.T) {
 	w := newWorld(t, repoRoot(t))
 	writeUserConf(t, w, "LEA_LOCKSQL=1\nLEA_LOCKMQ=1\nLEA_LOCKFILE=1\n")
@@ -73,7 +73,7 @@ func TestLockUpSocketVolumes(t *testing.T) {
 	labels(w, "docs", "lockfile", "socket")
 	args := lockArgs(t, w)
 	// Read-only: the console made the directory; connecting writes nothing. No stale-ids check of
-	// lockfile's (lock up's console made the volume with lockfile's ids).
+	// lockfile's (lox up's console made the volume with lockfile's ids).
 	for _, m := range []string{"type=volume,src=" + upProjectOf(w) + "_crm-run,dst=/run/locksql,readonly",
 		"type=volume,src=" + upProjectOf(w) + "_events-run,dst=/run/lockmq,readonly",
 		"type=volume,src=" + upProjectOf(w) + "_docs-run,dst=/run/lockfile,readonly"} {
@@ -92,7 +92,7 @@ func TestLockUpSocketVolumes(t *testing.T) {
 	}
 }
 
-// Whatever up.json says, only a volume docker labels as lock up's socket volume of that lock is
+// Whatever up.json says, only a volume docker labels as lox up's socket volume of that lock is
 // mounted: not a lock's home, not a volume of another project or instance.
 func TestLockUpRefusesOtherVolumes(t *testing.T) {
 	for name, c := range map[string]struct{ up, role string }{
@@ -124,7 +124,7 @@ func TestLockUpRefusesOtherVolumes(t *testing.T) {
 					t.Errorf("mounted %s", a)
 				}
 			}
-			// lock up runs the tool: the agents get none of its sockets, not another console's.
+			// lox up runs the tool: the agents get none of its sockets, not another console's.
 			for _, a := range args {
 				if strings.Contains(a, "locksql-run") || a == "LEA_LOCKSQL=1" {
 					t.Errorf("fixed locksql socket mounted instead: %s", a)
@@ -159,7 +159,7 @@ func TestLockUpTwoOfATool(t *testing.T) {
 	}
 }
 
-// A tool that is off stays off, lock up or not.
+// A tool that is off stays off, lox up or not.
 func TestLockUpToolOff(t *testing.T) {
 	w := newWorld(t, repoRoot(t))
 	writeUp(t, w, lockUp("events", "lockmq"))
@@ -171,7 +171,7 @@ func TestLockUpToolOff(t *testing.T) {
 	}
 }
 
-// An up.json others could write is not lock up's.
+// An up.json others could write is not lox up's.
 func TestLockUpFileMustBeTheUsers(t *testing.T) {
 	w := newWorld(t, repoRoot(t))
 	writeUp(t, w, lockUp("crm", "locksql"))
@@ -325,7 +325,7 @@ func TestLoxConsole(t *testing.T) {
 	// A socket volume docker does not label as lox up's.
 	w, cfg = setup(t, crm)
 	labelsWith(w, "crm", "locksql", "socket", "lockfamily-00000000", "crm", w.proj)
-	if _, _, err := LoxConsole(cfg, w.environ(), w.proj, "locksql", ""); err == nil || !strings.Contains(err.Error(), "is not lock up's socket volume") {
+	if _, _, err := LoxConsole(cfg, w.environ(), w.proj, "locksql", ""); err == nil || !strings.Contains(err.Error(), "is not lox up's socket volume") {
 		t.Fatalf("foreign volume: %v", err)
 	}
 }

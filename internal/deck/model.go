@@ -145,7 +145,7 @@ type HubCard struct {
 	Warnings   []string `json:"warnings,omitempty"`
 	Expires    int64    `json:"expires,omitempty"`
 	// Claimed is the agent name the ticket's requester gives; Truncated: the daemon had to cut
-	// the Lock's screen, so the deck cannot show all of it (lock approve answers it).
+	// the Lock's screen, so the deck cannot show all of it (lox approve answers it).
 	Claimed   string `json:"claimed,omitempty"`
 	Truncated bool   `json:"truncated,omitempty"`
 	// Expired: the ticket expired at the hub: r asks the Lock again, nothing decides it.
@@ -927,7 +927,7 @@ func (m Model) key(k string) (tea.Model, tea.Cmd) {
 			m.hubFull = !m.hubFull
 			if h := hubTicket(*a); m.hubFull {
 				if !m.hubFits(*a) {
-					m.status = "too tall for the deck: answer it with lock approve"
+					m.status = "too tall for the deck: answer it with lox approve"
 					return m, nil
 				}
 				if m.hubRead == nil {
@@ -1218,7 +1218,7 @@ func (m Model) answerHub(approve bool) (tea.Model, tea.Cmd) {
 		}
 		switch {
 		case h.Production && h.Retype == "":
-			m.status = "a production ticket with no name to type: answer it with lock approve"
+			m.status = "a production ticket with no name to type: answer it with lox approve"
 			return m, nil
 		case h.Production:
 			m.hubFor, m.hubDraft, m.status = ref, nil, ""
@@ -1235,7 +1235,7 @@ func (m Model) unreadable(a Agent, h HubCard) string {
 	body := len(m.hubBody(h))
 	switch {
 	case h.Truncated || body+len(m.hubWarnings(h)) > maxHubCard || !m.hubFits(a):
-		return "too long for the deck: answer it with lock approve"
+		return "too long for the deck: answer it with lox approve"
 	case body > hubFolded && !m.hubRead[h.Instance+"/"+h.ID]:
 		return "v shows the whole ticket: read it before approving"
 	}
@@ -1285,7 +1285,7 @@ func (m Model) hubKey(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 }
 
 // hubFolded is how many lines of the Lock's screen a folded card shows; maxHubCard how many lines
-// of it (and of its warnings) the deck approves at most: a longer ticket goes to lock approve.
+// of it (and of its warnings) the deck approves at most: a longer ticket goes to lox approve.
 const hubFolded, maxHubCard = 3, 24
 
 // hubBody is the Lock's screen of h as the card shows it at the deck's width: each line wrapped,

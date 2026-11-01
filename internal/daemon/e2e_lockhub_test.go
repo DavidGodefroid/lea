@@ -12,7 +12,7 @@ import (
 	"time"
 )
 
-// The deck approves a ticket in a real lockhub (the phase-2 exit demo, lea's side): a lock up
+// The deck approves a ticket in a real lockhub (the phase-2 exit demo, lea's side): a lox up
 // stack with a real Lock holds a request and asks the hub; lea's deck reads the hub's queue from
 // the real facade socket, shows the ticket on the agent that waits on it, and the deck's approval
 // (hub_decide, as the deck's key sends it) reaches the hub as a signed decision of facade "deck".
