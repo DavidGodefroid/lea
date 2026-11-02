@@ -65,6 +65,23 @@ tool() {
   [ -z "$out" ]
 }
 
+@test "in tower mode a subagent's tool calls pass, the tower's own are still denied" {
+  prompt "/lea:control-tower"
+  for t in Read Bash StructuredOutput Edit; do
+    out=$(jq -n --arg t "$t" '{session_id: "s1", agent_id: "a1", agent_type: "Explore", tool_name: $t, tool_input: {}}' | sh "$G" tool)
+    [ -z "$out" ]
+  done
+  [ "$(tool Read)" = deny ]
+  out=$(jq -n '{session_id: "s1", agent_type: "tower", tool_name: "Read", tool_input: {}}' | sh "$G" tool)
+  [ "$(printf '%s' "$out" | jq -r .hookSpecificOutput.permissionDecision)" = deny ]
+}
+
+@test "a subagent loading the skill does not put its session in tower mode" {
+  out=$(jq -n '{session_id: "s1", agent_id: "a1", tool_name: "Skill", tool_input: {skill: "lea:control-tower"}}' | sh "$G" tool)
+  [ -z "$out" ]
+  [ "$(tool Edit)" = allow ]
+}
+
 @test "a prompt that only mentions the skill does not turn tower mode on" {
   prompt "explain what /lea:control-tower does"
   [ "$(tool Edit)" = allow ]

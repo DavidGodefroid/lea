@@ -35,6 +35,11 @@ tool) ;;
 *) exit 0 ;;
 esac
 
+# The guard is for the tower itself, not for subagents run inside its session (by another plugin's
+# skill, say): Claude Code sets agent_id only on a subagent's calls. agent_type is no sign, as a
+# main session started with --agent carries it too.
+[ -z "$(printf '%s' "$in" | jq -r '.agent_id // empty')" ] || exit 0
+
 tool=$(printf '%s' "$in" | jq -r '.tool_name // empty')
 # The model can load the skill itself (the Skill tool): that turns the guard on as well.
 if [ "$tool" = Skill ]; then
