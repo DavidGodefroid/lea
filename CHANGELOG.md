@@ -1,5 +1,13 @@
 # Changelog
 
+## Unreleased
+
+- `lea init --locksql` with a locksql lock declared in `.lockfamily/lockfamily.yaml` (found by
+  its type) builds no console image when the lock pins its own, skips the profile wizard and says
+  the one step left: `lea stop`, then `lea`. It warns when the lock's `allowed_uids` lacks your uid.
+- `lea init --<tool>` or `--no-<tool>` configures the tools it names only: the other lock tools
+  keep their setting and are asked about on a bare `lea init` alone.
+
 ## v0.5.0 (2026-11-01)
 
 - The image ships locksql 0.14.0, lockmq 0.7.0 and lockfile 0.7.0, which reach one lock among
