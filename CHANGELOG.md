@@ -1,5 +1,13 @@
 # Changelog
 
+## Unreleased
+
+- Deck folders are simpler (#241): a click on a folder folds or unfolds it, `h` on an agent folds
+  its folder, `u` takes an agent out of its folder (also Remove from folder in its menu), `x` on
+  a folder asks before deleting it, and the status line shows the keys of the selected folder.
+- A folder can take a colour (`c`, or Colour… in its menu), saved by name in the deck's layout.
+- An agent a lead starts joins the lead's folder.
+
 ## v0.5.0 (2026-11-01)
 
 - The image ships locksql 0.14.0, lockmq 0.7.0 and lockfile 0.7.0, which reach one lock among

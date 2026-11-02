@@ -117,7 +117,7 @@ func (m Model) body(inner int) []string {
 var helpLines = []string{
 	"j k, arrows move",
 	"1-9         jump to a row",
-	"enter       show and focus",
+	"enter       show / fold folder",
 	"space       next needing you",
 	"n           new agent",
 	"N           new, other provider",
@@ -125,8 +125,8 @@ var helpLines = []string{
 	"- |         split with a shell",
 	"m           note to its inbox",
 	"t           its messages",
-	"e           rename",
-	"f o         new folder, move in",
+	"e c         rename, colour",
+	"f o u       new folder, in, out",
 	"J K h l     reorder, fold",
 	"r           its role",
 	"p           pause or resume",
@@ -176,12 +176,28 @@ func (m Model) statusLine(inner int) string {
 			}
 			return padRight(" "+st.Render(fit(safe(m.pressure.Short, c), inner-1, c)), inner)
 		}
+		if h := m.folderHint(); h != "" {
+			return padRight(" "+muted.Render(fit(h, inner-1, c)), inner)
+		}
 		if m.noticeText == "" {
 			return ""
 		}
 		return padRight(" "+muted.Render(fit(m.noticeText, inner-1, c)), inner)
 	}
 	return padRight(" "+alert.Render(fit(m.status, inner-1, c)), inner)
+}
+
+// folderHint is the keys of the selected row that the bottom border has no room for: a folder's,
+// or u on an agent in a folder; "" on any other row.
+func (m Model) folderHint() string {
+	d := m.cs().dot
+	switch {
+	case m.folderAt(m.selected) >= 0:
+		return fmt.Sprintf("enter fold %[1]s e name %[1]s c colour %[1]s x delete %[1]s J K move", d)
+	case m.folderOf(m.selected) >= 0 && m.index(m.selected) >= 0:
+		return "u out of folder"
+	}
+	return ""
 }
 
 // frameStyle is the style of the deck's frame: the accent while the deck has the keyboard, so the
@@ -336,6 +352,9 @@ func (m Model) bottom(w int) string {
 	}
 	if m.confirm != "" {
 		hint = fmt.Sprintf("y stop %s esc cancel", c.dot)
+		if isFolderKey(m.confirm) {
+			hint = fmt.Sprintf("y delete %s esc cancel", c.dot)
+		}
 	}
 	if m.roleFor != "" {
 		hint = fmt.Sprintf("l lead %[1]s d dev %[1]s r reviewer", c.dot)
@@ -388,7 +407,7 @@ func (m Model) rowLines(inner int) ([]string, []lineOwner) {
 		if e.agent < 0 {
 			rendered[i] = m.folderRow(e.in, inner)
 		} else {
-			rendered[i] = m.row(m.agents[e.agent], inner, e.in >= 0)
+			rendered[i] = m.row(m.agents[e.agent], inner, e.in)
 		}
 		// A lock added while lea runs, on the selected agent: the same for every agent of the
 		// container (its mounts), said once.
@@ -482,29 +501,39 @@ func (m Model) folderRow(fi int, inner int) []string {
 	const countW = 4
 	nameW := inner - 6 - (1 + countW) // mark, space, glyph, space, arrow, space
 	count := fmt.Sprintf("%d", len(m.folderMembers(fi)))
+	// The folder's colour, when it has one, is its arrow's and its name's; never its dot's.
+	arrowC, nameC := lipgloss.TerminalColor(theme.Accent), lipgloss.TerminalColor(theme.Text)
+	if col, ok := folderColour(f.Color); ok {
+		arrowC, nameC = col, col
+	}
 	return []string{bg(lipgloss.NewStyle().Foreground(theme.Accent)).Render(mark) +
 		bg(plain).Render(" ") +
 		bg(lipgloss.NewStyle().Foreground(gc)).Render(g) +
 		bg(plain).Render(" ") +
-		bg(lipgloss.NewStyle().Foreground(theme.Accent)).Render(arrow) +
+		bg(lipgloss.NewStyle().Foreground(arrowC)).Render(arrow) +
 		bg(plain).Render(" ") +
-		bg(lipgloss.NewStyle().Foreground(theme.Text).Bold(true)).Render(padRight(fit(f.Name, nameW, c), nameW)) +
+		bg(lipgloss.NewStyle().Foreground(nameC).Bold(true)).Render(padRight(fit(f.Name, nameW, c), nameW)) +
 		bg(plain).Render(" ") +
 		bg(muted).Render(padLeft(count, countW))}
 }
 
 // row is two lines of exactly inner cells: mark, bar, glyph, name, profile; then the detail. An
-// agent in a folder has the folder's guide in its second cell.
-func (m Model) row(a Agent, inner int, inFolder bool) []string {
+// agent in folder fi (-1: at the root) has the folder's guide in its second cell, in the folder's
+// colour when it has one.
+func (m Model) row(a Agent, inner int, fi int) []string {
 	c := m.cs()
 	sel := a.Key == m.selected
 	gap, pad := " ", "    "
-	if inFolder {
+	guide := muted
+	if fi >= 0 {
 		gap = "╎"
 		if m.ascii {
 			gap = ":"
 		}
 		pad = " " + gap + "  "
+		if col, ok := folderColour(m.layout.Folders[fi].Color); ok {
+			guide = lipgloss.NewStyle().Foreground(col)
+		}
 	}
 	bg := func(s lipgloss.Style) lipgloss.Style {
 		if sel {
@@ -528,7 +557,7 @@ func (m Model) row(a Agent, inner int, inFolder bool) []string {
 		}
 	}
 	line1 := bg(lipgloss.NewStyle().Foreground(theme.Accent)).Render(mark) +
-		bg(muted).Render(gap) +
+		bg(guide).Render(gap) +
 		bg(lipgloss.NewStyle().Foreground(gc)).Render(g) +
 		bg(plain).Render(" ") +
 		bg(lipgloss.NewStyle().Foreground(theme.Text).Bold(sel)).Render(padRight(fit(display(a), nameW, c), nameW)) +
@@ -537,7 +566,7 @@ func (m Model) row(a Agent, inner int, inFolder bool) []string {
 		bg(plain).Render(" ") +
 		bg(muted).Render(padLeft(ctxText(a.CtxPct), ctxW))
 	detail := fit(m.detail(a, inner-4), inner-4, c)
-	line2 := bg(muted).Render(pad) + bg(muted).Render(padRight(detail, inner-4))
+	line2 := bg(guide).Render(pad) + bg(muted).Render(padRight(detail, inner-4))
 	lines := []string{line1, line2}
 	if l := a.LockAsk; l != nil && a.Approval == nil {
 		warn := "⚠"
@@ -545,8 +574,8 @@ func (m Model) row(a Agent, inner int, inFolder bool) []string {
 			warn = "!"
 		}
 		lines = append(lines,
-			bg(muted).Render(pad)+bg(alert).Render(padRight(fit(warn+" open the "+lockAskName(*l)+" console?", inner-4, c), inner-4)),
-			bg(muted).Render(pad)+bg(lipgloss.NewStyle().Foreground(theme.Text)).Render(padRight(fit("[O]pen [d]ecline", inner-4, c), inner-4)))
+			bg(guide).Render(pad)+bg(alert).Render(padRight(fit(warn+" open the "+lockAskName(*l)+" console?", inner-4, c), inner-4)),
+			bg(guide).Render(pad)+bg(lipgloss.NewStyle().Foreground(theme.Text)).Render(padRight(fit("[O]pen [d]ecline", inner-4, c), inner-4)))
 	}
 	if h := hubTicket(a); h != nil {
 		warn := "⚠"
@@ -555,7 +584,7 @@ func (m Model) row(a Agent, inner int, inFolder bool) []string {
 		}
 		text := lipgloss.NewStyle().Foreground(theme.Text)
 		row := func(st lipgloss.Style, s string) string {
-			return bg(muted).Render(pad) + bg(st).Render(padRight(fit(s, inner-4, c), inner-4))
+			return bg(guide).Render(pad) + bg(st).Render(padRight(fit(s, inner-4, c), inner-4))
 		}
 		wide := max(8, inner-6)
 		if !h.Verified {
@@ -625,8 +654,8 @@ func (m Model) row(a Agent, inner int, inFolder bool) []string {
 			keys += " [A]lways"
 		}
 		lines = append(lines,
-			bg(muted).Render(pad)+bg(alert).Render(padRight(fit(warn+" "+what, inner-4, c), inner-4)),
-			bg(muted).Render(pad)+bg(lipgloss.NewStyle().Foreground(theme.Text)).Render(padRight(fit(keys, inner-4, c), inner-4)))
+			bg(guide).Render(pad)+bg(alert).Render(padRight(fit(warn+" "+what, inner-4, c), inner-4)),
+			bg(guide).Render(pad)+bg(lipgloss.NewStyle().Foreground(theme.Text)).Render(padRight(fit(keys, inner-4, c), inner-4)))
 	}
 	return lines
 }
