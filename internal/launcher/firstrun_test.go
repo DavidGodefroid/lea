@@ -264,3 +264,99 @@ func TestFirstRunPullOutputOnlyOnFailure(t *testing.T) {
 		t.Errorf("stderr on failure: %s", e)
 	}
 }
+
+// loxUpWorld is a projects directory with a Lock Family (lockfamily.yaml) and LEA_LOX_UP=conf.
+func loxUpWorld(t *testing.T, conf string) *world {
+	t.Helper()
+	w := newWorld(t, repoRoot(t))
+	writeUserConf(t, w, conf)
+	if err := os.MkdirAll(w.proj+"/.lockfamily", 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(w.proj+"/.lockfamily/lockfamily.yaml", []byte("locks: {}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	up := `{"version": 1, "project": "` + lockUpComposeProject(w.proj) + `", "workspace": "` + w.proj + `",
+		"locks": {"crm": {"type": "locksql"}, "bus": {"type": "lockmq"}}}`
+	if err := os.WriteFile(w.proj+"/.lockfamily/up.json", []byte(up), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	return w
+}
+
+// The hub is down: lea runs lox up once, then lists the consoles lox up started (bus kept its
+// container: it asks nothing).
+func TestLoxUpHubDown(t *testing.T) {
+	w := loxUpWorld(t, "LEA_LOX_UP=1\n")
+	w.env["FAKE_DOCKER_OUTSEQ_PS___FILTER"] = "lock-bus=b1|lockhub=h1 lock-crm=c1 lock-bus=b1"
+	if err := w.launcher().ensureHub(w.proj); err != nil {
+		t.Fatal(err)
+	}
+	ps := "docker [ps] [--filter] [label=com.docker.compose.project=" + lockUpComposeProject(w.proj) + `] [--format] [{{.Label "com.docker.compose.service"}}={{.ID}}]`
+	if got, want := strings.Join(w.calls(), "\n"), ps+"\nlox [up]\n"+ps; got != want {
+		t.Fatalf("calls:\n%s\nwant:\n%s", got, want)
+	}
+	want := "lea: starting the Lock Family hub and its locks (lox up, LEA_LOX_UP=1)\n" +
+		"lea: locksql crm waits for its start questions: lox attach crm\n"
+	if got := w.errb.String(); got != want {
+		t.Fatalf("stderr = %q, want %q", got, want)
+	}
+}
+
+func TestLoxUpHubAlreadyUp(t *testing.T) {
+	w := loxUpWorld(t, "LEA_LOX_UP=1\n")
+	w.env["FAKE_DOCKER_OUT_PS___FILTER"] = "lockhub=h1\nlock-crm=c1"
+	if err := w.launcher().ensureHub(w.proj); err != nil {
+		t.Fatal(err)
+	}
+	if w.hasCall("lox") || w.errb.String() != "" {
+		t.Fatalf("calls: %v, stderr %q", w.calls(), w.errb.String())
+	}
+}
+
+// Off (unset or 0), or without a Lock Family: no docker ps, no lox up.
+func TestLoxUpOff(t *testing.T) {
+	for name, conf := range map[string]string{"unset": "", "zero": "LEA_LOX_UP=0\n"} {
+		t.Run(name, func(t *testing.T) {
+			w := loxUpWorld(t, conf)
+			if err := w.launcher().ensureHub(w.proj); err != nil {
+				t.Fatal(err)
+			}
+			if w.hasCall("docker") || w.hasCall("lox") {
+				t.Fatalf("calls: %v", w.calls())
+			}
+		})
+	}
+	w := newWorld(t, repoRoot(t))
+	writeUserConf(t, w, "LEA_LOX_UP=1\nLEA_HUB=0\n")
+	if err := w.launcher().ensureHub(w.proj); err != nil {
+		t.Fatal(err)
+	}
+	if w.hasCall("docker") || w.hasCall("lox") {
+		t.Fatalf("no lockfamily.yaml: calls: %v", w.calls())
+	}
+}
+
+func TestLoxUpFailureWarns(t *testing.T) {
+	w := loxUpWorld(t, "LEA_LOX_UP=1\n")
+	w.env["FAKE_LOX_RC"] = "1"
+	if err := w.launcher().ensureHub(w.proj); err != nil {
+		t.Fatalf("ensureHub() = %v, want lea to start anyway", err)
+	}
+	want := "lea: starting the Lock Family hub and its locks (lox up, LEA_LOX_UP=1)\n" +
+		"lea: warning: lox up failed (above): lea starts without it; fix it, then run lox up\n"
+	if got := w.errb.String(); got != want {
+		t.Fatalf("stderr = %q, want %q", got, want)
+	}
+}
+
+func TestLoxUpDockerFailsWarns(t *testing.T) {
+	w := loxUpWorld(t, "LEA_LOX_UP=1\n")
+	w.env["FAKE_DOCKER_RC_PS___FILTER"] = "1"
+	if err := w.launcher().ensureHub(w.proj); err != nil {
+		t.Fatal(err)
+	}
+	if w.hasCall("lox") || !strings.Contains(w.errb.String(), "warning: LEA_LOX_UP: cannot list") {
+		t.Fatalf("calls: %v, stderr %q", w.calls(), w.errb.String())
+	}
+}

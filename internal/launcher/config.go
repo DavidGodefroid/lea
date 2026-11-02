@@ -279,6 +279,11 @@ func (c *Config) resolve(root string) error {
 		return fmt.Errorf("LEA_HUB must be 1 (lea follows the Lock Family approval hub) or 0, not '%s'", hub)
 	}
 	c.final["LEA_HUB"] = hub
+	loxUp := nonEmpty(c.Get("LEA_LOX_UP"), "0")
+	if loxUp != "0" && loxUp != "1" {
+		return fmt.Errorf("LEA_LOX_UP must be 1 (lea runs lox up when the Lock Family's hub is down) or 0, not '%s'", loxUp)
+	}
+	c.final["LEA_LOX_UP"] = loxUp
 	if err := c.resolveLimits(); err != nil {
 		return err
 	}
