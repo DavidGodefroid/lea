@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- `/lea:tower-control` removed, use `/lea:control-tower`.
+
 ## v0.5.0 (2026-11-01)
 
 - The image ships locksql 0.14.0, lockmq 0.7.0 and lockfile 0.7.0, which reach one lock among
