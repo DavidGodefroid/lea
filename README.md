@@ -105,7 +105,9 @@ directory cannot be one (`/`, your home directory or a parent of it, or one that
 `cd` into the directory that holds your projects and run `lea` again, or `LEA_PROJECTS_DIR=DIR
 lea`. When the projects directory has no `.lockfamily/up.json` yet, lea starts the Lock Family
 hub for it with `lox init`, on your terminal (`lox` on your `PATH`, 0.5.0 or later:
-`brew install davidgodefroid/tap/lox`; `LEA_HUB=0` runs lea without the hub).
+`brew install davidgodefroid/tap/lox`; `LEA_HUB=0` runs lea without the hub). After a reboot or
+a `lox down`, `LEA_LOX_UP=1` in `~/.config/lea/lea.conf` makes lea run `lox up` itself before it
+starts (see the configuration table).
 
 [`lox add`](https://github.com/DavidGodefroid/lockhub/blob/main/docs/lox-add.md) is how a Lock
 gets set up for lea's agents, run in lea's projects directory (lea reads `.lockfamily/up.json`
@@ -824,6 +826,7 @@ read-only. The screen runs in the deck on the host: agents cannot open or drive 
 | `LEA_LOCKHTTP` | `0` | send the agents' web requests through a LockHTTP gate (refuses `LEA_GIT_SSH` and `LEA_OTEL_UPSTREAM`) |
 | `LEA_HUB` | `1` | follow the Lock Family approval hub (lockhub's facade socket: `LEA_HUB_SOCKET`, else `$XDG_RUNTIME_DIR/lockhub/facade.sock`): an agent whose Lock call waits for a decision there is suspended until it comes, and the deck shows and answers the hub's tickets; while no hub answers, no agent is suspended, the deck says `lockhub unreachable` and `lea doctor` warns. `0`: lea reads no hub and resumes the agents it suspended. **Upgrading from v0.2**: the default was `0`; put `LEA_HUB=0` in `~/.config/lea/lea.conf` to keep that, then restart lea |
 | `LEA_HUB_KEEPALIVE` | `300` | seconds (`0` to `3600`) an agent suspended on a hub ticket keeps its process before lea stops it alone, keeping its session for the decision or a message to resume it; read only with `LEA_HUB=1` (changing it while the hub is off restarts nothing) |
+| `LEA_LOX_UP` | `0` | `1`: when `lea` starts on the host and the projects directory has a Lock Family (`.lockfamily/lockfamily.yaml`) whose hub is not running, lea runs `lox up` there first, on your terminal, then prints `<type> NAME waits for its start questions: lox attach NAME` for each console it started; a `lox up` that fails only warns and lea starts anyway. Agents never run it. `0`: lea never runs `lox up` (it pulls images and starts containers) |
 | `LEA_INTERNAL_HOSTS` | none | private hosts the proxy may reach (format in `config/internal-hosts`) |
 | `LEA_EGRESS_ALLOW` | empty (lea's default list) | the only web domains agents may reach, comma separated (subdomains included); `default` stands for lea's list, `*` opens the web |
 | `LEA_NESTED_NETWORKS` | empty | networks your compose files expect, created at start |
