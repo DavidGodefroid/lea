@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## v0.6.1 (2026-11-03)
 
 - The image ships locksql 0.16.0. It brings grants: with `locksql_grant` (CLI `locksql grant`),
   an agent asks once for a bounded read scope (tables, duration, budget) and, once you approve
