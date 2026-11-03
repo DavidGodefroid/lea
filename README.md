@@ -581,7 +581,6 @@ plugin enforces it with a hook: once `/lea:control-tower` runs, the session may 
 team tools (`agents_*`, `msg_*`, `board_read`, `task_update`), ask you questions and run
 `lea inbox --agent --wait`; any other tool (Bash, Edit, Read, git, gh, the web…) is denied with a
 reminder to delegate. `/lea:control-tower off` gives the session its tools back.
-The skill's old name, `/lea:tower-control`, still works for now.
 
 Type `/lea:check` (or ask for a status, a "point", a "topo") for the state of the work in
 progress, in at most 10 lines: done since the last check, in progress, left, and what is blocked
