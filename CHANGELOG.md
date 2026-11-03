@@ -1,7 +1,11 @@
 # Changelog
 
-## Unreleased
+## v0.6.0 (2026-11-03)
 
+- `LEA_LOX_UP=1` in `~/.config/lea/lea.conf` (default `0`, #243): when `lea` starts and the
+  projects directory has `.lockfamily/lockfamily.yaml` but no running hub, lea runs `lox up` there
+  first, then lists each console waiting for its start questions with its `lox attach NAME` line.
+  A failing `lox up` is a warning; lea starts anyway.
 - `lea init --locksql` with a locksql lock declared in `.lockfamily/lockfamily.yaml` (found by
   its type) builds no console image when the lock pins its own, skips the profile wizard and says
   the one step left: `lea stop`, then `lea`. It warns when the lock's `allowed_uids` lacks your uid.
