@@ -248,6 +248,15 @@ func isShell(a Agent) bool { return a.Kind == KindShell }
 // an ended or stopped agent has no process to freeze).
 func pausable(a Agent) bool { return !isShell(a) && a.State != "done" && a.State != "stopped" }
 
+// setPaused freezes the agent key, or lets it continue.
+func (m Model) setPaused(key string, pause bool) tea.Cmd {
+	api := m.api
+	return m.call(func(ctx context.Context) error { return api.SetPaused(ctx, key, pause) })
+}
+
+// pausedHint is the status while a paused agent is in the slot: its pane reads no key.
+func pausedHint(a Agent) string { return display(a) + " is paused: p resumes it" }
+
 // display is the name a row shows: the label when the user gave one.
 func display(a Agent) string {
 	if a.Label != "" {
@@ -303,6 +312,7 @@ type Model struct {
 	confirm    string           // key the stop (or folder delete) modal asks about (confirm.go)
 	confirmYes bool             // the modal's focus is on Confirm, not Cancel
 	roleFor    string           // key waiting for a role key (l, d, r)
+	pauseFor   string           // key whose pause waits for y (a stray p freezes nothing)
 	// providers is the list N picks from, while it waits for a digit (nil otherwise).
 	providers   []string
 	editFor     string          // key whose label the rename field (e) edits
@@ -491,6 +501,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		key, api := m.selected, m.api
 		m.ask(key)
+		if a := m.selectedAgent(); a != nil && a.Paused {
+			m.status = pausedHint(*a)
+		}
 		return m, m.call(func(ctx context.Context) error { return api.Show(ctx, key, false) })
 	case providersMsg:
 		if msg.err != nil {
@@ -727,6 +740,9 @@ func (m *Model) apply(s Snapshot) bool {
 	if m.roleFor != "" && m.index(m.roleFor) < 0 {
 		m.roleFor, m.status = "", ""
 	}
+	if m.pauseFor != "" && m.index(m.pauseFor) < 0 {
+		m.pauseFor, m.status = "", ""
+	}
 	if m.menuFor != "" && m.menuFor != deckMenu && !m.exists(m.menuFor) {
 		m.menuFor, m.menuPicker = "", false
 	}
@@ -793,6 +809,14 @@ func (m Model) key(k string) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 	}
+	if m.pauseFor != "" {
+		key := m.pauseFor
+		m.pauseFor, m.status = "", ""
+		if k == "y" {
+			return m, m.setPaused(key, true)
+		}
+		return m, nil
+	}
 	if m.roleFor != "" {
 		key, api := m.roleFor, m.api
 		m.roleFor, m.status = "", ""
@@ -855,6 +879,16 @@ func (m Model) key(k string) (tea.Model, tea.Cmd) {
 		m.seq++ // drops a pending delayed show
 		key := m.selected
 		m.ask(key)
+		if a := m.selectedAgent(); a != nil && a.Paused {
+			// Its pane would swallow every key until resumed: resume it first, and say so.
+			m.status = "resumed " + display(*a)
+			return m, m.call(func(ctx context.Context) error {
+				if err := api.SetPaused(ctx, key, false); err != nil {
+					return err
+				}
+				return api.Show(ctx, key, true)
+			})
+		}
 		return m, m.call(func(ctx context.Context) error { return api.Show(ctx, key, true) })
 	case "n":
 		m.status = "starting a new agent…"
@@ -952,8 +986,13 @@ func (m Model) key(k string) (tea.Model, tea.Cmd) {
 		if a == nil || !pausable(*a) {
 			return m, nil
 		}
-		key, pause := a.Key, !a.Paused
-		return m, m.call(func(ctx context.Context) error { return api.SetPaused(ctx, key, pause) })
+		key := a.Key
+		if !a.Paused {
+			m.pauseFor, m.status = key, "pause "+display(*a)+"? y pauses it, any other key cancels"
+			return m, nil
+		}
+		m.status = "resumed " + display(*a)
+		return m, m.setPaused(key, false)
 	case "r":
 		if a := m.selectedAgent(); a != nil && !isShell(*a) {
 			m.roleFor = a.Key
@@ -1071,9 +1110,10 @@ func (m Model) move(i int) (tea.Model, tea.Cmd) {
 	if i < 0 || i >= len(es) {
 		return m, nil
 	}
-	if m.status == nothingNeedsYou {
+	if a := m.selectedAgent(); m.status == nothingNeedsYou || m.pauseFor != "" || a != nil && m.status == pausedHint(*a) {
 		m.status = ""
 	}
+	m.pauseFor = "" // a click elsewhere drops the question: y would pause another row
 	m.panel = false // the selection is on a row again
 	m.selected = es[i].key
 	if isFolderKey(m.selected) {

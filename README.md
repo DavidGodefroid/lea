@@ -199,7 +199,7 @@ closing the deck, or the terminal, does not stop it: the next `lea` reattaches.
 | `s` | open a shell in the container (`exit` or `x` closes it) |
 | `-` / `\|` | split: a shell below the selected agent, or at its right, in its directory |
 | `S` | sounds on or off (the top border says `muted` while they are off) |
-| `p` | pause the selected agent, or resume it where it stopped (its conversation stays) |
+| `p`, then `y` | pause the selected agent (any other key cancels); `p` alone resumes a paused one where it stopped (its conversation stays), and `enter` on it resumes it before focusing it |
 | `,` | settings (also in a row's right-click menu) |
 | `x`, then `y` | stop the selected agent |
 | `f` | new folder (enter names it) |
