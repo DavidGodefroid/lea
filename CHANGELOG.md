@@ -1,5 +1,17 @@
 # Changelog
 
+## Unreleased
+
+- The image ships locksql 0.16.0. It brings grants: with `locksql_grant` (CLI `locksql grant`),
+  an agent asks once for a bounded read scope (tables, duration, budget) and, once you approve
+  it, runs its covered masked reads without a ticket each. Grants need lockhub (lox) 0.6.0 or
+  later; an older hub refuses the grant's ticket and everything else works as before. lea
+  already gives each agent the `LEA_AGENT_TOKEN` a grant needs.
+- It also brings locksql 0.15.0's TLS change: transport security is left to the database driver,
+  and a remote profile without `tls` now connects with `prefer` instead of `verify-full` (listed
+  once on the first start after the upgrade). Set `tls = "verify-full"` in a profile to keep
+  verifying the server's certificate.
+
 ## v0.6.0 (2026-11-03)
 
 - `LEA_LOX_UP=1` in `~/.config/lea/lea.conf` (default `0`, #243): when `lea` starts and the
