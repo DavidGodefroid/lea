@@ -136,7 +136,7 @@ func (m Model) menuAgent() *Agent {
 // openMenu opens key's menu on its first item.
 func (m *Model) openMenu(key string) {
 	m.menuFor, m.menuSel, m.menuPicker = key, 0, false
-	m.confirm, m.confirmYes, m.roleFor = "", false, ""
+	m.confirm, m.confirmYes, m.roleFor, m.pauseFor = "", false, "", ""
 }
 
 // pick runs item i of the open menu as its key on the menu's row (the deck's menu: as a key typed
@@ -164,6 +164,9 @@ func (m Model) pick(i int) (tea.Model, tea.Cmd) {
 	}
 	if items[i].key == "enter" {
 		return m.key("enter")
+	}
+	if items[i].key == "p" && a != nil { // the menu's Pause is deliberate: no y asked
+		return m, m.setPaused(a.Key, !a.Paused)
 	}
 	return m.key(items[i].key)
 }

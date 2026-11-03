@@ -129,7 +129,7 @@ var helpLines = []string{
 	"f o         new folder, move in",
 	"J K h l     reorder, fold",
 	"r           its role",
-	"p           pause or resume",
+	"p           pause (y), resume",
 	"a d A       allow deny always",
 	"x           stop or remove",
 	"S           sounds on or off",
