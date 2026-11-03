@@ -2,6 +2,7 @@ package deck
 
 import (
 	"context"
+	"fmt"
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -33,12 +34,15 @@ func (m Model) confirmKey(k string) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-// answer closes the modal, and stops its agent when yes.
+// answer closes the modal, and when yes stops its agent, or deletes its folder.
 func (m Model) answer(yes bool) (tea.Model, tea.Cmd) {
 	key, api := m.confirm, m.api
 	m.confirm, m.confirmYes = "", false
 	if !yes {
 		return m, nil
+	}
+	if isFolderKey(key) {
+		return m.deleteFolder(key), nil
 	}
 	return m, m.call(func(ctx context.Context) error { return api.Stop(ctx, key) })
 }
@@ -68,22 +72,27 @@ func (m Model) confirmMouse(e tea.MouseMsg) (tea.Model, tea.Cmd) {
 // its lines, and the columns [from, to) of the Confirm and Cancel buttons on its buttons line.
 func (m Model) modal(inner, n int) (top int, lines []string, yes, no [2]int) {
 	c := m.cs()
+	title, question, what := "Stop agent", "Stop %s?", [2]string{"Its process ends and its", "row goes."}
 	name := "?"
 	if i := m.index(m.confirm); i >= 0 {
 		name = display(m.agents[i])
+	}
+	if fi := m.folderAt(m.confirm); fi >= 0 {
+		title, question, what = "Delete folder", "Delete folder %s?", [2]string{"Its agents go back to the", "list, none is stopped."}
+		name = m.layout.Folders[fi].Name
 	}
 	w := inner - 4 // a margin and a border on each side
 	text := lipgloss.NewStyle().Foreground(theme.Text)
 	line := func(s string, st lipgloss.Style) string {
 		return " " + m.frameStyle().Render(c.v) + st.Render(padRight(" "+fit(s, w-1, c), w)) + m.frameStyle().Render(c.v) + " "
 	}
-	title := fit("Stop agent", w-3, c)
+	title = fit(title, w-3, c)
 	lines = append(lines,
 		" "+m.frameStyle().Render(c.tl+c.h+" ")+lipgloss.NewStyle().Foreground(theme.Accent).Bold(true).Render(title)+
 			m.frameStyle().Render(" "+strings.Repeat(c.h, max(0, w-3-lipgloss.Width(title)))+c.tr)+" ",
-		line("Stop "+name+"?", text.Bold(true)),
-		line("Its process ends and its", text),
-		line("row goes.", text),
+		line(fmt.Sprintf(question, name), text.Bold(true)),
+		line(what[0], text),
+		line(what[1], text),
 		line("", text))
 
 	mark := func(on bool) string {

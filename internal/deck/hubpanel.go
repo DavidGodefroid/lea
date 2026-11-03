@@ -163,7 +163,7 @@ func (m Model) panelLines(inner int) []string {
 		out = append(out, bg(lipgloss.NewStyle().Foreground(theme.Accent)).Render(mark)+
 			bg(plain).Render("  ")+bg(lst.Bold(on)).Render(padRight(fit(m.panelLine(h), inner-3, c), inner-3)))
 		if on {
-			out = append(out, m.hubCardLines(h, inner, "    ", bg0, false, true, 0)...)
+			out = append(out, m.hubCardLines(h, inner, "    ", bg0, muted, false, true, 0)...)
 		}
 	}
 	if end < len(m.hubQueue) {

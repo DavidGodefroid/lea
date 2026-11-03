@@ -140,14 +140,14 @@ func TestPickerNewFolderTakesTheAgent(t *testing.T) {
 	}
 }
 
-// Delete puts the folder's agents back at the root and never stops one.
+// Delete, once confirmed, puts the folder's agents back at the root and never stops one.
 func TestDeletingAFolderNeverStopsItsAgents(t *testing.T) {
 	st := &memStore{l: Layout{Folders: []Folder{{ID: "f1", Name: "web", Agents: []string{"lea-a/b"}}}}}
 	api := &fakeAPI{}
 	m := sized(newModel(api).WithLayout(st), 34, 30)
 	m, _ = step(t, m, snapshotMsg{snap: Snapshot{Version: 7, Shown: "lea-a/a", Agents: []Agent{ag("a", "idle", 1), ag("b", "working", 1)}}})
 	m.selected = folderKey("f1")
-	m = typed(t, m, "x")
+	m = typed(t, m, "x", "y") // x asks first (#241)
 	if got := order(m); got != "a b" || len(st.l.Folders) != 0 {
 		t.Fatalf("order %q, saved %+v", got, st.l)
 	}

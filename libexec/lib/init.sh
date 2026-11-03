@@ -218,11 +218,67 @@ lea__locksql_wants_vault() {
   [ -n "${LEA_PROJECTS_DIR:-}" ] && grep -q '^[[:space:]]*credentials[[:space:]]*=[[:space:]]*"vault"' "$(lea__locksql_config)" 2>/dev/null
 }
 
+# lea__declared_locks TYPE: the locks of TYPE that the projects directory's
+# .lockfamily/lockfamily.yaml declares (lox add writes it), found by their type, never their name:
+# one line per lock, NAME IMAGE UIDS, IMAGE - when the lock pins none, UIDS its allowed_uids
+# separated by commas (- for none). Nothing without the file.
+lea__declared_locks() {
+  [ -n "${LEA_PROJECTS_DIR:-}" ] && [ -f "$LEA_PROJECTS_DIR/.lockfamily/lockfamily.yaml" ] || return 0
+  awk -v want="$1" '
+    function ind(s) { match(s, /^ */); return RLENGTH }
+    function unq(s) { gsub(/^["'\'']|["'\'']$/, "", s); return s }
+    function val(s) { sub(/^[^:]*:[ \t]*/, "", s); sub(/[ \t]+#.*$/, "", s); return unq(s) }
+    function flush() {
+      if (name != "" && typ == want) printf "%s %s %s\n", name, (img == "" ? "-" : img), (uids == "" ? "-" : uids)
+      name = ""; typ = ""; img = ""; uids = ""; inuids = 0; fi = -1
+    }
+    { sub(/\r$/, "") }
+    /^[ \t]*(#|$)/ { next }
+    { i = ind($0); line = substr($0, i + 1) }
+    i == 0 { flush(); inlocks = (line ~ /^locks:[ \t]*$/); li = -1; next }
+    !inlocks { next }
+    li < 0 { li = i }
+    i <= li { flush(); n = line; sub(/[ \t]*:.*$/, "", n); name = unq(n); next }
+    inuids && line ~ /^-/ { v = line; sub(/^-[ \t]*/, "", v); uids = uids (uids == "" ? "" : ",") v; next }
+    fi < 0 { fi = i }
+    i != fi { next }
+    { inuids = 0 }
+    line ~ /^type:/ { typ = val(line) }
+    line ~ /^image:/ { img = val(line) }
+    line ~ /^allowed_uids:/ { v = val(line); if (v == "") inuids = 1; else { gsub(/[][ \t]/, "", v); uids = v } }
+    END { flush() }
+  ' "$LEA_PROJECTS_DIR/.lockfamily/lockfamily.yaml"
+}
+
+# lea__locksql_pinned: the projects directory declares locksql locks and each pins its own console
+# image: lox up runs that image, so lea builds none.
+lea__locksql_pinned() {
+  _lp_l=$(lea__declared_locks locksql)
+  [ -n "$_lp_l" ] && ! printf '%s\n' "$_lp_l" | awk '$2 == "-" { f = 1 } END { exit !f }'
+}
+
+# lea__locksql_declared_hint LOCKS: lea init's lines for the locksql locks lea__declared_locks
+# found: each one whose allowed_uids lacks your uid (its console refuses lea's agents), then the
+# one step left.
+lea__locksql_declared_hint() {
+  _ld_u=$(id -u)
+  _ld_n=$(printf '%s\n' "$1" | awk '{ printf "%s%s", (NR > 1 ? ", " : ""), $1 }')
+  printf '%s\n' "$1" | while read -r _ld_name _ _ld_uids; do
+    case ,$_ld_uids, in
+      *,"$_ld_u",*) ;;
+      *) lea_log "warning: the locksql lock $_ld_name has no allowed_uids [$_ld_u] in .lockfamily/lockfamily.yaml: its console refuses lea's agents (they run as your uid); add it, then lox up" ;;
+    esac
+  done
+  lea_log "locksql: lox up runs the locksql lock(s) $_ld_n of .lockfamily/lockfamily.yaml; next: lea stop, then lea, so lea's agents get the socket"
+}
+
 # The locksql console image (LEA_LOCKSQL_IMAGE), built from LEA_LOCKSQL_REF (lea__locksql_build:
 # a release's source only once its signature is verified) when it is not there yet, with the vault
-# CLI when a profile needs it. Never fatal: lea runs without it. lea init and lea update
+# CLI when a profile needs it. None when the declared locksql locks pin their own image
+# (lea__locksql_pinned). Never fatal: lea runs without it. lea init and lea update
 # (lea_refresh_images) both call it.
 lea__init_locksql() {
+  if lea__locksql_pinned; then return 0; fi
   if docker image inspect "$LEA_LOCKSQL_IMAGE" >/dev/null 2>&1; then
     lea_log "locksql console image $LEA_LOCKSQL_IMAGE: present"
     return 0
@@ -290,8 +346,21 @@ lea__locksql_console_hint() {
   lea_log "  its own questions (policy review, credentials): lox attach NAME, or lea lock open locksql in the deck; each query of an agent: lea's deck (hub view) or lox approve"
 }
 
+# lea__init_wants TOOL: whether this lea init configures TOOL: every tool on a bare lea init; only
+# the tools named by a --TOOL or --no-TOOL flag otherwise (the others keep their setting, unasked).
+lea__init_wants() {
+  [ -z "$_in_only" ] && return 0
+  case " $_in_only " in *" $1 "*) return 0 ;; *) return 1 ;; esac
+}
+
 lea_init() {
+  _in_only=
   for _in_a in "$@"; do
+    case $_in_a in
+      --no-locksql | --locksql | --lockmq | --no-lockmq | --lockfile | --no-lockfile)
+        _in_t=${_in_a#--}
+        _in_only="$_in_only ${_in_t#no-}" ;;
+    esac
     case $_in_a in
       --no-locksql) lea_user_config_set LEA_LOCKSQL 0; LEA_LOCKSQL=0 ;;
       --locksql) lea_user_config_set LEA_LOCKSQL 1; LEA_LOCKSQL=1 ;;
@@ -317,9 +386,13 @@ lea_init() {
   fi
   lea__init_claude_json "$_in_s"
   lea_ensure_images
-  if [ "$LEA_LOCKSQL" = 1 ]; then lea__init_locksql; lea__init_locksql_profile; fi
-  lea__init_lockhost lockmq
-  lea__init_lockhost lockfile
+  if [ "$LEA_LOCKSQL" = 1 ] && lea__init_wants locksql; then
+    _in_l=$(lea__declared_locks locksql)
+    lea__init_locksql
+    if [ -n "$_in_l" ]; then lea__locksql_declared_hint "$_in_l"; else lea__init_locksql_profile; fi
+  fi
+  if lea__init_wants lockmq; then lea__init_lockhost lockmq; fi
+  if lea__init_wants lockfile; then lea__init_lockhost lockfile; fi
   lea_init_apparmor
   if [ -z "${LEA_FIRST_RUN:-}" ]; then lea_log "ready. Run: lea"; fi
   umask "$_in_um"

@@ -768,6 +768,135 @@ y"
   [[ "$output" != *"[help]"* ]]
 }
 
+# declare_locksql [UIDS]: a lockfamily.yaml with a lockhttp lock and a locksql lock whose name is
+# not its type, pinned to its image, as lox add writes it (allowed_uids UIDS, yours by default).
+declare_locksql() {
+  mkdir -p "$P/.lockfamily"
+  cat >"$P/.lockfamily/lockfamily.yaml" <<EOF
+version: 1
+hub:
+  image: ghcr.io/example/lockhub@sha256:0000
+locks:
+  web:
+    type: lockhttp
+    image: ghcr.io/example/lockhttp@sha256:1111
+  prod-db:
+    type: locksql
+    image: ghcr.io/example/locksql@sha256:2222
+    profile: prod-db
+    allowed_uids: [${1-$(id -u)}]
+    vault: true
+EOF
+}
+
+@test "lea init --locksql with a declared locksql lock builds nothing, asks nothing, says lea stop then lea" {
+  interactive
+  LEA_LOCKSQL=0
+  declare_locksql
+  export FAKE_DOCKER_RC_IMAGE_INSPECT_AT_LOCKSQL_0_14_0=1
+  run lea_init --locksql </dev/null
+  [ "$status" -eq 0 ]
+  grep -qx "LEA_LOCKSQL='1'" "$U"
+  [[ "$output" == *"locksql: lox up runs the locksql lock(s) prod-db of .lockfamily/lockfamily.yaml; next: lea stop, then lea"* ]]
+  [[ "$output" != *"no such lock yet"* ]]
+  [[ "$output" != *"[y/N]"* ]]
+  [[ "$output" != *"[Y/n]"* ]]
+  [[ "$output" != *"allowed_uids ["* ]]
+  if grep -q '^LEA_LOCKMQ=\|^LEA_LOCKFILE=' "$U"; then false; fi
+  run calls
+  [[ "$output" != *"docker [build]"* ]]
+  [[ "$output" != *"[profile] [add]"* ]]
+}
+
+@test "lea init --locksql leaves lockmq and lockfile as they are, unasked" {
+  interactive
+  lea_user_config_set LEA_LOCKMQ 1
+  LEA_LOCKMQ=1
+  declare_locksql
+  run lea_init --locksql </dev/null
+  [ "$status" -eq 0 ]
+  [[ "$output" != *"lockmq console"* ]]
+  [[ "$output" != *"lockfile console"* ]]
+  grep -qx "LEA_LOCKMQ='1'" "$U"
+  if grep -q '^LEA_LOCKFILE=' "$U"; then false; fi
+}
+
+@test "a bare lea init still asks about lockmq and lockfile, a declared locksql lock or not" {
+  interactive
+  declare_locksql
+  run lea_init </dev/null
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"through a lockmq console"*"[y/N]"*"through a lockfile console"*"[y/N]"* ]]
+  [[ "$output" == *"next: lea stop, then lea"* ]]
+}
+
+@test "lea init --lockmq configures lockmq only: no locksql step" {
+  interactive
+  run lea_init --lockmq </dev/null
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"lockmq console: it runs under lox up only"* ]]
+  [[ "$output" != *"locksql console"* ]]
+  [[ "$output" != *"lockfile console"* ]]
+  run calls
+  [[ "$output" != *"locksql"* ]]
+}
+
+@test "a declared locksql lock without your uid in allowed_uids gets a warning" {
+  declare_locksql 4242
+  run lea_init --locksql </dev/null
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"warning: the locksql lock prod-db has no allowed_uids [$(id -u)]"* ]]
+}
+
+@test "a declared locksql lock that pins no image still gets the console image" {
+  declare_locksql
+  sed -i '/locksql@sha256/d' "$P/.lockfamily/lockfamily.yaml"
+  export FAKE_DOCKER_RC_IMAGE_INSPECT_AT_LOCKSQL_0_14_0=1
+  lea_init --locksql </dev/null 2>/dev/null
+  run calls
+  [[ "$output" == *"docker [build] [-t] [locksql:0.14.0]"* ]]
+}
+
+@test "lea update builds no locksql image for a declared lock pinning its own" {
+  declare_locksql
+  export FAKE_DOCKER_RC_IMAGE_INSPECT_AT_LOCKSQL_0_14_0=1
+  run lea__init_locksql
+  [ "$status" -eq 0 ]
+  [ -z "$output" ]
+  run calls
+  [[ "$output" != *"docker"* ]]
+}
+
+@test "lea__declared_locks finds locks by type: quotes, comments, block lists, nested keys" {
+  [ -z "$(lea__declared_locks locksql)" ]
+  mkdir -p "$P/.lockfamily"
+  cat >"$P/.lockfamily/lockfamily.yaml" <<'EOF'
+version: 1
+locks:
+  # a comment
+  "a":
+    type: "locksql"   # inline comment
+    image: 'ghcr.io/x/locksql@sha256:aa'
+    devices:
+      type: lockhttp
+    allowed_uids:
+      - 1000
+      - 1001
+  b:
+    type: lockmq
+    image: ghcr.io/x/lockmq@sha256:bb
+  c:
+    type: locksql
+vault:
+  type: locksql
+EOF
+  run lea__declared_locks locksql
+  [ "$output" = "a ghcr.io/x/locksql@sha256:aa 1000,1001
+c - -" ]
+  run lea__declared_locks lockmq
+  [ "$output" = "b ghcr.io/x/lockmq@sha256:bb -" ]
+}
+
 @test "a missing image is built with the vault CLI when a profile needs it" {
   mkdir -p "$P/.locksql"
   printf '[profiles.uat]\nengine = "postgres"\nhost = "db"\ncredentials = "vault"\nvault_path = "x/y"\n' >"$P/.locksql/config.toml"

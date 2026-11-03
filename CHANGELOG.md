@@ -1,5 +1,19 @@
 # Changelog
 
+## Unreleased
+
+- `lea init --locksql` with a locksql lock declared in `.lockfamily/lockfamily.yaml` (found by
+  its type) builds no console image when the lock pins its own, skips the profile wizard and says
+  the one step left: `lea stop`, then `lea`. It warns when the lock's `allowed_uids` lacks your uid.
+- `lea init --<tool>` or `--no-<tool>` configures the tools it names only: the other lock tools
+  keep their setting and are asked about on a bare `lea init` alone.
+- `/lea:tower-control` removed, use `/lea:control-tower`.
+- Deck folders are simpler (#241): a click on a folder folds or unfolds it, `h` on an agent folds
+  its folder, `u` takes an agent out of its folder (also Remove from folder in its menu), `x` on
+  a folder asks before deleting it, and the status line shows the keys of the selected folder.
+- A folder can take a colour (`c`, or Colour… in its menu), saved by name in the deck's layout.
+- An agent a lead starts joins the lead's folder.
+
 ## v0.5.0 (2026-11-01)
 
 - The image ships locksql 0.14.0, lockmq 0.7.0 and lockfile 0.7.0, which reach one lock among

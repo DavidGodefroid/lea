@@ -1,6 +1,8 @@
 package deck
 
 import (
+	"strings"
+
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 )
@@ -9,8 +11,8 @@ import (
 // click opens the row's menu under it. The menu lists what the keys do for that row; j/k or the
 // wheel move in it, enter or a click picks, esc, q or a click elsewhere closes it. A right click
 // anywhere else in the column (below the rows, on the frame) opens the deck's own menu under the
-// last row: every right click opens a menu. A ctrl + right click makes a folder, holding the agent
-// under the pointer when there is one.
+// last row: every right click opens a menu. A left click on a folder's row also folds or unfolds
+// it. A ctrl + right click makes a folder, holding the agent under the pointer when there is one.
 
 // menuItem is an action of a menu: the key it types, or, in the folder picker (o), the folder it
 // moves the agent to (target).
@@ -27,10 +29,12 @@ var hints = map[string]string{
 // hintLine is the owner item of a menu's hint line: inside the menu, on no item.
 const hintLine = -2
 
-// The picker's targets besides a folder's row key: the root, and a new folder.
+// The picker's targets besides a folder's row key: the root, and a new folder; colourTarget
+// starts a colour picker's target, the colour's name after it ("" for no colour).
 const (
 	rootTarget      = "\x00root"
 	newFolderTarget = "\x00new"
+	colourTarget    = "\x00colour:"
 )
 
 // menuItems are the actions of a row, in the order the menu shows them.
@@ -49,9 +53,12 @@ func menuItems(a Agent, inFolder bool) []menuItem {
 		items = append(items, menuItem{"Open console", "O", ""}, menuItem{"Decline console", "d", ""})
 	}
 	items = append(items, menuItem{"Show", "enter", ""}, menuItem{"Send message", "m", ""}, menuItem{"Messages", "t", ""},
-		menuItem{"Rename", "e", ""}, menuItem{"Role", "r", ""}, menuItem{"Move to folder", "o", ""})
+		menuItem{"Rename", "e", ""}, menuItem{"Role", "r", ""})
 	if inFolder {
-		items = append(items, menuItem{"Move up", "K", ""}, menuItem{"Move down", "J", ""})
+		items = append(items, menuItem{"Move to another folder…", "o", ""}, menuItem{"Remove from folder", "u", ""},
+			menuItem{"Move up", "K", ""}, menuItem{"Move down", "J", ""})
+	} else {
+		items = append(items, menuItem{"Move to folder…", "o", ""})
 	}
 	items = append(items, menuItem{"Split horizontally", "-", ""}, menuItem{"Split vertically", "|", ""})
 	switch {
@@ -84,7 +91,16 @@ func folderMenuItems(f Folder) []menuItem {
 	if f.Folded {
 		fold.label = "Unfold"
 	}
-	return []menuItem{fold, {"Rename", "e", ""}, {"Move up", "K", ""}, {"Move down", "J", ""}, {"Delete", "x", ""}}
+	return []menuItem{fold, {"Rename", "e", ""}, {"Colour…", "c", ""}, {"Move up", "K", ""}, {"Move down", "J", ""}, {"Delete", "x", ""}}
+}
+
+// colourItems are the colours a folder can take (c), numbered, then no colour.
+func colourItems() []menuItem {
+	var items []menuItem
+	for i, c := range folderColours {
+		items = append(items, menuItem{c.name, string(rune('1' + i)), colourTarget + c.name})
+	}
+	return append(items, menuItem{"No colour", "0", colourTarget})
 }
 
 // pickerItems are the places agent key can move to (o): every other folder, numbered, then the
@@ -114,6 +130,9 @@ func (m Model) openItems() []menuItem {
 		return deckMenuItems(m.sound)
 	}
 	if fi := m.folderAt(m.menuFor); fi >= 0 {
+		if m.menuPicker {
+			return colourItems()
+		}
 		return folderMenuItems(m.layout.Folders[fi])
 	}
 	if a := m.menuAgent(); a != nil {
@@ -161,6 +180,9 @@ func (m Model) pick(i int) (tea.Model, tea.Cmd) {
 			return nm, nil
 		}
 		return m.moveAgent(a.Key, m.folderAt(t)), nil
+	}
+	if name, ok := strings.CutPrefix(items[i].target, colourTarget); ok && isFolderKey(on) {
+		return m.setColour(on, name), nil
 	}
 	if items[i].key == "enter" {
 		return m.key("enter")
@@ -263,6 +285,9 @@ func (m Model) mouse(e tea.MouseMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	nm, cmd := m.move(i)
+	if !right && isFolderKey(key) && item < 0 { // a click on a folder's row folds or unfolds it
+		return nm.(Model).toggleFold(key), cmd
+	}
 	if right {
 		mm := nm.(Model)
 		mm.openMenu(key)
@@ -310,6 +335,11 @@ func (m Model) menuLines(items []menuItem, inner int) []string {
 		if i == m.menuSel {
 			st = lipgloss.NewStyle().Foreground(theme.Accent).Background(theme.Sel).Bold(true)
 			line = c.mark + line[len(" "):]
+		}
+		if name, ok := strings.CutPrefix(it.target, colourTarget); ok {
+			if col, ok := folderColour(name); ok {
+				st = st.Foreground(col) // a colour picker's item shows its colour
+			}
 		}
 		out = append(out, plain.Render("    ")+st.Render(fit(line, w, c)))
 	}

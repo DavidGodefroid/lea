@@ -300,7 +300,7 @@ type Model struct {
 	shown      string
 	selected   string
 	seen       map[string]int64 // key → Updated of a done agent this deck has shown
-	confirm    string           // key the stop modal asks about (confirm.go)
+	confirm    string           // key the stop (or folder delete) modal asks about (confirm.go)
 	confirmYes bool             // the modal's focus is on Confirm, not Cancel
 	roleFor    string           // key waiting for a role key (l, d, r)
 	// providers is the list N picks from, while it waits for a digit (nil otherwise).
@@ -333,7 +333,7 @@ type Model struct {
 	setDraft    []rune      // the field's text
 	hoverFor    string      // key of the row under the pointer, "" when none
 	hoverSeq    int         // the latest pointer move; older fades are dropped
-	menuPicker  bool        // the open menu picks the folder of menuFor (Move to folder)
+	menuPicker  bool        // the open menu picks the folder of agent menuFor (o), or the colour of folder menuFor (c)
 	layout      Layout      // the folders (folders.go)
 	store       LayoutStore // where the layout persists, nil when nowhere
 	ticking     bool        // a frame tick is pending
@@ -652,6 +652,7 @@ func (m *Model) apply(s Snapshot) bool {
 	}
 	prev, at := m.entryKeys(), m.pos(m.selected)
 	m.agents = sortAgents(s.Agents)
+	m.fileSpawned()
 	// A card hidden (behind an approval, or gone) and shown again starts its delay again.
 	since := map[int64]time.Time{}
 	for _, a := range m.agents {
@@ -720,7 +721,7 @@ func (m *Model) apply(s Snapshot) bool {
 	if fi := m.folderOf(m.selected); m.pos(m.selected) < 0 && fi >= 0 {
 		m.selected = folderKey(m.layout.Folders[fi].ID)
 	}
-	if m.confirm != "" && m.index(m.confirm) < 0 {
+	if m.confirm != "" && !m.exists(m.confirm) {
 		m.confirm, m.confirmYes = "", false
 	}
 	if m.roleFor != "" && m.index(m.roleFor) < 0 {
@@ -843,6 +844,10 @@ func (m Model) key(k string) (tea.Model, tea.Cmd) {
 			m.menuPicker = true
 		}
 		return m, nil
+	case "u":
+		return m.moveOut(m.selected), nil
+	case "h", "left":
+		return m.foldFrom(m.selected), nil
 	case "enter":
 		if m.selected == "" {
 			return m, nil
@@ -1017,8 +1022,9 @@ func (m Model) key(k string) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-// onFolder is a key typed on a folder's row: enter (or h, l, the arrows) folds or unfolds it, e renames it, x deletes it
-// (its agents go back to the root). ok is false for a key that does what it does on any row.
+// onFolder is a key typed on a folder's row: enter (or h, l, the arrows) folds or unfolds it, e
+// renames it, c picks its colour, x asks to delete it (its agents go back to the root). ok is
+// false for a key that does what it does on any row.
 func (m Model) onFolder(k string) (tea.Model, tea.Cmd, bool) {
 	fi := m.folderAt(m.selected)
 	if fi < 0 {
@@ -1034,8 +1040,13 @@ func (m Model) onFolder(k string) (tea.Model, tea.Cmd, bool) {
 		f := m.layout.Folders[fi]
 		m.editFor, m.draft, m.status = m.selected, []rune(f.Name), ""
 		return m, nil, true
+	case "c":
+		m.openMenu(m.selected)
+		m.menuPicker = true
+		return m, nil, true
 	case "x":
-		return m.deleteFolder(m.selected), nil, true
+		m.confirm, m.confirmYes, m.status = m.selected, false, ""
+		return m, nil, true
 	}
 	return m, nil, false
 }
@@ -1361,10 +1372,10 @@ func (m Model) hubFits() bool {
 	if a == nil {
 		return false
 	}
-	in := false
+	in := -1
 	for _, e := range m.entries(false) {
 		if e.key == a.Key {
-			in = e.in >= 0
+			in = e.in
 		}
 	}
 	return len(full.row(*a, m.innerWidth(), in)) <= room-len(full.panelLines(m.innerWidth()))

@@ -94,25 +94,14 @@ tool() {
   [ "$(tool Edit)" = deny ]
 }
 
-# The old name stays an alias for a transition period.
-@test "the old name tower-control still turns tower mode on and off" {
+@test "the removed name tower-control no longer turns tower mode on" {
   for on in "/lea:tower-control" "/tower-control"; do
     prompt "$on"
-    [ "$(tool Edit)" = deny ]
-    prompt "$on off"
     [ "$(tool Edit)" = allow ]
   done
   for k in lea:tower-control tower-control; do
     [ "$(tool Skill "$(jq -n --arg k "$k" '{skill: $k}')")" = allow ]
-    [ "$(tool Edit)" = deny ]
-    prompt "/lea:control-tower off"
+    [ "$(tool Edit)" = allow ]
   done
-  [ "$(tool Edit)" = allow ]
-}
-
-@test "the old skill name is a stub that hands over to control-tower" {
-  k="$P/skills/tower-control/SKILL.md"
-  grep -q '^name: tower-control$' "$k"
-  grep -q '^description: Deprecated name of control-tower' "$k"
-  grep -q 'lea:control-tower' "$k"
+  [ ! -e "$P/skills/tower-control" ]
 }

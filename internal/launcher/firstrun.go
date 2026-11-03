@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"runtime"
+	"sort"
 	"strings"
 )
 
@@ -110,9 +111,19 @@ func (l *Launcher) firstRun() error {
 	return nil
 }
 
-// ensureHub starts the workspace's Lock Family hub with `lox init` when it has none: LEA_HUB is on
-// and proj/.lockfamily/up.json is missing. lox init runs in the foreground, on the user's terminal.
+// ensureHub starts the workspace's Lock Family hub before lea starts: `lox init` when it has none
+// (loxInit), then, with LEA_LOX_UP=1, `lox up` when its hub is down (loxUp).
 func (l *Launcher) ensureHub(proj string) error {
+	if err := l.loxInit(proj); err != nil {
+		return err
+	}
+	l.loxUp(proj)
+	return nil
+}
+
+// loxInit starts the workspace's Lock Family hub with `lox init` when it has none: LEA_HUB is on
+// and proj/.lockfamily/up.json is missing. lox init runs in the foreground, on the user's terminal.
+func (l *Launcher) loxInit(proj string) error {
 	if l.Cfg.Get("LEA_HUB") != "1" {
 		return nil
 	}
@@ -130,4 +141,73 @@ func (l *Launcher) ensureHub(proj string) error {
 		return die("lox init failed (above): fix it, then run lea again" + noHub)
 	}
 	return nil
+}
+
+// loxUp runs `lox up` for the projects directory before lea starts, when the user opted in
+// (LEA_LOX_UP=1), proj/.lockfamily/lockfamily.yaml exists and no hub of proj runs (after a reboot
+// or a lox down). lox up runs in the foreground, on the user's terminal, where it reviews any
+// change: lea's agents never start a console, the human who runs lea does. A failure only warns:
+// lea starts anyway. Each console lox up started or recreated waits for its start questions (its
+// policy, the credentials it does not take from Vault), which lea lists with their lox attach.
+func (l *Launcher) loxUp(proj string) {
+	if l.Cfg.Get("LEA_LOX_UP") != "1" || !isRegular(proj+"/.lockfamily/lockfamily.yaml") {
+		return
+	}
+	before, err := l.loxServices(proj)
+	if err != nil {
+		l.logf("warning: LEA_LOX_UP: cannot list the Lock Family's containers (docker ps failed): lox up not run")
+		return
+	}
+	if before["lockhub"] != "" {
+		return
+	}
+	l.logf("starting the Lock Family hub and its locks (lox up, LEA_LOX_UP=1)")
+	c := l.cmd("lox", "up")
+	c.Dir = proj
+	c.Stdin, c.Stdout, c.Stderr = l.Stdin, l.Stdout, l.Stderr
+	if err := l.exec(c); err != nil {
+		l.logf("warning: lox up failed (above): lea starts without it; fix it, then run lox up")
+		return
+	}
+	after, err := l.loxServices(proj)
+	if err != nil {
+		return
+	}
+	types := map[string]string{}
+	if s, _ := l.readLockUp(proj, proj+"/.lockfamily"); s != nil {
+		for n, lk := range s.Locks {
+			types[n] = lk.Type
+		}
+	}
+	var insts []string
+	for svc, id := range after {
+		if inst, ok := strings.CutPrefix(svc, "lock-"); ok && before[svc] != id {
+			insts = append(insts, inst)
+		}
+	}
+	sort.Strings(insts)
+	for _, n := range insts {
+		t := types[n]
+		if t == "" {
+			t = "lock"
+		}
+		l.logf("%s %s waits for its start questions: lox attach %s", t, n, n)
+	}
+}
+
+// loxServices is the running containers of lox up's compose project for proj: container ID by
+// compose service (lockhub, lock-<instance>).
+func (l *Launcher) loxServices(proj string) (map[string]string, error) {
+	out, err := l.output(false, "docker", "ps", "--filter", "label=com.docker.compose.project="+lockUpComposeProject(proj),
+		"--format", `{{.Label "com.docker.compose.service"}}={{.ID}}`)
+	if err != nil {
+		return nil, err
+	}
+	m := map[string]string{}
+	for _, f := range strings.Fields(out) {
+		if svc, id, ok := strings.Cut(f, "="); ok && svc != "" && id != "" {
+			m[svc] = id
+		}
+	}
+	return m, nil
 }
