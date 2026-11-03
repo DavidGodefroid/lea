@@ -13,6 +13,8 @@ import (
 	"strings"
 	"syscall"
 
+	"github.com/charmbracelet/lipgloss"
+
 	"github.com/DavidGodefroid/lea/internal/textsafe"
 )
 
@@ -22,18 +24,42 @@ import (
 // container mounts, and no agent call reads or writes it. Shells stay out of folders, at the end.
 // An agent in no folder is at the root, after the folders, in launch order.
 
-// Layout is what the deck persists of its folders.
+// Layout is what the deck persists of its folders. Saved is when the deck last wrote it (unix
+// seconds, 0 for a layout written before #241): an agent started later than that is new to the
+// layout, and joins its lead's folder (fileSpawned).
 type Layout struct {
 	Folders []Folder `json:"folders"`
+	Saved   int64    `json:"saved,omitempty"`
 }
 
-// Folder is one folder: its stable id, the user's name, whether it is folded, and the keys of
-// its agents in the user's order.
+// Folder is one folder: its stable id, the user's name, whether it is folded, its colour (a
+// folderColours name, "" for none), and the keys of its agents in the user's order.
 type Folder struct {
 	ID     string   `json:"id"`
 	Name   string   `json:"name"`
 	Folded bool     `json:"folded,omitempty"`
+	Color  string   `json:"color,omitempty"`
 	Agents []string `json:"agents,omitempty"`
+}
+
+// folderColours are the colours a folder can take, by name: Catppuccin accents (agentColors),
+// without the reds and greens a state dot uses.
+var folderColours = []struct {
+	name   string
+	colour lipgloss.AdaptiveColor
+}{
+	{"pink", agentColors[2]}, {"mauve", agentColors[3]}, {"peach", agentColors[6]}, {"yellow", agentColors[7]},
+	{"teal", agentColors[9]}, {"sky", agentColors[10]}, {"blue", agentColors[12]}, {"lavender", agentColors[13]},
+}
+
+// folderColour is the colour of name; ok is false for "" and for a name the deck does not know.
+func folderColour(name string) (lipgloss.AdaptiveColor, bool) {
+	for _, c := range folderColours {
+		if c.name == name {
+			return c.colour, true
+		}
+	}
+	return lipgloss.AdaptiveColor{}, false
 }
 
 // LayoutStore keeps the layout across deck restarts.
@@ -77,6 +103,9 @@ func (l Layout) check() error {
 	if len(l.Folders) > maxFolders {
 		return fmt.Errorf("%w: more than %d folders", errBadLayout, maxFolders)
 	}
+	if l.Saved < 0 {
+		return fmt.Errorf("%w: saved time", errBadLayout)
+	}
 	ids, keys := map[string]bool{}, map[string]bool{}
 	for _, f := range l.Folders {
 		if !folderID.MatchString(f.ID) || ids[f.ID] {
@@ -84,6 +113,9 @@ func (l Layout) check() error {
 		}
 		if !validFolderName(f.Name) {
 			return fmt.Errorf("%w: a folder name", errBadLayout)
+		}
+		if _, ok := folderColour(f.Color); f.Color != "" && !ok {
+			return fmt.Errorf("%w: folder colour %q", errBadLayout, f.Color)
 		}
 		if len(f.Agents) > maxFolderAgents {
 			return fmt.Errorf("%w: more than %d agents in a folder", errBadLayout, maxFolderAgents)
@@ -327,7 +359,7 @@ func (m Model) nextFolderID() string {
 
 // cloneLayout copies l, so that a change never shows through an older model.
 func cloneLayout(l Layout) Layout {
-	out := Layout{Folders: make([]Folder, len(l.Folders))}
+	out := Layout{Folders: make([]Folder, len(l.Folders)), Saved: l.Saved}
 	for i, f := range l.Folders {
 		f.Agents = append([]string(nil), f.Agents...)
 		out.Folders[i] = f
@@ -350,6 +382,7 @@ func (m *Model) save() {
 			f.Agents = kept
 		}
 	}
+	m.layout.Saved = m.now().Unix()
 	if m.store == nil {
 		return
 	}
@@ -408,6 +441,74 @@ func (m Model) moveAgent(key string, fi int) Model {
 	m.selected = key
 	m.save()
 	return m
+}
+
+// moveOut puts agent key back at the root (u); an agent at the root or a shell stays as it is.
+func (m Model) moveOut(key string) Model {
+	if m.folderOf(key) < 0 {
+		return m
+	}
+	return m.moveAgent(key, -1)
+}
+
+// foldFrom folds the folder holding agent key (h on an agent inside it) and selects its row.
+func (m Model) foldFrom(key string) Model {
+	fi := m.folderOf(key)
+	if fi < 0 {
+		return m
+	}
+	fk := folderKey(m.layout.Folders[fi].ID)
+	m.selected = fk
+	m.seq++ // drops a pending delayed show
+	if !m.layout.Folders[fi].Folded {
+		m = m.toggleFold(fk)
+	}
+	return m
+}
+
+// setColour gives folder key the colour name ("" for none); an unknown name changes nothing.
+func (m Model) setColour(key, name string) Model {
+	fi := m.folderAt(key)
+	if _, ok := folderColour(name); fi < 0 || name != "" && !ok {
+		return m
+	}
+	m.layout = cloneLayout(m.layout)
+	m.layout.Folders[fi].Color = name
+	m.save()
+	return m
+}
+
+// fileSpawned puts each agent new to the layout (started after its last save) that is in no
+// folder into the folder of its lead (Parent), at its end. It runs on every snapshot, but files
+// an agent once: filing it saves the layout, and from then on it is no longer new, so an agent
+// the user moves out is never moved back. An agent started while no deck was attached is new
+// too, and is filed on the next attach. A layout that has never recorded a save (0, written
+// before #241) only starts the clock: the agents already listed keep their place.
+func (m *Model) fileSpawned() {
+	if len(m.layout.Folders) == 0 {
+		return
+	}
+	if m.layout.Saved == 0 {
+		m.layout.Saved = m.now().Unix()
+		return
+	}
+	filed := false
+	for _, a := range m.agents {
+		if isShell(a) || a.Created <= m.layout.Saved || a.Parent == "" || m.folderOf(a.Key) >= 0 {
+			continue
+		}
+		fi := m.folderOf(a.Parent)
+		if fi < 0 || len(m.layout.Folders[fi].Agents) >= maxFolderAgents {
+			continue
+		}
+		if !filed {
+			m.layout, filed = cloneLayout(m.layout), true
+		}
+		m.layout = withAgentIn(m.layout, a.Key, fi)
+	}
+	if filed {
+		m.save()
+	}
 }
 
 // renameFolder gives folder key the name s; an invalid or empty name keeps the old one.
