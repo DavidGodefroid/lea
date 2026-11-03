@@ -188,13 +188,13 @@ func (m Model) statusLine(inner int) string {
 }
 
 // folderHint is the keys of the selected row that the bottom border has no room for: a folder's,
-// or u on an agent in a folder; "" on any other row.
+// or u on an agent in a folder; "" on any other row, and while the selection is in the hub panel.
 func (m Model) folderHint() string {
 	d := m.cs().dot
 	switch {
-	case m.folderAt(m.selected) >= 0:
+	case m.folderAt(m.selected) >= 0 && !m.panel:
 		return fmt.Sprintf("enter fold %[1]s e name %[1]s c colour %[1]s x delete %[1]s J K move", d)
-	case m.folderOf(m.selected) >= 0 && m.index(m.selected) >= 0:
+	case m.folderOf(m.selected) >= 0 && m.index(m.selected) >= 0 && !m.panel:
 		return "u out of folder"
 	}
 	return ""
