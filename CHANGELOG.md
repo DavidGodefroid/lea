@@ -13,6 +13,11 @@
   a folder asks before deleting it, and the status line shows the keys of the selected folder.
 - A folder can take a colour (`c`, or Colour… in its menu), saved by name in the deck's layout.
 - An agent a lead starts joins the lead's folder.
+- The deck shows every pending ticket of the hub, attributed to an agent or not (#244): a
+  `⚠ hub · N pending` panel above the rows, one line per ticket with its lock, instance, risk,
+  the agent it waits for (or `no agent`), its age and time left. `H` moves the selection into
+  the panel, where `a`, `d`, `v`, `o` and `r` act on the selected ticket as on a card. A ticket
+  for no agent rings the attention sound.
 
 ## v0.5.0 (2026-11-01)
 

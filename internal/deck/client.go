@@ -146,24 +146,25 @@ func (c Client) SetSound(ctx context.Context, on bool) (string, error) {
 	return r.Sound, err
 }
 
-// HubDecide answers one of the hub's tickets for an agent of container (the hub card's a or d);
-// retype is the name typed for a production ticket.
-func (c Client) HubDecide(ctx context.Context, container, instance, id string, approved bool, retype string) error {
-	return c.call(ctx, "hub_decide", map[string]any{"container": container, "instance": instance, "id": id,
+// HubDecide answers one of the hub's tickets for an agent of container (the hub card's a or d),
+// or with panel any of them (the hub panel's); retype is the name typed for a production ticket.
+func (c Client) HubDecide(ctx context.Context, container string, panel bool, instance, id string, approved bool, retype string) error {
+	return c.call(ctx, "hub_decide", map[string]any{"container": container, "panel": panel, "instance": instance, "id": id,
 		"approved": approved, "retype": retype}, nil)
 }
 
 // HubReveal asks the Lock, through the daemon and the hub, for the clear values of a pending
-// ticket of an agent of container (the hub card's o or Ctrl-O).
-func (c Client) HubReveal(ctx context.Context, container, instance, id string) (HubClear, error) {
+// ticket of an agent of container (the hub card's o or Ctrl-O), or with panel of any (the panel's).
+func (c Client) HubReveal(ctx context.Context, container string, panel bool, instance, id string) (HubClear, error) {
 	var r HubClear
-	err := c.call(ctx, "hub_reveal", map[string]any{"container": container, "instance": instance, "id": id}, &r)
+	err := c.call(ctx, "hub_reveal", map[string]any{"container": container, "panel": panel, "instance": instance, "id": id}, &r)
 	return r, err
 }
 
-// HubRenew asks the Lock again for an expired ticket of an agent of container (the card's r).
-func (c Client) HubRenew(ctx context.Context, container, instance, id string) (HubRenewed, error) {
+// HubRenew asks the Lock again for an expired ticket of an agent of container (the card's r), or
+// with panel of any (the panel's).
+func (c Client) HubRenew(ctx context.Context, container string, panel bool, instance, id string) (HubRenewed, error) {
 	var r HubRenewed
-	err := c.call(ctx, "hub_renew", map[string]any{"container": container, "instance": instance, "id": id}, &r)
+	err := c.call(ctx, "hub_renew", map[string]any{"container": container, "panel": panel, "instance": instance, "id": id}, &r)
 	return r, err
 }

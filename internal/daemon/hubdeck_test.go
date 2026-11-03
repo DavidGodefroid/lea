@@ -204,7 +204,7 @@ func TestHubTicketApprovedFromTheDeck(t *testing.T) {
 		t.Fatalf("locks %+v", snap.Locks)
 	}
 	card := snap.Agents[0].Hub[0]
-	if err := c.HubDecide(e.ctx, "lea-a", card.Instance, card.ID, true, ""); err != nil {
+	if err := c.HubDecide(e.ctx, "lea-a", false, card.Instance, card.ID, true, ""); err != nil {
 		t.Fatal(err)
 	}
 	h.mu.Lock()

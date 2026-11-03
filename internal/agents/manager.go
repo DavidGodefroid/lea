@@ -211,6 +211,9 @@ type Snapshot struct {
 	// HubState is "down" when lea follows the hub (LEA_HUB=1) but cannot reach its facade, so no
 	// agent is suspended on a Lock call; set by the daemon.
 	HubState string `json:"hub_state,omitempty"`
+	// HubQueue is every pending ticket of the hub's queue, for an agent or none, oldest first:
+	// the deck's hub panel (#244). Set by the daemon from the hub's queue only.
+	HubQueue []HubCard `json:"hub_queue,omitempty"`
 	// LocksAdded are the locks lox up runs that the container does not mount (added while it
 	// runs): restart lea to use them. Set by the daemon.
 	LocksAdded []string `json:"locks_added,omitempty"`
@@ -260,6 +263,12 @@ type HubCard struct {
 	// the Lock again (r), never to decide it. Renews: this ticket asks again for an expired one.
 	Expired bool        `json:"expired,omitempty"`
 	Renews  *HubRenewal `json:"renews,omitempty"`
+	// Created is when the Lock asked (unix seconds, 0 unknown). Agent is the key of the agent the
+	// ticket shows on ("" when none) and AgentName the name the deck shows for it: set in the hub
+	// panel's list only (Snapshot.HubQueue).
+	Created   int64  `json:"created,omitempty"`
+	Agent     string `json:"agent,omitempty"`
+	AgentName string `json:"agent_name,omitempty"`
 }
 
 // HubRenewal is what a renewal ticket says of the expired ticket it asks again for (lockkit's

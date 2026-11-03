@@ -136,7 +136,7 @@ func TestHubTicketRevealedFromTheDeck(t *testing.T) {
 		t.Fatal(err)
 	}
 	c := deck.Client{Sock: e.api}
-	got, err := c.HubReveal(e.ctx, "lea-a", "crm", ticketA)
+	got, err := c.HubReveal(e.ctx, "lea-a", false, "crm", ticketA)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -419,10 +419,10 @@ func TestHubExpiredTicketRenewedFromTheDeck(t *testing.T) {
 	if v := lockView(e, "locksql"); v != nil && v.Pending != 0 {
 		t.Fatalf("an expired ticket counted: %+v", v)
 	}
-	if err := c.HubDecide(e.ctx, "lea-a", "crm", ticketA, true, ""); err == nil {
+	if err := c.HubDecide(e.ctx, "lea-a", false, "crm", ticketA, true, ""); err == nil {
 		t.Fatal("an expired ticket decided")
 	}
-	r, err := c.HubRenew(e.ctx, "lea-a", "crm", ticketA)
+	r, err := c.HubRenew(e.ctx, "lea-a", false, "crm", ticketA)
 	if err != nil || r.Ticket != ticketC || !r.AutoApproved {
 		t.Fatalf("renewed %+v %v", r, err)
 	}
@@ -442,7 +442,7 @@ func TestHubExpiredTicketRenewedFromTheDeck(t *testing.T) {
 	h.expired = []map[string]any{exp}
 	h.mu.Unlock()
 	e.d.pollHubQueue(e.ctx, 0)
-	if r, err := c.HubRenew(e.ctx, "lea-a", "crm", ticketA); err != nil || r.AutoApproved {
+	if r, err := c.HubRenew(e.ctx, "lea-a", false, "crm", ticketA); err != nil || r.AutoApproved {
 		t.Fatalf("renewed %+v %v", r, err)
 	}
 	ren := signedBy(queued(ticketC, "crm", "locksql", "someone", "", false, ""), k.lockPub)
@@ -458,7 +458,7 @@ func TestHubExpiredTicketRenewedFromTheDeck(t *testing.T) {
 		!hs[0].Renews.Checked || len(hs[0].Renews.Changes) != 2 || strings.ContainsRune(hs[0].Renews.Changes[0].Input, '\x1b') {
 		t.Fatalf("renewal card %+v", hs)
 	}
-	if err := c.HubDecide(e.ctx, "lea-a", "crm", ticketC, true, ""); err != nil {
+	if err := c.HubDecide(e.ctx, "lea-a", false, "crm", ticketC, true, ""); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -619,7 +619,7 @@ func TestHubRenewalFromTheDeckIsWaitedOn(t *testing.T) {
 		t.Fatal(err)
 	}
 	c := deck.Client{Sock: e.api}
-	if r, err := c.HubRenew(e.ctx, "lea-a", "crm", ticketA); err != nil || r.Ticket != ticketC || !r.AutoApproved {
+	if r, err := c.HubRenew(e.ctx, "lea-a", false, "crm", ticketA); err != nil || r.Ticket != ticketC || !r.AutoApproved {
 		t.Fatalf("renewed %+v %v", r, err)
 	}
 	if ws, _ := e.d.st.PendingHubWaits(dev); len(ws) != 1 || ws[0].Ticket != ticketC || ws[0].Lock != "locksql" || ws[0].Instance != "crm" {
@@ -641,7 +641,7 @@ func TestHubRenewalFromTheDeckIsWaitedOn(t *testing.T) {
 
 	// dev-2 only claimed ticketB (no wait of lea's named it): its renewal is waited on by no one.
 	renewal = "01JB0000000000000000000009"
-	if r, err := c.HubRenew(e.ctx, "lea-a", "crm", ticketB); err != nil || r.Ticket != renewal {
+	if r, err := c.HubRenew(e.ctx, "lea-a", false, "crm", ticketB); err != nil || r.Ticket != renewal {
 		t.Fatalf("renewed %+v %v", r, err)
 	}
 	if ws, _ := e.d.st.PendingHubWaits(dev2); len(ws) != 0 {
@@ -677,7 +677,7 @@ func TestHubRenewalApprovedBeforeItsWaitIsTold(t *testing.T) {
 	if c, _ := e.d.st.HubCursor(); c != "1" {
 		t.Fatalf("cursor %q", c)
 	}
-	if _, err := (deck.Client{Sock: e.api}).HubRenew(e.ctx, "lea-a", "crm", ticketA); err != nil {
+	if _, err := (deck.Client{Sock: e.api}).HubRenew(e.ctx, "lea-a", false, "crm", ticketA); err != nil {
 		t.Fatal(err)
 	}
 	inbox(t, e, "dev-1") // told of the renewal

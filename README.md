@@ -194,6 +194,7 @@ closing the deck, or the terminal, does not stop it: the next `lea` reattaches.
 | `e` | rename the selected agent (enter saves, esc cancels, empty clears) |
 | `m` / `t` | send the selected agent a message / read its messages (see below) |
 | `a` / `d` / `A` | allow / deny / always allow the selected agent's permission request |
+| `H` | move into the hub panel, the Lock Family hub's pending tickets (`a` / `d` approve / deny, `v` views, `esc` leaves) |
 | `r`, then `l` / `d` / `r` | make the selected agent a lead, a dev or a reviewer |
 | `s` | open a shell in the container (`exit` or `x` closes it) |
 | `-` / `\|` | split: a shell below the selected agent, or at its right, in its directory |
@@ -338,8 +339,12 @@ the lock; the agents see `.locksql` read-only. Vault profiles wait for lox up to
 console (lockhub#45). lea puts no `locksql` command on the host (it removes the link older releases
 made).
 
-Each query of an agent waits for your approval through the hub: in lea's deck (its hub view) or
-with `lox approve`. The console's own questions (its policy review on a first start or after a
+Each query of an agent waits for your approval through the hub: in lea's deck or with `lox
+approve`. The deck's hub panel, above the agents, lists every pending ticket of the hub as `lox
+approve` does, also one no agent claims (a query run through the shell, say), with whom it is for:
+`waiting: NAME (verified)` when the agent's own call waits on it, `claims: NAME (unverified)` when
+only the ticket's requester names it. It shows while a ticket waits, with the attention sound;
+`H` moves into it to answer. A ticket also shows on its agent's row. The console's own questions (its policy review on a first start or after a
 loosening, a production profile's typed name, the credentials its profile does not take from
 Vault) wait at its terminal: `lox attach NAME`, or **in the deck**: `L` in the deck (or
 `lea lock open locksql [profile]`) opens a pane under the agent attached to lox up's console of

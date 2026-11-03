@@ -10,18 +10,26 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 )
 
-func (f *fakeAPI) HubDecide(ctx context.Context, c, instance, id string, approved bool, retype string) error {
-	f.rec(fmt.Sprintf("hub-decide %s %s/%s %v %q", c, instance, id, approved, retype))
+// panelMark is how a fake call says it came from the hub panel.
+func panelMark(panel bool) string {
+	if panel {
+		return " panel"
+	}
+	return ""
+}
+
+func (f *fakeAPI) HubDecide(ctx context.Context, c string, panel bool, instance, id string, approved bool, retype string) error {
+	f.rec(fmt.Sprintf("hub-decide %s%s %s/%s %v %q", c, panelMark(panel), instance, id, approved, retype))
 	return f.err
 }
 
-func (f *fakeAPI) HubReveal(ctx context.Context, c, instance, id string) (HubClear, error) {
-	f.rec(fmt.Sprintf("hub-reveal %s %s/%s", c, instance, id))
+func (f *fakeAPI) HubReveal(ctx context.Context, c string, panel bool, instance, id string) (HubClear, error) {
+	f.rec(fmt.Sprintf("hub-reveal %s%s %s/%s", c, panelMark(panel), instance, id))
 	return f.clear, f.err
 }
 
-func (f *fakeAPI) HubRenew(ctx context.Context, c, instance, id string) (HubRenewed, error) {
-	f.rec(fmt.Sprintf("hub-renew %s %s/%s", c, instance, id))
+func (f *fakeAPI) HubRenew(ctx context.Context, c string, panel bool, instance, id string) (HubRenewed, error) {
+	f.rec(fmt.Sprintf("hub-renew %s%s %s/%s", c, panelMark(panel), instance, id))
 	return f.renewed, f.err
 }
 

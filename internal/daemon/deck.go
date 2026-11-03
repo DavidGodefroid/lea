@@ -296,6 +296,7 @@ func (d *Daemon) dispatchDeck(ctx context.Context, o Origin, req wire.Request) (
 		snap.Sound = d.soundState()
 		snap.Locks = d.lockViews(p.Container)
 		d.addHubCards(&snap)
+		snap.HubQueue = d.hubPanel()
 		snap.Pressure = d.deckPressure(p.Container)
 		snap.HubState = d.hubState()
 		// Locks lox up runs that this container does not mount: restart lea to use them.
