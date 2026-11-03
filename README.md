@@ -105,7 +105,9 @@ directory cannot be one (`/`, your home directory or a parent of it, or one that
 `cd` into the directory that holds your projects and run `lea` again, or `LEA_PROJECTS_DIR=DIR
 lea`. When the projects directory has no `.lockfamily/up.json` yet, lea starts the Lock Family
 hub for it with `lox init`, on your terminal (`lox` on your `PATH`, 0.5.0 or later:
-`brew install davidgodefroid/tap/lox`; `LEA_HUB=0` runs lea without the hub).
+`brew install davidgodefroid/tap/lox`; `LEA_HUB=0` runs lea without the hub). After a reboot or
+a `lox down`, `LEA_LOX_UP=1` in `~/.config/lea/lea.conf` makes lea run `lox up` itself before it
+starts (see the configuration table).
 
 [`lox add`](https://github.com/DavidGodefroid/lockhub/blob/main/docs/lox-add.md) is how a Lock
 gets set up for lea's agents, run in lea's projects directory (lea reads `.lockfamily/up.json`
@@ -192,6 +194,7 @@ closing the deck, or the terminal, does not stop it: the next `lea` reattaches.
 | `e` | rename the selected agent (enter saves, esc cancels, empty clears) |
 | `m` / `t` | send the selected agent a message / read its messages (see below) |
 | `a` / `d` / `A` | allow / deny / always allow the selected agent's permission request |
+| `H` | move into the hub panel, the Lock Family hub's pending tickets (`a` / `d` approve / deny, `v` views, `esc` leaves) |
 | `r`, then `l` / `d` / `r` | make the selected agent a lead, a dev or a reviewer |
 | `s` | open a shell in the container (`exit` or `x` closes it) |
 | `-` / `\|` | split: a shell below the selected agent, or at its right, in its directory |
@@ -200,9 +203,11 @@ closing the deck, or the terminal, does not stop it: the next `lea` reattaches.
 | `,` | settings (also in a row's right-click menu) |
 | `x`, then `y` | stop the selected agent |
 | `f` | new folder (enter names it) |
-| `o` | move the selected agent into a folder, or out of it |
+| `o` | move the selected agent into a folder, or to another one |
+| `u` | take the selected agent out of its folder |
 | `J` / `K` | move the selected folder, or an agent within its folder, down / up |
-| `enter`, `h` / `l` on a folder | fold / unfold it (`e` renames it, `x` deletes it: its agents go back, never stopped) |
+| `enter`, `h` / `l` on a folder | fold / unfold it (`e` renames it, `c` colours it, `x`, then `y` deletes it: its agents go back, never stopped) |
+| `h` on an agent in a folder | fold its folder |
 | `q` | leave the deck; agents keep running |
 | `?` | list the keys |
 
@@ -210,7 +215,8 @@ The mouse works too: click a row to select it, scroll to move, right-click a row
 (Split horizontally / Split vertically open a shell beside the agent, as Terminator does; the
 shell shows with its agent and steps aside while another agent is shown). A right-click anywhere
 else in the column opens the deck's own menu: new agent, new shell, new folder, sounds, keys,
-detach; ctrl + right-click makes a folder, holding the agent under the pointer. The
+detach; a click on a folder folds or unfolds it; ctrl + right-click makes a folder, holding the
+agent under the pointer. The
 pointer over a row shows its whole name (cut in the row when long) with the agent's name, role,
 profile and state in the bottom border.
 
@@ -240,7 +246,10 @@ profile and state in the bottom border.
   writes to you with `msg_send`, and you answer with `m`.
 - **Folders.** Folders come first, in your order, then the agents in no folder. A folded
   folder's dot sums up its agents: red when one needs you, the spinner while one works, green
-  once none works any more. The layout is yours: the deck keeps it on the host
+  once none works any more. A folder's colour (`c`) tints its arrow, its name and the guide of
+  its agents, never its dot. An agent a lead starts joins the lead's folder, also when it starts
+  while no deck is attached; once you move it, it stays where you put it. The layout is yours:
+  the deck keeps it on the host
   (`~/.local/share/lea/host/deck/<container>.json`), out of every container's reach.
   Each row shows the agent's context use, its directory and branch, and its own report on its
   task. The pane that has the keyboard is the bright one: the deck's frame turns blue when it
@@ -330,8 +339,12 @@ the lock; the agents see `.locksql` read-only. Vault profiles wait for lox up to
 console (lockhub#45). lea puts no `locksql` command on the host (it removes the link older releases
 made).
 
-Each query of an agent waits for your approval through the hub: in lea's deck (its hub view) or
-with `lox approve`. The console's own questions (its policy review on a first start or after a
+Each query of an agent waits for your approval through the hub: in lea's deck or with `lox
+approve`. The deck's hub panel, above the agents, lists every pending ticket of the hub as `lox
+approve` does, also one no agent claims (a query run through the shell, say), with whom it is for:
+`waiting: NAME (verified)` when the agent's own call waits on it, `claims: NAME (unverified)` when
+only the ticket's requester names it. It shows while a ticket waits, with the attention sound;
+`H` moves into it to answer. A ticket also shows on its agent's row. The console's own questions (its policy review on a first start or after a
 loosening, a production profile's typed name, the credentials its profile does not take from
 Vault) wait at its terminal: `lox attach NAME`, or **in the deck**: `L` in the deck (or
 `lea lock open locksql [profile]`) opens a pane under the agent attached to lox up's console of
@@ -824,6 +837,7 @@ read-only. The screen runs in the deck on the host: agents cannot open or drive 
 | `LEA_LOCKHTTP` | `0` | send the agents' web requests through a LockHTTP gate (refuses `LEA_GIT_SSH` and `LEA_OTEL_UPSTREAM`) |
 | `LEA_HUB` | `1` | follow the Lock Family approval hub (lockhub's facade socket: `LEA_HUB_SOCKET`, else `$XDG_RUNTIME_DIR/lockhub/facade.sock`): an agent whose Lock call waits for a decision there is suspended until it comes, and the deck shows and answers the hub's tickets; while no hub answers, no agent is suspended, the deck says `lockhub unreachable` and `lea doctor` warns. `0`: lea reads no hub and resumes the agents it suspended. **Upgrading from v0.2**: the default was `0`; put `LEA_HUB=0` in `~/.config/lea/lea.conf` to keep that, then restart lea |
 | `LEA_HUB_KEEPALIVE` | `300` | seconds (`0` to `3600`) an agent suspended on a hub ticket keeps its process before lea stops it alone, keeping its session for the decision or a message to resume it; read only with `LEA_HUB=1` (changing it while the hub is off restarts nothing) |
+| `LEA_LOX_UP` | `0` | `1`: when `lea` starts on the host and the projects directory has a Lock Family (`.lockfamily/lockfamily.yaml`) whose hub is not running, lea runs `lox up` there first, on your terminal, then prints `<type> NAME waits for its start questions: lox attach NAME` for each console it started; a `lox up` that fails only warns and lea starts anyway. Agents never run it. `0`: lea never runs `lox up` (it pulls images and starts containers) |
 | `LEA_INTERNAL_HOSTS` | none | private hosts the proxy may reach (format in `config/internal-hosts`) |
 | `LEA_EGRESS_ALLOW` | empty (lea's default list) | the only web domains agents may reach, comma separated (subdomains included); `default` stands for lea's list, `*` opens the web |
 | `LEA_NESTED_NETWORKS` | empty | networks your compose files expect, created at start |

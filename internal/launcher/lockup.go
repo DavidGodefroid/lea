@@ -78,6 +78,13 @@ func (l *Launcher) readLockUp(proj, lf string) (*lockUpState, string) {
 	return readLockUpState(l.logf, proj, lf)
 }
 
+// lockUpComposeProject is lox up's compose project of the projects directory proj (lockhub's
+// family.Project).
+func lockUpComposeProject(proj string) string {
+	h := sha256.Sum256([]byte(proj))
+	return "lockfamily-" + hex.EncodeToString(h[:4])
+}
+
 // readLockUpState is readLockUp saying its warnings through logf.
 func readLockUpState(logf func(string, ...any), proj, lf string) (*lockUpState, string) {
 	p := lf + "/" + lockUpFile
@@ -103,9 +110,7 @@ func readLockUpState(logf func(string, ...any), proj, lf string) (*lockUpState, 
 		logf("warning: %s: not lox up's state (version 1): lea ignores it", p)
 		return nil, p
 	}
-	// lox up's compose project of this very projects directory (lockhub's family.Project).
-	h := sha256.Sum256([]byte(proj))
-	if want := "lockfamily-" + hex.EncodeToString(h[:4]); s.Project != want || s.Workspace != proj {
+	if want := lockUpComposeProject(proj); s.Project != want || s.Workspace != proj {
 		logf("warning: %s: project %s of %q, not this projects directory's (%s of %q): lea ignores it", p, s.Project, s.Workspace, want, proj)
 		return nil, p
 	}

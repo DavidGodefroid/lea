@@ -117,7 +117,7 @@ func (m Model) body(inner int) []string {
 var helpLines = []string{
 	"j k, arrows move",
 	"1-9         jump to a row",
-	"enter       show and focus",
+	"enter       show / fold folder",
 	"space       next needing you",
 	"n           new agent",
 	"N           new, other provider",
@@ -125,14 +125,14 @@ var helpLines = []string{
 	"- |         split with a shell",
 	"m           note to its inbox",
 	"t           its messages",
-	"e           rename",
-	"f o         new folder, move in",
+	"e c         rename, colour",
+	"f o u       new folder, in, out",
 	"J K h l     reorder, fold",
 	"r           its role",
 	"p           pause (y), resume",
 	"a d A       allow deny always",
 	"x           stop or remove",
-	"S           sounds on or off",
+	"S H         sounds, hub panel",
 	",           settings",
 	"ctrl+space  deck or terminal",
 	"q           detach",
@@ -151,8 +151,8 @@ func (m Model) statusLine(inner int) string {
 	}
 	if m.hubFor != "" {
 		prompt := "type the name to approve: "
-		if a := m.selectedAgent(); a != nil && hubTicket(*a) != nil {
-			prompt = "type " + clean(hubTicket(*a).Retype) + ": "
+		if h := m.selectedHub(); h != nil {
+			prompt = "type " + clean(h.Retype) + ": "
 		}
 		field := tail(safe(string(m.hubDraft), c), max(1, inner-1-len([]rune(prompt))-1))
 		return padRight(" "+lipgloss.NewStyle().Foreground(theme.Text).Render(prompt+field)+
@@ -176,12 +176,28 @@ func (m Model) statusLine(inner int) string {
 			}
 			return padRight(" "+st.Render(fit(safe(m.pressure.Short, c), inner-1, c)), inner)
 		}
+		if h := m.folderHint(); h != "" {
+			return padRight(" "+muted.Render(fit(h, inner-1, c)), inner)
+		}
 		if m.noticeText == "" {
 			return ""
 		}
 		return padRight(" "+muted.Render(fit(m.noticeText, inner-1, c)), inner)
 	}
 	return padRight(" "+alert.Render(fit(m.status, inner-1, c)), inner)
+}
+
+// folderHint is the keys of the selected row that the bottom border has no room for: a folder's,
+// or u on an agent in a folder; "" on any other row, and while the selection is in the hub panel.
+func (m Model) folderHint() string {
+	d := m.cs().dot
+	switch {
+	case m.folderAt(m.selected) >= 0 && !m.panel:
+		return fmt.Sprintf("enter fold %[1]s e name %[1]s c colour %[1]s x delete %[1]s J K move", d)
+	case m.folderOf(m.selected) >= 0 && m.index(m.selected) >= 0 && !m.panel:
+		return "u out of folder"
+	}
+	return ""
 }
 
 // frameStyle is the style of the deck's frame: the accent while the deck has the keyboard, so the
@@ -245,6 +261,10 @@ func (m Model) top(w int) string {
 	// The requests waiting for the user in every Lock's console, or a console that is down.
 	if l := m.lockLine(); l != "" {
 		count = l + " " + c.dot + " " + count
+	}
+	// The hub's pending tickets, from its queue only: also those for no agent.
+	if n := m.queuePending(); n > 0 {
+		count = fmt.Sprintf("hub %d pending %s %s", n, c.dot, count)
 	}
 	// c.tl+c.h+" " (3) + title + " " + fill + " " + count + " "+c.h+c.tr (3)
 	fill := w - 8 - tw - lipgloss.Width(count)
@@ -322,13 +342,19 @@ func (m Model) bottom(w int) string {
 	if a := m.selectedAgent(); a != nil && a.Approval == nil && a.LockAsk != nil {
 		hint = fmt.Sprintf("O open console %s d decline", c.dot)
 	}
-	if a := m.selectedAgent(); a != nil && hubTicket(*a) != nil {
+	if h := m.selectedHub(); h != nil {
 		hint = fmt.Sprintf("a approve %[1]s d deny %[1]s v view %[1]s o clear values", c.dot)
-		if hubTicket(*a).Expired {
+		if h.Expired {
 			hint = fmt.Sprintf("r ask again (approves at once if nothing changed) %s v view", c.dot)
 		}
+		if m.panel {
+			hint = fmt.Sprintf("a approve %[1]s d deny %[1]s v view %[1]s esc leave", c.dot)
+			if h.Expired {
+				hint = fmt.Sprintf("r ask again %[1]s v view %[1]s esc leave", c.dot)
+			}
+		}
 	}
-	if a := m.selectedAgent(); a != nil && a.Approval != nil {
+	if a := m.selectedAgent(); a != nil && a.Approval != nil && !m.panel {
 		hint = fmt.Sprintf("a allow %s d deny", c.dot)
 		if a.Approval.Always {
 			hint += fmt.Sprintf(" %s A always", c.dot)
@@ -336,6 +362,9 @@ func (m Model) bottom(w int) string {
 	}
 	if m.confirm != "" {
 		hint = fmt.Sprintf("y stop %s esc cancel", c.dot)
+		if isFolderKey(m.confirm) {
+			hint = fmt.Sprintf("y delete %s esc cancel", c.dot)
+		}
 	}
 	if m.roleFor != "" {
 		hint = fmt.Sprintf("l lead %[1]s d dev %[1]s r reviewer", c.dot)
@@ -379,8 +408,10 @@ type lineOwner struct {
 	item int
 }
 
-// rowLines are the lines rows renders and, line for line, what each shows.
+// rowLines are the lines rows renders and, line for line, what each shows: the hub panel first,
+// always on screen (its lines show no row), then the rows that fit under it.
 func (m Model) rowLines(inner int) ([]string, []lineOwner) {
+	panel := m.panelLines(inner)
 	es := m.entries(false)
 	rendered := make([][]string, len(es))
 	owners := make([][]lineOwner, len(es))
@@ -388,7 +419,7 @@ func (m Model) rowLines(inner int) ([]string, []lineOwner) {
 		if e.agent < 0 {
 			rendered[i] = m.folderRow(e.in, inner)
 		} else {
-			rendered[i] = m.row(m.agents[e.agent], inner, e.in >= 0)
+			rendered[i] = m.row(m.agents[e.agent], inner, e.in)
 		}
 		// A lock added while lea runs, on the selected agent: the same for every agent of the
 		// container (its mounts), said once.
@@ -427,7 +458,7 @@ func (m Model) rowLines(inner int) ([]string, []lineOwner) {
 		if len(m.agents) == 0 { // the body's line saying there is no agent yet
 			room--
 		}
-		room = max(1, room)
+		room = max(1, room-len(panel))
 	}
 	start := 0
 	if sel := focus; sel >= 0 && room > 0 {
@@ -440,10 +471,13 @@ func (m Model) rowLines(inner int) ([]string, []lineOwner) {
 			start = j
 		}
 	}
-	var out []string
-	var own []lineOwner
+	out := append([]string(nil), panel...)
+	own := make([]lineOwner, len(panel))
+	for i := range own {
+		own[i] = lineOwner{"", -1}
+	}
 	for i := start; i < len(rendered); i++ {
-		if room > 0 && len(out) > 0 && len(out)+len(rendered[i]) > room {
+		if room > 0 && len(out) > len(panel) && len(out)-len(panel)+len(rendered[i]) > room {
 			break
 		}
 		out = append(out, rendered[i]...)
@@ -457,7 +491,7 @@ func (m Model) rowLines(inner int) ([]string, []lineOwner) {
 func (m Model) folderRow(fi int, inner int) []string {
 	c := m.cs()
 	f := m.layout.Folders[fi]
-	sel := folderKey(f.ID) == m.selected
+	sel := folderKey(f.ID) == m.selected && !m.panel
 	bg := func(s lipgloss.Style) lipgloss.Style {
 		if sel {
 			return s.Background(theme.Sel)
@@ -482,29 +516,39 @@ func (m Model) folderRow(fi int, inner int) []string {
 	const countW = 4
 	nameW := inner - 6 - (1 + countW) // mark, space, glyph, space, arrow, space
 	count := fmt.Sprintf("%d", len(m.folderMembers(fi)))
+	// The folder's colour, when it has one, is its arrow's and its name's; never its dot's.
+	arrowC, nameC := lipgloss.TerminalColor(theme.Accent), lipgloss.TerminalColor(theme.Text)
+	if col, ok := folderColour(f.Color); ok {
+		arrowC, nameC = col, col
+	}
 	return []string{bg(lipgloss.NewStyle().Foreground(theme.Accent)).Render(mark) +
 		bg(plain).Render(" ") +
 		bg(lipgloss.NewStyle().Foreground(gc)).Render(g) +
 		bg(plain).Render(" ") +
-		bg(lipgloss.NewStyle().Foreground(theme.Accent)).Render(arrow) +
+		bg(lipgloss.NewStyle().Foreground(arrowC)).Render(arrow) +
 		bg(plain).Render(" ") +
-		bg(lipgloss.NewStyle().Foreground(theme.Text).Bold(true)).Render(padRight(fit(f.Name, nameW, c), nameW)) +
+		bg(lipgloss.NewStyle().Foreground(nameC).Bold(true)).Render(padRight(fit(f.Name, nameW, c), nameW)) +
 		bg(plain).Render(" ") +
 		bg(muted).Render(padLeft(count, countW))}
 }
 
 // row is two lines of exactly inner cells: mark, bar, glyph, name, profile; then the detail. An
-// agent in a folder has the folder's guide in its second cell.
-func (m Model) row(a Agent, inner int, inFolder bool) []string {
+// agent in folder fi (-1: at the root) has the folder's guide in its second cell, in the folder's
+// colour when it has one.
+func (m Model) row(a Agent, inner int, fi int) []string {
 	c := m.cs()
-	sel := a.Key == m.selected
+	sel := a.Key == m.selected && !m.panel // in the hub panel, the selection is there
 	gap, pad := " ", "    "
-	if inFolder {
+	guide := muted
+	if fi >= 0 {
 		gap = "╎"
 		if m.ascii {
 			gap = ":"
 		}
 		pad = " " + gap + "  "
+		if col, ok := folderColour(m.layout.Folders[fi].Color); ok {
+			guide = lipgloss.NewStyle().Foreground(col)
+		}
 	}
 	bg := func(s lipgloss.Style) lipgloss.Style {
 		if sel {
@@ -528,7 +572,7 @@ func (m Model) row(a Agent, inner int, inFolder bool) []string {
 		}
 	}
 	line1 := bg(lipgloss.NewStyle().Foreground(theme.Accent)).Render(mark) +
-		bg(muted).Render(gap) +
+		bg(guide).Render(gap) +
 		bg(lipgloss.NewStyle().Foreground(gc)).Render(g) +
 		bg(plain).Render(" ") +
 		bg(lipgloss.NewStyle().Foreground(theme.Text).Bold(sel)).Render(padRight(fit(display(a), nameW, c), nameW)) +
@@ -537,7 +581,7 @@ func (m Model) row(a Agent, inner int, inFolder bool) []string {
 		bg(plain).Render(" ") +
 		bg(muted).Render(padLeft(ctxText(a.CtxPct), ctxW))
 	detail := fit(m.detail(a, inner-4), inner-4, c)
-	line2 := bg(muted).Render(pad) + bg(muted).Render(padRight(detail, inner-4))
+	line2 := bg(guide).Render(pad) + bg(muted).Render(padRight(detail, inner-4))
 	lines := []string{line1, line2}
 	if l := a.LockAsk; l != nil && a.Approval == nil {
 		warn := "⚠"
@@ -545,71 +589,11 @@ func (m Model) row(a Agent, inner int, inFolder bool) []string {
 			warn = "!"
 		}
 		lines = append(lines,
-			bg(muted).Render(pad)+bg(alert).Render(padRight(fit(warn+" open the "+lockAskName(*l)+" console?", inner-4, c), inner-4)),
-			bg(muted).Render(pad)+bg(lipgloss.NewStyle().Foreground(theme.Text)).Render(padRight(fit("[O]pen [d]ecline", inner-4, c), inner-4)))
+			bg(guide).Render(pad)+bg(alert).Render(padRight(fit(warn+" open the "+lockAskName(*l)+" console?", inner-4, c), inner-4)),
+			bg(guide).Render(pad)+bg(lipgloss.NewStyle().Foreground(theme.Text)).Render(padRight(fit("[O]pen [d]ecline", inner-4, c), inner-4)))
 	}
 	if h := hubTicket(a); h != nil {
-		warn := "⚠"
-		if m.ascii {
-			warn = "!"
-		}
-		text := lipgloss.NewStyle().Foreground(theme.Text)
-		row := func(st lipgloss.Style, s string) string {
-			return bg(muted).Render(pad) + bg(st).Render(padRight(fit(s, inner-4, c), inner-4))
-		}
-		wide := max(8, inner-6)
-		if !h.Verified {
-			lines = append(lines, row(alert, warn+" unverified: claims \""+clean(h.Claimed)+"\""))
-		}
-		head := warn + " " + clean(h.Lock) + " " + clean(h.Instance) + " " + c.dot + " " + clean(h.Risk)
-		if h.Expired {
-			head += " " + c.dot + " EXPIRED"
-		}
-		lines = append(lines, row(alert, head))
-		if h.Production {
-			lines = append(lines, row(alert, "PRODUCTION"))
-		}
-		if r := h.Renews; r != nil {
-			for _, l := range renewLines(*r) {
-				for _, w := range wrap(l, wide+2, c) {
-					lines = append(lines, row(alert, w))
-				}
-			}
-		}
-		for _, l := range wrap(clean(h.Header), wide+2, c) {
-			if l != "" {
-				lines = append(lines, row(text, l))
-			}
-		}
-		if h.Note != "" {
-			for _, l := range wrap("agent: "+clean(h.Note), wide+2, c) {
-				lines = append(lines, row(muted, l))
-			}
-		}
-		body := m.hubBody(*h)
-		if !m.hubFull && len(body) > hubFolded {
-			body = append(append([]string(nil), body[:hubFolded]...), fmt.Sprintf("… %d more lines (v)", len(body)-hubFolded))
-		}
-		for _, l := range body {
-			lines = append(lines, row(text, "  "+l))
-		}
-		for _, w := range m.hubWarnings(*h) {
-			lines = append(lines, row(alert, "  "+w))
-		}
-		if rv := m.revealed; rv != nil && rv.ref == h.Instance+"/"+h.ID && a.Key == m.selected {
-			lines = append(lines, m.clearLines(rv.clear, wide, row)...)
-		}
-		keys := "[a]pprove [d]eny [v]iew [o] clear values"
-		if h.Expired {
-			keys = "expired: [r] asks the lock again, approved at once if nothing changed"
-		}
-		if h.Production && h.Retype != "" && !h.Expired {
-			keys += " " + c.dot + " approving asks for " + clean(h.Retype)
-		}
-		if n := len(a.Hub); n > 1 {
-			keys += fmt.Sprintf(" %s %d more tickets", c.dot, n-1)
-		}
-		lines = append(lines, row(text, keys))
+		lines = append(lines, m.hubCardLines(*h, inner, pad, bg, guide, true, a.Key == m.selected && !m.panel, len(a.Hub)-1)...)
 	}
 	if ap := a.Approval; ap != nil {
 		warn := "⚠"
@@ -625,8 +609,8 @@ func (m Model) row(a Agent, inner int, inFolder bool) []string {
 			keys += " [A]lways"
 		}
 		lines = append(lines,
-			bg(muted).Render(pad)+bg(alert).Render(padRight(fit(warn+" "+what, inner-4, c), inner-4)),
-			bg(muted).Render(pad)+bg(lipgloss.NewStyle().Foreground(theme.Text)).Render(padRight(fit(keys, inner-4, c), inner-4)))
+			bg(guide).Render(pad)+bg(alert).Render(padRight(fit(warn+" "+what, inner-4, c), inner-4)),
+			bg(guide).Render(pad)+bg(lipgloss.NewStyle().Foreground(theme.Text)).Render(padRight(fit(keys, inner-4, c), inner-4)))
 	}
 	return lines
 }
@@ -816,4 +800,75 @@ func (m Model) clearLines(cl HubClear, wide int, row func(lipgloss.Style, string
 		end = rule + " cut: lox approve shows them all " + rule
 	}
 	return append(out, row(mark, end))
+}
+
+// hubCardLines are the lines of a hub ticket's card, inner cells wide, each after pad: the Lock,
+// the instance, the risk, production, the Lock's masked screen (folded unless v), its warnings,
+// the clear values when o showed them on this card (selected), and its keys. claim shows the
+// requester's claim of an unverified ticket (the panel says it in its own line); more counts the
+// agent's other tickets.
+func (m Model) hubCardLines(h HubCard, inner int, pad string, bg func(lipgloss.Style) lipgloss.Style, guide lipgloss.Style, claim, selected bool, more int) []string {
+	c := m.cs()
+	warn := "⚠"
+	if m.ascii {
+		warn = "!"
+	}
+	text := lipgloss.NewStyle().Foreground(theme.Text)
+	row := func(st lipgloss.Style, s string) string {
+		return bg(guide).Render(pad) + bg(st).Render(padRight(fit(s, inner-4, c), inner-4))
+	}
+	wide := max(8, inner-6)
+	var lines []string
+	if claim && !h.Verified {
+		lines = append(lines, row(alert, warn+" unverified: claims \""+clean(h.Claimed)+"\""))
+	}
+	head := warn + " " + clean(h.Lock) + " " + clean(h.Instance) + " " + c.dot + " " + clean(h.Risk)
+	if h.Expired {
+		head += " " + c.dot + " EXPIRED"
+	}
+	lines = append(lines, row(alert, head))
+	if h.Production {
+		lines = append(lines, row(alert, "PRODUCTION"))
+	}
+	if r := h.Renews; r != nil {
+		for _, l := range renewLines(*r) {
+			for _, w := range wrap(l, wide+2, c) {
+				lines = append(lines, row(alert, w))
+			}
+		}
+	}
+	for _, l := range wrap(clean(h.Header), wide+2, c) {
+		if l != "" {
+			lines = append(lines, row(text, l))
+		}
+	}
+	if h.Note != "" {
+		for _, l := range wrap("agent: "+clean(h.Note), wide+2, c) {
+			lines = append(lines, row(muted, l))
+		}
+	}
+	body := m.hubBody(h)
+	if !m.hubFull && len(body) > hubFolded {
+		body = append(append([]string(nil), body[:hubFolded]...), fmt.Sprintf("… %d more lines (v)", len(body)-hubFolded))
+	}
+	for _, l := range body {
+		lines = append(lines, row(text, "  "+l))
+	}
+	for _, w := range m.hubWarnings(h) {
+		lines = append(lines, row(alert, "  "+w))
+	}
+	if rv := m.revealed; rv != nil && rv.ref == h.Instance+"/"+h.ID && selected {
+		lines = append(lines, m.clearLines(rv.clear, wide, row)...)
+	}
+	keys := "[a]pprove [d]eny [v]iew [o] clear values"
+	if h.Expired {
+		keys = "expired: [r] asks the lock again, approved at once if nothing changed"
+	}
+	if h.Production && h.Retype != "" && !h.Expired {
+		keys += " " + c.dot + " approving asks for " + clean(h.Retype)
+	}
+	if more > 0 {
+		keys += fmt.Sprintf(" %s %d more tickets", c.dot, more)
+	}
+	return append(lines, row(text, keys))
 }

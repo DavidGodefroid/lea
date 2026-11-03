@@ -29,9 +29,10 @@ import (
 // (a long poll), shows each one on the agent it is for, and answers it there with the user's
 // approval or denial (facade "deck"). A ticket is for the agent whose own wait names it (hub_waits,
 // verified), else for the agent its requester claims (the requester is the agent's own words:
-// unverified). A ticket no agent of lea claims shows nowhere: `lox approve` answers it; nor does
-// one lea stopped waiting on (its agent forgotten, the hub switched off: hub_abandoned) until an
-// agent waits on it again. Each Lock's counter (#153) follows the queue.
+// unverified). A ticket no agent of lea claims shows on no card, nor does one lea stopped waiting
+// on (its agent forgotten, the hub switched off: hub_abandoned) until an agent waits on it again.
+// Every ticket, attributed or not, shows in each deck's hub panel (#244): the queue as `lox
+// approve` lists it, whatever the agents did. Each Lock's counter (#153) follows the queue.
 
 const (
 	// hubQueueWait is the long poll of GET /v1/queue (the hub caps it at 60 s); hubQueueRetry the
@@ -51,7 +52,7 @@ const (
 // the instance name of a production ticket (what the user types), never the ticket's flags.retype.
 type HubTicket struct {
 	ID, Instance, Lock, Risk string
-	Expires                  int64
+	Created, Expires         int64
 	Production               bool
 	Retype                   string
 	Header, Note             string
@@ -85,11 +86,12 @@ type HubVerdict struct {
 	Reason, Retype string
 }
 
-// hubEntry is a queued ticket lea shows: the agent it is for and that agent's container.
+// hubEntry is a queued ticket lea shows: the agent it is for ("" when none), that agent's
+// container and the name the deck shows for it.
 type hubEntry struct {
-	t                HubTicket
-	agent, container string
-	verified         bool
+	t                      HubTicket
+	agent, container, name string
+	verified               bool
 }
 
 var hubRef = regexp.MustCompile(`^[A-Za-z0-9._:-]{1,128}$`)
@@ -156,6 +158,7 @@ type queueItem struct {
 	ID       string          `json:"id"`
 	Instance string          `json:"instance"`
 	Risk     string          `json:"risk"`
+	Created  *time.Time      `json:"created"`
 	Expires  *time.Time      `json:"expires"`
 	Facades  []string        `json:"facades"`
 	Ticket   json.RawMessage `json:"ticket"`
@@ -210,6 +213,9 @@ func (it queueItem) ticket() (HubTicket, bool) {
 	}
 	if it.Expires != nil {
 		t.Expires = it.Expires.Unix()
+	}
+	if it.Created != nil {
+		t.Created = it.Created.Unix()
 	}
 	if r := tk.Renews; r != nil {
 		if !hubRef.MatchString(r.Of) {
@@ -330,7 +336,7 @@ func (d *Daemon) setHubQueue(ctx context.Context, ts []HubTicket, up bool) {
 		if err == nil {
 			abandoned, err = d.st.AbandonedHubTickets()
 		}
-		if err != nil { // no agent to show them on: none shows
+		if err != nil { // no agent to tell them from: none shows
 			log.Printf("lea daemon: hub queue: %v", err)
 			d.showHub(ctx, nil, "")
 			return
@@ -368,19 +374,22 @@ func (d *Daemon) setHubQueue(ctx context.Context, ts []HubTicket, up bool) {
 				// verifies the ticket and links the renewal to a ticket of the same instance.
 				k, ok = waited[t.Instance+"/"+t.Renews.Of]
 			}
-			if ok && byKey[k].Key != "" {
+			switch {
+			case ok && byKey[k].Key != "":
 				e.agent, e.verified = k, true
-			} else if abandoned[t.Instance+"/"+t.ID] || (t.Renews != nil && abandoned[t.Instance+"/"+t.Renews.Of]) {
+			case abandoned[t.Instance+"/"+t.ID] || (t.Renews != nil && abandoned[t.Instance+"/"+t.Renews.Of]):
 				// lea stopped waiting on it, or on the ticket it renews (its agent forgotten, the
-				// hub off): not a ticket of a live agent that bears the same name.
-				continue
-			} else {
+				// hub off): not a ticket of a live agent that bears the same name. The panel
+				// still shows it, for no agent.
+			default:
 				e.agent = claimedAgent(all, t)
 			}
-			if e.agent == "" {
-				continue
+			if a := byKey[e.agent]; e.agent != "" {
+				e.container, e.name = a.Container, a.Name
+				if a.Label != "" {
+					e.name = a.Label
+				}
 			}
-			e.container = byKey[e.agent].Container
 			entries = append(entries, e)
 		}
 	}
@@ -413,14 +422,24 @@ func (d *Daemon) dropHub(ctx context.Context, gone func(hubEntry) bool) {
 // showHubWith sets the queue to next(current), under one lock, and each Lock's counter from it.
 func (d *Daemon) showHubWith(ctx context.Context, next func(cur []hubEntry) []hubEntry, console string) {
 	d.mu.Lock()
+	old := map[string]bool{}
+	for _, e := range d.hubQueue {
+		old[e.t.Instance+"/"+e.t.ID] = true
+	}
 	entries := next(d.hubQueue)
 	d.hubQueue = entries
 	known := d.hubLocks
 	d.hubLocks = map[string]bool{}
 	counts := map[string]map[string]int{}
+	arrived := false
 	for _, e := range entries {
-		if e.t.Lock == "lockhttp" || e.t.Expired {
-			continue // the gate's status file counts LockHTTP's requests; an expired ticket waits on no one
+		if e.container == "" && !e.t.Expired && !old[e.t.Instance+"/"+e.t.ID] {
+			arrived = true // a ticket for no agent: no counter rings for it
+		}
+		if e.t.Lock == "lockhttp" || e.t.Expired || e.container == "" {
+			// the gate's status file counts LockHTTP's requests; an expired ticket waits on no
+			// one; a ticket for no agent waits in no container (the hub panel shows it)
+			continue
 		}
 		if counts[e.t.Lock] == nil {
 			counts[e.t.Lock] = map[string]int{}
@@ -436,7 +455,26 @@ func (d *Daemon) showHubWith(ctx context.Context, next func(cur []hubEntry) []hu
 	for l := range locks {
 		d.SetLockStatus(ctx, l, LockStatus{Console: console, PendingByContainer: counts[l]})
 	}
+	if arrived {
+		d.soundEveryDeck(ctx)
+	}
 	d.changed()
+}
+
+// soundEveryDeck plays the attention sound in each container a deck shows: a ticket for no agent
+// arrived in the hub panel every deck shows.
+func (d *Daemon) soundEveryDeck(ctx context.Context) {
+	all, err := d.st.Agents()
+	if err != nil {
+		return
+	}
+	done := map[string]bool{}
+	for _, a := range all {
+		if a.Container != "" && !done[a.Container] {
+			done[a.Container] = true
+			d.sound(ctx, a.Container, SoundAttention) // soundGap rings it once
+		}
+	}
 }
 
 // claimedAgent is the agent a ticket's requester claims: the live one with that session, else the
@@ -475,11 +513,26 @@ func (d *Daemon) addHubCards(snap *agents.Snapshot) {
 	}
 	for i := range snap.Agents {
 		for _, e := range entries {
-			if e.agent == snap.Agents[i].Key {
+			if e.agent != "" && e.agent == snap.Agents[i].Key {
 				snap.Agents[i].Hub = append(snap.Agents[i].Hub, hubCard(e))
 			}
 		}
 	}
+}
+
+// hubPanel is every queued ticket, for no agent or any, oldest first: the deck's hub panel
+// (#244). Each names the agent it shows on, if any, by the name the deck shows.
+func (d *Daemon) hubPanel() []agents.HubCard {
+	d.mu.Lock()
+	entries := d.hubQueue
+	d.mu.Unlock()
+	var out []agents.HubCard
+	for _, e := range entries {
+		c := hubCard(e)
+		c.Agent, c.AgentName = e.agent, e.name
+		out = append(out, c)
+	}
+	return out
 }
 
 func hubCard(e hubEntry) agents.HubCard {
@@ -506,7 +559,7 @@ func hubCard(e hubEntry) agents.HubCard {
 	c := agents.HubCard{ID: t.ID, Instance: t.Instance, Lock: t.Lock, Risk: line(t.Risk, 16),
 		Production: t.Production, Retype: line(t.Retype, maxRetype), Verified: e.verified,
 		Header: line(t.Header, maxHubLine), Note: note, Body: lines(t.Body, maxHubLines),
-		Warnings: lines(t.Warnings, 10), Expires: t.Expires, Claimed: claimed, Truncated: cut, Expired: t.Expired}
+		Warnings: lines(t.Warnings, 10), Created: t.Created, Expires: t.Expires, Claimed: claimed, Truncated: cut, Expired: t.Expired}
 	if r := t.Renews; r != nil {
 		c.Renews = &agents.HubRenewal{Of: r.Of, Reason: line(r.Reason, 32), Checked: r.Checked}
 		for _, ch := range r.Changes {
@@ -532,11 +585,12 @@ func hubLine(s string, n int) (line string, cut bool) {
 	return s, false
 }
 
-// hubDecide answers a queued ticket of one of container's agents from that container's deck.
+// hubDecide answers a queued ticket of one of container's agents from that container's deck, or,
+// from the hub panel (Panel), any queued ticket: the panel lists them all, as lox approve does.
 func (d *Daemon) hubDecide(ctx context.Context, params json.RawMessage) error {
 	var p struct {
 		Container, Instance, ID string
-		Approved                bool
+		Approved, Panel         bool
 		Reason, Retype          string
 	}
 	if err := json.Unmarshal(params, &p); err != nil {
@@ -546,7 +600,7 @@ func (d *Daemon) hubDecide(ctx context.Context, params json.RawMessage) error {
 	f := d.hubFacade
 	found, production := false, false
 	for _, e := range d.hubQueue {
-		if e.t.ID == p.ID && e.t.Instance == p.Instance && e.container == p.Container && p.Container != "" && !e.t.Expired {
+		if e.t.ID == p.ID && e.t.Instance == p.Instance && inDeck(e, p.Container, p.Panel) && !e.t.Expired {
 			found, production = true, e.t.Production
 		}
 	}
@@ -568,4 +622,10 @@ func (d *Daemon) hubDecide(ctx context.Context, params json.RawMessage) error {
 	}
 	d.dropHub(ctx, func(e hubEntry) bool { return e.t.ID == p.ID && e.t.Instance == p.Instance && !e.t.Expired })
 	return nil
+}
+
+// inDeck reports whether a deck may act on a queued ticket: one of its container's agents' from
+// a card, any from the hub panel. Both are the host's only (deckMethods).
+func inDeck(e hubEntry, container string, panel bool) bool {
+	return panel || (container != "" && e.container == container)
 }

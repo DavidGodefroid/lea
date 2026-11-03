@@ -314,17 +314,20 @@ func loadLockKeys(path string) (map[string]ed25519.PublicKey, error) {
 	return out, nil
 }
 
-// hubAsked finds the queued ticket of one of container's agents a deck asks about: pending
-// (reveal) or expired (renew).
+// hubAsked finds the queued ticket of one of container's agents a deck asks about, or any queued
+// ticket from the hub panel (Panel): pending (reveal) or expired (renew).
 func (d *Daemon) hubAsked(params json.RawMessage, expired bool) (HubFacade, hubEntry, string, error) {
-	var p struct{ Container, Instance, ID string }
+	var p struct {
+		Container, Instance, ID string
+		Panel                   bool
+	}
 	if err := json.Unmarshal(params, &p); err != nil {
 		return nil, hubEntry{}, "", err
 	}
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	for _, e := range d.hubQueue {
-		if e.t.ID == p.ID && e.t.Instance == p.Instance && e.container == p.Container && p.Container != "" && e.t.Expired == expired {
+		if e.t.ID == p.ID && e.t.Instance == p.Instance && inDeck(e, p.Container, p.Panel) && e.t.Expired == expired {
 			if d.hubFacade == nil {
 				break
 			}
