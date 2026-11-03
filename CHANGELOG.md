@@ -18,6 +18,10 @@
   the agent it waits for (or `no agent`), its age and time left. `H` moves the selection into
   the panel, where `a`, `d`, `v`, `o` and `r` act on the selected ticket as on a card. A ticket
   for no agent rings the attention sound.
+- A stray `p` typed on the deck no longer freezes an agent (#240): `p` on a running agent asks
+  first (`y` pauses it, any other key cancels), `p` on a paused one resumes it at once, and
+  `enter` on a paused agent resumes it before focusing it. The row menu's Pause / Resume stay
+  one click.
 
 ## v0.5.0 (2026-11-01)
 
