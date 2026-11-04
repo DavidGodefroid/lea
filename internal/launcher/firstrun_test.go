@@ -530,3 +530,24 @@ func stubConsoleGrace(grace, step time.Duration) func() {
 
 // A waiting console is said at once in tests: no grace to start.
 func init() { consoleGrace = 0 }
+
+// Several consoles wait (#282): lea goes through them one after the other and names which one it
+// is on.
+func TestConsolesWaitNOfM(t *testing.T) {
+	w := loxUpWorld(t, "")
+	w.env["FAKE_DOCKER_OUT_PS___FILTER"] = "lockhub=h1\nlock-crm=c1\nlock-bus=b1"
+	w.env["FAKE_DOCKER_OUT_EXEC_C1"] = unixNone
+	w.env["FAKE_DOCKER_OUT_EXEC_B1"] = unixNone
+	if err := w.launcher().ensureHub(w.proj); err != nil {
+		t.Fatal(err)
+	}
+	e := w.errb.String()
+	for _, s := range []string{
+		"lea: lockmq bus (1 of 2) waits for its start question (its console runs but does not serve yet): lox attach bus\n",
+		"lea: locksql crm (2 of 2) waits for its start question (its console runs but does not serve yet): lox attach crm\n",
+	} {
+		if !strings.Contains(e, s) {
+			t.Fatalf("stderr %q lacks %q", e, s)
+		}
+	}
+}
