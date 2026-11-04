@@ -1,5 +1,15 @@
 # Changelog
 
+## v0.8.1 (2026-11-04)
+
+- `a`, `d` and `Y` work after a click on the hub ticket shown in the right pane (#289): a click
+  (left or right) on the ticket pane keeps the keyboard on the deck, and ctrl+space no longer stops
+  on it. The wheel still scrolls the ticket.
+- The ticket pane keeps lea's own words (the name a production ticket awaits, a refusal, the
+  approve-all report, the keys) in a banner above the ticket, each line marked `▌`; the ticket's own
+  text can never draw such a line. An unknown key in the hub panel now says that `a` approves, `d`
+  denies and `esc` leaves.
+
 ## v0.8.0 (2026-11-04)
 
 - Hub tickets are shown whole in the large right pane (#284): selecting a ticket in the hub panel
