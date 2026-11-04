@@ -27,10 +27,11 @@ type fakeHub struct {
 	calls  []string
 	fail   bool
 	// queue is GET /v1/queue's tickets (lockhub's QueueItem); decided the bodies POSTed to
-	// /v1/tickets/{instance}/{id}/decide, answered with decideStatus (0: 200).
+	// /v1/tickets/{instance}/{id}/decide, answered with decideStatus (0: 200) and decideBody.
 	queue        []map[string]any
 	decided      []string
 	decideStatus int
+	decideBody   map[string]any
 	// expired is the queue's expired list (lockhub#29); onReveal and onRenew answer POST
 	// …/reveal and …/renew (status, JSON body), asked the bodies they got.
 	expired           []map[string]any
@@ -99,6 +100,10 @@ func (h *fakeHub) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.decided = append(h.decided, strings.TrimPrefix(r.URL.Path, "/v1/tickets/")+" "+string(b))
 		if h.decideStatus != 0 {
 			w.WriteHeader(h.decideStatus)
+			if h.decideBody != nil {
+				json.NewEncoder(w).Encode(h.decideBody)
+				return
+			}
 			json.NewEncoder(w).Encode(map[string]any{"error": map[string]string{"code": "x", "message": "no"}})
 			return
 		}

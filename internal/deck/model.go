@@ -360,11 +360,13 @@ type Model struct {
 	hubRead map[string]bool
 	// hubQueue is every ticket of the hub (Snapshot.HubQueue): the hub panel. panel says the
 	// selection is in it (H), on the ticket panelSel (instance/id) since panelAt: a key acts on a
-	// ticket only lockAskDelay after it came under the selection.
-	hubQueue []HubCard
-	panel    bool
-	panelSel string
-	panelAt  time.Time
+	// ticket only lockAskDelay after it came under the selection. panelDetail shows the selected
+	// ticket's details (enter, or a click on it).
+	hubQueue    []HubCard
+	panel       bool
+	panelSel    string
+	panelAt     time.Time
+	panelDetail bool
 	// revealed is the clear screen of the ticket o showed (memory only), dropped when the card
 	// changes or revealFor passes; revealSeq tells its timeout from an older one's.
 	revealed      *hubRevealed

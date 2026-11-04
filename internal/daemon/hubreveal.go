@@ -96,6 +96,7 @@ var hubKinds = map[string]string{
 	"forbidden":        "the hub refused: this facade may not do that",
 	"unknown_peer":     "the hub cannot tell who asks on its socket",
 	"bad_request":      "the hub refused the request",
+	"audit_down":       "the hub's audit log is not writable: retry later",
 }
 
 // explainHub is the short human message of a hub refusal: codes only.
@@ -109,7 +110,30 @@ func explainHub(e *HubAskError) string {
 	if m, ok := hubKinds[e.Kind]; ok {
 		return m
 	}
+	if e.Kind != "" {
+		return fmt.Sprintf("the hub refused: %s (HTTP %d)", e.Kind, e.Status)
+	}
 	return fmt.Sprintf("the hub refused (HTTP %d)", e.Status)
+}
+
+// hubRefusal is the hub's refusal of status with body b (lockhub's {"error": kind, "message": …}):
+// its kind and, when the Lock refused, the Lock's code, both only when they are codes.
+func hubRefusal(status int, b []byte) *HubAskError {
+	e := &HubAskError{Status: status}
+	var he struct {
+		Error   json.RawMessage `json:"error"`
+		Message string          `json:"message"`
+	}
+	if json.Unmarshal(b, &he) == nil {
+		var kind string
+		if json.Unmarshal(he.Error, &kind) == nil && hubCode.MatchString(kind) {
+			e.Kind = kind
+			if kind == "lock_refused" && hubCode.MatchString(he.Message) {
+				e.Code = he.Message // the Lock's code (lockhub's fail): a code, never its text
+			}
+		}
+	}
+	return e
 }
 
 // post sends one JSON request to the facade socket and decodes its answer; a refusal becomes a
@@ -137,21 +161,7 @@ func (f SocketFacade) post(ctx context.Context, path string, in, out any) error 
 		return err
 	}
 	if res.StatusCode != http.StatusOK {
-		e := &HubAskError{Status: res.StatusCode}
-		var he struct {
-			Error   json.RawMessage `json:"error"`
-			Message string          `json:"message"`
-		}
-		if json.Unmarshal(b, &he) == nil {
-			var kind string
-			if json.Unmarshal(he.Error, &kind) == nil && hubCode.MatchString(kind) {
-				e.Kind = kind
-				if kind == "lock_refused" && hubCode.MatchString(he.Message) {
-					e.Code = he.Message // the Lock's code (lockhub's fail): a code, never its text
-				}
-			}
-		}
-		return e
+		return hubRefusal(res.StatusCode, b)
 	}
 	if len(b) > maxRevealBody {
 		return errors.New("the hub's answer is too large")

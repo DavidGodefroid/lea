@@ -409,9 +409,10 @@ type lineOwner struct {
 }
 
 // rowLines are the lines rows renders and, line for line, what each shows: the hub panel first,
-// always on screen (its lines show no row), then the rows that fit under it.
+// always on screen (its lines show no row: hubPanel, with the index of their ticket), then the
+// rows that fit under it.
 func (m Model) rowLines(inner int) ([]string, []lineOwner) {
-	panel := m.panelLines(inner)
+	panel, tickets := m.panelOwned(inner)
 	es := m.entries(false)
 	rendered := make([][]string, len(es))
 	owners := make([][]lineOwner, len(es))
@@ -473,8 +474,8 @@ func (m Model) rowLines(inner int) ([]string, []lineOwner) {
 	}
 	out := append([]string(nil), panel...)
 	own := make([]lineOwner, len(panel))
-	for i := range own {
-		own[i] = lineOwner{"", -1}
+	for i, t := range tickets {
+		own[i] = lineOwner{hubPanel, t}
 	}
 	for i := start; i < len(rendered); i++ {
 		if room > 0 && len(out) > len(panel) && len(out)-len(panel)+len(rendered[i]) > room {
