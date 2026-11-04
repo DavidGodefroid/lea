@@ -311,9 +311,9 @@ func TestStopDaemonLeavesALeaDaemonOutsideTheInstallDir(t *testing.T) {
 	}
 }
 
-// The pid file stays until the daemon is gone: a daemon that outlives the stop can be stopped
-// on the next attempt (#34: the pid was lost and every retry failed).
-func TestStopDaemonKeepsThePidFileWhileTheDaemonRuns(t *testing.T) {
+// A daemon named by the pid file that ignores SIGTERM is lea's own: it is killed, with a line
+// saying so (#283; #34 kept its pid file and every retry failed), and the file goes.
+func TestStopDaemonKillsTheDaemonThatIgnoresTerm(t *testing.T) {
 	w := newWorld(t, repoRoot(t))
 	core := w.dir + "/lea-install/v1/build/lea"
 	d := daemonAt(t, core, "trap '' TERM\nsleep 30\n")
@@ -322,19 +322,14 @@ func TestStopDaemonKeepsThePidFileWhileTheDaemonRuns(t *testing.T) {
 	pf := w.hostDir() + "/daemon.pid"
 	os.WriteFile(pf, []byte(strconv.Itoa(d.Process.Pid)+"\n"), 0o600)
 	time.Sleep(100 * time.Millisecond) // the trap is set
+	l.Sleep = func(time.Duration) { time.Sleep(5 * time.Millisecond) }
 	l.stopDaemon()
-	if d.Process.Signal(syscall.Signal(0)) != nil {
-		t.Fatal("the daemon ignoring TERM is still running")
+	waitExit(t, d, "the daemon ignoring TERM was not killed")
+	if want := "lea: the lea daemon (pid " + strconv.Itoa(d.Process.Pid) + ") did not stop on request: killed it\n"; w.errb.String() != want {
+		t.Fatalf("stderr %q, want %q", w.errb.String(), want)
 	}
-	if !exists(pf) {
-		t.Fatal("the pid file of a running daemon was removed")
-	}
-	// it is gone: the next stop drops the file
-	d.Process.Kill()
-	waitExit(t, d, "kill")
-	l.stopDaemon()
 	if exists(pf) {
-		t.Fatal("the pid file of a gone daemon stays")
+		t.Fatal("the pid file of a killed daemon stays")
 	}
 }
 

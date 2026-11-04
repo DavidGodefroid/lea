@@ -8,6 +8,8 @@ import (
 	"strings"
 	"syscall"
 	"time"
+
+	"github.com/DavidGodefroid/lea/internal/identity"
 )
 
 func (l *Launcher) daemonPidfile() string { return l.Cfg.HostDir() + "/daemon.pid" }
@@ -222,34 +224,56 @@ func (l *Launcher) ensureDaemon() error {
 	return nil
 }
 
-// stopDaemon is lea_daemon_stop: kill only the lea daemon (after a crash or reboot the pid may
-// belong to an unrelated process), then drop the pid file once the daemon is gone; a daemon that
-// outlives the wait keeps its pid file, so a retry can still stop it.
+// stopDaemon is lea_daemon_stop: kill only lea's own daemon (after a crash or reboot the pid may
+// belong to an unrelated process), then drop the pid file once the daemon is gone. The daemon is
+// the pid of the pid file when it runs this core or the core of another install next to it, and
+// the peer of lea's daemon socket when it runs "<path>/lea daemon" (#283: a Homebrew upgrade
+// leaves the previous version's daemon running from a removed Cellar directory, and an earlier
+// failed stop may have dropped the pid file). Either way it runs as this user. One that ignores
+// SIGTERM for 5 s is killed, with a line saying so; one that outlives even that keeps its pid
+// file, so a retry can still stop it.
 func (l *Launcher) stopDaemon() {
 	pf := l.daemonPidfile()
-	if !exists(pf) {
-		return
-	}
-	s := readTrim(pf)
-	if pid, err := strconv.Atoi(s); err == nil && pid > 0 && strings.Trim(s, "0123456789") == "" && l.isDaemon(pid) {
-		syscall.Kill(pid, syscall.SIGTERM)
-		for i := 0; l.isDaemon(pid); i++ {
-			if i >= 50 {
-				return
-			}
-			l.Sleep(100 * time.Millisecond)
+	var pids []int
+	if s := readTrim(pf); s != "" {
+		if pid, err := strconv.Atoi(s); err == nil && pid > 0 && strings.Trim(s, "0123456789") == "" && l.isDaemon(pid) {
+			pids = append(pids, pid)
 		}
+	}
+	if peer := socketPeerPid(identity.DaemonSock(l.Cfg.Get)); peer > 0 && (len(pids) == 0 || pids[0] != peer) && l.isLeaDaemon(peer) {
+		pids = append(pids, peer)
+	}
+	for _, pid := range pids {
+		syscall.Kill(pid, syscall.SIGTERM)
+		if l.waitGone(pid, 50) {
+			continue
+		}
+		syscall.Kill(pid, syscall.SIGKILL)
+		if !l.waitGone(pid, 20) {
+			return
+		}
+		l.logf("the lea daemon (pid %d) did not stop on request: killed it", pid)
 	}
 	os.Remove(pf)
 }
 
-// isDaemon tells whether pid runs "<core> daemon": this core, or the core of another install
-// next to it (<install dir>/<version>/build/lea, #34: an update leaves the previous version's
-// daemon running). A gone process, or a zombie (empty command line), is no daemon.
+// waitGone waits up to n times 100 ms for pid to be no lea daemon any more.
+func (l *Launcher) waitGone(pid, n int) bool {
+	for i := 0; l.isLeaDaemon(pid); i++ {
+		if i >= n {
+			return false
+		}
+		l.Sleep(100 * time.Millisecond)
+	}
+	return true
+}
+
+// isDaemon tells whether pid runs "<core> daemon" as this user: this core, or the core of another
+// install next to it (<install dir>/<version>/build/lea, #34: an update leaves the previous
+// version's daemon running).
 func (l *Launcher) isDaemon(pid int) bool {
-	b, _ := os.ReadFile("/proc/" + strconv.Itoa(pid) + "/cmdline")
-	argv := strings.Split(string(b), "\x00")
-	if len(argv) < 2 || argv[1] != "daemon" {
+	argv, ok := daemonArgv(pid)
+	if !ok {
 		return false
 	}
 	if argv[0] == l.Core {
@@ -258,4 +282,32 @@ func (l *Launcher) isDaemon(pid int) bool {
 	bin := filepath.Dir(argv[0])
 	return filepath.Base(argv[0]) == "lea" && filepath.Base(bin) == "build" &&
 		filepath.Dir(filepath.Dir(bin)) == filepath.Dir(l.Root)
+}
+
+// isLeaDaemon tells whether pid runs "<path>/lea daemon" (or "<core> daemon") as this user: a
+// lea daemon, though not necessarily this lea's; only the peer of lea's daemon socket, or a pid
+// isDaemon accepted, is ever signalled.
+func (l *Launcher) isLeaDaemon(pid int) bool {
+	argv, ok := daemonArgv(pid)
+	return ok && (argv[0] == l.Core || filepath.Base(argv[0]) == "lea")
+}
+
+// daemonArgv is the command line of pid when it is "<path> daemon ..." run by this user. A gone
+// process, or a zombie (empty command line), is no daemon. The command line outlives the
+// binary: a daemon whose install was removed still reads "<old path> daemon".
+func daemonArgv(pid int) ([]string, bool) {
+	p := "/proc/" + strconv.Itoa(pid)
+	fi, err := os.Stat(p)
+	if err != nil {
+		return nil, false
+	}
+	if st, ok := fi.Sys().(*syscall.Stat_t); !ok || int(st.Uid) != os.Getuid() {
+		return nil, false
+	}
+	b, _ := os.ReadFile(p + "/cmdline")
+	argv := strings.Split(string(b), "\x00")
+	if len(argv) < 2 || argv[1] != "daemon" {
+		return nil, false
+	}
+	return argv, true
 }
