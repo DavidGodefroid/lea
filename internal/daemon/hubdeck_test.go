@@ -13,8 +13,18 @@ import (
 
 const ticketB, ticketC = "01JB0000000000000000000002", "01JB0000000000000000000003"
 
-// queued is one ticket of GET /v1/queue as lockhub serves it: its signed lockkit ticket verbatim.
+// queued is one ticket of GET /v1/queue as lockhub serves it: its signed lockkit ticket verbatim
+// (retype is lockkit's flags.retype) and, for production, the instance name to type (lockhub#105).
 func queued(id, instance, lock, agent, session string, production bool, retype string) map[string]any {
+	it := queuedAs(id, instance, lock, agent, session, production, retype)
+	if production {
+		it["retype"] = instance
+	}
+	return it
+}
+
+// queuedAs is a queue item with no name to type: the hub needs none (lockhub#105).
+func queuedAs(id, instance, lock, agent, session string, production bool, retype string) map[string]any {
 	return map[string]any{"id": id, "instance": instance, "risk": "write", "created": "2026-10-29T22:00:00Z",
 		"facades": []string{"deck", "tty"},
 		"ticket": map[string]any{"v": 1, "id": id, "risk": "write",
@@ -124,8 +134,32 @@ func TestHubDenyProductionNeedsNoName(t *testing.T) {
 	}
 }
 
+// A production ticket whose queue item names nothing to type (lockhub#105, lea#260) is approved
+// with no name: the card asks for none and the daemon sends none.
+func TestHubProductionTicketWithNoRetypeIsApprovedPlainly(t *testing.T) {
+	h := &fakeHub{queue: []map[string]any{queuedAs(ticketA, "crm", "locksql", "dev-1", "", true, "r")}}
+	e, dev, _ := hubEnv(t, h)
+	e.d.SetAgents(&fakeAgents{})
+	e.d.st.AddHubWait(dev, ticketA, "locksql", "crm", 1)
+	if _, err := e.d.pollHubQueue(e.ctx, 0); err != nil {
+		t.Fatal(err)
+	}
+	if c := cardsOf(e, dev).Agents[0].Hub; len(c) != 1 || !c[0].Production || c[0].Retype != "" {
+		t.Fatalf("production card %+v: the hub asks for no name", c)
+	}
+	if err := call(t, e.api, "", "hub_decide", map[string]any{"container": "lea-a", "instance": "crm", "id": ticketA,
+		"approved": true, "retype": ""}, nil); err != nil {
+		t.Fatal(err)
+	}
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if len(h.decided) != 1 || !strings.Contains(h.decided[0], `"approved":true`) || strings.Contains(h.decided[0], `"retype"`) {
+		t.Fatalf("decided %q", h.decided)
+	}
+}
+
 func TestHubDecideFromTheDeck(t *testing.T) {
-	// No lockkit retype flag: the card still asks for the instance name (lockhub#64).
+	// No lockkit retype flag: the card asks for the name the queue item gives (lockhub#105).
 	h := &fakeHub{queue: []map[string]any{queued(ticketA, "crm", "locksql", "dev-1", "", true, "")}}
 	e, dev, _ := hubEnv(t, h)
 	e.d.SetAgents(&fakeAgents{})
@@ -146,8 +180,8 @@ func TestHubDecideFromTheDeck(t *testing.T) {
 	if err := decide("lea-a", ticketB, true, ""); err == nil {
 		t.Fatal("a ticket not in the queue was decided")
 	}
-	// A wrong or empty name is refused by the daemon itself, though this hub would accept it
-	// (a hub older than lockhub v0.2.3 checks only flags.retype): fail closed.
+	// A wrong or empty name is refused by the daemon itself, though this hub would accept it:
+	// fail closed.
 	for _, typed := range []string{"crn", "", "r", "CRM"} {
 		if err := decide("lea-a", ticketA, true, typed); err == nil || !strings.Contains(err.Error(), "typed") {
 			t.Fatalf("approved with %q typed: %v", typed, err)

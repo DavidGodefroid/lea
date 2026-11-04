@@ -242,9 +242,9 @@ type LockView struct {
 // HubCard is one ticket of the Lock Family hub's queue (#158) the deck shows on the agent it is
 // for: the Lock, its instance, the risk, the production flags and the Lock's masked screen, all
 // cleaned by the daemon. Verified: the agent's own wait names the ticket; otherwise the ticket's
-// requester (which the agent wrote) claims the agent. Retype is what the user types to approve a
-// production ticket: its instance name (set on every production ticket; "" otherwise). Expires is
-// unix seconds (0 never).
+// requester (which the agent wrote) claims the agent. Retype is what the user types to approve the
+// ticket: its instance name when the hub asks for one (lockhub#105), "" when approving needs no
+// name, production or not. Expires is unix seconds (0 never).
 type HubCard struct {
 	ID         string   `json:"id"`
 	Instance   string   `json:"instance"`

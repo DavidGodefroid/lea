@@ -147,7 +147,7 @@ func (c Client) SetSound(ctx context.Context, on bool) (string, error) {
 }
 
 // HubDecide answers one of the hub's tickets for an agent of container (the hub card's a or d),
-// or with panel any of them (the hub panel's); retype is the name typed for a production ticket.
+// or with panel any of them (the hub panel's); retype is the name typed when the ticket asks for one.
 func (c Client) HubDecide(ctx context.Context, container string, panel bool, instance, id string, approved bool, retype string) error {
 	return c.call(ctx, "hub_decide", map[string]any{"container": container, "panel": panel, "instance": instance, "id": id,
 		"approved": approved, "retype": retype}, nil)

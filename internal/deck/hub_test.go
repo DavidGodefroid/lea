@@ -104,27 +104,22 @@ func TestHubProductionTicketNeedsItsNameTyped(t *testing.T) {
 	}
 }
 
-// A production ticket that came with no name to type (#260) asks for its instance name, the
-// name the daemon checks: it is answerable from the deck, not refused.
-func TestHubProductionTicketWithNoRetypeAsksForItsInstance(t *testing.T) {
+// A production ticket the hub asks no name for (Retype "", lockhub#105) is approved with a, as
+// any other ticket (#260): no field, nothing typed, and the card does not ask for a name.
+func TestHubProductionTicketWithNoRetypeIsApprovedWithA(t *testing.T) {
 	a := ticketed("b", true)
 	a.Hub[0].Retype = ""
 	api := &fakeAPI{}
 	m := wide(t, readable(loaded(t, api, "lea-a/b", a)))
-	if v := m.View(); !strings.Contains(v, "approving asks for crm") {
-		t.Fatalf("the card does not say what approving asks for:\n%s", v)
+	if v := m.View(); strings.Contains(v, "approving asks for") || !strings.Contains(v, "PRODUCTION") {
+		t.Fatalf("the card:\n%s", v)
 	}
 	m, cmd := step(t, m, key("a"))
-	if cmd != nil || m.hubFor != "crm/T1" || !strings.Contains(m.View(), "type crm:") {
-		t.Fatalf("no field for the instance name (status %q):\n%s", m.status, m.View())
-	}
-	m, _ = step(t, m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("crm")})
-	m, cmd = step(t, m, tea.KeyMsg{Type: tea.KeyEnter})
-	if cmd == nil {
-		t.Fatalf("enter did not approve: %q", m.status)
+	if cmd == nil || m.hubFor != "" {
+		t.Fatalf("a did not approve (status %q)", m.status)
 	}
 	step(t, m, cmd())
-	if got := api.got(); len(got) != 1 || got[0] != `hub-decide lea-a crm/T1 true "crm"` {
+	if got := api.got(); len(got) != 1 || got[0] != `hub-decide lea-a crm/T1 true ""` {
 		t.Fatalf("calls=%q", got)
 	}
 }

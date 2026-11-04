@@ -134,8 +134,8 @@ type Pressure struct {
 }
 
 // HubCard is one of the hub's pending tickets for an agent (agents.HubCard, #158): the deck
-// answers the oldest (a approves, d denies); a production one needs its Retype (its instance
-// name) typed first (retypeName).
+// answers the oldest (a approves, d denies); one with a Retype (the name the hub asks for, its
+// instance's) needs it typed first.
 // Verified: the agent's own wait names it; else the agent claims it (shown "unverified").
 type HubCard struct {
 	ID         string   `json:"id"`
@@ -1292,9 +1292,9 @@ func hubTicket(a Agent) *HubCard {
 	return &a.Hub[0]
 }
 
-// answerHub answers the selected agent's hub ticket: approve (a) or deny (d). Approving a
-// production ticket opens the field for its name first. Within lockAskDelay of the card coming
-// into view, the key does nothing.
+// answerHub answers the selected agent's hub ticket: approve (a) or deny (d). Approving a ticket
+// that asks for a name (Retype) opens the field for it first. Within lockAskDelay of the card
+// coming into view, the key does nothing.
 func (m Model) answerHub(approve bool) (tea.Model, tea.Cmd) {
 	sel := m.selectedHub()
 	if sel == nil {
@@ -1310,10 +1310,7 @@ func (m Model) answerHub(approve bool) (tea.Model, tea.Cmd) {
 		if why := m.unreadable(h); why != "" {
 			return m.refuseHub(ref, why), nil
 		}
-		switch {
-		case h.Production && retypeName(h) == "":
-			return m.refuseHub(ref, "a production ticket with no name to type: answer it with lox approve"), nil
-		case h.Production:
+		if h.Retype != "" {
 			m.hubFor, m.hubDraft, m.status, m.hubNote = ref, nil, "", hubNoted{}
 			return m, nil
 		}
@@ -1335,15 +1332,6 @@ func (m Model) unreadable(h HubCard) string {
 	return ""
 }
 
-// retypeName is what approving the production ticket h asks to be typed: its Retype, else its
-// instance name, the name the daemon checks either way (a ticket can come with no Retype, #260).
-func retypeName(h HubCard) string {
-	if h.Retype != "" {
-		return h.Retype
-	}
-	return h.Instance
-}
-
 // hubNoted is a refusal said under the ticket ref.
 type hubNoted struct{ ref, text string }
 
@@ -1360,7 +1348,7 @@ func (m Model) decideHub(h HubCard, approve bool, retype string) tea.Cmd {
 	})
 }
 
-// hubKey is a key typed in the field of a production ticket's name: enter approves with it, esc
+// hubKey is a key typed in the field of a ticket's name (its Retype): enter approves with it, esc
 // cancels; every other key is text.
 func (m Model) hubKey(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch s := k.String(); {
@@ -1374,7 +1362,7 @@ func (m Model) hubKey(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.status = "the ticket changed: answer it again"
 			return m, nil
 		}
-		if typed != retypeName(*h) {
+		if typed != h.Retype {
 			return m.refuseHub(ref, "does not match: not approved"), nil
 		}
 		return m, m.decideHub(*h, true, typed)
