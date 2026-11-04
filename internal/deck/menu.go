@@ -260,6 +260,9 @@ func (m Model) mouse(e tea.MouseMsg) (tea.Model, tea.Cmd) {
 	}
 	key, item := m.hit(e.Y)
 	right := e.Button == tea.MouseButtonRight
+	if key == hubPanel {
+		return m.panelClick(item, !right), nil
+	}
 	if right && e.Ctrl {
 		if item >= 0 || m.index(key) < 0 || isShell(m.agents[m.index(key)]) {
 			key = ""

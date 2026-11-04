@@ -238,6 +238,7 @@ var (
 	ErrHubDecided   = errors.New("this ticket was decided already")
 	ErrHubRetype    = errors.New("the typed name does not match: approving this production ticket needs it typed exactly")
 	ErrHubNotRouted = errors.New("this ticket is not routed to the deck: answer it with lox approve")
+	ErrHubOrphan    = errors.New("this ticket's lock no longer exists: the ticket cannot be decided (orphan)")
 )
 
 func (f SocketFacade) Decide(ctx context.Context, instance, id string, v HubVerdict) error {
@@ -262,7 +263,7 @@ func (f SocketFacade) Decide(ctx context.Context, instance, id string, v HubVerd
 		return err
 	}
 	defer res.Body.Close()
-	io.Copy(io.Discard, io.LimitReader(res.Body, maxHubBody))
+	b, _ := io.ReadAll(io.LimitReader(res.Body, maxHubBody))
 	switch res.StatusCode {
 	case http.StatusOK:
 		return nil
@@ -272,8 +273,14 @@ func (f SocketFacade) Decide(ctx context.Context, instance, id string, v HubVerd
 		return ErrHubRetype
 	case http.StatusForbidden:
 		return ErrHubNotRouted
+	case http.StatusUnauthorized: // a hub before lockhub#103: ErrUnknownLock, never the deck's credentials
+		return ErrHubOrphan
 	}
-	return fmt.Errorf("lockhub: decide: %s", res.Status)
+	e := hubRefusal(res.StatusCode, b)
+	if e.Kind == "lock_removed" || e.Kind == "unknown_lock" {
+		return ErrHubOrphan
+	}
+	return fmt.Errorf("lockhub: decide: %w", e)
 }
 
 // RunHubQueue follows the hub's queue until ctx ends: a long poll, and a pause after a failure.

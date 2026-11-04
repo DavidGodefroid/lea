@@ -44,7 +44,7 @@ func TestHubPanelShowsTheQueue(t *testing.T) {
 	q := []HubCard{queueTicket("T1", "lea-a/b", true, true), queueTicket("T2", "lea-a/c", false, false), queueTicket("T3", "", false, false)}
 	m := withQueue(t, &fakeAPI{}, q, b, ag("c", "idle", 2))
 	v := m.View()
-	for _, w := range []string{"hub 3 pending", "hub · 3 pending · H to act", "locksql crm · PROD · write · waiting: builder (verified) · 5m ago · 15m left",
+	for _, w := range []string{"hub 3 pending", "hub · 3 pending · H open", "locksql crm · PROD · write · waiting: builder (verified) · 5m ago · 15m left",
 		"waiting: builder (verified)", "claims: c (unverified)", "no agent"} {
 		if !strings.Contains(v, w) {
 			t.Errorf("missing %q in\n%s", w, v)

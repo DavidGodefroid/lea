@@ -425,3 +425,38 @@ func TestHubQueueDoesNotShowAnAbandonedTicketOnALiveAgentOfTheSameName(t *testin
 		t.Fatalf("dev-2's inbox %+v %v", ms, err)
 	}
 }
+
+// The hub's refusals of a decision read as what they mean (#256): a ticket whose lock is no longer
+// declared (401 of a hub before lockhub#103, lock_removed after) is an orphan, not an
+// authentication failure; any other refusal names the hub's error code, never its free text.
+func TestHubDecideRefusalsAreReadable(t *testing.T) {
+	h := &fakeHub{queue: []map[string]any{queued(ticketA, "crm", "locksql", "dev-1", "", false, "")}}
+	e, dev, _ := hubEnv(t, h)
+	e.d.SetAgents(&fakeAgents{})
+	e.d.st.AddHubWait(dev, ticketA, "locksql", "crm", 1)
+	if _, err := e.d.pollHubQueue(e.ctx, 0); err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range []struct {
+		status int
+		body   map[string]any
+		want   string
+	}{
+		{401, map[string]any{"error": "unauthorized", "message": "unknown lock instance"}, "lock no longer exists"},
+		{410, map[string]any{"error": "lock_removed", "message": "the ticket's lock is no longer declared"}, "lock no longer exists"},
+		{410, map[string]any{"error": "expired", "message": "x"}, "the ticket expired"},
+		{503, map[string]any{"error": "audit_down", "message": "x"}, "audit log"},
+		{500, map[string]any{"error": "internal", "message": "\x1b[2Jsecret"}, "internal (HTTP 500)"},
+		{502, map[string]any{"error": 7}, "HTTP 502"},
+	} {
+		h.mu.Lock()
+		h.decideStatus, h.decideBody = c.status, c.body
+		h.mu.Unlock()
+		err := call(t, e.api, "", "hub_decide", map[string]any{"container": "lea-a", "instance": "crm", "id": ticketA,
+			"approved": false, "retype": ""}, nil)
+		if err == nil || !strings.Contains(err.Error(), c.want) || strings.Contains(err.Error(), "Unauthorized") ||
+			strings.Contains(err.Error(), "secret") {
+			t.Errorf("HTTP %d %v: %v, want %q", c.status, c.body, err, c.want)
+		}
+	}
+}

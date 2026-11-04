@@ -2,6 +2,7 @@ package deck
 
 import (
 	"fmt"
+	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
@@ -10,8 +11,12 @@ import (
 // The hub panel (#244): every ticket of the hub's queue, as lox approve lists it, docked above the
 // rows while the queue holds one, whatever agent it is for or none. The daemon fills it from the
 // hub's queue only: what an agent did (its tool, the requester it wrote, a wait it registered)
-// changes only the attribution a line shows, never which tickets show nor their order. H moves the
-// selection into the panel, where a, d, v, o and r act on its ticket as on a card; esc leaves.
+// changes only the attribution a line shows, never which tickets show nor their order. H, or a click
+// on a ticket, moves the selection into the panel, where a, d, v, o and r act on its ticket as on a
+// card, enter (or a click on it) shows its details; esc leaves (#256).
+
+// hubPanel owns the panel's lines on screen (lineOwner): no row has this key.
+const hubPanel = "\x00hub"
 
 // hubPanelRows is how many tickets the panel lists at once; the rest scroll under the selection.
 const hubPanelRows = 5
@@ -49,9 +54,10 @@ func (m Model) enterPanel() Model {
 	return m
 }
 
-// selectPanel puts the panel's selection on h: a key acts on it lockAskDelay later.
+// selectPanel puts the panel's selection on h: a key acts on it lockAskDelay later. Its details
+// show only once asked for.
 func (m *Model) selectPanel(h HubCard) {
-	m.panelSel, m.panelAt = h.Instance+"/"+h.ID, m.now()
+	m.panelSel, m.panelAt, m.panelDetail = h.Instance+"/"+h.ID, m.now(), false
 }
 
 // panelIndex is the index of the panel's selected ticket, -1 when none.
@@ -77,7 +83,7 @@ func (m *Model) keepPanel() {
 }
 
 // panelKey is a key typed while the selection is in the hub panel: j, k and the arrows move in it,
-// esc and H leave it, and the keys of a ticket (a, d, A, v, o, r) and the deck's own (q, ?, S,
+// enter shows or hides the selected ticket's details, esc and H leave it, and the keys of a ticket (a, d, A, v, o, r) and the deck's own (q, ?, S,
 // space, settings) do what they do elsewhere (ok false). Every other key would act on a row the
 // user does not look at: nothing.
 func (m Model) panelKey(k string) (tea.Model, tea.Cmd, bool) {
@@ -91,8 +97,11 @@ func (m Model) panelKey(k string) (tea.Model, tea.Cmd, bool) {
 			m.selectPanel(m.hubQueue[j])
 		}
 		return m, nil, true
+	case "enter":
+		m.panelDetail = !m.panelDetail
+		return m, nil, true
 	case "esc", "H":
-		m.panel = false
+		m.panel, m.panelDetail = false, false
 		return m, nil, true
 	case "r":
 		if h := m.selectedHub(); h != nil && !h.Expired {
@@ -107,12 +116,41 @@ func (m Model) panelKey(k string) (tea.Model, tea.Cmd, bool) {
 	return m, nil, true
 }
 
+// panelClick is a click on the panel's line of ticket i (its line or its card; -1: the title or a
+// scroll mark): it closes an open menu and moves the selection into the panel, on that ticket; a
+// left click on the selected ticket shows or hides its details. A click on the title enters the
+// panel as H does.
+func (m Model) panelClick(i int, left bool) Model {
+	m.menuFor, m.menuPicker = "", false
+	switch {
+	case i < 0 || i >= len(m.hubQueue):
+		if !m.panel {
+			return m.enterPanel()
+		}
+	case m.panel && i == m.panelIndex():
+		if left {
+			m.panelDetail = !m.panelDetail
+		}
+	default:
+		m.panel = true
+		m.selectPanel(m.hubQueue[i])
+	}
+	return m
+}
+
 // panelLines are the hub panel's lines, inner cells wide: none while the queue is empty, else its
-// title (red with a production ticket pending), a line per ticket, and in the panel the selected
-// ticket's card under its line.
+// title (red with a production ticket pending) with the keys that act on it, a line per ticket,
+// and in the panel the selected ticket's card under its line, its details first when asked for.
 func (m Model) panelLines(inner int) []string {
+	out, _ := m.panelOwned(inner)
+	return out
+}
+
+// panelOwned is panelLines and, line for line, the index in hubQueue of the ticket each shows (its
+// line, its card), -1 on the others (the title, the scroll marks).
+func (m Model) panelOwned(inner int) ([]string, []int) {
 	if len(m.hubQueue) == 0 {
-		return nil
+		return nil, nil
 	}
 	c := m.cs()
 	warn := "⚠"
@@ -126,14 +164,21 @@ func (m Model) panelLines(inner int) []string {
 	for _, h := range m.hubQueue {
 		prod = prod || (h.Production && !h.Expired)
 	}
-	if !m.panel {
-		title += " " + c.dot + " H to act"
+	updown, enter := "↑↓", "⏎"
+	if m.ascii {
+		updown, enter = "j/k", "enter"
+	}
+	if m.panel {
+		title += fmt.Sprintf(" %[1]s %[2]s select %[1]s %[3]s details %[1]s esc leave", c.dot, updown, enter)
+	} else {
+		title += fmt.Sprintf(" %[1]s H open %[1]s %[2]s select %[1]s %[3]s details %[1]s a approve %[1]s d deny", c.dot, updown, enter)
 	}
 	st := lipgloss.NewStyle().Foreground(theme.Working).Bold(true)
 	if prod {
 		st = alert.Bold(true)
 	}
 	out := []string{padRight(" "+st.Render(fit(title, inner-1, c)), inner)}
+	own := []int{-1}
 	sel := m.panelIndex()
 	start := 0
 	if m.panel && sel >= hubPanelRows {
@@ -142,6 +187,7 @@ func (m Model) panelLines(inner int) []string {
 	end := min(len(m.hubQueue), start+hubPanelRows)
 	if start > 0 {
 		out = append(out, padRight("   "+muted.Render(fmt.Sprintf("… %d above", start)), inner))
+		own = append(own, -1)
 	}
 	for i := start; i < end; i++ {
 		h := m.hubQueue[i]
@@ -162,14 +208,45 @@ func (m Model) panelLines(inner int) []string {
 		}
 		out = append(out, bg(lipgloss.NewStyle().Foreground(theme.Accent)).Render(mark)+
 			bg(plain).Render("  ")+bg(lst.Bold(on)).Render(padRight(fit(m.panelLine(h), inner-3, c), inner-3)))
+		own = append(own, i)
 		if on {
-			out = append(out, m.hubCardLines(h, inner, "    ", bg0, muted, false, true, 0)...)
+			if m.panelDetail {
+				for _, l := range m.panelDetails(h) {
+					out = append(out, "    "+muted.Render(padRight(fit(l, inner-4, c), inner-4)))
+					own = append(own, i)
+				}
+			}
+			for _, l := range m.hubCardLines(h, inner, "    ", bg0, muted, false, true, 0) {
+				out, own = append(out, l), append(own, i)
+			}
 		}
 	}
 	if end < len(m.hubQueue) {
 		out = append(out, padRight("   "+muted.Render(fmt.Sprintf("… %d more", len(m.hubQueue)-end)), inner))
+		own = append(own, -1)
 	}
-	return out
+	return out, own
+}
+
+// panelDetails are the details of a panel ticket the card does not show: whom it is for, when it
+// was asked and how long ago, when it expires. The card under them shows the rest (the Lock's
+// screen, the agent's note, production, the keys). Raw: the caller fits them.
+func (m Model) panelDetails(h HubCard) []string {
+	now := m.now()
+	when := func(s int64) string { return time.Unix(s, 0).In(now.Location()).Format("2006-01-02 15:04") }
+	lines := []string{"requested by: " + m.attribution(h)}
+	if h.Created > 0 {
+		lines = append(lines, "created: "+when(h.Created)+" ("+agoText(now.Unix()-h.Created)+")")
+	}
+	switch {
+	case h.Expired:
+		lines = append(lines, "expires: expired")
+	case h.Expires > 0:
+		lines = append(lines, "expires: "+when(h.Expires)+" ("+leftText(h.Expires-now.Unix())+")")
+	default:
+		lines = append(lines, "expires: never")
+	}
+	return lines
 }
 
 func bg0(s lipgloss.Style) lipgloss.Style { return s }
@@ -186,11 +263,7 @@ func (m Model) panelLine(h HubCard) string {
 	s += " " + c.dot + " " + clean(h.Risk) + " " + c.dot + " " + m.attribution(h)
 	now := m.now().Unix()
 	if h.Created > 0 {
-		a := age(max(0, now-h.Created))
-		if a != "now" {
-			a += " ago"
-		}
-		s += " " + c.dot + " " + a
+		s += " " + c.dot + " " + agoText(now-h.Created)
 	}
 	switch {
 	case h.Expired:
@@ -199,6 +272,14 @@ func (m Model) panelLine(h HubCard) string {
 		s += " " + c.dot + " " + leftText(h.Expires-now)
 	}
 	return s
+}
+
+// agoText is how long ago a ticket was asked, s seconds ago.
+func agoText(s int64) string {
+	if a := age(max(0, s)); a != "now" {
+		return a + " ago"
+	}
+	return "now"
 }
 
 // leftText is the time left before a ticket expires.
