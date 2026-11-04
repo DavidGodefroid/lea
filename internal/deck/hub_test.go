@@ -104,6 +104,31 @@ func TestHubProductionTicketNeedsItsNameTyped(t *testing.T) {
 	}
 }
 
+// A production ticket that came with no name to type (#260) asks for its instance name, the
+// name the daemon checks: it is answerable from the deck, not refused.
+func TestHubProductionTicketWithNoRetypeAsksForItsInstance(t *testing.T) {
+	a := ticketed("b", true)
+	a.Hub[0].Retype = ""
+	api := &fakeAPI{}
+	m := wide(t, readable(loaded(t, api, "lea-a/b", a)))
+	if v := m.View(); !strings.Contains(v, "approving asks for crm") {
+		t.Fatalf("the card does not say what approving asks for:\n%s", v)
+	}
+	m, cmd := step(t, m, key("a"))
+	if cmd != nil || m.hubFor != "crm/T1" || !strings.Contains(m.View(), "type crm:") {
+		t.Fatalf("no field for the instance name (status %q):\n%s", m.status, m.View())
+	}
+	m, _ = step(t, m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("crm")})
+	m, cmd = step(t, m, tea.KeyMsg{Type: tea.KeyEnter})
+	if cmd == nil {
+		t.Fatalf("enter did not approve: %q", m.status)
+	}
+	step(t, m, cmd())
+	if got := api.got(); len(got) != 1 || got[0] != `hub-decide lea-a crm/T1 true "crm"` {
+		t.Fatalf("calls=%q", got)
+	}
+}
+
 // The card shows the Lock, the instance, the risk, production, an unverified requester, the
 // Lock's masked screen (three lines of it; v shows them all) and its warnings.
 func TestHubCardView(t *testing.T) {
@@ -128,8 +153,7 @@ func TestHubCardView(t *testing.T) {
 
 // A ticket longer than the folded card (more lines, or a line wider than the deck) is approved only
 // once v showed all of it; nothing of it is cut, it wraps. One too long for the deck, one the
-// daemon had to cut, or a production one with no name to type, is refused: lox approve answers
-// it; d still denies.
+// daemon had to cut, is refused: lox approve answers it; d still denies.
 func TestHubTicketIsReadWholeBeforeApproval(t *testing.T) {
 	long := ticketed("b", false)
 	long.Hub[0].Body = []string{"UPDATE t SET a=1 WHERE id=7 OR 1=1; " + strings.Repeat("-- ", 30) + "DROP TABLE t"}
@@ -148,7 +172,7 @@ func TestHubTicketIsReadWholeBeforeApproval(t *testing.T) {
 	if _, cmd := step(t, m, key("a")); cmd == nil {
 		t.Fatal("not approved after v")
 	}
-	for name, a := range map[string]Agent{"cut": ticketed("b", false), "huge": ticketed("b", false), "prod": ticketed("b", true)} {
+	for name, a := range map[string]Agent{"cut": ticketed("b", false), "huge": ticketed("b", false)} {
 		switch name {
 		case "cut":
 			a.Hub[0].Truncated = true
@@ -157,8 +181,6 @@ func TestHubTicketIsReadWholeBeforeApproval(t *testing.T) {
 			for i := 0; i < 40; i++ {
 				a.Hub[0].Body = append(a.Hub[0].Body, "line")
 			}
-		case "prod":
-			a.Hub[0].Retype = ""
 		}
 		m := readable(loaded(t, &fakeAPI{}, "lea-a/b", a))
 		m, _ = step(t, m, key("v"))
