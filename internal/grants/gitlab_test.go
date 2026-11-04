@@ -121,6 +121,22 @@ func TestPinnedGitLabMergeChecksTheMR(t *testing.T) {
 	if _, _, calls := gitlabRun(t, "glab mr merge 12 -y", "tok", map[string]string{"GET " + glAPI + "/merge_requests/12": glMR("1", "1", "opened", glSHA, "feat/73-x"), merge: done}); strings.Contains(calls, "auto_merge") {
 		t.Fatalf("no pipeline: calls %s", calls)
 	}
+	// By number with --remove-source-branch: the source is checked first, as without it, so the
+	// branch removed is the caller's own (#271).
+	for _, tc := range []struct {
+		name, mr string
+		merged   bool
+	}{
+		{"own branch", glMR("1", "1", "opened", glSHA, "feat/73-x"), true},
+		{"other branch", glMR("1", "1", "opened", glSHA, "feat/other"), false},
+		{"a fork's branch of the same name", glMR("2", "1", "opened", glSHA, "feat/73-x"), false},
+	} {
+		out, err, calls := gitlabRun(t, "glab mr merge 12 -s -d -y", "tok", map[string]string{"GET " + glAPI + "/merge_requests/12": tc.mr, merge: done})
+		merged := strings.Contains(calls, "[-X][PUT]")
+		if merged != tc.merged || (err == nil) != tc.merged || (tc.merged && !strings.Contains(calls, "[--data][should_remove_source_branch=true]")) {
+			t.Fatalf("numbered remove, %s: merged %v, err %v, out %s, calls %s", tc.name, merged, err, out, calls)
+		}
+	}
 	// By its branch: the one open MR of that branch of the project itself (a fork's MR of a
 	// branch of the same name is not it); none or two: refused.
 	list := "GET " + glAPI + "/merge_requests"

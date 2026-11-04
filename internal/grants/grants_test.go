@@ -37,8 +37,10 @@ func TestDecideBash(t *testing.T) {
 		{"merge own branch", "gh pr merge feat/73-x --squash", Allow, every},
 		{"merge HEAD delete", "gh pr merge --squash --delete-branch", "", every},
 		{"merge other branch", "gh pr merge feat/other --squash", "", every},
-		{"merge numbered delete", "gh pr merge 42 --squash --delete-branch", "", every},
-		{"merge numbered -d", "gh pr merge 42 -s -d", "", every},
+		// A numbered PR is merged only once gh says its head is the caller's branch (Command):
+		// deleting that head deletes the caller's own branch (#271).
+		{"merge numbered delete", "gh pr merge 42 --squash --delete-branch", Allow, every},
+		{"merge numbered -d", "gh pr merge 42 -s -d", Allow, every},
 		{"merge no grant", "gh pr merge 42 --squash", "", nil},
 		{"merge other action granted", "gh pr merge 42 --squash", "", []Grant{all(CloseIssue)}},
 		{"merge admin", "gh pr merge 42 --squash --admin", Deny, every},
@@ -501,6 +503,21 @@ func TestPinnedCommand(t *testing.T) {
 	if strings.Index(s0, "'view'") > strings.Index(s0, "'merge'") {
 		t.Fatalf("head checked after the merge:\n%s", s0)
 	}
+	// With --delete-branch the same check runs first: the branch deleted is the caller's own.
+	d = Decide("Bash", bash("gh pr merge 42 --squash --delete-branch"), dev, gs, now, false)
+	s0 = lastWord(t, d.Command)
+	if !strings.Contains(s0, `[ "$head" != 'false feat/73-x' ]`) ||
+		!strings.HasSuffix(s0, "\n"+`'/usr/bin/gh' 'pr' 'merge' '42' '--squash' '--delete-branch' '-R' 'github.com/o/lea'`) ||
+		strings.Index(s0, "'view'") > strings.Index(s0, "'merge'") {
+		t.Fatalf("numbered merge with --delete-branch:\n%s", s0)
+	}
+	// Never for a protected caller branch, whatever the PR.
+	prot := dev
+	prot.Branch = "main"
+	if d := Decide("Bash", bash("gh pr merge 42 --squash --delete-branch"), prot, []Grant{{ID: 1, Container: "lea-a", Action: Merge, Repo: "lea",
+		GitHub: "github.com/o/lea", Expires: now + 10}}, now, false); d.Verdict != "" {
+		t.Fatalf("protected branch: %+v", d)
+	}
 	d = Decide("Bash", bash(`git commit -m "it's done"`), dev, gs, now, false)
 	s := lastWord(t, d.Command)
 	for _, w := range []string{`'/usr/bin/git' '-C' '/p/.lea/worktrees/lea/dev-2'`, `'-c' 'core.hooksPath=/dev/null'`,
@@ -768,7 +785,7 @@ func TestGitLab(t *testing.T) {
 		{"mr merge own branch remove", `glab mr merge feat/73-x -s -d -y`, Allow},
 		{"mr merge rebase", `glab mr merge 12 -r -y`, ""},
 		{"mr merge rebase long", `glab mr merge 12 --rebase -y`, ""},
-		{"mr merge numbered remove", `glab mr merge 12 -d -y`, ""},
+		{"mr merge numbered remove", `glab mr merge 12 -d -y`, Allow},
 		{"mr merge unnamed", `glab mr merge -s -y`, ""},
 		{"mr merge other branch", `glab mr merge feat/other -s -y`, ""},
 		{"mr merge sha", `glab mr merge 12 --sha abc -y`, ""},
@@ -819,5 +836,69 @@ func TestGitLab(t *testing.T) {
 		if got := ValidPin(pin); got != ok {
 			t.Errorf("ValidPin(%q) = %v", pin, got)
 		}
+	}
+}
+
+// TestHint: a merge, PR create or push that a grant the caller holds would cover in another form
+// gets no verdict (the normal path) but a hint naming the covered forms (#271); a call no grant
+// is near, an allowed call and a hard deny get none.
+func TestHint(t *testing.T) {
+	gh := []Grant{all(Merge), all(PRCreate), all(CommitIdentity)}
+	gl := func(action string) Grant {
+		g := all(action)
+		g.GitHub = "gitlab:gitlab.example.com/grp/app"
+		return g
+	}
+	away := dev
+	away.OwnWorktree, away.Worktree = false, ""
+	cases := []struct {
+		name, cmd string
+		c         Caller
+		gs        []Grant
+		want      []string // "" alone: no hint
+	}{
+		{"merge with -R", "gh pr merge 42 --squash -R o/lea", dev, gh,
+			[]string{"merge grant", "gh pr merge <number|feat/73-x> [--squash|--merge|--rebase] [--delete-branch]", "without -R"}},
+		{"merge auto", "gh pr merge 42 --auto", dev, gh, []string{"gh pr merge <number|feat/73-x>"}},
+		{"merge chained", "cd /x && gh pr merge 42 --squash", dev, gh, []string{"one plain command"}},
+		{"merge away from the worktree", "gh pr merge 42 --squash", away, gh, []string{"root of your own git worktree"}},
+		{"merge allowed", "gh pr merge 42 --squash --delete-branch", dev, gh, []string{""}},
+		{"merge admin", "gh pr merge 42 --admin", dev, gh, []string{""}},
+		{"merge no grant", "gh pr merge 42 --auto", dev, nil, []string{""}},
+		{"merge other grant", "gh pr merge 42 --auto", dev, []Grant{all(CloseIssue)}, []string{""}},
+		{"merge other repo's grant", "gh pr merge 42 --auto", Caller{Key: dev.Key, Container: "lea-a", Repo: "other", Branch: "feat/73-x",
+			OwnWorktree: true}, gh, []string{""}},
+		{"create fill", "gh pr create --fill", dev, gh, []string{"pr-create grant", "gh pr create --head feat/73-x --title T"}},
+		{"push away from the worktree", "git push -u origin feat/73-x", away, gh, []string{"commit-identity grant", "git push [-u] origin feat/73-x"}},
+		{"push hard deny", "git push --tags origin feat/73-x", dev, gh, []string{""}},
+		{"glab merge rebase", "glab mr merge 12 --rebase -y", dev, []Grant{gl(Merge)},
+			[]string{"glab mr merge <number|feat/73-x> [--squash] [--remove-source-branch] [--yes]"}},
+		{"gh merge on a gitlab grant", "gh pr merge 42 --auto", dev, []Grant{gl(Merge)}, []string{""}},
+		{"unrelated", "go test ./...", dev, gh, []string{""}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			d := Decide("Bash", bash(tc.cmd), tc.c, tc.gs, now, false)
+			if tc.want[0] == "" {
+				if d.Hint != "" {
+					t.Fatalf("%q: hint %q", tc.cmd, d.Hint)
+				}
+				return
+			}
+			if d.Verdict != "" || d.Command != "" {
+				t.Fatalf("%q: verdict %q, want none", tc.cmd, d.Verdict)
+			}
+			for _, w := range tc.want {
+				if !strings.Contains(d.Hint, w) {
+					t.Fatalf("%q: hint lacks %q:\n%s", tc.cmd, w, d.Hint)
+				}
+			}
+		})
+	}
+	// No branch is the caller's own while another agent works on it: the hint says so.
+	shared := dev
+	shared.Branch = ""
+	if d := Decide("Bash", bash("gh pr merge 42 --squash"), shared, gh, now, false); !strings.Contains(d.Hint, "another agent") {
+		t.Fatalf("shared branch: %+v", d)
 	}
 }

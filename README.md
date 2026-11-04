@@ -617,7 +617,7 @@ not reach its children, and relayed in a lea message it is rightly distrusted. A
 that decision recorded by you on the host, applied the same way to every agent it covers:
 
 ```sh
-lea grant add merge --container lea-myproj --repo api --github me/api --expires 8h  # gh pr merge N|own-branch --squash|--merge|--rebase (--delete-branch: own-branch only; the PR's head must be the agent's branch)
+lea grant add merge --container lea-myproj --repo api --github me/api --expires 8h  # gh pr merge N|own-branch --squash|--merge|--rebase [--delete-branch] (the PR's head must be the agent's branch)
 lea grant add stop-finished --container lea-myproj                  # agents_stop on an idle or ended child
 lea grant add close-issue --container lea-myproj --repo api --github me/api  # gh issue close|reopen|comment N
 lea grant add delete-own-branch --container lea-myproj --repo api --github me/api  # git push origin --delete <the agent's own branch>
@@ -747,7 +747,8 @@ deny (no push to `main`, no force-push, no `--admin`). The calls covered:
   plain file inside it, outside `.git` (lea checks it is a plain file, opens it once and gh reads that open file; a quoted heredoc, `--body "$(cat <<'EOF' … EOF)"`, is
   not covered: write the body to a file);
 - `gh pr merge <n>|<own branch> --squash|--merge|--rebase [--delete-branch]` (the PR's head must be
-  the agent's branch), and `git push origin --delete <own branch>`;
+  the agent's branch, checked before the merge, so `--delete-branch` deletes that branch only), and
+  `git push origin --delete <own branch>`;
 - on GitLab: `glab mr create --source-branch <own branch> --title T [--description D]
   [--target-branch B] [--draft] [--remove-source-branch] [--yes]` and `glab mr merge <n>|<own
   branch> [--squash] [--remove-source-branch] [--yes]` (`--rebase` is not covered). lea does not
@@ -760,6 +761,10 @@ deny (no push to `main`, no force-push, no `--admin`). The calls covered:
   commit it checked, so GitLab refuses it if the branch moved in between. Pushes go to
   `https://HOST/PATH.git` with glab's credential helper. A multi-line description is not covered
   (no file option): it takes the usual path.
+
+A merge, PR or push in a form the agent's grant does not cover (with `-R`, chained, another flag)
+takes the usual path too, and the agent is told, in its context, the forms its grant covers. Each
+agent on a branch is also told them in its first prompt.
 
 Branch protection on the forge (required reviews, required checks) stays the control that decides
 whether a merge goes through: delivery only removes the prompt (on GitLab, an MR whose pipeline is still
