@@ -49,7 +49,8 @@ const (
 
 // HubTicket is one pending ticket of the hub's queue: the fields of the facade's item and of the
 // Lock's signed ticket (lockkit's ticket.Ticket) the deck uses, as the hub sent them; Retype is
-// the instance name of a production ticket (what the user types), never the ticket's flags.retype.
+// the name the user types to approve it, as the queue item gives it ("" none, lockhub#105), never
+// the ticket's flags.retype.
 type HubTicket struct {
 	ID, Instance, Lock, Risk string
 	Created, Expires         int64
@@ -162,6 +163,8 @@ type queueItem struct {
 	Expires  *time.Time      `json:"expires"`
 	Facades  []string        `json:"facades"`
 	Ticket   json.RawMessage `json:"ticket"`
+	// Retype is the name approving the ticket needs typed (its instance's), "" none (lockhub#105).
+	Retype string `json:"retype"`
 }
 
 // ticket reads the fields of the item's signed ticket the deck uses; false: not a ticket lea can
@@ -205,12 +208,10 @@ func (it queueItem) ticket() (HubTicket, bool) {
 	t := HubTicket{ID: it.ID, Instance: it.Instance, Lock: tk.Source.Lock, KeyID: tk.Source.KeyID, Risk: it.Risk,
 		Production: tk.Flags.Production, Header: tk.Screen.Header, Note: tk.Screen.Note,
 		Body: tk.Screen.Body, Warnings: tk.Screen.Warnings, Agent: tk.Requester.Agent, Session: tk.Requester.Session}
-	// Every production ticket is approved by typing its instance name (the Lock Family hub checks
-	// it, lockhub#64). The ticket's flags.retype is lockkit's console answer that asks to retype
-	// values (such as "r"), not what the user types.
-	if t.Production {
-		t.Retype = it.Instance
-	}
+	// The hub says whether approving needs a name typed (lockhub#105): a production ticket may
+	// need none. The ticket's flags.retype is lockkit's console answer that asks to retype values
+	// (such as "r"), not what the user types.
+	t.Retype = it.Retype
 	if it.Expires != nil {
 		t.Expires = it.Expires.Unix()
 	}
@@ -236,7 +237,7 @@ func (it queueItem) ticket() (HubTicket, bool) {
 // Errors of POST …/decide, as the deck tells them.
 var (
 	ErrHubDecided   = errors.New("this ticket was decided already")
-	ErrHubRetype    = errors.New("the typed name does not match: approving this production ticket needs it typed exactly")
+	ErrHubRetype    = errors.New("the typed name does not match: approving this ticket needs it typed exactly")
 	ErrHubNotRouted = errors.New("this ticket is not routed to the deck: answer it with lox approve")
 )
 
@@ -598,19 +599,18 @@ func (d *Daemon) hubDecide(ctx context.Context, params json.RawMessage) error {
 	}
 	d.mu.Lock()
 	f := d.hubFacade
-	found, production := false, false
+	found, want := false, ""
 	for _, e := range d.hubQueue {
 		if e.t.ID == p.ID && e.t.Instance == p.Instance && inDeck(e, p.Container, p.Panel) && !e.t.Expired {
-			found, production = true, e.t.Production
+			found, want = true, e.t.Retype
 		}
 	}
 	d.mu.Unlock()
 	if f == nil || !found {
 		return errors.New("no such ticket in this deck")
 	}
-	// The instance name is checked here too, whatever the hub checks (a hub older than lockhub
-	// v0.2.3 checks only the ticket's flags.retype): fail closed.
-	if p.Approved && production && (p.Instance == "" || p.Retype != p.Instance) {
+	// The name the hub asks for is checked here too, whatever the hub checks: fail closed.
+	if p.Approved && want != "" && p.Retype != want {
 		return ErrHubRetype
 	}
 	if len(p.Retype) > maxRetype || strings.ContainsFunc(p.Retype, textsafe.Unsafe) {
