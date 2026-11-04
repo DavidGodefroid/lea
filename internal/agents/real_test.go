@@ -241,3 +241,82 @@ func TestRealRepairSettles(t *testing.T) {
 		t.Fatalf("%d reconciles in 2.5 s with nothing changing: the repair does not settle", got-n)
 	}
 }
+
+// TestRealTicketPaneTakesTheSlot shows a hub ticket against a real tmux server (#284): the ticket
+// pane takes the slot beside the deck, keeps the deck's width, parks when hidden (the placeholder
+// takes the slot back), and the layout repair leaves it parked.
+func TestRealTicketPaneTakesTheSlot(t *testing.T) {
+	if _, err := exec.LookPath("tmux"); err != nil {
+		t.Skip("tmux is not installed: make go-test-tmux runs this test")
+	}
+	dir, err := os.MkdirTemp("", "lt")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.RemoveAll(dir) })
+	t.Setenv("TMUX_TMPDIR", dir)
+	conf := filepath.Join(dir, "tmux.conf")
+	if err := tmux.WriteConf(conf); err != nil {
+		t.Fatal(err)
+	}
+	bin := filepath.Join(dir, "lea")
+	if err := os.WriteFile(bin, []byte("#!/bin/sh\nexec sleep 600\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	const sock = "lea-test-ticket"
+	t.Cleanup(func() { exec.Command("tmux", "-L", sock, "kill-server").Run() })
+	tm := func(args ...string) string {
+		t.Helper()
+		out, err := exec.Command("tmux", append([]string{"-L", sock, "-f", conf}, args...)...).CombinedOutput()
+		if err != nil {
+			t.Fatalf("%v: %v: %s", args, err, out)
+		}
+		return strings.TrimSpace(string(out))
+	}
+	st, err := store.Open(filepath.Join(dir, "lea.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { st.Close() })
+	m := NewManager(Config{Store: st, Term: Tmux(tmux.Server{Socket: sock, Conf: conf}),
+		Containers: &fakeContainers{live: map[string][]string{}}, LeaBin: bin, UID: 1000, GID: 1000,
+		Now: func() int64 { return 1000 }})
+	if err := m.Ensure(bg, C, ""); err != nil {
+		t.Fatal(err)
+	}
+	// slot is the role of the pane beside the deck, and the deck's width.
+	slot := func() (string, string) {
+		t.Helper()
+		var role, width string
+		for _, l := range strings.Split(tm("list-panes", "-t", "="+C+":deck", "-F", "#{@lea_role}|#{pane_width}"), "\n") {
+			f := strings.Split(l, "|")
+			if f[0] == roleDeck {
+				width = f[1]
+			} else {
+				role = f[0]
+			}
+		}
+		return role, width
+	}
+	if err := m.ShowTicket(bg, C, "crm/T1", "", 0); err != nil {
+		t.Fatal(err)
+	}
+	if role, w := slot(); role != roleTicket || w != "34" {
+		t.Fatalf("slot %q, deck %s wide", role, w)
+	}
+	if got := tm("list-panes", "-s", "-t", "="+C, "-F", "#{@lea_role} #{pane_start_command}"); !strings.Contains(got, roleTicket+" "+bin+" deck --ticket "+C) {
+		t.Fatalf("panes:\n%s", got)
+	}
+	if err := m.ShowTicket(bg, C, "", "", 0); err != nil {
+		t.Fatal(err)
+	}
+	if role, w := slot(); role != rolePlace || w != "34" {
+		t.Fatalf("hidden: slot %q, deck %s wide", role, w)
+	}
+	if err := m.Ensure(bg, C, ""); err != nil {
+		t.Fatal(err)
+	}
+	if role, _ := slot(); role != rolePlace || !strings.Contains(tm("list-panes", "-s", "-t", "="+C, "-F", "#{@lea_role}"), roleTicket) {
+		t.Fatal("the repair moved or removed the parked ticket pane")
+	}
+}

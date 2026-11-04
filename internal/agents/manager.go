@@ -67,7 +67,7 @@ const (
 var (
 	nameRe = regexp.MustCompile(`^[a-z][a-z0-9-]{0,23}$`)
 	// reservedNames are the roles of lea's own panes: no agent takes one as its name.
-	reservedNames = map[string]bool{roleDeck: true, rolePlace: true}
+	reservedNames = map[string]bool{roleDeck: true, rolePlace: true, roleTicket: true}
 	shellRe       = regexp.MustCompile(`^sh-[1-9][0-9]{0,2}$`)
 	containerRe   = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,63}$`)
 	// sessionRe is a Claude session id, as ResumeStopped passes it to --resume.
@@ -220,6 +220,11 @@ type Snapshot struct {
 	// LocksAdded are the locks lox up runs that the container does not mount (added while it
 	// runs): restart lea to use them. Set by the daemon.
 	LocksAdded []string `json:"locks_added,omitempty"`
+	// Ticket is the hub ticket the slot shows (instance/id, #284) and TicketNote what the deck
+	// says under it (a refusal and its fix, or the approve-all report): both "" unless the ticket
+	// pane holds the slot. The ticket pane renders them; the deck waits for Ticket before a or d.
+	Ticket     string `json:"ticket,omitempty"`
+	TicketNote string `json:"ticket_note,omitempty"`
 }
 
 // PressureView is what the deck shows of the pressure: a short gauge of the container and the
@@ -318,6 +323,10 @@ type Manager struct {
 	shown map[string]string // container → key of the agent (or shell) in the slot
 	// shells lists, per container, the shells that have a pane, by name (under smu).
 	shells map[string][]string
+	// tickets is, per container, the hub ticket the slot shows (ticket.go; under smu).
+	tickets map[string]ticketView
+	// ticketSeqs is, per container, the latest ShowTicket sequence number taken (under smu).
+	ticketSeqs map[string]int64
 	// fresh marks a session Open created and no reconcile has laid out yet (under mu).
 	fresh map[string]bool
 	// recheck marks a new connection whose first reconcile asks the container for its shells: a
@@ -347,7 +356,7 @@ func NewManager(cfg Config) *Manager {
 		cfg.Now = func() int64 { return time.Now().Unix() }
 	}
 	m := &Manager{cfg: cfg, conns: map[string]Session{}, shown: map[string]string{}, fresh: map[string]bool{},
-		shells: map[string][]string{}, recheck: map[string]bool{},
+		shells: map[string][]string{}, tickets: map[string]ticketView{}, ticketSeqs: map[string]int64{}, recheck: map[string]bool{},
 		backoff: map[string]*backoff{}, tearing: map[string]chan struct{}{}, clock: time.Now,
 		schedule: func(d time.Duration, f func()) { time.AfterFunc(d, f) },
 		later:    func(d time.Duration, f func()) { time.AfterFunc(d, f) }}
@@ -424,7 +433,8 @@ func (m *Manager) snapshot(container string, v int64) (Snapshot, error) {
 	for _, n := range shells {
 		rows = append(rows, shellRow(container, n))
 	}
-	return Snapshot{Version: v, Shown: shown, Agents: rows}, nil
+	ref, note := m.ticketOf(container)
+	return Snapshot{Version: v, Shown: shown, Agents: rows, Ticket: ref, TicketNote: note}, nil
 }
 
 func rowOf(a store.Agent) Row {
@@ -581,8 +591,10 @@ func (m *Manager) follow(container string, s Session) {
 		delete(m.conns, container)
 		// Nothing tracks the shells now: their rows go until a new connection lists them.
 		m.smu.Lock()
-		dropped = len(m.shells[container]) > 0
+		dropped = len(m.shells[container]) > 0 || m.tickets[container] != ticketView{}
 		delete(m.shells, container)
+		delete(m.tickets, container) // the session is gone: so is any ticket it showed
+		delete(m.ticketSeqs, container)
 		m.smu.Unlock()
 	}
 	m.mu.Unlock()
@@ -979,6 +991,12 @@ func (m *Manager) ensureLayout(ctx context.Context, container string, s Session,
 			return false, false, err
 		}
 	}
+	// The ticket pane (ticket.go) is made on first use; once made, it is kept alive.
+	if tp, ok := byRole(ps, roleTicket); ok && tp.Dead && m.respawnDue(container, tp.ID) {
+		if _, err := run(append([]string{"respawn-pane", "-k", "-t", tp.ID, "--"}, m.ticketCmd(container)...)...); err != nil {
+			return false, false, err
+		}
+	}
 	if moved {
 		// A window the user's terminal was on may be gone, or the terminal may have followed a
 		// pane out: bring it back to the deck (no key of lea's conf leaves a parking window).
@@ -1169,7 +1187,9 @@ func (m *Manager) publish(container string, ps []pane) {
 	m.shells[container] = shells
 	m.smu.Unlock()
 	key := ""
-	if _, slot, ok := deckAndSlot(ps); ok && slot.Agent != "" {
+	_, slot, ok := deckAndSlot(ps)
+	m.slotTicket(container, ok && slot.Role == roleTicket && !slot.Dead)
+	if ok && slot.Agent != "" {
 		key = container + "/" + slot.Agent
 	} else if ok && slot.Shell != "" && !slot.Dead {
 		key = ShellKey(container, slot.Shell)
@@ -1245,7 +1265,7 @@ func (m *Manager) showLast(ctx context.Context, container string, s Session, ps 
 	if !ok {
 		return ps, nil
 	}
-	if err := m.show(ctx, s, ps, p, true); err != nil {
+	if err := m.show(ctx, s, container, ps, p, true); err != nil {
 		return ps, err
 	}
 	return listPanes(ctx, s, container)
@@ -1321,7 +1341,7 @@ func (m *Manager) OpenShell(ctx context.Context, container string) (Row, error) 
 	id, err := m.newShellPane(ctx, s, container, name, workdir, false)
 	if err == nil {
 		if ps, err = listPanes(ctx, s, container); err == nil {
-			err = m.show(ctx, s, ps, pane{ID: id}, true)
+			err = m.show(ctx, s, container, ps, pane{ID: id}, true)
 		}
 	}
 	if err != nil {
@@ -1421,7 +1441,7 @@ func (m *Manager) SplitShell(ctx context.Context, key string, below bool) (Row, 
 			return Row{}, err
 		}
 	}
-	if err := m.show(ctx, s, ps, ap, false); err != nil {
+	if err := m.show(ctx, s, a.Container, ps, ap, false); err != nil {
 		return Row{}, err
 	}
 	if deck, ok := byRole(ps, roleDeck); ok {
@@ -1494,7 +1514,7 @@ func (m *Manager) focusShell(ctx context.Context, container, name string, focus 
 	if agent, _ := p.splitAgent(); agent != "" {
 		if ap, ok := byAgent(ps, agent); ok {
 			// Its agent takes the slot, the shell beside it.
-			if err := m.show(ctx, s, ps, ap, false); err != nil {
+			if err := m.show(ctx, s, container, ps, ap, false); err != nil {
 				return err
 			}
 			if focus {
@@ -1519,7 +1539,7 @@ func (m *Manager) focusShell(ctx context.Context, container, name string, focus 
 		}
 		p.Split = ""
 	}
-	if err := m.show(ctx, s, ps, p, focus); err != nil {
+	if err := m.show(ctx, s, container, ps, p, focus); err != nil {
 		return err
 	}
 	if ps, err = listPanes(ctx, s, container); err != nil {
@@ -1624,8 +1644,13 @@ func (m *Manager) removePane(ctx context.Context, s Session, ps []pane, p pane) 
 	return err
 }
 
-// show swaps p into the slot; focus also moves the keyboard to it.
-func (m *Manager) show(ctx context.Context, s Session, ps []pane, p pane, focus bool) error {
+// show swaps p into the slot of container; focus also moves the keyboard to it. Any pane but the
+// ticket pane ends the ticket the slot showed (#284): the snapshot never names a ticket while
+// another pane, an agent's own screen among them, holds the slot.
+func (m *Manager) show(ctx context.Context, s Session, container string, ps []pane, p pane, focus bool) error {
+	if p.Role != roleTicket {
+		m.slotTicket(container, false)
+	}
 	deck, slot, ok := deckAndSlot(ps)
 	if !ok {
 		return errors.New("the deck window has no slot")
@@ -1855,7 +1880,7 @@ func (m *Manager) New(ctx context.Context, r NewRequest) (Row, error) {
 	if err == nil && !r.Hidden {
 		var ps []pane
 		if ps, err = listPanes(ctx, s, r.Container); err == nil {
-			err = m.show(ctx, s, ps, pane{ID: id}, r.Focus)
+			err = m.show(ctx, s, r.Container, ps, pane{ID: id}, r.Focus)
 		}
 	}
 	if err != nil {
@@ -1996,7 +2021,7 @@ func (m *Manager) Focus(ctx context.Context, key string, focus bool) error {
 			return fmt.Errorf("agent %s has ended and has no terminal left; x removes it", a.Name)
 		}
 	}
-	if err := m.show(ctx, s, ps, p, focus); err != nil {
+	if err := m.show(ctx, s, a.Container, ps, p, focus); err != nil {
 		return err
 	}
 	m.setShown(a.Container, a.Key)

@@ -20,6 +20,9 @@ func panelMark(panel bool) string {
 
 func (f *fakeAPI) HubDecide(ctx context.Context, c string, panel bool, instance, id string, approved bool, retype string) error {
 	f.rec(fmt.Sprintf("hub-decide %s%s %s/%s %v %q", c, panelMark(panel), instance, id, approved, retype))
+	if f.failOn != "" && id == f.failOn {
+		return errors.New("this ticket's lock no longer exists: the ticket cannot be decided (orphan)")
+	}
 	return f.err
 }
 
@@ -31,6 +34,14 @@ func (f *fakeAPI) HubReveal(ctx context.Context, c string, panel bool, instance,
 func (f *fakeAPI) HubRenew(ctx context.Context, c string, panel bool, instance, id string) (HubRenewed, error) {
 	f.rec(fmt.Sprintf("hub-renew %s%s %s/%s", c, panelMark(panel), instance, id))
 	return f.renewed, f.err
+}
+
+func (f *fakeAPI) HubShow(ctx context.Context, c, ref, note string, seq int64) error {
+	f.rec(fmt.Sprintf("hub-show %s %q %q", c, ref, note))
+	f.mu.Lock()
+	f.seqs = append(f.seqs, seq)
+	f.mu.Unlock()
+	return f.err
 }
 
 func ticketed(name string, prod bool) Agent {

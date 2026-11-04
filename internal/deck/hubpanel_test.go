@@ -63,125 +63,45 @@ func TestHubPanelShowsTheQueue(t *testing.T) {
 	}
 }
 
-// H moves the selection into the panel, on its oldest pending ticket, and shows its card; j and k
-// move in it, esc leaves it; a key for a row does nothing there. a and d answer the selected
-// ticket from the panel, also one for no agent, not before it was under the selection for
-// lockAskDelay.
+// H moves the selection into the panel, on its oldest pending ticket; j and k move in it, esc
+// leaves it; a key for a row does nothing there. The ticket itself shows in the slot, not in the
+// deck (#284). r on an expired ticket waits lockAskDelay after the selection came onto it.
 func TestHubPanelKeys(t *testing.T) {
 	q := []HubCard{queueTicket("T1", "", false, false), queueTicket("T2", "", false, false)}
 	q[0].Expired = true
-	for k, want := range map[string]string{"a": `hub-decide lea-a panel crm/T2 true ""`, "d": `hub-decide lea-a panel crm/T2 false ""`} {
-		api := &fakeAPI{}
-		m := withQueue(t, api, q, ag("b", "working", 1))
-		m, _ = step(t, m, key("H"))
-		if !m.panel || m.panelSel != "crm/T2" || !strings.Contains(m.View(), "UPDATE t SET") {
-			t.Fatalf("H: panel %v on %q:\n%s", m.panel, m.panelSel, m.View())
-		}
-		if m2, cmd := step(t, m, key(k)); cmd != nil || !strings.Contains(m2.status, "read the locksql ticket first") {
-			t.Fatalf("%s answered before the delay: %q", k, m2.status)
-		}
-		m = later(m)
-		m, cmd := step(t, m, key(k))
-		if cmd == nil {
-			t.Fatalf("%s: no call (%q)", k, m.status)
-		}
-		step(t, m, cmd())
-		if got := api.got(); len(got) != 1 || got[0] != want {
-			t.Fatalf("%s: calls %q", k, got)
-		}
-	}
 	api := &fakeAPI{}
-	m := later(withQueue(t, api, q, ag("b", "working", 1)))
+	m := withQueue(t, api, q, ag("b", "working", 1))
 	m, _ = step(t, m, key("H"))
+	if !m.panel || m.panelSel != "crm/T2" || strings.Contains(m.View(), "UPDATE t SET") {
+		t.Fatalf("H: panel %v on %q:\n%s", m.panel, m.panelSel, m.View())
+	}
+	m = later(m)
 	m, _ = step(t, m, key("k"))
 	if m.panelSel != "crm/T1" {
 		t.Fatalf("k: on %q", m.panelSel)
 	}
-	// k moved the selection onto T1: the delay starts again (T1 expired: r renews it).
-	if m2, cmd := step(t, m, key("r")); cmd != nil || !strings.Contains(m2.status, "read the locksql ticket first") {
+	// k moved the selection onto T1, which the slot does not show yet (T1 expired: r renews it).
+	if m2, cmd := step(t, m, key("r")); cmd != nil || !strings.Contains(m2.status, "not shown yet") {
 		t.Fatalf("r right after k: %q", m2.status)
 	}
-	for _, k := range []string{"x", "p", "e", "n"} {
+	for _, k := range []string{"x", "p", "e", "n", "enter", "v"} {
 		if m2, cmd := step(t, m, key(k)); cmd != nil || m2.confirm != "" || m2.editFor != "" || !m2.panel {
 			t.Fatalf("%s acted on a row from the panel", k)
 		}
 	}
 	m, _ = step(t, m, tea.KeyMsg{Type: tea.KeyEsc})
-	if m.panel || strings.Contains(m.View(), "UPDATE t SET") {
+	if m.panel {
 		t.Fatal("esc did not leave the panel")
 	}
-	if len(api.got()) != 0 {
-		t.Fatalf("calls %q", api.got())
+	for _, c := range api.got() {
+		if !strings.HasPrefix(c, "hub-show ") && !strings.HasPrefix(c, "show ") {
+			t.Fatalf("calls %q", api.got())
+		}
 	}
 	// No queue: H says so.
 	m = withQueue(t, &fakeAPI{}, nil, ag("b", "working", 1))
 	if m, _ := step(t, m, key("H")); m.panel || !strings.Contains(m.status, "no ticket waits") {
 		t.Fatalf("H with no queue: %v %q", m.panel, m.status)
-	}
-}
-
-// A production ticket in the panel needs its instance name typed, as on a card.
-func TestHubPanelProductionNeedsItsName(t *testing.T) {
-	api := &fakeAPI{}
-	m := withQueue(t, api, []HubCard{queueTicket("T1", "", false, true)}, ag("b", "working", 1))
-	m, _ = step(t, m, key("H"))
-	m = later(m)
-	m, cmd := step(t, m, key("a"))
-	if cmd != nil || m.hubFor != "crm/T1" || !strings.Contains(m.View(), "type crm:") {
-		t.Fatalf("no field for the name:\n%s", m.View())
-	}
-	m, _ = step(t, m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("crm")})
-	m, cmd = step(t, m, tea.KeyMsg{Type: tea.KeyEnter})
-	if cmd == nil {
-		t.Fatalf("not approved: %q", m.status)
-	}
-	step(t, m, cmd())
-	if got := api.got(); len(got) != 1 || got[0] != `hub-decide lea-a panel crm/T1 true "crm"` {
-		t.Fatalf("calls %q", got)
-	}
-}
-
-// A refusal of a (#260) stays under the selected ticket, with what answers it: the next key
-// replaces the status line, not the note; the selection moving off the ticket drops it.
-func TestHubPanelRefusalStaysUnderTheTicket(t *testing.T) {
-	q := []HubCard{queueTicket("T1", "", false, true), queueTicket("T2", "", false, false)}
-	for i := 0; i < 40; i++ {
-		q[0].Body = append(q[0].Body, "line")
-	}
-	m := withQueue(t, &fakeAPI{}, q, ag("b", "working", 1))
-	m, _ = step(t, m, key("H"))
-	m = later(m)
-	m, _ = step(t, m, key("v"))
-	m, cmd := step(t, m, key("a"))
-	if cmd != nil || m.hubFor != "" {
-		t.Fatal("a ticket too long for the deck was approved")
-	}
-	m, _ = step(t, m, key("x"))
-	if !strings.Contains(m.status, "esc leaves it") {
-		t.Fatalf("status %q", m.status)
-	}
-	if v := m.View(); !strings.Contains(v, "too long for the deck: answer it with lox approve") {
-		t.Fatalf("the refusal is gone after the next key:\n%s", v)
-	}
-	m, _ = step(t, m, key("j"))
-	if v := m.View(); strings.Contains(v, "too long for the deck") {
-		t.Fatalf("the refusal stays on the next ticket:\n%s", v)
-	}
-	// A name typed wrong is said under the ticket too.
-	m, _ = step(t, m, key("k"))
-	q[0].Body = q[0].Body[:1]
-	m, _ = step(t, m, snapshotMsg{snap: Snapshot{Version: 8, Agents: []Agent{ag("b", "working", 1)}, HubQueue: q}})
-	at := clock.Add(20 * lockAskDelay) // k put the selection back: its delay again
-	m.now = func() time.Time { return at }
-	m, _ = step(t, m, key("a"))
-	if m.hubFor != "crm/T1" {
-		t.Fatalf("no field for the name: %q", m.status)
-	}
-	m, _ = step(t, m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("CRM")})
-	m, _ = step(t, m, tea.KeyMsg{Type: tea.KeyEnter})
-	m, _ = step(t, m, key("x"))
-	if v := m.View(); !strings.Contains(v, "does not match: not approved") {
-		t.Fatalf("the mismatch is gone after the next key:\n%s", v)
 	}
 }
 

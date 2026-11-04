@@ -139,10 +139,10 @@ var helpLines = []string{
 	"a d A       allow deny always",
 	"x           stop or remove",
 	"S H         sounds, hub panel",
+	"Y           hub: approve all",
 	",           settings",
 	"ctrl+space  deck or terminal",
-	"q           detach",
-	"?           these keys",
+	"q ?         detach, these keys",
 }
 
 // statusLine is the line above the bottom border: the hub's retype field while it is open, else

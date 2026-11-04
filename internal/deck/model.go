@@ -123,6 +123,10 @@ type Snapshot struct {
 	// LocksAdded are the locks lox up runs that this container does not mount
 	// (agents.Snapshot.LocksAdded): the deck says to restart lea to use them.
 	LocksAdded []string `json:"locks_added,omitempty"`
+	// Ticket is the hub ticket the slot shows (instance/id) and TicketNote what the deck said
+	// under it (agents.Snapshot.Ticket, #284): "" unless the ticket pane holds the slot.
+	Ticket     string `json:"ticket,omitempty"`
+	TicketNote string `json:"ticket_note,omitempty"`
 }
 
 // Pressure is what the deck shows of the pressure (#132, P2): a short gauge of the container
@@ -239,6 +243,9 @@ type API interface {
 	// again for an expired ticket (r). panel as for HubDecide.
 	HubReveal(ctx context.Context, container string, panel bool, instance, id string) (HubClear, error)
 	HubRenew(ctx context.Context, container string, panel bool, instance, id string) (HubRenewed, error)
+	// HubShow shows a hub panel ticket (instance/id) whole in the slot, the note under it; ref
+	// and note "" hide it (#284). seq only grows: the daemon drops a call older than the last.
+	HubShow(ctx context.Context, container, ref, note string, seq int64) error
 }
 
 // isShell reports whether a row is a shell.
@@ -363,14 +370,32 @@ type Model struct {
 	// hubRead are the tickets v showed whole (by instance/id).
 	hubRead map[string]bool
 	// hubQueue is every ticket of the hub (Snapshot.HubQueue): the hub panel. panel says the
-	// selection is in it (H), on the ticket panelSel (instance/id) since panelAt: a key acts on a
-	// ticket only lockAskDelay after it came under the selection. panelDetail shows the selected
-	// ticket's details (enter, or a click on it).
-	hubQueue    []HubCard
-	panel       bool
-	panelSel    string
-	panelAt     time.Time
-	panelDetail bool
+	// selection is in it (H), on the ticket panelSel (instance/id) since panelAt; the slot shows
+	// that ticket whole (#284).
+	hubQueue []HubCard
+	panel    bool
+	panelSel string
+	panelAt  time.Time
+	// ticketAsked is what this deck last asked the slot to show (syncTicket); ticketShown the
+	// ticket the slot shows, as the daemon says (Snapshot.Ticket), since ticketAt: a or d acts on
+	// a panel ticket only ticketDelay after the slot shows it.
+	ticketAsked ticketAsk
+	ticketShown string
+	ticketAt    time.Time
+	// ticketNoteShown is the note the slot shows (Snapshot.TicketNote). ticketSeq numbers the
+	// slot calls (it only grows), ticketBusy says one is under way since ticketSentAt, and
+	// ticketFailed that the last one failed: syncTicket asks again.
+	ticketNoteShown string
+	ticketSeq       int64
+	ticketBusy      bool
+	ticketFailed    bool
+	ticketSentAt    time.Time
+	// hubReport is the approve-all report the slot shows until the selection moves; allFor the
+	// tickets Y asks to approve, waiting for y; hubSent the tickets answered here that the queue
+	// still lists (a second key does not answer them again).
+	hubReport string
+	allFor    *approveAll
+	hubSent   map[string]bool
 	// revealed is the clear screen of the ticket o showed (memory only), dropped when the card
 	// changes or revealFor passes; revealSeq tells its timeout from an older one's.
 	revealed      *hubRevealed
@@ -459,7 +484,20 @@ func (m Model) call(fn func(ctx context.Context) error) tea.Cmd {
 	}
 }
 
+// Update takes a message in; then the slot follows the hub panel's selection (syncTicket).
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	nm, cmd := m.update(msg)
+	mm, ok := nm.(Model)
+	if !ok {
+		return nm, cmd
+	}
+	if sync := mm.syncTicket(); sync != nil {
+		return mm, tea.Batch(cmd, sync)
+	}
+	return mm, cmd
+}
+
+func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
 		m.width, m.height = msg.Width, msg.Height
@@ -579,6 +617,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return nm, cmd
 	case revealMsg:
 		return m.revealed1(msg)
+	case ticketShownMsg:
+		return m.ticketShown1(msg), nil
+	case hubDecidedMsg:
+		return m.hubDecided(msg), nil
+	case approveAllMsg:
+		return m.approvedAll(msg), nil
 	case revealEndMsg:
 		if m.revealed != nil && msg.seq == m.revealSeq {
 			m.revealed = nil
@@ -597,6 +641,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 	case tea.MouseMsg:
+		if m.allFor != nil && msg.Action == tea.MouseActionPress {
+			m.allFor, m.status = nil, "nothing approved" // a click answers Y's question: no
+		}
 		nm, cmd := m.mouse(msg)
 		if mm, ok := nm.(Model); ok {
 			mm.keepReveal() // a wheel or a click moved the selection: the clear values go
@@ -664,6 +711,10 @@ func (m *Model) apply(s Snapshot) bool {
 	m.version, m.shown, m.sound, m.locks, m.pressure, m.hubDown = s.Version, s.Shown, s.Sound, s.Locks, s.Pressure, s.HubState == "down"
 	m.locksAdded = s.LocksAdded
 	m.hubQueue = s.HubQueue
+	if s.Ticket != m.ticketShown {
+		m.ticketShown, m.ticketAt = s.Ticket, m.now()
+	}
+	m.ticketNoteShown = s.TicketNote
 	for _, a := range s.Agents {
 		if a.Key == s.Shown && a.State == "done" {
 			m.seen[a.Key] = a.Updated
@@ -707,6 +758,7 @@ func (m *Model) apply(s Snapshot) bool {
 		seen(h)
 	}
 	m.keepPanel()
+	m.keepApproveAll()
 	if m.hubFor != "" {
 		if _, ok := hubSince[m.hubFor]; !ok {
 			m.hubFor, m.hubDraft = "", nil // decided elsewhere, or gone
@@ -717,6 +769,11 @@ func (m *Model) apply(s Snapshot) bool {
 	for ref := range m.hubRead {
 		if _, ok := hubSince[ref]; !ok {
 			delete(m.hubRead, ref)
+		}
+	}
+	for ref := range m.hubSent {
+		if _, ok := hubSince[ref]; !ok {
+			delete(m.hubSent, ref)
 		}
 	}
 	// An agent shown from elsewhere (lea new in another terminal, another deck client) takes
@@ -814,6 +871,9 @@ func (m Model) key(k string) (tea.Model, tea.Cmd) {
 			}
 		}
 		return m, nil
+	}
+	if m.allFor != nil {
+		return m.answerApproveAll(k == "y")
 	}
 	if m.pauseFor != "" {
 		key := m.pauseFor
@@ -1302,6 +1362,9 @@ func (m Model) answerHub(approve bool) (tea.Model, tea.Cmd) {
 	}
 	h := *sel
 	ref := h.Instance + "/" + h.ID
+	if m.panel {
+		return m.answerPanel(h, approve)
+	}
 	if !m.hubReady(ref) {
 		m.status = "read the " + clean(h.Lock) + " ticket first"
 		return m, nil
@@ -1341,11 +1404,15 @@ func (m Model) refuseHub(ref, why string) Model {
 	return m
 }
 
+// decideHub answers the ticket h through the daemon; its answer comes back as a hubDecidedMsg.
 func (m Model) decideHub(h HubCard, approve bool, retype string) tea.Cmd {
 	api, c, panel := m.api, m.container, m.panel
-	return m.call(func(ctx context.Context) error {
-		return api.HubDecide(ctx, c, panel, h.Instance, h.ID, approve, retype)
-	})
+	ref := h.Instance + "/" + h.ID
+	return func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), callTimeout)
+		defer cancel()
+		return hubDecidedMsg{ref: ref, panel: panel, approve: approve, err: api.HubDecide(ctx, c, panel, h.Instance, h.ID, approve, retype)}
+	}
 }
 
 // hubKey is a key typed in the field of a ticket's name (its Retype): enter approves with it, esc
@@ -1365,6 +1432,7 @@ func (m Model) hubKey(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if typed != h.Retype {
 			return m.refuseHub(ref, "does not match: not approved"), nil
 		}
+		m.sent(ref)
 		return m, m.decideHub(*h, true, typed)
 	case s == "backspace":
 		if len(m.hubDraft) > 0 {
@@ -1404,8 +1472,8 @@ func (m Model) hubWrap(ls []string) []string {
 
 // hubFits reports whether the selected card's whole ticket, the Lock's screen unfolded, fits in
 // the deck's height: the rows scroll to keep the selected row's block on screen below the hub
-// panel, and the panel shows its selected ticket's card whole, so all of it shows. Before the deck
-// knows its height, nothing is cut.
+// panel, so all of it shows. (A panel ticket shows whole in the slot, not in the deck.) Before the
+// deck knows its height, nothing is cut.
 func (m Model) hubFits() bool {
 	if m.height <= 0 {
 		return true
@@ -1542,15 +1610,26 @@ func (m *Model) keepReveal() {
 // renewal at once when nothing changed (not for production), else it comes as a new card.
 func (m Model) renewHub(h HubCard) (tea.Model, tea.Cmd) {
 	ref := h.Instance + "/" + h.ID
-	if !m.hubReady(ref) {
-		m.status = "read the " + clean(h.Lock) + " ticket first"
-		return m, nil
-	}
 	// The hub approves an unchanged renewal at once in the user's name, also of a ticket that
-	// expired undecided: r is an approval, read like a.
-	if why := m.unreadable(h); why != "" {
-		m.status = why
-		return m, nil
+	// expired undecided: r is an approval, read like a. In the panel, as a: once the slot shows
+	// the ticket, and never one lea had to cut.
+	if m.panel {
+		if why := m.ticketReady(ref); why != "" {
+			m.status = why
+			return m, nil
+		}
+		if h.Truncated {
+			return m.refuseHub(ref, "lea had to cut this ticket: answer it with lox approve"), nil
+		}
+	} else {
+		if !m.hubReady(ref) {
+			m.status = "read the " + clean(h.Lock) + " ticket first"
+			return m, nil
+		}
+		if why := m.unreadable(h); why != "" {
+			m.status = why
+			return m, nil
+		}
 	}
 	m.status = "asking the " + clean(h.Lock) + " lock again…"
 	api, c, panel := m.api, m.container, m.panel

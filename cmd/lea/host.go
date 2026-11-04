@@ -582,10 +582,12 @@ func runDeck(args []string, stderr io.Writer) int {
 			layout = deck.FileStore{Path: p}
 		}
 		err = deck.Run(deck.Client{Sock: identity.DaemonSock(os.Getenv)}, args[1], ascii, notice, st, off, layout)
+	case len(args) == 2 && args[0] == "--ticket":
+		err = deck.RunTicket(deck.Client{Sock: identity.DaemonSock(os.Getenv)}, args[1], ascii)
 	case len(args) >= 2 && args[0] == "--thread" && (len(args) == 2 || (len(args) == 3 && args[2] == "--compose")):
 		err = deck.RunThread(deck.Client{Sock: identity.DaemonSock(os.Getenv)}, args[1], len(args) == 3, ascii)
 	default:
-		fmt.Fprintln(stderr, "usage: lea deck --container NAME | --placeholder | --thread KEY [--compose]")
+		fmt.Fprintln(stderr, "usage: lea deck --container NAME | --placeholder | --ticket NAME | --thread KEY [--compose]")
 		return 2
 	}
 	if err != nil {
