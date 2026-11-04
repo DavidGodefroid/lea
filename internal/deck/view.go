@@ -152,7 +152,7 @@ func (m Model) statusLine(inner int) string {
 	if m.hubFor != "" {
 		prompt := "type the name to approve: "
 		if h := m.selectedHub(); h != nil {
-			prompt = "type " + clean(h.Retype) + ": "
+			prompt = "type " + clean(retypeName(*h)) + ": "
 		}
 		field := tail(safe(string(m.hubDraft), c), max(1, inner-1-len([]rune(prompt))-1))
 		return padRight(" "+lipgloss.NewStyle().Foreground(theme.Text).Render(prompt+field)+
@@ -862,11 +862,17 @@ func (m Model) hubCardLines(h HubCard, inner int, pad string, bg func(lipgloss.S
 	if h.Expired {
 		keys = "expired: [r] asks the lock again, approved at once if nothing changed"
 	}
-	if h.Production && h.Retype != "" && !h.Expired {
-		keys += " " + c.dot + " approving asks for " + clean(h.Retype)
+	if name := retypeName(h); h.Production && name != "" && !h.Expired {
+		keys += " " + c.dot + " approving asks for " + clean(name)
 	}
 	if more > 0 {
 		keys += fmt.Sprintf(" %s %d more tickets", c.dot, more)
 	}
-	return append(lines, row(text, keys))
+	lines = append(lines, row(text, keys))
+	if n := m.hubNote; selected && n.ref == h.Instance+"/"+h.ID {
+		for _, w := range wrap(n.text, wide+2, c) {
+			lines = append(lines, row(alert, w))
+		}
+	}
+	return lines
 }
