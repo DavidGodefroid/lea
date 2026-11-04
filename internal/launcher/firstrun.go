@@ -1,14 +1,15 @@
 package launcher
 
 import (
+	"bufio"
 	"bytes"
 	"errors"
 	"fmt"
 	"os"
 	"os/exec"
 	"runtime"
-	"sort"
 	"strings"
+	"time"
 )
 
 // noHub is the escape every refusal about lox names: lea without the Lock Family hub.
@@ -112,12 +113,15 @@ func (l *Launcher) firstRun() error {
 }
 
 // ensureHub starts the workspace's Lock Family hub before lea starts: `lox init` when it has none
-// (loxInit), then, with LEA_LOX_UP=1, `lox up` when its hub is down (loxUp).
+// (loxInit), then, with LEA_LOX_UP=1, `lox up` when its hub or a lock's console is down (loxUp).
+// Last it checks every lock up.json declares (consolesReady), so a console that waits for a
+// human is said, and answered, on the terminal where lea starts.
 func (l *Launcher) ensureHub(proj string) error {
 	if err := l.loxInit(proj); err != nil {
 		return err
 	}
 	l.loxUp(proj)
+	l.consolesReady(proj)
 	return nil
 }
 
@@ -144,11 +148,10 @@ func (l *Launcher) loxInit(proj string) error {
 }
 
 // loxUp runs `lox up` for the projects directory before lea starts, when the user opted in
-// (LEA_LOX_UP=1), proj/.lockfamily/lockfamily.yaml exists and no hub of proj runs (after a reboot
-// or a lox down). lox up runs in the foreground, on the user's terminal, where it reviews any
-// change: lea's agents never start a console, the human who runs lea does. A failure only warns:
-// lea starts anyway. Each console lox up started or recreated waits for its start questions (its
-// policy, the credentials it does not take from Vault), which lea lists with their lox attach.
+// (LEA_LOX_UP=1), proj/.lockfamily/lockfamily.yaml exists and no hub of proj runs or a lock of
+// up.json has no running console (after a reboot, a lox down, or a console that stopped). lox up
+// runs in the foreground, on the user's terminal, where it reviews any change: lea's agents never
+// start a console, the human who runs lea does. A failure only warns: lea starts anyway.
 func (l *Launcher) loxUp(proj string) {
 	if l.Cfg.Get("LEA_LOX_UP") != "1" || !isRegular(proj+"/.lockfamily/lockfamily.yaml") {
 		return
@@ -158,7 +161,11 @@ func (l *Launcher) loxUp(proj string) {
 		l.logf("warning: LEA_LOX_UP: cannot list the Lock Family's containers (docker ps failed): lox up not run")
 		return
 	}
-	if before["lockhub"] != "" {
+	down := before["lockhub"] == ""
+	for _, lk := range l.upLocks(proj) {
+		down = down || before["lock-"+lk.Instance] == ""
+	}
+	if !down {
 		return
 	}
 	l.logf("starting the Lock Family hub and its locks (lox up, LEA_LOX_UP=1)")
@@ -167,32 +174,110 @@ func (l *Launcher) loxUp(proj string) {
 	c.Stdin, c.Stdout, c.Stderr = l.Stdin, l.Stdout, l.Stderr
 	if err := l.exec(c); err != nil {
 		l.logf("warning: lox up failed (above): lea starts without it; fix it, then run lox up")
+	}
+}
+
+// upLocks are the locks of up.json an agent container started now would mount (Config.UpLocks),
+// without its warnings: the container's start says them.
+func (l *Launcher) upLocks(proj string) []UpLock {
+	return l.Cfg.UpLocks(proj, func(string, ...any) {})
+}
+
+// consoleGrace is how long a console that runs but does not listen yet may take to start before
+// lea says it waits for a human; consoleStep is how often lea looks again meanwhile.
+var consoleGrace, consoleStep = 3 * time.Second, 300 * time.Millisecond
+
+// atTerminal is whether lea may ask its user a question: stdin and stdout are a terminal.
+var atTerminal = func(l *Launcher) bool { return IsTerminal(l.Stdin) && IsTerminal(l.Stdout) }
+
+// consolesReady checks every lock of up.json lea's agents would use (#259): its console must run
+// (else: run lox up) and listen on its socket. A console that runs and does not listen waits for
+// its start question (a production profile's name, a first start's policy review, a credential
+// Vault does not give): nobody is attached to it after a restart. At a terminal lea offers to
+// answer it there with `lox attach`, then checks again; elsewhere it names the command. lea
+// starts anyway: an agent then gets "no console" from that lock.
+func (l *Launcher) consolesReady(proj string) {
+	locks := l.upLocks(proj)
+	if len(locks) == 0 {
 		return
 	}
-	after, err := l.loxServices(proj)
+	svcs, err := l.loxServices(proj)
 	if err != nil {
+		l.logf("warning: cannot list the Lock Family's containers (docker ps failed): lea does not know whether its locks serve")
 		return
 	}
-	types := map[string]string{}
-	if s, _ := l.readLockUp(proj, proj+"/.lockfamily"); s != nil {
-		for n, lk := range s.Locks {
-			types[n] = lk.Type
+	var running []UpLock
+	for _, lk := range locks {
+		if svcs["lock-"+lk.Instance] == "" {
+			l.logf("%s %s: its console is not running: run lox up", lk.Type, lk.Instance)
+			continue
+		}
+		running = append(running, lk)
+	}
+	for _, lk := range l.notListening(running, svcs) {
+		l.logf("%s %s waits for its start question (its console runs but does not serve yet): lox attach %s", lk.Type, lk.Instance, lk.Instance)
+		if !atTerminal(l) || l.attachConsole(proj, lk) && len(l.notListening([]UpLock{lk}, svcs)) == 0 {
+			continue
+		}
+		l.logf("%s %s still waits for its start question: lea starts without it; lox attach %s to answer it", lk.Type, lk.Instance, lk.Instance)
+	}
+}
+
+// attachConsole asks the user whether to answer lk's start question now and, on yes (the
+// default), runs `lox attach` on lea's terminal; false when declined or the attach failed.
+func (l *Launcher) attachConsole(proj string, lk UpLock) bool {
+	fmt.Fprintf(l.Stderr, "lea: answer it now with lox attach %s? Its question is not shown again: type what it waits for "+
+		"(a production lock: its profile name), Enter, then detach with Ctrl-P Ctrl-Q once it serves [Y/n] ", lk.Instance)
+	a, _ := bufio.NewReader(l.Stdin).ReadString('\n')
+	if a = strings.ToLower(strings.TrimSpace(a)); a != "" && a != "y" && a != "yes" {
+		return false
+	}
+	c := l.cmd("lox", "attach", lk.Instance)
+	c.Dir = proj
+	c.Stdin, c.Stdout, c.Stderr = l.Stdin, l.Stdout, l.Stderr
+	if err := l.exec(c); err != nil {
+		l.logf("warning: lox attach %s failed (above)", lk.Instance)
+		return false
+	}
+	return true
+}
+
+// notListening are the locks of locks whose console (its container in svcs, by compose service)
+// does not listen on a socket of its tool, once consoleGrace has passed for those still starting.
+func (l *Launcher) notListening(locks []UpLock, svcs map[string]string) []UpLock {
+	deadline := time.Now().Add(consoleGrace)
+	for {
+		var out []UpLock
+		for _, lk := range locks {
+			if !l.consoleListens(svcs["lock-"+lk.Instance], lk.Type) {
+				out = append(out, lk)
+			}
+		}
+		if len(out) == 0 || !time.Now().Before(deadline) {
+			return out
+		}
+		locks = out
+		time.Sleep(consoleStep)
+	}
+}
+
+// consoleListens is whether the console container id listens on a unix socket of tool, from the
+// kernel's table of its network namespace: a socket file in the volume may be a dead console's.
+func (l *Launcher) consoleListens(id, tool string) bool {
+	out, err := l.output(false, "docker", "exec", id, "cat", "/proc/net/unix")
+	return err == nil && unixListening(out, tool)
+}
+
+// unixListening is whether /proc/net/unix (table) holds a listening socket in /run/<tool>/: the
+// flag __SO_ACCEPTCON (00010000), state 01.
+func unixListening(table, tool string) bool {
+	for _, ln := range strings.Split(table, "\n") {
+		f := strings.Fields(ln)
+		if len(f) == 8 && f[3] == "00010000" && f[5] == "01" && strings.HasPrefix(f[7], "/run/"+tool+"/") {
+			return true
 		}
 	}
-	var insts []string
-	for svc, id := range after {
-		if inst, ok := strings.CutPrefix(svc, "lock-"); ok && before[svc] != id {
-			insts = append(insts, inst)
-		}
-	}
-	sort.Strings(insts)
-	for _, n := range insts {
-		t := types[n]
-		if t == "" {
-			t = "lock"
-		}
-		l.logf("%s %s waits for its start questions: lox attach %s", t, n, n)
-	}
+	return false
 }
 
 // loxServices is the running containers of lox up's compose project for proj: container ID by
