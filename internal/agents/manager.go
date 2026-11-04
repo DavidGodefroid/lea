@@ -114,6 +114,9 @@ type Containers interface {
 	// Unpark starts again what the agent's last Park stopped.
 	Unpark(ctx context.Context, container, name string) (string, error)
 	Sweep(ctx context.Context, container string, keep []string) (string, error)
+	// HasTranscript reports whether Claude wrote a transcript of session in the container: a
+	// session without one cannot be resumed (#255).
+	HasTranscript(ctx context.Context, container, session string) (bool, error)
 }
 
 type Config struct {
@@ -2211,6 +2214,11 @@ func (m *Manager) restartWith(ctx context.Context, s Session, container string, 
 	if err != nil {
 		return err
 	}
+	if session != "" && prov.CLI == providers.Claude && !m.hasTranscript(ctx, container, a, session) {
+		// Claude refuses to resume it ("No conversation found") and the pane dies: no message
+		// was ever exchanged, so starting it as it first did loses nothing (#255).
+		session = ""
+	}
 	args, err := launchArgs(prov, a, session, a.Args, a.Prompt)
 	if err != nil {
 		return err
@@ -2240,6 +2248,20 @@ func (m *Manager) restartWith(ctx context.Context, s Session, container string, 
 	}
 	_, err = m.newPane(ctx, s, container, a, args, false)
 	return err
+}
+
+// hasTranscript reports whether the agent's session has a transcript to resume. A container that
+// cannot tell (an image older than the check) resumes it, as before.
+func (m *Manager) hasTranscript(ctx context.Context, container string, a store.Agent, session string) bool {
+	ok, err := m.cfg.Containers.HasTranscript(ctx, container, session)
+	if err != nil {
+		log.Printf("lea daemon: check the transcript of %s: %v", a.Key, err)
+		return true
+	}
+	if !ok {
+		log.Printf("lea daemon: %s has no transcript of session %s: started afresh", a.Key, session)
+	}
+	return ok
 }
 
 // teardownTimeout bounds the removal of an ended agent's stack in the background.

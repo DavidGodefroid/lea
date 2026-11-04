@@ -162,6 +162,26 @@ func (d Docker) Sweep(ctx context.Context, container string, keep []string) (str
 	return strings.TrimSpace(string(out)), nil
 }
 
+// HasTranscript reports whether Claude wrote a transcript of session in the container (lea-agent
+// transcript: exit 3 when it has none). In a container that is not running, it has none.
+func (d Docker) HasTranscript(ctx context.Context, container, session string) (bool, error) {
+	if !sessionRe.MatchString(session) {
+		return false, fmt.Errorf("invalid session id %q", session)
+	}
+	_, err := d.agent(ctx, container, "transcript", session)
+	if err == nil {
+		return true, nil
+	}
+	var ee *exec.ExitError
+	if errors.As(err, &ee) && ee.ExitCode() == 3 {
+		return false, nil
+	}
+	if ferr := d.failed(ctx, container, err, "lea-agent transcript"); ferr != nil {
+		return false, ferr
+	}
+	return false, nil
+}
+
 // Projects is the projects directory the launcher started the container for (its lea.projects
 // label), a clean absolute path.
 func (d Docker) Projects(ctx context.Context, container string) (string, error) {

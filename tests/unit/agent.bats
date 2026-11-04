@@ -545,3 +545,33 @@ EOT
   done
   [ ! -s "$FAKE_LOG" ]
 }
+
+@test "transcript says whether a Claude session has a non-empty transcript to resume (#255)" {
+  export CLAUDE_CONFIG_DIR="$BATS_TEST_TMPDIR/claude"
+  sid=0b6f5a1e-4c1d-4f7a-9d2e-1a2b3c4d5e6f
+  # What a session left on its login or trust dialog leaves: its env, no transcript.
+  mkdir -p "$CLAUDE_CONFIG_DIR/projects/-p" "$CLAUDE_CONFIG_DIR/session-env/$sid"
+  run "$A" transcript "$sid"
+  [ "$status" -eq 3 ]
+  : >"$CLAUDE_CONFIG_DIR/projects/-p/$sid.jsonl"
+  run "$A" transcript "$sid"
+  [ "$status" -eq 3 ]
+  echo '{"type":"user"}' >"$CLAUDE_CONFIG_DIR/projects/-p/$sid.jsonl"
+  run "$A" transcript "$sid"
+  [ "$status" -eq 0 ]
+  unset CLAUDE_CONFIG_DIR
+  export HOME="$BATS_TEST_TMPDIR/home"
+  mkdir -p "$HOME/.claude/projects/-q"
+  run "$A" transcript "$sid"
+  [ "$status" -eq 3 ]
+  echo '{}' >"$HOME/.claude/projects/-q/$sid.jsonl"
+  run "$A" transcript "$sid"
+  [ "$status" -eq 0 ]
+}
+
+@test "transcript checks the session id" {
+  for id in "" --resume "../x" 0b6f5a1e-4c1d-4f7a-9d2e-1a2b3c4d5e6 0B6F5A1E-4C1D-4F7A-9D2E-1A2B3C4D5E6F; do
+    run "$A" transcript "$id"
+    [ "$status" -eq 2 ]
+  done
+}

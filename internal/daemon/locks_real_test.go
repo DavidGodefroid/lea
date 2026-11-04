@@ -30,6 +30,9 @@ func (realContainers) Pause(context.Context, string, string, bool) error {
 	return nil
 }
 func (realContainers) Projects(context.Context, string) (string, error) { return "/home/u/p", nil }
+func (realContainers) HasTranscript(context.Context, string, string) (bool, error) {
+	return true, nil
+}
 
 // noConsoles: no console container of an earlier lea runs.
 type noConsoles struct{}

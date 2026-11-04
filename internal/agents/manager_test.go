@@ -881,6 +881,56 @@ func TestResumeStoppedNeverPassesAForgedSessionID(t *testing.T) {
 	}
 }
 
+// A session Claude reported but never wrote a transcript for (the agent sat on its login or
+// trust dialog) cannot be resumed: `claude --resume` exits with "No conversation found". The
+// agent starts again as it first did, its first prompt included (#255).
+func TestResumeStoppedStartsAfreshASessionWithoutTranscript(t *testing.T) {
+	e := newEnv(t)
+	e.ensure(t, "/p")
+	if _, err := e.m.New(bg, NewRequest{Container: C, Name: "dev-1", Brief: "do it", Hidden: true, Args: []string{"--model", "opus"}}); err != nil {
+		t.Fatal(err)
+	}
+	e.spawn(t, "dev-2")
+	e.st.SetState(C+"/dev-1", "idle", sid1, 1001)
+	e.st.SetState(C+"/dev-2", "idle", sid2, 1001)
+	if err := e.m.MarkStopped(bg, C, false); err != nil {
+		t.Fatal(err)
+	}
+	r := e.restarted(t)
+	r.ctr.noTranscript = map[string]bool{sid1: true}
+	if err := r.m.ResumeStopped(bg, C); err != nil {
+		t.Fatal(err)
+	}
+	s := r.term.get(C)
+	got := agentArgs(t, s, "dev-1")
+	if len(got) != 3 || got[0] != "--model" || got[1] != "opus" || !strings.Contains(got[2], "Your brief is waiting") {
+		t.Fatalf("dev-1 restarted with %q", got)
+	}
+	if got := agentArgs(t, s, "dev-2"); !reflect.DeepEqual(got, []string{"--resume", sid2}) {
+		t.Fatalf("dev-2 restarted with %q", got)
+	}
+}
+
+// A container that cannot say whether the transcript is there (an older image) resumes the
+// session, as before.
+func TestResumeStoppedResumesWhenTheTranscriptCheckFails(t *testing.T) {
+	e := newEnv(t)
+	e.ensure(t, "/p")
+	e.spawn(t, "dev-1")
+	e.st.SetState(C+"/dev-1", "idle", sid1, 1001)
+	if err := e.m.MarkStopped(bg, C, false); err != nil {
+		t.Fatal(err)
+	}
+	r := e.restarted(t)
+	r.ctr.transcriptErr = errors.New("lea-agent transcript failed")
+	if err := r.m.ResumeStopped(bg, C); err != nil {
+		t.Fatal(err)
+	}
+	if got := agentArgs(t, r.term.get(C), "dev-1"); !reflect.DeepEqual(got, []string{"--resume", sid1}) {
+		t.Fatalf("dev-1 restarted with %q", got)
+	}
+}
+
 func TestResumeStoppedLeavesALiveAgentAlone(t *testing.T) {
 	e := newEnv(t)
 	s := e.ensure(t, "/p")
