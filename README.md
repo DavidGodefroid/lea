@@ -107,7 +107,12 @@ lea`. When the projects directory has no `.lockfamily/up.json` yet, lea starts t
 hub for it with `lox init`, on your terminal (`lox` on your `PATH`, 0.5.0 or later:
 `brew install davidgodefroid/tap/lox`; `LEA_HUB=0` runs lea without the hub). After a reboot or
 a `lox down`, `LEA_LOX_UP=1` in `~/.config/lea/lea.conf` makes lea run `lox up` itself before it
-starts (see the configuration table).
+starts (see the configuration table). Each time it starts, lea checks every lock of
+`.lockfamily/up.json`: a console that is not running is named with `run lox up`, and one that runs
+but does not serve yet waits for its start question (after a restart, a production lock waits for
+its profile name and nobody is attached to it). At a terminal lea offers to answer it there with
+`lox attach NAME` (the question is not shown again: type the answer, Enter, then detach with
+Ctrl-P Ctrl-Q); elsewhere it prints the command. lea starts anyway.
 
 [`lox add`](https://github.com/DavidGodefroid/lockhub/blob/main/docs/lox-add.md) is how a Lock
 gets set up for lea's agents, run in lea's projects directory (lea reads `.lockfamily/up.json`
@@ -343,7 +348,9 @@ Each query of an agent waits for your approval through the hub: in lea's deck or
 approve`. The deck's hub panel, above the agents, lists every pending ticket of the hub as `lox
 approve` does, also one no agent claims (a query run through the shell, say), with whom it is for:
 `waiting: NAME (verified)` when the agent's own call waits on it, `claims: NAME (unverified)` when
-only the ticket's requester names it. It shows while a ticket waits, with the attention sound;
+only the ticket's requester names it. The decision reaches the agent either way, as a new turn once
+its turn is over: an agent that ran its query through the shell need not wait for you to tell it.
+The panel shows while a ticket waits, with the attention sound;
 `H` moves into it to answer. A ticket also shows on its agent's row. The console's own questions (its policy review on a first start or after a
 loosening, a production profile's typed name, the credentials its profile does not take from
 Vault) wait at its terminal: `lox attach NAME`, or **in the deck**: `L` in the deck (or
@@ -837,7 +844,7 @@ read-only. The screen runs in the deck on the host: agents cannot open or drive 
 | `LEA_LOCKHTTP` | `0` | send the agents' web requests through a LockHTTP gate (refuses `LEA_GIT_SSH` and `LEA_OTEL_UPSTREAM`) |
 | `LEA_HUB` | `1` | follow the Lock Family approval hub (lockhub's facade socket: `LEA_HUB_SOCKET`, else `$XDG_RUNTIME_DIR/lockhub/facade.sock`): an agent whose Lock call waits for a decision there is suspended until it comes, and the deck shows and answers the hub's tickets; while no hub answers, no agent is suspended, the deck says `lockhub unreachable` and `lea doctor` warns. `0`: lea reads no hub and resumes the agents it suspended. **Upgrading from v0.2**: the default was `0`; put `LEA_HUB=0` in `~/.config/lea/lea.conf` to keep that, then restart lea |
 | `LEA_HUB_KEEPALIVE` | `300` | seconds (`0` to `3600`) an agent suspended on a hub ticket keeps its process before lea stops it alone, keeping its session for the decision or a message to resume it; read only with `LEA_HUB=1` (changing it while the hub is off restarts nothing) |
-| `LEA_LOX_UP` | `0` | `1`: when `lea` starts on the host and the projects directory has a Lock Family (`.lockfamily/lockfamily.yaml`) whose hub is not running, lea runs `lox up` there first, on your terminal, then prints `<type> NAME waits for its start questions: lox attach NAME` for each console it started; a `lox up` that fails only warns and lea starts anyway. Agents never run it. `0`: lea never runs `lox up` (it pulls images and starts containers) |
+| `LEA_LOX_UP` | `0` | `1`: when `lea` starts on the host and the projects directory has a Lock Family (`.lockfamily/lockfamily.yaml`) whose hub or one of whose locks' consoles is not running, lea runs `lox up` there first, on your terminal, then checks each console like every start (one that waits for its start question is offered `lox attach NAME`); a `lox up` that fails only warns and lea starts anyway. Agents never run it. `0`: lea never runs `lox up` (it pulls images and starts containers) |
 | `LEA_INTERNAL_HOSTS` | none | private hosts the proxy may reach (format in `config/internal-hosts`) |
 | `LEA_EGRESS_ALLOW` | empty (lea's default list) | the only web domains agents may reach, comma separated (subdomains included); `default` stands for lea's list, `*` opens the web |
 | `LEA_NESTED_NETWORKS` | empty | networks your compose files expect, created at start |

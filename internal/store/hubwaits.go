@@ -55,14 +55,22 @@ type HubWait struct {
 	Decision, Reason string
 	// Delivered is when the decision reached the agent (0: not yet).
 	Delivered int64
+	// Claimed: lea recorded the wait for the agent the ticket's requester names (#261), no Lock
+	// call of the agent's own registered it (unverified).
+	Claimed bool
 }
 
-const hubWaitCols = `agent_key, ticket, lock, instance, created, decided_at, decision, reason, delivered`
+const hubWaitCols = `agent_key, ticket, lock, instance, created, decided_at, decision, reason, delivered, claimed`
 
 func scanHubWait(sc interface{ Scan(...any) error }) (HubWait, error) {
 	var w HubWait
-	err := sc.Scan(&w.Agent, &w.Ticket, &w.Lock, &w.Instance, &w.Created, &w.DecidedAt, &w.Decision, &w.Reason, &w.Delivered)
+	err := sc.Scan(&w.Agent, &w.Ticket, &w.Lock, &w.Instance, &w.Created, &w.DecidedAt, &w.Decision, &w.Reason, &w.Delivered, &w.Claimed)
 	return w, err
+}
+
+// hubWaitColumns are the hub_waits columns added after it was created.
+var hubWaitColumns = [][2]string{
+	{"claimed", "INTEGER NOT NULL DEFAULT 0"},
 }
 
 // ValidHubWait reports whether ticket, lock and instance are what AddHubWait takes: a ULID and two
@@ -89,6 +97,10 @@ func (s *Store) AddHubWait(agent, ticket, lock, instance string, now int64) erro
 		return err
 	}
 	defer tx.Rollback()
+	// A wait lea claimed for the agent is its own now: the Lock answered the ticket to it.
+	if _, err := tx.Exec(`UPDATE hub_waits SET claimed=0 WHERE agent_key=? AND ticket=? AND claimed=1`, agent, ticket); err != nil {
+		return err
+	}
 	r, err := tx.Exec(`INSERT INTO hub_waits(agent_key, ticket, lock, instance, created)
 		SELECT ?,?,?,?,? WHERE EXISTS(SELECT 1 FROM agents WHERE key=?)
 		ON CONFLICT(agent_key, ticket) DO UPDATE SET decision='', reason='', decided_at=0, delivered=0,
@@ -103,6 +115,20 @@ func (s *Store) AddHubWait(agent, ticket, lock, instance string, now int64) erro
 		}
 	}
 	return tx.Commit()
+}
+
+// AddClaimedHubWait records, for an agent lea knows, a wait on the pending ticket its requester
+// claims it for (#261): an agent that ran its Lock through the shell registered none, and the
+// decision reaches it as any wait's does. Any wait of the agent on that ticket stays as it is:
+// its own, one already decided, one lea abandoned.
+func (s *Store) AddClaimedHubWait(agent, ticket, lock, instance string, now int64) error {
+	if !ValidHubWait(ticket, lock, instance) {
+		return errors.New("hub wait: invalid ticket id, lock or instance name")
+	}
+	_, err := s.db.Exec(`INSERT INTO hub_waits(agent_key, ticket, lock, instance, created, claimed)
+		SELECT ?,?,?,?,?,1 WHERE EXISTS(SELECT 1 FROM agents WHERE key=?)
+		ON CONFLICT(agent_key, ticket) DO NOTHING`, agent, ticket, lock, instance, now, agent)
+	return err
 }
 
 // DecideHubWaits records the hub's decision on ticket of instance for every agent that waits on
@@ -152,7 +178,8 @@ func (s *Store) EndSuspended(key string, now int64) (bool, error) {
 
 // AbandonAllHubWaits records, on every wait with no decision yet, that lea stopped waiting
 // (DecisionAbandoned, with reason), and returns those waits. A decision the hub takes later does
-// not replace it (a decision is final).
+// not replace it (a decision is final). A wait lea claimed itself (#261) is dropped instead: no
+// agent registered it, and its ticket is the requester's again, as before lea claimed it.
 func (s *Store) AbandonAllHubWaits(reason string, now int64) ([]HubWait, error) {
 	if len(reason) > maxHubReason || !utf8.ValidString(reason) {
 		return nil, fmt.Errorf("hub wait: the reason is not valid UTF-8 of at most %d bytes", maxHubReason)
@@ -162,6 +189,9 @@ func (s *Store) AbandonAllHubWaits(reason string, now int64) ([]HubWait, error) 
 		return nil, err
 	}
 	defer tx.Rollback()
+	if _, err := tx.Exec(`DELETE FROM hub_waits WHERE decision='' AND claimed=1`); err != nil {
+		return nil, err
+	}
 	rows, err := tx.Query(`SELECT ` + hubWaitCols + ` FROM hub_waits WHERE decision='' ORDER BY agent_key, ticket`)
 	if err != nil {
 		return nil, err
