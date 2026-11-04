@@ -77,7 +77,7 @@ func TestERenamesTheSelectedAgent(t *testing.T) {
 		t.Fatalf("draft %q calls %q", string(m.draft), api.got())
 	}
 	ls := viewLines(m)
-	if !strings.Contains(ls[len(ls)-2], "name: x q n 1[31m!") || !strings.HasPrefix(ls[len(ls)-1], "╰─ enter save · esc cancel ") {
+	if !strings.Contains(strings.Join(ls, "\n"), " x q n 1[31m!▍") || !strings.HasPrefix(ls[len(ls)-1], "╰─ enter save · esc cancel ") {
 		t.Fatalf("view:\n%s", strings.Join(ls, "\n"))
 	}
 	m, cmd = step(t, m, key("enter"))

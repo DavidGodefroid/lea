@@ -270,8 +270,8 @@ func TestTheFolderMenu(t *testing.T) {
 	if m.editFor != folderKey("f2") {
 		t.Fatalf("Rename: edit %q", m.editFor)
 	}
-	if line := viewLines(m)[len(viewLines(m))-2]; !strings.Contains(line, "folder: ops") {
-		t.Fatalf("field %q", line)
+	if s := strings.Join(viewLines(m), "\n"); !strings.Contains(s, "Rename folder") || !strings.Contains(s, " ops▍") {
+		t.Fatalf("field:\n%s", s)
 	}
 }
 
