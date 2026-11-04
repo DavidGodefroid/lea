@@ -81,7 +81,7 @@ CREATE TABLE IF NOT EXISTS grant_uses(
 CREATE TABLE IF NOT EXISTS hub_waits(
   agent_key TEXT NOT NULL, ticket TEXT NOT NULL, lock TEXT NOT NULL, instance TEXT NOT NULL,
   created INTEGER NOT NULL, decided_at INTEGER NOT NULL DEFAULT 0, decision TEXT NOT NULL DEFAULT '',
-  reason TEXT NOT NULL DEFAULT '', delivered INTEGER NOT NULL DEFAULT 0,
+  reason TEXT NOT NULL DEFAULT '', delivered INTEGER NOT NULL DEFAULT 0, claimed INTEGER NOT NULL DEFAULT 0,
   PRIMARY KEY(agent_key, ticket));
 CREATE INDEX IF NOT EXISTS hub_waits_ticket ON hub_waits(ticket);
 CREATE TABLE IF NOT EXISTS hub_abandoned(
@@ -183,7 +183,10 @@ func migrate(db *sql.DB) error {
 	if err := addColumns(db, "spawn_requests", requestColumns); err != nil {
 		return err
 	}
-	return addColumns(db, "approvals", approvalColumns)
+	if err := addColumns(db, "approvals", approvalColumns); err != nil {
+		return err
+	}
+	return addColumns(db, "hub_waits", hubWaitColumns)
 }
 
 // addColumns adds the columns table lacks. table is one of this file's constants, never input.
@@ -590,8 +593,9 @@ func (s *Store) ForgetAgent(key string) error {
 	// as unverified on a live agent its requester names (hub_abandoned), until an agent waits on
 	// it again; it expires on the hub
 	// unless answered there; its run, asked by the forgotten agent's token, has no one to call it.
+	// A wait lea only claimed for it (#261) abandons nothing: its ticket stays the requester's.
 	if _, err := tx.Exec(`INSERT INTO hub_abandoned(instance, ticket, at)
-		SELECT instance, ticket, CAST(strftime('%s','now') AS INTEGER) FROM hub_waits WHERE agent_key=? AND decision='' ORDER BY 1, 2
+		SELECT instance, ticket, CAST(strftime('%s','now') AS INTEGER) FROM hub_waits WHERE agent_key=? AND decision='' AND claimed=0 ORDER BY 1, 2
 		ON CONFLICT(instance, ticket) DO UPDATE SET at=excluded.at`, key); err != nil {
 		return err
 	}

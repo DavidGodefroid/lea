@@ -343,7 +343,9 @@ Each query of an agent waits for your approval through the hub: in lea's deck or
 approve`. The deck's hub panel, above the agents, lists every pending ticket of the hub as `lox
 approve` does, also one no agent claims (a query run through the shell, say), with whom it is for:
 `waiting: NAME (verified)` when the agent's own call waits on it, `claims: NAME (unverified)` when
-only the ticket's requester names it. It shows while a ticket waits, with the attention sound;
+only the ticket's requester names it. The decision reaches the agent either way, as a new turn once
+its turn is over: an agent that ran its query through the shell need not wait for you to tell it.
+The panel shows while a ticket waits, with the attention sound;
 `H` moves into it to answer. A ticket also shows on its agent's row. The console's own questions (its policy review on a first start or after a
 loosening, a production profile's typed name, the credentials its profile does not take from
 Vault) wait at its terminal: `lox attach NAME`, or **in the deck**: `L` in the deck (or

@@ -280,3 +280,107 @@ func TestAddHubWaitRevivesAnAbandonedWait(t *testing.T) {
 		t.Fatalf("abandoned %v", got)
 	}
 }
+
+// A claimed wait (#261) is the agent a ticket's requester names, recorded by lea itself: it never
+// replaces a wait the agent registered, nor one lea abandoned, and the agent's own wait on the
+// same ticket makes it a registered one, still pending.
+func TestClaimedHubWait(t *testing.T) {
+	s := open(t)
+	a, _ := s.UpsertAgent("lea-a", "dev-1", 1)
+	if err := s.AddClaimedHubWait(a, t1, "locksql", "crm", 2); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.AddClaimedHubWait(a, t1, "locksql", "crm", 3); err != nil {
+		t.Fatal(err)
+	}
+	ws, err := s.PendingHubWaits(a)
+	if err != nil || len(ws) != 1 || !ws[0].Claimed || ws[0].Created != 2 {
+		t.Fatalf("claimed %+v %v", ws, err)
+	}
+	if err := s.AddHubWait(a, t1, "locksql", "crm", 4); err != nil {
+		t.Fatal(err)
+	}
+	if ws, err = s.PendingHubWaits(a); err != nil || len(ws) != 1 || ws[0].Claimed || ws[0].Decision != "" {
+		t.Fatalf("registered over a claim %+v %v", ws, err)
+	}
+	if err := s.AddClaimedHubWait(a, t1, "locksql", "crm", 5); err != nil {
+		t.Fatal(err)
+	}
+	if ws, _ = s.PendingHubWaits(a); len(ws) != 1 || ws[0].Claimed {
+		t.Fatalf("a claim replaced the agent's own wait %+v", ws)
+	}
+	if err := s.AddHubWait(a, t2, "locksql", "crm", 6); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.AbandonAllHubWaits("off", 7); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.AddClaimedHubWait(a, t2, "locksql", "crm", 8); err != nil {
+		t.Fatal(err)
+	}
+	if ws, _ = s.PendingHubWaits(a); len(ws) != 0 {
+		t.Fatalf("a claim revived an abandoned wait %+v", ws)
+	}
+	if err := s.AddClaimedHubWait("lea-a/nobody", t1, "locksql", "crm", 9); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.AddClaimedHubWait(a, "nope", "locksql", "crm", 9); err == nil {
+		t.Fatal("an invalid ticket was claimed")
+	}
+}
+
+// lea stopping its waits (the hub off, the agent forgotten) drops a claimed one: no agent was told
+// of it, and its ticket is not abandoned, so it stays the requester's.
+func TestClaimedHubWaitIsDroppedNotAbandoned(t *testing.T) {
+	s := open(t)
+	a, _ := s.UpsertAgent("lea-a", "dev-1", 1)
+	b, _ := s.UpsertAgent("lea-a", "dev-2", 1)
+	if err := s.AddClaimedHubWait(a, t1, "locksql", "crm", 2); err != nil {
+		t.Fatal(err)
+	}
+	ws, err := s.AbandonAllHubWaits("off", 3)
+	if err != nil || len(ws) != 0 {
+		t.Fatalf("abandoned %+v %v", ws, err)
+	}
+	if all, _ := s.AllHubWaits(); len(all) != 0 {
+		t.Fatalf("waits %+v", all)
+	}
+	if err := s.AddClaimedHubWait(b, t2, "locksql", "crm", 4); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.ForgetAgent(b); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := s.AbandonedHubTickets(); len(got) != 0 {
+		t.Fatalf("abandoned tickets %v", got)
+	}
+}
+
+// A hub_waits of an older lea (no claimed column) gets it, its waits registered ones.
+func TestHubWaitsClaimedMigration(t *testing.T) {
+	p := filepath.Join(t.TempDir(), "lea.db")
+	s, err := Open(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	k, _ := s.UpsertAgent("lea-a", "dev-1", 1)
+	s.Close()
+	db, err := sql.Open("sqlite", p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`ALTER TABLE hub_waits DROP COLUMN claimed`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`INSERT INTO hub_waits(agent_key, ticket, lock, instance, created) VALUES(?,?,?,?,?)`, k, t1, "locksql", "crm", 1); err != nil {
+		t.Fatal(err)
+	}
+	db.Close()
+	if s, err = Open(p); err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	if ws, err := s.PendingHubWaits(k); err != nil || len(ws) != 1 || ws[0].Claimed {
+		t.Fatalf("waits %+v %v", ws, err)
+	}
+}
