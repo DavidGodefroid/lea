@@ -280,7 +280,7 @@ func TestRealFoldersPersistAcrossRestarts(t *testing.T) {
 	d := startRealDeck(t)
 	d.tm("select-pane", "-t", d.pane) // the deck has the keyboard
 	d.typed("f\x15web\r")             // f, ctrl+u, the name, enter
-	d.waitFor("the folder web", func(s string) bool { return strings.Contains(s, "▾ web") && !strings.Contains(s, "folder:") })
+	d.waitFor("the folder web", func(s string) bool { return strings.Contains(s, "▾ web") && !strings.Contains(s, "New folder") })
 	d.keys("j", "o", "1") // a, into the first folder
 	d.waitFor("a in web", func(s string) bool {
 		return strings.Contains(s, "╎") && strings.Contains(s, "web                      1")
@@ -292,7 +292,7 @@ func TestRealFoldersPersistAcrossRestarts(t *testing.T) {
 	d.mouse(18, 2, 'M')
 	time.Sleep(20 * time.Millisecond)
 	d.mouse(18, 2, 'm')
-	d.waitFor("the folder field", func(s string) bool { return strings.Contains(s, "folder: folder 2") })
+	d.waitFor("the folder field", func(s string) bool { return strings.Contains(s, "New folder") && strings.Contains(s, " folder 2▍") })
 	d.typed("\r")
 	d.waitFor("folder 2", func(s string) bool { return strings.Contains(s, "▾ folder 2") })
 
