@@ -1,5 +1,13 @@
 # Changelog
 
+## v0.7.1 (2026-11-04)
+
+- The done sound rings when the agent's turn really ends (#274): it no longer rings 10 s or more
+  after the deck shows the agent done, nor while the agent works again after a Stop hook blocked
+  its stop. It waits for an agent-type Stop hook's verdict (60 s at most), and its quiet wait
+  drops from 10 s to 3 s. The hook binary in a running container keeps the old behaviour until
+  the agent restarts.
+
 ## v0.7.0 (2026-11-04)
 
 - The deck asks for a name to type before approving a hub ticket only when the hub's queue item
