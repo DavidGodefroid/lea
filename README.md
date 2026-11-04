@@ -111,8 +111,10 @@ starts (see the configuration table). Each time it starts, lea checks every lock
 `.lockfamily/up.json`: a console that is not running is named with `run lox up`, and one that runs
 but does not serve yet waits for its start question (after a restart, a production lock waits for
 its profile name and nobody is attached to it). At a terminal lea offers to answer it there with
-`lox attach NAME` (the question is not shown again: type the answer, Enter, then detach with
-Ctrl-P Ctrl-Q); elsewhere it prints the command. lea starts anyway.
+`lox attach NAME` (the question is not shown again: type the answer, then Enter). lea detaches by
+itself as soon as the lock serves (Ctrl-P Ctrl-Q detaches sooner), and the console keeps running;
+with several waiting consoles it goes through them in turn, naming each "n of m". Elsewhere it
+prints the command. lea starts anyway.
 
 [`lox add`](https://github.com/DavidGodefroid/lockhub/blob/main/docs/lox-add.md) is how a Lock
 gets set up for lea's agents, run in lea's projects directory (lea reads `.lockfamily/up.json`

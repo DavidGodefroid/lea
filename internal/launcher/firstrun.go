@@ -214,9 +214,14 @@ func (l *Launcher) consolesReady(proj string) {
 		}
 		running = append(running, lk)
 	}
-	for _, lk := range l.notListening(running, svcs) {
-		l.logf("%s %s waits for its start question (its console runs but does not serve yet): lox attach %s", lk.Type, lk.Instance, lk.Instance)
-		if !atTerminal(l) || l.attachConsole(proj, lk) && len(l.notListening([]UpLock{lk}, svcs)) == 0 {
+	waiting := l.notListening(running, svcs)
+	for i, lk := range waiting {
+		name := lk.Instance
+		if len(waiting) > 1 {
+			name = fmt.Sprintf("%s (%d of %d)", lk.Instance, i+1, len(waiting))
+		}
+		l.logf("%s %s waits for its start question (its console runs but does not serve yet): lox attach %s", lk.Type, name, lk.Instance)
+		if !atTerminal(l) || l.attachConsole(proj, lk, svcs["lock-"+lk.Instance]) && len(l.notListening([]UpLock{lk}, svcs)) == 0 {
 			continue
 		}
 		l.logf("%s %s still waits for its start question: lea starts without it; lox attach %s to answer it", lk.Type, lk.Instance, lk.Instance)
@@ -224,20 +229,35 @@ func (l *Launcher) consolesReady(proj string) {
 }
 
 // attachConsole asks the user whether to answer lk's start question now and, on yes (the
-// default), runs `lox attach` on lea's terminal; false when declined or the attach failed.
-func (l *Launcher) attachConsole(proj string, lk UpLock) bool {
+// default), runs `lox attach` on lea's terminal; false when declined or the attach failed. At a
+// real terminal lea detaches by itself once the console (container id) serves (#282); the user
+// may still detach sooner with Ctrl-P Ctrl-Q.
+func (l *Launcher) attachConsole(proj string, lk UpLock, id string) bool {
 	fmt.Fprintf(l.Stderr, "lea: answer it now with lox attach %s? Its question is not shown again: type what it waits for "+
-		"(a production lock: its profile name), Enter, then detach with Ctrl-P Ctrl-Q once it serves [Y/n] ", lk.Instance)
+		"(a production lock: its profile name), then Enter: lea detaches by itself once it serves (Ctrl-P Ctrl-Q detaches sooner) [Y/n] ", lk.Instance)
 	a, _ := bufio.NewReader(l.Stdin).ReadString('\n')
 	if a = strings.ToLower(strings.TrimSpace(a)); a != "" && a != "y" && a != "yes" {
 		return false
 	}
 	c := l.cmd("lox", "attach", lk.Instance)
 	c.Dir = proj
-	c.Stdin, c.Stdout, c.Stderr = l.Stdin, l.Stdout, l.Stderr
-	if err := l.exec(c); err != nil {
+	err := errNoPty
+	served := false
+	in, inOK := l.Stdin.(*os.File)
+	out, outOK := l.Stdout.(*os.File)
+	if inOK && outOK && IsTerminal(in) && IsTerminal(out) {
+		served, err = l.attachUntilServes(c, in, out, func() bool { return l.consoleListens(id, lk.Type) })
+	}
+	if errors.Is(err, errNoPty) {
+		c.Stdin, c.Stdout, c.Stderr = l.Stdin, l.Stdout, l.Stderr
+		err = l.exec(c)
+	}
+	if err != nil && !served {
 		l.logf("warning: lox attach %s failed (above)", lk.Instance)
 		return false
+	}
+	if served {
+		l.logf("%s %s serves: lea detached from its console, which keeps running", lk.Type, lk.Instance)
 	}
 	return true
 }
