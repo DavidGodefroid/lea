@@ -38,10 +38,23 @@ func (m Model) wantTicket() ticketAsk {
 		return ticketAsk{}
 	}
 	note := ""
-	if m.hubNote.ref == m.panelSel {
+	switch {
+	case m.hubFor == m.panelSel:
+		// a opened the field of the ticket's name on the deck's bottom line, out of the eye's
+		// way: the ticket pane's banner, which no ticket text can imitate, says it waits (#289).
+		if h := m.selectedHub(); h != nil && h.Retype != "" {
+			note = retypeNote(clean(h.Retype))
+		}
+	case m.hubNote.ref == m.panelSel:
 		note = m.hubNote.text
 	}
 	return ticketAsk{on: true, ref: m.panelSel, note: note}
+}
+
+// retypeNote is what the ticket pane's banner says while the deck waits for the name of the
+// production ticket it shows; the field itself is the deck's bottom line.
+func retypeNote(name string) string {
+	return "Not approved yet: type the instance name \"" + name + "\" in the deck's bottom line, then enter (esc cancels)."
 }
 
 // syncTicket asks the daemon to show what wantTicket says: a ticket shows in the slot; out of the

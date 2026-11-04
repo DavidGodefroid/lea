@@ -116,7 +116,7 @@ func (m Model) panelKey(k string) (tea.Model, tea.Cmd, bool) {
 	case "a", "d", "A", "o", "ctrl+o", "q", "ctrl+c", "?", "S", ",", " ":
 		return m, nil, false
 	}
-	m.status = "in the hub panel: esc leaves it"
+	m.status = "in the hub panel: a approves, d denies, esc leaves"
 	return m, nil, true
 }
 
