@@ -4,6 +4,7 @@ import (
 	"os"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestLoxCheckMissing(t *testing.T) {
@@ -276,36 +277,61 @@ func loxUpWorld(t *testing.T, conf string) *world {
 	if err := os.WriteFile(w.proj+"/.lockfamily/lockfamily.yaml", []byte("locks: {}\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	up := `{"version": 1, "project": "` + lockUpComposeProject(w.proj) + `", "workspace": "` + w.proj + `",
-		"locks": {"crm": {"type": "locksql"}, "bus": {"type": "lockmq"}}}`
+	pr := lockUpComposeProject(w.proj)
+	up := `{"version": 1, "project": "` + pr + `", "workspace": "` + w.proj + `",
+		"locks": {"crm": {"type": "locksql", "socket_volume": "` + pr + `_crm-run"},
+		"bus": {"type": "lockmq", "socket_volume": "` + pr + `_bus-run"}}}`
 	if err := os.WriteFile(w.proj+"/.lockfamily/up.json", []byte(up), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	return w
 }
 
-// The hub is down: lea runs lox up once, then lists the consoles lox up started (bus kept its
-// container: it asks nothing).
+// Lines of a console's /proc/net/unix: its socket listening, or connected only (no listener).
+const (
+	unixListen = "0000000000000000: 00000002 00000000 00010000 0001 01 4242 /run/locksql/user-p.sock"
+	unixNone   = "0000000000000000: 00000003 00000000 00000000 0001 03 4243 /run/locksql/user-p.sock"
+	busListen  = "0000000000000000: 00000002 00000000 00010000 0001 01 4244 /run/lockmq/user-p.sock"
+)
+
+// psCall is the docker ps of lox up's containers of w's projects directory.
+func psCall(w *world) string {
+	return "docker [ps] [--filter] [label=com.docker.compose.project=" + lockUpComposeProject(w.proj) + `] [--format] [{{.Label "com.docker.compose.service"}}={{.ID}}]`
+}
+
+// serving makes every console of loxUpWorld serve: crm on c1, bus on b1.
+func serving(w *world) {
+	w.env["FAKE_DOCKER_OUT_EXEC_C1"] = unixListen
+	w.env["FAKE_DOCKER_OUT_EXEC_B1"] = busListen
+}
+
+// The hub is down: lea runs lox up once, then checks each console lox up runs; crm waits for its
+// start question.
 func TestLoxUpHubDown(t *testing.T) {
 	w := loxUpWorld(t, "LEA_LOX_UP=1\n")
 	w.env["FAKE_DOCKER_OUTSEQ_PS___FILTER"] = "lock-bus=b1|lockhub=h1 lock-crm=c1 lock-bus=b1"
+	w.env["FAKE_DOCKER_OUT_EXEC_C1"] = unixNone
+	w.env["FAKE_DOCKER_OUT_EXEC_B1"] = busListen
 	if err := w.launcher().ensureHub(w.proj); err != nil {
 		t.Fatal(err)
 	}
-	ps := "docker [ps] [--filter] [label=com.docker.compose.project=" + lockUpComposeProject(w.proj) + `] [--format] [{{.Label "com.docker.compose.service"}}={{.ID}}]`
-	if got, want := strings.Join(w.calls(), "\n"), ps+"\nlox [up]\n"+ps; got != want {
-		t.Fatalf("calls:\n%s\nwant:\n%s", got, want)
+	ps := psCall(w)
+	want := []string{ps, "lox [up]", ps, "docker [exec] [b1] [cat] [/proc/net/unix]", "docker [exec] [c1] [cat] [/proc/net/unix]"}
+	if got := strings.Join(w.calls(), "\n"); got != strings.Join(want, "\n") {
+		t.Fatalf("calls:\n%s\nwant:\n%s", got, strings.Join(want, "\n"))
 	}
-	want := "lea: starting the Lock Family hub and its locks (lox up, LEA_LOX_UP=1)\n" +
-		"lea: locksql crm waits for its start questions: lox attach crm\n"
-	if got := w.errb.String(); got != want {
-		t.Fatalf("stderr = %q, want %q", got, want)
+	wantErr := "lea: starting the Lock Family hub and its locks (lox up, LEA_LOX_UP=1)\n" +
+		"lea: locksql crm waits for its start question (its console runs but does not serve yet): lox attach crm\n"
+	if got := w.errb.String(); got != wantErr {
+		t.Fatalf("stderr = %q, want %q", got, wantErr)
 	}
 }
 
+// Hub and consoles run and serve: no lox up, nothing said.
 func TestLoxUpHubAlreadyUp(t *testing.T) {
 	w := loxUpWorld(t, "LEA_LOX_UP=1\n")
-	w.env["FAKE_DOCKER_OUT_PS___FILTER"] = "lockhub=h1\nlock-crm=c1"
+	w.env["FAKE_DOCKER_OUT_PS___FILTER"] = "lockhub=h1\nlock-crm=c1\nlock-bus=b1"
+	serving(w)
 	if err := w.launcher().ensureHub(w.proj); err != nil {
 		t.Fatal(err)
 	}
@@ -314,16 +340,39 @@ func TestLoxUpHubAlreadyUp(t *testing.T) {
 	}
 }
 
-// Off (unset or 0), or without a Lock Family: no docker ps, no lox up.
+// The hub runs but a lock's console does not (lea stop, a console that exited): LEA_LOX_UP=1 runs
+// lox up for it too, not only for a hub that is down.
+func TestLoxUpLockDown(t *testing.T) {
+	w := loxUpWorld(t, "LEA_LOX_UP=1\n")
+	w.env["FAKE_DOCKER_OUTSEQ_PS___FILTER"] = "lockhub=h1 lock-bus=b1|lockhub=h1 lock-crm=c1 lock-bus=b1"
+	serving(w)
+	if err := w.launcher().ensureHub(w.proj); err != nil {
+		t.Fatal(err)
+	}
+	if !w.hasCall("lox [up]") {
+		t.Fatalf("no lox up: calls: %v", w.calls())
+	}
+	if want := "lea: starting the Lock Family hub and its locks (lox up, LEA_LOX_UP=1)\n"; w.errb.String() != want {
+		t.Fatalf("stderr = %q, want %q", w.errb.String(), want)
+	}
+}
+
+// Off (unset or 0): no lox up, but every declared lock is still checked and the one that does not
+// serve is named, with what it waits for. Without a Lock Family: no docker, no lox.
 func TestLoxUpOff(t *testing.T) {
 	for name, conf := range map[string]string{"unset": "", "zero": "LEA_LOX_UP=0\n"} {
 		t.Run(name, func(t *testing.T) {
 			w := loxUpWorld(t, conf)
+			w.env["FAKE_DOCKER_OUT_PS___FILTER"] = "lockhub=h1\nlock-crm=c1"
+			w.env["FAKE_DOCKER_OUT_EXEC_C1"] = unixListen
 			if err := w.launcher().ensureHub(w.proj); err != nil {
 				t.Fatal(err)
 			}
-			if w.hasCall("docker") || w.hasCall("lox") {
+			if w.hasCall("lox") {
 				t.Fatalf("calls: %v", w.calls())
+			}
+			if want := "lea: lockmq bus: its console is not running: run lox up\n"; w.errb.String() != want {
+				t.Fatalf("stderr = %q, want %q", w.errb.String(), want)
 			}
 		})
 	}
@@ -344,7 +393,9 @@ func TestLoxUpFailureWarns(t *testing.T) {
 		t.Fatalf("ensureHub() = %v, want lea to start anyway", err)
 	}
 	want := "lea: starting the Lock Family hub and its locks (lox up, LEA_LOX_UP=1)\n" +
-		"lea: warning: lox up failed (above): lea starts without it; fix it, then run lox up\n"
+		"lea: warning: lox up failed (above): lea starts without it; fix it, then run lox up\n" +
+		"lea: lockmq bus: its console is not running: run lox up\n" +
+		"lea: locksql crm: its console is not running: run lox up\n"
 	if got := w.errb.String(); got != want {
 		t.Fatalf("stderr = %q, want %q", got, want)
 	}
@@ -360,3 +411,122 @@ func TestLoxUpDockerFailsWarns(t *testing.T) {
 		t.Fatalf("calls: %v, stderr %q", w.calls(), w.errb.String())
 	}
 }
+
+// After lea stop, then lea (#259): the hub and crm's console run, but crm's console restarted and
+// waits for its start question. At a terminal lea offers to answer it there (lox attach, in the
+// projects directory), then checks again; enter takes the default, yes.
+func TestConsoleWaitsAttach(t *testing.T) {
+	w := loxUpWorld(t, "")
+	w.env["FAKE_DOCKER_OUT_PS___FILTER"] = "lockhub=h1\nlock-crm=c1\nlock-bus=b1"
+	w.env["FAKE_DOCKER_OUTSEQ_EXEC_C1"] = unixNone + "|" + unixListen
+	w.env["FAKE_DOCKER_OUT_EXEC_B1"] = busListen
+	l := w.launcher()
+	l.Stdin = strings.NewReader("\n")
+	defer stubAtTerminal(true)()
+	if err := l.ensureHub(w.proj); err != nil {
+		t.Fatal(err)
+	}
+	if !w.hasCall("lox [attach] [crm]") || w.hasCall("lox [attach] [bus]") {
+		t.Fatalf("calls: %v", w.calls())
+	}
+	e := w.errb.String()
+	for _, s := range []string{
+		"lea: locksql crm waits for its start question (its console runs but does not serve yet): lox attach crm\n",
+		"answer it now with lox attach crm?",
+		"Ctrl-P Ctrl-Q",
+	} {
+		if !strings.Contains(e, s) {
+			t.Fatalf("stderr %q lacks %q", e, s)
+		}
+	}
+	if strings.Contains(e, "still waits") {
+		t.Fatalf("stderr %q: crm serves after the attach", e)
+	}
+}
+
+// The user declines, or the console still waits after the attach: lea says so and starts anyway.
+func TestConsoleWaitsDeclinedOrStill(t *testing.T) {
+	for name, tc := range map[string]struct{ in, attach string }{"no": {"n\n", ""}, "still": {"y\n", "lox [attach] [crm]"}} {
+		t.Run(name, func(t *testing.T) {
+			w := loxUpWorld(t, "")
+			w.env["FAKE_DOCKER_OUT_PS___FILTER"] = "lockhub=h1\nlock-crm=c1\nlock-bus=b1"
+			w.env["FAKE_DOCKER_OUT_EXEC_C1"] = unixNone
+			w.env["FAKE_DOCKER_OUT_EXEC_B1"] = busListen
+			l := w.launcher()
+			l.Stdin = strings.NewReader(tc.in)
+			defer stubAtTerminal(true)()
+			if err := l.ensureHub(w.proj); err != nil {
+				t.Fatal(err)
+			}
+			if tc.attach == "" && w.hasCall("lox [attach]") || tc.attach != "" && !w.hasCall(tc.attach) {
+				t.Fatalf("calls: %v", w.calls())
+			}
+			if want := "lea: locksql crm still waits for its start question: lea starts without it; lox attach crm to answer it\n"; !strings.HasSuffix(w.errb.String(), want) {
+				t.Fatalf("stderr = %q, want suffix %q", w.errb.String(), want)
+			}
+		})
+	}
+}
+
+// Not at a terminal (lea shell -- CMD from a script): the waiting console is named, nothing asked.
+func TestConsoleWaitsNoTerminal(t *testing.T) {
+	w := loxUpWorld(t, "")
+	w.env["FAKE_DOCKER_OUT_PS___FILTER"] = "lockhub=h1\nlock-crm=c1\nlock-bus=b1"
+	w.env["FAKE_DOCKER_OUT_EXEC_C1"] = unixNone
+	w.env["FAKE_DOCKER_OUT_EXEC_B1"] = busListen
+	if err := w.launcher().ensureHub(w.proj); err != nil {
+		t.Fatal(err)
+	}
+	if w.hasCall("lox") {
+		t.Fatalf("calls: %v", w.calls())
+	}
+	if want := "lea: locksql crm waits for its start question (its console runs but does not serve yet): lox attach crm\n"; w.errb.String() != want {
+		t.Fatalf("stderr = %q, want %q", w.errb.String(), want)
+	}
+}
+
+// A console still starting is not waiting: lea checks again until consoleGrace ends.
+func TestConsoleStartingIsNotWaiting(t *testing.T) {
+	w := loxUpWorld(t, "")
+	w.env["FAKE_DOCKER_OUT_PS___FILTER"] = "lockhub=h1\nlock-crm=c1\nlock-bus=b1"
+	w.env["FAKE_DOCKER_OUTSEQ_EXEC_C1"] = "|" + unixListen
+	w.env["FAKE_DOCKER_OUT_EXEC_B1"] = busListen
+	defer stubConsoleGrace(time.Second, time.Millisecond)()
+	if err := w.launcher().ensureHub(w.proj); err != nil {
+		t.Fatal(err)
+	}
+	if w.errb.String() != "" {
+		t.Fatalf("stderr = %q", w.errb.String())
+	}
+}
+
+func TestUnixListening(t *testing.T) {
+	head := "Num       RefCount Protocol Flags    Type St Inode Path\n"
+	for in, want := range map[string]bool{
+		head + unixListen: true,
+		head + unixNone:   false,
+		head + busListen:  false, // another tool's directory
+		head + "0000000000000000: 00000002 00000000 00010000 0001 01 4242 /run/locksql-other/x.sock": false,
+		head + "0000000000000000: 00000002 00000000 00010000 0001 01 4242":                           false,
+		"": false,
+	} {
+		if got := unixListening(in, "locksql"); got != want {
+			t.Errorf("unixListening(%q) = %v, want %v", in, got, want)
+		}
+	}
+}
+
+func stubAtTerminal(v bool) func() {
+	old := atTerminal
+	atTerminal = func(*Launcher) bool { return v }
+	return func() { atTerminal = old }
+}
+
+func stubConsoleGrace(grace, step time.Duration) func() {
+	og, ostep := consoleGrace, consoleStep
+	consoleGrace, consoleStep = grace, step
+	return func() { consoleGrace, consoleStep = og, ostep }
+}
+
+// A waiting console is said at once in tests: no grace to start.
+func init() { consoleGrace = 0 }

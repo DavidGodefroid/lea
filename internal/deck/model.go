@@ -135,7 +135,7 @@ type Pressure struct {
 
 // HubCard is one of the hub's pending tickets for an agent (agents.HubCard, #158): the deck
 // answers the oldest (a approves, d denies); a production one needs its Retype (its instance
-// name) typed first.
+// name) typed first (retypeName).
 // Verified: the agent's own wait names it; else the agent claims it (shown "unverified").
 type HubCard struct {
 	ID         string   `json:"id"`
@@ -357,6 +357,9 @@ type Model struct {
 	hubFor   string
 	hubDraft []rune
 	hubFull  bool
+	// hubNote is why the deck refused to approve a ticket (#260): it stays under that ticket, where
+	// the user looks, until the selection moves off it; a later key replaces only the status.
+	hubNote hubNoted
 	// hubRead are the tickets v showed whole (by instance/id).
 	hubRead map[string]bool
 	// hubQueue is every ticket of the hub (Snapshot.HubQueue): the hub panel. panel says the
@@ -1305,15 +1308,13 @@ func (m Model) answerHub(approve bool) (tea.Model, tea.Cmd) {
 	}
 	if approve {
 		if why := m.unreadable(h); why != "" {
-			m.status = why
-			return m, nil
+			return m.refuseHub(ref, why), nil
 		}
 		switch {
-		case h.Production && h.Retype == "":
-			m.status = "a production ticket with no name to type: answer it with lox approve"
-			return m, nil
+		case h.Production && retypeName(h) == "":
+			return m.refuseHub(ref, "a production ticket with no name to type: answer it with lox approve"), nil
 		case h.Production:
-			m.hubFor, m.hubDraft, m.status = ref, nil, ""
+			m.hubFor, m.hubDraft, m.status, m.hubNote = ref, nil, "", hubNoted{}
 			return m, nil
 		}
 	}
@@ -1332,6 +1333,24 @@ func (m Model) unreadable(h HubCard) string {
 		return "v shows the whole ticket: read it before approving"
 	}
 	return ""
+}
+
+// retypeName is what approving the production ticket h asks to be typed: its Retype, else its
+// instance name, the name the daemon checks either way (a ticket can come with no Retype, #260).
+func retypeName(h HubCard) string {
+	if h.Retype != "" {
+		return h.Retype
+	}
+	return h.Instance
+}
+
+// hubNoted is a refusal said under the ticket ref.
+type hubNoted struct{ ref, text string }
+
+// refuseHub says why the ticket ref is not approved, in the status and under the ticket.
+func (m Model) refuseHub(ref, why string) Model {
+	m.status, m.hubNote = why, hubNoted{ref, why}
+	return m
 }
 
 func (m Model) decideHub(h HubCard, approve bool, retype string) tea.Cmd {
@@ -1355,9 +1374,8 @@ func (m Model) hubKey(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.status = "the ticket changed: answer it again"
 			return m, nil
 		}
-		if typed != h.Retype {
-			m.status = "does not match: not approved"
-			return m, nil
+		if typed != retypeName(*h) {
+			return m.refuseHub(ref, "does not match: not approved"), nil
 		}
 		return m, m.decideHub(*h, true, typed)
 	case s == "backspace":
@@ -1405,8 +1423,8 @@ func (m Model) hubFits() bool {
 		return true
 	}
 	full := m
-	// The clear values are no part of what is approved: they do not count.
-	full.hubFull, full.revealed = true, nil
+	// The clear values and a refusal are no part of what is approved: they do not count.
+	full.hubFull, full.revealed, full.hubNote = true, nil, hubNoted{}
 	room := m.height - 3 // the borders and the status line
 	if m.panel {
 		return len(full.panelLines(m.innerWidth())) <= room
@@ -1516,8 +1534,14 @@ func (m Model) revealed1(msg revealMsg) (tea.Model, tea.Cmd) {
 	return m, tea.Tick(revealFor, func(time.Time) tea.Msg { return revealEndMsg{seq} })
 }
 
-// keepReveal drops the clear values once the selected row's card no longer shows their ticket.
+// keepReveal drops the clear values, and a refusal, once the selected row's card no longer shows
+// their ticket.
 func (m *Model) keepReveal() {
+	if n := m.hubNote; n.ref != "" {
+		if h := m.selectedHub(); h == nil || h.Instance+"/"+h.ID != n.ref {
+			m.hubNote = hubNoted{}
+		}
+	}
 	if m.revealed == nil {
 		return
 	}

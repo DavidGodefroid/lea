@@ -141,6 +141,50 @@ func TestHubPanelProductionNeedsItsName(t *testing.T) {
 	}
 }
 
+// A refusal of a (#260) stays under the selected ticket, with what answers it: the next key
+// replaces the status line, not the note; the selection moving off the ticket drops it.
+func TestHubPanelRefusalStaysUnderTheTicket(t *testing.T) {
+	q := []HubCard{queueTicket("T1", "", false, true), queueTicket("T2", "", false, false)}
+	for i := 0; i < 40; i++ {
+		q[0].Body = append(q[0].Body, "line")
+	}
+	m := withQueue(t, &fakeAPI{}, q, ag("b", "working", 1))
+	m, _ = step(t, m, key("H"))
+	m = later(m)
+	m, _ = step(t, m, key("v"))
+	m, cmd := step(t, m, key("a"))
+	if cmd != nil || m.hubFor != "" {
+		t.Fatal("a ticket too long for the deck was approved")
+	}
+	m, _ = step(t, m, key("x"))
+	if !strings.Contains(m.status, "esc leaves it") {
+		t.Fatalf("status %q", m.status)
+	}
+	if v := m.View(); !strings.Contains(v, "too long for the deck: answer it with lox approve") {
+		t.Fatalf("the refusal is gone after the next key:\n%s", v)
+	}
+	m, _ = step(t, m, key("j"))
+	if v := m.View(); strings.Contains(v, "too long for the deck") {
+		t.Fatalf("the refusal stays on the next ticket:\n%s", v)
+	}
+	// A name typed wrong is said under the ticket too.
+	m, _ = step(t, m, key("k"))
+	q[0].Body = q[0].Body[:1]
+	m, _ = step(t, m, snapshotMsg{snap: Snapshot{Version: 8, Agents: []Agent{ag("b", "working", 1)}, HubQueue: q}})
+	at := clock.Add(20 * lockAskDelay) // k put the selection back: its delay again
+	m.now = func() time.Time { return at }
+	m, _ = step(t, m, key("a"))
+	if m.hubFor != "crm/T1" {
+		t.Fatalf("no field for the name: %q", m.status)
+	}
+	m, _ = step(t, m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("CRM")})
+	m, _ = step(t, m, tea.KeyMsg{Type: tea.KeyEnter})
+	m, _ = step(t, m, key("x"))
+	if v := m.View(); !strings.Contains(v, "does not match: not approved") {
+		t.Fatalf("the mismatch is gone after the next key:\n%s", v)
+	}
+}
+
 // The selected ticket decided elsewhere leaves the selection on the next one, with the delay
 // again; the queue emptied closes the panel.
 func TestHubPanelFollowsTheQueue(t *testing.T) {
