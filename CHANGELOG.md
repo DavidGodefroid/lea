@@ -1,5 +1,33 @@
 # Changelog
 
+## v0.7.0 (2026-11-04)
+
+- The deck asks for a name to type before approving a hub ticket only when the hub's queue item
+  names one (its `retype`, lockhub 0.7.0); otherwise `a` approves at once, production or not
+  (#260). A hub older than lockhub (lox) 0.7.0 sends no `retype`: approving a production ticket
+  from the deck is then refused by the hub, and the refusal stays under the ticket's card until
+  the selection moves (use `lox approve`, or upgrade lox).
+- The hub panel is clickable (#256): a click on a ticket selects it, a click on the title enters
+  the panel, and `enter` (or a click on the selected ticket) shows its details: who requested it,
+  when it was created and when it expires. The panel's title names its keys. A ticket whose lock
+  was removed reads as an orphan on approve, deny, reveal and renew, and any other hub refusal
+  names its code and HTTP status.
+- A ticket requested by an agent that runs its Lock through the shell (`locksql run`) now
+  reaches that agent once decided (#261): lea delivers the decision to the agent the requester
+  names, in its inbox, and wakes it when idle. The card still marks the requester as unverified.
+- Renaming an agent or a folder, naming a new folder and editing a text setting open a modal over
+  the deck instead of a field in the status line (#257).
+- Agents inside a folder are indented under it (#258).
+- At each start, lea checks the console of every lock its agents mount (#259): a console that is
+  not running says to run `lox up`; one waiting for its start question says `lox attach NAME`,
+  and at a terminal lea offers to attach to it now. `LEA_LOX_UP=1` also runs `lox up` when the
+  hub runs but a lock's console does not.
+- After `lea stop`, an agent whose Claude session never wrote a transcript (it sat on its login
+  or trust dialog) starts afresh instead of failing with "No conversation found" (#255).
+- A delivery grant covers `gh pr merge N --delete-branch` and `glab mr merge N
+  --remove-source-branch` on the caller's own branch (#271). A merge, create or push that the
+  caller's grant would cover in another form gets a hint naming the covered forms.
+
 ## v0.6.1 (2026-11-03)
 
 - The image ships locksql 0.16.0. It brings grants: with `locksql_grant` (CLI `locksql grant`),
