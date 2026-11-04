@@ -32,6 +32,11 @@ func firstPrompt(a store.Agent, repo, worktree string, brief bool) string {
 			fmt.Fprintf(&b, " of the repository %s", repo)
 		}
 		b.WriteString(" (create it with git worktree add if it does not exist), never in the shared checkout.")
+		// Grants (#271): the forms a delivery or user grant runs without asking.
+		fmt.Fprintf(&b, " When the user has granted delivery, lea runs these forms without asking, each as one plain command from your worktree's root,"+
+			" without -R: git push -u origin %s, gh pr create --head %s --title T --body-file F, gh pr merge <number> --squash --delete-branch"+
+			" (GitLab: glab mr create --source-branch %s --title T --yes, glab mr merge <number> --squash --remove-source-branch --yes).",
+			a.Branch, a.Branch, a.Branch)
 	}
 	if r, err := roles.Get(a.Role); err == nil && r.CanSpawn {
 		fmt.Fprintf(&b, " As a %s you may start %s agents with agents_spawn and stop your own with agents_stop.", r.Name, strings.Join(r.SpawnRoles, " and "))

@@ -199,6 +199,8 @@ type Decision struct {
 	// Command replaces an allowed Bash call's command (the hook's updatedInput): the validated
 	// argv, pinned (Command).
 	Command string
+	// Hint, with no verdict, tells the agent which forms a grant it holds covers (hint).
+	Hint string
 }
 
 // Classify parses a tool call: hard is the reason of a hard deny ("" when none); req is the
@@ -275,6 +277,14 @@ func Match(req Request, c Caller, gs []Grant, now int64) (Grant, bool) {
 // stop-finished also needs the target to be the caller's finished child: the daemon checks that
 // before it calls Decide with finished true (false otherwise).
 func Decide(tool string, input json.RawMessage, c Caller, gs []Grant, now int64, finished bool) Decision {
+	d := decide(tool, input, c, gs, now, finished)
+	if d.Verdict == "" {
+		d.Hint = hint(tool, input, c, gs, now)
+	}
+	return d
+}
+
+func decide(tool string, input json.RawMessage, c Caller, gs []Grant, now int64, finished bool) Decision {
 	hard, req, ok := Classify(tool, input, c)
 	if hard != "" {
 		return Decision{Verdict: Deny, Reason: "lea hard deny: " + hard}

@@ -369,5 +369,5 @@ func (d *Daemon) grantCheck(o Origin, me string, raw json.RawMessage) (any, erro
 		}
 		d.changed()
 	}
-	return map[string]any{"verdict": dec.Verdict, "reason": dec.Reason, "grant": dec.Grant, "command": dec.Command}, nil
+	return map[string]any{"verdict": dec.Verdict, "reason": dec.Reason, "grant": dec.Grant, "command": dec.Command, "hint": dec.Hint}, nil
 }

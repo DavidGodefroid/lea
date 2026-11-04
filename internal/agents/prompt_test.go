@@ -30,6 +30,24 @@ func TestFirstPromptSaysIdleStacksStop(t *testing.T) {
 	}
 }
 
+// An agent on a branch knows the forms a delivery grant runs without asking (#271), with its own
+// branch in them; one with no branch is not told.
+func TestFirstPromptNamesTheGrantForms(t *testing.T) {
+	p := firstPrompt(store.Agent{Name: "dev-1", Role: "dev", Branch: "fix/9"}, "/p/lea", "/p/.lea/worktrees/lea/dev-1", true)
+	for _, want := range []string{"git push -u origin fix/9", "gh pr create --head fix/9 --title T --body-file F",
+		"gh pr merge <number> --squash --delete-branch", "glab mr merge <number> --squash --remove-source-branch --yes", "without -R"} {
+		if !strings.Contains(p, want) {
+			t.Fatalf("missing %q in %q", want, p)
+		}
+	}
+	if strings.ContainsAny(p, "\n\r\t") {
+		t.Fatalf("the prompt is not one plain line: %q", p)
+	}
+	if p := firstPrompt(store.Agent{Name: "dev-1", Role: "dev"}, "", "", true); strings.Contains(p, "gh pr merge") {
+		t.Fatalf("no branch, yet grant forms: %q", p)
+	}
+}
+
 // An agent knows its own label and the rule for names (#84): labels in text the user reads,
 // names in tool calls.
 func TestFirstPromptNamesTheLabelAndTheRule(t *testing.T) {

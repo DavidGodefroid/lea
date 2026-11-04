@@ -160,6 +160,33 @@ func TestAgentsCannotWriteGrants(t *testing.T) {
 	}
 }
 
+// TestPreToolUseHint: a form the caller's grant does not cover takes the normal path, with the
+// covered forms in the agent's context (#271).
+func TestPreToolUseHint(t *testing.T) {
+	api, bus, db := startDB(t)
+	registerDev(t, db)
+	if err := call(api, "", "grant_add", map[string]any{"container": "lea-a", "action": "merge", "repo": "fixture", "github": "o/fixture"}, nil); err != nil {
+		t.Fatal(err)
+	}
+	out := runHook(bus, "PreToolUse", preToolUse("gh pr merge 42 --squash -R o/fixture"), nil)
+	var r struct {
+		H struct {
+			Event    string `json:"hookEventName"`
+			Decision string `json:"permissionDecision"`
+			Context  string `json:"additionalContext"`
+		} `json:"hookSpecificOutput"`
+	}
+	if err := json.Unmarshal([]byte(out), &r); err != nil || r.H.Event != "PreToolUse" || r.H.Decision != "" ||
+		!strings.Contains(r.H.Context, "gh pr merge <number|feat/x>") {
+		t.Fatalf("near miss: %q %v", out, err)
+	}
+	// Covered: allowed, no hint.
+	out = runHook(bus, "PreToolUse", preToolUse("gh pr merge 42 --squash --delete-branch"), nil)
+	if d, _ := hookDecision(t, out); d != "allow" || strings.Contains(out, "additionalContext") {
+		t.Fatalf("covered: %q", out)
+	}
+}
+
 func TestPreToolUseSilentWithoutDaemon(t *testing.T) {
 	if out := runHook("/nonexistent/bus.sock", "PreToolUse", preToolUse("gh pr merge 1 --squash"), nil); out != "" {
 		t.Fatalf("out=%q", out)

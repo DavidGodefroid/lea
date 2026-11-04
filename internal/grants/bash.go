@@ -206,11 +206,11 @@ func number(s string) bool {
 // with -R, gh has no worktree branch to fall back on. Either way the PR merged is the caller's
 // own: the PR is merged only after gh says its head is the caller's branch, in the grant's
 // repository (Command), the branch the grant's glob matched.
-// --delete-branch deletes the PR's head branch: it is accepted only when the PR is named by the
-// caller's own branch (not a number), never a protected one.
+// --delete-branch deletes the PR's head branch: that head is the caller's own branch, never a
+// protected one, whether the PR is named by it or by its number (#271).
 func ghMerge(args []string, c Caller) (Request, bool) {
 	target := ""
-	method, del, own := false, false, false
+	method := false
 	for i, a := range args {
 		switch a {
 		case "--squash", "-s", "--merge", "-m", "--rebase", "-r":
@@ -219,7 +219,6 @@ func ghMerge(args []string, c Caller) (Request, bool) {
 			}
 			method = true
 		case "--delete-branch", "-d":
-			del = true
 		default:
 			switch {
 			case i != 0:
@@ -227,13 +226,13 @@ func ghMerge(args []string, c Caller) (Request, bool) {
 			case number(a):
 				target = "pr " + a
 			case c.Branch != "" && a == c.Branch && BranchName(a) && !Protected(a):
-				target, own = "pr of "+a, true
+				target = "pr of " + a
 			default:
 				return Request{}, false
 			}
 		}
 	}
-	if target == "" || (del && !own) || c.Branch == "" || !BranchName(c.Branch) || Protected(c.Branch) {
+	if target == "" || c.Branch == "" || !BranchName(c.Branch) || Protected(c.Branch) {
 		return Request{}, false
 	}
 	return Request{Action: Merge, Target: target}, true
@@ -361,11 +360,11 @@ func glabMRCreate(args []string, c Caller) (Request, bool) {
 }
 
 // glabMRMerge: glab mr merge <number>|<own branch> [--squash] [--remove-source-branch] [--yes],
-// as ghMerge (--rebase, a rebase then a merge, is not covered): the MR is named, its source must be the caller's branch (Command checks a
-// numbered one), and --remove-source-branch only when it is named by that branch.
+// as ghMerge (--rebase, a rebase then a merge, is not covered): the MR is named and its source
+// must be the caller's branch (Command checks it), so --remove-source-branch removes that branch.
 func glabMRMerge(args []string, c Caller) (Request, bool) {
 	target := ""
-	method, del, own := false, false, false
+	method := false
 	for i, a := range args {
 		switch a {
 		case "--squash", "-s":
@@ -373,9 +372,7 @@ func glabMRMerge(args []string, c Caller) (Request, bool) {
 				return Request{}, false
 			}
 			method = true
-		case "--remove-source-branch", "-d":
-			del = true
-		case "--yes", "-y":
+		case "--remove-source-branch", "-d", "--yes", "-y":
 		default:
 			switch {
 			case i != 0:
@@ -383,13 +380,13 @@ func glabMRMerge(args []string, c Caller) (Request, bool) {
 			case number(a):
 				target = "mr " + a
 			case c.Branch != "" && a == c.Branch && BranchName(a) && !Protected(a):
-				target, own = "mr of "+a, true
+				target = "mr of " + a
 			default:
 				return Request{}, false
 			}
 		}
 	}
-	if target == "" || (del && !own) || c.Branch == "" || !BranchName(c.Branch) || Protected(c.Branch) {
+	if target == "" || c.Branch == "" || !BranchName(c.Branch) || Protected(c.Branch) {
 		return Request{}, false
 	}
 	return Request{Action: Merge, Target: target}, true

@@ -164,6 +164,7 @@ func Claude(ctx context.Context, event string, stdin io.Reader, stdout io.Writer
 			Verdict string `json:"verdict"`
 			Reason  string `json:"reason"`
 			Command string `json:"command"`
+			Hint    string `json:"hint"`
 		}
 		// The environment a pinned command keeps comes from this process (Claude's), never from
 		// the agent's shell: the daemon checks each value and drops the rest.
@@ -177,6 +178,11 @@ func Claude(ctx context.Context, event string, stdin io.Reader, stdout io.Writer
 			return
 		}
 		if r.Verdict != "allow" && r.Verdict != "deny" {
+			// No verdict: the normal path, with the forms the agent's grant covers (#271).
+			if r.Verdict == "" && r.Hint != "" {
+				json.NewEncoder(stdout).Encode(map[string]any{"hookSpecificOutput": map[string]any{
+					"hookEventName": "PreToolUse", "additionalContext": truncate(r.Hint, 1000)}})
+			}
 			return
 		}
 		out := map[string]any{"hookEventName": "PreToolUse", "permissionDecision": r.Verdict,
