@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"os"
 	"os/exec"
+	"strings"
 	"sync"
 	"time"
 )
@@ -20,10 +21,26 @@ const (
 // once.
 const soundGap = time.Second
 
-// doneDelay is how long a turn must stay over before the done sound: Claude runs the Stop hooks
-// in parallel, and another one (an agent-type hook of a plugin, say) can work for a while, then
-// block the stop.
-const doneDelay = 10 * time.Second
+// doneDelay is how long an agent must stay quiet after its turn ends before the done sound:
+// Claude runs the Stop hooks in parallel, and an agent-type one (a plugin's) shows itself only at
+// its first tool call, a second or so after the Stop (#274).
+const doneDelay = 3 * time.Second
+
+// doneHookWait holds the done sound while an agent-type Stop hook has not answered: it may think a
+// while between two tools, and one killed at its timeout never answers.
+const doneHookWait = time.Minute
+
+// An agent-type hook runs as a subagent whose agent_id starts with hookAgentPrefix, and its last
+// tool call, hookVerdictTool, carries its verdict (Claude Code).
+const (
+	hookAgentPrefix = "hook-agent-"
+	hookVerdictTool = "StructuredOutput"
+)
+
+// doneTimer is a pending done sound: a *time.Timer, or a test's.
+type doneTimer interface{ Stop() bool }
+
+func afterFunc(d time.Duration, f func()) doneTimer { return time.AfterFunc(d, f) }
 
 // Sounder plays a sound of a kind; it must not block.
 type Sounder func(kind string)
@@ -92,8 +109,9 @@ func (d *Daemon) sound(ctx context.Context, container, kind string) {
 	s(kind)
 }
 
-// armDone plays the done sound of an agent after doneDelay, unless cancelDone comes first;
-// arming again restarts the wait. container is the agent's: its deck must still show it then.
+// armDone plays the done sound of an agent after doneDelay (doneHookWait while a Stop hook has not
+// answered), unless cancelDone comes first; arming again restarts the wait. container is the
+// agent's: its deck must still show it then.
 func (d *Daemon) armDone(key, container string) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
@@ -111,8 +129,12 @@ func (d *Daemon) armDoneLocked(key, container string) {
 	if t := d.doneTimers[key]; t != nil {
 		t.Stop()
 	}
-	var t *time.Timer
-	t = time.AfterFunc(d.doneDelay, func() {
+	delay := d.doneDelay
+	if len(d.stopHooks[key]) > 0 {
+		delay = doneHookWait
+	}
+	var t doneTimer
+	t = d.doneAfter(delay, func() {
 		d.mu.Lock()
 		// A timer stopped too late still runs: only the agent's current one rings.
 		mine := d.doneTimers[key] == t
@@ -139,6 +161,40 @@ func (d *Daemon) cancelDoneLocked(key string) {
 		t.Stop()
 		delete(d.doneTimers, key)
 	}
+}
+
+// toolAfterStopLocked sorts a tool event that comes after the agent's Stop by who runs the tool
+// (d.mu held), and tells whether the agent itself works again:
+//   - an agent-type Stop hook: it is pending until its verdict, and the done sound waits for it;
+//   - the agent itself (an empty id): a Stop hook blocked the stop. The done sound goes, the
+//     agent is no longer stopped, and its next Stop arms another;
+//   - another subagent (a background task): nothing changes;
+//   - no id at all (an older lea hook): the wait starts over, as it did before #274.
+func (d *Daemon) toolAfterStopLocked(key, container, event string, agentID *string, tool string) bool {
+	switch {
+	case agentID == nil:
+	case strings.HasPrefix(*agentID, hookAgentPrefix):
+		hooks := d.stopHooks[key]
+		if event == "PostToolUse" && tool == hookVerdictTool {
+			delete(hooks, *agentID)
+		} else if len(hooks) < maxSubagents {
+			if hooks == nil {
+				hooks = map[string]bool{}
+				d.stopHooks[key] = hooks
+			}
+			hooks[*agentID] = true
+		}
+	case *agentID != "":
+		return false
+	default:
+		d.cancelDoneLocked(key)
+		delete(d.stopped, key)
+		delete(d.stopHooks, key)
+		return true
+	}
+	// Cancelling would leave a stop the hook lets through without its sound: no stop_check follows.
+	d.restartDoneLocked(key, container)
+	return false
 }
 
 // HostSounder plays files on the host with the first player found (pw-play, paplay,

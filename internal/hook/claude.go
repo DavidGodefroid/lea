@@ -117,6 +117,11 @@ func Claude(ctx context.Context, event string, stdin io.Reader, stdout io.Writer
 	if (event == "SubagentStart" || event == "SubagentStop") && subagentID.MatchString(p.AgentID) {
 		payload["agent_id"] = p.AgentID
 	}
+	// A tool event says who runs the tool, by id only: the agent itself (an empty id) or a
+	// subagent, an agent-type Stop hook's among them (the daemon times the done sound by it).
+	if (event == "PreToolUse" || event == "PostToolUse") && (p.AgentID == "" || subagentID.MatchString(p.AgentID)) {
+		payload["agent_id"] = p.AgentID
+	}
 	bctx, cancel := context.WithTimeout(ctx, budget)
 	defer cancel()
 	if err := c.call(bctx, "hook_event",

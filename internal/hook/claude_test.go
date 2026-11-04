@@ -277,9 +277,29 @@ func TestPostToolUseForwardsOnlyNeededFields(t *testing.T) {
 	}
 	var got map[string]any
 	json.Unmarshal([]byte(ps[0]), &got)
-	want := map[string]any{"hook_event_name": "PostToolUse", "session_id": "s1", "tool_name": "Read"}
+	want := map[string]any{"hook_event_name": "PostToolUse", "session_id": "s1", "tool_name": "Read", "agent_id": ""}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("stored %.300s", ps[0])
+	}
+}
+
+// A tool event says who runs the tool: the agent itself (an empty agent_id), or a subagent such as
+// an agent-type Stop hook's (the daemon times the done sound by it). An unusable id is left out.
+func TestToolEventsForwardTheAgentID(t *testing.T) {
+	_, bus, db := startDB(t)
+	runHook(bus, "PreToolUse", `{"hook_event_name":"PreToolUse","session_id":"s1","tool_name":"Glob","agent_id":"hook-agent-ea5c9260-31cb-41b8-8875-f52518a3b113"}`, nil)
+	runHook(bus, "PreToolUse", `{"hook_event_name":"PreToolUse","session_id":"s1","tool_name":"Bash"}`, nil)
+	runHook(bus, "PreToolUse", `{"hook_event_name":"PreToolUse","session_id":"s1","tool_name":"Read","agent_id":"bad id\u001b"}`, nil)
+	ps := storedPayloads(t, db, "PreToolUse")
+	if len(ps) != 3 {
+		t.Fatalf("payloads=%q", ps)
+	}
+	for i, want := range []any{"hook-agent-ea5c9260-31cb-41b8-8875-f52518a3b113", "", nil} {
+		var got map[string]any
+		json.Unmarshal([]byte(ps[i]), &got)
+		if id, ok := got["agent_id"]; (want == nil && ok) || (want != nil && id != want) {
+			t.Fatalf("payload %d: %s, want agent_id %v", i, ps[i], want)
+		}
 	}
 }
 
