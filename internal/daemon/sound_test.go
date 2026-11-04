@@ -26,13 +26,71 @@ func soundEnv(t *testing.T) (env, func() []string) {
 	}
 }
 
-// testDoneDelay is the done-sound delay of the tests: short, yet longer than a few hook calls.
-const testDoneDelay = 100 * time.Millisecond
+// fakeTimers stands for the done-sound timers: the test fires them, nothing waits for the clock.
+type fakeTimers struct {
+	mu     sync.Mutex
+	timers []*fakeTimer
+}
 
-func quickDone(e env) {
+type fakeTimer struct {
+	c       *fakeTimers
+	after   time.Duration
+	f       func()
+	stopped bool
+}
+
+func (t *fakeTimer) Stop() bool {
+	t.c.mu.Lock()
+	defer t.c.mu.Unlock()
+	was := !t.stopped
+	t.stopped = true
+	return was
+}
+
+func (c *fakeTimers) afterFunc(d time.Duration, f func()) doneTimer {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	t := &fakeTimer{c: c, after: d, f: f}
+	c.timers = append(c.timers, t)
+	return t
+}
+
+// pending is the wait of each timer still armed.
+func (c *fakeTimers) pending() []time.Duration {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	var ds []time.Duration
+	for _, t := range c.timers {
+		if !t.stopped {
+			ds = append(ds, t.after)
+		}
+	}
+	return ds
+}
+
+// fire runs the timers still armed, as if their time had come.
+func (c *fakeTimers) fire() {
+	c.mu.Lock()
+	var due []*fakeTimer
+	for _, t := range c.timers {
+		if !t.stopped {
+			t.stopped = true
+			due = append(due, t)
+		}
+	}
+	c.mu.Unlock()
+	for _, t := range due {
+		t.f()
+	}
+}
+
+// fakeDone gives the daemon fake done-sound timers.
+func fakeDone(e env) *fakeTimers {
+	c := &fakeTimers{}
 	e.d.mu.Lock()
-	e.d.doneDelay = testDoneDelay
+	e.d.doneAfter = c.afterFunc
 	e.d.mu.Unlock()
+	return c
 }
 
 // waitRang polls until n sounds rang or the deadline passes.
@@ -44,97 +102,203 @@ func waitRang(rang func() []string, n int) []string {
 	return rang()
 }
 
+// hookEv sends a hook event of the agent dev with a payload.
+func hookEv(t *testing.T, e env, event string, payload map[string]any) {
+	t.Helper()
+	if err := call(t, e.bus, "dev", "hook_event", map[string]any{"event": event, "payload": payload}, nil); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// hookTool is a tool event of an agent-type Stop hook's subagent; mainTool one of the agent
+// itself, as the lea hook forwards them (an empty agent_id).
+func hookTool(t *testing.T, e env, event, id, tool string) {
+	t.Helper()
+	hookEv(t, e, event, map[string]any{"agent_id": "hook-agent-" + id, "tool_name": tool})
+}
+
+func mainTool(t *testing.T, e env, event, tool string) {
+	t.Helper()
+	hookEv(t, e, event, map[string]any{"agent_id": "", "tool_name": tool})
+}
+
+func endTurn(t *testing.T, e env) {
+	t.Helper()
+	hookEv(t, e, "Stop", nil)
+	if err := call(t, e.bus, "dev", "stop_check", nil, nil); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func devState(t *testing.T, e env) string {
+	t.Helper()
+	var as []agentView
+	call(t, e.api, "", "agents_list", nil, &as)
+	return as[0].State
+}
+
 // A permission request rings once, when the agent starts waiting; a turn that ends rings done.
 func TestSoundsWhenAnAgentWaitsAndWhenATurnEnds(t *testing.T) {
 	e, rang := soundEnv(t)
-	call(t, e.bus, "dev", "hook_event", map[string]any{"event": "UserPromptSubmit"}, nil)
-	call(t, e.bus, "dev", "hook_event", map[string]any{"event": "PermissionRequest"}, nil)
-	call(t, e.bus, "dev", "hook_event", map[string]any{"event": "PermissionRequest"}, nil)
+	c := fakeDone(e)
+	hookEv(t, e, "UserPromptSubmit", nil)
+	hookEv(t, e, "PermissionRequest", nil)
+	hookEv(t, e, "PermissionRequest", nil)
 	if got := rang(); len(got) != 1 || got[0] != SoundAttention {
 		t.Fatalf("rang %q", got)
 	}
-	quickDone(e)
-	call(t, e.bus, "dev", "hook_event", map[string]any{"event": "Stop"}, nil)
-	call(t, e.bus, "dev", "stop_check", nil, nil)
+	endTurn(t, e)
 	if got := rang(); len(got) != 1 {
 		t.Fatalf("done rang before the delay: %q", got)
 	}
-	if got := waitRang(rang, 2); len(got) != 2 || got[1] != SoundDone {
+	c.fire()
+	if got := rang(); len(got) != 2 || got[1] != SoundDone {
 		t.Fatalf("rang %q", got)
 	}
 }
 
-// A quiet stop rings done once, after the delay.
+// A quiet stop rings done once, after the short quiet wait.
 func TestAQuietStopRingsOnceAfterTheDelay(t *testing.T) {
 	e, rang := soundEnv(t)
-	quickDone(e)
-	call(t, e.bus, "dev", "hook_event", map[string]any{"event": "Stop"}, nil)
-	call(t, e.bus, "dev", "stop_check", nil, nil)
-	if got := rang(); len(got) != 0 {
-		t.Fatalf("done rang before the delay: %q", got)
+	c := fakeDone(e)
+	endTurn(t, e)
+	if got := c.pending(); len(got) != 1 || got[0] != doneDelay {
+		t.Fatalf("pending %v, want one wait of %v", got, doneDelay)
 	}
-	if got := waitRang(rang, 1); len(got) != 1 || got[0] != SoundDone {
-		t.Fatalf("rang %q", got)
+	if doneDelay > 3*time.Second {
+		t.Fatalf("doneDelay %v: the sound lags the deck", doneDelay)
 	}
-	time.Sleep(3 * testDoneDelay)
-	if got := rang(); len(got) != 1 {
+	c.fire()
+	c.fire()
+	if got := rang(); len(got) != 1 || got[0] != SoundDone {
 		t.Fatalf("rang %q", got)
 	}
 }
 
-// Another Stop hook blocked the stop: the agent goes on with tools, each sooner than the delay
-// after the last, so the turn did not end.
-func TestAStopBlockedByAnotherHookDoesNotRing(t *testing.T) {
+// Agent-type Stop hooks at work hold the done sound until each has answered (its StructuredOutput
+// call); then the turn rings once, after the quiet wait.
+func TestStopHooksHoldTheDoneSoundUntilTheyAnswer(t *testing.T) {
 	e, rang := soundEnv(t)
-	quickDone(e)
-	call(t, e.bus, "dev", "hook_event", map[string]any{"event": "Stop"}, nil)
-	call(t, e.bus, "dev", "stop_check", nil, nil)
-	for i := 0; i < 6; i++ {
-		call(t, e.bus, "dev", "hook_event", map[string]any{"event": "PreToolUse"}, nil)
-		call(t, e.bus, "dev", "hook_event", map[string]any{"event": "PostToolUse"}, nil)
-		time.Sleep(testDoneDelay / 2)
+	c := fakeDone(e)
+	endTurn(t, e)
+	hookTool(t, e, "PreToolUse", "a", "Glob")
+	hookTool(t, e, "PostToolUse", "a", "Glob")
+	hookTool(t, e, "PreToolUse", "b", "Read")
+	if got := c.pending(); len(got) != 1 || got[0] != doneHookWait {
+		t.Fatalf("pending %v, want %v while hooks work", got, doneHookWait)
 	}
-	if got := rang(); len(got) != 0 {
+	hookTool(t, e, "PreToolUse", "a", "StructuredOutput")
+	hookTool(t, e, "PostToolUse", "a", "StructuredOutput")
+	if got := c.pending(); len(got) != 1 || got[0] != doneHookWait {
+		t.Fatalf("pending %v, want %v while hook b works", got, doneHookWait)
+	}
+	hookTool(t, e, "PostToolUse", "b", "Read")
+	hookTool(t, e, "PreToolUse", "b", "StructuredOutput")
+	hookTool(t, e, "PostToolUse", "b", "StructuredOutput")
+	if got := c.pending(); len(got) != 1 || got[0] != doneDelay {
+		t.Fatalf("pending %v, want %v once every hook answered", got, doneDelay)
+	}
+	if s := devState(t, e); s != "idle" {
+		t.Fatalf("state=%s while the Stop hooks work, want idle", s)
+	}
+	c.fire()
+	if got := rang(); len(got) != 1 || got[0] != SoundDone {
 		t.Fatalf("rang %q", got)
 	}
 }
 
-// An agent-type Stop hook runs its tools, then lets the stop through: no stop_check follows, and
-// the turn still rings done once, after the delay from the hook's last tool.
-func TestAStopHookThatLetsTheStopThroughRings(t *testing.T) {
+// A Stop hook blocks the stop and the agent works again (its own tools): no done sound however
+// long it works, the deck shows it working, and its next end rings once.
+func TestAStopBlockedByAnotherHookRingsOnlyAtTheRealEnd(t *testing.T) {
 	e, rang := soundEnv(t)
-	quickDone(e)
-	call(t, e.bus, "dev", "hook_event", map[string]any{"event": "Stop"}, nil)
-	call(t, e.bus, "dev", "stop_check", nil, nil)
-	call(t, e.bus, "dev", "hook_event", map[string]any{"event": "PreToolUse"}, nil)
-	call(t, e.bus, "dev", "hook_event", map[string]any{"event": "PostToolUse"}, nil)
-	if got := rang(); len(got) != 0 {
-		t.Fatalf("done rang before the delay: %q", got)
+	c := fakeDone(e)
+	endTurn(t, e)
+	hookTool(t, e, "PreToolUse", "a", "Glob")
+	hookTool(t, e, "PostToolUse", "a", "Glob")
+	hookTool(t, e, "PreToolUse", "a", "StructuredOutput")
+	hookTool(t, e, "PostToolUse", "a", "StructuredOutput")
+	mainTool(t, e, "PreToolUse", "Bash") // a long test suite, say
+	if got := c.pending(); len(got) != 0 {
+		t.Fatalf("pending %v while the agent works again", got)
 	}
-	if got := waitRang(rang, 1); len(got) != 1 || got[0] != SoundDone {
+	if s := devState(t, e); s != "working" {
+		t.Fatalf("state=%s, want working", s)
+	}
+	c.fire()
+	mainTool(t, e, "PostToolUse", "Bash")
+	c.fire()
+	if got := rang(); len(got) != 0 {
+		t.Fatalf("rang %q while the agent works", got)
+	}
+	endTurn(t, e)
+	hookTool(t, e, "PreToolUse", "c", "StructuredOutput")
+	hookTool(t, e, "PostToolUse", "c", "StructuredOutput")
+	c.fire()
+	if got := rang(); len(got) != 1 || got[0] != SoundDone {
 		t.Fatalf("rang %q", got)
 	}
 }
 
-// A stop blocked once by another hook, then a real end: one done sound, at the end.
+// A blocked stop the agent answers without a tool comes back as a second Stop: one done sound.
 func TestTwoStopsOfOneTurnRingOnce(t *testing.T) {
 	e, rang := soundEnv(t)
-	quickDone(e)
-	call(t, e.bus, "dev", "hook_event", map[string]any{"event": "Stop"}, nil)
-	call(t, e.bus, "dev", "stop_check", nil, nil)
-	call(t, e.bus, "dev", "hook_event", map[string]any{"event": "PreToolUse"}, nil)
-	call(t, e.bus, "dev", "hook_event", map[string]any{"event": "PostToolUse"}, nil)
-	call(t, e.bus, "dev", "hook_event", map[string]any{"event": "Stop"}, nil)
-	call(t, e.bus, "dev", "stop_check", nil, nil)
-	if got := rang(); len(got) != 0 {
-		t.Fatalf("done rang before the delay: %q", got)
+	c := fakeDone(e)
+	endTurn(t, e)
+	hookTool(t, e, "PreToolUse", "a", "StructuredOutput")
+	hookTool(t, e, "PostToolUse", "a", "StructuredOutput")
+	endTurn(t, e)
+	if got := c.pending(); len(got) != 1 {
+		t.Fatalf("pending %v, want one done sound", got)
 	}
-	// The gap between two sounds of a kind is longer than the test: a second ring would show.
-	if got := waitRang(rang, 1); len(got) != 1 || got[0] != SoundDone {
+	c.fire()
+	if got := rang(); len(got) != 1 || got[0] != SoundDone {
 		t.Fatalf("rang %q", got)
 	}
-	time.Sleep(3 * testDoneDelay)
+}
+
+// A background subagent's tools after the Stop neither end nor extend the turn.
+func TestABackgroundSubagentDoesNotTouchTheDoneSound(t *testing.T) {
+	e, rang := soundEnv(t)
+	c := fakeDone(e)
+	endTurn(t, e)
+	hookEv(t, e, "PreToolUse", map[string]any{"agent_id": "a1b2c3", "tool_name": "Bash"})
+	if got := c.pending(); len(got) != 1 || got[0] != doneDelay {
+		t.Fatalf("pending %v", got)
+	}
+	if s := devState(t, e); s != "idle" {
+		t.Fatalf("state=%s, want idle", s)
+	}
+	c.fire()
 	if got := rang(); len(got) != 1 {
+		t.Fatalf("rang %q", got)
+	}
+}
+
+// A lea hook that forwards no agent_id (an older binary in a running container): a tool after the
+// Stop restarts the wait, as before.
+func TestToolsWithoutAnAgentIDRestartTheWait(t *testing.T) {
+	e, rang := soundEnv(t)
+	c := fakeDone(e)
+	endTurn(t, e)
+	hookEv(t, e, "PreToolUse", map[string]any{"tool_name": "Glob"})
+	hookEv(t, e, "PostToolUse", map[string]any{"tool_name": "Glob"})
+	if got := c.pending(); len(got) != 1 || got[0] != doneDelay {
+		t.Fatalf("pending %v", got)
+	}
+	c.fire()
+	if got := rang(); len(got) != 1 {
+		t.Fatalf("rang %q", got)
+	}
+}
+
+// A new prompt before the sound: the agent works again, nothing rings.
+func TestANewPromptCancelsTheDoneSound(t *testing.T) {
+	e, rang := soundEnv(t)
+	c := fakeDone(e)
+	endTurn(t, e)
+	hookEv(t, e, "UserPromptSubmit", nil)
+	c.fire()
+	if got := rang(); len(got) != 0 {
 		t.Fatalf("rang %q", got)
 	}
 }
@@ -142,11 +306,13 @@ func TestTwoStopsOfOneTurnRingOnce(t *testing.T) {
 // A stop blocked by waiting messages keeps the agent working: no done sound.
 func TestABlockedStopDoesNotRing(t *testing.T) {
 	e, rang := soundEnv(t)
+	c := fakeDone(e)
 	call(t, e.bus, "dev", "agents_list", nil, nil)
 	call(t, e.api, "", "msg_send", map[string]any{"to": "dev", "body": "ping", "kind": "note"}, nil)
-	call(t, e.bus, "dev", "hook_event", map[string]any{"event": "Stop"}, nil)
+	hookEv(t, e, "Stop", nil)
 	var r struct{ Block bool }
 	call(t, e.bus, "dev", "stop_check", nil, &r)
+	c.fire()
 	if !r.Block || len(rang()) != 0 {
 		t.Fatalf("block %v, rang %q", r.Block, rang())
 	}
@@ -155,9 +321,8 @@ func TestABlockedStopDoesNotRing(t *testing.T) {
 // A removed agent does not ring for its last stop.
 func TestARemovedAgentDoesNotRing(t *testing.T) {
 	e, rang := soundEnv(t)
-	quickDone(e)
-	call(t, e.bus, "dev", "hook_event", map[string]any{"event": "Stop"}, nil)
-	call(t, e.bus, "dev", "stop_check", nil, nil)
+	c := fakeDone(e)
+	endTurn(t, e)
 	as, err := e.d.st.Agents()
 	if err != nil || len(as) != 1 {
 		t.Fatalf("agents %v %v", as, err)
@@ -166,7 +331,7 @@ func TestARemovedAgentDoesNotRing(t *testing.T) {
 		t.Fatal(err)
 	}
 	e.d.pruneForgotten()
-	time.Sleep(3 * testDoneDelay)
+	c.fire()
 	if got := rang(); len(got) != 0 {
 		t.Fatalf("rang %q", got)
 	}
@@ -195,13 +360,12 @@ func TestNoSoundWithoutAnAttachedDeck(t *testing.T) {
 	e, rang := soundEnv(t)
 	fa := &fakeAgents{unattached: true}
 	e.d.SetAgents(fa)
-	quickDone(e)
+	c := fakeDone(e)
 	call(t, e.bus, "dev", "hook_event", map[string]any{"event": "UserPromptSubmit"}, nil)
 	call(t, e.bus, "dev", "hook_event", map[string]any{"event": "PermissionRequest"}, nil)
 	call(t, e.bus, "dev", "hook_event", map[string]any{"event": "PostToolUse"}, nil)
-	call(t, e.bus, "dev", "hook_event", map[string]any{"event": "Stop"}, nil)
-	call(t, e.bus, "dev", "stop_check", nil, nil)
-	time.Sleep(3 * testDoneDelay)
+	endTurn(t, e)
+	c.fire()
 	if got := rang(); len(got) != 0 {
 		t.Fatalf("rang %q without a deck", got)
 	}
@@ -218,13 +382,12 @@ func TestADeckClosedDuringTheDelaySilencesDone(t *testing.T) {
 	e, rang := soundEnv(t)
 	fa := &fakeAgents{}
 	e.d.SetAgents(fa)
-	quickDone(e)
-	call(t, e.bus, "dev", "hook_event", map[string]any{"event": "Stop"}, nil)
-	call(t, e.bus, "dev", "stop_check", nil, nil)
+	c := fakeDone(e)
+	endTurn(t, e)
 	fa.mu.Lock()
 	fa.unattached = true
 	fa.mu.Unlock()
-	time.Sleep(3 * testDoneDelay)
+	c.fire()
 	if got := rang(); len(got) != 0 {
 		t.Fatalf("rang %q after the deck closed", got)
 	}
@@ -234,11 +397,11 @@ func TestADeckClosedDuringTheDelaySilencesDone(t *testing.T) {
 func TestSoundsRingWithAnAttachedDeck(t *testing.T) {
 	e, rang := soundEnv(t)
 	e.d.SetAgents(&fakeAgents{})
-	quickDone(e)
+	c := fakeDone(e)
 	call(t, e.bus, "dev", "hook_event", map[string]any{"event": "PermissionRequest"}, nil)
-	call(t, e.bus, "dev", "hook_event", map[string]any{"event": "Stop"}, nil)
-	call(t, e.bus, "dev", "stop_check", nil, nil)
-	if got := waitRang(rang, 2); len(got) != 2 || got[0] != SoundAttention || got[1] != SoundDone {
+	endTurn(t, e)
+	c.fire()
+	if got := rang(); len(got) != 2 || got[0] != SoundAttention || got[1] != SoundDone {
 		t.Fatalf("rang %q", got)
 	}
 }

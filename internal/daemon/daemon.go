@@ -87,10 +87,14 @@ type Daemon struct {
 	sounder  Sounder
 	soundOff bool
 	rang     map[string]time.Time
-	// doneDelay holds back the done sound (a test seam): another Stop hook can still block the
-	// stop. doneTimers: the pending done sound of each agent, cancelled by its next hook.
+	// doneDelay holds back the done sound: another Stop hook can still block the stop. doneAfter
+	// arms its timers (a test seam). doneTimers: the pending done sound of each agent, cancelled
+	// by its next hook. stopHooks: the agent-type Stop hooks of each stopped agent that have not
+	// answered yet, by agent_id.
 	doneDelay  time.Duration
-	doneTimers map[string]*time.Timer
+	doneAfter  func(time.Duration, func()) doneTimer
+	doneTimers map[string]doneTimer
+	stopHooks  map[string]map[string]bool
 	// subs: the subagents each agent runs (trackSubagents); subTTL forgets them (a test seam).
 	subs   map[string]*subagents
 	subTTL time.Duration
@@ -183,7 +187,7 @@ func New(st *store.Store, runDir string, now func() int64) *Daemon {
 	return &Daemon{subs: map[string]*subagents{}, subTTL: subagentTTL, st: st, lim: bus.Default, now: now, runDir: runDir,
 		attached: map[string]string{}, notify: map[string]chan struct{}{},
 		verdicts: map[int64]chan string{}, asks: map[string]pendingAsk{}, blocks: map[string]int{}, stopped: map[string]bool{}, rewakes: map[string]int{}, keyMu: map[string]*sync.Mutex{}, statusPaths: map[string]string{}, named: map[string]bool{}, rang: map[string]time.Time{},
-		doneDelay: doneDelay, doneTimers: map[string]*time.Timer{},
+		doneDelay: doneDelay, doneAfter: afterFunc, doneTimers: map[string]doneTimer{}, stopHooks: map[string]map[string]bool{},
 		resumeDelay: DefaultResumeDelay, windows: map[string][]limitWindow{}, limitJobs: map[string]string{},
 		stackIdle: DefaultStackIdle, parkTimers: map[string]*time.Timer{}, parked: map[string]string{},
 		keepalive: DefaultKeepalive, keepTimers: map[string]*time.Timer{}, resumeFails: map[string]resumeFail{}, resuming: map[string]bool{},
@@ -891,6 +895,7 @@ func (d *Daemon) pruneForgotten() {
 			delete(d.blocks, k)
 			delete(d.named, k)
 			d.cancelDoneLocked(k)
+			delete(d.stopHooks, k)
 			d.forgetSubagentsLocked(k)
 			delete(d.windows, k)
 			delete(d.limitJobs, k)
@@ -955,9 +960,15 @@ func (d *Daemon) dispatchHooks(ctx context.Context, o Origin, me string, req wir
 		case p.Event == "Notification":
 		case stopped && (p.Event == "PreToolUse" || p.Event == "PostToolUse"):
 			// After Stop, a tool is an agent-type Stop hook at work, or the agent itself once
-			// another hook blocked the stop: the wait starts over. Cancelling would leave a stop
-			// the hook lets through without its sound, since no stop_check follows.
-			d.restartDoneLocked(me, o.Container)
+			// another hook blocked the stop: then it works again.
+			var t struct {
+				AgentID  *string `json:"agent_id"`
+				ToolName string  `json:"tool_name"`
+			}
+			_ = json.Unmarshal(p.Payload, &t)
+			if d.toolAfterStopLocked(me, o.Container, p.Event, t.AgentID, t.ToolName) {
+				stopped = false
+			}
 		default:
 			// A new turn began, or a new Stop comes with its own stop_check.
 			d.cancelDoneLocked(me)
@@ -966,8 +977,13 @@ func (d *Daemon) dispatchHooks(ctx context.Context, o Origin, me string, req wir
 		case p.Event == "UserPromptSubmit" || p.Event == "SessionStart":
 			delete(d.blocks, me)
 			delete(d.stopped, me)
+			delete(d.stopHooks, me)
 		case p.Event == "Stop" || p.Event == "StopFailure" || (p.Event == "Notification" && ok):
 			d.stopped[me] = true
+			if p.Event != "Notification" {
+				// Each Stop runs the Stop hooks afresh.
+				delete(d.stopHooks, me)
+			}
 		}
 		d.mu.Unlock()
 		if p.Event == "StopFailure" {
