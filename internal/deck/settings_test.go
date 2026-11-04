@@ -193,8 +193,8 @@ func TestATextSettingIsEditedInPlace(t *testing.T) {
 		t.Fatal("enter did not open the field")
 	}
 	m = typeIn(t, m, "/bad")
-	if last := viewLines(m)[len(viewLines(m))-2]; !strings.Contains(last, "value: /bad") {
-		t.Fatalf("field %q", last)
+	if s := strings.Join(viewLines(m), "\n"); !strings.Contains(s, " /bad▍") {
+		t.Fatalf("field:\n%s", s)
 	}
 	m, _ = step(t, m, key("enter"))
 	if !m.setEditing || !strings.Contains(m.status, "not a good value") || len(st.sets) != 0 {

@@ -61,6 +61,9 @@ func (m Model) View() string {
 	if m.confirm != "" {
 		body = m.overlay(body, inner)
 	}
+	if _, _, ok := m.inputOpen(); ok {
+		body = m.inputOverlay(body, inner)
+	}
 	if status := m.statusLine(inner); status != "" {
 		body = append(body, status)
 	}
@@ -139,16 +142,10 @@ var helpLines = []string{
 	"?           these keys",
 }
 
-// statusLine is the line above the bottom border: the rename field while it is open, else the
-// status, else the update notice ("" when none).
+// statusLine is the line above the bottom border: the hub's retype field while it is open, else
+// the status, else the update notice ("" when none). The other fields are in a modal (input.go).
 func (m Model) statusLine(inner int) string {
 	c := m.cs()
-	if m.setEditing {
-		const prompt = "value: "
-		field := tail(safe(string(m.setDraft), c), inner-1-len(prompt)-1)
-		return padRight(" "+lipgloss.NewStyle().Foreground(theme.Text).Render(prompt+field)+
-			lipgloss.NewStyle().Foreground(theme.Accent).Render(c.bar), inner)
-	}
 	if m.hubFor != "" {
 		prompt := "type the name to approve: "
 		if h := m.selectedHub(); h != nil {
@@ -158,16 +155,10 @@ func (m Model) statusLine(inner int) string {
 		return padRight(" "+lipgloss.NewStyle().Foreground(theme.Text).Render(prompt+field)+
 			lipgloss.NewStyle().Foreground(theme.Accent).Render(c.bar), inner)
 	}
-	if m.editFor != "" {
-		prompt := "name: "
-		if isFolderKey(m.editFor) {
-			prompt = "folder: "
-		}
-		field := tail(safe(string(m.draft), c), inner-1-len(prompt)-1)
-		return padRight(" "+lipgloss.NewStyle().Foreground(theme.Text).Render(prompt+field)+
-			lipgloss.NewStyle().Foreground(theme.Accent).Render(c.bar), inner)
-	}
 	if m.status == "" {
+		if _, _, ok := m.inputOpen(); ok { // the modal holds the field: nothing under it
+			return ""
+		}
 		// Near or over a threshold, and nothing else to say: the gauge, amber or red.
 		if m.noticeText == "" && m.pressure != nil && m.pressure.Level != "ok" {
 			st := lipgloss.NewStyle().Foreground(theme.Working)
