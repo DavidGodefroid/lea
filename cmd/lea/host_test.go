@@ -206,6 +206,10 @@ func (c *cliAgents) LockClose(ctx context.Context, ctr, tool, profile string) (s
 	c.rec("lock-close " + ctr + " " + tool + " " + profile)
 	return "closed", nil
 }
+func (c *cliAgents) ShowTicket(ctx context.Context, ctr, ref, note string, seq int64) error {
+	c.rec("show-ticket " + ctr + " " + ref)
+	return nil
+}
 func (c *cliAgents) LockCheckRequest(ctx context.Context, ctr, tool, profile string) error {
 	c.rec("lock-check " + ctr + " " + tool + " " + profile)
 	return nil

@@ -22,6 +22,9 @@ type fakeAPI struct {
 	// clear and renewed answer HubReveal and HubRenew.
 	clear   HubClear
 	renewed HubRenewed
+	// failOn: HubDecide refuses the ticket of this id as an orphan.
+	failOn string
+	seqs   []int64 // the sequence numbers of HubShow, in call order
 }
 
 func (f *fakeAPI) rec(s string) { f.mu.Lock(); f.calls = append(f.calls, s); f.mu.Unlock() }

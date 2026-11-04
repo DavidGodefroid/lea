@@ -165,6 +165,10 @@ func (f *fakeAgents) LockOpen(ctx context.Context, c, tool, profile string) (str
 	}
 	return "opened", nil
 }
+func (f *fakeAgents) ShowTicket(ctx context.Context, c, ref, note string, seq int64) error {
+	f.rec(fmt.Sprintf("show-ticket %s %s %q", c, ref, note))
+	return nil
+}
 func (f *fakeAgents) LockCheckRequest(ctx context.Context, c, tool, profile string) error {
 	f.rec(fmt.Sprintf("lock-check %s %s %q", c, tool, profile))
 	f.mu.Lock()

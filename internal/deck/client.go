@@ -153,6 +153,13 @@ func (c Client) HubDecide(ctx context.Context, container string, panel bool, ins
 		"approved": approved, "retype": retype}, nil)
 }
 
+// HubShow shows a ticket of the hub panel (instance/id) whole in the container's slot, the note
+// under it; ref and note "" hide it (#284). seq orders the calls: the daemon drops one older than
+// the last it took.
+func (c Client) HubShow(ctx context.Context, container, ref, note string, seq int64) error {
+	return c.call(ctx, "hub_show", map[string]any{"container": container, "ref": ref, "note": note, "seq": seq}, nil)
+}
+
 // HubReveal asks the Lock, through the daemon and the hub, for the clear values of a pending
 // ticket of an agent of container (the hub card's o or Ctrl-O), or with panel of any (the panel's).
 func (c Client) HubReveal(ctx context.Context, container string, panel bool, instance, id string) (HubClear, error) {
