@@ -1,5 +1,27 @@
 # Changelog
 
+## v0.8.0 (2026-11-04)
+
+- Hub tickets are shown whole in the large right pane (#284): selecting a ticket in the hub panel
+  (`H`, the arrows or a click on its line) shows it where the agent's session shows, with its
+  warnings, production, the agent's note, instance, requester, created and expires first and the
+  Lock's screen under them; the wheel, `j`/`k` and the page keys scroll it. `esc` brings the agent
+  back. There is no fold, no `enter` details and no `v` step any more.
+- `a` approves the ticket shown and `d` denies it, at once, once the right pane shows that very
+  ticket (a key pressed twice never answers the next one). A ticket lea had to cut is still
+  refused. A hub refusal shows under the ticket with its fix (`lox up` for a hub older than
+  lockhub 0.7.0, or `lox approve`).
+- `Y` in the hub panel approves every pending ticket after one question naming how many and how
+  many are production (`approve 3 tickets, 1 production? y/n`). Tickets that ask for a typed
+  name, cut ones and duplicates are skipped and listed; refusals are listed with their reasons.
+- At start, when a lock's console waits for its start question, lea attaches to it after the
+  [Y/n] prompt and detaches by itself as soon as the lock serves, then goes on into the deck: no
+  Ctrl-P Ctrl-Q any more (it still detaches sooner). Several waiting consoles are answered one
+  after the other, each named "n of m" (#282).
+- After `brew upgrade lea`, `lea` and `lea stop --all` stop the daemon of the previous version,
+  even when Homebrew removed its directory (#283). A daemon that ignores SIGTERM for 5 s gets
+  SIGKILL, and lea says so in one line.
+
 ## v0.7.1 (2026-11-04)
 
 - The done sound rings when the agent's turn really ends (#274): it no longer rings 10 s or more
