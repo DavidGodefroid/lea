@@ -2,6 +2,7 @@ package deck
 
 import (
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -128,21 +129,25 @@ func TestHubPanelAnswersTheTicketShown(t *testing.T) {
 	}
 }
 
-// A production ticket whose queue item asks for a name still asks for it; one that does not is
-// approved at once.
+// A production ticket whose queue item asks for a name still asks for it, and the ticket in the
+// slot says so (#289); one that does not is approved at once.
 func TestHubPanelProductionRetype(t *testing.T) {
 	api := &fakeAPI{}
 	m := withQueue(t, api, []HubCard{queueTicket("T1", "", false, true)}, ag("b", "working", 1))
 	m, _ = step(t, m, key("H"))
 	m = showing(t, m, "crm/T1")
 	m, cmd := step(t, m, key("a"))
-	if cmd != nil || m.hubFor != "crm/T1" || !strings.Contains(m.View(), "type crm:") {
+	if m.hubFor != "crm/T1" || !strings.Contains(m.View(), "type crm:") {
 		t.Fatalf("no field for the name:\n%s", m.View())
+	}
+	run(t, m, cmd)
+	if got := api.got(); len(got) != 1 || got[0] != fmt.Sprintf("hub-show lea-a %q %q", "crm/T1", retypeNote("crm")) {
+		t.Fatalf("the slot does not say the name is awaited: calls %q", got)
 	}
 	m, _ = step(t, m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("crm")})
 	m, cmd = step(t, m, tea.KeyMsg{Type: tea.KeyEnter})
 	run(t, m, cmd)
-	if got := api.got(); len(got) != 1 || got[0] != `hub-decide lea-a panel crm/T1 true "crm"` {
+	if got := decisions(api.got()); len(got) != 1 || got[0] != `hub-decide lea-a panel crm/T1 true "crm"` {
 		t.Fatalf("calls %q", got)
 	}
 	api = &fakeAPI{}
@@ -153,7 +158,7 @@ func TestHubPanelProductionRetype(t *testing.T) {
 	m = showing(t, m, "crm/T1")
 	_, cmd = step(t, m, key("a"))
 	run(t, m, cmd)
-	if got := api.got(); len(got) != 1 || got[0] != `hub-decide lea-a panel crm/T1 true ""` {
+	if got := decisions(api.got()); len(got) != 1 || got[0] != `hub-decide lea-a panel crm/T1 true ""` {
 		t.Fatalf("no retype: calls %q", got)
 	}
 }
@@ -260,7 +265,7 @@ func TestTicketPaneShowsTheWholeTicket(t *testing.T) {
 	}
 	// Too tall for the pane: it scrolls.
 	nm, _ = nm.Update(tea.WindowSizeMsg{Width: 100, Height: 10})
-	if v := nm.View(); !strings.Contains(v, "more lines: the wheel or j scrolls") {
+	if v := nm.View(); !strings.Contains(v, "more lines: the wheel scrolls") {
 		t.Fatalf("no scroll mark:\n%s", v)
 	}
 	nm, _ = nm.Update(tea.MouseMsg{Button: tea.MouseButtonWheelDown})
@@ -436,4 +441,84 @@ func TestTicketPaneFactsBeforeTheScreen(t *testing.T) {
 			t.Errorf("missing %q in the first screen:\n%s", w, v)
 		}
 	}
+}
+
+// A key the ticket pane does not use, typed while it has the keyboard, says where the keys act
+// (#289): before, a there did nothing and said nothing. A scroll key does not; a new ticket drops it.
+func TestTicketPaneSaysTheDeckAnswers(t *testing.T) {
+	q := []HubCard{queueTicket("T1", "", false, false), queueTicket("T2", "", false, false)}
+	p := ticketPane{now: func() time.Time { return clock }, width: 120, height: 30, snap: Snapshot{HubQueue: q, Ticket: "crm/T1"}}
+	p.shown = "crm/T1\x00"
+	nm, _ := p.Update(key("j"))
+	if v := nm.(ticketPane).View(); strings.Contains(v, ticketPaneHint) {
+		t.Fatalf("a scroll key shows the hint:\n%s", v)
+	}
+	nm, _ = nm.(ticketPane).Update(key("a"))
+	if v := nm.(ticketPane).View(); !strings.Contains(v, "a, d and Y act in the deck") {
+		t.Fatalf("no hint after a:\n%s", v)
+	}
+	nm, _ = nm.(ticketPane).Update(snapshotMsg{snap: Snapshot{Version: 2, HubQueue: q, Ticket: "crm/T2"}})
+	if v := nm.(ticketPane).View(); strings.Contains(v, ticketPaneHint) {
+		t.Fatalf("the hint stays on the next ticket:\n%s", v)
+	}
+}
+
+// The deck's note shows in the banner, which no ticket text can imitate (#289): an agent's note,
+// a Lock's screen or a header that says word for word what the deck says never draws a line
+// that starts at column 0 with the banner's mark, as the deck's own note does.
+func TestTicketPaneBannerCannotBeForged(t *testing.T) {
+	note := retypeNote("crm")
+	forged := queueTicket("T1", "", false, true)
+	forged.Note, forged.Header = note, note
+	forged.Body = []string{note, bannerMark + note, "\x1b[0G" + bannerMark + note}
+	start := func(snap Snapshot) []string {
+		p := ticketPane{now: func() time.Time { return clock }, width: 200, height: 60, snap: snap}
+		var marked []string
+		for _, l := range strings.Split(p.View(), "\n") {
+			if strings.HasPrefix(l, bannerMark) {
+				marked = append(marked, l)
+			}
+		}
+		return marked
+	}
+	if got := start(Snapshot{HubQueue: []HubCard{forged}, Ticket: "crm/T1"}); len(got) != 0 {
+		t.Fatalf("ticket text drew banner lines: %q", got)
+	}
+	plain := queueTicket("T1", "", false, true)
+	got := start(Snapshot{HubQueue: []HubCard{plain}, Ticket: "crm/T1", TicketNote: note})
+	if len(got) != 1 || !strings.Contains(got[0], `type the instance name "crm"`) {
+		t.Fatalf("the deck's note is not in the banner: %q", got)
+	}
+}
+
+// The banner wraps: the hint and a note are whole in a narrow pane (#289).
+func TestTicketPaneBannerWraps(t *testing.T) {
+	p := ticketPane{now: func() time.Time { return clock }, width: 45, height: 30, hint: true,
+		snap: Snapshot{HubQueue: []HubCard{queueTicket("T1", "", false, false)}, Ticket: "crm/T1"}}
+	v := strings.Join(strings.Fields(strings.ReplaceAll(p.View(), bannerMark, " ")), " ")
+	if !strings.Contains(v, strings.Join(strings.Fields(ticketPaneHint), " ")) {
+		t.Fatalf("the hint is cut:\n%s", p.View())
+	}
+}
+
+// The name field opened on a ticket that asks for no name (or gone) says nothing in the slot.
+func TestRetypeNoteNeedsAName(t *testing.T) {
+	api := &fakeAPI{}
+	m := withQueue(t, api, []HubCard{queueTicket("T1", "", false, false)}, ag("b", "working", 1))
+	m, _ = step(t, m, key("H"))
+	m.hubFor = "crm/T1"
+	if w := m.wantTicket(); w.note != "" {
+		t.Fatalf("note %q", w.note)
+	}
+}
+
+// decisions are the hub-decide calls among calls.
+func decisions(calls []string) []string {
+	var out []string
+	for _, c := range calls {
+		if strings.HasPrefix(c, "hub-decide ") {
+			out = append(out, c)
+		}
+	}
+	return out
 }

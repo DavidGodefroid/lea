@@ -201,7 +201,7 @@ closing the deck, or the terminal, does not stop it: the next `lea` reattaches.
 | `e` | rename the selected agent (enter saves, esc cancels, empty clears) |
 | `m` / `t` | send the selected agent a message / read its messages (see below) |
 | `a` / `d` / `A` | allow / deny / always allow the selected agent's permission request |
-| `H` | move into the hub panel, the Lock Family hub's pending tickets: the selected ticket shows whole in the right pane (`a` / `d` approve / deny it, `Y` approves every pending ticket after `y`, `esc` leaves) |
+| `H` | move into the hub panel, the Lock Family hub's pending tickets: the selected ticket shows whole in the right pane (`a` / `d` approve / deny it, `Y` approves every pending ticket after `y`, `esc` leaves; a click on the ticket or ctrl+space keeps the keyboard on the deck, and a production ticket that asks for its name says so on the right while the deck's bottom line takes it) |
 | `r`, then `l` / `d` / `r` | make the selected agent a lead, a dev or a reviewer |
 | `s` | open a shell in the container (`exit` or `x` closes it) |
 | `-` / `\|` | split: a shell below the selected agent, or at its right, in its directory |
