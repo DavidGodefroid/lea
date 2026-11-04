@@ -446,6 +446,21 @@ type fakeContainers struct {
 	parks    []string      // container/name of each Park
 	parkOut  string        // what Park reports
 	unparks  []string      // container/name of each Unpark
+	// noTranscript are the sessions with no transcript in the container (#255): every other
+	// session has one. transcriptErr makes HasTranscript fail (an image without the check).
+	noTranscript  map[string]bool
+	transcriptErr error
+	transcripts   []string // container:session of each HasTranscript
+}
+
+func (c *fakeContainers) HasTranscript(ctx context.Context, container, session string) (bool, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.transcripts = append(c.transcripts, container+":"+session)
+	if c.transcriptErr != nil {
+		return false, c.transcriptErr
+	}
+	return !c.noTranscript[session], nil
 }
 
 func (c *fakeContainers) Unpark(ctx context.Context, container, name string) (string, error) {

@@ -230,6 +230,32 @@ func TestDockerPark(t *testing.T) {
 	}
 }
 
+// HasTranscript asks lea-agent transcript (#255): exit 3 is a session with no transcript; an
+// image without the check is an error, never "no transcript".
+func TestDockerHasTranscript(t *testing.T) {
+	ctx := context.Background()
+	const sid = "0b6f5a1e-4c1d-4f7a-9d2e-1a2b3c4d5e6f"
+	bin, log := fakeDocker(t, `:`)
+	d := Docker{Bin: bin, UID: 1000, GID: 1000}
+	if ok, err := d.HasTranscript(ctx, "lea-a", sid); !ok || err != nil {
+		t.Fatalf("has = %v, %v", ok, err)
+	}
+	if !strings.Contains(logged(t, log), "exec -u 1000:1000 lea-a lea-agent transcript "+sid) {
+		t.Fatalf("log=%q", logged(t, log))
+	}
+	if _, err := d.HasTranscript(ctx, "lea-a", "--all"); err == nil {
+		t.Fatal("an invalid session is checked")
+	}
+	bin, _ = fakeDocker(t, `case $1 in exec) exit 3 ;; inspect) echo true ;; esac`)
+	if ok, err := (Docker{Bin: bin}).HasTranscript(ctx, "lea-a", sid); ok || err != nil {
+		t.Fatalf("no transcript = %v, %v", ok, err)
+	}
+	bin, _ = fakeDocker(t, `case $1 in exec) echo "usage: lea-agent run NAME" >&2; exit 2 ;; inspect) echo true ;; esac`)
+	if _, err := (Docker{Bin: bin}).HasTranscript(ctx, "lea-a", sid); err == nil || !strings.Contains(err.Error(), "make build") {
+		t.Fatalf("older image: %v", err)
+	}
+}
+
 // Volumes: the lea.projects label, then the names of the volumes the container mounts, one
 // docker inspect of the container.
 func TestDockerVolumes(t *testing.T) {

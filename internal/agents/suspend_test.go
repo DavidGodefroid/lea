@@ -88,6 +88,24 @@ func TestResumeSuspendedResumesTheSessionWithThePrompt(t *testing.T) {
 	}
 }
 
+// A session with no transcript cannot be resumed (#255): the agent starts again as it first did.
+func TestResumeSuspendedStartsAfreshASessionWithoutTranscript(t *testing.T) {
+	e := newEnv(t)
+	s := e.ensure(t, "/p")
+	e.spawn(t, "kid", "--model", "opus")
+	e.st.SetState(C+"/kid", store.StateSuspendedCold, sid1, 1001)
+	e.ctr.noTranscript = map[string]bool{sid1: true}
+	if err := e.m.ResumeSuspended(bg, C+"/kid", "wake up"); err != nil {
+		t.Fatal(err)
+	}
+	if got := agentArgs(t, s, "kid"); !reflect.DeepEqual(got, []string{"--model", "opus"}) {
+		t.Fatalf("kid resumed with %q", got)
+	}
+	if got := e.state(t, "kid"); got != "unknown" {
+		t.Fatalf("kid is %s after the restart, want unknown", got)
+	}
+}
+
 // Without a session there is nothing to resume: the agent ends.
 func TestResumeSuspendedWithoutASessionEndsTheAgent(t *testing.T) {
 	e := newEnv(t)

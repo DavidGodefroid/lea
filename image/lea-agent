@@ -4,7 +4,8 @@
 # `stop` ends one; `pause` freezes one with its children and the containers it started (SIGSTOP),
 # `resume` lets them continue (SIGCONT). Each agent gets a CPU window (LEA_AGENT_CPUS, #132) and its own Podman service: what it starts in the nested Podman carries
 # the annotation lea.agent=NAME, `teardown` removes it when the agent ends, `park` stops it while
-# the agent is idle (#132), and `sweep` removes the stacks of agents that are gone (#97). The deck's shells (s) work the same way: `shell` is what abduco starts for one (the
+# the agent is idle (#132), and `sweep` removes the stacks of agents that are gone (#97). `transcript`
+# says whether a Claude session has a transcript to resume (#255). The deck's shells (s) work the same way: `shell` is what abduco starts for one (the
 # user's login shell, never an agent: no LEA_AGENT), `shells` prints the live ones and
 # `stop-shell` ends one. The host reaches this script only through `docker exec`.
 set -eu
@@ -380,6 +381,21 @@ case ${1:-} in
       fi
     fi
     ;;
+  transcript)
+    # transcript SESSION: exit 0 when Claude wrote a non-empty transcript of SESSION (a UUID) in
+    # a project of its configuration directory, 3 when it has none: `claude --resume` would
+    # refuse it ("No conversation found") and the agent's pane would die (#255).
+    id=${2:-}
+    case $id in
+      [0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]-[0-9a-f][0-9a-f][0-9a-f][0-9a-f]-[0-9a-f][0-9a-f][0-9a-f][0-9a-f]-[0-9a-f][0-9a-f][0-9a-f][0-9a-f]-[0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]) ;;
+      *) echo "lea-agent: invalid session id '$id'" >&2; exit 2 ;;
+    esac
+    cfg=${CLAUDE_CONFIG_DIR:-${HOME:-}/.claude}
+    for f in "$cfg"/projects/*/"$id.jsonl"; do
+      if [ -s "$f" ]; then exit 0; fi
+    done
+    exit 3
+    ;;
   shell)
     name=${2:-}
     valid_shell "$name" || { echo "lea-agent: invalid shell name '$name'" >&2; exit 2; }
@@ -408,7 +424,7 @@ case ${1:-} in
     rm -f "$shell_dir/$name.pid"
     ;;
   *)
-    echo "usage: lea-agent run NAME [--cli claude|codex] [-- ARGS...] | ls | windows | stop NAME | teardown NAME | park NAME | unpark NAME | sweep [KEEP...] | pause NAME | resume NAME | shell NAME | shells | stop-shell NAME" >&2
+    echo "usage: lea-agent run NAME [--cli claude|codex] [-- ARGS...] | ls | windows | stop NAME | teardown NAME | park NAME | unpark NAME | sweep [KEEP...] | pause NAME | resume NAME | transcript SESSION | shell NAME | shells | stop-shell NAME" >&2
     exit 2
     ;;
 esac
