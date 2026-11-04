@@ -443,7 +443,8 @@ func TestHubDecideRefusalsAreReadable(t *testing.T) {
 		want   string
 	}{
 		{401, map[string]any{"error": "unauthorized", "message": "unknown lock instance"}, "lock no longer exists"},
-		{410, map[string]any{"error": "lock_removed", "message": "x"}, "lock no longer exists"},
+		{410, map[string]any{"error": "lock_removed", "message": "the ticket's lock is no longer declared"}, "lock no longer exists"},
+		{410, map[string]any{"error": "expired", "message": "x"}, "the ticket expired"},
 		{503, map[string]any{"error": "audit_down", "message": "x"}, "audit log"},
 		{500, map[string]any{"error": "internal", "message": "\x1b[2Jsecret"}, "internal (HTTP 500)"},
 		{502, map[string]any{"error": 7}, "HTTP 502"},

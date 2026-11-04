@@ -88,6 +88,7 @@ var hubKinds = map[string]string{
 	"not_routed":       "this ticket is not routed to the deck: use lox approve",
 	"foreign_key":      "the hub refused the deck's reveal key: it is for another ticket or lock",
 	"expired":          "the ticket expired",
+	"lock_removed":     "this ticket's lock no longer exists (orphan)",
 	"not_found":        "the hub no longer knows this ticket",
 	"state":            "the ticket is not in a state that allows this",
 	"conflict":         "the ticket changed meanwhile",

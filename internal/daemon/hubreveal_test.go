@@ -358,6 +358,7 @@ func TestHubRefusalsAreCodesOnly(t *testing.T) {
 		{403, map[string]string{"error": "not_routed", "message": "SECRET"}, "not routed to the deck"},
 		{403, map[string]string{"error": "foreign_key", "message": "SECRET"}, "reveal key"},
 		{410, map[string]string{"error": "expired", "message": "SECRET"}, "expired"},
+		{410, map[string]string{"error": "lock_removed", "message": "SECRET"}, "lock no longer exists"},
 		{500, map[string]string{"error": "SECRET words", "message": "SECRET"}, "HTTP 500"},
 		{500, "SECRET", "HTTP 500"},
 	} {
