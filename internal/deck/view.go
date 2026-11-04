@@ -12,6 +12,9 @@ import (
 // Width is the deck pane's width, border included (agents.DeckWidth).
 const Width = 34
 
+// folderIndent is how many cells an agent in a folder is shifted right of a root agent.
+const folderIndent = 2
+
 type charset struct {
 	tl, tr, bl, br, h, v, bar, mark, dot, more string
 	ascii                                      bool
@@ -534,7 +537,8 @@ func (m Model) folderRow(fi int, inner int) []string {
 
 // row is two lines of exactly inner cells: mark, bar, glyph, name, profile; then the detail. An
 // agent in folder fi (-1: at the root) has the folder's guide in its second cell, in the folder's
-// colour when it has one.
+// colour when it has one, and is shifted folderIndent cells right: its glyph under the folder's
+// arrow, its name and its detail under the folder's name.
 func (m Model) row(a Agent, inner int, fi int) []string {
 	c := m.cs()
 	sel := a.Key == m.selected && !m.panel // in the hub panel, the selection is there
@@ -545,6 +549,7 @@ func (m Model) row(a Agent, inner int, fi int) []string {
 		if m.ascii {
 			gap = ":"
 		}
+		gap += strings.Repeat(" ", folderIndent)
 		pad = " " + gap + "  "
 		if col, ok := folderColour(m.layout.Folders[fi].Color); ok {
 			guide = lipgloss.NewStyle().Foreground(col)
@@ -561,7 +566,8 @@ func (m Model) row(a Agent, inner int, fi int) []string {
 		mark = c.mark
 	}
 	const profW, ctxW = 6, 4
-	nameW := inner - 4 - (1 + profW) - (1 + ctxW) // mark, space, glyph, space
+	in := lipgloss.Width(pad)                      // where the detail starts
+	nameW := inner - in - (1 + profW) - (1 + ctxW) // mark, gap, glyph, space
 	g, gc := stateMark(shownState(a), a.Updated, m.now().Unix(), m.frame, m.ascii)
 	if isShell(a) {
 		g, gc = "$", theme.Unknown
@@ -580,8 +586,8 @@ func (m Model) row(a Agent, inner int, fi int) []string {
 		bg(muted).Render(padLeft(fit(a.Profile, profW, c), profW)) +
 		bg(plain).Render(" ") +
 		bg(muted).Render(padLeft(ctxText(a.CtxPct), ctxW))
-	detail := fit(m.detail(a, inner-4), inner-4, c)
-	line2 := bg(guide).Render(pad) + bg(muted).Render(padRight(detail, inner-4))
+	detail := fit(m.detail(a, inner-in), inner-in, c)
+	line2 := bg(guide).Render(pad) + bg(muted).Render(padRight(detail, inner-in))
 	lines := []string{line1, line2}
 	if l := a.LockAsk; l != nil && a.Approval == nil {
 		warn := "⚠"
@@ -589,8 +595,8 @@ func (m Model) row(a Agent, inner int, fi int) []string {
 			warn = "!"
 		}
 		lines = append(lines,
-			bg(guide).Render(pad)+bg(alert).Render(padRight(fit(warn+" open the "+lockAskName(*l)+" console?", inner-4, c), inner-4)),
-			bg(guide).Render(pad)+bg(lipgloss.NewStyle().Foreground(theme.Text)).Render(padRight(fit("[O]pen [d]ecline", inner-4, c), inner-4)))
+			bg(guide).Render(pad)+bg(alert).Render(padRight(fit(warn+" open the "+lockAskName(*l)+" console?", inner-in, c), inner-in)),
+			bg(guide).Render(pad)+bg(lipgloss.NewStyle().Foreground(theme.Text)).Render(padRight(fit("[O]pen [d]ecline", inner-in, c), inner-in)))
 	}
 	if h := hubTicket(a); h != nil {
 		lines = append(lines, m.hubCardLines(*h, inner, pad, bg, guide, true, a.Key == m.selected && !m.panel, len(a.Hub)-1)...)
@@ -609,8 +615,8 @@ func (m Model) row(a Agent, inner int, fi int) []string {
 			keys += " [A]lways"
 		}
 		lines = append(lines,
-			bg(guide).Render(pad)+bg(alert).Render(padRight(fit(warn+" "+what, inner-4, c), inner-4)),
-			bg(guide).Render(pad)+bg(lipgloss.NewStyle().Foreground(theme.Text)).Render(padRight(fit(keys, inner-4, c), inner-4)))
+			bg(guide).Render(pad)+bg(alert).Render(padRight(fit(warn+" "+what, inner-in, c), inner-in)),
+			bg(guide).Render(pad)+bg(lipgloss.NewStyle().Foreground(theme.Text)).Render(padRight(fit(keys, inner-in, c), inner-in)))
 	}
 	return lines
 }
@@ -814,10 +820,11 @@ func (m Model) hubCardLines(h HubCard, inner int, pad string, bg func(lipgloss.S
 		warn = "!"
 	}
 	text := lipgloss.NewStyle().Foreground(theme.Text)
+	in := lipgloss.Width(pad)
 	row := func(st lipgloss.Style, s string) string {
-		return bg(guide).Render(pad) + bg(st).Render(padRight(fit(s, inner-4, c), inner-4))
+		return bg(guide).Render(pad) + bg(st).Render(padRight(fit(s, inner-in, c), inner-in))
 	}
-	wide := max(8, inner-6)
+	wide := max(8, inner-in-2)
 	var lines []string
 	if claim && !h.Verified {
 		lines = append(lines, row(alert, warn+" unverified: claims \""+clean(h.Claimed)+"\""))
