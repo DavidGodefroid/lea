@@ -352,8 +352,13 @@ func (d *Daemon) setHubQueue(ctx context.Context, ts []HubTicket, up bool) {
 		for _, a := range all {
 			byKey[a.Key] = a
 		}
+		// A wait lea claimed itself (#261) verifies nothing: its ticket is still the requester's
+		// word.
 		waiting := map[string]string{}
 		for _, w := range waits {
+			if w.Claimed {
+				continue
+			}
 			if _, ok := waiting[w.Instance+"/"+w.Ticket]; !ok {
 				waiting[w.Instance+"/"+w.Ticket] = w.Agent
 			}
@@ -363,7 +368,7 @@ func (d *Daemon) setHubQueue(ctx context.Context, ts []HubTicket, up bool) {
 		// abandoned (the hub off): lea told that agent it stopped waiting on the ticket.
 		waited := map[string]string{}
 		for _, w := range every {
-			if w.Decision == store.DecisionAbandoned {
+			if w.Decision == store.DecisionAbandoned || w.Claimed {
 				continue
 			}
 			if _, ok := waited[w.Instance+"/"+w.Ticket]; !ok {
@@ -390,6 +395,7 @@ func (d *Daemon) setHubQueue(ctx context.Context, ts []HubTicket, up bool) {
 				// still shows it, for no agent.
 			default:
 				e.agent = claimedAgent(all, t)
+				d.claimHubWait(e.agent, t)
 			}
 			if a := byKey[e.agent]; e.agent != "" {
 				e.container, e.name = a.Container, a.Name
@@ -508,6 +514,22 @@ func claimedAgent(all []store.Agent, t HubTicket) string {
 		found = a.Key
 	}
 	return found
+}
+
+// claimHubWait records the wait of agent on the pending ticket its requester claims it for
+// (#261): an agent that ran its Lock through the shell, or whose Lock call lea did not see
+// answer pending, registered none, and would never hear the decision. With the wait, the
+// decision reaches it as any wait's does: in its inbox, which wakes it when its turn is over (its
+// rewake watch), or in the resume of a cold-suspended agent. The claim is the requester's word:
+// the card stays unverified, and the Lock still runs the ticket for its requester's token alone.
+// An expired ticket waits on no one; LockHTTP's request waits in the gate, not in a turn.
+func (d *Daemon) claimHubWait(agent string, t HubTicket) {
+	if agent == "" || t.Expired || t.Lock == "lockhttp" {
+		return
+	}
+	if err := d.st.AddClaimedHubWait(agent, t.ID, t.Lock, t.Instance, d.now()); err != nil {
+		log.Printf("lea daemon: claim hub ticket %.40q for %s: %v", t.ID, agent, err)
+	}
 }
 
 // addHubCards puts each queued ticket on its agent's row, oldest first.
