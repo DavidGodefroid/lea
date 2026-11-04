@@ -317,6 +317,7 @@ type Model struct {
 	providers   []string
 	editFor     string          // key whose label the rename field (e) edits
 	draft       []rune          // the rename field's text
+	editTitle   string          // the rename field's modal title (input.go)
 	help        bool            // the key list (?) is shown
 	asked       map[string]bool // agents this deck asked the daemon to show, not yet seen shown
 	lastAsked   string          // the latest of them
@@ -958,7 +959,7 @@ func (m Model) key(k string) (tea.Model, tea.Cmd) {
 		return m.openSettings()
 	case "e":
 		if a := m.selectedAgent(); a != nil && !isShell(*a) {
-			m.editFor, m.draft, m.status = a.Key, []rune(a.Label), ""
+			m.editFor, m.draft, m.editTitle, m.status = a.Key, []rune(a.Label), "Rename agent", ""
 		}
 		return m, nil
 	case "m", "t":
@@ -1079,7 +1080,7 @@ func (m Model) onFolder(k string) (tea.Model, tea.Cmd, bool) {
 		return m.toggleFold(m.selected), nil, true
 	case "e":
 		f := m.layout.Folders[fi]
-		m.editFor, m.draft, m.status = m.selected, []rune(f.Name), ""
+		m.editFor, m.draft, m.editTitle, m.status = m.selected, []rune(f.Name), "Rename folder", ""
 		return m, nil, true
 	case "c":
 		m.openMenu(m.selected)

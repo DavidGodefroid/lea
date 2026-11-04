@@ -223,7 +223,10 @@ func (m Model) menuKey(k string) (tea.Model, tea.Cmd) {
 
 // mouse handles a mouse event over the deck.
 func (m Model) mouse(e tea.MouseMsg) (tea.Model, tea.Cmd) {
-	if m.help || m.editFor != "" || m.setOpen {
+	if _, _, ok := m.inputOpen(); ok {
+		return m.inputMouse(e)
+	}
+	if m.help || m.setOpen {
 		return m, nil
 	}
 	if m.confirm != "" {

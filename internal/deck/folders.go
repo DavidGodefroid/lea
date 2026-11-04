@@ -407,6 +407,7 @@ func (m Model) newFolder(key string) (Model, bool) {
 	m.save()
 	fk := folderKey(id)
 	m.selected, m.editFor, m.draft = fk, fk, []rune(m.layout.Folders[len(m.layout.Folders)-1].Name)
+	m.editTitle = "New folder"
 	m.menuFor, m.menuPicker = "", false
 	return m, true
 }
