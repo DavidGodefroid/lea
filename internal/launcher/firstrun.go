@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"regexp"
 	"runtime"
 	"strings"
 	"time"
@@ -220,8 +221,13 @@ func (l *Launcher) consolesReady(proj string) {
 		if len(waiting) > 1 {
 			name = fmt.Sprintf("%s (%d of %d)", lk.Instance, i+1, len(waiting))
 		}
-		l.logf("%s %s waits for its start question (its console runs but does not serve yet): lox attach %s", lk.Type, name, lk.Instance)
-		if !atTerminal(l) || l.attachConsole(proj, lk, svcs["lock-"+lk.Instance]) && len(l.notListening([]UpLock{lk}, svcs)) == 0 {
+		q := l.consoleQuestion(svcs["lock-"+lk.Instance], lk)
+		if q != "" {
+			l.logf("%s %s waits for: the console asks \"%s\" (its console runs but does not serve yet): lox attach %s", lk.Type, name, q, lk.Instance)
+		} else {
+			l.logf("%s %s waits for its start question (its console runs but does not serve yet): lox attach %s", lk.Type, name, lk.Instance)
+		}
+		if !atTerminal(l) || l.attachConsole(proj, lk, svcs["lock-"+lk.Instance], q) && len(l.notListening([]UpLock{lk}, svcs)) == 0 {
 			continue
 		}
 		l.logf("%s %s still waits for its start question: lea starts without it; lox attach %s to answer it", lk.Type, lk.Instance, lk.Instance)
@@ -229,12 +235,17 @@ func (l *Launcher) consolesReady(proj string) {
 }
 
 // attachConsole asks the user whether to answer lk's start question now and, on yes (the
-// default), runs `lox attach` on lea's terminal; false when declined or the attach failed. At a
-// real terminal lea detaches by itself once the console (container id) serves (#282); the user
-// may still detach sooner with Ctrl-P Ctrl-Q.
-func (l *Launcher) attachConsole(proj string, lk UpLock, id string) bool {
-	fmt.Fprintf(l.Stderr, "lea: answer it now with lox attach %s? Its question is not shown again: type what it waits for "+
-		"(a production lock: its profile name), then Enter: lea detaches by itself once it serves (Ctrl-P Ctrl-Q detaches sooner) [Y/n] ", lk.Instance)
+// default), runs `lox attach` on lea's terminal; false when declined or the attach failed. q is
+// the question the console records (consoleQuestion), "" when it does not tell: lea then names
+// none, never a guess (#291). At a real terminal lea detaches by itself once the console
+// (container id) serves (#282); the user may still detach sooner with Ctrl-P Ctrl-Q.
+func (l *Launcher) attachConsole(proj string, lk UpLock, id, q string) bool {
+	what := "its console does not tell which one: lox attach lists what it may ask"
+	if q != "" {
+		what = `type the answer to "` + q + `"`
+	}
+	fmt.Fprintf(l.Stderr, "lea: answer it now with lox attach %s? Its question is not shown again (%s), then Enter: "+
+		"lea detaches by itself once it serves (Ctrl-P Ctrl-Q detaches sooner) [Y/n] ", lk.Instance, what)
 	a, _ := bufio.NewReader(l.Stdin).ReadString('\n')
 	if a = strings.ToLower(strings.TrimSpace(a)); a != "" && a != "y" && a != "yes" {
 		return false
@@ -279,6 +290,81 @@ func (l *Launcher) notListening(locks []UpLock, svcs map[string]string) []UpLock
 		locks = out
 		time.Sleep(consoleStep)
 	}
+}
+
+// consoleQuestion is the question the console of lk (container id) waits for, as a console built
+// on lockkit records it next to its socket in /run/<tool>/ (lockkit's QuestionPath: the prompt,
+// never an answer, removed once answered). lea asks only for a console that does not listen
+// (notListening): a file left beside a serving console is stale. Only that console's own file
+// counts: named for its profile's socket (<project key>-<profile>.question; with no profile named,
+// any *.question), a regular file of the account that owns /run/<tool>, mode 0600 exactly, and
+// exactly one such file. "" when there is none (an older console), several, or the container
+// cannot be read. The question is cut at maxQuestion characters and escaped for the terminal.
+func (l *Launcher) consoleQuestion(id string, lk UpLock) string {
+	prof := lk.Profile
+	if prof == "" && lk.Type == "lockfile" {
+		prof = "default" // lox up starts it with --profile default
+	}
+	name := "*.question"
+	if prof != "" {
+		name = "*-" + prof + ".question"
+	}
+	if id == "" || !toolName.MatchString(lk.Type) || prof != "" && !profileName.MatchString(prof) {
+		return ""
+	}
+	out, err := l.output(false, "docker", "exec", id, "sh", "-c", questionScript, "lea", "/run/"+lk.Type, name)
+	if err != nil {
+		return ""
+	}
+	var qs []string
+	for _, ln := range strings.Split(out, "\n") {
+		if q, ok := strings.CutPrefix(ln, "question: "); ok {
+			qs = append(qs, q)
+		}
+	}
+	if len(qs) != 1 {
+		return ""
+	}
+	q := []rune(strings.TrimSpace(qs[0]))
+	if len(q) > maxQuestion {
+		q = append(q[:maxQuestion], '…')
+	}
+	return terminalText(string(q))
+}
+
+// questionScript prints, in a console's container, each regular file of directory $1 named $2 (a
+// find -name pattern), owned by the account that owns $1, with mode 0600 exactly, as one
+// "question: " line: its first line, at most 512 bytes. Any other file is not the console's.
+const questionScript = `u=$(stat -c %u "$1") || exit 0; find "$1" -maxdepth 1 -name "$2" -type f -user "$u" -perm 0600 ` +
+	`-exec sh -c 'printf "question: "; head -n 1 "$1" | head -c 512; echo' q {} \; 2>/dev/null; true`
+
+// maxQuestion bounds the question lea shows, in characters.
+const maxQuestion = 200
+
+var (
+	// toolName is a lock tool's name, safe in a path.
+	toolName = regexp.MustCompile(`^[a-z]+$`)
+	// profileName is a profile name lox up accepts: no glob or shell character.
+	profileName = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$`)
+)
+
+// terminalText escapes s, text from a lock's container, for the user's terminal: C0 and C1
+// controls and DEL as \xNN; bidi and directional marks, zero-width characters, the word joiner,
+// the byte order mark and the line and paragraph separators as \uNNNN.
+func terminalText(s string) string {
+	var b strings.Builder
+	for _, r := range s {
+		switch {
+		case r < 0x20 || r == 0x7f || (r >= 0x80 && r < 0xa0):
+			fmt.Fprintf(&b, "\\x%02x", r)
+		case r == 0x061c, r >= 0x200b && r <= 0x200f, r >= 0x202a && r <= 0x202e, r >= 0x2066 && r <= 0x2069,
+			r == 0x2060, r == 0xfeff, r == 0x2028, r == 0x2029:
+			fmt.Fprintf(&b, "\\u%04x", r)
+		default:
+			b.WriteRune(r)
+		}
+	}
+	return b.String()
 }
 
 // consoleListens is whether the console container id listens on a unix socket of tool, from the

@@ -109,12 +109,14 @@ hub for it with `lox init`, on your terminal (`lox` on your `PATH`, 0.5.0 or lat
 a `lox down`, `LEA_LOX_UP=1` in `~/.config/lea/lea.conf` makes lea run `lox up` itself before it
 starts (see the configuration table). Each time it starts, lea checks every lock of
 `.lockfamily/up.json`: a console that is not running is named with `run lox up`, and one that runs
-but does not serve yet waits for its start question (after a restart, a production lock waits for
-its profile name and nobody is attached to it). At a terminal lea offers to answer it there with
-`lox attach NAME` (the question is not shown again: type the answer, then Enter). lea detaches by
-itself as soon as the lock serves (Ctrl-P Ctrl-Q detaches sooner), and the console keeps running;
-with several waiting consoles it goes through them in turn, naming each "n of m". Elsewhere it
-prints the command. lea starts anyway.
+but does not serve yet waits for its start question (after a restart nobody is attached to it:
+a Vault token, a password, a policy review, or a production lock's profile name when its policy
+was not confirmed yet). lea names the question when the console records it (the lock releases that
+follow DavidGodefroid/lockkit#127 and DavidGodefroid/locksql#182), and never guesses one. At a
+terminal lea offers to answer it there with `lox attach NAME` (the question is not printed again:
+type the answer, then Enter). lea detaches by itself as soon as the lock serves (Ctrl-P Ctrl-Q
+detaches sooner), and the console keeps running; with several waiting consoles it goes through
+them in turn, naming each "n of m". Elsewhere it prints the command. lea starts anyway.
 
 [`lox add`](https://github.com/DavidGodefroid/lockhub/blob/main/docs/lox-add.md) is how a Lock
 gets set up for lea's agents, run in lea's projects directory (lea reads `.lockfamily/up.json`
