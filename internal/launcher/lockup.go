@@ -156,7 +156,7 @@ func upTools(s *lockUpState, on func(tool string) bool) (map[string]*upTool, map
 			if vol, why := lockUsable(s, name); why != "" {
 				t.dropped = append(t.dropped, why)
 			} else {
-				t.locks = append(t.locks, UpLock{Instance: name, Type: typ, Volume: vol})
+				t.locks = append(t.locks, UpLock{Instance: name, Type: typ, Volume: vol, Profile: s.Locks[name].Profile})
 			}
 		}
 		out[typ] = t
@@ -225,7 +225,11 @@ func lockUsable(s *lockUpState, name string) (vol, why string) {
 
 // UpLock is a lock lox up runs that an agent container started now would mount: its instance,
 // its type and its socket volume.
-type UpLock struct{ Instance, Type, Volume string }
+type UpLock struct {
+	Instance, Type, Volume string
+	// Profile is the profile its console serves, from up.json ("" when lockfamily.yaml names none).
+	Profile string
+}
 
 // ReadUpLocks are the locks of the trusted up.json of the projects directory proj (readLockUp's
 // checks, its warnings through logf) that an agent container started now would mount: those of a

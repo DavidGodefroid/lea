@@ -316,7 +316,8 @@ func TestLoxUpHubDown(t *testing.T) {
 		t.Fatal(err)
 	}
 	ps := psCall(w)
-	want := []string{ps, "lox [up]", ps, "docker [exec] [b1] [cat] [/proc/net/unix]", "docker [exec] [c1] [cat] [/proc/net/unix]"}
+	want := []string{ps, "lox [up]", ps, "docker [exec] [b1] [cat] [/proc/net/unix]", "docker [exec] [c1] [cat] [/proc/net/unix]",
+		"docker [exec] [c1] [sh] [-c] [" + questionScript + "] [lea] [/run/locksql] [*.question]"}
 	if got := strings.Join(w.calls(), "\n"); got != strings.Join(want, "\n") {
 		t.Fatalf("calls:\n%s\nwant:\n%s", got, strings.Join(want, "\n"))
 	}
@@ -418,7 +419,8 @@ func TestLoxUpDockerFailsWarns(t *testing.T) {
 func TestConsoleWaitsAttach(t *testing.T) {
 	w := loxUpWorld(t, "")
 	w.env["FAKE_DOCKER_OUT_PS___FILTER"] = "lockhub=h1\nlock-crm=c1\nlock-bus=b1"
-	w.env["FAKE_DOCKER_OUTSEQ_EXEC_C1"] = unixNone + "|" + unixListen
+	// The third exec on c1 is the question read (none recorded): it takes the empty field.
+	w.env["FAKE_DOCKER_OUTSEQ_EXEC_C1"] = unixNone + "||" + unixListen
 	w.env["FAKE_DOCKER_OUT_EXEC_B1"] = busListen
 	l := w.launcher()
 	l.Stdin = strings.NewReader("\n")
@@ -549,5 +551,95 @@ func TestConsolesWaitNOfM(t *testing.T) {
 		if !strings.Contains(e, s) {
 			t.Fatalf("stderr %q lacks %q", e, s)
 		}
+	}
+}
+
+// The console records its question (lockkit's question file, #291): lea names it, quoted as the
+// console's and escaped for the terminal, at the terminal and not, and never guesses a production
+// lock's profile name.
+func TestConsoleWaitsNamesItsQuestion(t *testing.T) {
+	for name, term := range map[string]bool{"terminal": true, "no terminal": false} {
+		t.Run(name, func(t *testing.T) {
+			w := loxUpWorld(t, "")
+			w.env["FAKE_DOCKER_OUT_PS___FILTER"] = "lockhub=h1\nlock-crm=c1\nlock-bus=b1"
+			w.env["FAKE_DOCKER_OUT_EXEC_C1"] = unixNone
+			w.env["FAKE_DOCKER_OUT_EXEC_C1_AT___QUESTION"] = "question: Vault token for https://vault.example.com:8200:\x1b[2J\u202e\u200b"
+			w.env["FAKE_DOCKER_OUT_EXEC_B1"] = busListen
+			l := w.launcher()
+			l.Stdin = strings.NewReader("n\n")
+			defer stubAtTerminal(term)()
+			if err := l.ensureHub(w.proj); err != nil {
+				t.Fatal(err)
+			}
+			if !w.hasCall("docker [exec] [c1] [sh] [-c] [" + questionScript + "] [lea] [/run/locksql] [*.question]") {
+				t.Fatalf("calls: %v", w.calls())
+			}
+			e := w.errb.String()
+			q := `Vault token for https://vault.example.com:8200:\x1b[2J\u202e\u200b`
+			want := []string{"lea: locksql crm waits for: the console asks \"" + q + "\" (its console runs but does not serve yet): lox attach crm\n"}
+			if term {
+				want = append(want, `type the answer to "`+q+`"`)
+			}
+			for _, s := range want {
+				if !strings.Contains(e, s) {
+					t.Fatalf("stderr %q lacks %q", e, s)
+				}
+			}
+			if strings.Contains(e, "profile name") || strings.ContainsAny(e, "\x1b\u202e\u200b") {
+				t.Fatalf("stderr %q guesses the profile name or carries a control character", e)
+			}
+		})
+	}
+}
+
+// The question read: the console's own file only (its profile's name, the run directory owner's
+// account, mode 0600 exactly), and a long question cut.
+func TestConsoleQuestionRead(t *testing.T) {
+	if !strings.Contains(questionScript, `-type f -user "$u" -perm 0600`) || !strings.Contains(questionScript, `stat -c %u "$1"`) ||
+		!strings.Contains(questionScript, "head -c 512") {
+		t.Fatalf("questionScript %q", questionScript)
+	}
+	w := loxUpWorld(t, "")
+	w.env["FAKE_DOCKER_OUT_EXEC_C1_AT___SHOP_QUESTION"] = "question: " + strings.Repeat("x", 300)
+	l := w.launcher()
+	q := l.consoleQuestion("c1", UpLock{Instance: "crm", Type: "locksql", Profile: "shop"})
+	if !w.hasCall("[lea] [/run/locksql] [*-shop.question]") || q != strings.Repeat("x", 200)+"…" {
+		t.Fatalf("q %q, calls %v", q, w.calls())
+	}
+	// lockfile's console serves "default" when no profile is named.
+	l.consoleQuestion("c1", UpLock{Instance: "files", Type: "lockfile"})
+	if !w.hasCall("[lea] [/run/lockfile] [*-default.question]") {
+		t.Fatalf("calls %v", w.calls())
+	}
+	// A name that is not a profile or a tool runs nothing.
+	n := len(w.calls())
+	if l.consoleQuestion("c1", UpLock{Type: "locksql", Profile: "a*"}) != "" || l.consoleQuestion("c1", UpLock{Type: "lock sql"}) != "" ||
+		len(w.calls()) != n {
+		t.Fatalf("calls %v", w.calls())
+	}
+}
+
+// Several question files (a stale one beside the console's own), or none of its own: lea does not
+// know which question is pending, and says so without guessing (#291).
+func TestConsoleWaitsUnknownQuestionNoGuess(t *testing.T) {
+	for name, out := range map[string]string{"older console": "", "several": "question: User:\nquestion: Vault token for x:"} {
+		t.Run(name, func(t *testing.T) {
+			w := loxUpWorld(t, "")
+			w.env["FAKE_DOCKER_OUT_PS___FILTER"] = "lockhub=h1\nlock-crm=c1\nlock-bus=b1"
+			w.env["FAKE_DOCKER_OUT_EXEC_C1"] = unixNone
+			w.env["FAKE_DOCKER_OUT_EXEC_C1_AT___QUESTION"] = out
+			w.env["FAKE_DOCKER_OUT_EXEC_B1"] = busListen
+			l := w.launcher()
+			l.Stdin = strings.NewReader("n\n")
+			defer stubAtTerminal(true)()
+			if err := l.ensureHub(w.proj); err != nil {
+				t.Fatal(err)
+			}
+			e := w.errb.String()
+			if !strings.Contains(e, "its console does not tell which one: lox attach lists what it may ask") ||
+				strings.Contains(e, "profile name") || strings.Contains(e, "the console asks") {
+				t.Fatalf("stderr %q", e)
+			}
+		})
 	}
 }

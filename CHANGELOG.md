@@ -1,5 +1,16 @@
 # Changelog
 
+## Unreleased
+
+- A lock console that waits for its start question is named with that question when the console
+  records it (lockkit's question file, next to its socket): `lea: locksql NAME waits for: the
+  console asks "Vault token for https://vault.example.com:8200:" ...`, and the attach offer says to
+  type the answer to it. lea reads only that console's own file (named for its profile, owned by
+  the console's account, mode 0600, exactly one), at most 200 characters, escaped for the
+  terminal. A console that records none is said to not tell which one; lea no longer tells the
+  user to type "its profile name", which made users type the name into a Vault token prompt
+  (#291).
+
 ## v0.8.1 (2026-11-04)
 
 - `a`, `d` and `Y` work after a click on the hub ticket shown in the right pane (#289): a click
