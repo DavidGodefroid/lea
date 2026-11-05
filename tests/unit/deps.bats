@@ -23,7 +23,7 @@ latest() { export "FAKE_CURL_EFFECTIVE_$1=https://github.com/DavidGodefroid/$1/r
   on_tty; latest locksql v0.17.0
   run lea_update_deps ask <<<"y"
   [ "$status" -eq 0 ]
-  [[ "$output" == *"locksql: v0.16.0 -> v0.17.0 (release notes: https://github.com/DavidGodefroid/locksql/releases/tag/v0.17.0)"* ]]
+  [[ "$output" == *"locksql: v0.16.2 -> v0.17.0 (release notes: https://github.com/DavidGodefroid/locksql/releases/tag/v0.17.0)"* ]]
   [[ "$output" == *"Update locksql to v0.17.0 (its signature is checked first)? [y/N]"* ]]
   [[ "$output" == *"locksql v0.17.0 recorded (profiles kept); lox up pins the console's own image: lox add locksql NAME again moves a lock to a newer release"* ]]
   run calls
@@ -56,11 +56,11 @@ latest() { export "FAKE_CURL_EFFECTIVE_$1=https://github.com/DavidGodefroid/$1/r
   for answer in "" "n"; do
     : >"$FAKE_LOG"
     run lea_update_deps ask <<<"$answer"
-    [[ "$output" == *"locksql: kept at v0.16.0"* ]]
+    [[ "$output" == *"locksql: kept at v0.16.2"* ]]
     if calls | grep -q '^git\|^cosign\|^docker\|releases/download'; then false; fi
   done
   run lea_update_deps ask </dev/null
-  [[ "$output" == *"locksql: kept at v0.16.0"* ]]
+  [[ "$output" == *"locksql: kept at v0.16.2"* ]]
   [ ! -e "$LEA_CONFIG" ]
 }
 
@@ -68,7 +68,7 @@ latest() { export "FAKE_CURL_EFFECTIVE_$1=https://github.com/DavidGodefroid/$1/r
   latest locksql v0.17.0
   run lea_update_deps ask
   [ "$status" -eq 0 ]
-  [[ "$output" == *"locksql: v0.16.0 -> v0.17.0"*"locksql: not updated (no terminal to ask)"* ]]
+  [[ "$output" == *"locksql: v0.16.2 -> v0.17.0"*"locksql: not updated (no terminal to ask)"* ]]
   [[ "$output" == *"not updated: locksql (lea update on a terminal asks; lea update --deps all takes them all)"* ]]
   if calls | grep -q '^git\|^cosign\|^docker\|releases/download'; then false; fi
   [ ! -e "$LEA_CONFIG" ]
@@ -77,7 +77,7 @@ latest() { export "FAKE_CURL_EFFECTIVE_$1=https://github.com/DavidGodefroid/$1/r
 @test "--deps none shows the newer release and updates nothing; --deps all asks nothing" {
   on_tty; latest locksql v0.17.0
   run lea_update_deps none <<<"y"
-  [[ "$output" == *"locksql: v0.16.0 -> v0.17.0"*"locksql: not updated (--deps none)"* ]]
+  [[ "$output" == *"locksql: v0.16.2 -> v0.17.0"*"locksql: not updated (--deps none)"* ]]
   [[ "$output" != *"[y/N]"* ]]
   if calls | grep -q '^git\|^cosign\|^docker'; then false; fi
   run lea_update_deps all </dev/null
@@ -106,7 +106,7 @@ latest() { export "FAKE_CURL_EFFECTIVE_$1=https://github.com/DavidGodefroid/$1/r
   on_tty; latest locksql v0.17.0
   FAKE_COSIGN_RC=1 run lea_update_deps all
   [ "$status" -eq 0 ]
-  [[ "$output" == *"locksql: v0.17.0 at $SHA is not what locksql's release workflow signed; nothing built"*"warning: locksql stays at v0.16.0"* ]]
+  [[ "$output" == *"locksql: v0.17.0 at $SHA is not what locksql's release workflow signed; nothing built"*"warning: locksql stays at v0.16.2"* ]]
   if calls | grep -q '^docker'; then false; fi
   [ ! -e "$LEA_CONFIG" ]
 }
@@ -128,13 +128,13 @@ latest() { export "FAKE_CURL_EFFECTIVE_$1=https://github.com/DavidGodefroid/$1/r
 @test "a failed build records nothing" {
   latest locksql v0.17.0
   FAKE_DOCKER_RC_BUILD__T=1 run lea_update_deps all
-  [[ "$output" == *"could not build locksql:0.17.0"*"warning: locksql stays at v0.16.0"* ]]
+  [[ "$output" == *"could not build locksql:0.17.0"*"warning: locksql stays at v0.16.2"* ]]
   [ ! -e "$LEA_CONFIG" ]
 }
 
 @test "the same, an older or a non-release latest is never offered (no downgrade, never latest/rc)" {
   on_tty
-  for tag in v0.16.0 v0.7.9 latest v0.17.0-rc.1 main ""; do
+  for tag in v0.16.2 v0.7.9 latest v0.17.0-rc.1 main ""; do
     : >"$FAKE_LOG"
     latest locksql "$tag"
     run lea_update_deps all
@@ -142,9 +142,9 @@ latest() { export "FAKE_CURL_EFFECTIVE_$1=https://github.com/DavidGodefroid/$1/r
     [[ "$output" != *"->"* ]]
     if calls | grep -q 'releases/download\|^git\|^docker'; then false; fi
   done
-  latest locksql v0.16.0
+  latest locksql v0.16.2
   run lea_update_deps all
-  [[ "$output" == *"locksql v0.16.0: up to date"* ]]
+  [[ "$output" == *"locksql v0.16.2: up to date"* ]]
   latest locksql latest
   run lea_update_deps all
   [[ "$output" == *"locksql: cannot find its latest release (https://github.com/DavidGodefroid/locksql/releases/latest): not updated"* ]]
@@ -187,8 +187,8 @@ latest() { export "FAKE_CURL_EFFECTIVE_$1=https://github.com/DavidGodefroid/$1/r
 @test "a recorded release older than lea's own pin gives way to the pin; a newer, empty or checkout ref stays" {
   printf "LEA_LOCKSQL_REF='v0.7.0'\nLEA_LOCKSQL_IMAGE='locksql:0.7.0'\nLEA_LOCKFILE_REF='v0.1.1'\nLEA_LOCKMQ_REF='v0.0.1'\n" >"$LEA_CONFIG"
   lea_load_config
-  [ "$LEA_LOCKSQL_REF" = v0.16.0 ]
-  [ "$LEA_LOCKSQL_IMAGE" = locksql:0.16.0 ]
+  [ "$LEA_LOCKSQL_REF" = v0.16.2 ]
+  [ "$LEA_LOCKSQL_IMAGE" = locksql:0.16.2 ]
   [ "$LEA_LOCKFILE_REF" = v0.7.0 ]
   [ "$LEA_LOCKMQ_REF" = v0.7.0 ]
   printf "LEA_LOCKSQL_REF='v0.17.0'\nLEA_LOCKSQL_IMAGE='locksql:0.17.0'\nLEA_LOCKFILE_REF=\nLEA_LOCKMQ_REF='v1.0.0'\n" >"$LEA_CONFIG"
@@ -213,7 +213,7 @@ latest() { export "FAKE_CURL_EFFECTIVE_$1=https://github.com/DavidGodefroid/$1/r
   : >"$BATS_TEST_TMPDIR/elsewhere"; ln -s "$BATS_TEST_TMPDIR/elsewhere" "$LEA_CONFIG"
   run lea_update_deps all
   [ "$status" -eq 0 ]
-  [[ "$output" == *"locksql: locksql:0.17.0 is built but v0.17.0 could not be recorded in $LEA_CONFIG; lea keeps locksql:0.16.0"*"warning: locksql stays at v0.16.0"* ]]
+  [[ "$output" == *"locksql: locksql:0.17.0 is built but v0.17.0 could not be recorded in $LEA_CONFIG; lea keeps locksql:0.16.2"*"warning: locksql stays at v0.16.2"* ]]
   [[ "$output" != *"v0.17.0 recorded"* ]]
   [ ! -s "$BATS_TEST_TMPDIR/elsewhere" ]
 }

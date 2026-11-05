@@ -1,7 +1,11 @@
 # Changelog
 
-## Unreleased
+## v0.8.2 (2026-11-05)
 
+- The image ships locksql 0.16.2: a production console asks for its profile name once per
+  approved policy, not at every start (0.16.1), and keeps the question it waits for next to its
+  socket (0.16.2), which lea reads below. A lock's console records it once its image in
+  lockfamily.yaml is locksql 0.16.2 or later (then `lox up`).
 - A lock console that waits for its start question is named with that question when the console
   records it (lockkit's question file, next to its socket): `lea: locksql NAME waits for: the
   console asks "Vault token for https://vault.example.com:8200:" ...`, and the attach offer says to
