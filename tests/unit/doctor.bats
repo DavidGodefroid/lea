@@ -578,6 +578,11 @@ fake_docker_key() {
   run lea_doctor
   [[ "$output" == *"ok    kata seccomp: lea's profile applied in the guest (disable_guest_seccomp = false in $c)"* ]]
   [[ "$output" != *"warn  kata seccomp"* ]]
+  # Docker Engine reports a shim runtime as {} (no runtimeType): its name tells Kata.
+  export "FAKE_DOCKER_OUT_$k={}"
+  run lea_doctor
+  [[ "$output" == *"ok    kata seccomp: lea's profile applied in the guest (disable_guest_seccomp = false in $c)"* ]]
+  export "FAKE_DOCKER_OUT_$k={\"runtimeType\":\"io.containerd.kata.v2\"}"
   # The first file that exists wins (/etc over the defaults): a default without the setting is not read.
   e="$BATS_TEST_TMPDIR/etc.toml"; printf 'disable_guest_seccomp = false\n' >"$e"
   printf 'disable_guest_seccomp = true\n' >"$c"

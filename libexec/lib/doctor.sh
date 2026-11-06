@@ -276,7 +276,9 @@ lea__doctor_runtime() {
 # without them the agents run without lea's profile (AF_ALG, socketcall), silently.
 lea__doctor_runtime_seccomp() {
   _drsj=$(docker info --format "{{json (index .Runtimes \"$1\")}}" 2>/dev/null | tr -d '\n' || true)
-  case $_drsj in '' | null | '{}' | '{"status":null}') return 0 ;; esac # not readable (Podman): nothing said
+  # Not readable (Podman): nothing said. A shim runtime (runtimeType, Kata's) reads {}: dockerd
+  # leaves its type and options out of docker info, so its name tells Kata.
+  case $_drsj in '' | null) return 0 ;; esac
   _drsp=$(printf '%s' "$_drsj" | sed -n 's/.*"path":"\([^"]*\)".*/\1/p')
   _drst=$(printf '%s' "$_drsj" | sed -n 's/.*"runtimeType":"\([^"]*\)".*/\1/p')
   if [ "$1" = runsc ] || [ "${_drsp##*/}" = runsc ]; then
@@ -287,7 +289,7 @@ lea__doctor_runtime_seccomp() {
     fi
     return 0
   fi
-  case $1:$_drst in kata:* | *:*kata*) ;; *) return 0 ;; esac
+  case $1:$_drst in *kata*:* | *:*kata*) ;; *) return 0 ;; esac
   # The file Kata reads: the registration's ConfigPath, else the first that exists of its shim's
   # flavour (runtime-rs, or the Go runtime), /etc before the defaults.
   _drsl=$(printf '%s' "$_drsj" | sed -n 's/.*"ConfigPath":"\([^"]*\)".*/\1/p')
