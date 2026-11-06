@@ -55,7 +55,14 @@ fi
 mustnt "AF_ALG socket refused (seccomp)"       python3 -c 'import socket; socket.socket(38, 5, 0)'
 # The sandbox (#100): the nested rootless Podman builds and runs over pasta under lea's seccomp
 # profile and AppArmor; what it does not need stays refused, and nothing gets root back.
-must   "a nested image builds"                  sh -c 'd=$(mktemp -d) && printf "FROM busybox:1.37\nRUN echo built >/lea-built\nRUN test -s /lea-built\n" >"$d/Containerfile" && docker build -q -t lea-it-build "$d" && docker rmi lea-it-build; rc=$?; rm -rf "$d"; exit $rc'
+# Its engine's output goes to a log, shown when it fails.
+buildlog=$(mktemp)
+if sh -c 'd=$(mktemp -d) && printf "FROM busybox:1.37\nRUN echo built >/lea-built\nRUN test -s /lea-built\n" >"$d/Containerfile" && docker build -t lea-it-build "$d" && docker rmi lea-it-build; rc=$?; rm -rf "$d"; exit $rc' >"$buildlog" 2>&1; then
+  ok "a nested image builds"
+else
+  ko "a nested image builds"; sed 's/^/     | /' "$buildlog"
+fi
+rm -f "$buildlog"
 # Plain HTTP through the proxy from a nested container: any answer of the proxy (an error page for
 # this name) proves pasta's way out of the nested network namespace.
 must   "a nested container reaches the proxy over pasta" sh -c 'docker run --rm busybox:1.37 sh -c "http_proxy=http://\$1:3128 wget -Y on -T 10 -O /dev/null http://lea-isolation.invalid/ 2>&1" sh "$LEA_PROXY_IP" | grep -q "HTTP/1"'
