@@ -226,7 +226,7 @@ func normalize(w *world, s string) string {
 	s = strings.ReplaceAll(s, Slug(w.proj), "$SLUG")
 	s = strings.ReplaceAll(s, w.dir, "$W")
 	s = strings.ReplaceAll(s, w.root, "$R")
-	if r := (&Launcher{Root: w.root}).proxyRules(); r != "" {
+	if r := (&Launcher{Root: w.root}).proxyRules(proxyConfine); r != "" {
 		s = strings.ReplaceAll(s, r, "$RULES")
 	}
 	return strings.ReplaceAll(s, ID(w.proj), "$ID")
@@ -248,7 +248,7 @@ func commandSetup(t *testing.T, root string, sc commandScenario) (*world, []stri
 	w.env["FAKE_DOCKER_OUT_NETWORK_INSPECT"] = "true"
 	w.env["FAKE_DOCKER_OUT_CONTAINER_INSPECT"] = "172.18.0.5"
 	w.env["FAKE_DOCKER_OUT_INSPECT__F"] = "true"
-	if r := (&Launcher{Root: w.root}).proxyRules(); r != "" {
+	if r := (&Launcher{Root: w.root}).proxyRules(proxyConfine); r != "" {
 		w.env["FAKE_DOCKER_OUT_INSPECT___FORMAT"] = "@" + r
 	}
 	// The recorded scenarios run without the hub: the hub scenarios turn it back on (and the

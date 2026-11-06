@@ -135,6 +135,14 @@ if printf '%s\n' "$glog" | grep -q '"GET http://10.99.0.84:8000/v1/models HTTP/1
 else echo "FAIL lockhttp: forwarder request in the gate log:"; printf '%s\n' "$glog" | grep 10.99.0.84 || true; fail=1; fi
 if dc exec -T lockhttp-gate grep -q '"console":"up"' /run/lockhttp-gate/status.json; then echo "ok   lockhttp: the gate writes its status"
 else echo "FAIL lockhttp: no gate status"; fail=1; fi
+# lea confines only an image that says it runs so (internal/launcher/net.go: proxyConfinable).
+got=$(docker image inspect -f '{{index .Config.Labels "lea.confine"}}' lea-proxy:dev)
+if [ "$got" = 1 ]; then echo "ok   the image is labelled lea.confine=1"; else echo "FAIL the image's lea.confine label: '$got'"; fail=1; fi
+# Every proxy runs confined as lea starts it; check-confined.sh names each check.
+for svc in proxy proxy-allow proxy-default proxy-lockhttp; do
+  echo "-- $svc"
+  "$root/tests/proxy/check-confined.sh" "$(dc ps -q "$svc")" || fail=1
+done
 # Nothing secret in the logs (the forwarder logs name, method, path and status only).
 if dc logs proxy 2>&1 | grep -q -e test-key-123 -e agent-token -e stream=true; then
   echo "FAIL the proxy logs hold a key, a client credential or a query"; fail=1

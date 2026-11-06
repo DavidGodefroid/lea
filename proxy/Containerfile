@@ -14,7 +14,7 @@ RUN CGO_ENABLED=0 GOOS=linux GOARCH=${TARGETARCH} GOFLAGS=-mod=readonly \
     go build -trimpath -ldflags "-s -w" -o /out/lea-keyproxy ./cmd/lea-keyproxy
 
 FROM alpine:3.22
-RUN apk add --no-cache squid socat openssl \
+RUN apk add --no-cache squid socat openssl su-exec \
  && tpl=$(dirname "$(find /usr/share/squid/errors -name ERR_ACCESS_DENIED | head -n1)") \
  && mkdir -p /etc/squid/lea-errors /etc/lea \
  && cp "$tpl"/* /etc/squid/lea-errors/
@@ -23,5 +23,8 @@ COPY proxy/render-squid-conf.sh proxy/sni-matches.sh proxy/entrypoint.sh /usr/lo
 COPY --from=keyproxy /out/lea-keyproxy /usr/local/bin/lea-keyproxy
 COPY config/internal-hosts /etc/lea/internal-hosts
 RUN chmod 0755 /usr/local/bin/render-squid-conf.sh /usr/local/bin/sni-matches.sh /usr/local/bin/entrypoint.sh
+# The entrypoint runs under lea's confinement (no capability but SETUID/SETGID, read-only root, no
+# root service): lea applies it to an image with this label only (internal/launcher/net.go).
+LABEL lea.confine="1"
 EXPOSE 3128 3130 2222 4318 4400
 ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]

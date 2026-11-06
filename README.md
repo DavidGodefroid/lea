@@ -832,7 +832,7 @@ read-only. The screen runs in the deck on the host: agents cannot open or drive 
 | `LEA_EGRESS_ALLOW` | empty (lea's default list) | the only web domains agents may reach, comma separated (subdomains included); `default` stands for lea's list, `*` opens the web |
 | `LEA_NESTED_NETWORKS` | empty | networks your compose files expect, created at start |
 | `LEA_RUNTIME` | empty (the engine's default, runc) | the OCI runtime of the agent containers only: `runsc` (gVisor) or `kata` (Kata Containers) puts a second kernel between the agents and the host's ([a second kernel](#a-second-kernel-gvisor-or-kata)); applies to a container started after the change (`lea stop`, then `lea`) |
-| `LEA_CPUS`, `LEA_MEMORY`, `LEA_MEMORY_SWAP`, `LEA_PIDS_LIMIT` | `75%`, `50%`, no swap, `16384` | the lea container's limits: CPUs (a share of Docker's, at least 2, a number such as `8`, or `0`), memory (a share of Docker's, a size such as `16g`, or `0`), memory plus swap (`-1`: no limit), processes and threads (`0`: no limit); the next `lea` applies them to a running container |
+| `LEA_CPUS`, `LEA_MEMORY`, `LEA_MEMORY_SWAP`, `LEA_PIDS_LIMIT` | `75%`, `50%`, no swap, `16384` | the lea container's limits: CPUs (a share of Docker's, at least 2, a number such as `8`, or `0`), memory (a share of Docker's, a size such as `16g`, or `0`), memory plus swap (`-1`: no limit), processes and threads (`0`: no limit); the next `lea` applies them to a running container, or restarts it with them once no agent or session runs in it; rootless Podman needs `Delegate=cpu cpuset io memory pids` for `user@.service` (`lea doctor` checks it) |
 | `LEA_APPROVALS`, `LEA_APPROVAL_TIMEOUT` | `deck`, `60` | who answers permission requests |
 | `LEA_PROVIDER`, `LEA_MODEL` | `claude`, empty | the default provider and model of a new agent ([providers](#other-providers-codex-ollama-vllm)) |
 | `LEA_PROVIDERS` | `~/.config/lea/providers` | your OpenAI-compatible endpoints and their key files |
@@ -936,6 +936,13 @@ so. Changes apply after `lea init` (endpoints, keys, images, locksql) or `lea st
   literal grants the whole address, every vhost on it included.
 - The API keys of your providers' endpoints stay in the proxy container: no agent mounts a key
   file, and the key forwarder reaches an endpoint only through the proxy's egress rules.
+- The proxy container, the only one on both the agents' networks and the egress network, runs
+  confined: every capability dropped but `SETUID` and `SETGID`, `no-new-privileges`, a read-only
+  root (tmpfs on `/run`, `/tmp` and `/var/cache/squid`), a pids and a memory limit. No service in
+  it runs as root: squid as `squid`, the SSH and OTel forwarders as `nobody`, `lea-keyproxy` as
+  you (the owner of the key files; under rootless Podman, the container's root, which is you on
+  the host); only its entrypoint, PID 1, stays root to wait, or squid is PID 1 when no endpoint
+  is configured. A proxy that could not read a key file stops at start and says which.
 - lea never gets the Docker socket; the agents' own containers run in a rootless Podman inside
   lea, under seccomp and, on Linux, AppArmor. lea's seccomp profile (`image/seccomp.json`, not
   Docker's default) refuses `socketcall` and the kernel crypto API sockets (`AF_ALG`,
@@ -1054,6 +1061,7 @@ make test             # shellcheck + shell unit tests, in a container
 make build            # the lea:dev and lea-proxy:dev images
 make test-proxy       # proxy rules against fake DNS and decoys
 make test-isolation   # isolation checks (needs make build and, on Linux, lea init)
+make test-pressure    # host resources on the real engine (ENGINE=podman for rootless Podman)
 ```
 
 A tag `vX.Y.Z` publishes a release: the archives for Linux and macOS (amd64, arm64), their

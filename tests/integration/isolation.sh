@@ -161,6 +161,9 @@ until LEA_PROJECTS_DIR="$sibling" timeout 30 "$root/bin/lea" shell -- curl -s -o
   sleep 1
 done
 rc=0
+# The proxy lea started is confined (#102): capabilities, no-new-privileges, read-only root,
+# limits, no root process but PID 1.
+"$root/tests/proxy/check-confined.sh" lea-test-proxy || rc=1
 echo "isolation: the checks inside lea"
 LEA_PROJECTS_DIR="$projects" timeout 900 "$root/bin/lea" shell -- env CANARY_IP="$canary_ip" GW_IP="$gw_ip" HOST_IP="$host_ip" \
   SIBLING_IP="$sibling_ip" HOST_KERNEL="$(uname -r)" SECOND_KERNEL="${runtime:+1}" HOST_FACADE="$facade" HOST_CRED_SHA="$cred_sha" HOST_HIST_SHA="$hist_sha" sh "$projects/inside-isolation.sh" || rc=$?

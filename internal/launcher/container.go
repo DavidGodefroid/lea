@@ -1,6 +1,8 @@
 package launcher
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"math"
@@ -135,7 +137,74 @@ func (l *Launcher) resolvedLimits() limits {
 	if p := l.Cfg.Get("LEA_PIDS_LIMIT"); p != "0" {
 		r.pids = p
 	}
+	return l.withoutMissingControllers(r)
+}
+
+// delegateFix is how a user of rootless Podman gives their containers the cgroup controllers
+// lea's limits need: systemd delegates them to user@.service.
+const delegateFix = "sudo systemctl edit user@.service, add [Service] Delegate=cpu cpuset io memory pids, log in again, then lea stop and lea"
+
+// missingControllers is the cgroup controllers among cpu, memory and pids that rootless Podman
+// does not get (its {{.Host.CgroupControllers}}, which the user's systemd delegates): a limit of
+// one of them makes podman run fail. Nil for Docker, rootful Podman or when Podman does not tell.
+func (l *Launcher) missingControllers() map[string]bool {
+	out, err := l.output(false, "docker", "system", "info", "--format", "{{.Host.Security.Rootless}} {{.Host.CgroupControllers}}")
+	rest, rootless := strings.CutPrefix(strings.TrimSpace(out), "true ")
+	if err != nil || !rootless {
+		return nil
+	}
+	have := map[string]bool{}
+	for _, c := range strings.Fields(strings.Trim(rest, "[]")) {
+		have[c] = true
+	}
+	if len(have) == 0 {
+		return nil
+	}
+	miss := map[string]bool{}
+	for _, c := range []string{"cpu", "memory", "pids"} {
+		if !have[c] {
+			miss[c] = true
+		}
+	}
+	return miss
+}
+
+// withoutMissingControllers drops from r the limits whose controller rootless Podman lacks
+// (#132): the lea container starts with the others rather than not at all, and one warning per
+// lea names the fix. lea doctor reports it too.
+func (l *Launcher) withoutMissingControllers(r limits) limits {
+	miss := l.missingControllers()
+	var dropped, names []string
+	if miss["cpu"] && r.cpus != "" {
+		dropped, names, r.cpus = append(dropped, "--cpus "+r.cpus), append(names, "cpu"), ""
+	}
+	if miss["memory"] && r.mem != "" {
+		dropped, names, r.mem, r.swap = append(dropped, "--memory "+r.mem), append(names, "memory"), "", ""
+	}
+	if miss["pids"] && r.pids != "" {
+		dropped, names, r.pids = append(dropped, "--pids-limit "+r.pids), append(names, "pids"), ""
+	}
+	if root := l.root(); len(dropped) > 0 && !root.ctrlWarned {
+		root.ctrlWarned = true
+		l.logf("warning: rootless Podman does not get the %s cgroup controller: the lea container runs without %s; to apply it: %s",
+			strings.Join(names, " and "), strings.Join(dropped, ", "), delegateFix)
+	}
 	return r
+}
+
+// digest is the lea.limits label of a container started with limits r: equal limits give the
+// same digest, and any limit that changes changes it.
+func (r limits) digest() string {
+	h := sha256.Sum256([]byte("cpus=" + r.cpus + "\nmemory=" + r.mem + "\nswap=" + r.swap + "\npids=" + r.pids + "\n"))
+	return hex.EncodeToString(h[:8])
+}
+
+// nanos is r as the engine's inspect tells limits: NanoCpus, Memory, MemorySwap and PidsLimit, 0
+// for no limit (lea doctor compares them, LEA_LIMITS_WANT).
+func (r limits) nanos() string {
+	c, _ := strconv.ParseFloat(r.cpus, 64)
+	p, _ := strconv.ParseInt(r.pids, 10, 64)
+	return fmt.Sprintf("%d %d %d %d", int64(math.Round(c*1e9)), sizeBytes(r.mem), sizeBytes(r.swap), p)
 }
 
 // args are the flags of limits r, for docker run and docker update.
@@ -156,7 +225,10 @@ func (r limits) args() []string {
 // limitArgs are the lea container's resource limits (#97, #132): without them a pile of nested
 // stacks takes the whole host down (OOM, swap thrash, every core busy) instead of being held
 // inside lea.
-func (l *Launcher) limitArgs() []string { return l.resolvedLimits().args() }
+func (l *Launcher) limitArgs() []string {
+	r := l.resolvedLimits()
+	return append(r.args(), "--label", "lea.limits="+r.digest())
+}
 
 // sizeBytes is a docker size (dockerSize: 512m, 8g, 1024) in bytes, -1 as is, 0 for "" (no
 // limit).
@@ -205,18 +277,24 @@ func (l *Launcher) usage(name string) (mem, pids int64, ok bool) {
 // Podman without the cpu or memory controller): the next lea neither retries nor warns again.
 func (l *Launcher) limitsRefused(name string) string { return l.Cfg.HostDir() + "/limits/" + name }
 
+// pidsLimitFormat is the container's pids limit for docker inspect, 0 for none: Docker's is a
+// pointer, which recent releases print as "<no value>" (older ones "<nil>") when unset.
+const pidsLimitFormat = "{{with .HostConfig.PidsLimit}}{{.}}{{else}}0{{end}}"
+
 // applyLimits gives a running lea container the configured limits it lacks (#132): one started
 // by an older lea, or before a limit changed, ran without them until it restarted. Docker and
 // Podman both change them in place (docker update). The CPUs only throttle: always applied. A
-// memory or pids limit is lowered only while the usage stays under headroom of it; otherwise,
-// and when the engine refuses, a warning says to restart the container (lea stop, then lea) at a
-// quiet time. A limit turned off is only taken away by a restart.
-func (l *Launcher) applyLimits(name string) {
+// memory or pids limit is lowered only while the usage stays under headroom of it. When one is
+// held back that way, or the engine refuses the update, applyLimits says so once and returns true:
+// the container needs a restart, which up does at once when nothing runs in it, and otherwise
+// leaves to a later lea (or lea stop, then lea). A limit turned off is only taken away by a
+// restart.
+func (l *Launcher) applyLimits(name string) (restart bool) {
 	out, err := l.output(false, "docker", "inspect", "--format",
-		"{{.Id}} {{.HostConfig.NanoCpus}} {{.HostConfig.Memory}} {{.HostConfig.MemorySwap}} {{.HostConfig.PidsLimit}}", name)
+		"{{.Id}} {{.HostConfig.NanoCpus}} {{.HostConfig.Memory}} {{.HostConfig.MemorySwap}} "+pidsLimitFormat, name)
 	f := strings.Fields(out)
 	if err != nil || len(f) != 5 {
-		return
+		return false
 	}
 	id, n := f[0], make([]int64, 4)
 	for i, v := range f[1:] {
@@ -225,7 +303,7 @@ func (l *Launcher) applyLimits(name string) {
 		}
 		x, err := strconv.ParseInt(v, 10, 64)
 		if err != nil {
-			return
+			return false
 		}
 		n[i] = x
 	}
@@ -249,20 +327,21 @@ func (l *Launcher) applyLimits(name string) {
 		}
 	}
 	if len(fix.args()) == 0 {
-		return
+		return false
 	}
 	// A limit is lowered when there was none or it was higher: only with headroom.
 	lowerMem := fix.mem != "" && (memory == 0 || memory > wantMem)
 	lowerPids := fix.pids != "" && (pidsLimit == 0 || pidsLimit > wantPids)
+	var held, heldFlags []string
 	if lowerMem || lowerPids {
 		mem, pids, ok := l.usage(name)
-		var held []string
 		if lowerMem && (!ok || float64(mem) >= headroom*float64(wantMem)) {
 			if ok {
 				held = append(held, fmt.Sprintf("--memory %s (%d MiB in use)", fix.mem, mem>>20))
 			} else {
 				held = append(held, fmt.Sprintf("--memory %s (usage unknown)", fix.mem))
 			}
+			heldFlags = append(heldFlags, "--memory "+fix.mem)
 			fix.mem, fix.swap = "", ""
 		}
 		if lowerPids && (!ok || float64(pids) >= headroom*float64(wantPids)) {
@@ -271,35 +350,104 @@ func (l *Launcher) applyLimits(name string) {
 			} else {
 				held = append(held, fmt.Sprintf("--pids-limit %s (usage unknown)", fix.pids))
 			}
+			heldFlags = append(heldFlags, "--pids-limit "+fix.pids)
 			fix.pids = ""
-		}
-		if len(held) > 0 {
-			l.logf("warning: the running %s keeps its limits for now: %s; run 'lea stop', then lea, at a quiet time to apply them",
-				name, strings.Join(held, ", "))
 		}
 	}
 	a := fix.args()
-	if len(a) == 0 {
-		return
+	// What lea remembers it said about this container: the next lea neither retries nor warns
+	// again, and still knows the container needs a restart.
+	stampOf := func(a []string) string {
+		st := id + " " + strings.Join(a, " ")
+		if len(heldFlags) > 0 {
+			st += " held " + strings.Join(heldFlags, " ")
+		}
+		return st
 	}
-	stamp, refused := id+" "+strings.Join(a, " "), l.limitsRefused(name)
+	stamp := stampOf(a)
+	refused := l.limitsRefused(name)
 	// The file is lea's own, below the data directory (SafePath: no symbolic link on the way).
 	safe := SafePath(l.Cfg.DataDir(), refused) == nil
-	if safe && readTrim(refused) == stamp {
-		return
+	// A refusal is not tried again for the same container; a held limit is weighed again at each
+	// lea (the usage may have fallen), without saying the same thing twice.
+	seen := safe && readTrim(refused) == stamp
+	if seen && len(heldFlags) == 0 {
+		return true
 	}
-	if l.quiet("docker", append(append([]string{"update"}, a...), name)...) != nil {
-		l.logf("warning: could not apply the limits %s to the running %s; run 'lea stop', then lea, to restart it with them",
-			strings.Join(a, " "), name)
+	remember := func() {
 		if safe && Mkdirs(l.Cfg.DataDir(), parentText(refused)) == nil {
 			_ = WriteFile(l.Cfg.DataDir(), refused, []byte(stamp+"\n"))
 		}
-		return
+	}
+	if len(held) > 0 && !seen {
+		l.logf("warning: the running %s keeps its limits for now: %s; lea restarts it with them once no agent or session runs in it (or run 'lea stop', then lea, at a quiet time)",
+			name, strings.Join(held, ", "))
+	}
+	if len(a) == 0 {
+		remember()
+		return true
+	}
+	if l.quiet("docker", append(append([]string{"update"}, a...), name)...) != nil {
+		if !seen {
+			l.logf("warning: could not apply the limits %s to the running %s; lea restarts it with them once no agent or session runs in it (or run 'lea stop', then lea)",
+				strings.Join(a, " "), name)
+		}
+		remember()
+		return true
+	}
+	l.logf("applied the limits %s to the running %s", strings.Join(a, " "), name)
+	if len(held) > 0 {
+		// The next lea finds these applied: only the held ones are left to remember.
+		stamp = stampOf(nil)
+		remember()
+		return true
 	}
 	if safe {
 		os.Remove(refused)
 	}
-	l.logf("applied the limits %s to the running %s", strings.Join(a, " "), name)
+	return false
+}
+
+// containerQuiet: nothing runs in the projects dir's container that a restart would cut: no lea
+// session (lea --shell), no deck agent, no deck in tmux.
+func (l *Launcher) containerQuiet(proj string) bool {
+	if n, err := l.sessionCount(ID(proj)); err != nil || n > 0 {
+		return false
+	}
+	// An agent count lea cannot read is not "none": an exec that fails (the engine busy, the
+	// container paused) keeps the container rather than cutting agents it did not see.
+	if live, err := l.agentsRunning(proj); err != nil || live {
+		return false
+	}
+	if s, ok := l.tmuxServer(); ok && l.tmuxClient(s, "has-session", "-t", "="+l.Cfg.ContainerName(proj)) == nil {
+		return false
+	}
+	return true
+}
+
+// startedWithLimits: the container was started with the limits the configuration resolves to
+// now (its lea.limits label is their digest). The engine then holds it below them as well as it
+// can: a restart would start it again with the same flags (rootless Podman on cgroup v1, which
+// names no controller, ignores them at run as at update), so lea does not restart it again and
+// again (#132). A container without the label (an older lea) or with another digest was not.
+func (l *Launcher) startedWithLimits(name string) bool {
+	out, err := l.output(false, "docker", "container", "inspect", "--format", `{{index .Config.Labels "lea.limits"}}`, name)
+	got := strings.TrimSpace(out)
+	return err == nil && got != "" && got == l.resolvedLimits().digest()
+}
+
+// restartForLimits stops the projects dir's quiet container as lea stop does (its exit scan
+// included) and starts it again with the configured limits (#132).
+func (l *Launcher) restartForLimits(proj, pip string) error {
+	name := l.Cfg.ContainerName(proj)
+	l.logf("restarting the idle %s to apply its limits (no agent or session runs in it)", name)
+	l.deckStop(name, false)
+	_ = l.sh("scan-finish", proj)
+	_ = l.quiet("docker", "stop", name)
+	if p := l.limitsRefused(name); SafePath(l.Cfg.DataDir(), p) == nil {
+		os.Remove(p)
+	}
+	return l.containerStart(proj, pip)
 }
 
 // busArgs is lea_bus_args: the core binary read-only at /usr/local/bin/lea and the container's
@@ -693,8 +841,18 @@ func (l *Launcher) containerExec(name, wd string, cmd ...string) error {
 
 // agentsLive is lea__agents_live: the container runs deck agents.
 func (l *Launcher) agentsLive(proj string) bool {
+	live, err := l.agentsRunning(proj)
+	return err == nil && live
+}
+
+// agentsRunning is whether the container runs deck agents, with the error of the docker exec that
+// lists them: a caller about to cut them (containerQuiet) treats an error as agents running.
+func (l *Launcher) agentsRunning(proj string) (bool, error) {
 	out, err := l.output(false, "docker", "exec", "-u", uidgid(), l.Cfg.ContainerName(proj), "lea-agent", "ls")
-	return err == nil && out != ""
+	if err != nil {
+		return false, err
+	}
+	return out != "", nil
 }
 
 // IsTerminal is `[ -t N ]` for the launcher's stdin or stdout.
