@@ -58,17 +58,16 @@ func TestLimitsE2E(t *testing.T) {
 		t.Fatalf("the container starts with limits already: %s", got)
 	}
 
-	// The launcher, with the engine as its docker; the engine keeps the user's own HOME and
-	// runtime directory (rootless Podman's storage), the world only gives lea its directories.
+	// The launcher, with the engine as its docker. The engine runs with this test's own
+	// environment (HOME, XDG_RUNTIME_DIR: rootless Podman's storage and socket), not the world's,
+	// which only gives lea its directories.
 	w := newWorld(t, repoRoot(t))
 	shim := t.TempDir()
-	env := ""
-	for _, k := range []string{"HOME", "XDG_RUNTIME_DIR", "XDG_CONFIG_HOME", "XDG_DATA_HOME", "DBUS_SESSION_BUS_ADDRESS", "CONTAINER_HOST", "DOCKER_HOST"} {
-		if v, ok := os.LookupEnv(k); ok {
-			env += " " + k + "=" + shellQuote(v)
-		}
+	script := "#!/bin/sh\nexec env -i"
+	for _, kv := range os.Environ() {
+		script += " " + shellQuote(kv)
 	}
-	script := "#!/bin/sh\nexec env" + env + " " + shellQuote(bin) + " \"$@\"\n"
+	script += " " + shellQuote(bin) + " \"$@\"\n"
 	if err := os.WriteFile(filepath.Join(shim, "docker"), []byte(script), 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -77,6 +76,11 @@ func TestLimitsE2E(t *testing.T) {
 	l := w.launcher()
 	if restart := l.applyLimits(name); restart {
 		t.Fatalf("the update was refused or held: %s", w.errb.String())
+	}
+	if !strings.Contains(w.errb.String(), "applied the limits") {
+		out, err := exec.Command(filepath.Join(shim, "docker"), "inspect", "--format",
+			"{{.Id}} {{.HostConfig.NanoCpus}} {{.HostConfig.Memory}} {{.HostConfig.MemorySwap}} "+pidsLimitFormat, name).CombinedOutput()
+		t.Fatalf("nothing applied: the launcher's inspect answers %q (%v); stderr %q", out, err, w.errb.String())
 	}
 	t.Logf("launcher: %s", strings.TrimSpace(w.errb.String()))
 	got := must("inspect", "--format", "{{.HostConfig.NanoCpus}} {{.HostConfig.Memory}} {{.HostConfig.MemorySwap}} {{.HostConfig.PidsLimit}}", name)
