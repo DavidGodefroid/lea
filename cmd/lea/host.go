@@ -896,14 +896,13 @@ func runInboxWait(args []string, stdout, stderr io.Writer) int {
 	return 0
 }
 
-// soundFiles maps each sound kind to its file: the freedesktop sounds unless LEA_SOUND_ATTENTION
-// or LEA_SOUND_DONE names another (an absolute path: anything else, which the player could read
+// soundFiles maps each sound kind to its file: the freedesktop sound unless LEA_SOUND_ATTENTION
+// names another (an absolute path: anything else, which the player could read
 // as an option, plays nothing), and none for a kind set to 0. on is false when LEA_SOUND=0.
 func soundFiles(getenv func(string) string) (files map[string]string, on bool) {
 	files = map[string]string{}
 	for kind, def := range map[string]string{
 		daemon.SoundAttention: "/usr/share/sounds/freedesktop/stereo/message-new-instant.oga",
-		daemon.SoundDone:      "/usr/share/sounds/freedesktop/stereo/complete.oga",
 	} {
 		switch f := getenv("LEA_SOUND_" + strings.ToUpper(kind)); f {
 		case "0":

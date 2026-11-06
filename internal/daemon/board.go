@@ -1,9 +1,11 @@
 package daemon
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"unicode/utf8"
 
 	"github.com/DavidGodefroid/lea/internal/store"
@@ -38,7 +40,10 @@ func checkLine(field, v string, max int) error {
 
 // taskUpdate records the calling agent's report on its own task (spec §6.1); it feeds the deck's
 // row and lea board. No method writes another agent's task.
-func (d *Daemon) taskUpdate(o Origin, me string, raw json.RawMessage) (any, error) {
+//
+// A report whose blocked_on turns non-empty rings the attention sound: the agent waits on a
+// human (#294).
+func (d *Daemon) taskUpdate(ctx context.Context, o Origin, me string, raw json.RawMessage) (any, error) {
 	if _, err := d.spawnedCaller(o, me, "task_update"); err != nil {
 		return nil, err
 	}
@@ -61,12 +66,21 @@ func (d *Daemon) taskUpdate(o Origin, me string, raw json.RawMessage) (any, erro
 	if err := d.rates.allow("task_update", me, d.now()); err != nil {
 		return nil, err
 	}
+	// One report at a time per agent: blocked_on is read, then written.
+	defer d.lockKey("task:" + me)()
+	wasBlocked := false
+	if t, err := d.st.TaskOf(me); err == nil && t.Ended == 0 {
+		wasBlocked = strings.TrimSpace(t.BlockedOn) != ""
+	}
 	changed, err := d.st.UpdateTask(me, p.StatusText, p.Next, p.BlockedOn, d.now())
 	if err != nil {
 		return nil, err
 	}
 	if changed {
 		d.changed()
+	}
+	if !wasBlocked && strings.TrimSpace(p.BlockedOn) != "" {
+		d.sound(ctx, o.Container, SoundAttention)
 	}
 	return struct{}{}, nil
 }

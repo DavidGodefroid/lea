@@ -284,7 +284,7 @@ func TestPostToolUseForwardsOnlyNeededFields(t *testing.T) {
 }
 
 // A tool event says who runs the tool: the agent itself (an empty agent_id), or a subagent such as
-// an agent-type Stop hook's (the daemon times the done sound by it). An unusable id is left out.
+// an agent-type Stop hook's (the daemon tells a blocked stop by it). An unusable id is left out.
 func TestToolEventsForwardTheAgentID(t *testing.T) {
 	_, bus, db := startDB(t)
 	runHook(bus, "PreToolUse", `{"hook_event_name":"PreToolUse","session_id":"s1","tool_name":"Glob","agent_id":"hook-agent-ea5c9260-31cb-41b8-8875-f52518a3b113"}`, nil)

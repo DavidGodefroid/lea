@@ -238,7 +238,6 @@ func (d *Daemon) agentsStop(ctx context.Context, o Origin, me string, raw json.R
 	if err := a.Stop(ctx, key); err != nil {
 		return nil, err
 	}
-	d.cancelDone(key)
 	d.pruneForgotten()
 	d.changed()
 	return map[string]string{"stopped": t.Name}, nil

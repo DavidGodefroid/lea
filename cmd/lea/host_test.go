@@ -623,20 +623,22 @@ func TestRequestCommands(t *testing.T) {
 }
 
 func TestSoundFilesFromTheEnvironment(t *testing.T) {
-	const att, done = "/usr/share/sounds/freedesktop/stereo/message-new-instant.oga", "/usr/share/sounds/freedesktop/stereo/complete.oga"
+	const att = "/usr/share/sounds/freedesktop/stereo/message-new-instant.oga"
 	for _, c := range []struct {
 		env  map[string]string
 		want map[string]string
 		on   bool
 	}{
-		{nil, map[string]string{daemon.SoundAttention: att, daemon.SoundDone: done}, true},
-		{map[string]string{"LEA_SOUND_DONE": "0"}, map[string]string{daemon.SoundAttention: att}, true},
-		{map[string]string{"LEA_SOUND_ATTENTION": "0"}, map[string]string{daemon.SoundDone: done}, true},
-		{map[string]string{"LEA_SOUND_ATTENTION": "/a.oga", "LEA_SOUND_DONE": "/d.oga"}, map[string]string{daemon.SoundAttention: "/a.oga", daemon.SoundDone: "/d.oga"}, true},
-		{map[string]string{"LEA_SOUND": "0"}, map[string]string{daemon.SoundAttention: att, daemon.SoundDone: done}, false},
-		{map[string]string{"LEA_SOUND": "1"}, map[string]string{daemon.SoundAttention: att, daemon.SoundDone: done}, true},
+		{nil, map[string]string{daemon.SoundAttention: att}, true},
+		{map[string]string{"LEA_SOUND_ATTENTION": "0"}, map[string]string{}, true},
+		{map[string]string{"LEA_SOUND_ATTENTION": "/a.oga"}, map[string]string{daemon.SoundAttention: "/a.oga"}, true},
+		{map[string]string{"LEA_SOUND": "0"}, map[string]string{daemon.SoundAttention: att}, false},
+		{map[string]string{"LEA_SOUND": "1"}, map[string]string{daemon.SoundAttention: att}, true},
+		// No sound for a turn end any more (#294): an old LEA_SOUND_DONE adds nothing.
+		{map[string]string{"LEA_SOUND_DONE": "/d.oga"}, map[string]string{daemon.SoundAttention: att}, true},
 		// A value the player could read as an option, or a relative path, plays nothing.
-		{map[string]string{"LEA_SOUND_ATTENTION": "--help", "LEA_SOUND_DONE": "x.oga"}, map[string]string{}, true},
+		{map[string]string{"LEA_SOUND_ATTENTION": "--help"}, map[string]string{}, true},
+		{map[string]string{"LEA_SOUND_ATTENTION": "x.oga"}, map[string]string{}, true},
 	} {
 		files, on := soundFiles(func(k string) string { return c.env[k] })
 		if !reflect.DeepEqual(files, c.want) || on != c.on {

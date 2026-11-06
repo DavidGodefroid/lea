@@ -268,10 +268,13 @@ profile and state in the bottom border.
   or q to go back`, the line at the top of the view out of the history's lines, counting down as
   you scroll up. Any typed key (`q`, `Escape`, `Enter`, a letter…) goes back to the prompt; that key is
   not typed, the next ones are.
-- **Sounds.** lea plays a sound when an agent starts waiting for you, and another when a turn
-  ends, while a deck shows the agent. `lea sound on|off` and the deck's `S` switch them at
-  runtime; `LEA_SOUND=0` starts with them off; `LEA_SOUND_ATTENTION` and `LEA_SOUND_DONE` pick
-  the files, or mute one event with `0`.
+- **Sounds.** lea plays a sound only when it needs you, while a deck shows the agent: a
+  permission dialog or an approval card waits, a lock console or a hub ticket waits for you, an
+  agent sends you a request (`msg_send` to `user`, kind `request`, or a `needs_user` reply), or an
+  agent reports it is blocked on a human (`task_update` whose `blocked_on` becomes non-empty). A
+  turn that simply ends rings nothing. `lea sound on|off` and the deck's `S` switch it at
+  runtime; `LEA_SOUND=0` starts with it off; `LEA_SOUND_ATTENTION` picks the file, or mutes it
+  with `0`.
 - **Names.** An agent you have not renamed is named after its first prompt, by a short
   `claude -p` run on the host with a small model (`LEA_AUTONAME_MODEL`, `haiku` by default;
   `LEA_AUTONAME=0` turns it off). The prompt is not stored.
@@ -868,7 +871,7 @@ read-only. The screen runs in the deck on the host: agents cannot open or drive 
 | `LEA_ADMIT_CPU_PSI`, `LEA_ADMIT_MEM_PCT`, `LEA_ADMIT_MEM_PSI`, `LEA_ADMIT_IO_PSI`, `LEA_ADMIT_LOAD` | `40`, `85`, `10`, `40`, `2` | [host pressure](#host-pressure) above which new agents wait: PSI in percent, memory in percent of the lea container's limit (the host's from 90 %), the host's load per CPU (`0`: that one off) |
 | `LEA_SHED_MEM_PCT`, `LEA_SHED_MEM_PSI`, `LEA_SHED_CPU_PSI`, `LEA_SHED_AFTER`, `LEA_SHED_RESUME` | `95`, `30`, `80`, `30`, `60` | [host pressure](#host-pressure) that pauses the lowest-priority agent once it lasts `LEA_SHED_AFTER` seconds (`0`: never), resumed after `LEA_SHED_RESUME` seconds of calm |
 | `LEA_SOUND`, `LEA_AUTONAME` | on | the deck's sounds, automatic names (`0`: off) |
-| `LEA_SOUND_ATTENTION`, `LEA_SOUND_DONE` | freedesktop sounds | the file of each sound (`0`: that one off) |
+| `LEA_SOUND_ATTENTION` | freedesktop sound | the file of the sound lea plays when it needs you (`0`: off) |
 | `LEA_OTEL_UPSTREAM` | empty | send Claude Code usage telemetry to this OTLP collector |
 | `LEA_ASCII` | off | ASCII marks in the deck (`1`) |
 

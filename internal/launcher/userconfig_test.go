@@ -66,26 +66,26 @@ func TestAssignmentNamesTheFile(t *testing.T) {
 func TestWriteUserConfig(t *testing.T) {
 	w := newWorld(t, repoRoot(t))
 	p := filepath.Join(w.env["XDG_CONFIG_HOME"], "lea", "lea.conf")
-	if err := WriteUserConfig(p, "LEA_SOUND_DONE", "/it's here.oga"); err != nil {
+	if err := WriteUserConfig(p, "LEA_SOUND_ATTENTION", "/it's here.oga"); err != nil {
 		t.Fatal(err)
 	}
 	writeUserConf(t, w, "# mine\nLEA_APPROVALS=pane\nLEA_SOUND=1\nLEA_APPROVALS=deck\n")
 	if err := WriteUserConfig(p, "LEA_APPROVALS", "pane"); err != nil {
 		t.Fatal(err)
 	}
-	if err := WriteUserConfig(p, "LEA_SOUND_DONE", "/it's here.oga"); err != nil {
+	if err := WriteUserConfig(p, "LEA_SOUND_ATTENTION", "/it's here.oga"); err != nil {
 		t.Fatal(err)
 	}
 	b, _ := os.ReadFile(p)
-	if want := "# mine\nLEA_SOUND=1\nLEA_APPROVALS='pane'\nLEA_SOUND_DONE='/it'\\''s here.oga'\n"; string(b) != want {
+	if want := "# mine\nLEA_SOUND=1\nLEA_APPROVALS='pane'\nLEA_SOUND_ATTENTION='/it'\\''s here.oga'\n"; string(b) != want {
 		t.Fatalf("file:\n%s\nwant:\n%s", b, want)
 	}
 	if st, _ := os.Stat(p); st.Mode().Perm() != 0o600 {
 		t.Errorf("mode %v", st.Mode())
 	}
 	c, err := LoadConfig(w.getenv, w.root, w.proj)
-	if err != nil || c.Get("LEA_SOUND_DONE") != "/it's here.oga" {
-		t.Fatalf("read back %q: %v", c.Get("LEA_SOUND_DONE"), err)
+	if err != nil || c.Get("LEA_SOUND_ATTENTION") != "/it's here.oga" {
+		t.Fatalf("read back %q: %v", c.Get("LEA_SOUND_ATTENTION"), err)
 	}
 	link := filepath.Join(w.dir, "link.conf")
 	os.Symlink(p, link)
@@ -132,16 +132,16 @@ func TestWrittenValuesSourceLiterally(t *testing.T) {
 	w := newWorld(t, repoRoot(t))
 	p := filepath.Join(w.env["XDG_CONFIG_HOME"], "lea", "lea.conf")
 	for _, v := range []string{"it's", "$(id)", "`id`", "a; b", "$HOME", `"q"`, `\x`, "'; touch pwned; '", "a'b'c"} {
-		if err := WriteUserConfig(p, "LEA_SOUND_DONE", v); err != nil {
+		if err := WriteUserConfig(p, "LEA_SOUND_ATTENTION", v); err != nil {
 			t.Fatal(err)
 		}
-		out, err := exec.Command("/bin/sh", "-c", `. "$1"; printf '%s' "$LEA_SOUND_DONE"`, "sh", p).CombinedOutput()
+		out, err := exec.Command("/bin/sh", "-c", `. "$1"; printf '%s' "$LEA_SOUND_ATTENTION"`, "sh", p).CombinedOutput()
 		if err != nil || string(out) != v {
 			t.Errorf("sh reads %q (%v), want %q", out, err, v)
 		}
 		c, err := LoadConfig(w.getenv, w.root, w.proj)
-		if err != nil || c.Get("LEA_SOUND_DONE") != v {
-			t.Errorf("Go reads %q (%v), want %q", c.Get("LEA_SOUND_DONE"), err, v)
+		if err != nil || c.Get("LEA_SOUND_ATTENTION") != v {
+			t.Errorf("Go reads %q (%v), want %q", c.Get("LEA_SOUND_ATTENTION"), err, v)
 		}
 	}
 	if _, err := os.Stat(filepath.Join(w.proj, "pwned")); err == nil {

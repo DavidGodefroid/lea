@@ -166,8 +166,6 @@ func (d *Daemon) dispatchDeck(ctx context.Context, o Origin, req wire.Request) (
 			stop = a.RemoveEnded
 		}
 		err := stop(ctx, p.Key)
-		// A stopped agent's last turn does not ring.
-		d.cancelDone(p.Key)
 		d.pruneForgotten()
 		return ok, err
 	case "agents_mark_stopped":
