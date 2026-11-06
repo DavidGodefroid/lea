@@ -308,9 +308,11 @@ func (d *Daemon) grantCaller(o Origin, me, cwd string) (grants.Caller, error) {
 // process ended: what stop-finished covers.
 func (d *Daemon) finishedChild(o Origin, me string, input json.RawMessage) bool {
 	var in struct {
-		Name string `json:"name"`
+		Name    string `json:"name"`
+		Cascade bool   `json:"cascade"`
 	}
-	if json.Unmarshal(input, &in) != nil || !validTarget(in.Name) {
+	// A cascade stops the child's own team too, which may still be at work: never "finished".
+	if json.Unmarshal(input, &in) != nil || !validTarget(in.Name) || in.Cascade {
 		return false
 	}
 	key, err := d.resolveSpawned(in.Name, o.Container)
@@ -353,7 +355,22 @@ func (d *Daemon) grantCheck(o Origin, me string, raw json.RawMessage) (any, erro
 		return nil, err
 	}
 	finished := p.Tool == grants.StopTool && d.finishedChild(o, me, p.Input)
+	var policy *grants.MergePolicy
+	if _, req, ok := grants.Classify(p.Tool, p.Input, c); ok && req.Action == grants.Merge {
+		// A tower's tree merges into production only inside its lead's window, and only a
+		// low-risk PR (#110): the pinned gh merge checks it. A merge it cannot check is denied.
+		if policy = d.mergePolicy(c, grants.MergeNumber(req)); policy != nil {
+			if req.Prog != "gh" || grants.MergeNumber(req) == "" {
+				return map[string]any{"verdict": grants.Deny, "reason": "lea: in a tower's tree a merge names its GitHub PR number (gh pr merge N), " +
+					"so that lea can check the production-merge policy (deploy window, CI, review, sensitive paths); ask your lead or tower otherwise"}, nil
+			}
+			c.Merge = policy
+		}
+	}
 	dec := grants.Decide(p.Tool, p.Input, c, gs, now, finished)
+	if dec.Verdict == grants.Allow && policy != nil {
+		d.merges.add(me, grants.MergeNumber(dec.Request), now)
+	}
 	if dec.Verdict == "" {
 		// A push no grant rewrote runs as the agent wrote it: its bare branch must not be a tag.
 		if why := grants.RawPush(p.Tool, p.Input, c); why != "" {

@@ -54,7 +54,16 @@ func firstPrompt(a store.Agent, repo, worktree string, brief bool) string {
 	// The deck shows an agent's label, the user may rename it at any time (#84).
 	b.WriteString(" When you mention an agent in text the user reads (task_update, results your lead relays), use its label from agents_list" +
 		" when it has one, looked up fresh since the user may rename it; address tools by name, never by label.")
-	if a.Parent != "" {
+	r, rerr := roles.Get(a.Role)
+	switch {
+	case rerr == nil && r.Root:
+		b.WriteString(" You are the user's control tower: run their projects with the control-tower skill (/lea:control-tower).")
+	case a.Parent != "" && rerr == nil && r.CanSpawn:
+		// A tower's lead (#110): it runs its project's team and reports per issue.
+		parent := a.Parent[strings.LastIndex(a.Parent, "/")+1:]
+		fmt.Fprintf(&b, " Your tower is %s: run your project's team with the project-lead skill (/lea:project-lead)."+
+			" Send it one short msg_send (to %s, kind result) per completed issue, and escalate only a decision you cannot take (kind request), one at a time.", parent, parent)
+	case a.Parent != "":
 		// The lead that started the agent waits for its answer: task_update alone reaches the
 		// board, never the lead's inbox.
 		parent := a.Parent[strings.LastIndex(a.Parent, "/")+1:]

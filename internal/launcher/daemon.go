@@ -4,6 +4,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 	"syscall"
@@ -88,6 +89,42 @@ func DaemonHubStamp(get func(string) string) string {
 		return "off"
 	}
 	return "on " + strconv.Itoa(int(HubKeepalive(get)/time.Second))
+}
+
+// Tree settings (#110): LEA_MAX_AGENTS caps the running agents lea started when an agent starts
+// one (0: no cap; at most 1000; 30 when unset or invalid); LEA_CTX_WARN is the context use, in
+// percent, past which a child's parent is told (0: off; 70); LEA_IDLE_WARN the minutes a child
+// with an unfinished task stays idle before its parent is told (0: off; at most 1440; 30);
+// LEA_TOWER_OWNERS the GitHub or GitLab owners (users, organisations, groups) whose repositories
+// the tower takes charge of, space-separated (invalid words are dropped).
+func TreeSettings(get func(string) string) (maxAgents, ctxWarn int, idleWarn time.Duration, owners []string) {
+	maxAgents, ctxWarn, idleWarn = 30, 70, 30*time.Minute
+	if n, err := strconv.Atoi(strings.TrimSpace(get("LEA_MAX_AGENTS"))); err == nil && n >= 0 && n <= 1000 {
+		maxAgents = n
+	}
+	if n, err := strconv.Atoi(strings.TrimSpace(get("LEA_CTX_WARN"))); err == nil && n >= 0 && n <= 100 {
+		ctxWarn = n
+	}
+	if n, err := strconv.Atoi(strings.TrimSpace(get("LEA_IDLE_WARN"))); err == nil && n >= 0 && n <= 1440 {
+		idleWarn = time.Duration(n) * time.Minute
+	}
+	for _, o := range strings.Fields(get("LEA_TOWER_OWNERS")) {
+		if ownerRe.MatchString(o) && !strings.Contains(o, "..") && len(owners) < 32 {
+			owners = append(owners, o)
+		}
+	}
+	return maxAgents, ctxWarn, idleWarn, owners
+}
+
+// ownerRe is an owner of LEA_TOWER_OWNERS: a GitHub user or organisation (name), or a GitLab
+// group on its host (gitlab.example.com/group/sub).
+var ownerRe = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._/-]{0,99}$`)
+
+// DaemonTreeStamp is the tree settings as one line ("30 70 30 me my-org"): a daemon started with
+// others is restarted.
+func DaemonTreeStamp(get func(string) string) string {
+	m, c, i, o := TreeSettings(get)
+	return strings.TrimSpace(strconv.Itoa(m) + " " + strconv.Itoa(c) + " " + strconv.Itoa(int(i/time.Minute)) + " " + strings.Join(o, " "))
 }
 
 // StackIdleSetting is how long an agent stays idle before lea stops what it started in the nested
@@ -177,7 +214,8 @@ func (l *Launcher) ensureDaemon() error {
 			readTrim(host+"/daemon.lockhttp") == DaemonLockHTTPStamp(l.Cfg.Get) &&
 			readTrim(host+"/daemon.hub") == DaemonHubStamp(l.Cfg.Get) &&
 			readTrim(host+"/daemon.stacks") == DaemonStacksStamp(l.Cfg.Get) &&
-			readTrim(host+"/daemon.admit") == DaemonAdmitStamp(l.Cfg.Get) {
+			readTrim(host+"/daemon.admit") == DaemonAdmitStamp(l.Cfg.Get) &&
+			readTrim(host+"/daemon.tree") == DaemonTreeStamp(l.Cfg.Get) {
 			return nil
 		}
 		l.stopDaemon()

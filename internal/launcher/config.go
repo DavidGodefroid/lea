@@ -39,6 +39,7 @@ var ExportedKeys = []string{
 	"LEA_STACK_IDLE", "LEA_HEAVY_SLOTS", "LEA_HEAVY_WORKERS",
 	"LEA_ADMIT_CPU_PSI", "LEA_ADMIT_MEM_PCT", "LEA_ADMIT_MEM_PSI", "LEA_ADMIT_IO_PSI", "LEA_ADMIT_LOAD",
 	"LEA_SHED_MEM_PCT", "LEA_SHED_MEM_PSI", "LEA_SHED_CPU_PSI", "LEA_SHED_AFTER", "LEA_SHED_RESUME",
+	"LEA_MAX_AGENTS", "LEA_CTX_WARN", "LEA_IDLE_WARN", "LEA_TOWER_OWNERS",
 }
 
 // Config is what lea_load_config gives the shell: the environment, overlaid by the assignments of

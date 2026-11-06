@@ -64,7 +64,19 @@ type requestIn struct {
 }
 
 type stopIn struct {
-	Name string `json:"name" jsonschema:"name of one of your children"`
+	Name    string `json:"name" jsonschema:"name of one of your children"`
+	Cascade bool   `json:"cascade,omitempty" jsonschema:"stop the child's own children first, then it (a tower stopping a lead with its team); without it, a child that runs agents is not stopped"`
+}
+
+type windowIn struct {
+	Lead   string `json:"lead" jsonschema:"name of one of your leads"`
+	Window string `json:"window" jsonschema:"DAYS HH:MM-HH:MM ZONE, e.g. mon-sun 21:30-23:59 Europe/Brussels (a range past midnight belongs to the day it starts); empty clears it"`
+}
+
+type approveIn struct {
+	PR   int64  `json:"pr" jsonschema:"the pull request's number"`
+	SHA  string `json:"sha" jsonschema:"the full head commit you reviewed (gh pr view N --json headRefOid)"`
+	Repo string `json:"repo,omitempty" jsonschema:"the repository's directory under the projects directory, when you were not started on one"`
 }
 
 // proxy forwards one tool call to the daemon. A refusal by the daemon (rule, unknown agent)
@@ -104,7 +116,7 @@ func LockGuidance(get func(string) string) string {
 func New(sock, agent, version, instructions string) *mcp.Server {
 	s := mcp.NewServer(&mcp.Implementation{Name: "lea", Version: version}, &mcp.ServerOptions{Instructions: instructions})
 	const short = 10 * time.Second
-	mcp.AddTool(s, &mcp.Tool{Name: "agents_list", Description: "List the agents of this lea: name, label (the name the user sees in the deck, your container only), role, profile, state, parent, branch, ctx_pct (percent of its context window used, when known; your container only); you=true is you. Never their screens."},
+	mcp.AddTool(s, &mcp.Tool{Name: "agents_list", Description: "List the agents of this lea: name, label (the name the user sees in the deck, your container only), role, profile, state, parent, branch, window (a lead's deploy window), ctx_pct (percent of its context window used, when known; your container only); you=true is you. A tower sees its leads with their team rolled up (team: children, states, max_ctx_pct, needs_decision), not their children one by one. Never their screens."},
 		func(ctx context.Context, _ *mcp.CallToolRequest, in empty) (*mcp.CallToolResult, any, error) {
 			return proxy(ctx, sock, agent, "agents_list", short, in), nil, nil
 		})
@@ -146,13 +158,21 @@ func New(sock, agent, version, instructions string) *mcp.Server {
 			return proxy(ctx, sock, agent, "msg_reply", short, in), nil, nil
 		})
 	const long = 60 * time.Second // the daemon starts a terminal and the agent's container process
-	mcp.AddTool(s, &mcp.Tool{Name: "agents_spawn", Description: "Leads only: start a new agent as your child. Its brief is its first message. Refused beyond 20 children per lead, or while the host is under pressure (then queue: true starts it once the pressure falls); the reason comes back."},
+	mcp.AddTool(s, &mcp.Tool{Name: "agents_spawn", Description: "Leads and towers only: start a new agent as your child (a tower starts leads, role lead; a lead starts dev and reviewer agents). Its brief is its first message. Refused beyond 20 children per lead, beyond LEA_MAX_AGENTS agents in all, or while the host is under pressure (then queue: true starts it once the pressure falls); the reason comes back."},
 		func(ctx context.Context, _ *mcp.CallToolRequest, in spawnIn) (*mcp.CallToolResult, any, error) {
 			return proxy(ctx, sock, agent, "agents_spawn", long, in), nil, nil
 		})
-	mcp.AddTool(s, &mcp.Tool{Name: "agents_stop", Description: "Leads only: stop one of your own children."},
+	mcp.AddTool(s, &mcp.Tool{Name: "agents_stop", Description: "Leads and towers only: stop one of your own children. A child that runs agents of its own (a lead with its team) is stopped only with cascade: true, its children first."},
 		func(ctx context.Context, _ *mcp.CallToolRequest, in stopIn) (*mcp.CallToolResult, any, error) {
 			return proxy(ctx, sock, agent, "agents_stop", long, in), nil, nil
+		})
+	mcp.AddTool(s, &mcp.Tool{Name: "lead_window", Description: "Towers only: set the deploy window of one of your leads, a recurring time range when it and its team may merge a low-risk PR into a production branch (CI green, a reviewer's approval, no sensitive path). Outside it, lea refuses every production merge of that team. Choose it from the project's traffic (e.g. late evening for a shop)."},
+		func(ctx context.Context, _ *mcp.CallToolRequest, in windowIn) (*mcp.CallToolResult, any, error) {
+			return proxy(ctx, sock, agent, "lead_window", short, in), nil, nil
+		})
+	mcp.AddTool(s, &mcp.Tool{Name: "review_approve", Description: "Reviewers only: record that you approve a pull request at the head commit you reviewed. A production merge in a tower's team needs it; a push after it moves the head, and your approval no longer covers the PR."},
+		func(ctx context.Context, _ *mcp.CallToolRequest, in approveIn) (*mcp.CallToolResult, any, error) {
+			return proxy(ctx, sock, agent, "review_approve", short, in), nil, nil
 		})
 	mcp.AddTool(s, &mcp.Tool{Name: "agents_request_spawn", Description: "Ask a lead for another agent (only leads start agents). The lead decides; its answer comes back as a reply to the request, and an accepted agent shares the request's thread with you. At most 2 pending requests; a declined brief cannot be sent again."},
 		func(ctx context.Context, _ *mcp.CallToolRequest, in requestIn) (*mcp.CallToolResult, any, error) {

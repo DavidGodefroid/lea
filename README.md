@@ -202,7 +202,7 @@ closing the deck, or the terminal, does not stop it: the next `lea` reattaches.
 | `e` | rename the selected agent (enter saves, esc cancels, empty clears) |
 | `m` / `t` | send the selected agent a message / read its messages (see below) |
 | `a` / `d` / `A` | allow / deny / always allow the selected agent's permission request |
-| `r`, then `l` / `d` / `r` | make the selected agent a lead, a dev or a reviewer |
+| `r`, then `t` / `l` / `d` / `r` | make the selected agent the tower, a lead, a dev or a reviewer |
 | `s` | open a shell in the container (`exit` or `x` closes it) |
 | `-` / `\|` | split: a shell below the selected agent, or at its right, in its directory |
 | `S` | sounds on or off (the top border says `muted` while they are off) |
@@ -468,12 +468,25 @@ certificate, never the key, goes to the gate, to lea-keyproxy and into the agent
 
 ## Teams of agents
 
-Every agent has a role: `lead`, `dev` (the default) or `reviewer`. The first agent is a lead.
-Only you change a role (`r` in the deck, `lea role <agent> <role>`, `lea new -r reviewer`).
-Agents get lea's tools through MCP:
+Every agent has a role: `tower`, `lead`, `dev` (the default) or `reviewer`. The first agent is a
+lead. Only you change a role (`r` in the deck, `lea role <agent> <role>`, `lea new -r reviewer`),
+and only you give the `tower` role (`lea new --role tower`): one tower per lea, never with a
+parent. The agent tree is at most two levels below the tower, and the daemon enforces it whatever
+the prompts say: a tower starts leads, a lead starts `dev` and `reviewer` agents, nothing else
+spawns. Making a lead's child a lead moves it under the tower when one runs, and makes it a lead
+of its own otherwise. Agents get lea's tools through MCP:
 
 - a lead starts `dev` and `reviewer` agents with `agents_spawn` and stops its own with
-  `agents_stop` (at most 20 children at a time);
+  `agents_stop` (at most 20 children at a time); a tower starts leads the same way, and stops a
+  lead that still runs a team only with `cascade: true` (its children first). Past
+  `LEA_MAX_AGENTS` running agents in all (30), an agent's `agents_spawn` is refused (your own
+  `lea new` never is);
+- a tower talks to its leads only, and a lead's children to their lead: lea refuses a message
+  that skips a level. A tower's `agents_list` shows each lead with its team rolled up (children,
+  states, highest context use, how many need a decision);
+- lea tells an agent's parent once when the agent passes `LEA_CTX_WARN` percent of its context
+  (70), stays idle `LEA_IDLE_WARN` minutes with its task unfinished (30), ends without sending a
+  result, or hits its usage limit;
 - any other agent asks a lead with `agents_request_spawn`; without a lead the request comes to
   you (`lea requests`, `lea request accept <id>`, `lea request decline <id> [reason]`);
 - agents message each other (`msg_send`, `msg_reply`); a message waits in the inbox until the
@@ -567,6 +580,22 @@ Needs you: palette for dark-mode
 ```
 
 Ask it for the `board`, the `detail` of an agent, or to `stop` one, in your own words.
+
+Made the tower (`lea new --role tower`, or `r` then `t`), the control tower runs projects
+instead of agents: it starts one lead per project (`LEA_TOWER_OWNERS` names the GitHub or GitLab
+owners whose repositories it takes charge of), each lead follows the `/lea:project-lead` skill
+and runs its own team, and the tower brings you only the decisions that are yours, one question at
+a time. The tower gives each lead a deploy window (`lead_window`, e.g.
+`mon-sun 21:30-23:59 Europe/Brussels`): lea's grant hook refuses a merge by that lead or its team
+into a production branch (`.lea/production` in the repository, else `main` and `master`) outside
+the window, and inside it lets through only a low-risk PR: CI green on its head, a reviewer
+agent's approval of that head (`review_approve`), and no file matching the repository's
+`.lea/sensitive` patterns (lea's defaults without it: migrations, auth, payment, secrets, infra,
+CI). A PR holding an irreversible migration (a dropped or renamed table or column, destroyed data)
+is never merged automatically, and the tower gets a dedicated warning to put to you. These checks
+run in the pinned `gh pr merge <N>` a merge grant allows (lea reads the PR from GitHub just before
+merging, and merges only the head it checked); in a tower's tree a merge that names no PR number,
+or a GitLab merge, is refused.
 
 The tower never does the work itself, not even a `git push`: every request goes to an agent. The
 plugin enforces it with a hook: once `/lea:control-tower` runs, the session may only use lea's
@@ -840,6 +869,8 @@ read-only. The screen runs in the deck on the host: agents cannot open or drive 
 | `LEA_PROVIDER`, `LEA_MODEL` | `claude`, empty | the default provider and model of a new agent ([providers](#other-providers-codex-ollama-vllm)) |
 | `LEA_PROVIDERS` | `~/.config/lea/providers` | your OpenAI-compatible endpoints and their key files |
 | `LEA_AUTO_RESUME`, `LEA_RESUME_DELAY` | on, `60` | resume agents stopped on a usage limit, so many seconds after its reset (`0`: off) |
+| `LEA_MAX_AGENTS`, `LEA_CTX_WARN`, `LEA_IDLE_WARN` | `30`, `70`, `30` | [teams of agents](#teams-of-agents): running agents in all past which an agent may not start another (`0`: no cap); the context percent and the idle minutes past which a child's parent is told (`0`: off) |
+| `LEA_TOWER_OWNERS` | | [control tower](#control-tower): the GitHub or GitLab owners whose repositories the tower takes charge of, space-separated |
 | `LEA_STACK_IDLE` | `10` | minutes an agent stays idle before lea stops (not removes) the containers it started in the nested Podman (`0`: never); `lea board` lists what it freed |
 | `LEA_AGENT_CPUS` | `4` | each agent's CPU window, the least shared CPUs: the agent, its tools and its nested containers run there, so `nproc`, PHPStan, Go… see that many CPUs (`0`: no window) |
 | `LEA_HEAVY_SLOTS`, `LEA_HEAVY_WORKERS` | `0` (¾ of the CPUs ÷ workers), `4` | heavy jobs (`lea heavy -- <command>`): how many run at once per container, and the CPUs and workers each gets |

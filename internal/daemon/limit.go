@@ -17,6 +17,7 @@ type rate struct {
 var methodRates = map[string]rate{
 	"agents_spawn": {3, 60}, "agents_request_spawn": {3, 60}, "agents_stop": {10, 60},
 	"task_update": {30, 60}, "ask": {5, 60}, "lease_acquire": {30, 60}, "lease_release": {30, 60},
+	"review_approve": {10, 60}, "lead_window": {10, 60},
 }
 
 // rates keeps each caller's recent calls per method, in memory: a daemon restart forgets them.

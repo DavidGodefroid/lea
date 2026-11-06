@@ -63,3 +63,20 @@ func TestFirstPromptNamesTheLabelAndTheRule(t *testing.T) {
 		t.Fatalf("unlabelled prompt %q", p)
 	}
 }
+
+// A tower's first prompt names the control-tower skill; a tower's lead names the project-lead
+// skill and reports to its tower; a lead's child reports to its lead (#110).
+func TestFirstPromptOfTheTowersTree(t *testing.T) {
+	tw := firstPrompt(store.Agent{Name: "tw", Role: "tower"}, "", "", true)
+	if !strings.Contains(tw, "/lea:control-tower") || !strings.Contains(tw, "may start lead agents") {
+		t.Fatalf("tower prompt %q", tw)
+	}
+	l := firstPrompt(store.Agent{Name: "lead-1", Role: "lead", Parent: "lea-a/tw"}, "shop", "", true)
+	if !strings.Contains(l, "Your tower is tw") || !strings.Contains(l, "/lea:project-lead") || strings.Contains(l, "Your lead is") {
+		t.Fatalf("lead prompt %q", l)
+	}
+	d := firstPrompt(store.Agent{Name: "dev-1", Role: "dev", Parent: "lea-a/lead-1"}, "shop", "", true)
+	if !strings.Contains(d, "Your lead is lead-1") || strings.Contains(d, "project-lead") {
+		t.Fatalf("dev prompt %q", d)
+	}
+}

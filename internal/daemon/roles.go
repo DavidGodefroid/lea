@@ -52,25 +52,43 @@ func (d *Daemon) setRole(raw json.RawMessage) (any, error) {
 	if err != nil {
 		return nil, err
 	}
-	out := map[string]string{"key": key, "role": r.Name}
+	out := map[string]string{"key": key, "role": r.Name, "parent": shortName(a.Parent)}
 	if a.Role == r.Name {
 		return out, nil
 	}
-	if err := d.st.SetRole(key, r.Name, r.CanSpawn); err != nil {
+	parent, err := d.st.SetRole(key, r)
+	if err != nil {
 		return nil, err
 	}
-	if _, err := d.st.Send(store.Message{From: "user", To: key, Kind: "note", Body: roleNotice(r), At: d.now()}); err != nil {
+	out["parent"] = shortName(parent)
+	if _, err := d.st.Send(store.Message{From: "user", To: key, Kind: "note", Body: roleNotice(r, parent), At: d.now()}); err != nil {
 		log.Printf("lea daemon: tell %s its role: %v", key, err)
+	}
+	if parent != a.Parent && parent != "" {
+		// The tower that adopted a promoted lead hears of its new child.
+		body := fmt.Sprintf("lea: the user made %s a %s; it is now your child (it was %s's).", a.Name, r.Name, shortName(a.Parent))
+		if _, err := d.st.Send(store.Message{From: "user", To: parent, Kind: "note", Body: body, At: d.now()}); err != nil {
+			log.Printf("lea daemon: tell %s of its new child: %v", parent, err)
+		}
+		d.wake(parent)
 	}
 	d.wake(key)
 	d.changed()
 	return out, nil
 }
 
-func roleNotice(r roles.Role) string {
-	if r.CanSpawn {
-		return fmt.Sprintf("lea: your role is now %s. You may start %s agents with agents_spawn (they are your children) and stop your own with agents_stop.",
-			r.Name, strings.Join(r.SpawnRoles, " and "))
+func roleNotice(r roles.Role, parent string) string {
+	under := ""
+	if parent != "" {
+		under = fmt.Sprintf(" You report to %s.", shortName(parent))
 	}
-	return fmt.Sprintf("lea: your role is now %s. You cannot start agents: ask a lead with agents_request_spawn when you need one.", r.Name)
+	switch {
+	case r.Root:
+		return fmt.Sprintf("lea: your role is now %s. You may start %s agents with agents_spawn (they are your children, and they start their own teams) and stop your own with agents_stop.",
+			r.Name, strings.Join(r.SpawnRoles, " and "))
+	case r.CanSpawn:
+		return fmt.Sprintf("lea: your role is now %s. You may start %s agents with agents_spawn (they are your children) and stop your own with agents_stop.%s",
+			r.Name, strings.Join(r.SpawnRoles, " and "), under)
+	}
+	return fmt.Sprintf("lea: your role is now %s. You cannot start agents: ask a lead with agents_request_spawn when you need one.%s", r.Name, under)
 }

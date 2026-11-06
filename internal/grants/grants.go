@@ -146,6 +146,9 @@ type Caller struct {
 	// container (LeaProxy): the container's network is internal, and env -i drops the agent's
 	// HTTPS_PROXY, which lea would not vouch for anyway.
 	Proxy string
+	// Merge, when set, is the production-merge policy of a caller in a tower's tree (#110): an
+	// allowed gh merge runs only after it passes (mergePolicyScript).
+	Merge *MergePolicy
 }
 
 // LeaProxy is lea-proxy's forward proxy, as the containers of a lea reach it (the network alias
@@ -392,6 +395,13 @@ func Command(req Request, c Caller, g Grant) string {
 			if c.Branch == "" || !BranchName(c.Branch) || Protected(c.Branch) {
 				return ""
 			}
+			if c.Merge != nil {
+				// The policy needs the PR's number; the merge names the head it checked.
+				if !number(req.Args[2]) {
+					return ""
+				}
+				script = mergePolicyScript(req.Args[2], g.GitHub, *c.Merge) + script + ` --match-head-commit "$lea_head"`
+			}
 			script = prHeadCheck(req.Args[2], c.Branch, g.GitHub) + script
 		}
 		if script != "" {
@@ -399,7 +409,8 @@ func Command(req Request, c Caller, g Grant) string {
 		}
 	case "glab":
 		host, path, ok := gitlabPin(g.GitHub)
-		if !ok {
+		if !ok || req.Action == Merge && c.Merge != nil {
+			// The production-merge policy reads a GitHub PR: no GitLab merge in a tower's tree.
 			return ""
 		}
 		script = gitlabScript(req, c, host, path)

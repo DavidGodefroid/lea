@@ -9,6 +9,7 @@ import (
 	"io"
 	"regexp"
 	"strconv"
+	"strings"
 	"time"
 	"unicode/utf8"
 
@@ -253,4 +254,18 @@ func alwaysRules(raw json.RawMessage) json.RawMessage {
 		return nil
 	}
 	return raw
+}
+
+// MergeBlocked is `lea hook lea merge-blocked <pr>`: the pinned merge of an agent of a tower's
+// tree runs it when it refuses an irreversible migration of PR pr, with the migration's lines
+// on stdin (at most 2 KiB read). The daemon sends the tower its warning (#110). It never fails.
+func MergeBlocked(ctx context.Context, pr string, stdin io.Reader, getenv func(string) string) {
+	b, _ := io.ReadAll(io.LimitReader(stdin, 2048))
+	c := caller{sock: identity.BusSock(getenv), agent: identity.Agent(getenv)}
+	if c.agent == "" {
+		return
+	}
+	cctx, cancel := context.WithTimeout(ctx, budget)
+	defer cancel()
+	_ = c.call(cctx, "merge_blocked", map[string]string{"pr": pr, "lines": strings.ToValidUTF8(string(b), "?")}, nil)
 }

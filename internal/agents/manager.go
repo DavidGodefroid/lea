@@ -147,6 +147,9 @@ type Config struct {
 	// it as the requester of a plan, and the Lock runs a ticket only for the token that asked.
 	// Not a security boundary: the agents of a container share one UID. nil: no token.
 	RequesterToken func(container, agent, incarnation string) string
+	// MaxAgents caps the running agents lea started, checked when an agent starts one
+	// (LEA_MAX_AGENTS, #110; 0: no cap).
+	MaxAgents int
 }
 
 type Row struct {
@@ -193,6 +196,8 @@ type Row struct {
 	LimitUntil int64 `json:"limit_until,omitempty"`
 	// Woken: lea woke the idle agent for a message in its inbox (store.Agent.Woken).
 	Woken bool `json:"woken,omitempty"`
+	// Window is a lead's deploy window, as its tower set it (store.Agent.Window).
+	Window string `json:"window,omitempty"`
 }
 
 type Snapshot struct {
@@ -377,7 +382,7 @@ func (m *Manager) snapshot(container string, v int64) (Snapshot, error) {
 func rowOf(a store.Agent) Row {
 	return Row{Key: a.Key, Name: a.Name, Label: a.Label, Profile: a.Profile, Model: a.Model, State: a.State, Workdir: a.Workdir, Updated: a.Updated,
 		Created: a.Created, Role: a.Role, Parent: a.Parent, Repo: a.Repo, Branch: a.Branch, CtxPct: -1, CostUSD: -1, Paused: a.Paused,
-		LimitUntil: a.LimitUntil, Woken: a.Woken}
+		LimitUntil: a.LimitUntil, Woken: a.Woken, Window: a.Window}
 }
 
 func shellRow(container, name string) Row {
@@ -1654,8 +1659,8 @@ func (m *Manager) New(ctx context.Context, r NewRequest) (Row, error) {
 	if err != nil {
 		return Row{}, err
 	}
-	if r.Parent != "" && role.CanSpawn {
-		return Row{}, fmt.Errorf("a lead's child never spawns: the %s role cannot be given to a child", r.Role)
+	if r.Parent != "" && role.Root {
+		return Row{}, fmt.Errorf("the %s role is the user's to give: no agent starts one", r.Role)
 	}
 	if r.Name != "" && !nameRe.MatchString(r.Name) {
 		return Row{}, fmt.Errorf("invalid agent name %q: lowercase letters, digits and '-', starting with a letter, at most 24", r.Name)
@@ -1743,7 +1748,7 @@ func (m *Manager) New(ctx context.Context, r NewRequest) (Row, error) {
 			return Row{}, err
 		}
 	}
-	var caps store.Caps
+	caps := store.Caps{MaxAgents: m.cfg.MaxAgents}
 	if r.Parent != "" {
 		caps.MaxChildren = roles.MaxChildren
 	}

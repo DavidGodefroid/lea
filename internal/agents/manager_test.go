@@ -1390,8 +1390,11 @@ func TestNewForALeadsChildRecordsTheParent(t *testing.T) {
 	if strings.Contains(lastArg(s, "boss"), "Your lead is") {
 		t.Fatalf("the user's lead got a lead: %q", lastArg(s, "boss"))
 	}
-	if _, err := e.m.New(bg, NewRequest{Container: C, Role: "lead", Parent: lead.Key}); err == nil || !strings.Contains(err.Error(), "never spawns") {
+	if _, err := e.m.New(bg, NewRequest{Container: C, Role: "lead", Parent: lead.Key}); err == nil || !strings.Contains(err.Error(), "may start only dev and reviewer") {
 		t.Fatalf("a lead's child made a lead: err=%v", err)
+	}
+	if _, err := e.m.New(bg, NewRequest{Container: C, Role: "tower", Parent: lead.Key}); err == nil || !strings.Contains(err.Error(), "the user's to give") {
+		t.Fatalf("a child made a tower: err=%v", err)
 	}
 	if _, err := e.m.New(bg, NewRequest{Container: C, Role: "admin"}); err == nil || !strings.Contains(err.Error(), "unknown role") {
 		t.Fatalf("unknown role: err=%v", err)
@@ -1833,5 +1836,31 @@ func TestDefaultProviderAndEndpointProviders(t *testing.T) {
 	}
 	if _, err := e.m.New(bg, NewRequest{Container: C, Profile: "gone", Hidden: true}); err == nil {
 		t.Fatal("an unknown provider was started")
+	}
+}
+
+// The manager passes LEA_MAX_AGENTS to the store: a lead's spawn past it is refused, the
+// user's own is not (#110). A tower starts a lead that starts a dev.
+func TestNewAppliesMaxAgentsAndTheTowersTree(t *testing.T) {
+	e := newEnv(t)
+	e.ensure(t, "/p")
+	e.m.cfg.MaxAgents = 3
+	tw, err := e.m.New(bg, NewRequest{Container: C, Name: "tw", Role: "tower"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	lead, err := e.m.New(bg, NewRequest{Container: C, Role: "lead", Parent: tw.Key, NamePrefix: "lead", Brief: "own shop", BriefFrom: tw.Key, Hidden: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := e.m.New(bg, NewRequest{Container: C, Role: "dev", Parent: lead.Key, NamePrefix: "dev", Brief: "x", BriefFrom: lead.Key, Hidden: true}); err != nil {
+		t.Fatalf("the tower's lead starts a dev: %v", err)
+	}
+	if _, err := e.m.New(bg, NewRequest{Container: C, Role: "dev", Parent: lead.Key, NamePrefix: "dev", Brief: "x", BriefFrom: lead.Key, Hidden: true}); err == nil ||
+		!strings.Contains(err.Error(), "LEA_MAX_AGENTS 3") {
+		t.Fatalf("fourth agent: %v", err)
+	}
+	if _, err := e.m.New(bg, NewRequest{Container: C, Name: "mine", Role: "dev"}); err != nil {
+		t.Fatalf("the user's own agent at the cap: %v", err)
 	}
 }

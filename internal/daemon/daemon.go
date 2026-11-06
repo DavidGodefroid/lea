@@ -65,6 +65,13 @@ type Daemon struct {
 	// clock on a loaded runner.
 	afterFunc func(time.Duration, func()) *time.Timer
 
+	// health: the health signals sent to parents (health.go, #110).
+	health healthMon
+	// merges: the production merges the grant hook let through, by agent (tower.go, #110).
+	merges mergeLog
+	// towerOwners: LEA_TOWER_OWNERS, the owners whose repositories a tower takes charge of.
+	towerOwners []string
+
 	blocks map[string]int
 	// stopped: agents whose turn ended (Stop) and no new one began (prompt or stop block).
 	stopped map[string]bool
@@ -421,6 +428,12 @@ func (d *Daemon) dispatch(ctx context.Context, o Origin, req wire.Request) (any,
 		return d.agentsSpawn(ctx, o, me, req.Params)
 	case "agents_stop":
 		return d.agentsStop(ctx, o, me, req.Params)
+	case "lead_window":
+		return d.leadWindow(o, me, req.Params)
+	case "review_approve":
+		return d.reviewApprove(o, me, req.Params)
+	case "merge_blocked":
+		return d.mergeBlocked(ctx, o, me, req.Params)
 	case "agents_request_spawn":
 		return d.requestSpawn(o, me, req.Params)
 	case "request_list":
@@ -487,6 +500,13 @@ type agentView struct {
 	// Subagents counts the subagents the agent still runs (its Subagent hooks), for display.
 	Subagents int  `json:"subagents,omitempty"`
 	You       bool `json:"you,omitempty"`
+	// Window is a lead's deploy window (lead_window); Team, in a tower's list, its team rolled
+	// up (towerList).
+	Window string    `json:"window,omitempty"`
+	Team   *teamView `json:"team,omitempty"`
+	// Owners, on a tower's own row, are the owners whose repositories it takes charge of
+	// (LEA_TOWER_OWNERS).
+	Owners []string `json:"owners,omitempty"`
 }
 
 // agentsList lists the agents (spec §6.1: name, role, profile, state, branch; never screen
@@ -523,7 +543,7 @@ func (d *Daemon) agentsList(o Origin, me string) ([]agentView, error) {
 			v.Subagents = n[a.Key]
 		}
 		if a.Profile != "" {
-			v.Role, v.Profile, v.Model, v.Repo, v.Branch = a.Role, a.Profile, a.Model, a.Repo, a.Branch
+			v.Role, v.Profile, v.Model, v.Repo, v.Branch, v.Window = a.Role, a.Profile, a.Model, a.Repo, a.Branch, a.Window
 			v.Label = agentLabel(a, o.Container)
 			if a.Parent != "" {
 				v.Parent = shortName(a.Parent)
@@ -537,6 +557,11 @@ func (d *Daemon) agentsList(o Origin, me string) ([]agentView, error) {
 			}
 		}
 		out = append(out, v)
+	}
+	if o.Container != "" {
+		if c, err := d.st.AgentByKey(me); err == nil && c.Profile != "" && isRootRole(c.Role) {
+			return d.towerList(me, out)
+		}
 	}
 	return out, nil
 }
@@ -565,6 +590,9 @@ func (d *Daemon) send(from, to, body, kind string, replyTo int64) (sentView, err
 	}
 	dest, err := bus.Resolve(to, ks)
 	if err != nil {
+		return sentView{}, err
+	}
+	if err := d.routeCheck(from, dest); err != nil {
 		return sentView{}, err
 	}
 	hops := 0

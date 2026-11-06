@@ -471,6 +471,15 @@ lea_sha256_file() { sha256sum "$1" | cut -d' ' -f1; }
   grep -q 'plugin=${LEA_CLAUDE_PLUGIN:-/usr/local/share/lea/claude-plugin}' "$I/lea-session"
 }
 
+# The project-lead skill (#110): a tower's lead runs its project's team.
+@test "the plugin ships the project-lead skill" {
+  k="$I/claude-plugin/skills/project-lead/SKILL.md"
+  [ "$(sed -n 1p "$k")" = --- ]
+  grep -q '^name: project-lead$' "$k"
+  grep -q '^description: Use when ' "$k"
+  for t in agents_spawn agents_stop review_approve "deploy window" ".lea/sensitive" "irreversible migration" "roll back"; do grep -q "$t" "$k"; done
+}
+
 # Server-managed settings replace the file-based managed settings, env included: lea's telemetry
 # env also comes in through the --settings file, which keeps it on such hosts.
 @test "lea's telemetry env is in the --settings file too, with the version filled in" {

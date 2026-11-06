@@ -219,6 +219,17 @@ func runDaemon(stderr io.Writer) int {
 		fmt.Fprintln(stderr, "lea:", clean(err.Error(), false))
 		return 1
 	}
+	// Same pattern for the agent tree's settings (#110): the global cap on agents, the health
+	// signals' thresholds and the owners the tower takes charge of.
+	_ = os.Remove(filepath.Join(host, "daemon.tree"))
+	if err := os.WriteFile(filepath.Join(host, "daemon.tree"), []byte(launcher.DaemonTreeStamp(os.Getenv)), 0o600); err != nil {
+		fmt.Fprintln(stderr, "lea:", clean(err.Error(), false))
+		return 1
+	}
+	maxAgents, ctxWarn, idleWarn, owners := launcher.TreeSettings(os.Getenv)
+	d.SetHealth(ctxWarn, idleWarn)
+	d.SetTowerOwners(owners)
+	go d.RunHealth(ctx)
 	if a := launcher.AdmitSettings(os.Getenv); len(a) == 10 {
 		d.SetPressure(&daemon.HostPressure{}, daemon.Thresholds{CPUPSI: a[0], MemPct: a[1], MemPSI: a[2], IOPSI: a[3], Load: a[4]})
 		// Under sustained critical pressure the lowest-priority agent is paused, and resumed once
@@ -291,6 +302,7 @@ func runDaemon(stderr io.Writer) int {
 		DefaultModel:    os.Getenv("LEA_MODEL"),
 		ProxyToken:      proxyToken,
 		RequesterToken:  requesterToken,
+		MaxAgents:       maxAgents,
 	})
 	d.SetAgents(m)
 	// Whether lox run serves the workspace's decisions (#300): the deck says to run it when not.

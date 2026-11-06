@@ -9,6 +9,8 @@ import (
 	"strings"
 	"sync"
 	"testing"
+
+	"github.com/DavidGodefroid/lea/internal/roles"
 )
 
 func open(t *testing.T) *Store {
@@ -571,21 +573,28 @@ func TestRegisterCapsHoldUnderConcurrentSpawns(t *testing.T) {
 	}
 }
 
-func TestSetRoleKeepsTheTreeTwoLevels(t *testing.T) {
+func role(t *testing.T, name string) roles.Role {
+	t.Helper()
+	r, err := roles.Get(name)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return r
+}
+
+func TestSetRoleKeepsTheTree(t *testing.T) {
 	s := open(t)
 	lead, _ := reg(t, s, "boss", "lead", "", Caps{})
 	kid, _ := reg(t, s, "kid", "dev", lead.Key, Caps{})
-	if err := s.SetRole(kid.Key, "lead", true); !errors.Is(err, ErrTree) || !strings.Contains(err.Error(), "kid was started by boss") {
-		t.Fatalf("child promoted: err=%v", err)
-	}
-	if err := s.SetRole(lead.Key, "dev", false); !errors.Is(err, ErrTree) || !strings.Contains(err.Error(), "boss runs 1 agents") {
+	if _, err := s.SetRole(lead.Key, role(t, "dev")); !errors.Is(err, ErrTree) || !strings.Contains(err.Error(), "boss runs 1 agents") ||
+		!strings.Contains(err.Error(), "stop them first") {
 		t.Fatalf("lead with children demoted: err=%v", err)
 	}
-	if err := s.SetRole(kid.Key, "reviewer", false); err != nil {
-		t.Fatal(err)
+	if p, err := s.SetRole(kid.Key, role(t, "reviewer")); err != nil || p != lead.Key {
+		t.Fatalf("parent=%q err=%v", p, err)
 	}
 	s.SetState(kid.Key, "done", "", 2)
-	if err := s.SetRole(lead.Key, "dev", false); err != nil {
+	if _, err := s.SetRole(lead.Key, role(t, "dev")); err != nil {
 		t.Fatalf("demote after the child ended: %v", err)
 	}
 	if a, _ := s.AgentByKey(lead.Key); a.Role != "dev" {
@@ -594,12 +603,210 @@ func TestSetRoleKeepsTheTreeTwoLevels(t *testing.T) {
 	if a, _ := s.AgentByKey(kid.Key); a.Role != "reviewer" {
 		t.Fatalf("kid role=%q", a.Role)
 	}
-	if err := s.SetRole("lea-a/nope", "dev", false); !errors.Is(err, ErrNotFound) {
+	if _, err := s.SetRole("lea-a/nope", role(t, "dev")); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("unknown agent: err=%v", err)
 	}
 	k, _ := s.UpsertAgent("lea-a", "hook-only", 3)
-	if err := s.SetRole(k, "lead", true); err == nil || !strings.Contains(err.Error(), "not started by lea") {
+	if _, err := s.SetRole(k, role(t, "lead")); err == nil || !strings.Contains(err.Error(), "not started by lea") {
 		t.Fatalf("hook-only agent: err=%v", err)
+	}
+}
+
+// The user promotes a lead's child to lead (#110): never ErrTree. Without a tower it becomes a
+// root lead; with one, the tower's child.
+func TestSetRolePromotesALeadsChildUnderTheTowerOrAlone(t *testing.T) {
+	s := open(t)
+	lead, _ := reg(t, s, "boss", "lead", "", Caps{})
+	kid, _ := reg(t, s, "kid", "dev", lead.Key, Caps{})
+	if p, err := s.SetRole(kid.Key, role(t, "lead")); err != nil || p != "" {
+		t.Fatalf("no tower: parent=%q err=%v", p, err)
+	}
+	if a, _ := s.AgentByKey(kid.Key); a.Role != "lead" || a.Parent != "" {
+		t.Fatalf("kid=%+v", a)
+	}
+	tower, err := reg(t, s, "tw", "tower", "", Caps{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	lead2, _ := reg(t, s, "boss2", "lead", tower.Key, Caps{})
+	kid2, _ := reg(t, s, "kid2", "dev", lead2.Key, Caps{})
+	if p, err := s.SetRole(kid2.Key, role(t, "lead")); err != nil || p != tower.Key {
+		t.Fatalf("with a tower: parent=%q err=%v", p, err)
+	}
+	if a, _ := s.AgentByKey(kid2.Key); a.Role != "lead" || a.Parent != tower.Key {
+		t.Fatalf("kid2=%+v", a)
+	}
+	// A root lead promoted in a container with a tower stays a root lead.
+	if p, err := s.SetRole(kid.Key, role(t, "lead")); err != nil || p != "" {
+		t.Fatalf("root lead: parent=%q err=%v", p, err)
+	}
+	// A tower's lead demoted to dev is detached: a tower starts leads only.
+	if p, err := s.SetRole(kid2.Key, role(t, "dev")); err != nil || p != "" {
+		t.Fatalf("tower's lead demoted: parent=%q err=%v", p, err)
+	}
+}
+
+func TestSetRoleTowerGoesToARootAgentOncePerContainer(t *testing.T) {
+	s := open(t)
+	lead, _ := reg(t, s, "boss", "lead", "", Caps{})
+	kid, _ := reg(t, s, "kid", "dev", lead.Key, Caps{})
+	if _, err := s.SetRole(kid.Key, role(t, "tower")); !errors.Is(err, ErrTree) || !strings.Contains(err.Error(), "never has a parent") {
+		t.Fatalf("child made tower: err=%v", err)
+	}
+	if _, err := s.SetRole(lead.Key, role(t, "tower")); !errors.Is(err, ErrTree) || !strings.Contains(err.Error(), "stop them first") {
+		t.Fatalf("lead with a dev made tower: err=%v", err)
+	}
+	solo, _ := reg(t, s, "solo", "dev", "", Caps{})
+	if _, err := s.SetRole(solo.Key, role(t, "tower")); err != nil {
+		t.Fatal(err)
+	}
+	other, _ := reg(t, s, "other", "lead", "", Caps{})
+	if _, err := s.SetRole(other.Key, role(t, "tower")); !errors.Is(err, ErrTree) || !strings.Contains(err.Error(), "one tower per container") {
+		t.Fatalf("second tower: err=%v", err)
+	}
+	// A tower with leads cannot be demoted to lead (a lead never starts a lead).
+	if _, err := reg(t, s, "l1", "lead", solo.Key, Caps{}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.SetRole(solo.Key, role(t, "lead")); !errors.Is(err, ErrTree) {
+		t.Fatalf("tower with leads demoted: err=%v", err)
+	}
+}
+
+func TestRegisterTowerTree(t *testing.T) {
+	s := open(t)
+	tower, err := reg(t, s, "tw", "tower", "", Caps{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := reg(t, s, "tw2", "tower", "", Caps{}); !errors.Is(err, ErrTree) || !strings.Contains(err.Error(), "one tower per container") {
+		t.Fatalf("second tower: err=%v", err)
+	}
+	// Another container has its own tower.
+	if _, err := s.Register(NewAgent{Container: "lea-b", Name: "tw", Profile: "claude", Workdir: "/p", Role: "tower"}, Caps{}, 1); err != nil {
+		t.Fatalf("tower of lea-b: %v", err)
+	}
+	if _, err := reg(t, s, "sub", "tower", tower.Key, Caps{}); !errors.Is(err, ErrTree) {
+		t.Fatalf("tower with a parent: err=%v", err)
+	}
+	if _, err := reg(t, s, "d0", "dev", tower.Key, Caps{}); err == nil {
+		t.Fatal("a tower started a dev")
+	}
+	lead, err := reg(t, s, "boss", "lead", tower.Key, Caps{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	dev, err := reg(t, s, "dev1", "dev", lead.Key, Caps{})
+	if err != nil {
+		t.Fatalf("the tower's lead starts a dev: %v", err)
+	}
+	for _, r := range []string{"lead", "tower"} {
+		if _, err := reg(t, s, "x-"+r, r, lead.Key, Caps{}); err == nil {
+			t.Fatalf("the tower's lead started a %s", r)
+		}
+	}
+	if _, err := reg(t, s, "deep", "dev", dev.Key, Caps{}); !errors.Is(err, ErrTree) {
+		t.Fatalf("a grandchild spawned: err=%v", err)
+	}
+	// A lead under a lead under no tower stays refused.
+	root, _ := reg(t, s, "rootlead", "lead", "", Caps{})
+	kid, _ := reg(t, s, "kid", "dev", root.Key, Caps{})
+	if _, err := reg(t, s, "deep2", "dev", kid.Key, Caps{}); !errors.Is(err, ErrTree) {
+		t.Fatalf("a lead's child spawned: err=%v", err)
+	}
+	// Once the tower ended, a new one may start.
+	s.SetState(tower.Key, "done", "", 2)
+	if _, err := reg(t, s, "tw3", "tower", "", Caps{}); err != nil {
+		t.Fatalf("tower after the first ended: %v", err)
+	}
+}
+
+func TestRegisterMaxAgentsHoldsAcrossTheTreeUnderConcurrentSpawns(t *testing.T) {
+	s := open(t)
+	tower, _ := reg(t, s, "tw", "tower", "", Caps{})
+	l1, _ := reg(t, s, "l1", "lead", tower.Key, Caps{})
+	l2, _ := reg(t, s, "l2", "lead", tower.Key, Caps{})
+	// 3 running; a stopped container's agent and an ended one do not count.
+	st, _ := reg(t, s, "parked", "dev", "", Caps{})
+	s.SetState(st.Key, "stopped", "", 2)
+	gone, _ := reg(t, s, "gone", "dev", "", Caps{})
+	s.SetState(gone.Key, "done", "", 2)
+	var wg sync.WaitGroup
+	var mu sync.Mutex
+	ok, limited := 0, 0
+	for i := 0; i < 10; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			p := l1.Key
+			if i%2 == 1 {
+				p = l2.Key
+			}
+			_, err := s.Register(NewAgent{Container: "lea-a", Name: fmt.Sprintf("c%d", i), Profile: "claude", Workdir: "/p",
+				Role: "dev", Parent: p}, Caps{MaxChildren: 20, MaxAgents: 5}, 1)
+			mu.Lock()
+			defer mu.Unlock()
+			switch {
+			case err == nil:
+				ok++
+			case errors.Is(err, ErrLimit) && strings.Contains(err.Error(), "LEA_MAX_AGENTS 5"):
+				limited++
+			default:
+				t.Errorf("register c%d: %v", i, err)
+			}
+		}(i)
+	}
+	wg.Wait()
+	if ok != 2 || limited != 8 {
+		t.Fatalf("ok=%d limited=%d, want 2 and 8", ok, limited)
+	}
+	// The user's own spawn is not refused by the global cap.
+	if _, err := s.Register(NewAgent{Container: "lea-a", Name: "mine", Profile: "claude", Workdir: "/p", Role: "dev"}, Caps{MaxAgents: 5}, 1); err != nil {
+		t.Fatalf("user spawn at the cap: %v", err)
+	}
+}
+
+func TestDeployWindowApprovalsAndResults(t *testing.T) {
+	s := open(t)
+	lead, _ := reg(t, s, "boss", "lead", "", Caps{})
+	if err := s.SetDeployWindow(lead.Key, "mon-sun 21:30-23:59 Europe/Brussels"); err != nil {
+		t.Fatal(err)
+	}
+	if a, _ := s.AgentByKey(lead.Key); a.Window != "mon-sun 21:30-23:59 Europe/Brussels" {
+		t.Fatalf("window=%q", a.Window)
+	}
+	if err := s.SetDeployWindow("lea-a/nope", "x"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("unknown: %v", err)
+	}
+	s.SetState(lead.Key, "done", "", 2)
+	again, err := reg(t, s, "boss", "lead", "", Caps{})
+	if err != nil || again.Window != "" {
+		t.Fatalf("reused row keeps its window: %+v %v", again, err)
+	}
+	if a, _ := s.AgentByKey(lead.Key); a.Window != "" {
+		t.Fatalf("reused row window=%q", a.Window)
+	}
+	for _, sha := range []string{"aaa", "bbb", "aaa"} {
+		if err := s.AddPRApproval("lea-a", "shop", 7, sha, "lea-a/rev", 3); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if got, err := s.PRApprovals("lea-a", "shop", 7); err != nil || !reflect.DeepEqual(got, []string{"aaa", "bbb"}) {
+		t.Fatalf("approvals=%q err=%v", got, err)
+	}
+	if got, _ := s.PRApprovals("lea-a", "shop", 8); len(got) != 0 {
+		t.Fatalf("other PR: %q", got)
+	}
+	if ok, _ := s.SentResult("lea-a/kid", "lea-a/boss", 0); ok {
+		t.Fatal("result before any")
+	}
+	s.Send(Message{From: "lea-a/kid", To: "lea-a/boss", Kind: "note", Body: "x", At: 5})
+	s.Send(Message{From: "lea-a/kid", To: "lea-a/boss", Kind: "result", Body: "done", At: 6})
+	if ok, _ := s.SentResult("lea-a/kid", "lea-a/boss", 6); !ok {
+		t.Fatal("result not seen")
+	}
+	if ok, _ := s.SentResult("lea-a/kid", "lea-a/boss", 7); ok {
+		t.Fatal("result before since")
 	}
 }
 
