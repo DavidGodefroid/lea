@@ -26,7 +26,7 @@ func TestLockHostOffByDefault(t *testing.T) {
 	}
 }
 
-// On: each tool's socket volume of lox up's lock on /run/<tool>, read-only, and its own clients
+// On: each tool's socket volume of lox run's lock on /run/<tool>, read-only, and its own clients
 // group, as locksql's; nothing of the host (no system.toml, no host directory, no console
 // account's files).
 func TestLockHostWired(t *testing.T) {
@@ -62,7 +62,7 @@ func TestLockHostWired(t *testing.T) {
 	}
 }
 
-// The consoles run hub-attached only, under lox up: a tool that is on, and has no lock of lox up
+// The consoles run hub-attached only, under lox run: a tool that is on, and has no lock of lox run
 // for the projects directory, gets no socket (never the fixed <tool>-run volume of a console of
 // its own launcher), and lea says to add one (`lox add <tool>`).
 func TestLockHostNeedsLoxUp(t *testing.T) {
@@ -136,7 +136,7 @@ func must(t *testing.T, err error) {
 }
 
 // TestRunArgsLocksOnMatchTheGoldenFile: the docker run arguments with lockmq and lockfile on (their
-// lox up socket volumes and clients groups, nothing of the host).
+// lox run socket volumes and clients groups, nothing of the host).
 func TestRunArgsLocksOnMatchTheGoldenFile(t *testing.T) {
 	w := newWorld(t, copyRoot(t))
 	writeUserConf(t, w, "LEA_LOCKSQL=1\nLEA_LOCKMQ=1\nLEA_LOCKFILE=1\n")
@@ -148,12 +148,12 @@ func TestRunArgsLocksOnMatchTheGoldenFile(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// lox up's project derives from the projects directory's path.
+	// lox run's project derives from the projects directory's path.
 	got := strings.ReplaceAll(strings.Join(a, "\n")+"\n", upProjectOf(w), "lockfamily-$PROJECT")
 	checkGolden(t, "run-args", "lockmq and lockfile on", hostNeutral(normalize(w, got)))
 }
 
-// A lock lox up runs for a tool the user turned off (LEA_<TOOL>=0): one line says how to turn it
+// A lock lox run runs for a tool the user turned off (LEA_<TOOL>=0): one line says how to turn it
 // on; the agents get none of its socket.
 func TestLockUpLockOfAToolThatIsOff(t *testing.T) {
 	w := newWorld(t, repoRoot(t))
@@ -167,7 +167,7 @@ func TestLockUpLockOfAToolThatIsOff(t *testing.T) {
 		}
 	}
 	e := w.errb.String()
-	if strings.Count(e, "locksql is off (LEA_LOCKSQL=0), though lox up runs a locksql lock here: `lea init --locksql` turns it on") != 1 ||
+	if strings.Count(e, "locksql is off (LEA_LOCKSQL=0), though lox run runs a locksql lock here: `lea init --locksql` turns it on") != 1 ||
 		strings.Count(e, "lockmq is off (LEA_LOCKMQ=0)") != 1 || strings.Contains(e, "lockfile") {
 		t.Errorf("stderr: %s", e)
 	}
@@ -197,7 +197,7 @@ func TestInitDefaultNoLeavesToolUnset(t *testing.T) {
 }
 
 // lea locksql, lea lockmq and lea lockfile take the launcher's decision (ToolsOn): a lock of lox
-// up for the projects directory turns a tool on that the user's configuration does not set, and
+// run for the projects directory turns a tool on that the user's configuration does not set, and
 // an explicit LEA_<TOOL>=0 keeps it off.
 func TestToolStatusFollowsUpJSON(t *testing.T) {
 	for tool, key := range map[string]string{"locksql": "LEA_LOCKSQL", "lockmq": "LEA_LOCKMQ", "lockfile": "LEA_LOCKFILE"} {
@@ -206,8 +206,8 @@ func TestToolStatusFollowsUpJSON(t *testing.T) {
 		if st := w.launcher().Main([]string{tool}); st != 0 {
 			t.Fatalf("%s: status %d: %s", tool, st, w.errb.String())
 		}
-		if e := w.errb.String(); !strings.Contains(e, tool+" is on for lea while lox up runs a "+tool+" lock here") || strings.Contains(e, " is off") {
-			t.Errorf("%s with a lock of lox up: %s", tool, e)
+		if e := w.errb.String(); !strings.Contains(e, tool+" is on for lea while lox run runs a "+tool+" lock here") || strings.Contains(e, " is off") {
+			t.Errorf("%s with a lock of lox run: %s", tool, e)
 		}
 		w = newWorld(t, repoRoot(t))
 		writeUp(t, w, lockUp("orders", tool))
@@ -221,14 +221,14 @@ func TestToolStatusFollowsUpJSON(t *testing.T) {
 	}
 }
 
-// lea doctor checks the lock of a tool that a lock of lox up turns on, as the launcher does.
+// lea doctor checks the lock of a tool that a lock of lox run turns on, as the launcher does.
 func TestDoctorFollowsUpJSON(t *testing.T) {
 	w := newWorld(t, repoRoot(t))
 	writeUp(t, w, lockUp("orders", "locksql")+","+lockUp("events", "lockmq"))
 	w.env["FAKE_DOCKER_OUT_VOLUME_LS"] = upProjectOf(w) + "_orders-run"
 	w.launcher().Main([]string{"doctor"})
-	if o := w.out.String(); !strings.Contains(o, "ok    locksql lock of lox up (socket volume "+upProjectOf(w)+"_orders-run)") ||
-		!strings.Contains(o, "lockmq launcher") || strings.Contains(o, "lockfile") || strings.Contains(o, "locksql image") {
+	if o := w.out.String(); !strings.Contains(o, "ok    locksql lock of lox run (socket volume "+upProjectOf(w)+"_orders-run)") ||
+		!strings.Contains(o, "lockmq launcher") || strings.Contains(o, "lockfile launcher") || strings.Contains(o, "locksql image") {
 		t.Errorf("doctor: %s", o)
 	}
 }

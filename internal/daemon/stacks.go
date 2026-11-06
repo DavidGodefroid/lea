@@ -46,7 +46,7 @@ func (d *Daemon) stackActivity(key, state string) {
 		return
 	}
 	var t *time.Timer
-	t = time.AfterFunc(d.stackIdle, func() {
+	t = d.afterFunc(d.stackIdle, func() {
 		d.mu.Lock()
 		mine := d.parkTimers[key] == t
 		if mine {

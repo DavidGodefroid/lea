@@ -62,14 +62,20 @@ func TestAnIdleAgentsStackIsParked(t *testing.T) {
 		t.Fatal(err)
 	}
 	e.d.SetStackIdle(80 * time.Millisecond)
+	timers := newManualTimers(t)
+	timers.use(e.d)
 	hookEvent(t, e, "kid", "UserPromptSubmit")
 	hookEvent(t, e, "kid", "Stop")
 	hookEvent(t, e, "kid", "UserPromptSubmit") // a new turn before the delay
-	time.Sleep(250 * time.Millisecond)
+	if ds := timers.delays(); len(ds) != 1 || ds[0] != 80*time.Millisecond {
+		t.Fatalf("armed timers %v, want the 80ms idle delay", ds)
+	}
+	timers.fire(t) // the delay goes by: the new turn cancelled it
 	if p := fa.parks(); len(p) != 0 {
 		t.Fatalf("a working agent's stack is parked: %q", p)
 	}
 	hookEvent(t, e, "kid", "Stop")
+	timers.fire(t) // idle for the whole delay: the stack is parked
 	waitParks(t, fa, 1)
 	if p := fa.parks(); p[0] != "park lea-a/kid" {
 		t.Fatalf("parks %q", p)
@@ -77,7 +83,9 @@ func TestAnIdleAgentsStackIsParked(t *testing.T) {
 	if s := boardStack(t, e, "kid"); !strings.Contains(s, "stopped 2 containers and 1 pod (freed 812 MiB)") {
 		t.Fatalf("board stack %q", s)
 	}
-	time.Sleep(200 * time.Millisecond)
+	if ds := timers.delays(); len(ds) != 0 {
+		t.Fatalf("armed timers %v after the park, want none: it would park again", ds)
+	}
 	if p := fa.parks(); len(p) != 1 {
 		t.Fatalf("parked again: %q", p)
 	}

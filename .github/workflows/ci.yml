@@ -30,11 +30,12 @@ jobs:
         with:
           persist-credentials: false
       - run: make test-proxy
-  # Load-aware admission (#132) on a real engine: a 64 MiB, half-CPU container under a real memory
-  # then CPU load; the daemon's sampler reads its cgroup from the host. Docker, and rootless Podman.
+  # Host resources (#132) on a real engine, Docker and rootless Podman: load-aware admission (a
+  # 64 MiB, half-CPU container under a real memory then CPU load), the limits a running container
+  # gets at the next lea and an OOM held inside it, and the CPU budget of heavy jobs.
   pressure:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 15
     strategy:
       fail-fast: false
       matrix:
@@ -85,6 +86,32 @@ jobs:
           node-version: 22
       - run: npm install -g --ignore-scripts "@openai/codex@$(sed -n 's/^ARG CODEX_VERSION=//p' image/Containerfile)"
       - run: LEA_E2E_CODEX="$(command -v codex)" go test -count=1 -run 'TestCodex(ReachesAnEndpointThroughTheForwarder|IgnoresAPlantedProjectConfig|LockCallOutlivesTheDefaultToolTimeout|PassesTheAgentIdentityToALockServer)' -v ./internal/providers/
+  # lea's seccomp profile (#100) is moby's default, vendored and pinned, with lea's reviewed changes
+  # (image/seccomp/lea.json, each with its reason): the vendored base must be moby's file at the
+  # pinned commit and image/seccomp.json what the generator builds from them. A newer moby default
+  # is only reported: moving the pin is a reviewed change.
+  seccomp:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - name: the vendored base is moby's default at the pinned commit
+        run: |
+          src=$(jq -r .base.source image/seccomp/lea.json)
+          echo "$src" | grep -Eq '^https://raw\.githubusercontent\.com/moby/profiles/[0-9a-f]{40}/seccomp/default\.json$'
+          curl -fsSL --retry 3 -o "$RUNNER_TEMP/pinned.json" "$src"
+          cmp "$RUNNER_TEMP/pinned.json" image/seccomp/moby-default.json
+          [ "$(sha256sum <image/seccomp/moby-default.json | cut -d' ' -f1)" = "$(jq -r .base.sha256 image/seccomp/lea.json)" ]
+      - name: image/seccomp.json is what image/seccomp/generate.py builds
+        run: python3 -I image/seccomp/generate.py --check
+      - name: report a newer moby default (never fails)
+        run: |
+          if curl -fsSL --retry 3 -o "$RUNNER_TEMP/main.json" https://raw.githubusercontent.com/moby/profiles/main/seccomp/default.json \
+            && ! cmp -s "$RUNNER_TEMP/main.json" image/seccomp/moby-default.json; then
+            echo "::notice title=seccomp::moby/profiles main has a newer seccomp/default.json than the pinned one: review it and move the pin in image/seccomp/lea.json"
+          fi
   # The agent-side isolation (tests/integration/isolation.sh, I2/I11): from inside a real lea, no
   # decoy, host port or sibling lea is reachable, .lockfamily is read-only (EROFS) and the hub's
   # facade socket is not visible. The two images come from the GitHub Actions cache when unchanged.
@@ -129,15 +156,25 @@ jobs:
         run: |
           make test-isolation 2>&1 | tee isolation.log
           if grep -E '^FAIL |^note: ' isolation.log; then echo "an isolation check failed or was skipped" >&2; exit 1; fi
-          for c in '.lockfamily write gets EROFS' 'host facade socket not visible' 'no facade socket in the container' 'sibling lea unreachable directly' 'host port unreachable via host IP' 'public HTTPS works through the proxy' 'nested HTTP between containers is direct'; do
+          for c in '.lockfamily write gets EROFS' 'host facade socket not visible' 'no facade socket in the container' 'sibling lea unreachable directly' 'host port unreachable via host IP' 'public HTTPS works through the proxy' 'nested HTTP between containers is direct' \
+                   'proxy confined: CapDrop' 'proxy confined: ReadonlyRootfs' 'proxy confined: no root process but PID 1' \
+                   'a nested image builds' 'a nested container reaches the proxy over pasta' 'unprivileged user namespace (rootless Podman needs it)' \
+                   'keyctl refused (seccomp)' 'perf_event_open refused (seccomp)' 'reboot refused (seccomp)' 'vmsplice refused (seccomp)' 'NETLINK_AUDIT socket refused (seccomp)' \
+                   'NETLINK_AUDIT socket with high protocol bits refused (seccomp)' 'AF_ALG socket with high family bits refused (seccomp)' \
+                   'sudo absent' 'no setuid or setgid file'; do
             grep -qxF "ok   $c" isolation.log || { echo "isolation: '$c' did not run" >&2; exit 1; }
           done
-  # The phase-2 exit demo, lea's side (tests/integration/hubdeck.sh): lox up with the released,
-  # cosign-verified lockhub and a LockHTTP lock; the gate holds an agent's write, lea's deck
-  # approves its ticket through the real facade socket, and the gate lets the write out.
-  hubdeck:
+  # The same isolation checks with the agent container on a sandboxed runtime (#106, LEA_RUNTIME):
+  # gVisor (runsc) and Kata Containers (QEMU, the runner's /dev/kvm), each installed at a pinned
+  # release by tests/integration/install-runtime.sh. docker inspect must show the runtime, the
+  # agents must see a kernel other than the host's, and every check of the runc job must run.
+  isolation-runtime:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        runtime: [runsc, kata]
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
@@ -145,29 +182,65 @@ jobs:
       - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
         with:
           go-version-file: go.mod
-      - uses: sigstore/cosign-installer@7e8b541eb2e61bf99390e1afd4be13a184e9ebc5 # v3.10.1
+      - run: go build -trimpath -o build/lea ./cmd/lea
+      - name: install and register ${{ matrix.runtime }}
+        run: tests/integration/install-runtime.sh ${{ matrix.runtime }}
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
+      - uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
         with:
-          cosign-release: v2.6.1
-      - name: make test-hubdeck, the deck's test run
+          context: .
+          file: proxy/Containerfile
+          tags: lea-proxy:dev
+          load: true
+          cache-from: type=gha,scope=lea-proxy-dev
+      - uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
+        with:
+          context: .
+          file: image/Containerfile
+          build-args: LEA_VERSION=dev
+          tags: lea:dev
+          load: true
+          cache-from: type=gha,scope=lea-dev
+      - name: AppArmor profile (as lea init loads it)
+        run: |
+          if docker info --format '{{json .SecurityOptions}}' | grep -q 'name=apparmor'; then
+            if [ -e /etc/apparmor.d/abi/4.0 ]; then abi=4.0 userns='  userns,'; else abi=3.0 userns=''; fi
+            sed -e "s|@ABI@|$abi|" -e "s|^@USERNS@\$|$userns|" apparmor/lea.tmpl | sudo tee /etc/apparmor.d/lea >/dev/null
+            sudo apparmor_parser -r /etc/apparmor.d/lea
+          fi
+      - name: make test-isolation on ${{ matrix.runtime }}, every check run
         shell: bash
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          LEA_TEST_RUNTIME: ${{ matrix.runtime }}
         run: |
-          make test-hubdeck 2>&1 | tee hubdeck.log
-          grep -q -- '^--- PASS: TestHubDeckApprovesARealLockhubTicket ' hubdeck.log
-          grep -qx 'hubdeck: OK' hubdeck.log
+          make test-isolation 2>&1 | tee isolation.log
+          if grep -E '^FAIL |^note: ' isolation.log; then echo "an isolation check failed or was skipped" >&2; exit 1; fi
+          for c in "lea-test-proxy keeps the engine's default runtime (runc)" 'a nested container runs' 'AF_ALG socket refused (seccomp)' 'NETLINK_AUDIT socket with high protocol bits refused (seccomp)' 'AF_ALG socket with high family bits refused (seccomp)' '.lockfamily write gets EROFS' 'host facade socket not visible' 'no facade socket in the container' 'sibling lea unreachable directly' 'host port unreachable via host IP' 'public HTTPS works through the proxy' 'the Claude API answers through the proxy' 'nested HTTP between containers is direct' "lea doctor: $LEA_TEST_RUNTIME applies lea's seccomp profile"; do
+            grep -qxF "ok   $c" isolation.log || { echo "isolation: '$c' did not run" >&2; exit 1; }
+          done
+          [ "$(grep -c "^ok   lea-test-[0-9a-f]* runs on the $LEA_TEST_RUNTIME runtime\$" isolation.log)" -eq 2 ] || { echo "isolation: the agent containers are not on $LEA_TEST_RUNTIME" >&2; exit 1; }
+          grep -q "^ok   a kernel other than the host's" isolation.log || { echo "isolation: the second-kernel check did not run" >&2; exit 1; }
+          # lea's bus crosses gVisor (--host-uds=open), not Kata's VM (README, "A second kernel").
+          if [ "$LEA_TEST_RUNTIME" = runsc ]; then bus="is reachable"; else bus="is not reachable"; fi
+          grep -qx "info lea's bus socket $bus" isolation.log || { echo "isolation: lea's bus socket was expected to be $bus" >&2; exit 1; }
+      - name: the runtime's logs, on failure
+        if: failure()
+        run: |
+          docker info --format '{{json .Runtimes}}' || true
+          sudo journalctl -u docker --no-pager -n 200 || true
+          sudo journalctl --no-pager -n 400 | grep -iE 'kata|runsc|gvisor' || true
   # lea's first run on a machine without images (tests/integration/firstrun.sh): a fresh HOME and
   # XDG_* directories, no lea images, the lox CLI of the checksum-verified lockhub release on
-  # PATH; `lea shell -- true` pulls both release images (cosign-verified), starts the hub with
-  # `lox init`, and a second run pulls nothing and starts no hub. The lox release is 0.5.0, the
-  # floor of config/host-minimums: until lockhub's v0.5.0 is tagged the first step finds no
-  # release, every other step is skipped and the job succeeds with a notice; once it exists the
-  # test runs with no soft-fail.
+  # PATH behind a recorder; `lea shell -- true` pulls both release images (cosign-verified) and
+  # runs no lox command (#300); with locks declared, a second run pulls nothing, still runs no lox
+  # command, and says to run `lox run` in another terminal, as lea doctor does. The lox release is
+  # 0.9.0 (lox run), LOCKS_LOX_VERSION of config/locks.lock: until lockhub's release is tagged the
+  # first step finds no release, every other step is skipped and the job succeeds with a notice.
   firstrun:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     env:
-      LOCKHUB_VERSION: "0.5.0"
+      LOCKHUB_VERSION: "0.9.0"
     steps:
       - name: is lockhub's release there yet
         id: release
@@ -320,7 +393,7 @@ jobs:
           # The hub-only checks wait for each Lock's first hub-only release: a note until then.
           h=$(grep -c '^note: .* the hub-only check is not run' phase0.log || true)
           echo "$n phase0 checks passed, $h hub-only checks not run yet"
-          [ $((n + h)) -eq 31 ]
+          [ $((n + h)) -eq 40 ]
   images:
     runs-on: ubuntu-latest
     steps:

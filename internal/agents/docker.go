@@ -198,7 +198,7 @@ func (d Docker) Projects(ctx context.Context, container string) (string, error) 
 
 // Volumes is the projects directory the launcher started the container for (its lea.projects
 // label) and the names of the volumes the container mounts, as docker inspect reports them: what
-// the daemon compares with the locks lox up runs (a lock added while lea runs).
+// the daemon compares with the locks lox run runs (a lock added while lea runs).
 func (d Docker) Volumes(ctx context.Context, container string) (string, []string, error) {
 	out, err := exec.CommandContext(ctx, d.bin(), "inspect", "--type", "container", "-f",
 		`{{index .Config.Labels "lea.projects"}}{{range .Mounts}}{{if eq .Type "volume"}}{{"\n"}}{{.Name}}{{end}}{{end}}`, container).Output()
@@ -245,35 +245,6 @@ func (d Docker) Pause(ctx context.Context, container, name string, paused bool) 
 			return ferr
 		}
 		return fmt.Errorf("lea-agent %s %s: container %s is not running", verb, name, container)
-	}
-	return nil
-}
-
-// DockerConsoles reaches the console containers an earlier lea started, through the docker CLI.
-type DockerConsoles struct {
-	Bin string // "docker" when empty
-}
-
-func (d DockerConsoles) bin() string {
-	if d.Bin == "" {
-		return "docker"
-	}
-	return d.Bin
-}
-
-// StopConsolesOf stops the console containers a deck of owner started (an earlier lea started
-// its own, labelled lea.lock-for=<owner>): never one of lox up's, which carry no such label.
-func (d DockerConsoles) StopConsolesOf(ctx context.Context, owner string) error {
-	out, err := exec.CommandContext(ctx, d.bin(), "ps", "-q", "--filter", "label="+lockOwnerLabel+"="+owner).Output()
-	if err != nil {
-		return fmt.Errorf("docker ps: %w%s", err, stderrOf(err))
-	}
-	ids := strings.Fields(string(out))
-	if len(ids) == 0 {
-		return nil
-	}
-	if out, err := exec.CommandContext(ctx, d.bin(), append([]string{"stop", "-t", "5"}, ids...)...).CombinedOutput(); err != nil {
-		return fmt.Errorf("docker stop: %w: %s", err, strings.TrimSpace(string(out)))
 	}
 	return nil
 }

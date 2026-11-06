@@ -105,27 +105,39 @@ func TestSessionEndForgetsSubagentsButSessionStartKeepsThem(t *testing.T) {
 
 func TestSubagentsExpireWithoutHooks(t *testing.T) {
 	e := start(t)
+	timers := newManualTimers(t)
 	e.d.mu.Lock()
 	e.d.subTTL = 300 * time.Millisecond
 	e.d.mu.Unlock()
+	timers.use(e.d)
 	subHook(t, e, "dev", "SubagentStart", sub("a1"))
-	// Any hook of the agent keeps them.
+	// Any hook of the agent keeps them: each rearms the TTL, superseding the timer before it.
 	for i := 0; i < 3; i++ {
-		time.Sleep(150 * time.Millisecond)
 		subHook(t, e, "dev", "PostToolUse", nil)
 	}
 	if _, n := listed(t, e, "dev"); n != 1 {
 		t.Fatalf("refreshed subagents expired: %d", n)
 	}
-	deadline := time.Now().Add(5 * time.Second)
-	for {
-		if _, n := listed(t, e, "dev"); n == 0 {
-			break
+	ds := timers.delays()
+	if len(ds) != 4 {
+		t.Fatalf("armed timers %v, want one per hook", ds)
+	}
+	for _, d := range ds {
+		if d != 300*time.Millisecond {
+			t.Fatalf("armed timers %v, want the 300ms TTL each", ds)
 		}
-		if time.Now().After(deadline) {
-			t.Fatal("subagents never expired")
+	}
+	// A superseded timer knows its generation: firing it forgets nothing.
+	for i := 0; i < 3; i++ {
+		timers.fire(t)
+		if _, n := listed(t, e, "dev"); n != 1 {
+			t.Fatalf("a refreshed timer expired the subagents: %d", n)
 		}
-		time.Sleep(50 * time.Millisecond)
+	}
+	// The newest timer's TTL elapses: the subagents are forgotten.
+	timers.fire(t)
+	if _, n := listed(t, e, "dev"); n != 0 {
+		t.Fatalf("subagents never expired: %d", n)
 	}
 	e.d.mu.Lock()
 	defer e.d.mu.Unlock()

@@ -60,6 +60,11 @@ type Daemon struct {
 	// afterWait is a test seam: it runs after an approval waiter woke, before it deregisters.
 	afterWait func()
 
+	// afterFunc arms the daemon's timers (the suspension keepalives, the subagent TTL). A test
+	// seam (#278): a test replaces it with timers it fires itself instead of racing the wall
+	// clock on a loaded runner.
+	afterFunc func(time.Duration, func()) *time.Timer
+
 	blocks map[string]int
 	// stopped: agents whose turn ended (Stop) and no new one began (prompt or stop block).
 	stopped map[string]bool
@@ -142,13 +147,10 @@ type Daemon struct {
 	hubOff bool
 	// hubDown: the hub's facade did not answer last (hubswitch.go); the deck says so.
 	hubDown bool
-	// hubQueue is the hub's queue as the decks show it, hubLocks the Locks it counted (hubdeck.go,
-	// #158).
+	// hubQueue is the hub's queue, each ticket with the agent it waits for, hubLocks the Locks it
+	// counted (hubdeck.go, #158).
 	hubQueue []hubEntry
 	hubLocks map[string]bool
-	// hubKeys is the directory of the host facades' keys lox up writes (hubreveal.go; "": no
-	// reveal).
-	hubKeys string
 	// pressClock is the pressure's clock (nil: time.Now), a test seam.
 	pressClock func() time.Time
 	// Shedding (shed.go, #132): its thresholds, each container's state, and whether pauses or
@@ -160,7 +162,11 @@ type Daemon struct {
 	// read (none when lea cannot trust it), the instances of the last trusted one, its last
 	// warnings (said once), each container's mounts, and test seams (the debounce, the events,
 	// the warnings' logger).
-	lockWatch      LockWatch
+	lockWatch LockWatch
+	// loxRun is whether lox run serves the workspace's decisions, as RunLoxRunWatch last read it
+	// (loxrun.go, #300).
+	loxRun         string
+	loxRunWatch    LoxRunWatch
 	upLocks        []UpLock
 	upKnown        map[string]bool
 	lockLastWarn   string
@@ -176,7 +182,7 @@ func New(st *store.Store, runDir string, now func() int64) *Daemon {
 	if err := st.ClearSubagents(); err != nil {
 		log.Printf("lea daemon: clear subagents: %v", err)
 	}
-	return &Daemon{subs: map[string]*subagents{}, subTTL: subagentTTL, st: st, lim: bus.Default, now: now, runDir: runDir,
+	return &Daemon{subs: map[string]*subagents{}, subTTL: subagentTTL, afterFunc: time.AfterFunc, st: st, lim: bus.Default, now: now, runDir: runDir,
 		attached: map[string]string{}, notify: map[string]chan struct{}{},
 		verdicts: map[int64]chan string{}, asks: map[string]pendingAsk{}, blocks: map[string]int{}, stopped: map[string]bool{}, rewakes: map[string]int{}, keyMu: map[string]*sync.Mutex{}, statusPaths: map[string]string{}, named: map[string]bool{}, rang: map[string]time.Time{},
 		resumeDelay: DefaultResumeDelay, windows: map[string][]limitWindow{}, limitJobs: map[string]string{},
@@ -1210,8 +1216,6 @@ func (d *Daemon) dispatchHooks(ctx context.Context, o Origin, me string, req wir
 		return d.grantCheck(o, me, req.Params)
 	case "status_report":
 		return d.statusReport(ctx, o, me, req.Params)
-	case "lock_request":
-		return d.lockRequest(ctx, o, me, req.Params)
 	default:
 		return nil, fmt.Errorf("unknown method %q", req.Method)
 	}

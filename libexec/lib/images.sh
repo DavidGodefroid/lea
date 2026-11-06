@@ -94,8 +94,8 @@ lea_ensure_images() {
   lea__ensure_image proxy "$LEA_PROXY_IMAGE"
 }
 
-# lea_refresh_images: lea update. Rebuilds local images, pulls registry ones, and builds the
-# locksql console image when it is absent (with LEA_LOCKSQL=1; never fatal).
+# lea_refresh_images: lea update. Rebuilds local images and pulls registry ones (lea's image
+# brings the Lock clients of config/locks.lock; lea builds no Lock image).
 # The registry images are pulled first, then the local ones built: a failure (the shell's set -e, a
 # lea_die) never leaves the cosign lea downloaded behind.
 lea_refresh_images() {
@@ -107,7 +107,6 @@ lea_refresh_images() {
   if [ "$_ri_new" = 1 ]; then lea__co_put; fi
   case $LEA_IMAGE in lea:dev) lea__build_image lea ;; esac
   case $LEA_PROXY_IMAGE in lea-proxy:dev) lea__build_image proxy ;; esac
-  if [ "$LEA_LOCKSQL" = 1 ]; then lea__init_locksql; fi
 }
 
 # lea__refresh_pull IMAGE: lea update's pull of IMAGE, verified; a failed pull removes the cosign

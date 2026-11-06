@@ -114,7 +114,7 @@ if [ -n "$peek" ]; then
   # ssl::server_name falls back to the CONNECT host when the ClientHello has no SNI, which would
   # let a client without SNI reach the ingress's default vhost: the helper sees the raw SNI.
   cat <<'CONF'
-http_port 127.0.0.1:3129 ssl-bump tls-cert=/etc/squid/lea-peek.pem generate-host-certificates=off
+http_port 127.0.0.1:3129 ssl-bump tls-cert=/tmp/lea-peek/lea-peek.pem generate-host-certificates=off
 visible_hostname lea-proxy-peek
 cache deny all
 cache_mem 0 MB

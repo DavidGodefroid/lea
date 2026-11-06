@@ -12,8 +12,8 @@ import (
 )
 
 // LockHTTP (LEA_LOCKHTTP=1): a LockHTTP gate beside the proxy container decides every web request
-// of the agents, asking the human on the hub of `lox up` (contract: lockhttp's docs/lea.md, and
-// lockhub's docs/lox-up.md; lockhubgate.go). The gate is a sidecar container in the proxy's
+// of the agents, asking the human on the hub of `lox run` (contract: lockhttp's docs/lea.md, and
+// lockhub's docs/lox-run.md; lockhubgate.go). The gate is a sidecar container in the proxy's
 // network namespace, from the image lockhttp's launcher pins; it alone gets the console's socket
 // volume. The agents get a proxy URL with their
 // own token (internal/lockhttp), and the daemon tells the gate who holds which (sources.json).
@@ -136,7 +136,7 @@ var lockHTTPConfine = []string{"--cap-drop", "ALL", "--security-opt", "no-new-pr
 // ensureLockHTTPGate runs the gate container beside the proxy (docs/lea.md, §2.1), and under MITM
 // the signer (§3), unless fresh is false and they are current: a running gate of image (and CA)
 // started after the proxy, and a running signer of the same. A gate older than the proxy is in a
-// network namespace the proxy left. The gate asks hub (lox up's lockhttp lock, lockhubgate.go),
+// network namespace the proxy left. The gate asks hub (lox run's lockhttp lock, lockhubgate.go),
 // and only the proxy joins the hub's network.
 func (l *Launcher) ensureLockHTTPGate(fresh bool, image string, hub *gateHub, proj string) error {
 	proxy, name, signer := l.prefix()+"-proxy", l.lockHTTPGateName(), l.lockHTTPSignerName()
@@ -190,7 +190,7 @@ func (l *Launcher) ensureLockHTTPGate(fresh bool, image string, hub *gateHub, pr
 	}
 	a := []string{"run", "-d", "--name", name, "--restart", "unless-stopped",
 		"--network", "container:" + proxy, "--user", "gate", "--label", "lea.role=lockhttp-gate"}
-	// The console's socket (lox up's): the gate's container only, never an agent's.
+	// The console's socket (lox run's): the gate's container only, never an agent's.
 	gateMITM = append(gateMITM, "--mount", "type=volume,src="+hub.home+",dst=/lockhttp-home",
 		"--mount", "type=bind,src="+hubDir+",dst="+gateHubDir+",readonly")
 	a = append(append(append(a, labels...), lockHTTPConfine...),

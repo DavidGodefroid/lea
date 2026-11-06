@@ -1,0 +1,24 @@
+status 0
+-- calls
+tmux [-V]
+docker [image] [inspect] [-f] [{{.Id}}] [lea:dev]
+docker [image] [inspect] [-f] [{{.Id}}] [lea-proxy:dev]
+tmux [-V]
+core [agents]
+core [version]
+docker [network] [inspect] [lea-egress]
+docker [network] [inspect] [-f] [{{.Internal}} {{index .Options "com.docker.network.bridge.gateway_mode_ipv4"}}] [lea-internal-$ID]
+docker [inspect] [--type] [image] [-f] [{{index .Config.Labels "lea.confine"}}] [lea-proxy:dev]
+docker [system] [info] [--format] [{{.Host.Security.Rootless}} {{.Host.CgroupControllers}}]
+docker [inspect] [-f] [{{.State.Running}}] [lea-proxy]
+docker [inspect] [--format] [{{index .Config.Labels "lea.git-ssh"}}{{with index .Config.Labels "lea.egress-allow"}}|{{.}}{{end}}{{with index .Config.Labels "lea.providers"}}#{{.}}{{end}}{{with index .Config.Labels "lea.rules"}}@{{.}}{{end}}{{with index .Config.Labels "lea.lockhttp"}}^{{.}}{{end}}!{{.Image}}] [lea-proxy]
+docker [image] [inspect] [-f] [{{.Id}}] [lea-proxy:dev]
+docker [container] [inspect] [--format] [{{with index .NetworkSettings.Networks "lea-internal-$ID"}}{{.IPAddress}}{{end}}] [lea-proxy]
+docker [inspect] [-f] [{{.State.Running}}] [lea-$ID]
+docker [inspect] [--format] [{{.Id}} {{.HostConfig.NanoCpus}} {{.HostConfig.Memory}} {{.HostConfig.MemorySwap}} {{with .HostConfig.PidsLimit}}{{.}}{{else}}0{{end}}] [lea-$ID]
+core [attach-container] [lea-$ID]
+core [deck-open] [--container] [lea-$ID] [--workdir] [$W/projects]
+tmux [-L] [lea] [-f] [$W/data/lea/host/tmux.conf] [attach-session] [-t] [=lea-$ID]
+-- lea
+lea: Open another terminal (outside lea) and run `lox run` to approve the agents' connections and writes.
+-- stdout

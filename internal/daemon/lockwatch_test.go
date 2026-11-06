@@ -20,7 +20,7 @@ import (
 	"github.com/DavidGodefroid/lea/internal/launcher"
 )
 
-// lockFamily is a projects directory with lox up's state for the locks named (all locksql):
+// lockFamily is a projects directory with lox run's state for the locks named (all locksql):
 // what ReadUpLocks trusts.
 type lockFamily struct {
 	proj, lf, project string
@@ -40,7 +40,7 @@ func newLockFamily(t *testing.T) lockFamily {
 	return lockFamily{proj: proj, lf: lf, project: "lockfamily-" + hex.EncodeToString(h[:4])}
 }
 
-// write rewrites up.json as lox up does (a new file renamed over the old one), with mode.
+// write rewrites up.json as lox run does (a new file renamed over the old one), with mode.
 func (f lockFamily) write(t *testing.T, mode os.FileMode, names ...string) {
 	t.Helper()
 	locks := map[string]any{}
@@ -132,7 +132,7 @@ func TestDaemonSeesNewLock(t *testing.T) {
 	f.write(t, 0o600, "shop")
 	rec := runWatch(t, e.d, f, nil)
 
-	// A lock lox up runs from now on: one event, named.
+	// A lock lox run runs from now on: one event, named.
 	f.write(t, 0o600, "shop", "orders")
 	eventually(t, "lock-added orders", func() bool {
 		ev, _ := rec.snapshot()

@@ -67,26 +67,6 @@ func (r *recAgents) OpenShell(ctx context.Context, c string) (agents.Row, error)
 	r.calls = append(r.calls, "shell "+c)
 	return agents.Row{Key: agents.ShellKey(c, "sh-1"), Name: "sh-1", Kind: agents.KindShell, State: "running"}, nil
 }
-func (r *recAgents) LockOpen(ctx context.Context, c, tool, profile string) (string, error) {
-	r.calls = append(r.calls, "lock-open "+c+" "+tool+" "+profile)
-	return "opened", nil
-}
-func (r *recAgents) LockClose(ctx context.Context, c, tool, profile string) (string, error) {
-	r.calls = append(r.calls, "lock-close "+c+" "+tool+" "+profile)
-	return "closed", nil
-}
-func (r *recAgents) LockCheckRequest(ctx context.Context, c, tool, profile string) error {
-	r.calls = append(r.calls, "lock-check "+c+" "+tool+" "+profile)
-	return nil
-}
-func (r *recAgents) ShowTicket(ctx context.Context, c, ref, note string, seq int64) error {
-	r.calls = append(r.calls, fmt.Sprintf("ticket %s %s %s %d", c, ref, note, seq))
-	return nil
-}
-func (r *recAgents) LockList(ctx context.Context, c string) ([]agents.LockRow, error) {
-	r.calls = append(r.calls, "lock-list "+c)
-	return nil, nil
-}
 func (r *recAgents) SplitShell(ctx context.Context, k string, below bool) (agents.Row, error) {
 	r.calls = append(r.calls, fmt.Sprintf("split %s %v", k, below))
 	return agents.Row{Key: agents.ShellKey("lea-a", "sh-2"), Name: "sh-2", Kind: agents.KindShell, State: "running"}, nil
@@ -142,15 +122,12 @@ func TestClientSpeaksTheDaemonAPI(t *testing.T) {
 	if err := c.SetPaused(ctx, "lea-a/claude-1", true); err != nil {
 		t.Fatal(err)
 	}
-	if err := c.HubShow(ctx, "lea-a", "crm/T1", "refused", 9); err != nil {
-		t.Fatal(err)
-	}
 	sh, err := c.OpenShell(ctx, "lea-a")
 	if err != nil || sh.Key != "shell:lea-a/sh-1" || sh.Kind != KindShell {
 		t.Fatalf("shell=%+v err=%v", sh, err)
 	}
 	if !reflect.DeepEqual(ra.calls, []string{"focus lea-a/claude-1", "stop lea-a/claude-1", "remove-ended lea-a/claude-2", "detach lea-a", "popup lea-a/claude-1",
-		"label lea-a/claude-1 auth work", "paused lea-a/claude-1 true", "ticket lea-a crm/T1 refused 9", "shell lea-a"}) {
+		"label lea-a/claude-1 auth work", "paused lea-a/claude-1 true", "shell lea-a"}) {
 		t.Fatalf("calls=%q", ra.calls)
 	}
 }

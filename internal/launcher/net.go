@@ -87,10 +87,58 @@ func (l *Launcher) ensureNetworks(id string) error {
 	return l.run("docker", "network", "create", "--label", "lea.prefix="+l.prefix(), "--label", "lea.id="+id, "--internal", inet)
 }
 
+// proxyConfine are the docker run arguments that confine the proxy, the one container on both the
+// agents' networks and the egress network, which holds the provider keys: no capability but SETUID
+// and SETGID (its entrypoint starts each service under a user of its own with su-exec: none of
+// them runs as root), no-new-privileges, a read-only root with tmpfs where it writes, and pids and
+// memory limits. Only an image whose entrypoint runs so (its label lea.confine=1) gets it
+// (proxyConfinable), and rootless Podman without a cgroup controller gets it without that
+// controller's limit (proxyConfinement). The arguments passed are part of proxyRules: a lea that
+// confines it otherwise replaces a running proxy.
+var proxyConfine = []string{"--cap-drop", "ALL", "--cap-add", "SETUID", "--cap-add", "SETGID",
+	"--security-opt", "no-new-privileges", "--read-only",
+	"--tmpfs", "/run:rw,nosuid,nodev,noexec,size=16m", "--tmpfs", "/tmp:rw,nosuid,nodev,noexec,size=64m",
+	"--tmpfs", "/var/cache/squid:rw,nosuid,nodev,noexec,size=16m",
+	"--pids-limit", "512", "--memory", "1g"}
+
+// proxyConfinable tells whether the proxy image runs under proxyConfine: its label lea.confine
+// is 1. An older image (a release before the confinement, a pinned LEA_PROXY_IMAGE) writes its
+// configuration in its root and starts squid as root: it runs as before (ensureProxy warns when it
+// starts it). An image that cannot be inspected gets the confinement (docker run then pulls or
+// fails on it).
+func (l *Launcher) proxyConfinable(image string) bool {
+	out, err := l.output(false, "docker", "inspect", "--type", "image", "-f", `{{index .Config.Labels "lea.confine"}}`, image)
+	return err != nil || out == "1"
+}
+
+// proxyConfinement is the confinement the proxy is started with: proxyConfine for a confinable
+// image, nil for an older one. On rootless Podman without the memory or the pids cgroup controller
+// (missingControllers), podman run refuses that controller's limit (#132): the proxy then runs
+// without it, as the lea container does, and dropped names the limits left out. The capabilities,
+// no-new-privileges and the read-only root need no controller: they are always kept.
+func (l *Launcher) proxyConfinement(image string) (confine, dropped []string) {
+	if !l.proxyConfinable(image) {
+		return nil, nil
+	}
+	miss := l.missingControllers()
+	for i := 0; i < len(proxyConfine); i++ {
+		a := proxyConfine[i]
+		if i+1 < len(proxyConfine) && (a == "--memory" && miss["memory"] || a == "--pids-limit" && miss["pids"]) {
+			dropped = append(dropped, a+" "+proxyConfine[i+1])
+			i++
+			continue
+		}
+		confine = append(confine, a)
+	}
+	return confine, dropped
+}
+
 // proxyRules is a digest (12 hex digits) of the files the proxy renders its rules and refusal
-// pages from (the lea root's proxy/), "" when there is none: a lea whose rules changed (a new
-// default allowlist, a new refusal) replaces a proxy that an older one started.
-func (l *Launcher) proxyRules() string {
+// pages from (the lea root's proxy/) and of the confinement arguments the proxy is started with
+// (proxyConfinement), "" when there is no rule file: a lea whose rules changed (a new default
+// allowlist, a new refusal, another confinement, a cgroup controller now delegated) replaces a
+// proxy that an older one started.
+func (l *Launcher) proxyRules(confine []string) string {
 	dir := filepath.Join(l.Root, "proxy")
 	files, _ := filepath.Glob(filepath.Join(dir, "errors", "*"))
 	files = append(files, filepath.Join(dir, "render-squid-conf.sh"), filepath.Join(dir, "sni-matches.sh"),
@@ -110,6 +158,7 @@ func (l *Launcher) proxyRules() string {
 	if n == 0 {
 		return ""
 	}
+	h.Write([]byte("confine\x00" + strings.Join(confine, "\x00") + "\n"))
 	return hex.EncodeToString(h.Sum(nil))[:12]
 }
 
@@ -120,7 +169,9 @@ func (l *Launcher) proxyRules() string {
 // squid.conf are set at start. proj is the projects directory being opened: no key file may sit in
 // it.
 func (l *Launcher) ensureProxy(proj string) error {
-	name, allow, rules := l.prefix()+"-proxy", l.Cfg.Get("LEA_EGRESS_ALLOW"), l.proxyRules()
+	image := l.Cfg.Get("LEA_PROXY_IMAGE")
+	confine, dropped := l.proxyConfinement(image)
+	name, allow, rules := l.prefix()+"-proxy", l.Cfg.Get("LEA_EGRESS_ALLOW"), l.proxyRules(confine)
 	fw, err := l.forwarder(proj)
 	if err != nil {
 		return err
@@ -132,12 +183,12 @@ func (l *Launcher) ensureProxy(proj string) error {
 		if lh, gateImage, err = l.lockHTTPProxyArgs(); err != nil {
 			return err
 		}
-		// lox up's lockhttp lock for this projects directory: the gate asks its hub, and only it.
+		// lox run's lockhttp lock for this projects directory: the gate asks its hub, and only it.
 		if hub, err = l.lockUpGate(proj); err != nil {
 			return l.staleGate(err)
 		}
 		// One gate serves every projects directory of this prefix: it asks the hub of the last one
-		// started under lox up. A switch of whose hub under the agents of another directory would
+		// started under lox run. A switch of whose hub under the agents of another directory would
 		// change how their requests are approved: lea stops, before it changes anything (the
 		// proxy, the gate's inputs, its networks).
 		if err := l.gateSwitchRefused(l.lockHTTPGateName(), proj, proj); err != nil {
@@ -190,6 +241,14 @@ func (l *Launcher) ensureProxy(proj string) error {
 	a := []string{"run", "-d", "--name", name, "--restart", "unless-stopped", "--network", l.prefix() + "-egress",
 		"--label", "lea.prefix=" + l.prefix(), "--label", "lea.role=proxy", "--label", "lea.git-ssh=" + l.Cfg.GitSSH(),
 		"--label", "lea.egress-allow=" + allow}
+	switch {
+	case confine == nil:
+		l.logf("warning: the proxy image %s predates the proxy's confinement (no capability, read-only, no root service): it runs without it; use a newer lea-proxy image (lea update, or make build)", image)
+	case len(dropped) > 0:
+		l.logf("warning: rootless Podman does not get the cgroup controller of %s: %s runs without it; to apply it: %s",
+			strings.Join(dropped, ", "), name, delegateFix)
+	}
+	a = append(a, confine...)
 	if fw.stamp != "" {
 		a = append(a, "--label", "lea.providers="+fw.stamp)
 	}

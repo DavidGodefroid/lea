@@ -194,15 +194,16 @@ setup() { setup_fakes; load_lea; U="$HOME/.config/lea/lea.conf"; }
 @test "LEA_LOCKSQL is 0 by default (as lockmq and lockfile), 0 or 1 only" {
   lea_load_config
   [ "$LEA_LOCKSQL" = 0 ]
-  [ "$LEA_LOCKSQL_IMAGE" = locksql:0.16.0 ]
-  [ "$LEA_LOCKSQL_REF" = v0.16.0 ]
+  # No per-Lock pin: the clients come from config/locks.lock (lea#134).
+  [ -z "${LEA_LOCKSQL_IMAGE:-}" ]
+  [ -z "$LEA_LOCKSQL_REF" ]
   mkdir -p "${U%/*}"; printf "LEA_LOCKSQL='1'\n" >"$U"
   lea_load_config
   [ "$LEA_LOCKSQL" = 1 ]
   printf 'LEA_LOCKSQL=yes\n' >"$U"
   run lea_load_config
   [ "$status" -eq 1 ]
-  [[ "$output" == *"LEA_LOCKSQL must be 1 (wire lea for a locksql console) or 0, not 'yes'"* ]]
+  [[ "$output" == *"LEA_LOCKSQL must be 1 (lea's agents reach a locksql lock lox runs) or 0, not 'yes'"* ]]
 }
 
 @test "LEA_AUTOUPDATE is on by default, 0 turns it off, any other value is refused" {
