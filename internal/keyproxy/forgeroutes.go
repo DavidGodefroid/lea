@@ -394,9 +394,34 @@ func gqlLex(src string) ([]gqlTok, error) {
 // graphqlMutations ("" when there is none). A subscription, or a fragment spread or inline fragment
 // at a mutation's root (which would hide its fields), is refused as "subscription" or "...".
 func graphqlMutationFields(q string) (string, error) {
+	names, special, err := graphqlRoots(q)
+	if err != nil || special != "" {
+		return special, err
+	}
+	for _, n := range names {
+		if !graphqlMutations[n] {
+			return n, nil
+		}
+	}
+	return "", nil
+}
+
+// graphqlMutationRoots is every root field of the mutations of q (an alias resolved to its
+// field); a subscription or a fragment at a mutation's root fails.
+func graphqlMutationRoots(q string) ([]string, error) {
+	names, special, err := graphqlRoots(q)
+	if err == nil && special != "" {
+		err = errors.New("a " + special + " lea cannot read")
+	}
+	return names, err
+}
+
+// graphqlRoots is the root fields of q's mutations, up to a subscription or a fragment at a
+// mutation's root ("subscription" or "..." in special, where the walk stops).
+func graphqlRoots(q string) (names []string, special string, err error) {
 	toks, err := gqlLex(q)
 	if err != nil {
-		return "", err
+		return nil, "", err
 	}
 	i := 0
 	peek := func() gqlTok {
@@ -448,29 +473,29 @@ func graphqlMutationFields(q string) (string, error) {
 		}
 	}
 	if len(toks) == 0 {
-		return "", errors.New("an empty document")
+		return nil, "", errors.New("an empty document")
 	}
 	for i < len(toks) {
 		t := peek()
 		switch {
 		case t.kind == 'p' && t.s == "{":
 			if err := skip(); err != nil {
-				return "", err
+				return nil, "", err
 			}
 		case t.kind == 'n' && (t.s == "query" || t.s == "fragment"):
 			i++
 			if err := header(); err != nil {
-				return "", err
+				return nil, "", err
 			}
 			if err := skip(); err != nil {
-				return "", err
+				return nil, "", err
 			}
 		case t.kind == 'n' && t.s == "subscription":
-			return "subscription", nil
+			return names, "subscription", nil
 		case t.kind == 'n' && t.s == "mutation":
 			i++
 			if err := header(); err != nil {
-				return "", err
+				return nil, "", err
 			}
 			i++ // the root "{"
 			for {
@@ -480,10 +505,10 @@ func graphqlMutationFields(q string) (string, error) {
 					break
 				}
 				if f.kind == 'p' && f.s == "..." {
-					return "...", nil
+					return names, "...", nil
 				}
 				if f.kind != 'n' {
-					return "", errors.New("a mutation root without a field name")
+					return nil, "", errors.New("a mutation root without a field name")
 				}
 				i++
 				name := f.s
@@ -493,41 +518,39 @@ func graphqlMutationFields(q string) (string, error) {
 						name = n.s
 						i++
 					} else {
-						return "", errors.New("an alias without a field")
+						return nil, "", errors.New("an alias without a field")
 					}
 				}
-				if !graphqlMutations[name] {
-					return name, nil
-				}
+				names = append(names, name)
 				if a := peek(); a.kind == 'p' && a.s == "(" {
 					if err := skip(); err != nil {
-						return "", err
+						return nil, "", err
 					}
 				}
 				for d := peek(); d.kind == 'p' && d.s == "@"; d = peek() {
 					i++
 					if n := peek(); n.kind != 'n' {
-						return "", errors.New("a directive without a name")
+						return nil, "", errors.New("a directive without a name")
 					}
 					i++
 					if a := peek(); a.kind == 'p' && a.s == "(" {
 						if err := skip(); err != nil {
-							return "", err
+							return nil, "", err
 						}
 					}
 				}
 				if s := peek(); s.kind == 'p' && s.s == "{" {
 					if err := skip(); err != nil {
-						return "", err
+						return nil, "", err
 					}
 				}
 				if i >= len(toks) {
-					return "", errors.New("an unterminated mutation")
+					return nil, "", errors.New("an unterminated mutation")
 				}
 			}
 		default:
-			return "", errors.New("an unexpected token")
+			return nil, "", errors.New("an unexpected token")
 		}
 	}
-	return "", nil
+	return names, "", nil
 }

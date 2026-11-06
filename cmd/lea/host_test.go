@@ -423,7 +423,7 @@ func TestRoleCommand(t *testing.T) {
 	if rc, _, e := runEnv(t, env, "role", "claude-1", "admin"); rc != 1 || !strings.Contains(e, "unknown role") {
 		t.Fatalf("rc=%d err=%q", rc, e)
 	}
-	if rc, _, e := runEnv(t, env, "role", "claude-1"); rc != 2 || !strings.Contains(e, "lead, dev, reviewer") {
+	if rc, _, e := runEnv(t, env, "role", "claude-1"); rc != 2 || !strings.Contains(e, "tower, lead, dev, reviewer") {
 		t.Fatalf("rc=%d err=%q", rc, e)
 	}
 }

@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"regexp"
 	"strconv"
 	"strings"
 
@@ -67,6 +68,14 @@ var catalog = []Setting{
 		Help: "the provider of a new agent: claude, codex or a name of the providers file", check: providerName},
 	{Key: "LEA_MODEL", Group: "Agents", Name: "Default model", Kind: Text, Apply: ApplyNextStart,
 		Help: "the model of a new agent on the default provider; empty: the provider's own", check: providers.CheckModel},
+	{Key: "LEA_MAX_AGENTS", Group: "Agents", Name: "Max agents", Kind: Text, Default: "30", Apply: ApplyAfterStop,
+		Help: "running agents in all past which an agent may not start another (0: no cap)", check: intRange("the max agents", 0, 1000)},
+	{Key: "LEA_CTX_WARN", Group: "Agents", Name: "Context warning", Kind: Text, Default: "70", Apply: ApplyAfterStop,
+		Help: "percent of its context a child uses before its lead is told (0: off)", check: intRange("the context warning", 0, 100)},
+	{Key: "LEA_IDLE_WARN", Group: "Agents", Name: "Idle warning", Kind: Text, Default: "30", Apply: ApplyAfterStop,
+		Help: "minutes a child with an unfinished task stays idle before its lead is told (0: off)", check: intRange("the idle warning", 0, 1440)},
+	{Key: "LEA_TOWER_OWNERS", Group: "Agents", Name: "Tower owners", Kind: Text, Apply: ApplyAfterStop,
+		Help: "GitHub or GitLab owners whose repositories the tower takes charge of, space-separated", check: owners},
 	{Key: "LEA_SOUND", Group: "Sounds", Name: "Sounds", Kind: Toggle, Default: "1", Apply: ApplyNow, Live: true,
 		Help: "a sound when lea needs you: a question, an approval, an agent blocked on you"},
 	{Key: "LEA_SOUND_ATTENTION", Group: "Sounds", Name: "Attention sound", Kind: Text, Apply: ApplyAfterStop,
@@ -298,4 +307,32 @@ func providerName(v string) error {
 	}
 	_, err = reg.Get(v)
 	return err
+}
+
+// intRange checks a whole number from lo to hi, without sign or leading zero.
+func intRange(what string, lo, hi int) func(string) error {
+	return func(v string) error {
+		n, err := strconv.Atoi(v)
+		if err != nil || strings.Trim(v, "0123456789") != "" || len(v) > 1 && v[0] == '0' || n < lo || n > hi {
+			return fmt.Errorf("%s is a number from %d to %d, not %q", what, lo, hi, v)
+		}
+		return nil
+	}
+}
+
+var ownerWord = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._/-]{0,99}$`)
+
+// owners checks LEA_TOWER_OWNERS: space-separated GitHub users or organisations, or GitLab groups
+// on their host (gitlab.example.com/group).
+func owners(v string) error {
+	ws := strings.Fields(v)
+	if len(ws) > 32 {
+		return errors.New("at most 32 tower owners")
+	}
+	for _, w := range ws {
+		if !ownerWord.MatchString(w) || strings.Contains(w, "..") {
+			return fmt.Errorf("%q is not a GitHub owner or a GitLab group (host/group)", w)
+		}
+	}
+	return nil
 }

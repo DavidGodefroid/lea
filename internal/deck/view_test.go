@@ -384,7 +384,7 @@ func TestRowShowsRoleBranchAndStatus(t *testing.T) {
 		t.Fatalf("a status hid what needs the user:\n%s", s)
 	}
 	m.roleFor = a.Key
-	if ls := viewLines(m); !strings.HasPrefix(ls[len(ls)-1], "╰─ l lead · d dev · r reviewer ") {
+	if ls := viewLines(m); !strings.HasPrefix(ls[len(ls)-1], "╰─ t tower · l lead · d dev · r reviewer ") {
 		t.Fatalf("bottom %q", ls[len(ls)-1])
 	}
 }

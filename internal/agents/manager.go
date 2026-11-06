@@ -23,6 +23,7 @@ import (
 	"time"
 
 	"github.com/DavidGodefroid/lea/internal/bus"
+	"github.com/DavidGodefroid/lea/internal/grants"
 	"github.com/DavidGodefroid/lea/internal/providers"
 	"github.com/DavidGodefroid/lea/internal/roles"
 	"github.com/DavidGodefroid/lea/internal/store"
@@ -149,6 +150,9 @@ type Config struct {
 	// it as the requester of a plan, and the Lock runs a ticket only for the token that asked.
 	// Not a security boundary: the agents of a container share one UID. nil: no token.
 	RequesterToken func(container, agent, incarnation string) string
+	// MaxAgents caps the running agents lea started, checked when an agent starts one
+	// (LEA_MAX_AGENTS, #110; 0: no cap).
+	MaxAgents int
 }
 
 type Row struct {
@@ -195,6 +199,8 @@ type Row struct {
 	LimitUntil int64 `json:"limit_until,omitempty"`
 	// Woken: lea woke the idle agent for a message in its inbox (store.Agent.Woken).
 	Woken bool `json:"woken,omitempty"`
+	// Window is a lead's deploy window, as its tower set it (store.Agent.Window).
+	Window string `json:"window,omitempty"`
 }
 
 type Snapshot struct {
@@ -257,6 +263,9 @@ type NewRequest struct {
 	// Hidden leaves the agent in its parking window: an agent another agent started never takes
 	// the slot or the keyboard.
 	Hidden bool
+	// Tree: the agent joins a tower's tree (#110); its Branch may not be a production branch the
+	// repository shows (grants.LocalProduction).
+	Tree bool
 }
 
 type Manager struct {
@@ -379,7 +388,7 @@ func (m *Manager) snapshot(container string, v int64) (Snapshot, error) {
 func rowOf(a store.Agent) Row {
 	return Row{Key: a.Key, Name: a.Name, Label: a.Label, Profile: a.Profile, Model: a.Model, State: a.State, Workdir: a.Workdir, Updated: a.Updated,
 		Created: a.Created, Role: a.Role, Parent: a.Parent, Repo: a.Repo, Branch: a.Branch, CtxPct: -1, CostUSD: -1, Paused: a.Paused,
-		LimitUntil: a.LimitUntil, Woken: a.Woken}
+		LimitUntil: a.LimitUntil, Woken: a.Woken, Window: a.Window}
 }
 
 func shellRow(container, name string) Row {
@@ -1676,8 +1685,8 @@ func (m *Manager) New(ctx context.Context, r NewRequest) (Row, error) {
 	if err != nil {
 		return Row{}, err
 	}
-	if r.Parent != "" && role.CanSpawn {
-		return Row{}, fmt.Errorf("a lead's child never spawns: the %s role cannot be given to a child", r.Role)
+	if r.Parent != "" && role.Root {
+		return Row{}, fmt.Errorf("the %s role is the user's to give: no agent starts one", r.Role)
 	}
 	if r.Name != "" && !nameRe.MatchString(r.Name) {
 		return Row{}, fmt.Errorf("invalid agent name %q: lowercase letters, digits and '-', starting with a letter, at most 24", r.Name)
@@ -1744,6 +1753,10 @@ func (m *Manager) New(ctx context.Context, r NewRequest) (Row, error) {
 		// prompt names the repo.
 		r.Workdir = projects
 	}
+	if r.Tree && r.Branch != "" && grants.LocalProduction(repo, r.Branch) {
+		return Row{}, fmt.Errorf("branch %s is a production branch of the repository (main, master, its default branch or one .lea/production names): "+
+			"an agent of a tower's tree works on a branch of its own and merges through the tree's merge grant", r.Branch)
+	}
 	if r.Workdir == "" {
 		out, err := s.Run(ctx, "display-message", "-p", "-t", "="+r.Container+":", "#{"+optWorkdir+"}")
 		if err != nil {
@@ -1765,7 +1778,7 @@ func (m *Manager) New(ctx context.Context, r NewRequest) (Row, error) {
 			return Row{}, err
 		}
 	}
-	var caps store.Caps
+	caps := store.Caps{MaxAgents: m.cfg.MaxAgents}
 	if r.Parent != "" {
 		caps.MaxChildren = roles.MaxChildren
 	}

@@ -205,7 +205,7 @@ closing the deck, or the terminal, does not stop it: the next `lea` reattaches.
 | `e` | rename the selected agent (enter saves, esc cancels, empty clears) |
 | `m` / `t` | send the selected agent a message / read its messages (see below) |
 | `a` / `d` / `A` | allow / deny / always allow the selected agent's permission request |
-| `r`, then `l` / `d` / `r` | make the selected agent a lead, a dev or a reviewer |
+| `r`, then `t` / `l` / `d` / `r` | make the selected agent the tower, a lead, a dev or a reviewer |
 | `s` | open a shell in the container (`exit` or `x` closes it) |
 | `-` / `\|` | split: a shell below the selected agent, or at its right, in its directory |
 | `S` | sounds on or off (the top border says `muted` while they are off) |
@@ -547,12 +547,25 @@ certificate, never the key, goes to the gate, to lea-keyproxy and into the agent
 
 ## Teams of agents
 
-Every agent has a role: `lead`, `dev` (the default) or `reviewer`. The first agent is a lead.
-Only you change a role (`r` in the deck, `lea role <agent> <role>`, `lea new -r reviewer`).
-Agents get lea's tools through MCP:
+Every agent has a role: `tower`, `lead`, `dev` (the default) or `reviewer`. The first agent is a
+lead. Only you change a role (`r` in the deck, `lea role <agent> <role>`, `lea new -r reviewer`),
+and only you give the `tower` role (`lea new --role tower`): one tower per lea, never with a
+parent. The agent tree is at most two levels below the tower, and the daemon enforces it whatever
+the prompts say: a tower starts leads, a lead starts `dev` and `reviewer` agents, nothing else
+spawns. Making a lead's child a lead moves it under the tower when one runs, and makes it a lead
+of its own otherwise. Agents get lea's tools through MCP:
 
 - a lead starts `dev` and `reviewer` agents with `agents_spawn` and stops its own with
-  `agents_stop` (at most 20 children at a time);
+  `agents_stop` (at most 20 children at a time); a tower starts leads the same way, and stops a
+  lead that still runs a team only with `cascade: true` (its children first). Past
+  `LEA_MAX_AGENTS` running agents in all (30), an agent's `agents_spawn` is refused (your own
+  `lea new` never is);
+- a tower talks to its leads only, and a lead's children to their lead: lea refuses a message
+  that skips a level. A tower's `agents_list` shows each lead with its team rolled up (children,
+  states, highest context use, how many need a decision);
+- lea tells an agent's parent once when the agent passes `LEA_CTX_WARN` percent of its context
+  (70), stays idle `LEA_IDLE_WARN` minutes with its task unfinished (30), ends without sending a
+  result, or hits its usage limit;
 - any other agent asks a lead with `agents_request_spawn`; without a lead the request comes to
   you (`lea requests`, `lea request accept <id>`, `lea request decline <id> [reason]`);
 - agents message each other (`msg_send`, `msg_reply`); a message waits in the inbox until the
@@ -696,6 +709,44 @@ Needs you: palette for dark-mode
 ```
 
 Ask it for the `board`, the `detail` of an agent, or to `stop` one, in your own words.
+
+Made the tower (`lea new --role tower`, or `r` then `t`), the control tower runs projects
+instead of agents: it starts one lead per project (`LEA_TOWER_OWNERS` names the GitHub or GitLab
+owners whose repositories it takes charge of), each lead follows the `/lea:project-lead` skill
+and runs its own team, and the tower brings you only the decisions that are yours, one question at
+a time. The tower gives each lead a deploy window (`lead_window`, e.g.
+`mon-sun 21:30-23:59 Europe/Brussels`): lea's grant hook refuses a merge by that lead or its team
+into a production branch (the repository's default branch, `main`, `master`, and the branches `.lea/production` names
+on the default branch or on the PR's base branch, one per line; when the default branch's list names the base branch,
+the base branch's own file must list the same branches, or the merge is refused) outside
+the window, and inside it lets through only a low-risk PR: CI green on its head, a reviewer
+agent's approval of that head (`review_approve`), and no file matching the repository's
+`.lea/sensitive` patterns (lea's defaults without it: migrations, auth, payment, secrets, infra,
+CI; paths and patterns compared lower-cased), and no file GitHub shows no diff of. Any error reading GitHub but a 404
+of a `.lea` file refuses the merge. A PR holding an irreversible migration (a dropped or renamed table or column, destroyed data;
+SQL and the Rails, Knex, Alembic, Django and Laravel equivalents)
+is never merged automatically, and the tower gets a dedicated warning to put to you. These checks
+run in the pinned `gh pr merge <N>` a merge grant allows (lea reads the PR from GitHub just before
+merging, and merges only the head it checked); in a tower's tree a merge that names no PR number,
+or a GitLab merge, is refused, and so is any merge no grant pins (`gh pr merge` without a grant,
+`gh api …/pulls/N/merge`, percent-escaped or not, an API write whose path or method holds a shell expansion, GraphQL
+`mergePullRequest`, any GraphQL call lea cannot read literally in the command (a shell variable, a query from a file or
+stdin, an escape, a program other than `gh`/`glab api`, `curl`, `wget` or `xh`), `curl -K` or `wget -i`, an MCP merge
+tool), whatever the deck or a user rule allows. A tower's tree never writes a branch
+through the API either: the contents API (PUT, DELETE), git refs (create, update, delete), `merge-upstream` and the
+GraphQL ref mutations are denied, so the trusted `.lea/production` and the production branches move only by a merge.
+Nor does it push to a production branch: lea never starts an agent of the tree on `main`, `master` or a branch the
+repository shows as production, a push no grant pins is denied in the tree, and the pinned `git push origin <branch>`
+first reads the default branch and `.lea/production` (on the default branch and on the pushed branch) from GitHub and
+refuses a production branch, or any read error but a 404.
+The forge forwarder enforces the same rules itself, whatever ran the call (a script, `make`, a raw `curl` to
+`git-receive-pack`): for a container a tower runs in, it reads the ref list of every `git-receive-pack` and refuses
+a push that does not carry the single-use token lea minted for that pinned push of that exact ref, a push of more
+than one ref or of a tag, and any update or delete of a production branch (the default branch, `main`, `master`, a
+branch `.lea/production` names on the default branch or on the pushed branch, read on GitHub: a missing file only on
+a 404). It refuses a REST or GraphQL merge without the token lea minted for the pinned merge of that PR, an
+auto-merge, `merges`, `merge-upstream`, the contents API and git refs writes (but the delete of a branch that is not a
+production one, for `gh pr merge --delete-branch`).
 
 The tower never does the work itself, not even a `git push`: every request goes to an agent. The
 plugin enforces it with a hook: once `/lea:control-tower` runs, the session may only use lea's
@@ -974,6 +1025,8 @@ read-only. The screen runs in the deck on the host: agents cannot open or drive 
 | `LEA_PROVIDER`, `LEA_MODEL` | `claude`, empty | the default provider and model of a new agent ([providers](#other-providers-codex-ollama-vllm)) |
 | `LEA_PROVIDERS` | `~/.config/lea/providers` | your OpenAI-compatible endpoints and their key files |
 | `LEA_AUTO_RESUME`, `LEA_RESUME_DELAY` | on, `60` | resume agents stopped on a usage limit, so many seconds after its reset (`0`: off) |
+| `LEA_MAX_AGENTS`, `LEA_CTX_WARN`, `LEA_IDLE_WARN` | `30`, `70`, `30` | [teams of agents](#teams-of-agents): running agents in all past which an agent may not start another (`0`: no cap); the context percent and the idle minutes past which a child's parent is told (`0`: off) |
+| `LEA_TOWER_OWNERS` | | [control tower](#control-tower): the GitHub or GitLab owners whose repositories the tower takes charge of, space-separated |
 | `LEA_STACK_IDLE` | `10` | minutes an agent stays idle before lea stops (not removes) the containers it started in the nested Podman (`0`: never); `lea board` lists what it freed |
 | `LEA_AGENT_CPUS` | `4` | each agent's CPU window, the least shared CPUs: the agent, its tools and its nested containers run there, so `nproc`, PHPStan, Go… see that many CPUs (`0`: no window) |
 | `LEA_HEAVY_SLOTS`, `LEA_HEAVY_WORKERS` | `0` (¾ of the CPUs ÷ workers), `4` | heavy jobs (`lea heavy -- <command>`): how many run at once per container, and the CPUs and workers each gets |

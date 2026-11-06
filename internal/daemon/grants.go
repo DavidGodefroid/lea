@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/DavidGodefroid/lea/internal/grants"
+	"github.com/DavidGodefroid/lea/internal/keyproxy"
 	"github.com/DavidGodefroid/lea/internal/store"
 )
 
@@ -254,6 +255,34 @@ func (d *Daemon) SetGrantProxy(f func(container, agent string) string) {
 	d.mu.Unlock()
 }
 
+// SetGrantKey is the key of the grant tokens (keyproxy.LoadGrantKey): each pinned GitHub push
+// and merge then carries a token for that ref or PR, from that container, which the forge
+// forwarder requires of a container of a tower's tree (#110).
+func (d *Daemon) SetGrantKey(key []byte) {
+	d.mu.Lock()
+	d.grantKey = key
+	d.mu.Unlock()
+}
+
+// grantMint is the Mint of a caller of container (grants.Caller), nil without a grant key.
+func (d *Daemon) grantMint(container string) func(kind, repo, ref string, pr int64) string {
+	d.mu.Lock()
+	key := d.grantKey
+	d.mu.Unlock()
+	if key == nil {
+		return nil
+	}
+	return func(kind, repo, ref string, pr int64) string {
+		// The forwarder checks the expiry against its own clock.
+		tok, err := keyproxy.MintGrant(key, keyproxy.Grant{Container: container, Repo: repo, Kind: kind, Ref: ref, PR: pr}, time.Now())
+		if err != nil {
+			log.Printf("lea daemon: grant token: %v", err)
+			return ""
+		}
+		return tok
+	}
+}
+
 func (d *Daemon) grantProxyFor(container, agent string) string {
 	d.mu.Lock()
 	f := d.grantProxy
@@ -277,7 +306,8 @@ func (d *Daemon) grantCaller(o Origin, me, cwd string) (grants.Caller, error) {
 		return grants.Caller{}, err
 	}
 	c := grants.Caller{Key: me, Container: o.Container, Repo: a.Repo, Branch: a.Branch, Lineage: []string{me},
-		OwnWorktree: grants.InWorktree(cwd, a.Repo, a.Name), Cwd: cwd, Proxy: d.grantProxyFor(o.Container, a.Name)}
+		OwnWorktree: grants.InWorktree(cwd, a.Repo, a.Name), Cwd: cwd, Proxy: d.grantProxyFor(o.Container, a.Name),
+		Mint: d.grantMint(o.Container)}
 	if c.OwnWorktree {
 		c.Worktree = strings.TrimSuffix(cwd, "/")
 	}
@@ -308,9 +338,11 @@ func (d *Daemon) grantCaller(o Origin, me, cwd string) (grants.Caller, error) {
 // process ended: what stop-finished covers.
 func (d *Daemon) finishedChild(o Origin, me string, input json.RawMessage) bool {
 	var in struct {
-		Name string `json:"name"`
+		Name    string `json:"name"`
+		Cascade bool   `json:"cascade"`
 	}
-	if json.Unmarshal(input, &in) != nil || !validTarget(in.Name) {
+	// A cascade stops the child's own team too, which may still be at work: never "finished".
+	if json.Unmarshal(input, &in) != nil || !validTarget(in.Name) || in.Cascade {
 		return false
 	}
 	key, err := d.resolveSpawned(in.Name, o.Container)
@@ -353,7 +385,52 @@ func (d *Daemon) grantCheck(o Origin, me string, raw json.RawMessage) (any, erro
 		return nil, err
 	}
 	finished := p.Tool == grants.StopTool && d.finishedChild(o, me, p.Input)
+	tower, _ := d.towerOf(c.Lineage)
+	// A pinned push of the tree checks that it goes to no production branch (#110).
+	c.Tree = tower != ""
+	var policy *grants.MergePolicy
+	if _, req, ok := grants.Classify(p.Tool, p.Input, c); ok && req.Action == grants.Merge {
+		// A tower's tree merges into production only inside its lead's window, and only a
+		// low-risk PR (#110): the pinned gh merge checks it. A merge it cannot check is denied.
+		if policy = d.mergePolicy(c, grants.MergeNumber(req)); policy != nil {
+			if req.Prog != "gh" || grants.MergeNumber(req) == "" {
+				return map[string]any{"verdict": grants.Deny, "reason": "lea: in a tower's tree a merge names its GitHub PR number (gh pr merge N), " +
+					"so that lea can check the production-merge policy (deploy window, CI, review, sensitive paths); ask your lead or tower otherwise"}, nil
+			}
+			c.Merge = policy
+		}
+	}
 	dec := grants.Decide(p.Tool, p.Input, c, gs, now, finished)
+	if dec.Verdict == grants.Allow && policy != nil {
+		d.merges.add(me, grants.MergeNumber(dec.Request), now)
+	}
+	if dec.Verdict == "" && tower != "" && grants.MergeAttempt(p.Tool, p.Input) {
+		// In a tower's tree a merge runs only as a grant pins it, under the production-merge
+		// policy (#110): a merge no grant covers (gh pr merge N without one, gh api …/merge,
+		// GraphQL mergePullRequest, an MCP merge tool) never reaches the deck, where an "always"
+		// or a user's Bash(gh pr merge:*) rule would skip the policy.
+		dec = grants.Decision{Verdict: grants.Deny, Reason: "lea: in a tower's tree a merge runs only through the merge grant of the tower's tree " +
+			"(gh pr merge N, which lea pins and checks against the production-merge policy: deploy window, CI, review, sensitive paths); " +
+			"this merge (or a forge API write whose path or method lea cannot read: an expansion) matches no grant, so it is denied: " +
+			"use gh pr merge N under that grant, or ask your lead or tower"}
+	}
+	if dec.Verdict == "" && tower != "" {
+		// Nor does a forge write that rewrites a file on a branch or moves one (contents API, git
+		// refs, merge-upstream): it would rewrite the trusted .lea/production or move a production
+		// branch past the policy (#110).
+		if why := grants.BranchWrite(p.Tool, p.Input); why != "" {
+			dec = grants.Decision{Verdict: grants.Deny, Reason: "lea: " + why}
+		}
+	}
+	if dec.Verdict == "" && tower != "" && grants.PushAttempt(p.Tool, p.Input) {
+		// Nor does a push no grant pinned: lea reads the production branches (the default branch,
+		// main, master, .lea/production) on the forge, which only the pinned push does; as the
+		// agent wrote it, the push could reach a production branch (its own branch may be one, or
+		// a refspec name one) and skip the whole production-merge policy (#110).
+		dec = grants.Decision{Verdict: grants.Deny, Reason: "lea: in a tower's tree a git push runs only through the tree's push grant " +
+			"(git push origin <your branch>, which lea pins and checks against the production branches: the default branch, main, master, " +
+			".lea/production); this push matches no grant, so it is denied: push plainly under that grant, or ask your lead or tower"}
+	}
 	if dec.Verdict == "" {
 		// A push no grant rewrote runs as the agent wrote it: its bare branch must not be a tag.
 		if why := grants.RawPush(p.Tool, p.Input, c); why != "" {

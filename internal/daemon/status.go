@@ -88,7 +88,7 @@ func (d *Daemon) statusReport(ctx context.Context, o Origin, me string, raw json
 		d.mu.Unlock()
 		if !same {
 			if prev, err := d.st.EventPayloads(me, "paths"); err == nil && len(prev) >= maxPathEvents {
-				return d.statusAnswer(ctx, o.Container), nil
+				return d.statusAnswer(ctx, o, me), nil
 			}
 			b, err := json.Marshal(map[string]any{"paths": p.Paths})
 			if err != nil {
@@ -99,13 +99,18 @@ func (d *Daemon) statusReport(ctx context.Context, o Origin, me string, raw json
 			}
 		}
 	}
-	return d.statusAnswer(ctx, o.Container), nil
+	return d.statusAnswer(ctx, o, me), nil
 }
 
-// statusAnswer is status_report's answer for an agent of container.
-func (d *Daemon) statusAnswer(ctx context.Context, container string) any {
-	if added := d.locksAdded(ctx, container); len(added) > 0 {
-		return map[string][]string{"locks_added": added}
+// statusAnswer is status_report's answer for agent me: the locks its container does not mount,
+// and in a tower's tree its lead's deploy window, open or closed (#110).
+func (d *Daemon) statusAnswer(ctx context.Context, o Origin, me string) any {
+	out := map[string]any{}
+	if added := d.locksAdded(ctx, o.Container); len(added) > 0 {
+		out["locks_added"] = added
 	}
-	return struct{}{}
+	if dep := d.deployNote(o, me); dep != "" {
+		out["deploy"] = dep
+	}
+	return out
 }

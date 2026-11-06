@@ -472,3 +472,50 @@ func TestPinnedCallsGoThroughLeaProxy(t *testing.T) {
 		t.Fatalf("the agent's proxy got %v", h)
 	}
 }
+
+// TestPinnedPushInATowersTreeChecksTheProductionBranches runs the whole pinned push of a tower's
+// tree against a fake gh (#110, re-review B1): a push to a production branch (listed in
+// .lea/production, or the default branch other than main) stops before git pushes anything; a
+// push to a branch of its own passes the check and goes on to the push.
+func TestPinnedPushInATowersTreeChecksTheProductionBranches(t *testing.T) {
+	root, wt, _ := fixture(t)
+	for _, tc := range []struct {
+		branch, def, listed string
+		refused             bool
+	}{{"release", "main", "release\n", true}, {"develop", "develop", "", true}, {"main", "develop", "", true}, {"feat/73-x", "main", "release\n", false}} {
+		dir := t.TempDir()
+		for name, body := range map[string]string{"gh": fakeGH, "default.txt": tc.def + "\n"} {
+			os.WriteFile(filepath.Join(dir, name), []byte(body), 0o755)
+		}
+		if tc.listed != "" {
+			os.WriteFile(filepath.Join(dir, "production."+tc.def), []byte(tc.listed), 0o644)
+		}
+		c, g := pinnedCaller(root, wt)
+		c.Branch, c.Tree = tc.branch, true
+		g.GitHub, g.Branch = "github.com/someone/shop", "*"
+		exec.Command(gitPath, "-C", wt, "branch", "-f", tc.branch).Run()
+		push := Command(Request{Prog: "git", Args: []string{"push", "origin", tc.branch}}, c, g)
+		if tc.branch == "main" {
+			if push != "" {
+				t.Fatalf("a push to main pinned: %s", push)
+			}
+			continue
+		}
+		// The bare repository's push is replaced by a marker: the test never reaches a forge.
+		script := strings.ReplaceAll(lastWord(t, push), "'"+ghPath+"'", "'"+filepath.Join(dir, "gh")+"'")
+		script = strings.Replace(script, " push '", " PUSHED_MARKER '", 1)
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		cmd := exec.CommandContext(ctx, shPath, "-c", script)
+		cmd.Env = []string{"PATH=/usr/bin:/bin", "GIT_CONFIG_GLOBAL=/dev/null", "GIT_TERMINAL_PROMPT=0", "HOME=" + root}
+		out, err := cmd.CombinedOutput()
+		cancel()
+		refused := strings.Contains(string(out), "production branch "+tc.branch+" never runs in a tower's tree")
+		if refused != tc.refused || (tc.refused && (err == nil || strings.Contains(string(out), "PUSHED_MARKER"))) {
+			t.Fatalf("%s: refused=%v err=%v out:\n%s", tc.branch, refused, err, out)
+		}
+		if !tc.refused && !strings.Contains(string(out), "PUSHED_MARKER") {
+			t.Fatalf("%s: the push did not go on:\n%s", tc.branch, out)
+		}
+		notPwned(t, root)
+	}
+}

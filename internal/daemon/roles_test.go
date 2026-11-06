@@ -90,7 +90,7 @@ func TestRoleChangeIsTheUsersCall(t *testing.T) {
 	}
 	spawned(t, e, "kid", "dev", boss)
 	for _, tc := range []struct{ agent, role, want string }{
-		{"kid", "lead", "never spawns"},
+		{"kid", "tower", "never has a parent"},
 		{"boss", "dev", "stop them first"},
 		{"nobody", "dev", "no agent named"},
 		{"boss", "admin", "unknown role"},
@@ -108,15 +108,52 @@ func TestRoleChangeIgnoresACallerSuppliedCanSpawn(t *testing.T) {
 	e := start(t)
 	boss := spawned(t, e, "boss", "lead", "")
 	kid := spawned(t, e, "kid", "dev", boss)
-	if err := call(t, e.api, "", "agent_role", map[string]any{"agent": "kid", "role": "lead", "can_spawn": false, "canSpawn": false}, nil); err == nil {
-		t.Fatal("a child was promoted")
+	if err := call(t, e.api, "", "agent_role", map[string]any{"agent": "kid", "role": "reviewer", "can_spawn": true, "canSpawn": true}, nil); err != nil {
+		t.Fatal(err)
 	}
-	if a, _ := e.d.st.AgentByKey(kid); a.Role != "dev" {
-		t.Fatalf("role=%q", a.Role)
+	if a, _ := e.d.st.AgentByKey(kid); a.Role != "reviewer" || a.Parent != boss {
+		t.Fatalf("kid=%+v", a)
 	}
 	if err := call(t, e.api, "", "agent_role", map[string]any{"agent": "boss", "role": "dev", "can_spawn": true}, nil); err == nil ||
 		!strings.Contains(err.Error(), "stop them first") {
 		t.Fatalf("a lead with children was demoted: %v", err)
+	}
+}
+
+// The user promotes a lead's child to lead (#110): with a tower running it becomes the tower's
+// child, and both hear of it; otherwise a root lead. Never ErrTree.
+func TestPromotingALeadsChildMovesItUnderTheTowerOrAlone(t *testing.T) {
+	e := start(t)
+	boss := spawned(t, e, "boss", "lead", "")
+	kid := spawned(t, e, "kid", "dev", boss)
+	var r map[string]string
+	if err := call(t, e.api, "", "agent_role", map[string]any{"agent": "kid", "role": "lead"}, &r); err != nil {
+		t.Fatal(err)
+	}
+	if a, _ := e.d.st.AgentByKey(kid); a.Role != "lead" || a.Parent != "" || r["parent"] != "" {
+		t.Fatalf("no tower: kid=%+v result=%v", a, r)
+	}
+	tower := spawned(t, e, "tw", "tower", "")
+	lead := spawned(t, e, "lead2", "lead", tower)
+	kid2 := spawned(t, e, "kid2", "dev", lead)
+	if err := call(t, e.api, "", "agent_role", map[string]any{"agent": "kid2", "role": "lead"}, &r); err != nil {
+		t.Fatal(err)
+	}
+	if a, _ := e.d.st.AgentByKey(kid2); a.Role != "lead" || a.Parent != tower || r["parent"] != "tw" {
+		t.Fatalf("with a tower: kid2=%+v result=%v", a, r)
+	}
+	ms, _ := e.d.st.Unread(kid2, 8)
+	if len(ms) != 1 || !strings.Contains(ms[0].Body, "You report to tw") {
+		t.Fatalf("kid2 notice=%+v", ms)
+	}
+	ms, _ = e.d.st.Unread(tower, 8)
+	if len(ms) != 1 || !strings.Contains(ms[0].Body, "kid2") || !strings.Contains(ms[0].Body, "your child") {
+		t.Fatalf("tower notice=%+v", ms)
+	}
+	// A second tower is refused, by the role too.
+	if err := call(t, e.api, "", "agent_role", map[string]any{"agent": "kid", "role": "tower"}, nil); err == nil ||
+		!strings.Contains(err.Error(), "one tower per container") {
+		t.Fatalf("second tower: %v", err)
 	}
 }
 

@@ -60,6 +60,8 @@ type Agent struct {
 	// Woken: lea woke the idle agent for a message in its inbox (agents.Row), until that turn
 	// ends or the user types: the user sees why it started.
 	Woken bool `json:"woken,omitempty"`
+	// Window is a lead's deploy window (agents.Row): its row shows the hours.
+	Window string `json:"window,omitempty"`
 }
 
 // shownState is the state a row shows (issue #72): green only when nothing is pending. A live
@@ -789,7 +791,7 @@ func (m Model) key(k string) (tea.Model, tea.Cmd) {
 	case "r":
 		if a := m.selectedAgent(); a != nil && !isShell(*a) {
 			m.roleFor = a.Key
-			m.status = "role of " + display(*a) + ": l lead, d dev, r reviewer"
+			m.status = "role of " + display(*a) + ": t tower, l lead, d dev, r reviewer"
 		}
 		return m, nil
 	case "a", "d", "A":
@@ -857,7 +859,7 @@ func (m Model) selectedAgent() *Agent {
 }
 
 // roleKeys are the answers to r (spec §4.2: change the selected agent's role; the user only).
-var roleKeys = map[string]string{"l": "lead", "d": "dev", "r": "reviewer"}
+var roleKeys = map[string]string{"t": "tower", "l": "lead", "d": "dev", "r": "reviewer"}
 
 var verdicts = map[string]string{"a": "allow", "d": "deny", "A": "always"}
 

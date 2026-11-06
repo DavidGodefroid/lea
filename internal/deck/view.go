@@ -344,7 +344,7 @@ func (m Model) bottom(w int) string {
 		}
 	}
 	if m.roleFor != "" {
-		hint = fmt.Sprintf("l lead %[1]s d dev %[1]s r reviewer", c.dot)
+		hint = fmt.Sprintf("t tower %[1]s l lead %[1]s d dev %[1]s r reviewer", c.dot)
 	}
 	if m.editFor != "" {
 		hint = fmt.Sprintf("enter save %s esc cancel", c.dot)
@@ -645,6 +645,9 @@ func (m Model) detail(a Agent, width int) string {
 		var before, after []string
 		if a.Role != "" && a.Role != "dev" {
 			before = append(before, a.Role)
+		}
+		if f := strings.Fields(a.Window); len(f) == 3 { // a lead's deploy window: its hours
+			before = append(before, "deploy "+f[1])
 		}
 		if a.Model != "" { // the provider is on the first line
 			before = append(before, a.Model)

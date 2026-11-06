@@ -148,6 +148,7 @@ type forge struct {
 	keyDir   string
 	upstream func(string) *url.URL
 	self     func(net.IP) bool // the proxy's own addresses (localIP)
+	spent    spent             // the grant tokens used (grant.go)
 }
 
 func (g *forge) ServeHTTP(rw http.ResponseWriter, r *http.Request) {
@@ -201,6 +202,17 @@ func (g *forge) ServeHTTP(rw http.ResponseWriter, r *http.Request) {
 	auth := ""
 	if tokenHosts[h] {
 		tok, err := providers.ReadKey(filepath.Join(g.keyDir, GitHubTokenFile))
+		if c, tree := treeSource(g.keyDir, localAddr(r)); tree {
+			// A tower's tree (#110): lea checks the pushes and merges here, whatever ran them.
+			if err != nil {
+				tok = ""
+			}
+			if why := g.treeCheck(r, h, segs, raw, c, source, tok); why != "" {
+				g.f.log.Printf("forge: tree: refused %s", why)
+				refuseTree(w, why)
+				return
+			}
+		}
 		switch {
 		case err == nil && h == "github.com":
 			// git over HTTPS takes Basic; any user name goes with a token.
@@ -233,6 +245,16 @@ func refuseForge(w http.ResponseWriter, why string) {
 	msg := "lea refuses this GitHub call (" + why + "): the token in lea's proxy reaches only the calls of lea's gh and git " +
 		"workflows. Make it yourself, on the host."
 	b, _ := json.Marshal(map[string]string{"message": msg, "documentation_url": "https://github.com/DavidGodefroid/lea#git-and-forges"})
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+	w.WriteHeader(http.StatusForbidden)
+	_, _ = w.Write(append(b, '\n'))
+}
+
+// refuseTree answers 403 for a call the rules of a tower's tree refuse (forgetree.go).
+func refuseTree(w http.ResponseWriter, why string) {
+	b, _ := json.Marshal(map[string]string{"message": "lea refuses this GitHub call: " + why,
+		"documentation_url": "https://github.com/DavidGodefroid/lea#git-and-forges"})
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	w.Header().Set("X-Content-Type-Options", "nosniff")
 	w.WriteHeader(http.StatusForbidden)

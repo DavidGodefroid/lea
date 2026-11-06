@@ -22,6 +22,7 @@ import (
 	"github.com/DavidGodefroid/lea/internal/daemon"
 	"github.com/DavidGodefroid/lea/internal/deck"
 	"github.com/DavidGodefroid/lea/internal/identity"
+	"github.com/DavidGodefroid/lea/internal/keyproxy"
 	"github.com/DavidGodefroid/lea/internal/launcher"
 	"github.com/DavidGodefroid/lea/internal/lockhttp"
 	"github.com/DavidGodefroid/lea/internal/roles"
@@ -226,6 +227,17 @@ func runDaemon(stderr io.Writer) int {
 		fmt.Fprintln(stderr, "lea:", clean(err.Error(), false))
 		return 1
 	}
+	// Same pattern for the agent tree's settings (#110): the global cap on agents, the health
+	// signals' thresholds and the owners the tower takes charge of.
+	_ = os.Remove(filepath.Join(host, "daemon.tree"))
+	if err := os.WriteFile(filepath.Join(host, "daemon.tree"), []byte(launcher.DaemonTreeStamp(os.Getenv)), 0o600); err != nil {
+		fmt.Fprintln(stderr, "lea:", clean(err.Error(), false))
+		return 1
+	}
+	maxAgents, ctxWarn, idleWarn, owners := launcher.TreeSettings(os.Getenv)
+	d.SetHealth(ctxWarn, idleWarn)
+	d.SetTowerOwners(owners)
+	go d.RunHealth(ctx)
 	if a := launcher.AdmitSettings(os.Getenv); len(a) == 10 {
 		d.SetPressure(&daemon.HostPressure{}, daemon.Thresholds{CPUPSI: a[0], MemPct: a[1], MemPSI: a[2], IOPSI: a[3], Load: a[4]})
 		// Under sustained critical pressure the lowest-priority agent is paused, and resumed once
@@ -272,6 +284,15 @@ func runDaemon(stderr io.Writer) int {
 	requesterToken := func(container, agent, incarnation string) string {
 		return agents.RequesterToken(key, container, agent, incarnation)
 	}
+	// The grant tokens of the pinned pushes and merges, and the tree file: the forge forwarder
+	// enforces a tower's tree's push and merge rules itself (#110).
+	if gk, err := keyproxy.LoadGrantKey(forgeDir(filepath.Dir(host))); err != nil {
+		fmt.Fprintln(stderr, "lea:", clean(err.Error(), false))
+		return 1
+	} else {
+		d.SetGrantKey(gk)
+	}
+	go forgeTree(ctx, st, filepath.Dir(host), nonEmptyEnv("LEA_PREFIX", "lea"))
 	if os.Getenv("LEA_LOCKHTTP") == "1" {
 		proxyToken = func(container, agent string) string { return lockhttp.Token(key, container, agent) }
 		d.SetGrantProxy(lockHTTPGrantProxy(key))
@@ -298,6 +319,7 @@ func runDaemon(stderr io.Writer) int {
 		DefaultModel:    os.Getenv("LEA_MODEL"),
 		ProxyToken:      proxyToken,
 		RequesterToken:  requesterToken,
+		MaxAgents:       maxAgents,
 	})
 	d.SetAgents(m)
 	// Whether lox run serves the workspace's decisions (#300): the deck says to run it when not.

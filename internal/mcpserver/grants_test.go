@@ -45,7 +45,7 @@ func TestNoToolWritesGrants(t *testing.T) {
 		names = append(names, tl.Name)
 	}
 	sort.Strings(names)
-	want := "agents_list agents_request_spawn agents_spawn agents_stop ask board_read grants_list lease_acquire lease_release msg_inbox msg_reply msg_send msg_wait providers_list task_update"
+	want := "agents_list agents_request_spawn agents_spawn agents_stop ask board_read grants_list lead_window lease_acquire lease_release msg_inbox msg_reply msg_send msg_wait providers_list review_approve task_update"
 	if got := strings.Join(names, " "); got != want {
 		t.Fatalf("agent tools changed:\n got %s\nwant %s", got, want)
 	}

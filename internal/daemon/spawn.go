@@ -9,6 +9,7 @@ import (
 
 	"github.com/DavidGodefroid/lea/internal/agents"
 	"github.com/DavidGodefroid/lea/internal/bus"
+	"github.com/DavidGodefroid/lea/internal/grants"
 	"github.com/DavidGodefroid/lea/internal/roles"
 	"github.com/DavidGodefroid/lea/internal/store"
 )
@@ -119,6 +120,14 @@ func (d *Daemon) agentsSpawn(ctx context.Context, o Origin, me string, raw json.
 	if p.Role == "" {
 		p.Role = roles.Default
 	}
+	// An agent of a tower's tree never gets a production branch (#110): a push to its own branch
+	// would skip the production-merge policy. main, master and HEAD here; the manager also reads
+	// the repository's default branch and .lea/production on the host, and the pinned push reads
+	// them on the forge (the check that holds).
+	tree := d.inTowerTree(me)
+	if tree && p.Branch != "" && grants.Protected(p.Branch) {
+		return nil, fmt.Errorf("agents_spawn: branch %s is a production branch: an agent of a tower's tree works on a branch of its own", p.Branch)
+	}
 	cr, err := roles.Get(caller.Role)
 	if err != nil {
 		return nil, err
@@ -158,7 +167,7 @@ func (d *Daemon) agentsSpawn(ctx context.Context, o Origin, me string, raw json.
 		p.Profile, p.Model = req.Profile, req.Model
 	}
 	nr := agents.NewRequest{Container: o.Container, Profile: p.Profile, Model: p.Model, Role: p.Role, Parent: me,
-		Repo: p.Repo, Branch: p.Branch, Brief: p.Brief, BriefFrom: me, NamePrefix: p.Role, Hidden: true}
+		Repo: p.Repo, Branch: p.Branch, Brief: p.Brief, BriefFrom: me, NamePrefix: p.Role, Hidden: true, Tree: tree}
 	if admit != nil {
 		id, err := d.queueSpawn(me, nr, req)
 		if err != nil {
@@ -199,14 +208,16 @@ func (d *Daemon) startSpawn(ctx context.Context, a Agents, lead string, nr agent
 }
 
 // agentsStop stops one of the calling lead's own children (spec §5.2: several leads may run; each
-// stops only its own children).
+// stops only its own children). A child that runs agents of its own (a tower's lead with its
+// team) is stopped only with cascade: its children first, then it (#110).
 func (d *Daemon) agentsStop(ctx context.Context, o Origin, me string, raw json.RawMessage) (any, error) {
 	caller, err := d.spawnedCaller(o, me, "agents_stop")
 	if err != nil {
 		return nil, err
 	}
 	var p struct {
-		Name string `json:"name"`
+		Name    string `json:"name"`
+		Cascade bool   `json:"cascade"`
 	}
 	if err := json.Unmarshal(raw, &p); err != nil {
 		return nil, err
@@ -228,6 +239,17 @@ func (d *Daemon) agentsStop(ctx context.Context, o Origin, me string, raw json.R
 	if t.Parent != me {
 		return nil, fmt.Errorf("agents_stop: %s is not one of your children", t.Name)
 	}
+	kids, err := d.st.Children(key)
+	if err != nil {
+		return nil, err
+	}
+	if len(kids) > 0 && !p.Cascade {
+		names := make([]string, len(kids))
+		for i, k := range kids {
+			names[i] = k.Name
+		}
+		return nil, fmt.Errorf("agents_stop: %s runs %d agents (%s): pass cascade: true to stop them, then it", t.Name, len(kids), strings.Join(names, ", "))
+	}
 	a := d.manager()
 	if a == nil {
 		return nil, errors.New("agents are not available in this daemon")
@@ -235,11 +257,25 @@ func (d *Daemon) agentsStop(ctx context.Context, o Origin, me string, raw json.R
 	if err := d.rates.allow("agents_stop", me, d.now()); err != nil {
 		return nil, err
 	}
+	stopped := []string{}
+	for _, k := range kids {
+		d.markParentStop(k)
+		if err := a.Stop(ctx, k.Key); err != nil {
+			d.changed()
+			return nil, fmt.Errorf("agents_stop: %s's child %s: %w (%s left running)", t.Name, k.Name, err, t.Name)
+		}
+		stopped = append(stopped, k.Name)
+	}
+	d.markParentStop(t)
 	if err := a.Stop(ctx, key); err != nil {
+		d.changed()
 		return nil, err
 	}
 	d.pruneForgotten()
 	d.changed()
+	if len(stopped) > 0 {
+		return map[string]any{"stopped": t.Name, "children": stopped}, nil
+	}
 	return map[string]string{"stopped": t.Name}, nil
 }
 

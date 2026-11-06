@@ -10,6 +10,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 
 	"github.com/DavidGodefroid/lea/internal/roles"
@@ -22,7 +23,8 @@ var (
 	ErrExists   = errors.New("already exists")
 	// ErrLimit: a cap (max_children, pending requests, leases) is reached.
 	ErrLimit = errors.New("limit reached")
-	// ErrTree: the change would break the agent tree (spec A17: a lead and its children).
+	// ErrTree: the change would break the agent tree (spec A17: a tower starts leads, a lead
+	// starts agents that never spawn).
 	ErrTree = errors.New("agent tree rule")
 )
 
@@ -87,6 +89,10 @@ CREATE INDEX IF NOT EXISTS hub_waits_ticket ON hub_waits(ticket);
 CREATE TABLE IF NOT EXISTS hub_abandoned(
   instance TEXT NOT NULL, ticket TEXT NOT NULL, at INTEGER NOT NULL, PRIMARY KEY(instance, ticket));
 CREATE TABLE IF NOT EXISTS kv(key TEXT PRIMARY KEY, value TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS pr_approvals(
+  id INTEGER PRIMARY KEY AUTOINCREMENT, container TEXT NOT NULL, repo TEXT NOT NULL, pr INTEGER NOT NULL,
+  sha TEXT NOT NULL, agent TEXT NOT NULL, at INTEGER NOT NULL);
+CREATE INDEX IF NOT EXISTS pr_approvals_pr ON pr_approvals(container, repo, pr);
 `
 
 type Store struct{ db *sql.DB }
@@ -142,6 +148,9 @@ type Agent struct {
 	// Woken: lea woke the idle agent for a message in its inbox (#297), until that turn ends or
 	// the user types. Display only.
 	Woken bool
+	// Window is a lead's deploy window, as its tower set it (lead_window; "" when none): when it
+	// and its children may merge into a production branch (#110).
+	Window string
 }
 
 // agentColumns are the agents columns added after phase 0; migrate adds the missing ones to a
@@ -168,6 +177,7 @@ var agentColumns = [][2]string{
 	{"limit_tries", "INTEGER NOT NULL DEFAULT 0"},
 	{"incarnation", "TEXT NOT NULL DEFAULT ''"},
 	{"woken", "INTEGER NOT NULL DEFAULT 0"},
+	{"deploy_window", "TEXT NOT NULL DEFAULT ''"},
 }
 
 // requestColumns are the spawn_requests columns added after it was created.
@@ -266,13 +276,13 @@ func (s *Store) SetHookState(key, state, sessionID string, now int64) (bool, err
 	return s.setState(key, state, sessionID, now, ` AND state<>'stopped'`)
 }
 
-const agentCols = `key, container, name, session_id, state, updated, profile, workdir, created, role, parent, repo, branch, task_id, label, args, prompt, paused, model, limit_until, limit_tries, incarnation, woken`
+const agentCols = `key, container, name, session_id, state, updated, profile, workdir, created, role, parent, repo, branch, task_id, label, args, prompt, paused, model, limit_until, limit_tries, incarnation, woken, deploy_window`
 
 func scanAgent(sc interface{ Scan(...any) error }) (Agent, error) {
 	var a Agent
 	var args string
 	err := sc.Scan(&a.Key, &a.Container, &a.Name, &a.SessionID, &a.State, &a.Updated, &a.Profile, &a.Workdir, &a.Created,
-		&a.Role, &a.Parent, &a.Repo, &a.Branch, &a.TaskID, &a.Label, &args, &a.Prompt, &a.Paused, &a.Model, &a.LimitUntil, &a.LimitTries, &a.Incarnation, &a.Woken)
+		&a.Role, &a.Parent, &a.Repo, &a.Branch, &a.TaskID, &a.Label, &args, &a.Prompt, &a.Paused, &a.Model, &a.LimitUntil, &a.LimitTries, &a.Incarnation, &a.Woken, &a.Window)
 	if err == nil && args != "" {
 		err = json.Unmarshal([]byte(args), &a.Args)
 	}
@@ -342,14 +352,19 @@ type NewAgent struct {
 	Model                             string
 }
 
-// Caps bound a spawn: at most MaxChildren running children of the parent (0: no bound). An ended
-// agent (done) does not count, nor does a row a hook registered.
-type Caps struct{ MaxChildren int }
+// Caps bound a spawn: at most MaxChildren running children of the parent (0: no bound) and, for
+// a spawn by an agent (one with a parent), at most MaxAgents running agents lea started in all
+// (LEA_MAX_AGENTS; 0: no bound): the per-parent caps alone allow a tower 20 leads of 20 children.
+// An ended agent (done) does not count, nor does a row a hook registered; nor, for MaxAgents, an
+// agent whose container is stopped. The user's own spawns are never refused by MaxAgents.
+type Caps struct{ MaxChildren, MaxAgents int }
 
-// Register records an agent lea spawns, checking the caps in the same transaction: two spawns at
-// the cap never both pass. A row of the same name whose agent ended (state done) is reused from
-// scratch (its children are detached: a new agent never inherits them); any other existing row is
-// ErrExists.
+// Register records an agent lea spawns, checking the tree and the caps in the same transaction:
+// two spawns at a cap never both pass. A root role (tower) never has a parent, and runs once per
+// container. A parent that has a parent itself is accepted only under a root agent that has
+// none: the tree is at most two levels below its root (spec A17). A row of the same name whose
+// agent ended (state done) is reused from scratch (its children are detached: a new agent never
+// inherits them); any other existing row is ErrExists.
 func (s *Store) Register(n NewAgent, c Caps, now int64) (Agent, error) {
 	if n.Role == "" {
 		return Agent{}, errors.New("register: an agent needs a role")
@@ -371,6 +386,16 @@ func (s *Store) Register(n NewAgent, c Caps, now int64) (Agent, error) {
 	default:
 		return Agent{}, fmt.Errorf("agent %s: %w", n.Name, ErrExists)
 	}
+	if r, err := roles.Get(n.Role); err == nil && r.Root {
+		if n.Parent != "" {
+			return Agent{}, fmt.Errorf("%w: a %s is started by the user only, never by an agent", ErrTree, n.Role)
+		}
+		if t, err := runningRoot(tx, n.Container, key); err != nil {
+			return Agent{}, err
+		} else if t != "" {
+			return Agent{}, fmt.Errorf("%w: %s is already the tower of %s: one tower per container", ErrTree, nameOf(t), n.Container)
+		}
+	}
 	if n.Parent != "" {
 		if n.Parent == key {
 			return Agent{}, fmt.Errorf("%w: %s cannot be its own parent", ErrTree, n.Name)
@@ -382,7 +407,15 @@ func (s *Store) Register(n NewAgent, c Caps, now int64) (Agent, error) {
 		case err != nil:
 			return Agent{}, err
 		case grand != "":
-			return Agent{}, fmt.Errorf("%w: %s was started by %s, and a lead's child never spawns", ErrTree, nameOf(n.Parent), nameOf(grand))
+			// Only a root agent's child may spawn, and only when that root has no parent.
+			var ggrand, grole string
+			err := tx.QueryRow(`SELECT parent, role FROM agents WHERE key=?`, grand).Scan(&ggrand, &grole)
+			if err != nil && !errors.Is(err, sql.ErrNoRows) {
+				return Agent{}, err
+			}
+			if gr, gerr := roles.Get(grole); err != nil || gerr != nil || !gr.Root || ggrand != "" {
+				return Agent{}, fmt.Errorf("%w: %s was started by %s, and a lead's child never spawns", ErrTree, nameOf(n.Parent), nameOf(grand))
+			}
 		}
 		// Checked here, in the transaction SetRole also runs in, so a demotion cannot slip
 		// between the spawner's role check and the registration.
@@ -403,6 +436,15 @@ func (s *Store) Register(n NewAgent, c Caps, now int64) (Agent, error) {
 			return Agent{}, fmt.Errorf("%w: %s already runs %d agents (max_children %d)", ErrLimit, nameOf(n.Parent), kids, c.MaxChildren)
 		}
 	}
+	if n.Parent != "" && c.MaxAgents > 0 {
+		var all int
+		if err := tx.QueryRow(`SELECT COUNT(*) FROM agents WHERE profile<>'' AND state NOT IN ('done','stopped') AND key<>?`, key).Scan(&all); err != nil {
+			return Agent{}, err
+		}
+		if all >= c.MaxAgents {
+			return Agent{}, fmt.Errorf("%w: lea already runs %d agents (LEA_MAX_AGENTS %d): stop one first", ErrLimit, all, c.MaxAgents)
+		}
+	}
 	inc, err := newIncarnation()
 	if err != nil {
 		return Agent{}, err
@@ -412,7 +454,7 @@ func (s *Store) Register(n NewAgent, c Caps, now int64) (Agent, error) {
 			return Agent{}, err
 		}
 		_, err = tx.Exec(`UPDATE agents SET profile=?, workdir=?, created=?, updated=?, state='unknown', session_id='',
-			ctx_pct=-1, cost_usd=-1, role=?, parent=?, repo=?, branch=?, task_id=0, label='', args='', prompt='', paused=0, subagents=0, limit_until=0, limit_tries=0, woken=0, model=?, incarnation=? WHERE key=?`,
+			ctx_pct=-1, cost_usd=-1, role=?, parent=?, repo=?, branch=?, task_id=0, label='', args='', prompt='', paused=0, subagents=0, limit_until=0, limit_tries=0, woken=0, deploy_window='', model=?, incarnation=? WHERE key=?`,
 			n.Profile, n.Workdir, now, now, n.Role, n.Parent, n.Repo, n.Branch, n.Model, inc, key)
 	} else {
 		_, err = tx.Exec(`INSERT INTO agents(key, container, name, profile, workdir, created, updated, role, parent, repo, branch, model, incarnation)
@@ -442,43 +484,181 @@ func (s *Store) RegisterAgent(container, name, profile, workdir string, now int6
 	return s.Register(NewAgent{Container: container, Name: name, Profile: profile, Workdir: workdir, Role: "dev"}, Caps{}, now)
 }
 
-// SetRole changes the role of an agent lea spawned. A role that spawns (canSpawn) is refused to a
-// lead's child, and a role that does not is refused to an agent with running children: the tree
-// stays a lead and its children (spec A17). Only the user calls it. canSpawn is trusted: callers
-// must derive it from roles.Get(role).CanSpawn, never from user or agent input.
-func (s *Store) SetRole(key, role string, canSpawn bool) error {
+// runningRoot is the key of the running agent of a root role (the tower) in container other than
+// except ("" when none).
+func runningRoot(tx *sql.Tx, container, except string) (string, error) {
+	rs := roles.RootRoles()
+	if len(rs) == 0 {
+		return "", nil
+	}
+	q := `SELECT key FROM agents WHERE container=? AND key<>? AND profile<>'' AND state<>'done' AND role IN (?` +
+		strings.Repeat(",?", len(rs)-1) + `) ORDER BY created LIMIT 1`
+	args := []any{container, except}
+	for _, r := range rs {
+		args = append(args, r)
+	}
+	var k string
+	err := tx.QueryRow(q, args...).Scan(&k)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", nil
+	}
+	return k, err
+}
+
+// SetRole gives role r to an agent lea spawned; only the user calls it, and r must be a built-in
+// role (roles.Get), never one built from user or agent input. It keeps the tree of spec A17,
+// in the transaction a spawn registers its child in, so a demotion cannot race a spawn:
+//   - every running child of the agent must be one r may start ("stop them first" otherwise);
+//   - a root role (tower) goes only to an agent without a parent, once per container;
+//   - when the agent's parent may not give r, the agent moves: an agent that now spawns (a
+//     lead's child promoted to lead) goes under the container's tower when one runs and may
+//     take it, and is detached (a root agent) otherwise; one that does not spawn is detached.
+//
+// It returns the agent's parent after the change ("" when none).
+func (s *Store) SetRole(key string, r roles.Role) (string, error) {
 	tx, err := s.db.Begin()
 	if err != nil {
-		return err
+		return "", err
 	}
 	defer tx.Rollback()
-	var parent, profile string
-	err = tx.QueryRow(`SELECT parent, profile FROM agents WHERE key=?`, key).Scan(&parent, &profile)
+	var parent, profile, container string
+	err = tx.QueryRow(`SELECT parent, profile, container FROM agents WHERE key=?`, key).Scan(&parent, &profile, &container)
 	if errors.Is(err, sql.ErrNoRows) {
-		return ErrNotFound
+		return "", ErrNotFound
 	}
+	if err != nil {
+		return "", err
+	}
+	if profile == "" {
+		return "", fmt.Errorf("agent %s was not started by lea", nameOf(key))
+	}
+	rows, err := tx.Query(`SELECT role FROM agents WHERE parent=? AND state<>'done'`, key)
+	if err != nil {
+		return "", err
+	}
+	kids, odd := 0, 0
+	for rows.Next() {
+		var kr string
+		if err := rows.Scan(&kr); err != nil {
+			rows.Close()
+			return "", err
+		}
+		kids++
+		if !slices.Contains(r.SpawnRoles, kr) {
+			odd++
+		}
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return "", err
+	}
+	if odd > 0 {
+		return "", fmt.Errorf("%w: %s runs %d agents a %s may not start: stop them first", ErrTree, nameOf(key), kids, r.Name)
+	}
+	if r.Root {
+		if parent != "" {
+			return "", fmt.Errorf("%w: %s was started by %s, and a %s never has a parent", ErrTree, nameOf(key), nameOf(parent), r.Name)
+		}
+		if t, err := runningRoot(tx, container, key); err != nil {
+			return "", err
+		} else if t != "" {
+			return "", fmt.Errorf("%w: %s is already the tower of %s: one tower per container", ErrTree, nameOf(t), container)
+		}
+	}
+	if parent != "" {
+		var prole string
+		err := tx.QueryRow(`SELECT role FROM agents WHERE key=?`, parent).Scan(&prole)
+		if err != nil && !errors.Is(err, sql.ErrNoRows) {
+			return "", err
+		}
+		pr, perr := roles.Get(prole)
+		if err != nil || perr != nil || roles.CanGive(pr, r.Name) != nil {
+			parent = ""
+			if r.CanSpawn {
+				if parent, err = adoptiveRoot(tx, container, key, r.Name); err != nil {
+					return "", err
+				}
+			}
+		}
+	}
+	if _, err := tx.Exec(`UPDATE agents SET role=?, parent=? WHERE key=?`, r.Name, parent, key); err != nil {
+		return "", err
+	}
+	return parent, tx.Commit()
+}
+
+// adoptiveRoot is the running root agent (tower) of container that may take key, of role role,
+// as its child: it may give that role and has room under its max_children. "" when none.
+func adoptiveRoot(tx *sql.Tx, container, key, role string) (string, error) {
+	t, err := runningRoot(tx, container, key)
+	if err != nil || t == "" {
+		return "", err
+	}
+	var trole string
+	if err := tx.QueryRow(`SELECT role FROM agents WHERE key=?`, t).Scan(&trole); err != nil {
+		return "", err
+	}
+	tr, err := roles.Get(trole)
+	if err != nil || roles.CanGive(tr, role) != nil {
+		return "", nil
+	}
+	var kids int
+	if err := tx.QueryRow(`SELECT COUNT(*) FROM agents WHERE parent=? AND state<>'done' AND key<>?`, t, key).Scan(&kids); err != nil {
+		return "", err
+	}
+	if tr.MaxChildren > 0 && kids >= tr.MaxChildren {
+		return "", nil
+	}
+	return t, nil
+}
+
+// SetDeployWindow records a lead's deploy window ("" clears it); the caller checks the text
+// (grants.ParseWindow).
+func (s *Store) SetDeployWindow(key, window string) error {
+	res, err := s.db.Exec(`UPDATE agents SET deploy_window=? WHERE key=? AND profile<>''`, window, key)
 	if err != nil {
 		return err
 	}
-	if profile == "" {
-		return fmt.Errorf("agent %s was not started by lea", nameOf(key))
-	}
-	if canSpawn && parent != "" {
-		return fmt.Errorf("%w: %s was started by %s, and a lead's child never spawns", ErrTree, nameOf(key), nameOf(parent))
-	}
-	if !canSpawn {
-		var kids int
-		if err := tx.QueryRow(`SELECT COUNT(*) FROM agents WHERE parent=? AND state<>'done'`, key).Scan(&kids); err != nil {
-			return err
-		}
-		if kids > 0 {
-			return fmt.Errorf("%w: %s runs %d agents: stop them first", ErrTree, nameOf(key), kids)
-		}
-	}
-	if _, err := tx.Exec(`UPDATE agents SET role=? WHERE key=?`, role, key); err != nil {
+	if n, err := res.RowsAffected(); err != nil {
 		return err
+	} else if n == 0 {
+		return ErrNotFound
 	}
-	return tx.Commit()
+	return nil
+}
+
+// SentResult says whether from sent to a message of kind result at or after since.
+func (s *Store) SentResult(from, to string, since int64) (bool, error) {
+	var n int
+	err := s.db.QueryRow(`SELECT COUNT(*) FROM messages WHERE sender=? AND recipient=? AND kind='result' AND at>=?`, from, to, since).Scan(&n)
+	return n > 0, err
+}
+
+// AddPRApproval records that reviewer agent approved pull request pr of repo (a directory under
+// the projects directory) in container, at head commit sha.
+func (s *Store) AddPRApproval(container, repo string, pr int64, sha, agent string, now int64) error {
+	_, err := s.db.Exec(`INSERT INTO pr_approvals(container, repo, pr, sha, agent, at) VALUES(?,?,?,?,?,?)`,
+		container, repo, pr, sha, agent, now)
+	return err
+}
+
+// PRApprovals lists the head commits at which a reviewer approved pull request pr of repo in
+// container, newest first, at most 20.
+func (s *Store) PRApprovals(container, repo string, pr int64) ([]string, error) {
+	rows, err := s.db.Query(`SELECT sha FROM pr_approvals WHERE container=? AND repo=? AND pr=? GROUP BY sha ORDER BY MAX(id) DESC LIMIT 20`, container, repo, pr)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []string
+	for rows.Next() {
+		var sha string
+		if err := rows.Scan(&sha); err != nil {
+			return nil, err
+		}
+		out = append(out, sha)
+	}
+	return out, rows.Err()
 }
 
 // SetLabel sets the display label of an agent lea spawned ("" clears it). Only the user calls

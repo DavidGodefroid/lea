@@ -46,7 +46,7 @@ fi
 case $tool in
 mcp__lea__agents_spawn | mcp__lea__agents_list | mcp__lea__agents_stop | mcp__lea__agents_request_spawn | \
   mcp__lea__msg_send | mcp__lea__msg_reply | mcp__lea__msg_inbox | mcp__lea__msg_wait | \
-  mcp__lea__board_read | mcp__lea__task_update | AskUserQuestion | ToolSearch | TodoWrite)
+  mcp__lea__board_read | mcp__lea__task_update | mcp__lea__lead_window | AskUserQuestion | ToolSearch | TodoWrite)
   exit 0
   ;;
 Bash)
@@ -61,4 +61,4 @@ Bash)
   esac
   ;;
 esac
-deny "control-tower: you are the control tower, you do not act yourself. Give this to an agent: agents_spawn a new one, or msg_send the agent already on this subject. Your tools: agents_spawn, agents_list, agents_stop, msg_send, msg_reply, msg_inbox, msg_wait, board_read, task_update, questions to the user, and the Bash job 'lea inbox --agent --wait'. The user leaves tower mode with '/lea:control-tower off'."
+deny "control-tower: you are the control tower, you do not act yourself. Give this to an agent: agents_spawn a new one, or msg_send the agent already on this subject. Your tools: agents_spawn, agents_list, agents_stop, lead_window, msg_send, msg_reply, msg_inbox, msg_wait, board_read, task_update, questions to the user, and the Bash job 'lea inbox --agent --wait'. The user leaves tower mode with '/lea:control-tower off'."

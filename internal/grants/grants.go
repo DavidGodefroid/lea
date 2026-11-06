@@ -11,6 +11,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"regexp"
+	"strconv"
 	"strings"
 )
 
@@ -146,7 +147,43 @@ type Caller struct {
 	// container (LeaProxy): the container's network is internal, and env -i drops the agent's
 	// HTTPS_PROXY, which lea would not vouch for anyway.
 	Proxy string
+	// Merge, when set, is the production-merge policy of a caller in a tower's tree (#110): an
+	// allowed gh merge runs only after it passes (mergePolicyScript).
+	Merge *MergePolicy
+	// Tree: the caller is an agent of a tower's tree (#110). A pinned push then runs only after
+	// it checks that its destination is no production branch (pushPolicyScript).
+	Tree bool
+	// Mint, when set, is the daemon's grant token (keyproxy.MintGrant) for a pinned push of ref
+	// (GrantPush) or a pinned merge of PR pr (GrantMerge) in the GitHub repository repo
+	// (OWNER/NAME): the forge forwarder lets a container of a tower's tree push or merge only
+	// with one (#110). "" when it cannot mint: the call is then not pinned.
+	Mint func(kind, repo, ref string, pr int64) string
 }
+
+// The kinds of grant tokens (keyproxy.GrantPush, keyproxy.GrantMerge) and the header a pinned
+// push carries its token in (keyproxy.GrantHeader).
+const (
+	GrantPush   = "push"
+	GrantMerge  = "merge"
+	GrantHeader = "X-Lea-Grant"
+)
+
+// grantToken is c's token for kind, "" (and ok) when c mints none; ok is false when it should
+// and cannot.
+func grantToken(c Caller, kind, gh, ref string, pr int64) (string, bool) {
+	if c.Mint == nil {
+		return "", true
+	}
+	repo, ok := strings.CutPrefix(gh, "github.com/")
+	if !ok {
+		return "", false
+	}
+	tok := c.Mint(kind, repo, ref, pr)
+	return tok, tok != "" && safeToken.MatchString(tok)
+}
+
+// safeToken is a grant token as it may go into a header and a single-quoted shell word.
+var safeToken = regexp.MustCompile(`^[A-Za-z0-9._-]{1,1000}$`)
 
 // LeaProxy is lea-proxy's forward proxy, as the containers of a lea reach it (the network alias
 // lea gives it on their internal network). CONNECT keeps TLS end to end.
@@ -392,6 +429,24 @@ func Command(req Request, c Caller, g Grant) string {
 			if c.Branch == "" || !BranchName(c.Branch) || Protected(c.Branch) {
 				return ""
 			}
+			if number(req.Args[2]) {
+				// The forwarder lets a tree's container merge only with the PR's token (#110).
+				n, _ := strconv.ParseInt(req.Args[2], 10, 64)
+				tok, ok := grantToken(c, GrantMerge, g.GitHub, "", n)
+				if !ok {
+					return ""
+				}
+				if tok != "" {
+					script = "GH_TOKEN=" + shellWords([]string{tok}) + " " + script
+				}
+			}
+			if c.Merge != nil {
+				// The policy needs the PR's number; the merge names the head it checked.
+				if !number(req.Args[2]) {
+					return ""
+				}
+				script = mergePolicyScript(req.Args[2], g.GitHub, *c.Merge) + script + ` --match-head-commit "$lea_head"`
+			}
 			script = prHeadCheck(req.Args[2], c.Branch, g.GitHub) + script
 		}
 		if script != "" {
@@ -399,7 +454,8 @@ func Command(req Request, c Caller, g Grant) string {
 		}
 	case "glab":
 		host, path, ok := gitlabPin(g.GitHub)
-		if !ok {
+		if !ok || req.Action == Merge && c.Merge != nil {
+			// The production-merge policy reads a GitHub PR: no GitLab merge in a tower's tree.
 			return ""
 		}
 		script = gitlabScript(req, c, host, path)
@@ -411,7 +467,25 @@ func Command(req Request, c Caller, g Grant) string {
 		case "commit":
 			script = commitScript(req.Args[1:], c.Worktree, c.Proxy)
 		case "push":
-			script = pushScript(req.Args, c.Worktree, g.GitHub, c.Proxy)
+			grant := ""
+			if pa := pushArgs(req.Args, g.GitHub); pa != nil && !gitlab {
+				// The forwarder lets a tree's container push only with the ref's token (#110).
+				tok, ok := grantToken(c, GrantPush, g.GitHub, pa[1], 0)
+				if !ok {
+					return ""
+				}
+				grant = tok
+			}
+			script = pushScript(req.Args, c.Worktree, g.GitHub, c.Proxy, grant)
+			if c.Tree && script != "" {
+				// The production branches are read on GitHub: no pinned GitLab push in a tower's tree.
+				pa := pushArgs(req.Args, g.GitHub)
+				if gitlab || pa == nil {
+					return ""
+				}
+				// In a subshell: gh's settings (ghIsolated) and set -f stay out of the push.
+				script = "(\n" + ghIsolated() + pushPolicyScript(strings.TrimPrefix(pa[1], "refs/heads/"), g.GitHub) + ") || exit 1\n" + script
+			}
 		}
 	}
 	if script == "" {
@@ -574,7 +648,7 @@ func commitScript(args []string, wt, proxy string) string {
 
 // pushScript pushes the caller's branch (or deletes it) from a bare repository lea creates for
 // the call (pushArgs gives the URL and the ref).
-func pushScript(args []string, wt, gh, proxy string) string {
+func pushScript(args []string, wt, gh, proxy, grant string) string {
 	pa := pushArgs(args, gh)
 	if pa == nil {
 		return ""
@@ -591,6 +665,10 @@ func pushScript(args []string, wt, gh, proxy string) string {
 		pa[0] = u
 		base := u[:len(u)-len(strings.TrimPrefix(gh, "github.com/")+".git")]
 		bp = append(bp, "-c", "protocol.http.allow=always", "-c", "http."+base+".proxy=")
+		if grant != "" {
+			// After gitPins' empty http.extraHeader, which resets the list.
+			bp = append(bp, "-c", "http.extraHeader="+GrantHeader+": "+grant)
+		}
 	}
 	bare := shellWords([]string{gitPath, "--git-dir"}) + ` "$tmp" ` + shellWords(bp)
 	s := configGuard(wt) +

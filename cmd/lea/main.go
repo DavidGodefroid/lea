@@ -60,7 +60,7 @@ const usage = `usage: lea <command>
   new --container NAME --workdir DIR [-p claude] [-r ROLE] [--branch B] [--brief FILE] [NAME] [-- ARGS]
                              start an agent (used by the launcher, in this form only;
                              any other new is the launcher's lea new)
-  role <agent> <role>        change an agent's role (lead, dev, reviewer)
+  role <agent> <role>        change an agent's role (tower, lead, dev, reviewer)
   grant add <action> --container NAME [--repo R] [--github OWNER/NAME] [--branch GLOB] [--agent NAME] [--expires 8h]
                              let every agent of a lea (or one agent's subtree) take an action
                              without asking: merge, stop-finished, close-issue,
@@ -114,6 +114,10 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	case "delivery":
 		return runDelivery(args[1:], stdout, stderr)
 	case "hook":
+		if len(args) == 4 && args[1] == "lea" && args[2] == "merge-blocked" {
+			hook.MergeBlocked(context.Background(), args[3], stdin, os.Getenv)
+			return 0
+		}
 		if len(args) == 4 && args[1] == "codex" && args[2] == "notify" {
 			hook.CodexNotify(context.Background(), args[3], os.Getenv)
 			return 0
@@ -146,11 +150,11 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		if len(args) == 3 && args[1] == "--dump" {
 			dump = args[2]
 		}
-		post := func(r statusline.Report) []string {
+		post := func(r statusline.Report) statusline.Answer {
 			ctx, cancel := context.WithTimeout(context.Background(), statusBudget)
 			defer cancel()
-			added, _ := statusline.Post(ctx, identity.BusSock(os.Getenv), identity.Agent(os.Getenv), r)
-			return added
+			ans, _ := statusline.Post(ctx, identity.BusSock(os.Getenv), identity.Agent(os.Getenv), r)
+			return ans
 		}
 		if err := statusline.Run(stdin, stdout, dump, post); err != nil {
 			fmt.Fprintln(stderr, "lea statusline:", err)

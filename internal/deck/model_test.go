@@ -596,7 +596,7 @@ func TestRoleKeyAsksThenSetsTheRole(t *testing.T) {
 	api := &fakeAPI{}
 	m := loaded(t, api, "lea-a/a", ag("a", "idle", 1))
 	m, cmd := step(t, m, key("r"))
-	if cmd != nil || !strings.Contains(m.status, "role of a: l lead, d dev, r reviewer") {
+	if cmd != nil || !strings.Contains(m.status, "role of a: t tower, l lead, d dev, r reviewer") {
 		t.Fatalf("status %q", m.status)
 	}
 	m, cmd = step(t, m, key("l"))
@@ -606,6 +606,28 @@ func TestRoleKeyAsksThenSetsTheRole(t *testing.T) {
 	cmd()
 	if got := api.got(); len(got) != 1 || got[0] != "role lea-a/a lead" {
 		t.Fatalf("calls=%q", got)
+	}
+	m, _ = step(t, m, key("r"))
+	if m, cmd = step(t, m, key("t")); cmd == nil {
+		t.Fatal("t made no call")
+	}
+	cmd()
+	if got := api.got(); len(got) != 2 || got[1] != "role lea-a/a tower" {
+		t.Fatalf("calls=%q", got)
+	}
+}
+
+// A lead's row shows the hours of its deploy window (#110).
+func TestDetailShowsALeadsDeployWindow(t *testing.T) {
+	m := loaded(t, &fakeAPI{}, "lea-a/a", ag("a", "idle", 1))
+	a := ag("a", "idle", 1)
+	a.Role, a.Window = "lead", "mon-sun 21:30-23:59 Europe/Brussels"
+	if d := m.detail(a, 0); !strings.Contains(d, "lead") || !strings.Contains(d, "deploy 21:30-23:59") {
+		t.Fatalf("detail %q", d)
+	}
+	a.Window = ""
+	if d := m.detail(a, 0); strings.Contains(d, "deploy") {
+		t.Fatalf("detail %q", d)
 	}
 }
 
