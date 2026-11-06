@@ -67,10 +67,33 @@ seccomp_copy() { mkdir -p "$BATS_TEST_TMPDIR/i/seccomp"; cp "$I"/seccomp/* "$BAT
   [ "$(jq '[.syscalls[] | select(.action == "SCMP_ACT_ALLOW" and (.names | length) == 1 and ((.comment // "") | startswith("lea: ") | not)
     and (.args // []) == [] and (.includes // {}) == {} and (.excludes // {}) == {})] | length' "$f")" -eq 0 ]
   for n in keyctl add_key request_key reboot bpf perf_event_open syslog fanotify_init clone3 fsopen fsconfig fsmount fspick \
-           pidfd_getfd sethostname setdomainname kexec_load init_module; do
+           pidfd_getfd sethostname setdomainname kexec_load init_module vmsplice; do
     [ "$(jq --arg n "$n" '[.syscalls[] | select(.action == "SCMP_ACT_ALLOW" and (.names | index($n)) and (.includes // {}) == {})] | length' "$f")" -eq 0 ]
   done
   [ "$(jq -r '.syscalls[] | select(.names == ["clone3"]) | .errnoRet' "$f")" = 38 ]
+}
+
+# The hand-written profile lea ran before #100 refused these on purpose (EPERM, unconditionally or
+# without the capability lea's container lacks): each stays refused, under any capability lea has.
+# vmsplice, cachestat, map_shadow_stack, the futex2 calls and io_pgetevents are allowed by moby's
+# default: lea.json removes them, each with its reason.
+@test "seccomp profile still refuses every syscall the pre-#100 profile refused on purpose" {
+  f="$I/seccomp.json"
+  caps='["CAP_CHOWN","CAP_DAC_OVERRIDE","CAP_FSETID","CAP_FOWNER","CAP_SETGID","CAP_SETUID","CAP_SETFCAP","CAP_SETPCAP","CAP_NET_BIND_SERVICE","CAP_SYS_CHROOT","CAP_KILL"]'
+  for n in vmsplice cachestat map_shadow_stack futex_waitv futex_wake futex_wait futex_requeue io_pgetevents io_pgetevents_time64 \
+           bdflush kexec_file_load kexec_load migrate_pages move_pages nfsservctl nice oldfstat oldlstat oldolduname oldstat \
+           olduname pciconfig_iobase pciconfig_read pciconfig_write sgetmask ssetmask swapoff swapon syscall sysfs uselib \
+           userfaultfd ustat vm86 vm86old open_by_handle_at bpf lookup_dcookie perf_event_open quotactl quotactl_fd \
+           setdomainname sethostname delete_module finit_module init_module query_module acct kcmp process_madvise ioperm iopl \
+           clock_settime clock_settime64 settimeofday stime vhangup; do
+    run jq --arg n "$n" --argjson caps "$caps" '[.syscalls[] | select(.action == "SCMP_ACT_ALLOW" and (.names | index($n))
+      and ((.includes.caps // []) - $caps) == [] and ([(.excludes.caps // [])[] | select(. as $c | $caps | index($c))] | length) == 0
+      and ((.includes.arches // ["amd64"]) | index("amd64") or index("arm64")))] | length' "$f"
+    [ "$output" = 0 ] || { echo "$n is allowed"; return 1; }
+  done
+  for n in vmsplice cachestat map_shadow_stack futex_waitv futex_wake futex_wait futex_requeue io_pgetevents io_pgetevents_time64; do
+    [ "$(jq --arg n "$n" '[.remove[] | select(.name == $n and (.why | length) > 0)] | length' "$I/seccomp/lea.json")" = 1 ]
+  done
 }
 
 # CVE-2026-31431: the kernel crypto API (AF_ALG, 38) is out of reach. socketcall multiplexes

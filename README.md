@@ -953,11 +953,12 @@ so. Changes apply after `lea init` (endpoints, keys, images, locksql) or `lea st
   `pivot_root`), so unprivileged user namespaces are available in lea (`unshare -U -r` works: the
   rootless Podman runs in one). The rest stays refused as in Docker's default: the kernel keyring
   (`keyctl`; nested containers join no keyring), `perf_event_open`, `bpf`, `reboot`, `syslog`,
-  the new mount API's `fsopen`... It also refuses `socketcall` and the kernel crypto API sockets
-  (`AF_ALG`, CVE-2026-31431). 32-bit x86 (i386) programs do not run in lea: their `socketcall`
-  hides the socket family from seccomp, so the profile leaves that architecture out. The AppArmor
-  profile `lea` is docker-default with its `/proc` write denies, plus mounts and user namespaces
-  for the nested Podman.
+  the new mount API's `fsopen`... It also refuses `socketcall`, the kernel crypto API sockets
+  (`AF_ALG`, CVE-2026-31431), and what lea's earlier profile refused that Docker's default allows
+  (`vmsplice`, `cachestat`, `map_shadow_stack`, the futex2 calls, `io_pgetevents`). 32-bit x86
+  (i386) programs do not run in lea: their `socketcall` hides the socket family from seccomp, so
+  the profile leaves that architecture out. The AppArmor profile `lea` is docker-default with its
+  `/proc` write denies, plus mounts and user namespaces for the nested Podman.
 - No way back to root in lea: the entrypoint drops to your uid with no capabilities, the image has
   no `sudo` and no setuid or setgid file. `newuidmap` and `newgidmap` keep their file capabilities,
   which the rootless Podman maps its sub-ids with; that is why lea runs without

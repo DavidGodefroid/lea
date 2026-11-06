@@ -15,6 +15,42 @@
 		{
 			"name": "socketcall",
 			"why": "the socket(2) multiplexer hides the socket family behind a pointer seccomp cannot read, so it would bypass the AF_ALG refusal (CVE-2026-31431)"
+		},
+		{
+			"name": "vmsplice",
+			"why": "maps user pages into a pipe by reference, the path of a run of kernel exploits (CVE-2008-0600 and Dirty Pipe's family); lea's profile before #100 refused it (EPERM), with no workload of lea needing it since"
+		},
+		{
+			"name": "cachestat",
+			"why": "tells which pages of any file it can open are in the host's page cache, a side channel on what other containers read; lea's profile before #100 refused it (EPERM), with no workload of lea needing it since"
+		},
+		{
+			"name": "map_shadow_stack",
+			"why": "x86 user shadow stacks are off in lea and glibc runs without them; lea's profile before #100 refused it (EPERM), with no workload of lea needing it since"
+		},
+		{
+			"name": "futex_waitv",
+			"why": "futex2 (Linux 5.16), which glibc does not call (only Wine and Proton do); lea's profile before #100 refused it (EPERM), with no workload of lea needing it since"
+		},
+		{
+			"name": "futex_wake",
+			"why": "futex2 (Linux 6.7), which glibc does not call; lea's profile before #100 refused it (EPERM), with no workload of lea needing it since"
+		},
+		{
+			"name": "futex_wait",
+			"why": "futex2 (Linux 6.7), which glibc does not call; lea's profile before #100 refused it (EPERM), with no workload of lea needing it since"
+		},
+		{
+			"name": "futex_requeue",
+			"why": "futex2 (Linux 6.7), which glibc does not call; futex requeue is where CVE-2014-3153 was; lea's profile before #100 refused it (EPERM), with no workload of lea needing it since"
+		},
+		{
+			"name": "io_pgetevents",
+			"why": "the legacy Linux AIO interface, which no tool lea ships uses; lea's profile before #100 refused it (EPERM), with no workload of lea needing it since"
+		},
+		{
+			"name": "io_pgetevents_time64",
+			"why": "the 32-bit-time io_pgetevents (no x86_64 or aarch64 number); lea's profile before #100 refused it (EPERM), with no workload of lea needing it since"
 		}
 	],
 	"allow": [

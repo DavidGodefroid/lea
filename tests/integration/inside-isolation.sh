@@ -62,19 +62,21 @@ must   "a nested container reaches the proxy over pasta" sh -c 'docker run --rm 
 # Rootless Podman's own user namespace: required (README, Security), so it is a must.
 must   "unprivileged user namespace (rootless Podman needs it)" unshare -U -r true
 # keyctl(KEYCTL_GET_KEYRING_ID, KEY_SPEC_SESSION_KEYRING, 0) and perf_event_open of a software
-# counter: the kernel keyring and perf events are not namespaced (seccomp refuses both).
+# counter: the kernel keyring and perf events are not namespaced (seccomp refuses both). vmsplice on
+# fd -1: EPERM from seccomp, where the kernel itself would answer EBADF (image/seccomp/lea.json).
 # shellcheck disable=SC2317,SC2329 # run by must
 sys_refused() {
   python3 -I -c 'import ctypes, platform, sys
-nr = {"x86_64": {"keyctl": 250, "perf_event_open": 298, "reboot": 169}, "aarch64": {"keyctl": 219, "perf_event_open": 241, "reboot": 142}}[platform.machine()][sys.argv[1]]
+nr = {"x86_64": {"keyctl": 250, "perf_event_open": 298, "reboot": 169, "vmsplice": 278}, "aarch64": {"keyctl": 219, "perf_event_open": 241, "reboot": 142, "vmsplice": 75}}[platform.machine()][sys.argv[1]]
 attr = (ctypes.c_uint32 * 32)(); attr[0] = 1; attr[1] = 128  # PERF_TYPE_SOFTWARE, size; config 0: cpu-clock
-args = {"keyctl": (0, -3, 0), "perf_event_open": (attr, 0, -1, -1, 0), "reboot": (0, 0, 0, 0)}[sys.argv[1]]
+args = {"keyctl": (0, -3, 0), "perf_event_open": (attr, 0, -1, -1, 0), "reboot": (0, 0, 0, 0), "vmsplice": (-1, 0, 0, 0)}[sys.argv[1]]
 libc = ctypes.CDLL(None, use_errno=True)
 sys.exit(0 if libc.syscall(nr, *args) < 0 and ctypes.get_errno() == 1 else 1)' "$1"
 }
 must   "keyctl refused (seccomp)"               sys_refused keyctl
 must   "perf_event_open refused (seccomp)"      sys_refused perf_event_open
 must   "reboot refused (seccomp)"               sys_refused reboot
+must   "vmsplice refused (seccomp)"             sys_refused vmsplice
 mustnt "sudo absent"                            command -v sudo
 must   "no setuid or setgid file"               sh -c '[ -z "$(find / -xdev -type f \( -perm -4000 -o -perm -2000 \) -print 2>/dev/null)" ]'
 # The locksql console's own directory: read-only, and a mount point no agent can replace by a
