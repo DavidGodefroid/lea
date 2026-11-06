@@ -46,10 +46,6 @@ type Agent struct {
 	CtxPct   int       `json:"ctx_pct"`
 	CostUSD  float64   `json:"cost_usd"`
 	Approval *Approval `json:"approval,omitempty"`
-	// LockAsk: the agent asks the user to open a lock console (agents.LockAsk).
-	LockAsk *LockAsk `json:"lock_ask,omitempty"`
-	// Hub: the Lock Family hub's pending tickets for the agent, oldest first (agents.HubCard).
-	Hub []HubCard `json:"hub,omitempty"`
 	// Paused: the user froze the agent (p); it continues where it stopped on resume.
 	Paused bool `json:"paused,omitempty"`
 	// Subagents counts the subagents the agent still runs (agents.Row.Subagents).
@@ -61,6 +57,9 @@ type Agent struct {
 	// LimitUntil: the agent stopped on its usage limit; lea resumes it then (unix seconds), or -1:
 	// it waits for the user (agents.Row).
 	LimitUntil int64 `json:"limit_until,omitempty"`
+	// Woken: lea woke the idle agent for a message in its inbox (agents.Row), until that turn
+	// ends or the user types: the user sees why it started.
+	Woken bool `json:"woken,omitempty"`
 }
 
 // shownState is the state a row shows (issue #72): green only when nothing is pending. A live
@@ -96,14 +95,6 @@ type Approval struct {
 	Always  bool   `json:"always"`
 }
 
-// LockAsk is an agent's request that the user open a lock tool's console (agents.LockAsk): a
-// card the user answers with a (open) or d (decline). Only the tool and the profile, checked.
-type LockAsk struct {
-	ID      int64  `json:"id"`
-	Tool    string `json:"tool"`
-	Profile string `json:"profile"`
-}
-
 type Snapshot struct {
 	Version int64   `json:"version"`
 	Shown   string  `json:"shown"`
@@ -117,16 +108,12 @@ type Snapshot struct {
 	Pressure *Pressure `json:"pressure,omitempty"`
 	// HubState is "down" when lea follows the hub but cannot reach it (agents.Snapshot.HubState).
 	HubState string `json:"hub_state,omitempty"`
-	// HubQueue is every pending ticket of the hub, for an agent or none, oldest first: the hub
-	// panel (agents.Snapshot.HubQueue, #244).
-	HubQueue []HubCard `json:"hub_queue,omitempty"`
-	// LocksAdded are the locks lox up runs that this container does not mount
+	// LoxRun is "off" when the workspace has locks and no lox run serves their decisions
+	// (agents.Snapshot.LoxRun, #300): the deck says to run it in another terminal.
+	LoxRun string `json:"lox_run,omitempty"`
+	// LocksAdded are the locks lox run runs that this container does not mount
 	// (agents.Snapshot.LocksAdded): the deck says to restart lea to use them.
 	LocksAdded []string `json:"locks_added,omitempty"`
-	// Ticket is the hub ticket the slot shows (instance/id) and TicketNote what the deck said
-	// under it (agents.Snapshot.Ticket, #284): "" unless the ticket pane holds the slot.
-	Ticket     string `json:"ticket,omitempty"`
-	TicketNote string `json:"ticket_note,omitempty"`
 }
 
 // Pressure is what the deck shows of the pressure (#132, P2): a short gauge of the container
@@ -137,72 +124,9 @@ type Pressure struct {
 	Over  string `json:"over,omitempty"`
 }
 
-// HubCard is one of the hub's pending tickets for an agent (agents.HubCard, #158): the deck
-// answers the oldest (a approves, d denies); one with a Retype (the name the hub asks for, its
-// instance's) needs it typed first.
-// Verified: the agent's own wait names it; else the agent claims it (shown "unverified").
-type HubCard struct {
-	ID         string   `json:"id"`
-	Instance   string   `json:"instance"`
-	Lock       string   `json:"lock"`
-	Risk       string   `json:"risk"`
-	Production bool     `json:"production,omitempty"`
-	Retype     string   `json:"retype,omitempty"`
-	Verified   bool     `json:"verified,omitempty"`
-	Header     string   `json:"header,omitempty"`
-	Note       string   `json:"note,omitempty"`
-	Body       []string `json:"body,omitempty"`
-	Warnings   []string `json:"warnings,omitempty"`
-	Expires    int64    `json:"expires,omitempty"`
-	// Claimed is the agent name the ticket's requester gives; Truncated: the daemon had to cut
-	// the Lock's screen, so the deck cannot show all of it (lox approve answers it).
-	Claimed   string `json:"claimed,omitempty"`
-	Truncated bool   `json:"truncated,omitempty"`
-	// Expired: the ticket expired at the hub: r asks the Lock again, nothing decides it.
-	// Renews: this ticket asks again for an expired one, with what changed since.
-	Expired bool        `json:"expired,omitempty"`
-	Renews  *HubRenewal `json:"renews,omitempty"`
-	// Created is when the Lock asked (unix seconds, 0 unknown). Agent is the key of the agent the
-	// ticket shows on and AgentName its name, in the hub panel only ("" for no agent).
-	Created   int64  `json:"created,omitempty"`
-	Agent     string `json:"agent,omitempty"`
-	AgentName string `json:"agent_name,omitempty"`
-}
-
-// HubRenewal is what a renewal ticket says of the expired ticket it asks again for
-// (agents.HubRenewal): its id, why it expired, whether the Lock compared the plan's inputs, and
-// each input that changed, is new or is gone.
-type HubRenewal struct {
-	Of      string      `json:"of"`
-	Reason  string      `json:"reason,omitempty"`
-	Checked bool        `json:"checked,omitempty"`
-	Changes []HubChange `json:"changes,omitempty"`
-}
-
-type HubChange struct {
-	Input  string `json:"input"`
-	Change string `json:"change"`
-}
-
-// HubClear is a ticket's clear screen (o or Ctrl-O), cleaned by the daemon: the deck shows it
-// marked, in memory only, until the card changes or revealFor passes.
-type HubClear struct {
-	Header    string   `json:"header,omitempty"`
-	Note      string   `json:"note,omitempty"`
-	Body      []string `json:"body,omitempty"`
-	Warnings  []string `json:"warnings,omitempty"`
-	Truncated bool     `json:"truncated,omitempty"`
-}
-
-// HubRenewed is the hub's answer to r on an expired ticket.
-type HubRenewed struct {
-	Ticket       string `json:"ticket"`
-	AutoApproved bool   `json:"auto_approved"`
-}
-
 // LockState is what the deck shows of one Lock's approvals (agents.LockView): its name, its
 // console ("up", "down", "" unknown) and the container's requests waiting there. A notification
-// only: the user approves them in the Lock's console (or the hub's facade).
+// only: lox run decides them, outside lea (#300).
 type LockState struct {
 	Lock    string `json:"lock"`
 	Console string `json:"console"`
@@ -232,20 +156,6 @@ type API interface {
 	SplitShell(ctx context.Context, key string, below bool) (Agent, error)
 	// SetSound switches the daemon's sounds and answers the new state.
 	SetSound(ctx context.Context, on bool) (string, error)
-	// LockOpen opens a lock tool's console under the agent (the deck's L), without the keyboard.
-	LockOpen(ctx context.Context, container, tool string) (string, error)
-	// LockDecide answers an agent's lock request: open opens the console it names, as L would.
-	LockDecide(ctx context.Context, container string, id int64, open bool) (string, error)
-	// HubDecide answers one of the hub's tickets for an agent of container (the hub card's a or d),
-	// or, with panel, any of the hub's tickets (the hub panel's).
-	HubDecide(ctx context.Context, container string, panel bool, instance, id string, approved bool, retype string) error
-	// HubReveal asks the Lock for a pending ticket's clear values (o, Ctrl-O); HubRenew asks it
-	// again for an expired ticket (r). panel as for HubDecide.
-	HubReveal(ctx context.Context, container string, panel bool, instance, id string) (HubClear, error)
-	HubRenew(ctx context.Context, container string, panel bool, instance, id string) (HubRenewed, error)
-	// HubShow shows a hub panel ticket (instance/id) whole in the slot, the note under it; ref
-	// and note "" hide it (#284). seq only grows: the daemon drops a call older than the last.
-	HubShow(ctx context.Context, container, ref, note string, seq int64) error
 }
 
 // isShell reports whether a row is a shell.
@@ -294,11 +204,7 @@ type (
 		agent Agent
 		err   error
 	}
-	doneMsg struct{ err error }
-	lockMsg struct {
-		status string
-		err    error
-	}
+	doneMsg  struct{ err error }
 	soundMsg struct {
 		sound string
 		err   error
@@ -321,85 +227,41 @@ type Model struct {
 	roleFor    string           // key waiting for a role key (l, d, r)
 	pauseFor   string           // key whose pause waits for y (a stray p freezes nothing)
 	// providers is the list N picks from, while it waits for a digit (nil otherwise).
-	providers   []string
-	editFor     string          // key whose label the rename field (e) edits
-	draft       []rune          // the rename field's text
-	editTitle   string          // the rename field's modal title (input.go)
-	help        bool            // the key list (?) is shown
-	asked       map[string]bool // agents this deck asked the daemon to show, not yet seen shown
-	lastAsked   string          // the latest of them
-	status      string
-	notice      func() string // the update notice (WithNotice)
-	noticeText  string        // its latest text, shown while there is no status
-	sound       string        // the daemon's sound switch (Snapshot.Sound)
-	locks       []LockState   // each Lock's approvals state (Snapshot.Locks)
-	pressure    *Pressure     // the container's pressure gauge (Snapshot.Pressure)
-	hubDown     bool          // lea follows the hub but cannot reach it (Snapshot.HubState)
-	locksAdded  []string      // locks this container does not mount (Snapshot.LocksAdded)
-	seq         int           // the latest selection; older delayed shows are dropped
-	frame       int           // the working spinner's frame
-	intro       int           // frames left of the logo's start animation (WithIntro)
-	focused     bool          // the deck's pane has the keyboard (focus events)
-	menuFor     string        // key whose menu (right click) is open
-	menuSel     int           // the menu's highlighted item
-	settings    SettingsStore // the settings screen's store (WithSettings), nil when none
-	settingsOff string        // why there is none
-	setOpen     bool          // the settings screen (,) is shown
-	setList     []settings.Setting
-	setSel      int         // its selected setting
-	setEditing  bool        // the selected text setting's field is open
-	setDraft    []rune      // the field's text
-	hoverFor    string      // key of the row under the pointer, "" when none
-	hoverSeq    int         // the latest pointer move; older fades are dropped
-	menuPicker  bool        // the open menu picks the folder of agent menuFor (o), or the colour of folder menuFor (c)
-	layout      Layout      // the folders (folders.go)
-	store       LayoutStore // where the layout persists, nil when nowhere
-	ticking     bool        // a frame tick is pending
-	// lockSince is when each lock request's card came into view (by request id): O answers it
-	// only lockAskDelay later, so a key meant for something else never opens a console.
-	lockSince map[int64]time.Time
-	// hubSince is the same for the hub's tickets (by instance/id); hubFor the ticket whose name
-	// the field (hubDraft) takes before approving it; hubFull shows the Lock's whole screen.
-	hubSince map[string]time.Time
-	hubFor   string
-	hubDraft []rune
-	hubFull  bool
-	// hubNote is why the deck refused to approve a ticket (#260): it stays under that ticket, where
-	// the user looks, until the selection moves off it; a later key replaces only the status.
-	hubNote hubNoted
-	// hubRead are the tickets v showed whole (by instance/id).
-	hubRead map[string]bool
-	// hubQueue is every ticket of the hub (Snapshot.HubQueue): the hub panel. panel says the
-	// selection is in it (H), on the ticket panelSel (instance/id) since panelAt; the slot shows
-	// that ticket whole (#284).
-	hubQueue []HubCard
-	panel    bool
-	panelSel string
-	panelAt  time.Time
-	// ticketAsked is what this deck last asked the slot to show (syncTicket); ticketShown the
-	// ticket the slot shows, as the daemon says (Snapshot.Ticket), since ticketAt: a or d acts on
-	// a panel ticket only ticketDelay after the slot shows it.
-	ticketAsked ticketAsk
-	ticketShown string
-	ticketAt    time.Time
-	// ticketNoteShown is the note the slot shows (Snapshot.TicketNote). ticketSeq numbers the
-	// slot calls (it only grows), ticketBusy says one is under way since ticketSentAt, and
-	// ticketFailed that the last one failed: syncTicket asks again.
-	ticketNoteShown string
-	ticketSeq       int64
-	ticketBusy      bool
-	ticketFailed    bool
-	ticketSentAt    time.Time
-	// hubReport is the approve-all report the slot shows until the selection moves; allFor the
-	// tickets Y asks to approve, waiting for y; hubSent the tickets answered here that the queue
-	// still lists (a second key does not answer them again).
-	hubReport string
-	allFor    *approveAll
-	hubSent   map[string]bool
-	// revealed is the clear screen of the ticket o showed (memory only), dropped when the card
-	// changes or revealFor passes; revealSeq tells its timeout from an older one's.
-	revealed      *hubRevealed
-	revealSeq     int
+	providers     []string
+	editFor       string          // key whose label the rename field (e) edits
+	draft         []rune          // the rename field's text
+	editTitle     string          // the rename field's modal title (input.go)
+	help          bool            // the key list (?) is shown
+	asked         map[string]bool // agents this deck asked the daemon to show, not yet seen shown
+	lastAsked     string          // the latest of them
+	status        string
+	notice        func() string // the update notice (WithNotice)
+	noticeText    string        // its latest text, shown while there is no status
+	sound         string        // the daemon's sound switch (Snapshot.Sound)
+	locks         []LockState   // each Lock's approvals state (Snapshot.Locks)
+	pressure      *Pressure     // the container's pressure gauge (Snapshot.Pressure)
+	hubDown       bool          // lea follows the hub but cannot reach it (Snapshot.HubState)
+	loxRunOff     bool          // the workspace has locks and no lox run serves them (Snapshot.LoxRun)
+	locksAdded    []string      // locks this container does not mount (Snapshot.LocksAdded)
+	seq           int           // the latest selection; older delayed shows are dropped
+	frame         int           // the working spinner's frame
+	intro         int           // frames left of the logo's start animation (WithIntro)
+	focused       bool          // the deck's pane has the keyboard (focus events)
+	menuFor       string        // key whose menu (right click) is open
+	menuSel       int           // the menu's highlighted item
+	settings      SettingsStore // the settings screen's store (WithSettings), nil when none
+	settingsOff   string        // why there is none
+	setOpen       bool          // the settings screen (,) is shown
+	setList       []settings.Setting
+	setSel        int         // its selected setting
+	setEditing    bool        // the selected text setting's field is open
+	setDraft      []rune      // the field's text
+	hoverFor      string      // key of the row under the pointer, "" when none
+	hoverSeq      int         // the latest pointer move; older fades are dropped
+	menuPicker    bool        // the open menu picks the folder of agent menuFor (o), or the colour of folder menuFor (c)
+	layout        Layout      // the folders (folders.go)
+	store         LayoutStore // where the layout persists, nil when nowhere
+	ticking       bool        // a frame tick is pending
 	width, height int
 }
 
@@ -484,20 +346,7 @@ func (m Model) call(fn func(ctx context.Context) error) tea.Cmd {
 	}
 }
 
-// Update takes a message in; then the slot follows the hub panel's selection (syncTicket).
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
-	nm, cmd := m.update(msg)
-	mm, ok := nm.(Model)
-	if !ok {
-		return nm, cmd
-	}
-	if sync := mm.syncTicket(); sync != nil {
-		return mm, tea.Batch(cmd, sync)
-	}
-	return mm, cmd
-}
-
-func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
 		m.width, m.height = msg.Width, msg.Height
@@ -573,18 +422,6 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.status = oneLine(msg.err.Error())
 		}
 		return m, nil
-	case lockMsg:
-		switch {
-		case msg.err != nil:
-			m.status = oneLine(msg.err.Error())
-		case msg.status == "declined":
-			m.status = "lock request declined"
-		case msg.status == "opened":
-			m.status = "locksql console opened below: click it to answer"
-		default:
-			m.status = "locksql console shown below"
-		}
-		return m, nil
 	case soundMsg:
 		if msg.err != nil {
 			m.status = oneLine(msg.err.Error())
@@ -603,53 +440,12 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.editFor != "" {
 			return m.editKey(msg)
 		}
-		if m.hubFor != "" {
-			return m.hubKey(msg)
-		}
 		if m.menuFor != "" {
 			return m.menuKey(msg.String())
 		}
-		nm, cmd := m.key(msg.String())
-		if mm, ok := nm.(Model); ok {
-			mm.keepReveal() // the selection moved off the card: its clear values go
-			return mm, cmd
-		}
-		return nm, cmd
-	case revealMsg:
-		return m.revealed1(msg)
-	case ticketShownMsg:
-		return m.ticketShown1(msg), nil
-	case hubDecidedMsg:
-		return m.hubDecided(msg), nil
-	case approveAllMsg:
-		return m.approvedAll(msg), nil
-	case revealEndMsg:
-		if m.revealed != nil && msg.seq == m.revealSeq {
-			m.revealed = nil
-		}
-		return m, nil
-	case renewMsg:
-		switch {
-		case msg.err != nil:
-			m.status = oneLine(msg.err.Error())
-		case msg.r.AutoApproved:
-			m.status = "renewed as ticket " + clean(msg.r.Ticket) + " and approved: nothing changed since"
-		case m.panel:
-			m.status = "the lock asks again with ticket " + clean(msg.r.Ticket) + ": review it in the hub panel"
-		default:
-			m.status = "the lock asks again with ticket " + clean(msg.r.Ticket) + ": review it on this row"
-		}
-		return m, nil
+		return m.key(msg.String())
 	case tea.MouseMsg:
-		if m.allFor != nil && msg.Action == tea.MouseActionPress {
-			m.allFor, m.status = nil, "nothing approved" // a click answers Y's question: no
-		}
-		nm, cmd := m.mouse(msg)
-		if mm, ok := nm.(Model); ok {
-			mm.keepReveal() // a wheel or a click moved the selection: the clear values go
-			return mm, cmd
-		}
-		return nm, cmd
+		return m.mouse(msg)
 	case hoverEndMsg:
 		if msg.seq == m.hoverSeq {
 			m.hoverFor = ""
@@ -709,12 +505,7 @@ func (m *Model) ask(key string) {
 func (m *Model) apply(s Snapshot) bool {
 	before, was := m.shown, m.selected
 	m.version, m.shown, m.sound, m.locks, m.pressure, m.hubDown = s.Version, s.Shown, s.Sound, s.Locks, s.Pressure, s.HubState == "down"
-	m.locksAdded = s.LocksAdded
-	m.hubQueue = s.HubQueue
-	if s.Ticket != m.ticketShown {
-		m.ticketShown, m.ticketAt = s.Ticket, m.now()
-	}
-	m.ticketNoteShown = s.TicketNote
+	m.locksAdded, m.loxRunOff = s.LocksAdded, s.LoxRun == "off"
 	for _, a := range s.Agents {
 		if a.Key == s.Shown && a.State == "done" {
 			m.seen[a.Key] = a.Updated
@@ -723,59 +514,6 @@ func (m *Model) apply(s Snapshot) bool {
 	prev, at := m.entryKeys(), m.pos(m.selected)
 	m.agents = sortAgents(s.Agents)
 	m.fileSpawned()
-	// A card hidden (behind an approval, or gone) and shown again starts its delay again.
-	since := map[int64]time.Time{}
-	for _, a := range m.agents {
-		if l := a.LockAsk; l != nil && a.Approval == nil {
-			if t, ok := m.lockSince[l.ID]; ok {
-				since[l.ID] = t
-			} else {
-				since[l.ID] = m.now()
-				// The row's menu changes under the highlight (Open console comes first): it closes,
-				// so an enter meant for another item never opens a console.
-				if m.menuFor == a.Key {
-					m.menuFor, m.menuSel, m.menuPicker = "", 0, false
-				}
-			}
-		}
-	}
-	m.lockSince = since
-	hubSince := map[string]time.Time{}
-	seen := func(h HubCard) {
-		ref := h.Instance + "/" + h.ID
-		if t, ok := m.hubSince[ref]; ok {
-			hubSince[ref] = t
-		} else {
-			hubSince[ref] = m.now()
-		}
-	}
-	for _, a := range m.agents {
-		if h := hubTicket(a); h != nil {
-			seen(*h)
-		}
-	}
-	for _, h := range m.hubQueue {
-		seen(h)
-	}
-	m.keepPanel()
-	m.keepApproveAll()
-	if m.hubFor != "" {
-		if _, ok := hubSince[m.hubFor]; !ok {
-			m.hubFor, m.hubDraft = "", nil // decided elsewhere, or gone
-		}
-	}
-	m.hubSince = hubSince
-	m.keepReveal()
-	for ref := range m.hubRead {
-		if _, ok := hubSince[ref]; !ok {
-			delete(m.hubRead, ref)
-		}
-	}
-	for ref := range m.hubSent {
-		if _, ok := hubSince[ref]; !ok {
-			delete(m.hubSent, ref)
-		}
-	}
 	// An agent shown from elsewhere (lea new in another terminal, another deck client) takes
 	// the selection, so the row under the cursor is the one in the slot. A show this deck asked
 	// for does not: the cursor may already have moved on.
@@ -872,9 +610,6 @@ func (m Model) key(k string) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 	}
-	if m.allFor != nil {
-		return m.answerApproveAll(k == "y")
-	}
 	if m.pauseFor != "" {
 		key := m.pauseFor
 		m.pauseFor, m.status = "", ""
@@ -892,28 +627,9 @@ func (m Model) key(k string) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	api, c := m.api, m.container
-	if m.panel {
-		if nm, cmd, ok := m.panelKey(k); ok {
-			return nm, cmd
-		}
-	} else if isFolderKey(m.selected) {
+	if isFolderKey(m.selected) {
 		if nm, cmd, ok := m.onFolder(k); ok {
 			return nm, cmd
-		}
-	}
-	if h := m.selectedHub(); h != nil {
-		switch k {
-		case "o", "ctrl+o":
-			return m.revealHub(*h)
-		case "r":
-			if h.Expired {
-				return m.renewHub(*h)
-			}
-		case "a", "d", "A":
-			if h.Expired {
-				m.status = "this ticket expired: r asks the " + clean(h.Lock) + " lock again"
-				return m, nil
-			}
 		}
 	}
 	switch k {
@@ -979,15 +695,6 @@ func (m Model) key(k string) (tea.Model, tea.Cmd) {
 			defer cancel()
 			a, err := api.OpenShell(ctx, c)
 			return newMsg{a, err}
-		}
-	case "L":
-		// The locksql console, in the lock slot under the agent; the keyboard stays here.
-		m.status = "opening the locksql console…"
-		return m, func() tea.Msg {
-			ctx, cancel := context.WithTimeout(context.Background(), callTimeout)
-			defer cancel()
-			st, err := api.LockOpen(ctx, c, "locksql")
-			return lockMsg{st, err}
 		}
 	case "-", "|":
 		// Split, as Terminator does: - puts a shell below the agent, | at its right.
@@ -1065,43 +772,8 @@ func (m Model) key(k string) (tea.Model, tea.Cmd) {
 			m.status = "role of " + display(*a) + ": l lead, d dev, r reviewer"
 		}
 		return m, nil
-	case "O":
-		return m.answerLock(true)
-	case "H":
-		return m.enterPanel(), nil
-	case "v":
-		if h := m.selectedHub(); h != nil {
-			m.hubFull = !m.hubFull
-			if m.hubFull {
-				if !m.hubFits() {
-					m.status = "too tall for the deck: answer it with lox approve"
-					return m, nil
-				}
-				if m.hubRead == nil {
-					m.hubRead = map[string]bool{}
-				}
-				m.hubRead[h.Instance+"/"+h.ID] = true
-			}
-		}
-		return m, nil
 	case "a", "d", "A":
 		a := m.selectedAgent()
-		if m.selectedHub() != nil {
-			if k == "A" {
-				m.status = "a approves this ticket, d denies it"
-				return m, nil
-			}
-			return m.answerHub(k == "a")
-		}
-		if a != nil && a.Approval == nil && a.LockAsk != nil {
-			if k == "d" {
-				return m.answerLock(false)
-			}
-			// a and A answer approvals: never a lock request (a key pressed twice, or held, after
-			// an approval would otherwise open the console the card behind it asks for).
-			m.status = "O opens the " + lockAskName(*a.LockAsk) + " console, d declines"
-			return m, nil
-		}
 		if a == nil || a.Approval == nil {
 			return m, nil
 		}
@@ -1180,7 +852,6 @@ func (m Model) move(i int) (tea.Model, tea.Cmd) {
 		m.status = ""
 	}
 	m.pauseFor = "" // a click elsewhere drops the question: y would pause another row
-	m.panel = false // the selection is on a row again
 	m.selected = es[i].key
 	if isFolderKey(m.selected) {
 		m.seq++ // drops a pending delayed show
@@ -1199,7 +870,7 @@ func rank(a Agent, seen map[string]int64) int {
 		return 6
 	case a.Paused: // frozen by the user: it neither needs them nor works
 		return 4
-	case shownState(a) == "blocked" || a.LockAsk != nil || hubPending(a):
+	case shownState(a) == "blocked":
 		return 0
 	case a.State == "done" && seen[a.Key] != a.Updated:
 		return 1
@@ -1234,12 +905,6 @@ func (m Model) label(a Agent) string {
 		return "shell"
 	case a.Paused:
 		return "paused"
-	case a.LockAsk != nil && a.Approval == nil:
-		return "asks for a console"
-	case hubTicket(a) != nil && hubTicket(a).Expired:
-		return "Lock ticket expired"
-	case hubTicket(a) != nil:
-		return "Lock ticket"
 	case a.State == "blocked" && a.Approval == nil:
 		return "see terminal" // the agent's own dialog asks: the deck has no card for it
 	case a.State == "blocked":
@@ -1256,6 +921,8 @@ func (m Model) label(a Agent) string {
 		return "stopped"
 	case shownState(a) == "limited":
 		return m.limitLabel(a.LimitUntil)
+	case a.Woken && (a.State == "working" || a.State == "idle"):
+		return "woken by lea"
 	case a.State == "working" || a.State == "idle":
 		return shownState(a)
 	}
@@ -1275,38 +942,6 @@ func (m Model) limitLabel(until int64) string {
 	}
 	return "usage limit, resumes " + t.Format("15:04")
 }
-
-// lockAskDelay is how long a lock request's card is in view before O opens it: a key pressed
-// for what was there before (held, or typed twice) never opens a console unread.
-const lockAskDelay = time.Second
-
-// answerLock answers the selected agent's lock request: open opens the console it names (O, as L
-// would, without the keyboard), else it is declined (d). The agent learns which, never what the
-// console shows. Within lockAskDelay of the card coming into view, the key does nothing.
-func (m Model) answerLock(open bool) (tea.Model, tea.Cmd) {
-	a := m.selectedAgent()
-	if a == nil || a.Approval != nil || a.LockAsk == nil {
-		return m, nil
-	}
-	id, what := a.LockAsk.ID, lockAskName(*a.LockAsk)
-	if t, ok := m.lockSince[id]; !ok || m.now().Sub(t) < lockAskDelay {
-		m.status = "read the " + what + " request first"
-		return m, nil
-	}
-	if open {
-		m.status = "opening the " + what + " console…"
-	}
-	api, c := m.api, m.container
-	return m, func() tea.Msg {
-		ctx, cancel := context.WithTimeout(context.Background(), callTimeout)
-		defer cancel()
-		st, err := api.LockDecide(ctx, c, id, open)
-		return lockMsg{st, err}
-	}
-}
-
-// lockAskName is what a lock request names: <tool>/<profile>, cleaned for the screen.
-func lockAskName(l LockAsk) string { return clean(l.Tool) + "/" + clean(l.Profile) }
 
 // nextNeedingYou is the first agent after the selection (wrapping, in display order, folded
 // folders included) that needs the user: blocked, done and not yet seen, or holding a message for
@@ -1341,312 +976,4 @@ func providersPrompt(names []string) string {
 		fmt.Fprintf(&b, " %d %s", i+1, n)
 	}
 	return b.String()
-}
-
-// hubTicket is the hub ticket a's card shows: its oldest, when no approval or lock request comes
-// first; nil when none.
-func hubTicket(a Agent) *HubCard {
-	if a.Approval != nil || a.LockAsk != nil || len(a.Hub) == 0 {
-		return nil
-	}
-	return &a.Hub[0]
-}
-
-// answerHub answers the selected agent's hub ticket: approve (a) or deny (d). Approving a ticket
-// that asks for a name (Retype) opens the field for it first. Within lockAskDelay of the card
-// coming into view, the key does nothing.
-func (m Model) answerHub(approve bool) (tea.Model, tea.Cmd) {
-	sel := m.selectedHub()
-	if sel == nil {
-		return m, nil
-	}
-	h := *sel
-	ref := h.Instance + "/" + h.ID
-	if m.panel {
-		return m.answerPanel(h, approve)
-	}
-	if !m.hubReady(ref) {
-		m.status = "read the " + clean(h.Lock) + " ticket first"
-		return m, nil
-	}
-	if approve {
-		if why := m.unreadable(h); why != "" {
-			return m.refuseHub(ref, why), nil
-		}
-		if h.Retype != "" {
-			m.hubFor, m.hubDraft, m.status, m.hubNote = ref, nil, "", hubNoted{}
-			return m, nil
-		}
-	}
-	return m, m.decideHub(h, approve, "")
-}
-
-// unreadable says why the deck cannot approve h, the selected card's ticket ("" when it can): the
-// daemon cut it, it is too long or too tall for the deck, or a long one was not read whole with
-// v. a and r (which may approve at once) both need it read.
-func (m Model) unreadable(h HubCard) string {
-	body := len(m.hubBody(h))
-	switch {
-	case h.Truncated || body+len(m.hubWarnings(h)) > maxHubCard || !m.hubFits():
-		return "too long for the deck: answer it with lox approve"
-	case body > hubFolded && !m.hubRead[h.Instance+"/"+h.ID]:
-		return "v shows the whole ticket: read it before approving"
-	}
-	return ""
-}
-
-// hubNoted is a refusal said under the ticket ref.
-type hubNoted struct{ ref, text string }
-
-// refuseHub says why the ticket ref is not approved, in the status and under the ticket.
-func (m Model) refuseHub(ref, why string) Model {
-	m.status, m.hubNote = why, hubNoted{ref, why}
-	return m
-}
-
-// decideHub answers the ticket h through the daemon; its answer comes back as a hubDecidedMsg.
-func (m Model) decideHub(h HubCard, approve bool, retype string) tea.Cmd {
-	api, c, panel := m.api, m.container, m.panel
-	ref := h.Instance + "/" + h.ID
-	return func() tea.Msg {
-		ctx, cancel := context.WithTimeout(context.Background(), callTimeout)
-		defer cancel()
-		return hubDecidedMsg{ref: ref, panel: panel, approve: approve, err: api.HubDecide(ctx, c, panel, h.Instance, h.ID, approve, retype)}
-	}
-}
-
-// hubKey is a key typed in the field of a ticket's name (its Retype): enter approves with it, esc
-// cancels; every other key is text.
-func (m Model) hubKey(k tea.KeyMsg) (tea.Model, tea.Cmd) {
-	switch s := k.String(); {
-	case s == "esc" || s == "ctrl+c":
-		m.hubFor, m.hubDraft = "", nil
-	case s == "enter":
-		ref, typed := m.hubFor, string(m.hubDraft)
-		m.hubFor, m.hubDraft = "", nil
-		h := m.selectedHub()
-		if h == nil || h.Instance+"/"+h.ID != ref {
-			m.status = "the ticket changed: answer it again"
-			return m, nil
-		}
-		if typed != h.Retype {
-			return m.refuseHub(ref, "does not match: not approved"), nil
-		}
-		m.sent(ref)
-		return m, m.decideHub(*h, true, typed)
-	case s == "backspace":
-		if len(m.hubDraft) > 0 {
-			m.hubDraft = m.hubDraft[:len(m.hubDraft)-1]
-		}
-	case s == "ctrl+u":
-		m.hubDraft = nil
-	case k.Type == tea.KeySpace:
-		m.hubDraft = append(m.hubDraft, ' ')
-	case k.Type == tea.KeyRunes:
-		for _, r := range k.Runes {
-			if !textsafe.Unsafe(r) && len(m.hubDraft) < 128 {
-				m.hubDraft = append(m.hubDraft, r)
-			}
-		}
-	}
-	return m, nil
-}
-
-// hubFolded is how many lines of the Lock's screen a folded card shows; maxHubCard how many lines
-// of it (and of its warnings) the deck approves at most: a longer ticket goes to lox approve.
-const hubFolded, maxHubCard = 3, 24
-
-// hubBody is the Lock's screen of h as the card shows it at the deck's width: each line wrapped,
-// none cut. hubWarnings the same for its warnings.
-func (m Model) hubBody(h HubCard) []string     { return m.hubWrap(h.Body) }
-func (m Model) hubWarnings(h HubCard) []string { return m.hubWrap(h.Warnings) }
-
-func (m Model) hubWrap(ls []string) []string {
-	w := max(8, m.innerWidth()-6)
-	var out []string
-	for _, l := range ls {
-		out = append(out, wrap(clean(l), w, m.cs())...)
-	}
-	return out
-}
-
-// hubFits reports whether the selected card's whole ticket, the Lock's screen unfolded, fits in
-// the deck's height: the rows scroll to keep the selected row's block on screen below the hub
-// panel, so all of it shows. (A panel ticket shows whole in the slot, not in the deck.) Before the
-// deck knows its height, nothing is cut.
-func (m Model) hubFits() bool {
-	if m.height <= 0 {
-		return true
-	}
-	full := m
-	// The clear values and a refusal are no part of what is approved: they do not count.
-	full.hubFull, full.revealed, full.hubNote = true, nil, hubNoted{}
-	room := m.height - 3 // the borders and the status line
-	if m.panel {
-		return len(full.panelLines(m.innerWidth())) <= room
-	}
-	a := m.selectedAgent()
-	if a == nil {
-		return false
-	}
-	in := -1
-	for _, e := range m.entries(false) {
-		if e.key == a.Key {
-			in = e.in
-		}
-	}
-	return len(full.row(*a, m.innerWidth(), in)) <= room-len(full.panelLines(m.innerWidth()))
-}
-
-// hubPending reports whether a has a pending hub ticket (one the user decides): an expired one
-// waits on no one.
-func hubPending(a Agent) bool {
-	for _, h := range a.Hub {
-		if !h.Expired {
-			return true
-		}
-	}
-	return false
-}
-
-// selectedHub is the hub ticket the selection is on: the hub panel's, else the one the selected
-// row's card shows; nil when none.
-func (m Model) selectedHub() *HubCard {
-	if m.panel {
-		for i := range m.hubQueue {
-			if h := &m.hubQueue[i]; h.Instance+"/"+h.ID == m.panelSel {
-				return h
-			}
-		}
-		return nil
-	}
-	if a := m.selectedAgent(); a != nil {
-		return hubTicket(*a)
-	}
-	return nil
-}
-
-// revealFor is how long the deck shows a ticket's clear values.
-const revealFor = time.Minute
-
-type hubRevealed struct {
-	ref   string
-	clear HubClear
-}
-
-type revealMsg struct {
-	ref   string
-	clear HubClear
-	err   error
-}
-
-type revealEndMsg struct{ seq int }
-
-type renewMsg struct {
-	r   HubRenewed
-	err error
-}
-
-// revealHub asks the Lock for the clear values of the selected card's ticket (o, Ctrl-O); o
-// again hides them. Not within lockAskDelay of the card coming into view, nor for an expired
-// ticket (the Lock keeps no clear screen past it).
-func (m Model) revealHub(h HubCard) (tea.Model, tea.Cmd) {
-	ref := h.Instance + "/" + h.ID
-	if m.revealed != nil && m.revealed.ref == ref {
-		m.revealed, m.status = nil, "clear values hidden"
-		return m, nil
-	}
-	if h.Expired {
-		m.status = "this ticket expired: nothing to reveal (r asks the lock again)"
-		return m, nil
-	}
-	if !m.hubReady(ref) {
-		m.status = "read the " + clean(h.Lock) + " ticket first"
-		return m, nil
-	}
-	m.status = "asking the " + clean(h.Lock) + " lock for the clear values…"
-	api, c, panel := m.api, m.container, m.panel
-	return m, func() tea.Msg {
-		ctx, cancel := context.WithTimeout(context.Background(), callTimeout)
-		defer cancel()
-		cl, err := api.HubReveal(ctx, c, panel, h.Instance, h.ID)
-		return revealMsg{ref, cl, err}
-	}
-}
-
-// revealed1 takes a reveal's answer: shown on its card while that card is in view.
-func (m Model) revealed1(msg revealMsg) (tea.Model, tea.Cmd) {
-	if msg.err != nil {
-		m.status = oneLine(msg.err.Error())
-		return m, nil
-	}
-	if h := m.selectedHub(); h == nil || h.Instance+"/"+h.ID != msg.ref {
-		m.status = "the ticket changed: o asks again"
-		return m, nil
-	}
-	m.revealSeq++
-	m.revealed, m.status = &hubRevealed{ref: msg.ref, clear: msg.clear}, "clear values shown for a minute (o hides them)"
-	seq := m.revealSeq
-	return m, tea.Tick(revealFor, func(time.Time) tea.Msg { return revealEndMsg{seq} })
-}
-
-// keepReveal drops the clear values, and a refusal, once the selected row's card no longer shows
-// their ticket.
-func (m *Model) keepReveal() {
-	if n := m.hubNote; n.ref != "" {
-		if h := m.selectedHub(); h == nil || h.Instance+"/"+h.ID != n.ref {
-			m.hubNote = hubNoted{}
-		}
-	}
-	if m.revealed == nil {
-		return
-	}
-	if h := m.selectedHub(); h == nil || h.Instance+"/"+h.ID != m.revealed.ref || h.Expired {
-		m.revealed = nil
-	}
-}
-
-// renewHub asks the Lock again for the selected card's expired ticket (r): the hub approves the
-// renewal at once when nothing changed (not for production), else it comes as a new card.
-func (m Model) renewHub(h HubCard) (tea.Model, tea.Cmd) {
-	ref := h.Instance + "/" + h.ID
-	// The hub approves an unchanged renewal at once in the user's name, also of a ticket that
-	// expired undecided: r is an approval, read like a. In the panel, as a: once the slot shows
-	// the ticket, and never one lea had to cut.
-	if m.panel {
-		if why := m.ticketReady(ref); why != "" {
-			m.status = why
-			return m, nil
-		}
-		if h.Truncated {
-			return m.refuseHub(ref, "lea had to cut this ticket: answer it with lox approve"), nil
-		}
-	} else {
-		if !m.hubReady(ref) {
-			m.status = "read the " + clean(h.Lock) + " ticket first"
-			return m, nil
-		}
-		if why := m.unreadable(h); why != "" {
-			m.status = why
-			return m, nil
-		}
-	}
-	m.status = "asking the " + clean(h.Lock) + " lock again…"
-	api, c, panel := m.api, m.container, m.panel
-	return m, func() tea.Msg {
-		ctx, cancel := context.WithTimeout(context.Background(), callTimeout)
-		defer cancel()
-		r, err := api.HubRenew(ctx, c, panel, h.Instance, h.ID)
-		return renewMsg{r, err}
-	}
-}
-
-// hubReady reports whether a key may act on the ticket ref: its card was in view for
-// lockAskDelay and, in the hub panel, it was under the selection that long.
-func (m Model) hubReady(ref string) bool {
-	t, ok := m.hubSince[ref]
-	if !ok || m.now().Sub(t) < lockAskDelay {
-		return false
-	}
-	return !m.panel || m.now().Sub(m.panelAt) >= lockAskDelay
 }

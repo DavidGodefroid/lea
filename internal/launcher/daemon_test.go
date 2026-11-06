@@ -480,7 +480,7 @@ func TestLockServersPerInstance(t *testing.T) {
 	if two == one || !strings.Contains(two, "locksql-orders=1500,locksql-stock=1500") {
 		t.Errorf("stamp: one %q, two %q", one, two)
 	}
-	// stock's socket volume is not lox up's: lockUsable leaves it out, and no server runs it.
+	// stock's socket volume is not lox run's: lockUsable leaves it out, and no server runs it.
 	writeUp(t, w, lockUp("orders", "locksql")+","+`"stock":{"type":"locksql","socket_volume":"other-volume"}`)
 	dropped, got := servers(w)
 	if strings.Join(got, ",") != "locksql/orders" || dropped == two {

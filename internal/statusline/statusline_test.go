@@ -286,7 +286,7 @@ func TestRunReportsRateLimitWindows(t *testing.T) {
 	}
 }
 
-// The daemon names the locks lox up runs that the agent's container does not mount: the line says
+// The daemon names the locks lox run runs that the agent's container does not mount: the line says
 // to restart lea, a name it should never send is left out.
 func TestStatusLineSaysRestartLea(t *testing.T) {
 	t.Setenv("NO_COLOR", "1")

@@ -12,7 +12,7 @@ import (
 	"github.com/fsnotify/fsnotify"
 )
 
-// A lock added while lea runs: lox up rewrites <projects>/.lockfamily/up.json, the daemon
+// A lock added while lea runs: lox run rewrites <projects>/.lockfamily/up.json, the daemon
 // sees it (RunLockWatch) and reads it again with the launcher's trust checks (LockWatch.Read).
 // Docker cannot add a mount to a running container: an agent container started from now on gets
 // the lock at its start (the launcher's runArgs), and each running container whose real mounts
@@ -22,10 +22,10 @@ import (
 // up.json with each container's mounts, so a daemon that started after the lock was added gives
 // it as well.
 
-// upLockFile is lox up's state in the Lock Family's directory (internal/launcher's lockUpFile).
+// upLockFile is lox run's state in the Lock Family's directory (internal/launcher's lockUpFile).
 const upLockFile = "up.json"
 
-// UpLock is a lock lox up runs that an agent container started now would mount: its instance and
+// UpLock is a lock lox run runs that an agent container started now would mount: its instance and
 // its socket volume (launcher.UpLock).
 type UpLock struct{ Instance, Volume string }
 
@@ -80,7 +80,7 @@ func (d *Daemon) runLockWatch(ctx context.Context, ready chan<- struct{}) error 
 	}
 	defer w.Close()
 	// The projects directory, for the Lock Family's directory made (lox init) or made again, and
-	// the Lock Family's directory itself, where lox up renames its new up.json.
+	// the Lock Family's directory itself, where lox run renames its new up.json.
 	parent := filepath.Dir(lw.Dir)
 	if err := w.Add(parent); err != nil {
 		return err

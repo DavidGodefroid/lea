@@ -22,28 +22,195 @@ setup() { setup_fakes; load_lea; I="$LEA_ROOT/image"; }
   [ "$(jq -r '.env.OTEL_LOG_USER_PROMPTS // "unset"' "$m")" = unset ]
 }
 
-@test "seccomp profile is the vendored containers/common v0.64.2 file, hardened against AF_ALG" {
-  [ "$(lea_sha256_file "$I/seccomp.json")" = "$(cat "$I/seccomp.json.sha256")" ]
+# The profile is built from the pinned moby default and lea's reviewed changes (#100).
+@test "seccomp profile is what image/seccomp/generate.py builds from the pinned moby default" {
+  python3 -I "$I/seccomp/generate.py" --check
+  [ "$(lea_sha256_file "$I/seccomp/moby-default.json")" = "$(jq -r .base.sha256 "$I/seccomp/lea.json")" ]
   [ "$(jq -r .defaultAction "$I/seccomp.json")" = SCMP_ACT_ERRNO ]
+}
+
+# A copy of image/ with seccomp/ and seccomp.json, for the generator's refusals.
+seccomp_copy() { mkdir -p "$BATS_TEST_TMPDIR/i/seccomp"; cp "$I"/seccomp/* "$BATS_TEST_TMPDIR/i/seccomp/"; cp "$I/seccomp.json" "$BATS_TEST_TMPDIR/i/"; G="$BATS_TEST_TMPDIR/i/seccomp/generate.py"; }
+
+@test "seccomp check fails on a hand edit of the profile" {
+  seccomp_copy
+  jq '.syscalls[0].names += ["keyctl"]' "$I/seccomp.json" >"$BATS_TEST_TMPDIR/i/seccomp.json"
+  run python3 -I "$G" --check
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"not what image/seccomp/generate.py builds"* ]]
+}
+
+@test "seccomp check fails on a base that is not the pinned moby default" {
+  seccomp_copy
+  jq '.syscalls[0].names += ["keyctl"]' "$I/seccomp/moby-default.json" >"$BATS_TEST_TMPDIR/i/seccomp/moby-default.json"
+  run python3 -I "$G" --check
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"not the pinned base"* ]]
+}
+
+@test "seccomp generator refuses a widened syscall without a reason" {
+  seccomp_copy
+  jq '.allow += [{"name": "keyctl"}]' "$I/seccomp/lea.json" >"$BATS_TEST_TMPDIR/i/seccomp/lea.json"
+  run python3 -I "$G"
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"allow keyctl: a one-line reason (why) is required"* ]]
+}
+
+# Every syscall the profile allows unconditionally and moby does not carries lea's reason, in the
+# profile itself; what the nested Podman does not need is refused (keyring, perf, reboot, ...).
+@test "seccomp profile widens moby only with a reason, and not for what the nested Podman does not need" {
+  f="$I/seccomp.json"
+  wide=$(jq -r --slurpfile m "$I/seccomp/moby-default.json" '($m[0].syscalls[0].names) as $base
+    | .syscalls[] | select(.action == "SCMP_ACT_ALLOW" and (.args // []) == [] and (.includes // {}) == {} and (.excludes // {}) == {})
+    | .names[] as $n | select($base | index($n) | not) | $n' "$f" | sort | tr '\n' ' ')
+  [ "$wide" = "clone mount mount_setattr move_mount open_tree pivot_root setns umount2 unshare " ]
+  [ "$(jq '[.syscalls[] | select(.action == "SCMP_ACT_ALLOW" and (.names | length) == 1 and ((.comment // "") | startswith("lea: ") | not)
+    and (.args // []) == [] and (.includes // {}) == {} and (.excludes // {}) == {})] | length' "$f")" -eq 0 ]
+  for n in keyctl add_key request_key reboot bpf perf_event_open syslog fanotify_init clone3 fsopen fsconfig fsmount fspick \
+           pidfd_getfd sethostname setdomainname kexec_load init_module vmsplice; do
+    [ "$(jq --arg n "$n" '[.syscalls[] | select(.action == "SCMP_ACT_ALLOW" and (.names | index($n)) and (.includes // {}) == {})] | length' "$f")" -eq 0 ]
+  done
+  [ "$(jq -r '.syscalls[] | select(.names == ["clone3"]) | .errnoRet' "$f")" = 38 ]
+}
+
+# The hand-written profile lea ran before #100 refused these on purpose (EPERM, unconditionally or
+# without the capability lea's container lacks): each stays refused, under any capability lea has.
+# vmsplice, cachestat, map_shadow_stack, the futex2 calls and io_pgetevents are allowed by moby's
+# default: lea.json removes them, each with its reason.
+@test "seccomp profile still refuses every syscall the pre-#100 profile refused on purpose" {
+  f="$I/seccomp.json"
+  caps='["CAP_CHOWN","CAP_DAC_OVERRIDE","CAP_FSETID","CAP_FOWNER","CAP_SETGID","CAP_SETUID","CAP_SETFCAP","CAP_SETPCAP","CAP_NET_BIND_SERVICE","CAP_SYS_CHROOT","CAP_KILL"]'
+  for n in vmsplice cachestat map_shadow_stack futex_waitv futex_wake futex_wait futex_requeue io_pgetevents io_pgetevents_time64 \
+           bdflush kexec_file_load kexec_load migrate_pages move_pages nfsservctl nice oldfstat oldlstat oldolduname oldstat \
+           olduname pciconfig_iobase pciconfig_read pciconfig_write sgetmask ssetmask swapoff swapon syscall sysfs uselib \
+           userfaultfd ustat vm86 vm86old open_by_handle_at bpf lookup_dcookie perf_event_open quotactl quotactl_fd \
+           setdomainname sethostname delete_module finit_module init_module query_module acct kcmp process_madvise ioperm iopl \
+           clock_settime clock_settime64 settimeofday stime vhangup; do
+    run jq --arg n "$n" --argjson caps "$caps" '[.syscalls[] | select(.action == "SCMP_ACT_ALLOW" and (.names | index($n))
+      and ((.includes.caps // []) - $caps) == [] and ([(.excludes.caps // [])[] | select(. as $c | $caps | index($c))] | length) == 0
+      and ((.includes.arches // ["amd64"]) | index("amd64") or index("arm64")))] | length' "$f"
+    [ "$output" = 0 ] || { echo "$n is allowed"; return 1; }
+  done
+  for n in vmsplice cachestat map_shadow_stack futex_waitv futex_wake futex_wait futex_requeue io_pgetevents io_pgetevents_time64; do
+    [ "$(jq --arg n "$n" '[.remove[] | select(.name == $n and (.why | length) > 0)] | length' "$I/seccomp/lea.json")" = 1 ]
+  done
 }
 
 # CVE-2026-31431: the kernel crypto API (AF_ALG, 38) is out of reach. socketcall multiplexes
 # socket(2) behind a pointer seccomp cannot read: it is not allowed, and 32-bit x86, where libseccomp
 # turns the socket rules into socketcall rules without the family test, is not in the profile. Every
-# rule that allows socket excludes family 38 itself (a rule's conditions are ANDed, rules are ORed),
-# and family 38 gets EAFNOSUPPORT from a rule no allow rule overlaps (crun refuses overlaps: EEXIST).
+# rule that allows socket names a family other than 38 (moby's list) or excludes 38 itself (a rule's
+# conditions are ANDed, rules are ORed), and family 38 gets EAFNOSUPPORT from a rule no allow rule
+# overlaps (crun refuses overlaps: EEXIST).
 @test "seccomp profile refuses socketcall and AF_ALG sockets" {
   f="$I/seccomp.json"
   [ "$(jq '[.syscalls[] | select(.action == "SCMP_ACT_ALLOW" and (.names | index("socketcall")))] | length' "$f")" -eq 0 ]
   [ "$(jq -c '[.archMap[] | select(.architecture == "SCMP_ARCH_X86_64") | .subArchitectures[]]' "$f")" = '["SCMP_ARCH_X32"]' ]
   [ "$(jq '[.syscalls[] | select(.action == "SCMP_ACT_ALLOW" and (.names | index("socket")))] | length' "$f")" -gt 0 ]
   [ "$(jq '[.syscalls[] | select(.action == "SCMP_ACT_ALLOW" and (.names | index("socket")))
-    | select([(.args // [])[] | select(.index == 0 and .op == "SCMP_CMP_NE" and .value == 38)] | length == 0)]
+    | select([(.args // [])[] | select(.index == 0 and ((.op == "SCMP_CMP_NE" and .value == 38)
+        or (.op == "SCMP_CMP_EQ" and .value != 38) or (.op == "SCMP_CMP_LT" and .value <= 38)))] | length == 0)]
     | length' "$f")" -eq 0 ]
   [ "$(jq -c '[.syscalls[] | select(.names == ["socket"] and .action == "SCMP_ACT_ERRNO" and .errnoRet == 97) | .args]' "$f")" = \
-    '[[{"index":0,"value":38,"valueTwo":0,"op":"SCMP_CMP_EQ"}]]' ]
+    '[[{"index":0,"value":4294967295,"valueTwo":38,"op":"SCMP_CMP_MASKED_EQ"}]]' ]
   # Each rule compares an argument once: runc splits a rule that compares one twice into ORed rules.
   [ "$(jq '[.syscalls[] | select((.args // []) | map(.index) | length != (unique | length))] | length' "$f")" -eq 0 ]
+}
+
+# NETLINK_AUDIT (AF_NETLINK 16, protocol 9) gets EINVAL, as in the pre-#100 profile: lea drops
+# CAP_AUDIT_WRITE. moby's allow rule for family 16 is narrowed to the other netlink protocols, each
+# compared in 64 bits (LT 9, EQ 10 to 31), so no allow rule overlaps the errno rule (crun refuses
+# overlaps: EEXIST) and none lets 0x100000009 through, which the kernel truncates to 9; the errno
+# rule compares the low 32 bits only. Each change carries its reason.
+@test "seccomp profile refuses NETLINK_AUDIT sockets and keeps the other netlink sockets" {
+  f="$I/seccomp.json"
+  [ "$(jq -c '[.syscalls[] | select(.names == ["socket"] and .action == "SCMP_ACT_ERRNO" and .errnoRet == 22) | .args]' "$f")" = \
+    '[[{"index":0,"value":4294967295,"valueTwo":16,"op":"SCMP_CMP_MASKED_EQ"},{"index":2,"value":4294967295,"valueTwo":9,"op":"SCMP_CMP_MASKED_EQ"}]]' ]
+  # Every allow rule for socket tests a family other than 16 or a protocol below 2^32 other than 9.
+  [ "$(jq '[.syscalls[] | select(.action == "SCMP_ACT_ALLOW" and (.names | index("socket")))
+    | select([(.args // [])[] | select((.index == 0 and ((.op == "SCMP_CMP_EQ" and .value != 16) or (.op == "SCMP_CMP_LT" and .value <= 16)))
+        or (.index == 2 and ((.op == "SCMP_CMP_EQ" and .value != 9 and .value < 4294967296) or (.op == "SCMP_CMP_LT" and .value <= 9))))] | length == 0)] | length' "$f")" -eq 0 ]
+  [ "$(jq -c '[.syscalls[] | select(.names == ["socket"] and .action == "SCMP_ACT_ALLOW" and (.args | map(select(.index == 0 and .value == 16)) | length) > 0)
+    | .args[1] | [.op, .value]]' "$f")" = \
+    "[[\"SCMP_CMP_LT\",9]$(for p in $(seq 10 31); do printf ',["SCMP_CMP_EQ",%d]' "$p"; done)]" ]
+  l="$I/seccomp/lea.json"
+  [ "$(jq '[.rules[] | select(.rule.errnoRet == 22 and (.why | test("NETLINK_AUDIT")))] | length' "$l")" = 1 ]
+  [ "$(jq '[.narrow[] | select(.base.args == [{"index":0,"value":16,"op":"SCMP_CMP_EQ"}] and (.why | test("NETLINK_AUDIT")))] | length' "$l")" = 1 ]
+}
+
+# seccomp compares 64 bits, the kernel reads an int argument's low 32 (socket's family, type and
+# protocol, personality's persona): the generator refuses a comparison that high bits would get past.
+@test "seccomp generator refuses a 64-bit comparison of a 32-bit argument that fails open" {
+  seccomp_copy
+  # The scan's finding: NE 9 on the protocol lets 0x100000009 (NETLINK_AUDIT) through.
+  jq '.narrow[0].rules = [{"names": ["socket"], "action": "SCMP_ACT_ALLOW", "args": [{"index": 0, "value": 16, "op": "SCMP_CMP_EQ"}, {"index": 2, "value": 9, "op": "SCMP_CMP_NE"}]}]' \
+    "$I/seccomp/lea.json" >"$BATS_TEST_TMPDIR/i/seccomp/lea.json"
+  run python3 -I "$G"
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"socket: argument 2 is a 32-bit int the kernel truncates, compared as SCMP_CMP_NE 9: an allow rule must match no value"* ]]
+  # A refusal by EQ misses the same value.
+  jq '(.rules[] | select(.rule.errnoRet == 22) | .rule.args[1]) = {"index": 2, "value": 9, "valueTwo": 0, "op": "SCMP_CMP_EQ"}' \
+    "$I/seccomp/lea.json" >"$BATS_TEST_TMPDIR/i/seccomp/lea.json"
+  run python3 -I "$G"
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"socket: argument 2 is a 32-bit int the kernel truncates, compared as SCMP_CMP_EQ 9: a rule that refuses must test its low 32 bits only"* ]]
+  # An allow rule by GE, or by an EQ above 2^32, also matches high bits.
+  jq '.narrow[0].rules[0].args[1] = {"index": 2, "value": 10, "op": "SCMP_CMP_GE"}' "$I/seccomp/lea.json" >"$BATS_TEST_TMPDIR/i/seccomp/lea.json"
+  run python3 -I "$G"
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"compared as SCMP_CMP_GE 10"* ]]
+  jq '.narrow[0].rules[0].args[1] = {"index": 2, "value": 4294967306, "op": "SCMP_CMP_EQ"}' "$I/seccomp/lea.json" >"$BATS_TEST_TMPDIR/i/seccomp/lea.json"
+  run python3 -I "$G"
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"compared as SCMP_CMP_EQ 4294967306"* ]]
+  # A masked refusal that keeps high bits in its mask.
+  jq '(.rules[] | select(.rule.errnoRet == 97) | .rule.args[0].value) = 8589934591' "$I/seccomp/lea.json" >"$BATS_TEST_TMPDIR/i/seccomp/lea.json"
+  run python3 -I "$G"
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"socket: argument 0 is a 32-bit int the kernel truncates, compared as SCMP_CMP_MASKED_EQ 8589934591"* ]]
+  # An argument whose width the generator does not know.
+  jq '.rules += [{"why": "test", "rule": {"names": ["ioctl"], "action": "SCMP_ACT_ERRNO", "args": [{"index": 1, "value": 4294967295, "valueTwo": 21531, "op": "SCMP_CMP_MASKED_EQ"}], "errnoRet": 1}}]' \
+    "$I/seccomp/lea.json" >"$BATS_TEST_TMPDIR/i/seccomp/lea.json"
+  run python3 -I "$G"
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"ioctl: argument 1 is tested but its width is not in ARG_BITS"* ]]
+}
+
+@test "seccomp generator narrows a base rule only by tests of other arguments, with a reason" {
+  seccomp_copy
+  jq '.narrow[0].rules[3].args[1] = {"index": 0, "value": 9, "op": "SCMP_CMP_LT"}' "$I/seccomp/lea.json" >"$BATS_TEST_TMPDIR/i/seccomp/lea.json"
+  run python3 -I "$G"
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"the rule must be the base rule with tests of other arguments added"* ]]
+  jq '.narrow[0].rules[0].action = "SCMP_ACT_LOG"' "$I/seccomp/lea.json" >"$BATS_TEST_TMPDIR/i/seccomp/lea.json"
+  run python3 -I "$G"
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"the rule must be the base rule with tests of other arguments added"* ]]
+  jq '.narrow[0].base.args[0].value = 99' "$I/seccomp/lea.json" >"$BATS_TEST_TMPDIR/i/seccomp/lea.json"
+  run python3 -I "$G"
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"the base has 0 such rules, not one"* ]]
+  jq '.narrow[0].rules = []' "$I/seccomp/lea.json" >"$BATS_TEST_TMPDIR/i/seccomp/lea.json"
+  run python3 -I "$G"
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"rules lists the narrowed rules"* ]]
+  jq 'del(.narrow[0].why)' "$I/seccomp/lea.json" >"$BATS_TEST_TMPDIR/i/seccomp/lea.json"
+  run python3 -I "$G"
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"a one-line reason (why) is required"* ]]
+}
+
+# #100: once the entrypoint drops to the developer, nothing gives root back; crun joins no keyring.
+@test "Containerfile removes sudo and every setuid or setgid bit" {
+  c="$I/Containerfile"
+  grep -q '^RUN rpm -e sudo \\$' "$c"
+  grep -qF ' && find / -xdev -type f \( -perm -4000 -o -perm -2000 \) -exec chmod ug-s {} + \' "$c"
+  run grep -E '^(RUN|COPY|ADD|ENV|ARG)' <(sed -n '/^RUN rpm -e sudo/,$p' "$c" | sed 1d)
+  [[ "$output" != *RUN* && "$output" != *COPY* ]]
+}
+
+@test "containers.conf: nested containers join no session keyring (seccomp refuses keyctl)" {
+  grep -q '^keyring = false$' "$I/containers.conf.tmpl"
 }
 
 @test "Containerfile pins every version" {
@@ -51,7 +218,9 @@ setup() { setup_fakes; load_lea; I="$LEA_ROOT/image"; }
   grep -q '^FROM quay.io/podman/stable:v5.8.7-immutable$' "$c"
   grep -q '^ARG CLAUDE_CODE_VERSION=2.1.296$' "$c"
   grep -q '^ARG RTK_VERSION=0.36.0$' "$c"
-  grep -q ' V=0.16.0 ' "$c"
+  # The Locks' clients: no version here, config/locks.lock's set (lea#134).
+  grep -q '^COPY config/locks.lock /usr/local/share/lea/locks.lock$' "$c"
+  ! grep -Eq '(V|MQ|LF)=[0-9]+\.[0-9]+' "$c"
 }
 
 @test "Containerfile ships Go 1.26 by digest, staticcheck and govulncheck pinned, with Go's state in the state dir go" {
@@ -89,17 +258,31 @@ setup() { setup_fakes; load_lea; I="$LEA_ROOT/image"; }
   [ "$(jq -r '.permissions // "none"' "$I/managed-settings.json")" = none ]
 }
 
-@test "Containerfile installs the locksql client of a console in another container" {
+@test "Containerfile installs the Locks' clients of consoles in other containers, from the set" {
   c="$I/Containerfile"
   grep -q 'useradd -r -u 10001 -U -M -s /sbin/nologin locksql' "$c"
-  grep -q "'socket_dir   = \"/run/locksql\"'" "$c"
-  grep -q 'A="locksql_${V}_linux_${TARGETARCH}.tar.gz"' "$c"
-  # Pinned by the archive's sha256, for each architecture.
-  grep -q 'echo "$sq  $A" | sha256sum -c' "$c"
-  grep -Eq 'amd64\) sq=[0-9a-f]{64} ;;' "$c"
-  grep -Eq 'arm64\) sq=[0-9a-f]{64} ;;' "$c"
+  grep -q 'for t in locksql lockmq lockfile; do' "$c"
+  grep -q '"socket_dir   = \\"/run/$t\\""' "$c"
+  grep -q 'a="${t}_${v}_linux_${TARGETARCH}.tar.gz"' "$c"
+  # Each archive pinned by the set's sha256, for each architecture.
+  grep -q 'sum=$(sed -n "s/^LOCKS_${T}_SHA256_${A}=' "$c"
+  grep -q 'echo "$sum  $a" | sha256sum -c' "$c"
+  grep -q 'amd64) A=AMD64 ;;' "$c"
+  grep -q 'arm64) A=ARM64 ;;' "$c"
   grep -q 'install -d -m 2710 -o 10001 -g 10000 /run/locksql' "$c"
   ! grep -q 'LOCKSQL_REF\|COPY --from=locksql' "$c"
+}
+
+@test "the set's version and sha256 lines are the ones the Containerfile reads" {
+  # The sed patterns of the Containerfile, run on the set: every client has its version and both
+  # architectures' sha256.
+  for t in LOCKSQL LOCKMQ LOCKFILE; do
+    v=$(sed -n "s/^LOCKS_${t}_VERSION=v\([0-9][0-9.]*\)\$/\1/p" "$LEA_ROOT/config/locks.lock")
+    [ -n "$v" ]
+    for A in AMD64 ARM64; do
+      [ -n "$(sed -n "s/^LOCKS_${t}_SHA256_${A}=\([0-9a-f]\{64\}\)\$/\1/p" "$LEA_ROOT/config/locks.lock")" ]
+    done
+  done
 }
 
 # render_ssh_config OUT: the entrypoint's /run/lea/ssh_config block, run with its output in OUT.
@@ -264,7 +447,11 @@ lea_sha256_file() { sha256sum "$1" | cut -d' ' -f1; }
   # Its SessionStart twin (#83) takes a pending resume over after a container restart.
   jq -e '.hooks.SessionStart[0].hooks[1] | (.command | contains("/usr/local/bin/lea hook claude LimitResume")) and .asyncRewake == true and .timeout == 691200' "$s" >/dev/null
   # A Lock call's own rewake job (#161): no Stop follows a turn suspended on a pending decision.
-  jq -e '.hooks.PostToolUse[1] | .matcher == "^mcp__lock[a-z]*__" and (.hooks[0] | (.command | contains("/usr/local/bin/lea hook claude Rewake")) and .asyncRewake == true and .timeout == 3600)' "$s" >/dev/null
+  jq -e '.hooks.PostToolUse[1] | .matcher == "^mcp__lock[a-z]*__" and (.hooks[0] | (.command | contains("/usr/local/bin/lea hook claude Rewake")) and .asyncRewake == true and .timeout == 691200)' "$s" >/dev/null
+  # The inbox rewake job (#297) at each turn end and each session start: it renews its watch for
+  # days, so its timeout is LimitWait's.
+  jq -e '.hooks.Stop[0].hooks[1] | (.command | contains("/usr/local/bin/lea hook claude Rewake")) and .asyncRewake == true and .timeout == 691200' "$s" >/dev/null
+  jq -e '.hooks.SessionStart[0].hooks[2] | (.command | contains("/usr/local/bin/lea hook claude Rewake")) and .asyncRewake == true and .timeout == 691200' "$s" >/dev/null
   [ "$(jq -r '.hooks // "none"' "$I/managed-settings.json")" = none ]
   grep -q '^COPY image/claude-settings.json /usr/local/share/lea/claude-settings.json$' "$I/Containerfile"
   grep -q 'settings=${LEA_CLAUDE_SETTINGS:-/usr/local/share/lea/claude-settings.json}' "$I/lea-session"

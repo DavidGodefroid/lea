@@ -13,7 +13,6 @@ lea_load_config() {
   _lc_appt=${LEA_APPROVAL_TIMEOUT:-}
   # shellcheck source=/dev/null
   . "$LEA_ROOT/config/lea.conf"
-  _lc_psql=${LEA_LOCKSQL_REF:-} _lc_pimg=${LEA_LOCKSQL_IMAGE:-} _lc_pmq=${LEA_LOCKMQ_REF:-} _lc_plf=${LEA_LOCKFILE_REF:-}
   _lc_user=$(lea_user_config_path)
   case $_lc_user in /*) ;; *) _lc_user=./$_lc_user ;; esac
   if [ -n "${LEA_CONFIG:-}" ] || [ -f "$_lc_user" ]; then
@@ -48,11 +47,11 @@ lea_load_config() {
   fi
   lea__check_otel_upstream
   LEA_LOCKSQL=${LEA_LOCKSQL:-0}
-  case $LEA_LOCKSQL in 0|1) ;; *) lea_die "LEA_LOCKSQL must be 1 (wire lea for a locksql console) or 0, not '$LEA_LOCKSQL'" ;; esac
+  case $LEA_LOCKSQL in 0|1) ;; *) lea_die "LEA_LOCKSQL must be 1 (lea's agents reach a locksql lock lox runs) or 0, not '$LEA_LOCKSQL'" ;; esac
   LEA_LOCKMQ=${LEA_LOCKMQ:-0}
-  case $LEA_LOCKMQ in 0|1) ;; *) lea_die "LEA_LOCKMQ must be 1 (reach a lockmq console on this host) or 0, not '$LEA_LOCKMQ'" ;; esac
+  case $LEA_LOCKMQ in 0|1) ;; *) lea_die "LEA_LOCKMQ must be 1 (lea's agents reach a lockmq lock lox runs) or 0, not '$LEA_LOCKMQ'" ;; esac
   LEA_LOCKFILE=${LEA_LOCKFILE:-0}
-  case $LEA_LOCKFILE in 0|1) ;; *) lea_die "LEA_LOCKFILE must be 1 (reach a lockfile console on this host) or 0, not '$LEA_LOCKFILE'" ;; esac
+  case $LEA_LOCKFILE in 0|1) ;; *) lea_die "LEA_LOCKFILE must be 1 (lea's agents reach a lockfile lock lox runs) or 0, not '$LEA_LOCKFILE'" ;; esac
   LEA_LOCKHTTP=${LEA_LOCKHTTP:-0}
   case $LEA_LOCKHTTP in 0|1) ;; *) lea_die "LEA_LOCKHTTP must be 1 (agents' web egress through a LockHTTP gate) or 0, not '$LEA_LOCKHTTP'" ;; esac
   if [ "$LEA_LOCKHTTP" = 1 ] && [ -n "$LEA_GIT_SSH" ]; then
@@ -64,17 +63,15 @@ lea_load_config() {
   LEA_LOCKHTTP_MITM=${LEA_LOCKHTTP_MITM:-0}
   case $LEA_LOCKHTTP_MITM in 0|1) ;; *) lea_die "LEA_LOCKHTTP_MITM must be 1 (the LockHTTP gate decrypts HTTPS with a local CA) or 0, not '$LEA_LOCKHTTP_MITM'" ;; esac
   if [ "$LEA_LOCKHTTP_MITM" = 1 ] && [ "$LEA_LOCKHTTP" != 1 ]; then lea_die "LEA_LOCKHTTP_MITM=1 needs LEA_LOCKHTTP=1"; fi
-  # Empty: no pinned release (config/lea.conf pins one), and lea init installs nothing.
-  LEA_LOCKMQ_REF=${LEA_LOCKMQ_REF:-} LEA_LOCKFILE_REF=${LEA_LOCKFILE_REF:-}
+  # LEA_<LOCK>_REF: a dev override of config/locks.lock's release of a client (lea doctor warns),
+  # for this release only; empty (the default): the set's.
+  LEA_LOCKSQL_REF=${LEA_LOCKSQL_REF:-} LEA_LOCKMQ_REF=${LEA_LOCKMQ_REF:-} LEA_LOCKFILE_REF=${LEA_LOCKFILE_REF:-}
+  case $LEA_LOCKSQL_REF in ''|/*) ;; *) lea__semver "$LEA_LOCKSQL_REF" >/dev/null || lea_die "LEA_LOCKSQL_REF must be a locksql release (vX.Y.Z), not '$LEA_LOCKSQL_REF'" ;; esac
   [ -z "$LEA_LOCKMQ_REF" ] || lea__semver "$LEA_LOCKMQ_REF" >/dev/null || lea_die "LEA_LOCKMQ_REF must be a lockmq release (vX.Y.Z), not '$LEA_LOCKMQ_REF'"
   [ -z "$LEA_LOCKFILE_REF" ] || lea__semver "$LEA_LOCKFILE_REF" >/dev/null || lea_die "LEA_LOCKFILE_REF must be a lockfile release (vX.Y.Z), not '$LEA_LOCKFILE_REF'"
   [ -z "$LEA_LOCKFILE_REF" ] || lea__lockfile_safe "$LEA_LOCKFILE_REF" || lea_die "LEA_LOCKFILE_REF $LEA_LOCKFILE_REF is refused: lockfile v0.1.0 lets a plugin escape its sandbox (v0.1.1 or later)"
-  # A release lea update recorded in the user config never holds lea below its own, newer pin
-  # (a later lea may need it); an empty ref or a locksql checkout stays as it is. After the
-  # checks: a refused ref (lockfile v0.1.0) is still refused, never quietly raised.
-  if lea__older "${LEA_LOCKSQL_REF:-}" "$_lc_psql"; then LEA_LOCKSQL_REF=$_lc_psql LEA_LOCKSQL_IMAGE=$_lc_pimg; fi
-  if lea__older "${LEA_LOCKMQ_REF:-}" "$_lc_pmq"; then LEA_LOCKMQ_REF=$_lc_pmq; fi
-  if lea__older "${LEA_LOCKFILE_REF:-}" "$_lc_plf"; then LEA_LOCKFILE_REF=$_lc_plf; fi
+  LEA_ALLOW_GATEWAY=${LEA_ALLOW_GATEWAY:-0}
+  case $LEA_ALLOW_GATEWAY in 0|1) ;; *) lea_die "LEA_ALLOW_GATEWAY must be 0 (lea refuses an internal network the host is reachable from) or 1, not '$LEA_ALLOW_GATEWAY'" ;; esac
   LEA_AUTOUPDATE=${LEA_AUTOUPDATE:-1}
   case $LEA_AUTOUPDATE in 0|1) ;; *) lea_die "LEA_AUTOUPDATE must be 1 (check for a new release every day) or 0, not '$LEA_AUTOUPDATE'" ;; esac
   LEA_AUTOUPDATE_SKIP=${LEA_AUTOUPDATE_SKIP:-}
@@ -82,7 +79,7 @@ lea_load_config() {
     lea_die "LEA_AUTOUPDATE_SKIP must be empty or a release version (vX.Y.Z, set by lea rollback), not '$LEA_AUTOUPDATE_SKIP'"
   fi
   unset LEA_GITLAB_SSH LEA_GITLAB_KNOWN_HOSTS LEA_REGISTRY
-  export LEA_PREFIX LEA_IMAGE LEA_PROXY_IMAGE LEA_CTL LEA_CTL_IMAGE LEA_GIT_SSH LEA_GIT_KNOWN_HOSTS LEA_LOCKSQL LEA_LOCKSQL_IMAGE LEA_LOCKSQL_REF \
+  export LEA_PREFIX LEA_IMAGE LEA_PROXY_IMAGE LEA_CTL LEA_CTL_IMAGE LEA_GIT_SSH LEA_GIT_KNOWN_HOSTS LEA_LOCKSQL LEA_LOCKSQL_REF \
     LEA_LOCKMQ LEA_LOCKFILE LEA_LOCKMQ_REF LEA_LOCKFILE_REF LEA_LOCKHTTP LEA_LOCKHTTP_MITM \
     LEA_OTEL_UPSTREAM LEA_NESTED_NETWORKS LEA_K8S_NAMESPACE LEA_INTERNAL_HOSTS LEA_EGRESS_ALLOW LEA_PROJECTS_DIR \
     LEA_APPROVALS LEA_APPROVAL_TIMEOUT LEA_SOUND LEA_SOUND_ATTENTION

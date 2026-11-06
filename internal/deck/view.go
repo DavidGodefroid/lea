@@ -127,7 +127,7 @@ var helpLines = []string{
 	"space       next needing you",
 	"n           new agent",
 	"N           new, other provider",
-	"s L         new shell, locksql",
+	"s           new shell",
 	"- |         split with a shell",
 	"m           note to its inbox",
 	"t           its messages",
@@ -138,26 +138,20 @@ var helpLines = []string{
 	"p           pause (y), resume",
 	"a d A       allow deny always",
 	"x           stop or remove",
-	"S H         sounds, hub panel",
-	"Y           hub: approve all",
+	"S           sounds",
 	",           settings",
 	"ctrl+space  deck or terminal",
 	"q ?         detach, these keys",
 }
 
-// statusLine is the line above the bottom border: the hub's retype field while it is open, else
-// the status, else the update notice ("" when none). The other fields are in a modal (input.go).
+// loxRunHint is what the status line says while the workspace has locks and no lox run serves
+// them (#300): approvals live outside lea, in lox run.
+const loxRunHint = "no lox run: open another terminal (outside lea) and run lox run to approve the agents' connections and writes"
+
+// statusLine is the line above the bottom border: the status, else the lox run hint, else the
+// update notice ("" when none). The fields are in a modal (input.go).
 func (m Model) statusLine(inner int) string {
 	c := m.cs()
-	if m.hubFor != "" {
-		prompt := "type the name to approve: "
-		if h := m.selectedHub(); h != nil {
-			prompt = "type " + clean(h.Retype) + ": "
-		}
-		field := tail(safe(string(m.hubDraft), c), max(1, inner-1-len([]rune(prompt))-1))
-		return padRight(" "+lipgloss.NewStyle().Foreground(theme.Text).Render(prompt+field)+
-			lipgloss.NewStyle().Foreground(theme.Accent).Render(c.bar), inner)
-	}
 	if m.status == "" {
 		if _, _, ok := m.inputOpen(); ok { // the modal holds the field: nothing under it
 			return ""
@@ -169,6 +163,10 @@ func (m Model) statusLine(inner int) string {
 				st = alert
 			}
 			return padRight(" "+st.Render(fit(safe(m.pressure.Short, c), inner-1, c)), inner)
+		}
+		// The agents' Lock requests wait until lox run serves (#300): say where they are decided.
+		if m.loxRunOff {
+			return padRight(" "+lipgloss.NewStyle().Foreground(theme.Working).Render(fit(loxRunHint, inner-1, c)), inner)
 		}
 		if h := m.folderHint(); h != "" {
 			return padRight(" "+muted.Render(fit(h, inner-1, c)), inner)
@@ -182,13 +180,13 @@ func (m Model) statusLine(inner int) string {
 }
 
 // folderHint is the keys of the selected row that the bottom border has no room for: a folder's,
-// or u on an agent in a folder; "" on any other row, and while the selection is in the hub panel.
+// or u on an agent in a folder; "" on any other row.
 func (m Model) folderHint() string {
 	d := m.cs().dot
 	switch {
-	case m.folderAt(m.selected) >= 0 && !m.panel:
+	case m.folderAt(m.selected) >= 0:
 		return fmt.Sprintf("enter fold %[1]s e name %[1]s c colour %[1]s x delete %[1]s J K move", d)
-	case m.folderOf(m.selected) >= 0 && m.index(m.selected) >= 0 && !m.panel:
+	case m.folderOf(m.selected) >= 0 && m.index(m.selected) >= 0:
 		return "u out of folder"
 	}
 	return ""
@@ -252,13 +250,9 @@ func (m Model) top(w int) string {
 	if m.sound == "off" {
 		count = "muted " + c.dot + " " + count
 	}
-	// The requests waiting for the user in every Lock's console, or a console that is down.
+	// The requests waiting for lox run, or a console that is down.
 	if l := m.lockLine(); l != "" {
 		count = l + " " + c.dot + " " + count
-	}
-	// The hub's pending tickets, from its queue only: also those for no agent.
-	if n := m.queuePending(); n > 0 {
-		count = fmt.Sprintf("hub %d pending %s %s", n, c.dot, count)
 	}
 	// c.tl+c.h+" " (3) + title + " " + fill + " " + count + " "+c.h+c.tr (3)
 	fill := w - 8 - tw - lipgloss.Width(count)
@@ -269,11 +263,11 @@ func (m Model) top(w int) string {
 		muted.Render(count) + m.frameStyle().Render(" "+c.h+c.tr)
 }
 
-// lockLine is what the top border says of the Locks' approvals: "locksql 2 to approve" when one
-// Lock's requests wait, "5 to approve" when several Locks' do, else "lockhttp console down" for
-// the first console down, else "lockhub unreachable" when lea follows the hub but cannot reach it
-// (no agent is suspended on a Lock call then); "" when all is quiet. The Lock names are the
-// daemon's, checked.
+// lockLine is what the top border says of the Locks' approvals, which lox run decides (#300):
+// "locksql 2 wait for lox run" when one Lock's requests wait, "5 wait for lox run" when several
+// Locks' do, else "lockhttp console down" for the first console down, else "lockhub unreachable"
+// when lea follows the hub but cannot reach it (no agent is suspended on a Lock call then); ""
+// when all is quiet. The Lock names are the daemon's, checked.
 func (m Model) lockLine() string {
 	total, one, down := 0, "", ""
 	n := 0
@@ -291,9 +285,9 @@ func (m Model) lockLine() string {
 	}
 	switch {
 	case n == 1:
-		return fmt.Sprintf("%s %d to approve", one, total)
+		return fmt.Sprintf("%s %d wait for lox run", one, total)
 	case n > 1:
-		return fmt.Sprintf("%d to approve", total)
+		return fmt.Sprintf("%d wait for lox run", total)
 	case down != "":
 		return down + " console down"
 	case m.hubDown:
@@ -304,11 +298,11 @@ func (m Model) lockLine() string {
 
 var lockNameRe = regexp.MustCompile(`^[a-z][a-z0-9-]{0,31}$`)
 
-// lockInstanceRe is a lock's instance name, as lox up names it (internal/launcher's
+// lockInstanceRe is a lock's instance name, as lox run names it (internal/launcher's
 // lockUpInstance).
 var lockInstanceRe = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,62}$`)
 
-// lockAddedHint is the deck's hint for a lock lox up runs that the container does not mount:
+// lockAddedHint is the deck's hint for a lock lox run runs that the container does not mount:
 // Docker cannot add a mount to a running container.
 func lockAddedHint(name string) string {
 	return "lock " + name + " added: restart lea to use it (lea stop, then lea)"
@@ -333,22 +327,7 @@ func (m Model) lockHintLines(inner int) []string {
 func (m Model) bottom(w int) string {
 	c := m.cs()
 	hint := fmt.Sprintf("n new %[1]s m msg %[1]s ? keys", c.dot)
-	if a := m.selectedAgent(); a != nil && a.Approval == nil && a.LockAsk != nil {
-		hint = fmt.Sprintf("O open console %s d decline", c.dot)
-	}
-	if h := m.selectedHub(); h != nil {
-		hint = fmt.Sprintf("a approve %[1]s d deny %[1]s v view %[1]s o clear values", c.dot)
-		if h.Expired {
-			hint = fmt.Sprintf("r ask again (approves at once if nothing changed) %s v view", c.dot)
-		}
-		if m.panel {
-			hint = fmt.Sprintf("a approve %[1]s d deny %[1]s v view %[1]s esc leave", c.dot)
-			if h.Expired {
-				hint = fmt.Sprintf("r ask again %[1]s v view %[1]s esc leave", c.dot)
-			}
-		}
-	}
-	if a := m.selectedAgent(); a != nil && a.Approval != nil && !m.panel {
+	if a := m.selectedAgent(); a != nil && a.Approval != nil {
 		hint = fmt.Sprintf("a allow %s d deny", c.dot)
 		if a.Approval.Always {
 			hint += fmt.Sprintf(" %s A always", c.dot)
@@ -365,9 +344,6 @@ func (m Model) bottom(w int) string {
 	}
 	if m.editFor != "" {
 		hint = fmt.Sprintf("enter save %s esc cancel", c.dot)
-	}
-	if m.hubFor != "" {
-		hint = fmt.Sprintf("enter approve %s esc cancel", c.dot)
 	}
 	if m.menuFor != "" {
 		hint = fmt.Sprintf("enter pick %s esc close", c.dot)
@@ -402,11 +378,8 @@ type lineOwner struct {
 	item int
 }
 
-// rowLines are the lines rows renders and, line for line, what each shows: the hub panel first,
-// always on screen (its lines show no row: hubPanel, with the index of their ticket), then the
-// rows that fit under it.
+// rowLines are the lines rows renders and, line for line, what each shows.
 func (m Model) rowLines(inner int) ([]string, []lineOwner) {
-	panel, tickets := m.panelOwned(inner)
 	es := m.entries(false)
 	rendered := make([][]string, len(es))
 	owners := make([][]lineOwner, len(es))
@@ -453,7 +426,7 @@ func (m Model) rowLines(inner int) ([]string, []lineOwner) {
 		if len(m.agents) == 0 { // the body's line saying there is no agent yet
 			room--
 		}
-		room = max(1, room-len(panel))
+		room = max(1, room)
 	}
 	start := 0
 	if sel := focus; sel >= 0 && room > 0 {
@@ -466,13 +439,10 @@ func (m Model) rowLines(inner int) ([]string, []lineOwner) {
 			start = j
 		}
 	}
-	out := append([]string(nil), panel...)
-	own := make([]lineOwner, len(panel))
-	for i, t := range tickets {
-		own[i] = lineOwner{hubPanel, t}
-	}
+	var out []string
+	var own []lineOwner
 	for i := start; i < len(rendered); i++ {
-		if room > 0 && len(out) > len(panel) && len(out)-len(panel)+len(rendered[i]) > room {
+		if room > 0 && len(out) > 0 && len(out)+len(rendered[i]) > room {
 			break
 		}
 		out = append(out, rendered[i]...)
@@ -486,7 +456,7 @@ func (m Model) rowLines(inner int) ([]string, []lineOwner) {
 func (m Model) folderRow(fi int, inner int) []string {
 	c := m.cs()
 	f := m.layout.Folders[fi]
-	sel := folderKey(f.ID) == m.selected && !m.panel
+	sel := folderKey(f.ID) == m.selected
 	bg := func(s lipgloss.Style) lipgloss.Style {
 		if sel {
 			return s.Background(theme.Sel)
@@ -533,7 +503,7 @@ func (m Model) folderRow(fi int, inner int) []string {
 // arrow, its name and its detail under the folder's name.
 func (m Model) row(a Agent, inner int, fi int) []string {
 	c := m.cs()
-	sel := a.Key == m.selected && !m.panel // in the hub panel, the selection is there
+	sel := a.Key == m.selected
 	gap, pad := " ", "    "
 	guide := muted
 	if fi >= 0 {
@@ -581,18 +551,6 @@ func (m Model) row(a Agent, inner int, fi int) []string {
 	detail := fit(m.detail(a, inner-in), inner-in, c)
 	line2 := bg(guide).Render(pad) + bg(muted).Render(padRight(detail, inner-in))
 	lines := []string{line1, line2}
-	if l := a.LockAsk; l != nil && a.Approval == nil {
-		warn := "⚠"
-		if m.ascii {
-			warn = "!"
-		}
-		lines = append(lines,
-			bg(guide).Render(pad)+bg(alert).Render(padRight(fit(warn+" open the "+lockAskName(*l)+" console?", inner-in, c), inner-in)),
-			bg(guide).Render(pad)+bg(lipgloss.NewStyle().Foreground(theme.Text)).Render(padRight(fit("[O]pen [d]ecline", inner-in, c), inner-in)))
-	}
-	if h := hubTicket(a); h != nil {
-		lines = append(lines, m.hubCardLines(*h, inner, pad, bg, guide, true, a.Key == m.selected && !m.panel, len(a.Hub)-1)...)
-	}
 	if ap := a.Approval; ap != nil {
 		warn := "⚠"
 		if m.ascii {
@@ -671,10 +629,11 @@ func (m Model) detail(a Agent, width int) string {
 }
 
 // shortStatus is the row's label, or the agent's own task status (task_update) while it works or
-// idles, unpaused, and nothing needs the user. The text is the agent's: fit cleans it with the
+// idles, unpaused, not woken by lea (the user sees why it started), and nothing needs the user.
+// The text is the agent's: fit cleans it with the
 // whole line.
 func (m Model) shortStatus(a Agent) string {
-	if a.Status != "" && !a.Paused && (a.State == "working" || a.State == "idle") && shownState(a) != "limited" && rank(a, m.seen) >= 3 {
+	if a.Status != "" && !a.Paused && (a.State == "working" || a.State == "idle") && shownState(a) != "limited" && !a.Woken && rank(a, m.seen) >= 3 {
 		if st := strings.TrimLeft(a.Status, leaGlyphs); st != "" {
 			return st
 		}
@@ -740,140 +699,4 @@ func padLeft(s string, w int) string {
 		return strings.Repeat(" ", d) + s
 	}
 	return s
-}
-
-// renewLines say what a renewal ticket renews and what changed since: the Lock's words, cleaned.
-func renewLines(r HubRenewal) []string {
-	why := "it expired before a decision"
-	if r.Reason == "approval-expired" {
-		why = "its approval expired before the run"
-	}
-	out := []string{"renews " + clean(r.Of) + ": " + why}
-	switch {
-	case !r.Checked:
-		out = append(out, "the lock could not compare the plan's inputs with the expired ticket's")
-	case len(r.Changes) == 0:
-		out = append(out, "nothing changed since then")
-	default:
-		out = append(out, "changed since then:")
-		for _, ch := range r.Changes {
-			what := clean(ch.Change)
-			if ch.Change == "unchecked" { // lockkit ticket.ChangeUnchecked
-				what = "not checked now; the run checks it"
-			}
-			out = append(out, "  "+clean(ch.Input)+": "+what)
-		}
-	}
-	return out
-}
-
-// clearLines are a ticket's clear values on its card, set apart from the masked screen.
-func (m Model) clearLines(cl HubClear, wide int, row func(lipgloss.Style, string) string) []string {
-	c := m.cs()
-	rule := "════"
-	if m.ascii {
-		rule = "===="
-	}
-	mark := alert.Bold(true)
-	text := lipgloss.NewStyle().Foreground(theme.Text)
-	out := []string{row(mark, rule+" CLEAR VALUES "+c.dot+" sealed by the lock to this deck, not kept "+rule)}
-	for _, l := range wrap(clean(cl.Header), wide+2, c) {
-		if l != "" {
-			out = append(out, row(text, l))
-		}
-	}
-	for _, l := range m.hubWrap(cl.Body) {
-		out = append(out, row(text, "  "+l))
-	}
-	if cl.Note != "" {
-		for _, l := range wrap("agent: "+clean(cl.Note), wide+2, c) {
-			out = append(out, row(text, l))
-		}
-	}
-	for _, w := range m.hubWrap(cl.Warnings) {
-		out = append(out, row(alert, "  "+w))
-	}
-	end := rule + " end of clear values (o hides them) " + rule
-	if cl.Truncated {
-		end = rule + " cut: lox approve shows them all " + rule
-	}
-	return append(out, row(mark, end))
-}
-
-// hubCardLines are the lines of a hub ticket's card, inner cells wide, each after pad: the Lock,
-// the instance, the risk, production, the Lock's masked screen (folded unless v), its warnings,
-// the clear values when o showed them on this card (selected), and its keys. claim shows the
-// requester's claim of an unverified ticket (the panel says it in its own line); more counts the
-// agent's other tickets.
-func (m Model) hubCardLines(h HubCard, inner int, pad string, bg func(lipgloss.Style) lipgloss.Style, guide lipgloss.Style, claim, selected bool, more int) []string {
-	c := m.cs()
-	warn := "⚠"
-	if m.ascii {
-		warn = "!"
-	}
-	text := lipgloss.NewStyle().Foreground(theme.Text)
-	in := lipgloss.Width(pad)
-	row := func(st lipgloss.Style, s string) string {
-		return bg(guide).Render(pad) + bg(st).Render(padRight(fit(s, inner-in, c), inner-in))
-	}
-	wide := max(8, inner-in-2)
-	var lines []string
-	if claim && !h.Verified {
-		lines = append(lines, row(alert, warn+" unverified: claims \""+clean(h.Claimed)+"\""))
-	}
-	head := warn + " " + clean(h.Lock) + " " + clean(h.Instance) + " " + c.dot + " " + clean(h.Risk)
-	if h.Expired {
-		head += " " + c.dot + " EXPIRED"
-	}
-	lines = append(lines, row(alert, head))
-	if h.Production {
-		lines = append(lines, row(alert, "PRODUCTION"))
-	}
-	if r := h.Renews; r != nil {
-		for _, l := range renewLines(*r) {
-			for _, w := range wrap(l, wide+2, c) {
-				lines = append(lines, row(alert, w))
-			}
-		}
-	}
-	for _, l := range wrap(clean(h.Header), wide+2, c) {
-		if l != "" {
-			lines = append(lines, row(text, l))
-		}
-	}
-	if h.Note != "" {
-		for _, l := range wrap("agent: "+clean(h.Note), wide+2, c) {
-			lines = append(lines, row(muted, l))
-		}
-	}
-	body := m.hubBody(h)
-	if !m.hubFull && len(body) > hubFolded {
-		body = append(append([]string(nil), body[:hubFolded]...), fmt.Sprintf("… %d more lines (v)", len(body)-hubFolded))
-	}
-	for _, l := range body {
-		lines = append(lines, row(text, "  "+l))
-	}
-	for _, w := range m.hubWarnings(h) {
-		lines = append(lines, row(alert, "  "+w))
-	}
-	if rv := m.revealed; rv != nil && rv.ref == h.Instance+"/"+h.ID && selected {
-		lines = append(lines, m.clearLines(rv.clear, wide, row)...)
-	}
-	keys := "[a]pprove [d]eny [v]iew [o] clear values"
-	if h.Expired {
-		keys = "expired: [r] asks the lock again, approved at once if nothing changed"
-	}
-	if h.Retype != "" && !h.Expired {
-		keys += " " + c.dot + " approving asks for " + clean(h.Retype)
-	}
-	if more > 0 {
-		keys += fmt.Sprintf(" %s %d more tickets", c.dot, more)
-	}
-	lines = append(lines, row(text, keys))
-	if n := m.hubNote; selected && n.ref == h.Instance+"/"+h.ID {
-		for _, w := range wrap(n.text, wide+2, c) {
-			lines = append(lines, row(alert, w))
-		}
-	}
-	return lines
 }

@@ -77,7 +77,7 @@ func (d *Daemon) trackSubagents(me, event string, payload json.RawMessage) {
 		} else {
 			s.gen++
 			cur, gen := s, s.gen
-			s.timer = time.AfterFunc(d.subTTL, func() { d.expireSubagents(me, cur, gen) })
+			s.timer = d.afterFunc(d.subTTL, func() { d.expireSubagents(me, cur, gen) })
 		}
 	}
 	d.mu.Unlock()

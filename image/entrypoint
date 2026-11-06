@@ -59,6 +59,13 @@ if [ "${LEA_LOCKHTTP:-0}" = 1 ]; then
   nested_proxy=http://nested:$LEA_NESTED_PROXY_TOKEN@$LEA_PROXY_IP:3130
 fi
 sed -e "s|@LEA_NESTED_PROXY@|$nested_proxy|g" /usr/local/share/lea/containers.conf.tmpl >/etc/containers/containers.conf
+# Under gVisor (LEA_RUNTIME=runsc, #106) the nested Podman cannot give a container a network
+# namespace of its own: it keeps one by bind-mounting its nsfs file, which gVisor refuses (EINVAL).
+# Its containers share lea's network namespace instead (still behind lea's proxy and internal
+# network); their ports then share lea's (README, "A second kernel: gVisor or Kata").
+case $(uname -r) in *gvisor*)
+  sed -i 's|^utsns = "host"$|&\n# gVisor (written by the entrypoint): no network namespace of their own.\nnetns = "host"|' /etc/containers/containers.conf ;;
+esac
 if [ "${LEA_LOCKHTTP_MITM:-0}" = 1 ]; then
   # The LockHTTP gate decrypts HTTPS with lea's local CA: its certificate (never its key) joins
   # the system trust store, which curl, git, Go, OpenSSL and Podman read; the launcher points

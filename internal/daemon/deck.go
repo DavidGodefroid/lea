@@ -55,18 +55,6 @@ type Agents interface {
 	OpenShell(ctx context.Context, container string) (agents.Row, error)
 	// SplitShell opens a shell beside an agent (the deck's split), below it or at its right.
 	SplitShell(ctx context.Context, key string, below bool) (agents.Row, error)
-	// LockOpen, LockClose and LockList manage the lock consoles of a deck (lea lock, the deck's
-	// L): the user's only. No agent may open, show, close or list a console.
-	LockOpen(ctx context.Context, container, tool, profile string) (string, error)
-	LockClose(ctx context.Context, container, tool, profile string) (string, error)
-	LockList(ctx context.Context, container string) ([]agents.LockRow, error)
-	// LockCheckRequest checks an agent's request that the user open a console (lock_request):
-	// it opens nothing and says nothing of the consoles that run.
-	LockCheckRequest(ctx context.Context, container, tool, profile string) error
-	// ShowTicket shows a hub ticket of the panel (instance/id) whole in the container's slot,
-	// with the deck's note under it; ref and note "" hide it (#284). seq orders a deck's calls:
-	// one older than the last taken is dropped. The user's only.
-	ShowTicket(ctx context.Context, container, ref, note string, seq int64) error
 	Changed()
 }
 
@@ -78,8 +66,6 @@ var deckMethods = map[string]bool{
 	"agents_resume_stopped": true, "agents_sweep_stacks": true,
 	"deck_attached": true, "deck_popup": true, "agent_label": true, "shell_open": true,
 	"shell_split": true, "agent_pause": true,
-	"lock_open": true, "lock_close": true, "lock_list": true, "lock_request_decide": true,
-	"hub_decide": true, "hub_reveal": true, "hub_renew": true, "hub_show": true,
 }
 
 func (d *Daemon) SetAgents(a Agents) {
@@ -239,7 +225,13 @@ func (d *Daemon) dispatchDeck(ctx context.Context, o Origin, req wire.Request) (
 		if err := json.Unmarshal(req.Params, &p); err != nil {
 			return nil, err
 		}
-		return ok, a.SetPaused(ctx, p.Key, p.Paused)
+		if err := a.SetPaused(ctx, p.Key, p.Paused); err != nil {
+			return nil, err
+		}
+		if !p.Paused {
+			d.wake(p.Key) // a rewake watch held while it was paused looks again (wake.go)
+		}
+		return ok, nil
 	case "shell_open":
 		var p struct{ Container string }
 		if err := json.Unmarshal(req.Params, &p); err != nil {
@@ -255,41 +247,6 @@ func (d *Daemon) dispatchDeck(ctx context.Context, o Origin, req wire.Request) (
 			return nil, err
 		}
 		return a.SplitShell(ctx, p.Key, p.Below)
-	case "lock_open", "lock_close":
-		var p struct{ Container, Tool, Profile string }
-		if err := json.Unmarshal(req.Params, &p); err != nil {
-			return nil, err
-		}
-		do := a.LockOpen
-		if req.Method == "lock_close" {
-			do = a.LockClose
-		}
-		st, err := do(ctx, p.Container, p.Tool, p.Profile)
-		return map[string]string{"status": st}, err
-	case "lock_request_decide":
-		return d.lockRequestDecide(ctx, a, req.Params)
-	case "hub_decide":
-		return ok, d.hubDecide(ctx, req.Params)
-	case "hub_show":
-		var p struct {
-			Container, Ref, Note string
-			Seq                  int64
-		}
-		if err := json.Unmarshal(req.Params, &p); err != nil {
-			return nil, err
-		}
-		return ok, a.ShowTicket(ctx, p.Container, p.Ref, p.Note, p.Seq)
-	case "hub_reveal":
-		// The clear values go to the deck that asked, as this answer: nowhere else.
-		return d.hubReveal(ctx, req.Params)
-	case "hub_renew":
-		return d.hubRenew(ctx, req.Params)
-	case "lock_list":
-		var p struct{ Container string }
-		if err := json.Unmarshal(req.Params, &p); err != nil {
-			return nil, err
-		}
-		return a.LockList(ctx, p.Container)
 	case "agents_watch":
 		var p struct {
 			Container string
@@ -306,11 +263,11 @@ func (d *Daemon) dispatchDeck(ctx context.Context, o Origin, req wire.Request) (
 		// The deck shows the user's sound switch beside the agents.
 		snap.Sound = d.soundState()
 		snap.Locks = d.lockViews(p.Container)
-		d.addHubCards(&snap)
-		snap.HubQueue = d.hubPanel()
 		snap.Pressure = d.deckPressure(p.Container)
 		snap.HubState = d.hubState()
-		// Locks lox up runs that this container does not mount: restart lea to use them.
+		// Whether lox run decides the agents' Lock requests (#300): the deck says to run it.
+		snap.LoxRun = d.loxRunState()
+		// Locks lox run runs that this container does not mount: restart lea to use them.
 		snap.LocksAdded = d.locksAdded(ctx, p.Container)
 		return snap, err
 	}

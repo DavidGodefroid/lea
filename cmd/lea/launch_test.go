@@ -92,7 +92,7 @@ func TestCoreCommandsMatchTheSwitch(t *testing.T) {
 		t.Fatalf("found only %d case labels in run: %v", len(cases), cases)
 	}
 	for c := range cases {
-		if c == "new" || c == "lock" || c == "delivery" {
+		if c == "new" || c == "delivery" {
 			continue
 		}
 		if !coreCommands[c] {
@@ -110,11 +110,11 @@ func TestCoreCommandsMatchTheSwitch(t *testing.T) {
 	if !cases["new"] || coreCommands["new"] {
 		t.Error("new: a case of run, routed by launcherCommand, never in coreCommands")
 	}
-	if !cases["lock"] || coreCommands["lock"] {
-		t.Error("lock: a case of run, routed by launcherCommand, never in coreCommands")
-	}
-	if !launcherCommand([]string{"lock", "open", "locksql"}) || launcherCommand([]string{"lock", "--container", "lea-a", "list"}) {
-		t.Error("lock: the user's form goes to the launcher, the core form (--container) to the core")
+	// lea lock was removed (#300): the core has no form of it, every form goes to the launcher,
+	// which refuses it.
+	if cases["lock"] || coreCommands["lock"] || !launcherCommand([]string{"lock", "open", "locksql"}) ||
+		!launcherCommand([]string{"lock", "--container", "lea-a", "list"}) {
+		t.Error("lock: the core keeps a form of it")
 	}
 	if !cases["delivery"] || coreCommands["delivery"] || !launcherCommand([]string{"delivery", "on"}) ||
 		launcherCommand([]string{"delivery", "--container", "lea-a", "--projects", "/p", "on"}) {

@@ -1,0 +1,13 @@
+status 1
+-- calls
+tmux [-V]
+docker [image] [inspect] [-f] [{{.Id}}] [lea:dev]
+docker [image] [inspect] [-f] [{{.Id}}] [lea-proxy:dev]
+tmux [-V]
+core [agents]
+core [version]
+docker [network] [inspect] [lea-egress]
+docker [network] [inspect] [-f] [{{.Internal}} {{index .Options "com.docker.network.bridge.gateway_mode_ipv4"}}|{{.Id}}|{{index .Options "com.docker.network.bridge.name"}}] [lea-internal-$ID]
+-- lea
+lea: error: network lea-internal-$ID exists without gateway_mode_ipv4=isolated (nat): the host is reachable from it; stop its container (lea stop), remove it (docker network rm lea-internal-$ID) and retry, or set LEA_ALLOW_GATEWAY=1 to accept it
+-- stdout

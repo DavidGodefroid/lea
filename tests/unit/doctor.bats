@@ -58,22 +58,20 @@ setup() {
   [[ "$output" == *"ok    state ssh/known_hosts"* ]]
 }
 
-@test "locksql: its image and lox up's lock are checked with LEA_LOCKSQL=1, never with 0" {
-  export FAKE_DOCKER_RC_IMAGE_INSPECT_AT_LOCKSQL_0_16_0=1 FAKE_DOCKER_RC_VOLUME_INSPECT=1
+@test "locksql: lox run's lock is checked with LEA_LOCKSQL=1, never with 0, and no image of lea's" {
+  export FAKE_DOCKER_RC_VOLUME_INSPECT=1
   run lea_doctor
-  [[ "$output" == *"warn  locksql image: locksql:0.16.0 absent: run lea init (or set LEA_LOCKSQL=0)"* ]]
-  [[ "$output" == *"warn  locksql lock: no socket volume of a locksql lock of lox up for $LEA_PROJECTS_DIR"*"no such lock yet: \`lox add locksql\`"* ]]
+  [[ "$output" != *"locksql image"* ]]
+  [[ "$output" == *"warn  locksql lock: no socket volume of a locksql lock of lox run for $LEA_PROJECTS_DIR"*"no such lock yet: \`lox add locksql\`"* ]]
   [[ "$output" != *"locksql-run"* ]]
   grep -qF "docker [volume] [ls] [--filter] [label=dev.lockfamily.role=socket] [--filter] [label=dev.lockfamily.type=locksql] [--filter] [label=dev.lockfamily.workspace=$LEA_PROJECTS_DIR] [--format] [{{.Name}}]" "$FAKE_LOG"
-  unset FAKE_DOCKER_RC_IMAGE_INSPECT_AT_LOCKSQL_0_16_0
   export FAKE_DOCKER_OUT_VOLUME_LS=lockfamily-1a2b3c4d_crm-run
   run lea_doctor
-  [[ "$output" == *"ok    locksql image locksql:0.16.0"* ]]
-  [[ "$output" == *"ok    locksql lock of lox up (socket volume lockfamily-1a2b3c4d_crm-run)"* ]]
+  [[ "$output" == *"ok    locksql lock of lox run (socket volume lockfamily-1a2b3c4d_crm-run)"* ]]
   export FAKE_DOCKER_OUT_VOLUME_LS='lockfamily-1a2b3c4d_a-run
 lockfamily-1a2b3c4d_b-run'
   run lea_doctor
-  [[ "$output" == *"ok    2 locksql locks of lox up (lea's agents reach each on /run/locksql/<instance>)"* ]]
+  [[ "$output" == *"ok    2 locksql locks of lox run (lea's agents reach each on /run/locksql/<instance>)"* ]]
   LEA_LOCKSQL=0 run lea_doctor
   [[ "$output" != *locksql* ]]
 }
@@ -87,13 +85,28 @@ lockfamily-1a2b3c4d_b-run'
   [[ "$output" != *"locksql-run"* ]]
 }
 
-@test "a non-isolated internal network is a warning" {
+@test "a non-isolated internal network is a failure (#105)" {
   fake_tmux
   export FAKE_DOCKER_OUT_NETWORK_LS=lea-internal-abc
   export FAKE_DOCKER_OUT_NETWORK_INSPECT='true nat'
   run lea_doctor
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"FAIL  lea-internal-abc gateway_mode_ipv4=nat: not isolated"*"LEA_ALLOW_GATEWAY=1"* ]]
+  export FAKE_DOCKER_OUT_NETWORK_INSPECT='true <no value>'
+  run lea_doctor
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"FAIL  lea-internal-abc gateway_mode_ipv4=unset: not isolated"* ]]
+}
+
+@test "a non-isolated internal network is a warning with LEA_ALLOW_GATEWAY=1" {
+  fake_tmux
+  export FAKE_DOCKER_OUT_NETWORK_LS=lea-internal-abc
+  export FAKE_DOCKER_OUT_NETWORK_INSPECT='true nat'
+  export LEA_ALLOW_GATEWAY=1
+  run lea_doctor
   [ "$status" -eq 0 ]
-  [[ "$output" == *"warn  lea-internal-abc isolated from the host"* ]]
+  [[ "$output" == *"warn  lea-internal-abc gateway_mode_ipv4=nat: not isolated"*"(LEA_ALLOW_GATEWAY=1)"* ]]
+  [[ "$output" != *FAIL* ]]
 }
 
 @test "an internal network that is not --internal is a failure" {
@@ -108,8 +121,8 @@ lockfamily-1a2b3c4d_b-run'
   export FAKE_DOCKER_OUT_NETWORK_LS=$'lea-internal-abc\nlea-internal-def\nlea-egress'
   export FAKE_DOCKER_OUT_NETWORK_INSPECT='true isolated'
   run lea_doctor
-  [[ "$output" == *"ok    lea-internal-abc isolated from the host"* ]]
-  [[ "$output" == *"ok    lea-internal-def isolated from the host"* ]]
+  [[ "$output" == *"ok    lea-internal-abc gateway_mode_ipv4=isolated"* ]]
+  [[ "$output" == *"ok    lea-internal-def gateway_mode_ipv4=isolated"* ]]
   [[ "$output" != *"lea-egress"* ]]
 }
 
@@ -328,17 +341,61 @@ host_minimums() {
 
 @test "limits: a running lea container without CPU or memory limits is a warning (#132)" {
   export FAKE_DOCKER_OUT_PS___FILTER=lea-abc
-  export FAKE_DOCKER_OUT_INSPECT___FORMAT='0 0'
+  export FAKE_DOCKER_OUT_INSPECT___FORMAT='0 0 0 0'
   run lea_doctor
   [[ "$output" == *"warn  lea-abc limits: no CPU and memory limit: run lea in its projects directory to apply LEA_CPUS and LEA_MEMORY"* ]]
-  export FAKE_DOCKER_OUT_INSPECT___FORMAT='16500000000 0'
+  export FAKE_DOCKER_OUT_INSPECT___FORMAT='16500000000 0 0 <nil>'
   run lea_doctor
   [[ "$output" == *"warn  lea-abc limits: no memory limit"* ]]
-  export FAKE_DOCKER_OUT_INSPECT___FORMAT='16500000000 17179869184'
+  export FAKE_DOCKER_OUT_INSPECT___FORMAT='16500000000 17179869184 17179869184 16384 c33f5c7309f710f8'
   run lea_doctor
   [[ "$output" == *"ok    lea-abc limits: 16.5 CPUs, 16384 MiB"* ]]
   LEA_CPUS=0 FAKE_DOCKER_OUT_INSPECT___FORMAT='0 17179869184' run lea_doctor
-  [[ "$output" == *"ok    lea-abc limits: no limit on CPUs, 16384 MiB"* ]]
+  [[ "$output" == *"ok    lea-abc limits: no CPU limit, 16384 MiB"* ]]
+}
+
+@test "limits: a running lea container whose limits differ from the configured ones is stale (#132)" {
+  export FAKE_DOCKER_OUT_PS___FILTER=lea-abc
+  # What the Go launcher hands over: 12 CPUs, 16 GiB (swap the same), 16384 pids.
+  export LEA_LIMITS_WANT='12000000000 17179869184 17179869184 16384' LEA_LIMITS_DIGEST=c33f5c7309f710f8
+  # Started by a lea older than the limits (no lea.limits label): every limit is stale.
+  export FAKE_DOCKER_OUT_INSPECT___FORMAT='0 0 0 0'
+  run lea_doctor
+  [[ "$output" == *"warn  lea-abc limits: stale (digest none: started by an older lea, configured c33f5c7309f710f8): no CPU limit (configured 12 CPUs), no memory limit (configured 16384 MiB), pids no limit (configured 16384); run lea in its projects directory: it applies them, or restarts the container once no agent or session runs in it"* ]]
+  # Started with other limits (LEA_CPUS changed since): only the CPUs are stale.
+  export FAKE_DOCKER_OUT_INSPECT___FORMAT='8000000000 17179869184 17179869184 16384 0123456789abcdef'
+  run lea_doctor
+  [[ "$output" == *"warn  lea-abc limits: stale (digest 0123456789abcdef, configured c33f5c7309f710f8): 8 CPUs (configured 12 CPUs);"* ]]
+  [[ "$output" != *"configured 16384 MiB"* ]]
+  # The right label, but someone changed the limits by hand.
+  export FAKE_DOCKER_OUT_INSPECT___FORMAT='12000000000 8589934592 8589934592 16384 c33f5c7309f710f8'
+  run lea_doctor
+  [[ "$output" == *"warn  lea-abc limits: stale (changed since it started (docker update)): 8192 MiB (configured 16384 MiB);"* ]]
+  # Matching limits: ok. A limit turned off (0) is never stale.
+  export FAKE_DOCKER_OUT_INSPECT___FORMAT='12000000000 17179869184 17179869184 16384 c33f5c7309f710f8'
+  run lea_doctor
+  [[ "$output" == *"ok    lea-abc limits: 12 CPUs, 16384 MiB"* ]]
+  LEA_LIMITS_WANT='0 17179869184 17179869184 16384' FAKE_DOCKER_OUT_INSPECT___FORMAT='12000000000 17179869184 17179869184 16384' run lea_doctor
+  [[ "$output" == *"ok    lea-abc limits: 12 CPUs, 16384 MiB"* ]]
+}
+
+@test "cgroup delegation: rootless Podman without the cpu controller is a warning (#132)" {
+  key=$(printf '%s' 'INFO_--FORMAT_AT_{{.Host.Security.Rootless}} {{.Host.CgroupControllers}}' | tr '[:lower:]' '[:upper:]' | tr -c 'A-Z0-9_' '_')
+  export "FAKE_DOCKER_OUT_$key=true [memory pids]"
+  run lea_doctor
+  [[ "$output" == *"warn  cgroup delegation: rootless Podman does not get the cpu controller, so lea's container runs without that limit: sudo systemctl edit user@.service, add [Service] Delegate=cpu cpuset io memory pids, log in again, then lea stop and lea"* ]]
+  export "FAKE_DOCKER_OUT_$key=true [pids]"
+  run lea_doctor
+  [[ "$output" == *"does not get the cpu, memory controller"* ]]
+  export "FAKE_DOCKER_OUT_$key=true [cpuset cpu io memory pids]"
+  run lea_doctor
+  [[ "$output" == *"ok    cgroup delegation: cpu, memory and pids (rootless Podman)"* ]]
+  # Docker, rootful Podman, or a Podman that does not tell: nothing.
+  for v in 'false [cpu]' 'true []' ''; do
+    export "FAKE_DOCKER_OUT_$key=$v"
+    run lea_doctor
+    [[ "$output" != *"cgroup delegation"* ]]
+  done
 }
 
 @test "the agents' CPU windows of each running lea container are listed (#132)" {
@@ -419,4 +476,188 @@ host_minimums() {
   printf 'https://u:ghp_x@github.com\n' >"$S/git/credentials"
   run lea_doctor
   [[ "$output" == *"warn  agent-readable: /lea/state/git/credentials: holds a github.com token"* ]]
+}
+
+# fake_pgrep RC: a pgrep first on PATH that exits RC (0: a lox run runs, 1: none does).
+fake_pgrep() {
+  mkdir -p "$BATS_TEST_TMPDIR/pbin"
+  printf '#!/bin/sh\nexit %s\n' "$1" >"$BATS_TEST_TMPDIR/pbin/pgrep"
+  chmod +x "$BATS_TEST_TMPDIR/pbin/pgrep"
+  PATH="$BATS_TEST_TMPDIR/pbin:$PATH"
+}
+
+# lox_journal EVENT...: lox run's session journal of the projects directory, events in order.
+lox_journal() {
+  _lj=$XDG_STATE_HOME/lockfamily/lockfamily-$(printf '%s' "$(cd "$P" && pwd -P)" | sha256sum | cut -c1-8)
+  mkdir -p "$_lj"; : >"$_lj/runs.jsonl"
+  for e in "$@"; do printf '{"at":"2026-11-06T10:00:00Z","event":"%s","user":"me"}\n' "$e" >>"$_lj/runs.jsonl"; done
+}
+
+@test "lox: lea doctor checks its version against the lox of config/locks.lock, and runs nothing else of it" {
+  run lea_doctor
+  [[ "$output" == *"ok    lox 0.9.0"* ]]
+  FAKE_LOX_VERSION=0.8.0 run lea_doctor
+  [[ "$output" == *"warn  lox: 0.8.0 is older than 0.9.0, which has lox run: brew upgrade lox"* ]]
+  FAKE_LOX_VERSION=dev run lea_doctor
+  [[ "$output" == *"ok    lox dev (its version is not checked)"* ]]
+  run calls
+  [[ "$output" == *"lox [version]"* ]]
+  [[ "$output" != *"lox [up]"* && "$output" != *"lox [init]"* && "$output" != *"lox [attach]"* && "$output" != *"lox [run]"* ]]
+}
+
+@test "lox run: lea doctor says to run it while the workspace has locks and none serves them" {
+  export XDG_STATE_HOME="$BATS_TEST_TMPDIR/state"
+  # No lock declared: nothing to say of lox run.
+  run lea_doctor
+  [[ "$output" != *"lox run:"* ]]
+  mkdir -p "$P/.lockfamily"; printf 'locks: {}\n' >"$P/.lockfamily/lockfamily.yaml"
+  fake_pgrep 1
+  run lea_doctor
+  [[ "$output" == *"warn  lox run: not serving the locks of $P: their requests wait. Open another terminal (outside lea) and run \`lox run\` to approve the agents' connections and writes."* ]]
+  # Serving: its journal ends with a start (or a mode switch) and its process runs.
+  fake_pgrep 0
+  lox_journal start
+  run lea_doctor
+  [[ "$output" == *"ok    lox run: serves the decisions of $P"* ]]
+  lox_journal start mode
+  run lea_doctor
+  [[ "$output" == *"ok    lox run: serves the decisions of $P"* ]]
+  # Stopped, or killed before its stop (no process): not serving.
+  lox_journal start stop
+  run lea_doctor
+  [[ "$output" == *"warn  lox run: not serving"* ]]
+  fake_pgrep 1
+  lox_journal start
+  run lea_doctor
+  [[ "$output" == *"warn  lox run: not serving"* ]]
+  # Without lox at all, it says how to get it.
+  mkdir -p "$BATS_TEST_TMPDIR/nolox"
+  for f in "$LEA_ROOT"/tests/fakes/*; do [ "$(basename "$f")" = lox ] || ln -s "$f" "$BATS_TEST_TMPDIR/nolox/"; done
+  PATH="$BATS_TEST_TMPDIR/pbin:$BATS_TEST_TMPDIR/nolox:/usr/local/bin:/usr/bin:/bin" run lea_doctor
+  [[ "$output" == *"warn  lox: not found: brew install davidgodefroid/tap/lox, then run \`lox run\` in another terminal (outside lea)"* ]]
+}
+
+@test "LEA_LOX_UP is obsolete: lea doctor says so" {
+  LEA_LOX_UP=1 run lea_doctor
+  [[ "$output" == *"warn  LEA_LOX_UP: obsolete and ignored: lea no longer runs lox up; remove it from your configuration"* ]]
+  run calls
+  [[ "$output" != *"lox [up]"* ]]
+}
+
+# fake_docker_key ARGS...: the fake docker's FAKE_DOCKER_OUT_ suffix for a call with these first
+# two arguments and this last one (tests/fakes/docker).
+fake_docker_key() {
+  printf '%s_%s_AT_%s' "$1" "$2" "$3" | tr '[:lower:]' '[:upper:]' | tr -c 'A-Z0-9_' '_'
+}
+
+@test "runtime: LEA_RUNTIME, the runtimes the engine knows and each running lea container's (#106)" {
+  export "FAKE_DOCKER_OUT_$(fake_docker_key info --format '{{.DefaultRuntime}}')=runc"
+  export "FAKE_DOCKER_OUT_$(fake_docker_key info --format '{{range $k, $v := .Runtimes}}{{$k}} {{end}}')=io.containerd.runc.v2 runc runsc "
+  run lea_doctor
+  [[ "$output" == *"ok    agent runtime: runc (LEA_RUNTIME empty; runsc or kata adds a second kernel: README)"* ]]
+  export LEA_RUNTIME=runsc
+  run lea_doctor
+  [[ "$output" == *"ok    agent runtime: runsc (LEA_RUNTIME; the engine's default: runc)"* ]]
+  [[ "$output" != *"FAIL  agent runtime"* ]]
+  export LEA_RUNTIME=kata
+  run lea_doctor
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"FAIL  agent runtime kata: the engine has no such runtime (it knows: io.containerd.runc.v2 runc runsc)"* ]]
+  export LEA_RUNTIME='run sc'
+  run lea_doctor
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"FAIL  agent runtime: LEA_RUNTIME 'run sc' is not a runtime name"* ]]
+  # A running lea container on another runtime than LEA_RUNTIME's: a warning.
+  export LEA_RUNTIME=runsc FAKE_DOCKER_OUT_PS___FILTER=lea-abc
+  export "FAKE_DOCKER_OUT_INSPECT___FORMAT_AT_LEA_ABC=runc"
+  run lea_doctor
+  [[ "$output" == *"warn  lea-abc runtime: runs on runc, not runsc: run 'lea stop', then lea, to restart it on runsc"* ]]
+  export "FAKE_DOCKER_OUT_INSPECT___FORMAT_AT_LEA_ABC=runsc"
+  run lea_doctor
+  [[ "$output" == *"ok    lea-abc runtime: runsc"* ]]
+  # LEA_RUNTIME empty: the engine's default is expected.
+  unset LEA_RUNTIME
+  run lea_doctor
+  [[ "$output" == *"warn  lea-abc runtime: runs on runsc, not runc"* ]]
+}
+
+@test "runtime seccomp: warns when runsc's registration lacks --oci-seccomp (#106)" {
+  export "FAKE_DOCKER_OUT_$(fake_docker_key info --format '{{range $k, $v := .Runtimes}}{{$k}} {{end}}')=runc runsc gvisor "
+  k=$(fake_docker_key info --format '{{json (index .Runtimes "runsc")}}')
+  export LEA_RUNTIME=runsc
+  export "FAKE_DOCKER_OUT_$k={\"path\":\"/opt/gvisor/runsc\",\"runtimeArgs\":[\"--host-uds=open\",\"--host-fifo=open\"]}"
+  run lea_doctor
+  [[ "$output" == *"warn  runsc seccomp: its dockerd registration has no --oci-seccomp: runsc ignores lea's seccomp profile"* ]]
+  # A status string that merely mentions the flag (escaped, in the runtime's features) is not it.
+  export "FAKE_DOCKER_OUT_$k={\"path\":\"/opt/gvisor/runsc\",\"status\":{\"f\":\"{\\\"a\\\":[\\\"--oci-seccomp\\\"]}\"}}"
+  run lea_doctor
+  [[ "$output" == *"warn  runsc seccomp: its dockerd registration has no --oci-seccomp"* ]]
+  export "FAKE_DOCKER_OUT_$k={\"path\":\"/opt/gvisor/runsc\",\"runtimeArgs\":[\"--oci-seccomp\",\"--host-uds=open\"]}"
+  run lea_doctor
+  [[ "$output" == *"ok    runsc seccomp: lea's profile applied in the sandbox (--oci-seccomp)"* ]]
+  [[ "$output" != *"warn  runsc seccomp"* ]]
+  # A runtime of another name whose path is runsc is gVisor too.
+  export LEA_RUNTIME=gvisor
+  export "FAKE_DOCKER_OUT_$(fake_docker_key info --format '{{json (index .Runtimes "gvisor")}}')={\"path\":\"/usr/bin/runsc\"}"
+  run lea_doctor
+  [[ "$output" == *"warn  gvisor seccomp: its dockerd registration has no --oci-seccomp"* ]]
+}
+
+@test "runtime seccomp: warns when Kata's configuration lacks disable_guest_seccomp = false (#106)" {
+  export "FAKE_DOCKER_OUT_$(fake_docker_key info --format '{{range $k, $v := .Runtimes}}{{$k}} {{end}}')=runc kata "
+  k=$(fake_docker_key info --format '{{json (index .Runtimes "kata")}}')
+  export LEA_RUNTIME=kata "FAKE_DOCKER_OUT_$k={\"runtimeType\":\"io.containerd.kata.v2\"}"
+  c="$BATS_TEST_TMPDIR/configuration.toml"
+  export LEA_KATA_CONFIGS="$BATS_TEST_TMPDIR/absent.toml $c"
+  # No configuration found: a warning, never an ok.
+  run lea_doctor
+  [[ "$output" == *"warn  kata seccomp: no Kata configuration.toml found"* ]]
+  # Kata's default (commented out, or true): not applied.
+  printf '[runtime]\n#disable_guest_seccomp = false\n' >"$c"
+  run lea_doctor
+  [[ "$output" == *"warn  kata seccomp: $c does not set disable_guest_seccomp = false (Kata's default is true)"* ]]
+  printf '[runtime]\ndisable_guest_seccomp=true\n' >"$c"
+  run lea_doctor
+  [[ "$output" == *"warn  kata seccomp: $c does not set disable_guest_seccomp = false"* ]]
+  printf '[runtime]\n  disable_guest_seccomp = false # lea\n' >"$c"
+  run lea_doctor
+  [[ "$output" == *"ok    kata seccomp: lea's profile applied in the guest (disable_guest_seccomp = false in $c)"* ]]
+  [[ "$output" != *"warn  kata seccomp"* ]]
+  # Docker Engine reports a shim runtime as {} (no runtimeType): its name tells Kata.
+  export "FAKE_DOCKER_OUT_$k={}"
+  run lea_doctor
+  [[ "$output" == *"ok    kata seccomp: lea's profile applied in the guest (disable_guest_seccomp = false in $c)"* ]]
+  export "FAKE_DOCKER_OUT_$k={\"runtimeType\":\"io.containerd.kata.v2\"}"
+  # The first file that exists wins (/etc over the defaults): a default without the setting is not read.
+  e="$BATS_TEST_TMPDIR/etc.toml"; printf 'disable_guest_seccomp = false\n' >"$e"
+  printf 'disable_guest_seccomp = true\n' >"$c"
+  export LEA_KATA_CONFIGS="$e $c"
+  run lea_doctor
+  [[ "$output" == *"ok    kata seccomp: lea's profile applied in the guest (disable_guest_seccomp = false in $e)"* ]]
+  [[ "$output" != *"warn  kata seccomp"* ]]
+  # An unknown shim flavour: the file each flavour would read is checked.
+  export LEA_KATA_CONFIGS="$e|$BATS_TEST_TMPDIR/absent.toml $c"
+  run lea_doctor
+  [[ "$output" == *"ok    kata seccomp: lea's profile applied in the guest (disable_guest_seccomp = false in $e)"* ]]
+  [[ "$output" == *"warn  kata seccomp: $c does not set disable_guest_seccomp = false"* ]]
+  # A ConfigPath in the registration's options is the file Kata reads.
+  o="$BATS_TEST_TMPDIR/other.toml"; printf 'disable_guest_seccomp = true\n' >"$o"
+  export "FAKE_DOCKER_OUT_$k={\"runtimeType\":\"io.containerd.kata.v2\",\"options\":{\"ConfigPath\":\"$o\"}}"
+  run lea_doctor
+  [[ "$output" == *"warn  kata seccomp: $o does not set disable_guest_seccomp = false"* ]]
+  [[ "$output" != *"$e"* ]]
+  export "FAKE_DOCKER_OUT_$k={\"runtimeType\":\"io.containerd.kata.v2\",\"options\":{\"ConfigPath\":\"$BATS_TEST_TMPDIR/gone.toml\"}}"
+  run lea_doctor
+  [[ "$output" == *"warn  kata seccomp: $BATS_TEST_TMPDIR/gone.toml does not exist (ConfigPath of its registration)"* ]]
+}
+
+@test "runtime seccomp: says nothing for runc or an unreadable registration (Podman) (#106)" {
+  export "FAKE_DOCKER_OUT_$(fake_docker_key info --format '{{.DefaultRuntime}}')=runc"
+  export "FAKE_DOCKER_OUT_$(fake_docker_key info --format '{{json (index .Runtimes "runc")}}')={\"path\":\"runc\"}"
+  run lea_doctor
+  [[ "$output" != *"runc seccomp"* ]]
+  export LEA_RUNTIME=kata
+  export "FAKE_DOCKER_OUT_$(fake_docker_key info --format '{{range $k, $v := .Runtimes}}{{$k}} {{end}}')=runc kata "
+  run lea_doctor
+  [[ "$output" != *"kata seccomp"* ]]
 }

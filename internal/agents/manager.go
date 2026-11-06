@@ -49,8 +49,10 @@ const (
 	optDeck    = "@lea_deck"
 	roleDeck   = "deck"
 	rolePlace  = "placeholder"
-	paneFormat = "#{pane_id}|#{window_id}|#{pane_dead}|#{@lea_role}|#{@lea_agent}|#{pane_width}|#{pane_at_left}|#{@lea_shell}|#{@lea_deck}|#{@lea_split}|#{@lea_lock}"
-	paneFields = 11
+	paneFormat = "#{pane_id}|#{window_id}|#{pane_dead}|#{@lea_role}|#{@lea_agent}|#{pane_width}|#{pane_at_left}|#{@lea_shell}|#{@lea_deck}|#{@lea_split}"
+	paneFields = 10
+	// retiredTicket is the role of the hub ticket pane an earlier lea made (#284, removed by #300).
+	retiredTicket = "ticket"
 	// subscription reports pane deaths; panesSubscription reports a pane that closed without
 	// dying (a shell's: remain-on-exit is off for it), which no %window-close announces when
 	// the pane was in the slot.
@@ -67,7 +69,7 @@ const (
 var (
 	nameRe = regexp.MustCompile(`^[a-z][a-z0-9-]{0,23}$`)
 	// reservedNames are the roles of lea's own panes: no agent takes one as its name.
-	reservedNames = map[string]bool{roleDeck: true, rolePlace: true, roleTicket: true}
+	reservedNames = map[string]bool{roleDeck: true, rolePlace: true, retiredTicket: true}
 	shellRe       = regexp.MustCompile(`^sh-[1-9][0-9]{0,2}$`)
 	containerRe   = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,63}$`)
 	// sessionRe is a Claude session id, as ResumeStopped passes it to --resume.
@@ -138,10 +140,6 @@ type Config struct {
 	// without a provider.
 	Providers                     func() (*providers.Registry, error)
 	DefaultProvider, DefaultModel string
-	// LockSpec reads a lock tool's console configuration from the host's lea config, at each
-	// open; Consoles reaches the console containers. Without them no console opens.
-	LockSpec func(tool string) (LockSpec, error)
-	Consoles Consoles
 	// ProxyToken is an agent's LockHTTP proxy password (LEA_LOCKHTTP=1), handed to lea-agent
 	// run; nil: LockHTTP is off and the agent keeps its container's proxy.
 	ProxyToken func(container, agent string) string
@@ -181,8 +179,6 @@ type Row struct {
 	CtxPct   int       `json:"ctx_pct"`
 	CostUSD  float64   `json:"cost_usd"`
 	Approval *Approval `json:"approval,omitempty"`
-	// LockAsk: the agent asks the user to open a lock tool's console (lock_request).
-	LockAsk *LockAsk `json:"lock_ask,omitempty"`
 	// Paused: the user froze the agent (the deck's p); State is what it was doing.
 	Paused bool `json:"paused,omitempty"`
 	// Subagents counts the subagents the agent still runs (its Subagent hooks): an idle agent
@@ -195,8 +191,8 @@ type Row struct {
 	// LimitUntil: the agent stopped on its provider's usage limit (store.Agent.LimitUntil): lea
 	// resumes it at that time (unix seconds), or -1: it waits for the user.
 	LimitUntil int64 `json:"limit_until,omitempty"`
-	// Hub: the hub's pending tickets for this agent (#158), oldest first, set by the daemon.
-	Hub []HubCard `json:"hub,omitempty"`
+	// Woken: lea woke the idle agent for a message in its inbox (store.Agent.Woken).
+	Woken bool `json:"woken,omitempty"`
 }
 
 type Snapshot struct {
@@ -214,17 +210,14 @@ type Snapshot struct {
 	// HubState is "down" when lea follows the hub (LEA_HUB=1) but cannot reach its facade, so no
 	// agent is suspended on a Lock call; set by the daemon.
 	HubState string `json:"hub_state,omitempty"`
-	// HubQueue is every pending ticket of the hub's queue, for an agent or none, oldest first:
-	// the deck's hub panel (#244). Set by the daemon from the hub's queue only.
-	HubQueue []HubCard `json:"hub_queue,omitempty"`
-	// LocksAdded are the locks lox up runs that the container does not mount (added while it
+	// LoxRun is "off" when the workspace has locks and no lox run serves their decisions (#300):
+	// the agents' Lock requests wait until it does, and the deck says to run it in another
+	// terminal; "serving" when one does; "" when lea does not know or no lock is declared. Set
+	// by the daemon.
+	LoxRun string `json:"lox_run,omitempty"`
+	// LocksAdded are the locks lox run runs that the container does not mount (added while it
 	// runs): restart lea to use them. Set by the daemon.
 	LocksAdded []string `json:"locks_added,omitempty"`
-	// Ticket is the hub ticket the slot shows (instance/id, #284) and TicketNote what the deck
-	// says under it (a refusal and its fix, or the approve-all report): both "" unless the ticket
-	// pane holds the slot. The ticket pane renders them; the deck waits for Ticket before a or d.
-	Ticket     string `json:"ticket,omitempty"`
-	TicketNote string `json:"ticket_note,omitempty"`
 }
 
 // PressureView is what the deck shows of the pressure: a short gauge of the container and the
@@ -237,62 +230,11 @@ type PressureView struct {
 
 // LockView is what the deck shows of one Lock's approvals (D6, #153): its name, whether its
 // console runs ("up", "down", "" when unknown) and how many of the container's requests wait
-// there. A notification only: requests are approved in the Lock's console (or the hub's facade).
+// there. A notification only: lox run decides them, outside lea (#300).
 type LockView struct {
 	Lock    string `json:"lock"`
 	Console string `json:"console"`
 	Pending int    `json:"pending"`
-}
-
-// HubCard is one ticket of the Lock Family hub's queue (#158) the deck shows on the agent it is
-// for: the Lock, its instance, the risk, the production flags and the Lock's masked screen, all
-// cleaned by the daemon. Verified: the agent's own wait names the ticket; otherwise the ticket's
-// requester (which the agent wrote) claims the agent. Retype is what the user types to approve the
-// ticket: its instance name when the hub asks for one (lockhub#105), "" when approving needs no
-// name, production or not. Expires is unix seconds (0 never).
-type HubCard struct {
-	ID         string   `json:"id"`
-	Instance   string   `json:"instance"`
-	Lock       string   `json:"lock"`
-	Risk       string   `json:"risk"`
-	Production bool     `json:"production,omitempty"`
-	Retype     string   `json:"retype,omitempty"`
-	Verified   bool     `json:"verified,omitempty"`
-	Header     string   `json:"header,omitempty"`
-	Note       string   `json:"note,omitempty"`
-	Body       []string `json:"body,omitempty"`
-	Warnings   []string `json:"warnings,omitempty"`
-	Expires    int64    `json:"expires,omitempty"`
-	// Claimed is the agent name the ticket's requester gives (cleaned); Truncated: lea had to cut
-	// the Lock's screen, so the deck cannot show all of it and sends the user to lox approve.
-	Claimed   string `json:"claimed,omitempty"`
-	Truncated bool   `json:"truncated,omitempty"`
-	// Expired: the ticket expired at the hub (its queue's expired list): the deck offers to ask
-	// the Lock again (r), never to decide it. Renews: this ticket asks again for an expired one.
-	Expired bool        `json:"expired,omitempty"`
-	Renews  *HubRenewal `json:"renews,omitempty"`
-	// Created is when the Lock asked (unix seconds, 0 unknown). Agent is the key of the agent the
-	// ticket shows on ("" when none) and AgentName the name the deck shows for it: set in the hub
-	// panel's list only (Snapshot.HubQueue).
-	Created   int64  `json:"created,omitempty"`
-	Agent     string `json:"agent,omitempty"`
-	AgentName string `json:"agent_name,omitempty"`
-}
-
-// HubRenewal is what a renewal ticket says of the expired ticket it asks again for (lockkit's
-// ticket.Renewal, cleaned): its id, why it expired (expired, approval-expired), whether the Lock
-// compared the plan's inputs (Checked) and what changed since (input: changed, new or gone).
-type HubRenewal struct {
-	Of      string      `json:"of"`
-	Reason  string      `json:"reason,omitempty"`
-	Checked bool        `json:"checked,omitempty"`
-	Changes []HubChange `json:"changes,omitempty"`
-}
-
-// HubChange is one input of a renewal's plan and how it changed.
-type HubChange struct {
-	Input  string `json:"input"`
-	Change string `json:"change"`
 }
 
 type NewRequest struct {
@@ -323,10 +265,6 @@ type Manager struct {
 	shown map[string]string // container → key of the agent (or shell) in the slot
 	// shells lists, per container, the shells that have a pane, by name (under smu).
 	shells map[string][]string
-	// tickets is, per container, the hub ticket the slot shows (ticket.go; under smu).
-	tickets map[string]ticketView
-	// ticketSeqs is, per container, the latest ShowTicket sequence number taken (under smu).
-	ticketSeqs map[string]int64
 	// fresh marks a session Open created and no reconcile has laid out yet (under mu).
 	fresh map[string]bool
 	// recheck marks a new connection whose first reconcile asks the container for its shells: a
@@ -356,7 +294,7 @@ func NewManager(cfg Config) *Manager {
 		cfg.Now = func() int64 { return time.Now().Unix() }
 	}
 	m := &Manager{cfg: cfg, conns: map[string]Session{}, shown: map[string]string{}, fresh: map[string]bool{},
-		shells: map[string][]string{}, tickets: map[string]ticketView{}, ticketSeqs: map[string]int64{}, recheck: map[string]bool{},
+		shells: map[string][]string{}, recheck: map[string]bool{},
 		backoff: map[string]*backoff{}, tearing: map[string]chan struct{}{}, clock: time.Now,
 		schedule: func(d time.Duration, f func()) { time.AfterFunc(d, f) },
 		later:    func(d time.Duration, f func()) { time.AfterFunc(d, f) }}
@@ -433,14 +371,13 @@ func (m *Manager) snapshot(container string, v int64) (Snapshot, error) {
 	for _, n := range shells {
 		rows = append(rows, shellRow(container, n))
 	}
-	ref, note := m.ticketOf(container)
-	return Snapshot{Version: v, Shown: shown, Agents: rows, Ticket: ref, TicketNote: note}, nil
+	return Snapshot{Version: v, Shown: shown, Agents: rows}, nil
 }
 
 func rowOf(a store.Agent) Row {
 	return Row{Key: a.Key, Name: a.Name, Label: a.Label, Profile: a.Profile, Model: a.Model, State: a.State, Workdir: a.Workdir, Updated: a.Updated,
 		Created: a.Created, Role: a.Role, Parent: a.Parent, Repo: a.Repo, Branch: a.Branch, CtxPct: -1, CostUSD: -1, Paused: a.Paused,
-		LimitUntil: a.LimitUntil}
+		LimitUntil: a.LimitUntil, Woken: a.Woken}
 }
 
 func shellRow(container, name string) Row {
@@ -591,10 +528,8 @@ func (m *Manager) follow(container string, s Session) {
 		delete(m.conns, container)
 		// Nothing tracks the shells now: their rows go until a new connection lists them.
 		m.smu.Lock()
-		dropped = len(m.shells[container]) > 0 || m.tickets[container] != ticketView{}
+		dropped = len(m.shells[container]) > 0
 		delete(m.shells, container)
-		delete(m.tickets, container) // the session is gone: so is any ticket it showed
-		delete(m.ticketSeqs, container)
 		m.smu.Unlock()
 	}
 	m.mu.Unlock()
@@ -742,7 +677,6 @@ type pane struct {
 	Shell       string
 	DeckWin     bool   // its window carries the deck mark (@lea_deck)
 	Split       string // a split shell's agent and side (@lea_split), "" for any other pane
-	Lock        string // a lock console's id (@lea_lock), "" for any other pane
 }
 
 // splitAgent is the agent a split shell belongs to ("" for any other pane), and whether it
@@ -765,6 +699,10 @@ func companion(ps []pane, agent string) (pane, bool) {
 
 // tagged reports whether lea made the pane: every pane of lea's carries @lea_role, @lea_agent or
 // @lea_shell.
+// retiredRole are the roles of the panes an earlier lea made and this one no longer does: its lock
+// consoles and its hub ticket pane (#300). ensureLayout kills them.
+var retiredRole = map[string]bool{"lock": true, retiredTicket: true}
+
 func (p pane) tagged() bool { return p.Role != "" || p.Agent != "" || p.Shell != "" }
 
 func listPanes(ctx context.Context, s Session, container string) ([]pane, error) {
@@ -783,7 +721,7 @@ func listPanes(ctx context.Context, s Session, container string) ([]pane, error)
 			return nil, fmt.Errorf("unexpected list-panes line %q", l)
 		}
 		out = append(out, pane{ID: f[0], Window: f[1], Dead: f[2] == "1", Role: f[3], Agent: f[4], Width: width,
-			AtLeft: f[6] == "1", Shell: f[7], DeckWin: f[8] == "1", Split: f[9], Lock: f[10]})
+			AtLeft: f[6] == "1", Shell: f[7], DeckWin: f[8] == "1", Split: f[9]})
 	}
 	return out, nil
 }
@@ -810,9 +748,9 @@ func byShell(ps []pane, name string) (pane, bool) {
 }
 
 // slotOf is the pane next to deck in the deck window: never a split shell beside the agent shown
-// there, unless it is alone, and never the lock console under it.
+// there, unless it is alone.
 func slotOf(ps []pane, deck pane) (pane, bool) {
-	in := func(p pane) bool { return p.Window == deck.Window && p.ID != deck.ID && p.Role != roleLock }
+	in := func(p pane) bool { return p.Window == deck.Window && p.ID != deck.ID }
 	if p, ok := findPane(ps, func(p pane) bool { a, _ := p.splitAgent(); return in(p) && a == "" }); ok {
 		return p, true
 	}
@@ -871,9 +809,8 @@ func (m *Manager) ensureLayout(ctx context.Context, container string, s Session,
 	// session never loses its last pane.
 	moved := created // the user's terminal may have been on a window that is gone
 	for _, p := range ps {
-		// A lock console's pane closes when the console exits; one that died before remain-on-exit
-		// was off goes too, its last screen with it.
-		if p.ID != deck.ID && (!p.tagged() || p.Role == roleDeck || p.Role == roleLock && p.Dead) {
+		// The panes of an earlier lea's lock consoles and hub ticket (retiredRole, #300) go too.
+		if p.ID != deck.ID && (!p.tagged() || p.Role == roleDeck || retiredRole[p.Role]) {
 			if _, err := run("kill-pane", "-t", p.ID); err != nil {
 				return false, false, err
 			}
@@ -906,24 +843,13 @@ func (m *Manager) ensureLayout(ctx context.Context, container string, s Session,
 	// The deck window keeps the deck and one slot; every other pane in it goes to a window of
 	// its own named after it.
 	slot, hasSlot := slotOf(ps, deck)
-	parked, lockKept := false, false
+	parked := false
 	for _, p := range ps {
 		if p.ID == deck.ID || p.Window != deck.Window || p.ID == slot.ID {
 			continue
 		}
 		if a, _ := p.splitAgent(); a != "" && slot.Agent == a && !p.Dead {
 			continue // the shown agent's split shell stays beside it
-		}
-		if p.Role == roleLock && hasSlot && !lockKept {
-			lockKept = true // the lock slot holds one console, under the slot
-			continue
-		}
-		if p.Role == roleLock {
-			if _, err := run("break-pane", "-d", "-s", p.ID, "-n", lockWindow(p.Lock)); err != nil {
-				return false, false, err
-			}
-			parked, moved = true, true
-			continue
 		}
 		name := p.Agent
 		if name == "" {
@@ -988,12 +914,6 @@ func (m *Manager) ensureLayout(ctx context.Context, container string, s Session,
 		}
 	case ph.Dead && m.respawnDue(container, ph.ID):
 		if _, err := run(append([]string{"respawn-pane", "-k", "-t", ph.ID, "--"}, m.placeholderCmd()...)...); err != nil {
-			return false, false, err
-		}
-	}
-	// The ticket pane (ticket.go) is made on first use; once made, it is kept alive.
-	if tp, ok := byRole(ps, roleTicket); ok && tp.Dead && m.respawnDue(container, tp.ID) {
-		if _, err := run(append([]string{"respawn-pane", "-k", "-t", tp.ID, "--"}, m.ticketCmd(container)...)...); err != nil {
 			return false, false, err
 		}
 	}
@@ -1188,7 +1108,6 @@ func (m *Manager) publish(container string, ps []pane) {
 	m.smu.Unlock()
 	key := ""
 	_, slot, ok := deckAndSlot(ps)
-	m.slotTicket(container, ok && slot.Role == roleTicket && !slot.Dead)
 	if ok && slot.Agent != "" {
 		key = container + "/" + slot.Agent
 	} else if ok && slot.Shell != "" && !slot.Dead {
@@ -1644,13 +1563,8 @@ func (m *Manager) removePane(ctx context.Context, s Session, ps []pane, p pane) 
 	return err
 }
 
-// show swaps p into the slot of container; focus also moves the keyboard to it. Any pane but the
-// ticket pane ends the ticket the slot showed (#284): the snapshot never names a ticket while
-// another pane, an agent's own screen among them, holds the slot.
+// show swaps p into the slot of container; focus also moves the keyboard to it.
 func (m *Manager) show(ctx context.Context, s Session, container string, ps []pane, p pane, focus bool) error {
-	if p.Role != roleTicket {
-		m.slotTicket(container, false)
-	}
 	deck, slot, ok := deckAndSlot(ps)
 	if !ok {
 		return errors.New("the deck window has no slot")
@@ -2101,8 +2015,6 @@ func (m *Manager) MarkStopped(ctx context.Context, container string, forget bool
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	// The lock consoles its deck opened stop with it: none outlives its pane.
-	m.stopConsoles(ctx, container)
 	as, err := m.cfg.Store.SpawnedAgents(container)
 	if err != nil {
 		return err
