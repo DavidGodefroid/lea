@@ -183,8 +183,9 @@ func sgrOf(c lipgloss.AdaptiveColor) string {
 	return fmt.Sprintf("38;2;%d;%d;%d", r, g, b)
 }
 
-// c on a folder's row (or Colour… in its menu) picks its colour: the arrow, the name and the
-// guides of its agents take it, the dot keeps its state's; 0 clears it.
+// c on a folder's row (or Colour… in its menu) picks its colour: the header's arrow and name
+// take it, its agents' rows never do (#295: no guides any more); 0 clears it. The summary keeps
+// its state colours: an agent that needs the user shows red in the header.
 func TestCPicksAFolderColour(t *testing.T) {
 	truecolour(t)
 	st := &memStore{l: Layout{Folders: []Folder{{ID: "f1", Name: "web", Agents: []string{"lea-a/a"}}}}}
@@ -208,11 +209,11 @@ func TestCPicksAFolderColour(t *testing.T) {
 	if !strings.Contains(ls[0], sgrOf(pink)+"m▾") || !strings.Contains(ls[0], "1;"+sgrOf(pink)+"mweb") {
 		t.Fatalf("folder row %q", ls[0])
 	}
-	if !strings.Contains(ls[0], sgrOf(theme.Blocked)) {
-		t.Fatalf("the folder's dot lost its state colour: %q", ls[0])
+	if !strings.Contains(ls[0], sgrOf(theme.Blocked)+"m●1") {
+		t.Fatalf("the header lost the blocked mark's colour: %q", ls[0])
 	}
-	if !strings.Contains(ls[1], sgrOf(pink)+"m╎") || strings.Contains(ls[3], sgrOf(pink)) {
-		t.Fatalf("guides: a %q, b %q", ls[1], ls[3])
+	if strings.Contains(ls[1], sgrOf(pink)) || strings.Contains(ls[1], "╎") || strings.Contains(ls[3], sgrOf(pink)) {
+		t.Fatalf("a guide or a tint on an agent row: a %q, b %q", ls[1], ls[3])
 	}
 	// The folder's menu has Colour…; its No colour (0) clears it.
 	m, _ = step(t, m, click(tea.MouseButtonRight, 1))
