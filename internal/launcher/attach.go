@@ -57,16 +57,20 @@ func (l *Launcher) attach(args []string) error {
 	if !l.containerRunning(name) {
 		return die("%s is not running: start it with lea first (or lea new for an agent)", name)
 	}
-	argv := []string{"docker", "exec", "-it", "-u", uidgid(), "-e", "TERM", "-w", l.cwdIn(proj), name}
+	// TERM as containerExec gives it: the caller's, else xterm-256color.
+	rest := []string{"-w", l.cwdIn(proj), name}
 	if agent != "" {
-		argv = append(argv, "abduco", "-a", "ag-"+agent)
+		rest = append(rest, "abduco", "-a", "ag-"+agent)
 	} else {
-		argv = append(append(argv, "lea-session"), l.toolArgs(nil)...)
+		rest = append(append(rest, "lea-session"), l.toolArgs(nil)...)
 	}
+	head := []string{"docker", "exec", "-it", "-u", uidgid(), "-e"}
 	if printOnly {
-		_, err := io.WriteString(l.Stdout, shellLine(argv)+"\n")
+		// The printed line's shell expands TERM from the terminal that runs it, same rule.
+		_, err := io.WriteString(l.Stdout, shellLine(head)+" "+termEnvShell+" "+shellLine(rest)+"\n")
 		return err
 	}
+	argv := append(append(head, l.termEnv()), rest...)
 	return l.foreground(argv[0], argv[1:]...)
 }
 

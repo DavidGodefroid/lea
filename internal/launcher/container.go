@@ -823,13 +823,23 @@ func (l *Launcher) containerStart(proj, pip string) error {
 	return nil
 }
 
+// defaultTerm is the TERM a docker exec gives the container when the caller has none.
+const defaultTerm = "xterm-256color"
+
+// termEnv is the TERM a docker exec gives the container: the caller's, else defaultTerm.
+func (l *Launcher) termEnv() string { return "TERM=" + nonEmpty(l.Cfg.Get("TERM"), defaultTerm) }
+
+// termEnvShell is termEnv as a printed command line says it: the shell that runs the line
+// expands it with the TERM of its own terminal, under the same rule.
+const termEnvShell = `"TERM=${TERM:-` + defaultTerm + `}"`
+
 // containerExec is lea_container_exec: docker exec on the launcher's terminal.
 func (l *Launcher) containerExec(name, wd string, cmd ...string) error {
 	tty := "-i"
 	if IsTerminal(l.Stdin) && IsTerminal(l.Stdout) {
 		tty = "-it"
 	}
-	args := append([]string{"exec", tty, "-u", uidgid(), "-e", "TERM=" + nonEmpty(l.Cfg.Get("TERM"), "xterm-256color"),
+	args := append([]string{"exec", tty, "-u", uidgid(), "-e", l.termEnv(),
 		"-w", wd, name}, cmd...)
 	return l.foreground("docker", args...)
 }

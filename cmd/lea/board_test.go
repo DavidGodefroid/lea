@@ -2,8 +2,10 @@ package main
 
 import (
 	"bytes"
+	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/DavidGodefroid/lea/internal/store"
 )
@@ -56,6 +58,46 @@ func TestBoardCommand(t *testing.T) {
 	}
 	if rc, _, _ := runEnv(t, env, "board", "--bogus"); rc != 2 {
 		t.Fatalf("bad option rc=%d", rc)
+	}
+}
+
+// lea board --watch clears the screen and shows the board again every boardWatchEvery, with what
+// changed in between; a daemon gone ends it with an error.
+func TestBoardWatch(t *testing.T) {
+	api, st := startDaemonStore(t, nil)
+	a, _ := st.Register(store.NewAgent{Container: "lea-a", Name: "boss", Profile: "claude", Workdir: "/p", Role: "lead"}, store.Caps{}, 1)
+	st.CreateTask("lea-a", a.Key, "plan the release", 1)
+	old := boardWait
+	t.Cleanup(func() { boardWait = old })
+	var waits []time.Duration
+	boardWait = func(d time.Duration) bool {
+		waits = append(waits, d)
+		if len(waits) == 1 {
+			st.UpdateTask(a.Key, "second pass", "", "", 2)
+		}
+		return len(waits) < 2
+	}
+	rc, out, e := runEnv(t, map[string]string{"LEA_DAEMON_SOCK": api}, "board", "--watch")
+	if rc != 0 {
+		t.Fatalf("rc=%d err=%q", rc, e)
+	}
+	if len(waits) != 2 || waits[0] != boardWatchEvery || waits[1] != boardWatchEvery {
+		t.Fatalf("waits %v, want two of %v", waits, boardWatchEvery)
+	}
+	frames := strings.Split(out, "\x1b[H\x1b[2J")
+	if len(frames) != 3 || frames[0] != "" {
+		t.Fatalf("%d frames, want 2 each after a clear:\n%q", len(frames)-1, out)
+	}
+	if !strings.Contains(frames[1], "plan the release") || strings.Contains(frames[1], "second pass") {
+		t.Fatalf("first frame %q", frames[1])
+	}
+	if !strings.Contains(frames[2], "second pass") {
+		t.Fatalf("second frame does not show the update: %q", frames[2])
+	}
+	// A daemon that cannot be reached ends the watch with an error, not a loop.
+	boardWait = func(time.Duration) bool { t.Fatal("waited without a board"); return false }
+	if rc, _, _ := runEnv(t, map[string]string{"LEA_DAEMON_SOCK": filepath.Join(t.TempDir(), "none.sock")}, "board", "--watch"); rc == 0 {
+		t.Fatal("watch without a daemon: rc 0")
 	}
 }
 

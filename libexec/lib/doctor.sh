@@ -45,6 +45,15 @@ lea_doctor() {
     if _dtb=$(lea_tmux_bin); then _dtv=$("$_dtb" -V 2>/dev/null || true); fi
     if [ -n "$_dtv" ] && lea_tmux_version_ok "$_dtv"; then lea__ok "tmux ($_dtv, $(lea_tmux_source "$_dtb"))"
     else lea__ok "tmux not needed without the deck (lea new needs tmux $LEA_TMUX_MIN or later for its agents' terminals)"; fi
+    # What waits for you comes as a desktop notification from the daemon: with LEA_CTL=1 the
+    # daemon runs in lea-ctl, a container with no notify-send nor osascript, so none shows.
+    if [ "${LEA_CTL:-0}" = 1 ]; then
+      lea__warn "notifications" "LEA_CTL=1 runs lea's daemon in lea-ctl, which shows no desktop notification without the deck: lea requests lists what waits for you (lea config ctl off: notifications)"
+    elif command -v notify-send >/dev/null 2>&1 || command -v osascript >/dev/null 2>&1; then
+      lea__ok "notifications ($(command -v notify-send >/dev/null 2>&1 && echo notify-send || echo osascript))"
+    else
+      lea__warn "notifications" "no notify-send nor osascript: nothing tells you when an approval waits without the deck (lea requests lists them)"
+    fi
   elif _dtb=$(lea_tmux_bin); then
     _dtv=$("$_dtb" -V 2>/dev/null || true)
     if lea_tmux_version_ok "$_dtv"; then lea__ok "tmux ($_dtv, $(lea_tmux_source "$_dtb"))"

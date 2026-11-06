@@ -315,9 +315,14 @@ for its agents' terminals).
   `lea deny sN [reason]` answer them. Unanswered after `LEA_APPROVAL_TIMEOUT` seconds, the
   agent asks in its own terminal. Lock requests (locksql, lockmq, lockfile, lockhttp) are not
   lea's: `lox run` decides them, deck or not.
+- **No notifications with `LEA_CTL=1`.** lea-ctl runs lea's daemon in a container, which has
+  neither `notify-send` nor `osascript`: without the deck nothing shows when something waits for
+  you. Check `lea requests` (or `lea board --watch`), or `lea config ctl off` to get the
+  notifications back. `lea doctor` warns in that configuration, and when the host has no notifier.
 - **Off without the deck:** the agent column, lea's sounds and the deck's keys.
 
-`lea doctor` shows the mode and does not flag a missing tmux with `LEA_DECK=0`.
+`lea doctor` shows the mode, does not flag a missing tmux with `LEA_DECK=0`, and says whether
+lea's notifications can show.
 
 ## Git and forges
 

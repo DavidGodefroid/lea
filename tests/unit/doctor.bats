@@ -700,3 +700,25 @@ fake_docker_key() {
   run lea_doctor
   [[ "$output" == *"ok    tmux (tmux 3.4, host)"* ]]
 }
+
+@test "without the deck, doctor says whether lea's notifications can show (#135)" {
+  export LEA_DECK=0 LEA_TOOL=claude
+  mkdir -p "$BATS_TEST_TMPDIR/nbin"
+  printf '#!/bin/sh\nexit 0\n' >"$BATS_TEST_TMPDIR/nbin/notify-send"; chmod +x "$BATS_TEST_TMPDIR/nbin/notify-send"
+  PATH="$BATS_TEST_TMPDIR/nbin:$PATH" run lea_doctor
+  [[ "$output" == *"ok    notifications (notify-send)"* ]]
+  # With LEA_CTL=1 the daemon runs in lea-ctl, where neither notifier exists.
+  LEA_CTL=1 PATH="$BATS_TEST_TMPDIR/nbin:$PATH" run lea_doctor
+  [[ "$output" == *"warn  notifications: LEA_CTL=1 runs lea's daemon in lea-ctl, which shows no desktop notification without the deck"* ]]
+  [[ "$output" != *"ok    notifications"* ]]
+  # With the deck there is no notification to check.
+  LEA_DECK=1 LEA_CTL=1 run lea_doctor
+  [[ "$output" != *"notifications"* ]]
+}
+
+@test "without the deck and no notifier, doctor warns (#135)" {
+  if command -v notify-send >/dev/null 2>&1 || command -v osascript >/dev/null 2>&1; then skip "a notifier is installed in the test image"; fi
+  export LEA_DECK=0 LEA_TOOL=claude
+  run lea_doctor
+  [[ "$output" == *"warn  notifications: no notify-send nor osascript"* ]]
+}

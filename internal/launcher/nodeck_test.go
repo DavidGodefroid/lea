@@ -2,6 +2,7 @@ package launcher
 
 import (
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -108,7 +109,7 @@ func TestAttachPrint(t *testing.T) {
 		if err := l.dispatch(c.args); err != nil {
 			t.Fatalf("%q: %v\n%s", c.args, err, w.errb.String())
 		}
-		want := "docker exec -it -u " + uidgid() + " -e TERM -w " + wd + " " + w.name() + " " + c.want + "\n"
+		want := "docker exec -it -u " + uidgid() + ` -e "TERM=${TERM:-xterm-256color}" -w ` + wd + " " + w.name() + " " + c.want + "\n"
 		if w.out.String() != want {
 			t.Errorf("%q: printed %q, want %q", c.args, w.out.String(), want)
 		}
@@ -118,11 +119,57 @@ func TestAttachPrint(t *testing.T) {
 	}
 	// lea attach AGENT (no --print) joins it on this terminal.
 	w, _, _ := commandSetup(t, root, commandScenario{})
+	w.env["TERM"] = ""
 	if err := w.launcher().dispatch([]string{"attach", "dev"}); err != nil {
 		t.Fatal(err)
 	}
-	if !w.hasCall("docker [exec] [-it] [-u] [" + uidgid() + "] [-e] [TERM] [-w] [" + w.proj + "] [" + w.name() + "] [abduco] [-a] [ag-dev]") {
+	if !w.hasCall("docker [exec] [-it] [-u] [" + uidgid() + "] [-e] [TERM=xterm-256color] [-w] [" + w.proj + "] [" + w.name() + "] [abduco] [-a] [ag-dev]") {
 		t.Fatalf("calls:\n%s", strings.Join(w.calls(), "\n"))
+	}
+}
+
+// lea attach gives the container the TERM containerExec gives it, set or not: the caller's,
+// else xterm-256color; the printed line says the same rule for the shell that runs it.
+func TestAttachTermIsContainerExecs(t *testing.T) {
+	root := repoRoot(t)
+	for _, term := range []string{"", "screen-256color"} {
+		w, _, _ := commandSetup(t, root, commandScenario{})
+		w.env["TERM"] = term
+		want := "TERM=" + nonEmpty(term, "xterm-256color")
+		if err := w.launcher().containerExec(w.name(), w.proj, "true"); err != nil {
+			t.Fatal(err)
+		}
+		if err := w.launcher().dispatch([]string{"attach", "dev"}); err != nil {
+			t.Fatal(err)
+		}
+		n := 0
+		for _, c := range w.calls() {
+			if strings.HasPrefix(c, "docker [exec] [-i") {
+				if !strings.Contains(c, "[-e] ["+want+"] [-w]") {
+					t.Errorf("TERM=%q: %s, want %s", term, c, want)
+				}
+				n++
+			}
+		}
+		if n != 2 {
+			t.Fatalf("TERM=%q: %d docker exec calls:\n%s", term, n, strings.Join(w.calls(), "\n"))
+		}
+		// The printed line, run by a shell with that TERM, passes the same value.
+		w.out.Reset()
+		l := w.launcher()
+		if err := l.dispatch([]string{"attach", "--print", "dev"}); err != nil {
+			t.Fatal(err)
+		}
+		line := strings.TrimSpace(w.out.String())
+		sh := exec.Command("sh", "-c", `set -- `+line+`; for a; do case $a in TERM=*) echo "$a";; esac; done`)
+		sh.Env = []string{"PATH=" + os.Getenv("PATH")}
+		if term != "" {
+			sh.Env = append(sh.Env, "TERM="+term)
+		}
+		out, err := sh.Output()
+		if err != nil || strings.TrimSpace(string(out)) != want {
+			t.Errorf("TERM=%q: the printed line %q passes %q (%v), want %s", term, line, out, err, want)
+		}
 	}
 }
 

@@ -324,3 +324,32 @@ func TestWithoutTheDeckAnApprovalWaitsForLeaApprove(t *testing.T) {
 		t.Fatalf("verdict %+v", r)
 	}
 }
+
+// Without the deck, an answer given the instant the notification shows (a fast lea approve) is
+// delivered at once: the verdict channel is registered before the user is told, so the agent
+// never waits for its approval timeout. The approval's timer never fires on its own here.
+func TestWithoutTheDeckAnImmediateAnswerIsDeliveredAtOnce(t *testing.T) {
+	e, _, _ := noDeckEnv(t)
+	newManualTimers(t).use(e.d)
+	answered := make(chan error, 1)
+	e.d.SetNoDeck(func(title, body string) {
+		var pend []pendingView
+		if err := call(t, e.api, "", "approval_list", nil, &pend); err != nil || len(pend) != 1 {
+			answered <- fmt.Errorf("pending %+v: %v", pend, err)
+			return
+		}
+		answered <- call(t, e.api, "", "approval_decide", map[string]any{"id": pend[0].ID, "verdict": "allow"}, nil)
+	})
+	got := ask(t, e, 600, false)
+	select {
+	case err := <-answered:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("no notification")
+	}
+	if r := receive(t, got); r.Verdict != "allow" {
+		t.Fatalf("verdict %+v", r)
+	}
+}

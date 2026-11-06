@@ -60,7 +60,7 @@ type Daemon struct {
 	// afterWait is a test seam: it runs after an approval waiter woke, before it deregisters.
 	afterWait func()
 
-	// afterFunc arms the daemon's timers (the suspension keepalives, the subagent TTL). A test
+	// afterFunc arms the daemon's timers (the suspension keepalives, the subagent TTL, the approval timeouts). A test
 	// seam (#278): a test replaces it with timers it fires itself instead of racing the wall
 	// clock on a loaded runner.
 	afterFunc func(time.Duration, func()) *time.Timer
@@ -1132,20 +1132,24 @@ func (d *Daemon) dispatchHooks(ctx context.Context, o Origin, me string, req wir
 		if err != nil {
 			return nil, err
 		}
-		// Without the deck the user answers on the host (#135): a notification says so.
-		d.desktop(fmt.Sprintf("%s#p%d", me, id), fmt.Sprintf("%s asks to use %s: lea approve p%d or lea deny p%d (lea requests)", shortName(me), capTool(p.Tool), id, id))
+		// The verdict channel is registered before anyone is told: an answer given at once (a
+		// fast lea approve after the notification) is delivered, not left waiting for the timeout.
 		ch := make(chan string, 1)
+		timedOut := make(chan struct{})
 		d.mu.Lock()
 		d.verdicts[id] = ch
+		after := d.afterFunc
 		d.mu.Unlock()
 		d.changed()
-		timer := time.NewTimer(time.Duration(p.TimeoutS) * time.Second)
+		// Without the deck the user answers on the host (#135): a notification says so.
+		d.desktop(fmt.Sprintf("%s#p%d", me, id), fmt.Sprintf("%s asks to use %s: lea approve p%d or lea deny p%d (lea requests)", shortName(me), capTool(p.Tool), id, id))
+		timer := after(time.Duration(p.TimeoutS)*time.Second, func() { close(timedOut) })
 		defer timer.Stop()
 		v := ""
 		hookGone := false
 		select {
 		case v = <-ch:
-		case <-timer.C:
+		case <-timedOut:
 		case <-ctx.Done():
 			hookGone = true
 		}

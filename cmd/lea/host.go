@@ -47,6 +47,10 @@ const agentTimeout = 60 * time.Second
 // boardWatchEvery is how often lea board --watch shows the board again.
 const boardWatchEvery = 2 * time.Second
 
+// boardWait waits d between two boards of lea board --watch; false ends the watch. A test seam:
+// the real one sleeps and never ends it (ctrl+c does).
+var boardWait = func(d time.Duration) bool { time.Sleep(d); return true }
+
 // sweepTimeout bounds the sweep of a fresh container's nested Podman: removing a pile of stacks
 // left by a crash takes a while.
 const sweepTimeout = 5 * time.Minute
@@ -479,7 +483,9 @@ func runHost(args []string, stdout, stderr io.Writer) int {
 			var out strings.Builder
 			renderBoard(&out, b)
 			fmt.Fprint(stdout, "\x1b[H\x1b[2J"+out.String())
-			time.Sleep(boardWatchEvery)
+			if !boardWait(boardWatchEvery) {
+				return 0
+			}
 		}
 	case "requests":
 		return runRequests(stdout, stderr)
