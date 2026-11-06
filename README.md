@@ -965,10 +965,24 @@ so. Changes apply after `lea init` (endpoints, keys, images, locksql) or `lea st
 - The API keys of your providers' endpoints stay in the proxy container: no agent mounts a key
   file, and the key forwarder reaches an endpoint only through the proxy's egress rules.
 - lea never gets the Docker socket; the agents' own containers run in a rootless Podman inside
-  lea, under seccomp and, on Linux, AppArmor. lea's seccomp profile (`image/seccomp.json`, not
-  Docker's default) refuses `socketcall` and the kernel crypto API sockets (`AF_ALG`,
-  CVE-2026-31431). 32-bit x86 (i386) programs do not run in lea: their `socketcall` hides the
-  socket family from seccomp, so the profile leaves that architecture out.
+  lea, under seccomp and, on Linux, AppArmor. lea's seccomp profile (`image/seccomp.json`) is
+  Docker's default (moby/profiles, vendored and pinned in `image/seccomp/`) with a reviewed list of
+  changes, each with its reason, in `image/seccomp/lea.json`; `image/seccomp/generate.py` builds
+  the profile from them and CI fails on any other difference. It allows what the nested rootless
+  Podman needs and Docker's default keeps for `CAP_SYS_ADMIN` (`clone` and `unshare` of
+  namespaces, `setns`, `mount`, `umount2`, `open_tree`, `move_mount`, `mount_setattr`,
+  `pivot_root`), so unprivileged user namespaces are available in lea (`unshare -U -r` works: the
+  rootless Podman runs in one). The rest stays refused as in Docker's default: the kernel keyring
+  (`keyctl`; nested containers join no keyring), `perf_event_open`, `bpf`, `reboot`, `syslog`,
+  the new mount API's `fsopen`... It also refuses `socketcall` and the kernel crypto API sockets
+  (`AF_ALG`, CVE-2026-31431). 32-bit x86 (i386) programs do not run in lea: their `socketcall`
+  hides the socket family from seccomp, so the profile leaves that architecture out. The AppArmor
+  profile `lea` is docker-default with its `/proc` write denies, plus mounts and user namespaces
+  for the nested Podman.
+- No way back to root in lea: the entrypoint drops to your uid with no capabilities, the image has
+  no `sudo` and no setuid or setgid file. `newuidmap` and `newgidmap` keep their file capabilities,
+  which the rootless Podman maps its sub-ids with; that is why lea runs without
+  `no-new-privileges`.
 - Every lea container shares the host kernel, so the host's patch level is part of the
   containment. The kernel must carry the fixes for CVE-2026-74753, CVE-2026-80521 and CVE-2026-80841; on Ubuntu, check with
   `apt changelog linux-image-$(uname -r) | grep -E 'CVE-2026-(74753|80521|80841)'`. `lea doctor`

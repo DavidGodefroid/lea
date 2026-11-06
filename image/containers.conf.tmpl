@@ -27,6 +27,9 @@ cgroups = "disabled"
 # A nested container cannot set its own hostname: lea's user namespace has no CAP_SYS_ADMIN in
 # its bounding set (Docker drops it), so crun's sethostname would fail. It shares lea's instead.
 utsns = "host"
+# No session keyring per container: lea's seccomp profile refuses keyctl (the kernel keyring is not
+# namespaced, moby refuses it too), and crun would fail to join one (#100).
+keyring = false
 log_driver = "k8s-file"
 
 [engine]

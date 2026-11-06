@@ -1,7 +1,6 @@
 {
 	"defaultAction": "SCMP_ACT_ERRNO",
-	"defaultErrnoRet": 38,
-	"defaultErrno": "ENOSYS",
+	"defaultErrnoRet": 1,
 	"archMap": [
 		{
 			"architecture": "SCMP_ARCH_X86_64",
@@ -48,59 +47,19 @@
 			"subArchitectures": [
 				"SCMP_ARCH_S390"
 			]
+		},
+		{
+			"architecture": "SCMP_ARCH_RISCV64",
+			"subArchitectures": null
+		},
+		{
+			"architecture": "SCMP_ARCH_LOONGARCH64",
+			"subArchitectures": null
 		}
 	],
 	"syscalls": [
 		{
 			"names": [
-				"bdflush",
-				"cachestat",
-				"futex_requeue",
-				"futex_wait",
-				"futex_waitv",
-				"futex_wake",
-				"io_pgetevents",
-				"io_pgetevents_time64",
-				"kexec_file_load",
-				"kexec_load",
-				"map_shadow_stack",
-				"migrate_pages",
-				"move_pages",
-				"nfsservctl",
-				"nice",
-				"oldfstat",
-				"oldlstat",
-				"oldolduname",
-				"oldstat",
-				"olduname",
-				"pciconfig_iobase",
-				"pciconfig_read",
-				"pciconfig_write",
-				"sgetmask",
-				"ssetmask",
-				"swapoff",
-				"swapon",
-				"syscall",
-				"sysfs",
-				"uselib",
-				"userfaultfd",
-				"ustat",
-				"vm86",
-				"vm86old",
-				"vmsplice"
-			],
-			"action": "SCMP_ACT_ERRNO",
-			"args": [],
-			"comment": "",
-			"includes": {},
-			"excludes": {},
-			"errnoRet": 1,
-			"errno": "EPERM"
-		},
-		{
-			"names": [
-				"_llseek",
-				"_newselect",
 				"accept",
 				"accept4",
 				"access",
@@ -108,6 +67,7 @@
 				"alarm",
 				"bind",
 				"brk",
+				"cachestat",
 				"capget",
 				"capset",
 				"chdir",
@@ -122,8 +82,6 @@
 				"clock_gettime64",
 				"clock_nanosleep",
 				"clock_nanosleep_time64",
-				"clone",
-				"clone3",
 				"close",
 				"close_range",
 				"connect",
@@ -151,7 +109,6 @@
 				"fadvise64",
 				"fadvise64_64",
 				"fallocate",
-				"fanotify_init",
 				"fanotify_mark",
 				"fchdir",
 				"fchmod",
@@ -168,11 +125,7 @@
 				"flock",
 				"fork",
 				"fremovexattr",
-				"fsconfig",
 				"fsetxattr",
-				"fsmount",
-				"fsopen",
-				"fspick",
 				"fstat",
 				"fstat64",
 				"fstatat64",
@@ -182,11 +135,12 @@
 				"ftruncate",
 				"ftruncate64",
 				"futex",
+				"futex_requeue",
 				"futex_time64",
+				"futex_wait",
+				"futex_waitv",
+				"futex_wake",
 				"futimesat",
-				"get_mempolicy",
-				"get_robust_list",
-				"get_thread_area",
 				"getcpu",
 				"getcwd",
 				"getdents",
@@ -212,29 +166,33 @@
 				"getresuid",
 				"getresuid32",
 				"getrlimit",
+				"get_robust_list",
 				"getrusage",
 				"getsid",
 				"getsockname",
 				"getsockopt",
+				"get_thread_area",
 				"gettid",
 				"gettimeofday",
 				"getuid",
 				"getuid32",
 				"getxattr",
+				"getxattrat",
 				"inotify_add_watch",
 				"inotify_init",
 				"inotify_init1",
 				"inotify_rm_watch",
 				"io_cancel",
+				"ioctl",
 				"io_destroy",
 				"io_getevents",
-				"io_setup",
-				"io_submit",
-				"ioctl",
+				"io_pgetevents",
+				"io_pgetevents_time64",
 				"ioprio_get",
 				"ioprio_set",
+				"io_setup",
+				"io_submit",
 				"ipc",
-				"keyctl",
 				"kill",
 				"landlock_add_rule",
 				"landlock_create_ruleset",
@@ -245,15 +203,18 @@
 				"link",
 				"linkat",
 				"listen",
+				"listmount",
 				"listxattr",
+				"listxattrat",
 				"llistxattr",
+				"_llseek",
 				"lremovexattr",
 				"lseek",
 				"lsetxattr",
 				"lstat",
 				"lstat64",
 				"madvise",
-				"mbind",
+				"map_shadow_stack",
 				"membarrier",
 				"memfd_create",
 				"memfd_secret",
@@ -267,9 +228,6 @@
 				"mlockall",
 				"mmap",
 				"mmap2",
-				"mount",
-				"mount_setattr",
-				"move_mount",
 				"mprotect",
 				"mq_getsetattr",
 				"mq_notify",
@@ -280,6 +238,7 @@
 				"mq_timedsend_time64",
 				"mq_unlink",
 				"mremap",
+				"mseal",
 				"msgctl",
 				"msgget",
 				"msgrcv",
@@ -291,17 +250,15 @@
 				"name_to_handle_at",
 				"nanosleep",
 				"newfstatat",
+				"_newselect",
 				"open",
-				"open_tree",
 				"openat",
 				"openat2",
 				"pause",
-				"pidfd_getfd",
 				"pidfd_open",
 				"pidfd_send_signal",
 				"pipe",
 				"pipe2",
-				"pivot_root",
 				"pkey_alloc",
 				"pkey_free",
 				"pkey_mprotect",
@@ -314,11 +271,8 @@
 				"preadv2",
 				"prlimit64",
 				"process_mrelease",
-				"process_vm_readv",
-				"process_vm_writev",
 				"pselect6",
 				"pselect6_time64",
-				"ptrace",
 				"pwrite64",
 				"pwritev",
 				"pwritev2",
@@ -327,7 +281,6 @@
 				"readlink",
 				"readlinkat",
 				"readv",
-				"reboot",
 				"recv",
 				"recvfrom",
 				"recvmmsg",
@@ -335,10 +288,12 @@
 				"recvmsg",
 				"remap_file_pages",
 				"removexattr",
+				"removexattrat",
 				"rename",
 				"renameat",
 				"renameat2",
 				"restart_syscall",
+				"riscv_hwprobe",
 				"rmdir",
 				"rseq",
 				"rt_sigaction",
@@ -350,11 +305,11 @@
 				"rt_sigtimedwait",
 				"rt_sigtimedwait_time64",
 				"rt_tgsigqueueinfo",
-				"sched_get_priority_max",
-				"sched_get_priority_min",
 				"sched_getaffinity",
 				"sched_getattr",
 				"sched_getparam",
+				"sched_get_priority_max",
+				"sched_get_priority_min",
 				"sched_getscheduler",
 				"sched_rr_get_interval",
 				"sched_rr_get_interval_time64",
@@ -376,10 +331,6 @@
 				"sendmmsg",
 				"sendmsg",
 				"sendto",
-				"set_mempolicy",
-				"set_robust_list",
-				"set_thread_area",
-				"set_tid_address",
 				"setfsgid",
 				"setfsgid32",
 				"setfsuid",
@@ -389,7 +340,6 @@
 				"setgroups",
 				"setgroups32",
 				"setitimer",
-				"setns",
 				"setpgid",
 				"setpriority",
 				"setregid",
@@ -401,18 +351,21 @@
 				"setreuid",
 				"setreuid32",
 				"setrlimit",
+				"set_robust_list",
 				"setsid",
 				"setsockopt",
+				"set_thread_area",
+				"set_tid_address",
 				"setuid",
 				"setuid32",
 				"setxattr",
+				"setxattrat",
 				"shmat",
 				"shmctl",
 				"shmdt",
 				"shmget",
 				"shutdown",
 				"sigaltstack",
-				"signal",
 				"signalfd",
 				"signalfd4",
 				"sigprocmask",
@@ -423,6 +376,7 @@
 				"stat64",
 				"statfs",
 				"statfs64",
+				"statmount",
 				"statx",
 				"symlink",
 				"symlinkat",
@@ -430,7 +384,6 @@
 				"sync_file_range",
 				"syncfs",
 				"sysinfo",
-				"syslog",
 				"tee",
 				"tgkill",
 				"time",
@@ -452,537 +405,86 @@
 				"truncate64",
 				"ugetrlimit",
 				"umask",
-				"umount",
-				"umount2",
 				"uname",
 				"unlink",
 				"unlinkat",
-				"unshare",
+				"uretprobe",
 				"utime",
 				"utimensat",
 				"utimensat_time64",
 				"utimes",
 				"vfork",
+				"vmsplice",
 				"wait4",
 				"waitid",
 				"waitpid",
 				"write",
 				"writev"
 			],
-			"action": "SCMP_ACT_ALLOW",
-			"args": [],
-			"comment": "",
-			"includes": {},
-			"excludes": {}
+			"action": "SCMP_ACT_ALLOW"
 		},
 		{
 			"names": [
-				"personality"
+				"clone"
 			],
 			"action": "SCMP_ACT_ALLOW",
-			"args": [
-				{
-					"index": 0,
-					"value": 0,
-					"valueTwo": 0,
-					"op": "SCMP_CMP_EQ"
-				}
-			],
-			"comment": "",
-			"includes": {},
-			"excludes": {}
+			"comment": "lea: the nested Podman and crun create the user, mount, PID, network and IPC namespaces of nested containers, flags moby allows only with CAP_SYS_ADMIN"
 		},
 		{
 			"names": [
-				"personality"
+				"unshare"
 			],
 			"action": "SCMP_ACT_ALLOW",
-			"args": [
-				{
-					"index": 0,
-					"value": 8,
-					"valueTwo": 0,
-					"op": "SCMP_CMP_EQ"
-				}
-			],
-			"comment": "",
-			"includes": {},
-			"excludes": {}
+			"comment": "lea: rootless Podman enters its user namespace (CLONE_NEWUSER), unpacks image layers in a mount namespace, and Buildah's RUN steps unshare their own"
 		},
 		{
 			"names": [
-				"personality"
-			],
-			"action": "SCMP_ACT_ALLOW",
-			"args": [
-				{
-					"index": 0,
-					"value": 131072,
-					"valueTwo": 0,
-					"op": "SCMP_CMP_EQ"
-				}
-			],
-			"comment": "",
-			"includes": {},
-			"excludes": {}
-		},
-		{
-			"names": [
-				"personality"
-			],
-			"action": "SCMP_ACT_ALLOW",
-			"args": [
-				{
-					"index": 0,
-					"value": 131080,
-					"valueTwo": 0,
-					"op": "SCMP_CMP_EQ"
-				}
-			],
-			"comment": "",
-			"includes": {},
-			"excludes": {}
-		},
-		{
-			"names": [
-				"personality"
-			],
-			"action": "SCMP_ACT_ALLOW",
-			"args": [
-				{
-					"index": 0,
-					"value": 4294967295,
-					"valueTwo": 0,
-					"op": "SCMP_CMP_EQ"
-				}
-			],
-			"comment": "",
-			"includes": {},
-			"excludes": {}
-		},
-		{
-			"names": [
-				"sync_file_range2",
-				"swapcontext"
-			],
-			"action": "SCMP_ACT_ALLOW",
-			"args": [],
-			"comment": "",
-			"includes": {
-				"arches": [
-					"ppc64le"
-				]
-			},
-			"excludes": {}
-		},
-		{
-			"names": [
-				"arm_fadvise64_64",
-				"arm_sync_file_range",
-				"breakpoint",
-				"cacheflush",
-				"set_tls",
-				"sync_file_range2"
-			],
-			"action": "SCMP_ACT_ALLOW",
-			"args": [],
-			"comment": "",
-			"includes": {
-				"arches": [
-					"arm",
-					"arm64"
-				]
-			},
-			"excludes": {}
-		},
-		{
-			"names": [
-				"arch_prctl"
-			],
-			"action": "SCMP_ACT_ALLOW",
-			"args": [],
-			"comment": "",
-			"includes": {
-				"arches": [
-					"amd64",
-					"x32"
-				]
-			},
-			"excludes": {}
-		},
-		{
-			"names": [
-				"modify_ldt"
-			],
-			"action": "SCMP_ACT_ALLOW",
-			"args": [],
-			"comment": "",
-			"includes": {
-				"arches": [
-					"amd64",
-					"x32",
-					"x86"
-				]
-			},
-			"excludes": {}
-		},
-		{
-			"names": [
-				"s390_pci_mmio_read",
-				"s390_pci_mmio_write",
-				"s390_runtime_instr"
-			],
-			"action": "SCMP_ACT_ALLOW",
-			"args": [],
-			"comment": "",
-			"includes": {
-				"arches": [
-					"s390",
-					"s390x"
-				]
-			},
-			"excludes": {}
-		},
-		{
-			"names": [
-				"riscv_flush_icache"
-			],
-			"action": "SCMP_ACT_ALLOW",
-			"args": [],
-			"comment": "",
-			"includes": {
-				"arches": [
-					"riscv64"
-				]
-			},
-			"excludes": {}
-		},
-		{
-			"names": [
-				"open_by_handle_at"
-			],
-			"action": "SCMP_ACT_ALLOW",
-			"args": [],
-			"comment": "",
-			"includes": {
-				"caps": [
-					"CAP_DAC_READ_SEARCH"
-				]
-			},
-			"excludes": {}
-		},
-		{
-			"names": [
-				"open_by_handle_at"
-			],
-			"action": "SCMP_ACT_ERRNO",
-			"args": [],
-			"comment": "",
-			"includes": {},
-			"excludes": {
-				"caps": [
-					"CAP_DAC_READ_SEARCH"
-				]
-			},
-			"errnoRet": 1,
-			"errno": "EPERM"
-		},
-		{
-			"names": [
-				"bpf",
-				"lookup_dcookie",
-				"quotactl",
-				"quotactl_fd",
-				"setdomainname",
-				"sethostname",
 				"setns"
 			],
 			"action": "SCMP_ACT_ALLOW",
-			"args": [],
-			"comment": "",
-			"includes": {
-				"caps": [
-					"CAP_SYS_ADMIN"
-				]
-			},
-			"excludes": {}
+			"comment": "lea: every podman command joins the user namespace of Podman's pause process, and podman exec and pasta join a nested container's namespaces"
 		},
 		{
 			"names": [
-				"lookup_dcookie",
-				"perf_event_open",
-				"quotactl",
-				"quotactl_fd",
-				"setdomainname",
-				"sethostname",
-				"setns"
-			],
-			"action": "SCMP_ACT_ERRNO",
-			"args": [],
-			"comment": "",
-			"includes": {},
-			"excludes": {
-				"caps": [
-					"CAP_SYS_ADMIN"
-				]
-			},
-			"errnoRet": 1,
-			"errno": "EPERM"
-		},
-		{
-			"names": [
-				"chroot"
+				"mount"
 			],
 			"action": "SCMP_ACT_ALLOW",
-			"args": [],
-			"comment": "",
-			"includes": {
-				"caps": [
-					"CAP_SYS_CHROOT"
-				]
-			},
-			"excludes": {}
+			"comment": "lea: crun mounts a nested container's root file system, /proc, /dev and volumes, fuse-overlayfs its layers and pasta its empty tmpfs root, inside the nested user namespace"
 		},
 		{
 			"names": [
-				"chroot"
-			],
-			"action": "SCMP_ACT_ERRNO",
-			"args": [],
-			"comment": "",
-			"includes": {},
-			"excludes": {
-				"caps": [
-					"CAP_SYS_CHROOT"
-				]
-			},
-			"errnoRet": 1,
-			"errno": "EPERM"
-		},
-		{
-			"names": [
-				"delete_module",
-				"finit_module",
-				"init_module",
-				"query_module"
+				"umount2"
 			],
 			"action": "SCMP_ACT_ALLOW",
-			"args": [],
-			"comment": "",
-			"includes": {
-				"caps": [
-					"CAP_SYS_MODULE"
-				]
-			},
-			"excludes": {}
+			"comment": "lea: crun and pasta detach the old root after pivot_root, and Podman unmounts a nested container's storage, shm and network namespace"
 		},
 		{
 			"names": [
-				"delete_module",
-				"finit_module",
-				"init_module",
-				"query_module"
-			],
-			"action": "SCMP_ACT_ERRNO",
-			"args": [],
-			"comment": "",
-			"includes": {},
-			"excludes": {
-				"caps": [
-					"CAP_SYS_MODULE"
-				]
-			},
-			"errnoRet": 1,
-			"errno": "EPERM"
-		},
-		{
-			"names": [
-				"acct"
+				"open_tree"
 			],
 			"action": "SCMP_ACT_ALLOW",
-			"args": [],
-			"comment": "",
-			"includes": {
-				"caps": [
-					"CAP_SYS_PACCT"
-				]
-			},
-			"excludes": {}
+			"comment": "lea: crun clones the /sys of lea into a nested container (OPEN_TREE_CLONE): a user namespace cannot mount a fresh sysfs without its own network namespace's ownership of it"
 		},
 		{
 			"names": [
-				"acct"
-			],
-			"action": "SCMP_ACT_ERRNO",
-			"args": [],
-			"comment": "",
-			"includes": {},
-			"excludes": {
-				"caps": [
-					"CAP_SYS_PACCT"
-				]
-			},
-			"errnoRet": 1,
-			"errno": "EPERM"
-		},
-		{
-			"names": [
-				"kcmp",
-				"process_madvise"
+				"move_mount"
 			],
 			"action": "SCMP_ACT_ALLOW",
-			"args": [],
-			"comment": "",
-			"includes": {
-				"caps": [
-					"CAP_SYS_PTRACE"
-				]
-			},
-			"excludes": {}
+			"comment": "lea: crun attaches the trees it cloned with open_tree (/sys, bind mounts) inside a nested container"
 		},
 		{
 			"names": [
-				"kcmp",
-				"process_madvise"
-			],
-			"action": "SCMP_ACT_ERRNO",
-			"args": [],
-			"comment": "",
-			"includes": {},
-			"excludes": {
-				"caps": [
-					"CAP_SYS_PTRACE"
-				]
-			},
-			"errnoRet": 1,
-			"errno": "EPERM"
-		},
-		{
-			"names": [
-				"ioperm",
-				"iopl"
+				"mount_setattr"
 			],
 			"action": "SCMP_ACT_ALLOW",
-			"args": [],
-			"comment": "",
-			"includes": {
-				"caps": [
-					"CAP_SYS_RAWIO"
-				]
-			},
-			"excludes": {}
+			"comment": "lea: crun sets the flags of the trees it cloned (read-only /sys, read-only and nosuid bind mounts), recursively"
 		},
 		{
 			"names": [
-				"ioperm",
-				"iopl"
-			],
-			"action": "SCMP_ACT_ERRNO",
-			"args": [],
-			"comment": "",
-			"includes": {},
-			"excludes": {
-				"caps": [
-					"CAP_SYS_RAWIO"
-				]
-			},
-			"errnoRet": 1,
-			"errno": "EPERM"
-		},
-		{
-			"names": [
-				"clock_settime",
-				"clock_settime64",
-				"settimeofday",
-				"stime"
+				"pivot_root"
 			],
 			"action": "SCMP_ACT_ALLOW",
-			"args": [],
-			"comment": "",
-			"includes": {
-				"caps": [
-					"CAP_SYS_TIME"
-				]
-			},
-			"excludes": {}
-		},
-		{
-			"names": [
-				"clock_settime",
-				"clock_settime64",
-				"settimeofday",
-				"stime"
-			],
-			"action": "SCMP_ACT_ERRNO",
-			"args": [],
-			"comment": "",
-			"includes": {},
-			"excludes": {
-				"caps": [
-					"CAP_SYS_TIME"
-				]
-			},
-			"errnoRet": 1,
-			"errno": "EPERM"
-		},
-		{
-			"names": [
-				"vhangup"
-			],
-			"action": "SCMP_ACT_ALLOW",
-			"args": [],
-			"comment": "",
-			"includes": {
-				"caps": [
-					"CAP_SYS_TTY_CONFIG"
-				]
-			},
-			"excludes": {}
-		},
-		{
-			"names": [
-				"vhangup"
-			],
-			"action": "SCMP_ACT_ERRNO",
-			"args": [],
-			"comment": "",
-			"includes": {},
-			"excludes": {
-				"caps": [
-					"CAP_SYS_TTY_CONFIG"
-				]
-			},
-			"errnoRet": 1,
-			"errno": "EPERM"
-		},
-		{
-			"names": [
-				"socket"
-			],
-			"action": "SCMP_ACT_ERRNO",
-			"args": [
-				{
-					"index": 0,
-					"value": 16,
-					"valueTwo": 0,
-					"op": "SCMP_CMP_EQ"
-				},
-				{
-					"index": 2,
-					"value": 9,
-					"valueTwo": 0,
-					"op": "SCMP_CMP_EQ"
-				}
-			],
-			"comment": "",
-			"includes": {},
-			"excludes": {
-				"caps": [
-					"CAP_AUDIT_WRITE"
-				]
-			},
-			"errnoRet": 22,
-			"errno": "EINVAL"
+			"comment": "lea: crun switches a nested container to its own root file system, and pasta sandboxes itself in an empty tmpfs"
 		},
 		{
 			"names": [
@@ -997,37 +499,18 @@
 					"op": "SCMP_CMP_EQ"
 				}
 			],
-			"comment": "lea: no AF_ALG (CVE-2026-31431)",
-			"includes": {},
-			"excludes": {},
 			"errnoRet": 97,
-			"errno": "EAFNOSUPPORT"
+			"comment": "lea: AF_ALG (38), the kernel crypto API, gets EAFNOSUPPORT, the answer of a kernel without it (CVE-2026-31431); moby leaves it out of its socket families"
 		},
 		{
 			"names": [
-				"socket"
+				"process_vm_readv",
+				"process_vm_writev",
+				"ptrace"
 			],
 			"action": "SCMP_ACT_ALLOW",
-			"args": [
-				{
-					"index": 2,
-					"value": 9,
-					"valueTwo": 0,
-					"op": "SCMP_CMP_NE"
-				},
-				{
-					"index": 0,
-					"value": 38,
-					"valueTwo": 0,
-					"op": "SCMP_CMP_NE"
-				}
-			],
-			"comment": "lea: no AF_ALG (CVE-2026-31431)",
-			"includes": {},
-			"excludes": {
-				"caps": [
-					"CAP_AUDIT_WRITE"
-				]
+			"includes": {
+				"minKernel": "4.8"
 			}
 		},
 		{
@@ -1038,80 +521,728 @@
 			"args": [
 				{
 					"index": 0,
-					"value": 38,
-					"valueTwo": 0,
-					"op": "SCMP_CMP_NE"
+					"value": 3,
+					"op": "SCMP_CMP_LT"
 				}
-			],
-			"comment": "lea: no AF_ALG (CVE-2026-31431)",
-			"includes": {
-				"caps": [
-					"CAP_AUDIT_WRITE"
-				]
-			},
-			"excludes": {}
+			]
 		},
 		{
 			"names": [
-				"bpf"
+				"socket"
+			],
+			"action": "SCMP_ACT_ALLOW",
+			"args": [
+				{
+					"index": 0,
+					"value": 7,
+					"op": "SCMP_CMP_EQ"
+				}
+			]
+		},
+		{
+			"names": [
+				"socket"
+			],
+			"action": "SCMP_ACT_ALLOW",
+			"args": [
+				{
+					"index": 0,
+					"value": 8,
+					"op": "SCMP_CMP_EQ"
+				}
+			]
+		},
+		{
+			"names": [
+				"socket"
+			],
+			"action": "SCMP_ACT_ALLOW",
+			"args": [
+				{
+					"index": 0,
+					"value": 9,
+					"op": "SCMP_CMP_EQ"
+				}
+			]
+		},
+		{
+			"names": [
+				"socket"
+			],
+			"action": "SCMP_ACT_ALLOW",
+			"args": [
+				{
+					"index": 0,
+					"value": 10,
+					"op": "SCMP_CMP_EQ"
+				}
+			]
+		},
+		{
+			"names": [
+				"socket"
+			],
+			"action": "SCMP_ACT_ALLOW",
+			"args": [
+				{
+					"index": 0,
+					"value": 13,
+					"op": "SCMP_CMP_EQ"
+				}
+			]
+		},
+		{
+			"names": [
+				"socket"
+			],
+			"action": "SCMP_ACT_ALLOW",
+			"args": [
+				{
+					"index": 0,
+					"value": 14,
+					"op": "SCMP_CMP_EQ"
+				}
+			]
+		},
+		{
+			"names": [
+				"socket"
+			],
+			"action": "SCMP_ACT_ALLOW",
+			"args": [
+				{
+					"index": 0,
+					"value": 15,
+					"op": "SCMP_CMP_EQ"
+				}
+			]
+		},
+		{
+			"names": [
+				"socket"
+			],
+			"action": "SCMP_ACT_ALLOW",
+			"args": [
+				{
+					"index": 0,
+					"value": 16,
+					"op": "SCMP_CMP_EQ"
+				}
+			]
+		},
+		{
+			"names": [
+				"socket"
+			],
+			"action": "SCMP_ACT_ALLOW",
+			"args": [
+				{
+					"index": 0,
+					"value": 17,
+					"op": "SCMP_CMP_EQ"
+				}
+			]
+		},
+		{
+			"names": [
+				"socket"
+			],
+			"action": "SCMP_ACT_ALLOW",
+			"args": [
+				{
+					"index": 0,
+					"value": 18,
+					"op": "SCMP_CMP_EQ"
+				}
+			]
+		},
+		{
+			"names": [
+				"socket"
+			],
+			"action": "SCMP_ACT_ALLOW",
+			"args": [
+				{
+					"index": 0,
+					"value": 21,
+					"op": "SCMP_CMP_EQ"
+				}
+			]
+		},
+		{
+			"names": [
+				"socket"
+			],
+			"action": "SCMP_ACT_ALLOW",
+			"args": [
+				{
+					"index": 0,
+					"value": 22,
+					"op": "SCMP_CMP_EQ"
+				}
+			]
+		},
+		{
+			"names": [
+				"socket"
+			],
+			"action": "SCMP_ACT_ALLOW",
+			"args": [
+				{
+					"index": 0,
+					"value": 24,
+					"op": "SCMP_CMP_EQ"
+				}
+			]
+		},
+		{
+			"names": [
+				"socket"
+			],
+			"action": "SCMP_ACT_ALLOW",
+			"args": [
+				{
+					"index": 0,
+					"value": 26,
+					"op": "SCMP_CMP_EQ"
+				}
+			]
+		},
+		{
+			"names": [
+				"socket"
+			],
+			"action": "SCMP_ACT_ALLOW",
+			"args": [
+				{
+					"index": 0,
+					"value": 27,
+					"op": "SCMP_CMP_EQ"
+				}
+			]
+		},
+		{
+			"names": [
+				"socket"
+			],
+			"action": "SCMP_ACT_ALLOW",
+			"args": [
+				{
+					"index": 0,
+					"value": 28,
+					"op": "SCMP_CMP_EQ"
+				}
+			]
+		},
+		{
+			"names": [
+				"socket"
+			],
+			"action": "SCMP_ACT_ALLOW",
+			"args": [
+				{
+					"index": 0,
+					"value": 29,
+					"op": "SCMP_CMP_EQ"
+				}
+			]
+		},
+		{
+			"names": [
+				"socket"
+			],
+			"action": "SCMP_ACT_ALLOW",
+			"args": [
+				{
+					"index": 0,
+					"value": 30,
+					"op": "SCMP_CMP_EQ"
+				}
+			]
+		},
+		{
+			"names": [
+				"socket"
+			],
+			"action": "SCMP_ACT_ALLOW",
+			"args": [
+				{
+					"index": 0,
+					"value": 31,
+					"op": "SCMP_CMP_EQ"
+				}
+			]
+		},
+		{
+			"names": [
+				"socket"
+			],
+			"action": "SCMP_ACT_ALLOW",
+			"args": [
+				{
+					"index": 0,
+					"value": 32,
+					"op": "SCMP_CMP_EQ"
+				}
+			]
+		},
+		{
+			"names": [
+				"socket"
+			],
+			"action": "SCMP_ACT_ALLOW",
+			"args": [
+				{
+					"index": 0,
+					"value": 33,
+					"op": "SCMP_CMP_EQ"
+				}
+			]
+		},
+		{
+			"names": [
+				"socket"
+			],
+			"action": "SCMP_ACT_ALLOW",
+			"args": [
+				{
+					"index": 0,
+					"value": 35,
+					"op": "SCMP_CMP_EQ"
+				}
+			]
+		},
+		{
+			"names": [
+				"socket"
+			],
+			"action": "SCMP_ACT_ALLOW",
+			"args": [
+				{
+					"index": 0,
+					"value": 36,
+					"op": "SCMP_CMP_EQ"
+				}
+			]
+		},
+		{
+			"names": [
+				"socket"
+			],
+			"action": "SCMP_ACT_ALLOW",
+			"args": [
+				{
+					"index": 0,
+					"value": 39,
+					"op": "SCMP_CMP_EQ"
+				}
+			]
+		},
+		{
+			"names": [
+				"socket"
+			],
+			"action": "SCMP_ACT_ALLOW",
+			"args": [
+				{
+					"index": 0,
+					"value": 41,
+					"op": "SCMP_CMP_EQ"
+				}
+			]
+		},
+		{
+			"names": [
+				"socket"
+			],
+			"action": "SCMP_ACT_ALLOW",
+			"args": [
+				{
+					"index": 0,
+					"value": 42,
+					"op": "SCMP_CMP_EQ"
+				}
+			]
+		},
+		{
+			"names": [
+				"socket"
+			],
+			"action": "SCMP_ACT_ALLOW",
+			"args": [
+				{
+					"index": 0,
+					"value": 43,
+					"op": "SCMP_CMP_EQ"
+				}
+			]
+		},
+		{
+			"names": [
+				"socket"
+			],
+			"action": "SCMP_ACT_ALLOW",
+			"args": [
+				{
+					"index": 0,
+					"value": 44,
+					"op": "SCMP_CMP_EQ"
+				}
+			]
+		},
+		{
+			"names": [
+				"socket"
+			],
+			"action": "SCMP_ACT_ALLOW",
+			"args": [
+				{
+					"index": 0,
+					"value": 45,
+					"op": "SCMP_CMP_EQ"
+				}
+			]
+		},
+		{
+			"names": [
+				"personality"
+			],
+			"action": "SCMP_ACT_ALLOW",
+			"args": [
+				{
+					"index": 0,
+					"value": 0,
+					"op": "SCMP_CMP_EQ"
+				}
+			]
+		},
+		{
+			"names": [
+				"personality"
+			],
+			"action": "SCMP_ACT_ALLOW",
+			"args": [
+				{
+					"index": 0,
+					"value": 8,
+					"op": "SCMP_CMP_EQ"
+				}
+			]
+		},
+		{
+			"names": [
+				"personality"
+			],
+			"action": "SCMP_ACT_ALLOW",
+			"args": [
+				{
+					"index": 0,
+					"value": 131072,
+					"op": "SCMP_CMP_EQ"
+				}
+			]
+		},
+		{
+			"names": [
+				"personality"
+			],
+			"action": "SCMP_ACT_ALLOW",
+			"args": [
+				{
+					"index": 0,
+					"value": 131080,
+					"op": "SCMP_CMP_EQ"
+				}
+			]
+		},
+		{
+			"names": [
+				"personality"
+			],
+			"action": "SCMP_ACT_ALLOW",
+			"args": [
+				{
+					"index": 0,
+					"value": 4294967295,
+					"op": "SCMP_CMP_EQ"
+				}
+			]
+		},
+		{
+			"names": [
+				"sync_file_range2",
+				"swapcontext"
+			],
+			"action": "SCMP_ACT_ALLOW",
+			"includes": {
+				"arches": [
+					"ppc64le"
+				]
+			}
+		},
+		{
+			"names": [
+				"arm_fadvise64_64",
+				"arm_sync_file_range",
+				"sync_file_range2",
+				"breakpoint",
+				"cacheflush",
+				"set_tls"
+			],
+			"action": "SCMP_ACT_ALLOW",
+			"includes": {
+				"arches": [
+					"arm",
+					"arm64"
+				]
+			}
+		},
+		{
+			"names": [
+				"arch_prctl"
+			],
+			"action": "SCMP_ACT_ALLOW",
+			"includes": {
+				"arches": [
+					"amd64",
+					"x32"
+				]
+			}
+		},
+		{
+			"names": [
+				"modify_ldt"
+			],
+			"action": "SCMP_ACT_ALLOW",
+			"includes": {
+				"arches": [
+					"amd64",
+					"x32",
+					"x86"
+				]
+			}
+		},
+		{
+			"names": [
+				"s390_pci_mmio_read",
+				"s390_pci_mmio_write",
+				"s390_runtime_instr"
+			],
+			"action": "SCMP_ACT_ALLOW",
+			"includes": {
+				"arches": [
+					"s390",
+					"s390x"
+				]
+			}
+		},
+		{
+			"names": [
+				"riscv_flush_icache"
+			],
+			"action": "SCMP_ACT_ALLOW",
+			"includes": {
+				"arches": [
+					"riscv64"
+				]
+			}
+		},
+		{
+			"names": [
+				"open_by_handle_at"
+			],
+			"action": "SCMP_ACT_ALLOW",
+			"includes": {
+				"caps": [
+					"CAP_DAC_READ_SEARCH"
+				]
+			}
+		},
+		{
+			"names": [
+				"bpf",
+				"clone3",
+				"fanotify_init",
+				"fsconfig",
+				"fsmount",
+				"fsopen",
+				"fspick",
+				"lookup_dcookie",
+				"lsm_get_self_attr",
+				"lsm_list_modules",
+				"lsm_set_self_attr",
+				"perf_event_open",
+				"quotactl",
+				"quotactl_fd",
+				"setdomainname",
+				"sethostname",
+				"syslog",
+				"umount"
+			],
+			"action": "SCMP_ACT_ALLOW",
+			"includes": {
+				"caps": [
+					"CAP_SYS_ADMIN"
+				]
+			}
+		},
+		{
+			"names": [
+				"clone3"
 			],
 			"action": "SCMP_ACT_ERRNO",
-			"args": [],
-			"comment": "",
-			"includes": {},
+			"errnoRet": 38,
 			"excludes": {
 				"caps": [
-					"CAP_SYS_ADMIN",
-					"CAP_BPF"
+					"CAP_SYS_ADMIN"
 				]
-			},
-			"errnoRet": 1,
-			"errno": "EPERM"
+			}
+		},
+		{
+			"names": [
+				"reboot"
+			],
+			"action": "SCMP_ACT_ALLOW",
+			"includes": {
+				"caps": [
+					"CAP_SYS_BOOT"
+				]
+			}
+		},
+		{
+			"names": [
+				"chroot"
+			],
+			"action": "SCMP_ACT_ALLOW",
+			"includes": {
+				"caps": [
+					"CAP_SYS_CHROOT"
+				]
+			}
+		},
+		{
+			"names": [
+				"delete_module",
+				"init_module",
+				"finit_module"
+			],
+			"action": "SCMP_ACT_ALLOW",
+			"includes": {
+				"caps": [
+					"CAP_SYS_MODULE"
+				]
+			}
+		},
+		{
+			"names": [
+				"acct"
+			],
+			"action": "SCMP_ACT_ALLOW",
+			"includes": {
+				"caps": [
+					"CAP_SYS_PACCT"
+				]
+			}
+		},
+		{
+			"names": [
+				"kcmp",
+				"pidfd_getfd",
+				"process_madvise",
+				"process_vm_readv",
+				"process_vm_writev",
+				"ptrace"
+			],
+			"action": "SCMP_ACT_ALLOW",
+			"includes": {
+				"caps": [
+					"CAP_SYS_PTRACE"
+				]
+			}
+		},
+		{
+			"names": [
+				"iopl",
+				"ioperm"
+			],
+			"action": "SCMP_ACT_ALLOW",
+			"includes": {
+				"caps": [
+					"CAP_SYS_RAWIO"
+				]
+			}
+		},
+		{
+			"names": [
+				"settimeofday",
+				"stime",
+				"clock_settime",
+				"clock_settime64"
+			],
+			"action": "SCMP_ACT_ALLOW",
+			"includes": {
+				"caps": [
+					"CAP_SYS_TIME"
+				]
+			}
+		},
+		{
+			"names": [
+				"vhangup"
+			],
+			"action": "SCMP_ACT_ALLOW",
+			"includes": {
+				"caps": [
+					"CAP_SYS_TTY_CONFIG"
+				]
+			}
+		},
+		{
+			"names": [
+				"get_mempolicy",
+				"mbind",
+				"set_mempolicy",
+				"set_mempolicy_home_node"
+			],
+			"action": "SCMP_ACT_ALLOW",
+			"includes": {
+				"caps": [
+					"CAP_SYS_NICE"
+				]
+			}
+		},
+		{
+			"names": [
+				"syslog"
+			],
+			"action": "SCMP_ACT_ALLOW",
+			"includes": {
+				"caps": [
+					"CAP_SYSLOG"
+				]
+			}
 		},
 		{
 			"names": [
 				"bpf"
 			],
 			"action": "SCMP_ACT_ALLOW",
-			"args": [],
-			"comment": "",
 			"includes": {
 				"caps": [
 					"CAP_BPF"
 				]
-			},
-			"excludes": {}
-		},
-		{
-			"names": [
-				"perf_event_open"
-			],
-			"action": "SCMP_ACT_ERRNO",
-			"args": [],
-			"comment": "",
-			"includes": {},
-			"excludes": {
-				"caps": [
-					"CAP_SYS_ADMIN",
-					"CAP_BPF"
-				]
-			},
-			"errnoRet": 1,
-			"errno": "EPERM"
+			}
 		},
 		{
 			"names": [
 				"perf_event_open"
 			],
 			"action": "SCMP_ACT_ALLOW",
-			"args": [],
-			"comment": "",
 			"includes": {
 				"caps": [
 					"CAP_PERFMON"
 				]
-			},
-			"excludes": {}
+			}
 		}
 	]
 }

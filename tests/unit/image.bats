@@ -22,28 +22,89 @@ setup() { setup_fakes; load_lea; I="$LEA_ROOT/image"; }
   [ "$(jq -r '.env.OTEL_LOG_USER_PROMPTS // "unset"' "$m")" = unset ]
 }
 
-@test "seccomp profile is the vendored containers/common v0.64.2 file, hardened against AF_ALG" {
-  [ "$(lea_sha256_file "$I/seccomp.json")" = "$(cat "$I/seccomp.json.sha256")" ]
+# The profile is built from the pinned moby default and lea's reviewed changes (#100).
+@test "seccomp profile is what image/seccomp/generate.py builds from the pinned moby default" {
+  python3 -I "$I/seccomp/generate.py" --check
+  [ "$(lea_sha256_file "$I/seccomp/moby-default.json")" = "$(jq -r .base.sha256 "$I/seccomp/lea.json")" ]
   [ "$(jq -r .defaultAction "$I/seccomp.json")" = SCMP_ACT_ERRNO ]
+}
+
+# A copy of image/ with seccomp/ and seccomp.json, for the generator's refusals.
+seccomp_copy() { mkdir -p "$BATS_TEST_TMPDIR/i/seccomp"; cp "$I"/seccomp/* "$BATS_TEST_TMPDIR/i/seccomp/"; cp "$I/seccomp.json" "$BATS_TEST_TMPDIR/i/"; G="$BATS_TEST_TMPDIR/i/seccomp/generate.py"; }
+
+@test "seccomp check fails on a hand edit of the profile" {
+  seccomp_copy
+  jq '.syscalls[0].names += ["keyctl"]' "$I/seccomp.json" >"$BATS_TEST_TMPDIR/i/seccomp.json"
+  run python3 -I "$G" --check
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"not what image/seccomp/generate.py builds"* ]]
+}
+
+@test "seccomp check fails on a base that is not the pinned moby default" {
+  seccomp_copy
+  jq '.syscalls[0].names += ["keyctl"]' "$I/seccomp/moby-default.json" >"$BATS_TEST_TMPDIR/i/seccomp/moby-default.json"
+  run python3 -I "$G" --check
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"not the pinned base"* ]]
+}
+
+@test "seccomp generator refuses a widened syscall without a reason" {
+  seccomp_copy
+  jq '.allow += [{"name": "keyctl"}]' "$I/seccomp/lea.json" >"$BATS_TEST_TMPDIR/i/seccomp/lea.json"
+  run python3 -I "$G"
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"allow keyctl: a one-line reason (why) is required"* ]]
+}
+
+# Every syscall the profile allows unconditionally and moby does not carries lea's reason, in the
+# profile itself; what the nested Podman does not need is refused (keyring, perf, reboot, ...).
+@test "seccomp profile widens moby only with a reason, and not for what the nested Podman does not need" {
+  f="$I/seccomp.json"
+  wide=$(jq -r --slurpfile m "$I/seccomp/moby-default.json" '($m[0].syscalls[0].names) as $base
+    | .syscalls[] | select(.action == "SCMP_ACT_ALLOW" and (.args // []) == [] and (.includes // {}) == {} and (.excludes // {}) == {})
+    | .names[] as $n | select($base | index($n) | not) | $n' "$f" | sort | tr '\n' ' ')
+  [ "$wide" = "clone mount mount_setattr move_mount open_tree pivot_root setns umount2 unshare " ]
+  [ "$(jq '[.syscalls[] | select(.action == "SCMP_ACT_ALLOW" and (.names | length) == 1 and ((.comment // "") | startswith("lea: ") | not)
+    and (.args // []) == [] and (.includes // {}) == {} and (.excludes // {}) == {})] | length' "$f")" -eq 0 ]
+  for n in keyctl add_key request_key reboot bpf perf_event_open syslog fanotify_init clone3 fsopen fsconfig fsmount fspick \
+           pidfd_getfd sethostname setdomainname kexec_load init_module; do
+    [ "$(jq --arg n "$n" '[.syscalls[] | select(.action == "SCMP_ACT_ALLOW" and (.names | index($n)) and (.includes // {}) == {})] | length' "$f")" -eq 0 ]
+  done
+  [ "$(jq -r '.syscalls[] | select(.names == ["clone3"]) | .errnoRet' "$f")" = 38 ]
 }
 
 # CVE-2026-31431: the kernel crypto API (AF_ALG, 38) is out of reach. socketcall multiplexes
 # socket(2) behind a pointer seccomp cannot read: it is not allowed, and 32-bit x86, where libseccomp
 # turns the socket rules into socketcall rules without the family test, is not in the profile. Every
-# rule that allows socket excludes family 38 itself (a rule's conditions are ANDed, rules are ORed),
-# and family 38 gets EAFNOSUPPORT from a rule no allow rule overlaps (crun refuses overlaps: EEXIST).
+# rule that allows socket names a family other than 38 (moby's list) or excludes 38 itself (a rule's
+# conditions are ANDed, rules are ORed), and family 38 gets EAFNOSUPPORT from a rule no allow rule
+# overlaps (crun refuses overlaps: EEXIST).
 @test "seccomp profile refuses socketcall and AF_ALG sockets" {
   f="$I/seccomp.json"
   [ "$(jq '[.syscalls[] | select(.action == "SCMP_ACT_ALLOW" and (.names | index("socketcall")))] | length' "$f")" -eq 0 ]
   [ "$(jq -c '[.archMap[] | select(.architecture == "SCMP_ARCH_X86_64") | .subArchitectures[]]' "$f")" = '["SCMP_ARCH_X32"]' ]
   [ "$(jq '[.syscalls[] | select(.action == "SCMP_ACT_ALLOW" and (.names | index("socket")))] | length' "$f")" -gt 0 ]
   [ "$(jq '[.syscalls[] | select(.action == "SCMP_ACT_ALLOW" and (.names | index("socket")))
-    | select([(.args // [])[] | select(.index == 0 and .op == "SCMP_CMP_NE" and .value == 38)] | length == 0)]
+    | select([(.args // [])[] | select(.index == 0 and ((.op == "SCMP_CMP_NE" and .value == 38)
+        or (.op == "SCMP_CMP_EQ" and .value != 38) or (.op == "SCMP_CMP_LT" and .value <= 38)))] | length == 0)]
     | length' "$f")" -eq 0 ]
   [ "$(jq -c '[.syscalls[] | select(.names == ["socket"] and .action == "SCMP_ACT_ERRNO" and .errnoRet == 97) | .args]' "$f")" = \
     '[[{"index":0,"value":38,"valueTwo":0,"op":"SCMP_CMP_EQ"}]]' ]
   # Each rule compares an argument once: runc splits a rule that compares one twice into ORed rules.
   [ "$(jq '[.syscalls[] | select((.args // []) | map(.index) | length != (unique | length))] | length' "$f")" -eq 0 ]
+}
+
+# #100: once the entrypoint drops to the developer, nothing gives root back; crun joins no keyring.
+@test "Containerfile removes sudo and every setuid or setgid bit" {
+  c="$I/Containerfile"
+  grep -q '^RUN rpm -e sudo \\$' "$c"
+  grep -qF ' && find / -xdev -type f \( -perm -4000 -o -perm -2000 \) -exec chmod ug-s {} + \' "$c"
+  run grep -E '^(RUN|COPY|ADD|ENV|ARG)' <(sed -n '/^RUN rpm -e sudo/,$p' "$c" | sed 1d)
+  [[ "$output" != *RUN* && "$output" != *COPY* ]]
+}
+
+@test "containers.conf: nested containers join no session keyring (seccomp refuses keyctl)" {
+  grep -q '^keyring = false$' "$I/containers.conf.tmpl"
 }
 
 @test "Containerfile pins every version" {
