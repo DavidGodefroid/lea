@@ -559,3 +559,58 @@ func TestCommandAppliesThePushPolicy(t *testing.T) {
 		}
 	}
 }
+
+// Command carries the daemon's grant token in a pinned GitHub push (GrantHeader, after
+// gitPins' reset) and a pinned merge (GH_TOKEN of the merge call only), for exactly that ref
+// or PR; a caller that mints none is not pinned (#110, re-review B2).
+func TestCommandCarriesTheGrantToken(t *testing.T) {
+	type mint struct {
+		kind, repo, ref string
+		pr              int64
+	}
+	var got []mint
+	tok := "lea-grant.eyJjIjoibGVhLWEifQ.c2ln"
+	c := dev
+	c.Branch, c.Tree = "feat/73-x", true
+	c.Mint = func(kind, repo, ref string, pr int64) string {
+		got = append(got, mint{kind, repo, ref, pr})
+		return tok
+	}
+	g := all(CommitIdentity)
+	g.GitHub, g.Branch = "github.com/someone/shop", "*"
+	script := lastWord(t, Command(Request{Prog: "git", Args: []string{"push", "origin", "feat/73-x"}}, c, g))
+	h := "'http.extraHeader=" + GrantHeader + ": " + tok + "'"
+	if !strings.Contains(script, h) || strings.Index(script, "'http.extraHeader='") > strings.Index(script, h) {
+		t.Fatalf("no grant header after the reset: %s", script)
+	}
+	if len(got) != 1 || got[0] != (mint{GrantPush, "someone/shop", "refs/heads/feat/73-x", 0}) {
+		t.Fatalf("minted %+v", got)
+	}
+	got = nil
+	m := all(Merge)
+	m.GitHub = "github.com/someone/shop"
+	c.Merge = &MergePolicy{Lead: "l", Open: true, Approved: []string{headSHA}, Agent: "dev-2"}
+	cmd := lastWord(t, Command(Request{Action: Merge, Prog: "gh", Args: []string{"pr", "merge", "7", "--squash"}}, c, m))
+	i := strings.Index(cmd, "GH_TOKEN='"+tok+"' '"+ghPath+"' 'pr' 'merge' '7'")
+	if i < 0 || strings.Index(cmd, "lea_isprod") > i || strings.Count(cmd, tok) != 1 {
+		t.Fatalf("the merge token is not on the merge call alone: %s", cmd)
+	}
+	if len(got) != 1 || got[0] != (mint{GrantMerge, "someone/shop", "", 7}) {
+		t.Fatalf("minted %+v", got)
+	}
+	// A daemon that cannot mint, or a token lea would not quote: not pinned.
+	for _, bad := range []string{"", "it's", "a b"} {
+		c.Mint = func(string, string, string, int64) string { return bad }
+		if cmd := Command(Request{Prog: "git", Args: []string{"push", "origin", "feat/73-x"}}, c, g); cmd != "" {
+			t.Fatalf("%q: a push pinned: %s", bad, cmd)
+		}
+		if cmd := Command(Request{Action: Merge, Prog: "gh", Args: []string{"pr", "merge", "7"}}, c, m); cmd != "" {
+			t.Fatalf("%q: a merge pinned: %s", bad, cmd)
+		}
+	}
+	// No Mint (no forge forwarder rules): as before.
+	c.Mint = nil
+	if cmd := Command(Request{Prog: "git", Args: []string{"push", "origin", "feat/73-x"}}, c, g); cmd == "" || strings.Contains(cmd, GrantHeader) {
+		t.Fatalf("without Mint: %s", cmd)
+	}
+}

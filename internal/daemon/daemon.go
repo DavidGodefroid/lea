@@ -52,8 +52,11 @@ type Daemon struct {
 	attached map[string]string
 	// grantProxy names the proxy of an agent's pinned calls (SetGrantProxy); nil: grants.LeaProxy.
 	grantProxy func(container, agent string) string
-	notify     map[string]chan struct{}
-	verdicts   map[int64]chan string
+	// grantKey signs the grant tokens of the pinned pushes and merges (SetGrantKey, #110); nil:
+	// none is minted.
+	grantKey []byte
+	notify   map[string]chan struct{}
+	verdicts map[int64]chan string
 	// asks: the asks in flight, by asker (one each); in memory, a restart ends them.
 	asks map[string]pendingAsk
 

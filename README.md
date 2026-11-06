@@ -701,6 +701,14 @@ Nor does it push to a production branch: lea never starts an agent of the tree o
 repository shows as production, a push no grant pins is denied in the tree, and the pinned `git push origin <branch>`
 first reads the default branch and `.lea/production` (on the default branch and on the pushed branch) from GitHub and
 refuses a production branch, or any read error but a 404.
+The forge forwarder enforces the same rules itself, whatever ran the call (a script, `make`, a raw `curl` to
+`git-receive-pack`): for a container a tower runs in, it reads the ref list of every `git-receive-pack` and refuses
+a push that does not carry the single-use token lea minted for that pinned push of that exact ref, a push of more
+than one ref or of a tag, and any update or delete of a production branch (the default branch, `main`, `master`, a
+branch `.lea/production` names on the default branch or on the pushed branch, read on GitHub: a missing file only on
+a 404). It refuses a REST or GraphQL merge without the token lea minted for the pinned merge of that PR, an
+auto-merge, `merges`, `merge-upstream`, the contents API and git refs writes (but the delete of a branch that is not a
+production one, for `gh pr merge --delete-branch`).
 
 The tower never does the work itself, not even a `git push`: every request goes to an agent. The
 plugin enforces it with a hook: once `/lea:control-tower` runs, the session may only use lea's

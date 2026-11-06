@@ -401,3 +401,16 @@ func (d *Daemon) deployNote(o Origin, me string) string {
 	}
 	return "no window " + state
 }
+
+// TreeContainers is the containers a tower's tree lives in: those of the towers that run
+// (spawned agents share their parent's container). The forge forwarder applies the tree's push
+// and merge rules to every request of theirs (keyproxy.TreeFile, #110).
+func TreeContainers(agents []store.Agent) map[string]bool {
+	out := map[string]bool{}
+	for _, a := range agents {
+		if a.Parent == "" && a.State != "done" && a.State != "stopped" && isRootRole(a.Role) {
+			out[a.Container] = true
+		}
+	}
+	return out
+}

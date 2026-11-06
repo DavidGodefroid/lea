@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/DavidGodefroid/lea/internal/grants"
+	"github.com/DavidGodefroid/lea/internal/keyproxy"
 	"github.com/DavidGodefroid/lea/internal/store"
 )
 
@@ -254,6 +255,34 @@ func (d *Daemon) SetGrantProxy(f func(container, agent string) string) {
 	d.mu.Unlock()
 }
 
+// SetGrantKey is the key of the grant tokens (keyproxy.LoadGrantKey): each pinned GitHub push
+// and merge then carries a token for that ref or PR, from that container, which the forge
+// forwarder requires of a container of a tower's tree (#110).
+func (d *Daemon) SetGrantKey(key []byte) {
+	d.mu.Lock()
+	d.grantKey = key
+	d.mu.Unlock()
+}
+
+// grantMint is the Mint of a caller of container (grants.Caller), nil without a grant key.
+func (d *Daemon) grantMint(container string) func(kind, repo, ref string, pr int64) string {
+	d.mu.Lock()
+	key := d.grantKey
+	d.mu.Unlock()
+	if key == nil {
+		return nil
+	}
+	return func(kind, repo, ref string, pr int64) string {
+		// The forwarder checks the expiry against its own clock.
+		tok, err := keyproxy.MintGrant(key, keyproxy.Grant{Container: container, Repo: repo, Kind: kind, Ref: ref, PR: pr}, time.Now())
+		if err != nil {
+			log.Printf("lea daemon: grant token: %v", err)
+			return ""
+		}
+		return tok
+	}
+}
+
 func (d *Daemon) grantProxyFor(container, agent string) string {
 	d.mu.Lock()
 	f := d.grantProxy
@@ -277,7 +306,8 @@ func (d *Daemon) grantCaller(o Origin, me, cwd string) (grants.Caller, error) {
 		return grants.Caller{}, err
 	}
 	c := grants.Caller{Key: me, Container: o.Container, Repo: a.Repo, Branch: a.Branch, Lineage: []string{me},
-		OwnWorktree: grants.InWorktree(cwd, a.Repo, a.Name), Cwd: cwd, Proxy: d.grantProxyFor(o.Container, a.Name)}
+		OwnWorktree: grants.InWorktree(cwd, a.Repo, a.Name), Cwd: cwd, Proxy: d.grantProxyFor(o.Container, a.Name),
+		Mint: d.grantMint(o.Container)}
 	if c.OwnWorktree {
 		c.Worktree = strings.TrimSuffix(cwd, "/")
 	}

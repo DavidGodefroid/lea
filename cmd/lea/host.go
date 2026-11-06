@@ -22,6 +22,7 @@ import (
 	"github.com/DavidGodefroid/lea/internal/daemon"
 	"github.com/DavidGodefroid/lea/internal/deck"
 	"github.com/DavidGodefroid/lea/internal/identity"
+	"github.com/DavidGodefroid/lea/internal/keyproxy"
 	"github.com/DavidGodefroid/lea/internal/launcher"
 	"github.com/DavidGodefroid/lea/internal/lockhttp"
 	"github.com/DavidGodefroid/lea/internal/roles"
@@ -276,6 +277,15 @@ func runDaemon(stderr io.Writer) int {
 	requesterToken := func(container, agent, incarnation string) string {
 		return agents.RequesterToken(key, container, agent, incarnation)
 	}
+	// The grant tokens of the pinned pushes and merges, and the tree file: the forge forwarder
+	// enforces a tower's tree's push and merge rules itself (#110).
+	if gk, err := keyproxy.LoadGrantKey(forgeDir(filepath.Dir(host))); err != nil {
+		fmt.Fprintln(stderr, "lea:", clean(err.Error(), false))
+		return 1
+	} else {
+		d.SetGrantKey(gk)
+	}
+	go forgeTree(ctx, st, filepath.Dir(host), nonEmptyEnv("LEA_PREFIX", "lea"))
 	if os.Getenv("LEA_LOCKHTTP") == "1" {
 		proxyToken = func(container, agent string) string { return lockhttp.Token(key, container, agent) }
 		d.SetGrantProxy(lockHTTPGrantProxy(key))

@@ -255,7 +255,7 @@ func Server(addr string, h http.Handler) *http.Server {
 // SourceHeader names the calling container to a LockHTTP gate; an agent's own is always dropped.
 const SourceHeader = "X-Lea-Source"
 
-var strip = []string{"Authorization", "Proxy-Authorization", SourceHeader, "X-Api-Key", "Api-Key", "Cookie", "Cookie2",
+var strip = []string{"Authorization", "Proxy-Authorization", SourceHeader, GrantHeader, "X-Api-Key", "Api-Key", "Cookie", "Cookie2",
 	"Forwarded", "Via", "Proxy-Connection", "Connection", "Upgrade", "Keep-Alive", "Te", "Trailer", "Transfer-Encoding"}
 
 type statusWriter struct {
