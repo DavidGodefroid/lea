@@ -964,6 +964,13 @@ so. Changes apply after `lea init` (endpoints, keys, images, locksql) or `lea st
   literal grants the whole address, every vhost on it included.
 - The API keys of your providers' endpoints stay in the proxy container: no agent mounts a key
   file, and the key forwarder reaches an endpoint only through the proxy's egress rules.
+- The proxy container, the only one on both the agents' networks and the egress network, runs
+  confined: every capability dropped but `SETUID` and `SETGID`, `no-new-privileges`, a read-only
+  root (tmpfs on `/run`, `/tmp` and `/var/cache/squid`), a pids and a memory limit. No service in
+  it runs as root: squid as `squid`, the SSH and OTel forwarders as `nobody`, `lea-keyproxy` as
+  you (the owner of the key files; under rootless Podman, the container's root, which is you on
+  the host); only its entrypoint, PID 1, stays root to wait, or squid is PID 1 when no endpoint
+  is configured. A proxy that could not read a key file stops at start and says which.
 - lea never gets the Docker socket; the agents' own containers run in a rootless Podman inside
   lea, under seccomp and, on Linux, AppArmor. lea's seccomp profile (`image/seccomp.json`, not
   Docker's default) refuses `socketcall` and the kernel crypto API sockets (`AF_ALG`,

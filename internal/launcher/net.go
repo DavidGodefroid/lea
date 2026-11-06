@@ -44,9 +44,21 @@ func (l *Launcher) ensureNetworks(id string) error {
 	return nil
 }
 
+// proxyConfine are the docker run arguments that confine the proxy, the one container on both the
+// agents' networks and the egress network, which holds the provider keys: no capability but SETUID
+// and SETGID (its entrypoint starts each service under a user of its own with su-exec: none of
+// them runs as root), no-new-privileges, a read-only root with tmpfs where it writes, and pids and
+// memory limits. Part of proxyRules: a lea that confines it otherwise replaces a running proxy.
+var proxyConfine = []string{"--cap-drop", "ALL", "--cap-add", "SETUID", "--cap-add", "SETGID",
+	"--security-opt", "no-new-privileges", "--read-only",
+	"--tmpfs", "/run:rw,nosuid,nodev,noexec,size=16m", "--tmpfs", "/tmp:rw,nosuid,nodev,noexec,size=64m",
+	"--tmpfs", "/var/cache/squid:rw,nosuid,nodev,noexec,size=16m",
+	"--pids-limit", "512", "--memory", "1g"}
+
 // proxyRules is a digest (12 hex digits) of the files the proxy renders its rules and refusal
-// pages from (the lea root's proxy/), "" when there is none: a lea whose rules changed (a new
-// default allowlist, a new refusal) replaces a proxy that an older one started.
+// pages from (the lea root's proxy/) and of proxyConfine, "" when there is no rule file: a lea
+// whose rules changed (a new default allowlist, a new refusal, another confinement) replaces a
+// proxy that an older one started.
 func (l *Launcher) proxyRules() string {
 	dir := filepath.Join(l.Root, "proxy")
 	files, _ := filepath.Glob(filepath.Join(dir, "errors", "*"))
@@ -67,6 +79,7 @@ func (l *Launcher) proxyRules() string {
 	if n == 0 {
 		return ""
 	}
+	h.Write([]byte("confine\x00" + strings.Join(proxyConfine, "\x00") + "\n"))
 	return hex.EncodeToString(h.Sum(nil))[:12]
 }
 
@@ -147,6 +160,7 @@ func (l *Launcher) ensureProxy(proj string) error {
 	a := []string{"run", "-d", "--name", name, "--restart", "unless-stopped", "--network", l.prefix() + "-egress",
 		"--label", "lea.prefix=" + l.prefix(), "--label", "lea.role=proxy", "--label", "lea.git-ssh=" + l.Cfg.GitSSH(),
 		"--label", "lea.egress-allow=" + allow}
+	a = append(a, proxyConfine...)
 	if fw.stamp != "" {
 		a = append(a, "--label", "lea.providers="+fw.stamp)
 	}

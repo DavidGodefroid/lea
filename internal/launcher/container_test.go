@@ -834,8 +834,58 @@ func TestProxyRulesDigest(t *testing.T) {
 		t.Fatalf("an error page change left the digest at %q", second)
 	}
 	write("render-squid-conf.sh", "a2")
-	if third := l.proxyRules(); third == first {
+	third := l.proxyRules()
+	if third == first {
 		t.Fatal("a render-squid-conf.sh change left the digest unchanged")
+	}
+	// Another confinement replaces a running proxy too.
+	old := proxyConfine
+	proxyConfine = append(append([]string(nil), old...), "--cap-add", "CHOWN")
+	t.Cleanup(func() { proxyConfine = old })
+	if fourth := l.proxyRules(); fourth == third {
+		t.Fatal("a proxyConfine change left the digest unchanged")
+	}
+}
+
+// The proxy (both the agents' networks and the egress one, the provider keys) runs confined (#102):
+// no capability but SETUID and SETGID, no-new-privileges, a read-only root with tmpfs where its
+// entrypoint and squid write, pids and memory limits; never privileged, never a capability more.
+func TestProxyRunsConfined(t *testing.T) {
+	w := newWorld(t, repoRoot(t))
+	if err := w.launcher().ensureProxy(w.proj); err != nil {
+		t.Fatal(err)
+	}
+	var run string
+	for _, c := range w.calls() {
+		if strings.HasPrefix(c, "docker [run]") && strings.Contains(c, "[--name] [lea-proxy]") {
+			run = c
+		}
+	}
+	if run == "" {
+		t.Fatalf("no proxy run:\n%s", strings.Join(w.calls(), "\n"))
+	}
+	for _, want := range []string{
+		"[--cap-drop] [ALL] [--cap-add] [SETUID] [--cap-add] [SETGID]",
+		"[--security-opt] [no-new-privileges]", "[--read-only]",
+		"[--tmpfs] [/run:rw,nosuid,nodev,noexec,size=16m]", "[--tmpfs] [/tmp:rw,nosuid,nodev,noexec,size=64m]",
+		"[--tmpfs] [/var/cache/squid:rw,nosuid,nodev,noexec,size=16m]",
+		"[--pids-limit] [512]", "[--memory] [1g]",
+	} {
+		if !strings.Contains(run, want) {
+			t.Errorf("proxy run lacks %s:\n%s", want, run)
+		}
+	}
+	if n := strings.Count(run, "[--cap-add]"); n != 2 {
+		t.Errorf("proxy run adds %d capabilities, want 2:\n%s", n, run)
+	}
+	for _, no := range []string{"[--privileged]", "[--user]", "seccomp=unconfined", "apparmor=unconfined"} {
+		if strings.Contains(run, no) {
+			t.Errorf("proxy run has %s:\n%s", no, run)
+		}
+	}
+	// The confinement comes before the image: docker would pass it to the entrypoint otherwise.
+	if i, j := strings.Index(run, "[--read-only]"), strings.Index(run, "[lea-proxy:dev]"); i < 0 || j < i {
+		t.Errorf("the confinement is not a docker option:\n%s", run)
 	}
 }
 
