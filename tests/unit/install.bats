@@ -425,3 +425,24 @@ legacy_warning="warning: no Sigstore bundle for this release (pre-signing versio
   [ "$status" -eq 2 ]
   [[ "$output" == *"unknown option --gitlab"* ]]
 }
+
+@test "under umask 002 the installer creates lea-install and the bin dir with mode 755" {
+  run sh -c 'umask 002; sh "$1" --version v1.2.3 --no-init' _ "$INSTALL"
+  [ "$status" -eq 0 ]
+  [ -x "$LEA_INSTALL_DIR/v1.2.3/bin/lea" ]
+  [ -n "$(find "$LEA_INSTALL_DIR" -maxdepth 0 -perm 0755)" ]
+  [ -n "$(find "$LEA_BIN_DIR" -maxdepth 0 -perm 0755)" ]
+}
+
+@test "an existing group-writable lea-install is left as it is, with a warning and the fix" {
+  mkdir -p "$LEA_INSTALL_DIR" "$LEA_BIN_DIR"
+  chmod 0775 "$LEA_INSTALL_DIR"
+  run sh -c 'umask 002; sh "$1" --version v1.2.3 --no-init' _ "$INSTALL"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"warning: $LEA_INSTALL_DIR is writable by its group or others: fix it yourself with  chmod go-w '$LEA_INSTALL_DIR'"* ]]
+  # Never chmod-ed silently: still 775 after the install.
+  [ -n "$(find "$LEA_INSTALL_DIR" -maxdepth 0 -perm 0775)" ]
+  # The bin dir, created by the installer, is 755 and draws no warning.
+  [ -n "$(find "$LEA_BIN_DIR" -maxdepth 0 -perm 0755)" ]
+  [[ "$output" != *"$LEA_BIN_DIR is writable"* ]]
+}

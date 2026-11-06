@@ -38,6 +38,19 @@ done
 say() { printf 'lea install: %s\n' "$*" >&2; }
 die() { say "error: $*"; exit 1; }
 have() { command -v "$1" >/dev/null 2>&1; }
+# mk_dir DIR: create DIR with mode 0755 whatever the umask (a umask of 002 would otherwise make
+# it group-writable), but only when this installer creates it: an existing directory is never
+# chmod-ed silently, since files in it may already have been tampered with. One that others can
+# write only gets a warning with the fix.
+mk_dir() {
+  if [ -d "$1" ]; then
+    if [ -n "$(find -H "$1" -maxdepth 0 \( -perm -0020 -o -perm -0002 \) 2>/dev/null)" ]; then
+      say "warning: $1 is writable by its group or others: fix it yourself with  chmod go-w '$1'"
+    fi
+  else
+    (umask 022; mkdir -p "$1")
+  fi
+}
 
 # Requirements.
 case $(uname -s) in
@@ -128,7 +141,7 @@ want=$(awk -v f="$asset" '$2 == f { print $1 }' "$tmp/checksums.txt")
 [ "$(sum "$tmp/$asset")" = "$want" ] || die "$asset does not match its checksum"
 
 dir=${LEA_INSTALL_DIR:-${XDG_DATA_HOME:-$HOME/.local/share}/lea-install}
-mkdir -p "$dir"
+mk_dir "$dir"
 tar -xzf "$tmp/$asset" -C "$tmp"
 rm -rf "${dir:?}/${version:?}"
 mv "$tmp/lea-$version" "$dir/$version"
@@ -136,7 +149,7 @@ bindir=${LEA_BIN_DIR:-$HOME/.local/bin}
 if [ -z "$link" ]; then
   say "installed lea $version in $dir/$version, not linked"
 else
-  mkdir -p "$bindir"
+  mk_dir "$bindir"
   if [ -e "$bindir/lea" ] && [ ! -L "$bindir/lea" ]; then
     die "$bindir/lea exists and is not a link: move it away, then rerun"
   fi
