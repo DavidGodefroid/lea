@@ -439,7 +439,8 @@ done
 
 say "the Lock clients against the locks lox runs: lea doctor, and lea's hello probe"
 LEA_PROJECTS_DIR="$projects" "$root/bin/lea" doctor </dev/null >"$work/doctor.out" 2>&1 || true
-grep -i 'lock\|lox' "$work/doctor.out" || true
+# Indented: lea doctor's own ok lines are not this test's checks.
+grep -i 'lock\|lox' "$work/doctor.out" | sed 's/^/      doctor: /' || true
 for x in "crm locksql $sq_v" "events lockmq $mq_v" "docs lockfile $lf_v"; do
   # shellcheck disable=SC2086 # three words
   set -- $x
