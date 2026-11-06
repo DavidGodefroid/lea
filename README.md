@@ -313,9 +313,12 @@ lea needs no forge account, and works with any of them.
   `github.com`. An agent can use the token for what it allows, never read
   it; the forwarder also refuses the calls that would hand access to someone outside lea (an SSH,
   GPG or signing key on the account, a deploy key, a webhook, an OAuth authorization: make those
-  on the host). A token an earlier lea, or a `gh auth login` in lea, left in the agents' state
-  (`/lea/state/gh/hosts.yml`, or a `github.com` line of git's store) is moved to the proxy at the
-  next `lea`. Prefer a fine-grained token limited to the repositories of the projects directory,
+  on the host). A GitHub token in the agents' state (`/lea/state/gh/hosts.yml`, or a
+  `github.com` line of git's store) is removed at each `lea`. Any agent can write that state, so
+  such a token never replaces the proxy's: it is discarded with a warning (`lea github login`
+  changes lea's token). Only the first `lea` of this version, when the proxy has no token yet,
+  adopts the one an earlier lea left (the marker `~/.local/share/lea/proxy/forge-migrated` then
+  stops it, even after `lea github logout`). Prefer a fine-grained token limited to the repositories of the projects directory,
   without administration or workflow permissions.
 - **Other forges.** Log in from a shell in lea (`lea shell`, or `s` in the deck): `glab auth
   login`, or a token in git's credential store. Those tokens stay readable by the agents (see

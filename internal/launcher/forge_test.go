@@ -57,9 +57,9 @@ func TestMigrateGitHubTokenMovesItToTheProxy(t *testing.T) {
 		}
 	}
 	l := w.launcher()
-	what, err := l.migrateGitHubToken()
-	if err != nil || what != "gh's config and git's credential store" {
-		t.Fatalf("%q %v", what, err)
+	what, adopted, err := l.migrateGitHubToken()
+	if err != nil || what != "gh's config and git's credential store" || !adopted {
+		t.Fatalf("%q %v %v", what, adopted, err)
 	}
 	b, err := os.ReadFile(w.data + "/lea/proxy/forge/github.com")
 	if err != nil || string(b) != "gho_entryToken0123456789\n" {
@@ -82,12 +82,100 @@ func TestMigrateGitHubTokenMovesItToTheProxy(t *testing.T) {
 		t.Errorf("config.yml %q", b)
 	}
 	// Nothing left: nothing moved, the proxy's token stays.
-	if what, err := l.migrateGitHubToken(); err != nil || what != "" {
-		t.Errorf("second run: %q %v", what, err)
+	if what, adopted, err := l.migrateGitHubToken(); err != nil || what != "" || adopted {
+		t.Errorf("second run: %q %v %v", what, adopted, err)
 	}
 	if b, _ := os.ReadFile(w.data + "/lea/proxy/forge/github.com"); string(b) != "gho_entryToken0123456789\n" {
 		t.Errorf("second run changed the token: %q", b)
 	}
+}
+
+// plantStateTokens writes what an agent can write: a GitHub token in gh's config and git's store.
+func plantStateTokens(t *testing.T, st, tok string) {
+	t.Helper()
+	for d, f := range map[string]string{
+		"gh/hosts.yml":    "github.com:\n    oauth_token: " + tok + "\n    user: mallory\n",
+		"git/credentials": "https://mallory:" + tok + "@github.com\n",
+	} {
+		if err := os.MkdirAll(filepath.Dir(st+"/"+d), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(st+"/"+d, []byte(f), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
+func assertStateStripped(t *testing.T, st, tok string) {
+	t.Helper()
+	for _, f := range []string{"gh/hosts.yml", "git/credentials"} {
+		if b, _ := os.ReadFile(st + "/" + f); strings.Contains(string(b), tok) {
+			t.Errorf("%s still holds the planted token: %q", f, b)
+		}
+	}
+}
+
+// An agent writes the state: a token planted there never replaces the proxy's (#103).
+func TestMigrateGitHubTokenKeepsTheProxysToken(t *testing.T) {
+	w := newWorld(t, repoRoot(t))
+	st := w.data + "/lea/state"
+	l := w.launcher()
+	if err := l.setGitHubToken("ghp_OWNER"); err != nil {
+		t.Fatal(err)
+	}
+	plantStateTokens(t, st, "ghp_ATTACKER")
+	what, adopted, err := l.migrateGitHubToken()
+	if err != nil || what != "gh's config and git's credential store" || adopted {
+		t.Fatalf("%q %v %v", what, adopted, err)
+	}
+	if b, _ := os.ReadFile(w.data + "/lea/proxy/forge/github.com"); string(b) != "ghp_OWNER\n" {
+		t.Errorf("the proxy's token was replaced: %q", b)
+	}
+	assertStateStripped(t, st, "ghp_ATTACKER")
+	l.logGitHubMigration(what, adopted)
+	if s := w.errb.String() + w.out.String(); !strings.Contains(s, "lea github login") || !strings.Contains(s, "discarded") || strings.Contains(s, "ATTACKER") {
+		t.Errorf("warning: %q", s)
+	}
+}
+
+// After the first migration, a token planted in the state is discarded, even with no proxy token
+// (after lea github logout).
+func TestMigrateGitHubTokenAdoptsOnlyOnce(t *testing.T) {
+	w := newWorld(t, repoRoot(t))
+	st := w.data + "/lea/state"
+	l := w.launcher()
+	// The first start: nothing in the state, the marker is written.
+	if what, adopted, err := l.migrateGitHubToken(); err != nil || what != "" || adopted {
+		t.Fatalf("first: %q %v %v", what, adopted, err)
+	}
+	if _, err := os.Stat(w.data + "/lea/proxy/forge-migrated"); err != nil {
+		t.Fatalf("no marker: %v", err)
+	}
+	plantStateTokens(t, st, "ghp_ATTACKER")
+	what, adopted, err := l.migrateGitHubToken()
+	if err != nil || what == "" || adopted {
+		t.Fatalf("planted: %q %v %v", what, adopted, err)
+	}
+	if _, err := os.Stat(w.data + "/lea/proxy/forge/github.com"); !os.IsNotExist(err) {
+		t.Errorf("a planted token reached the proxy: %v", err)
+	}
+	assertStateStripped(t, st, "ghp_ATTACKER")
+	// Logged in, then out: a token planted after the logout is discarded too.
+	l.Stdin = strings.NewReader("ghp_OWNER\n")
+	if err := l.github([]string{"login"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := l.github([]string{"logout"}); err != nil {
+		t.Fatal(err)
+	}
+	plantStateTokens(t, st, "ghp_ATTACKER2")
+	if _, adopted, err := l.migrateGitHubToken(); err != nil || adopted {
+		t.Fatalf("after logout: %v %v", adopted, err)
+	}
+	if _, err := os.Stat(w.data + "/lea/proxy/forge/github.com"); !os.IsNotExist(err) {
+		t.Errorf("a token planted after logout reached the proxy: %v", err)
+	}
+	assertStateStripped(t, st, "ghp_ATTACKER2")
 }
 
 func TestGitHubLoginLogoutStatus(t *testing.T) {

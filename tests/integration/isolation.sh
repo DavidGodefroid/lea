@@ -33,7 +33,7 @@ printf '#!/bin/sh\necho "lox dev"\n' >"$work/bin/lox"; chmod +x "$work/bin/lox"
 PATH="$work/bin:$PATH"; export PATH
 state="$XDG_DATA_HOME/lea/state"; mkdir -p "$state"; printf '{}\n' >"$state/claude.json"
 # A GitHub login left in the agents' state by an earlier lea (#103): gh's config and git's store.
-# lea moves it to the proxy at start. LEA_IT_GITHUB_TOKEN (CI: the workflow's token) proves that
+# lea moves it to the proxy at its first start (the proxy has no token yet). LEA_IT_GITHUB_TOKEN (CI: the workflow's token) proves that
 # gh and git work with it; without one, a made-up token must reach GitHub (Bad credentials).
 forge_token=${LEA_IT_GITHUB_TOKEN:-ghp_leaIsolationNotAToken}
 forge_expect=bad
@@ -169,6 +169,9 @@ else echo "FAIL the GitHub token is not in the proxy's key directory"; rc=1; fi
 if grep -q oauth_token "$state/gh/hosts.yml" || grep -q github.com "$state/git/credentials"; then
   echo "FAIL the GitHub token is still in the agents' state"; rc=1
 else echo "ok   the GitHub token left the agents' state"; fi
+# Adopted once (#103): from now on, a token an agent plants in the state is discarded.
+if [ -f "$XDG_DATA_HOME/lea/proxy/forge-migrated" ]; then echo "ok   the state's tokens are adopted only once"
+else echo "FAIL no forge-migrated marker: a token planted in the state could replace the proxy's"; rc=1; fi
 LEA_PROJECTS_DIR="$projects" "$root/bin/lea" shell -- env FORGE_NEEDLE="$forge_needle" FORGE_EXPECT="$forge_expect" CANARY_IP="$canary_ip" GW_IP="$gw_ip" HOST_IP="$host_ip" \
   SIBLING_IP="$sibling_ip" HOST_FACADE="$facade" HOST_CRED_SHA="$cred_sha" HOST_HIST_SHA="$hist_sha" sh "$projects/inside-isolation.sh" || rc=1
 exit "$rc"

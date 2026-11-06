@@ -62,12 +62,20 @@ func validToken(tok string) bool {
 	return true
 }
 
-// migrateGitHubToken moves a GitHub token an agent could read out of lea's state into the proxy:
-// gh's (STATE/gh/hosts.yml: every oauth_token of its github.com entry; a gh auth login in lea, or
-// an earlier lea) and git's store (STATE/git/credentials: its https://…@github.com lines). The
-// newest wins: gh's, then the store's, replace the proxy's. What it removes is gone from the agents'
-// state, and the token is never printed. It says what it moved, "" for nothing.
-func (l *Launcher) migrateGitHubToken() (string, error) {
+// forgeMigrated is the marker of the one migration of a state token (outside the agents' state,
+// which every agent container mounts read-write).
+func (l *Launcher) forgeMigrated() string { return l.Cfg.DataDir() + "/proxy/forge-migrated" }
+
+// migrateGitHubToken removes the GitHub tokens an agent could read from lea's state: gh's
+// (STATE/gh/hosts.yml: every oauth_token of its github.com entry; a gh auth login in lea, or an
+// earlier lea) and git's store (STATE/git/credentials: its https://…@github.com lines). The state
+// is the agents' and any agent can write there, so a token found there is not trusted: it never
+// replaces the proxy's. It is adopted (gh's first, else the store's) only by the first migration of
+// this data dir, and only when the proxy has no token: the tokens an earlier lea left. The marker
+// proxy/forge-migrated is then written; after it, a token in the state (planted by an agent, even
+// after lea github logout) is discarded. The token is never printed. It says what it removed ("" for
+// nothing) and whether the proxy took the token.
+func (l *Launcher) migrateGitHubToken() (string, bool, error) {
 	st := l.Cfg.StateDir()
 	var moved []string
 	tok := ""
@@ -76,12 +84,12 @@ func (l *Launcher) migrateGitHubToken() (string, error) {
 		out, t, n := stripGHToken(string(b))
 		if n > 0 {
 			if err := WriteFile(l.Cfg.DataDir(), hosts, []byte(out)); err != nil {
-				return "", die("%v", err)
+				return "", false, die("%v", err)
 			}
 			moved = append(moved, "gh's config")
 			tok = t
 			if err := l.ghConfigVersioned(st + "/gh/config.yml"); err != nil {
-				return "", err
+				return "", false, err
 			}
 		}
 	}
@@ -90,7 +98,7 @@ func (l *Launcher) migrateGitHubToken() (string, error) {
 		out, t, n := stripStoreToken(string(b))
 		if n > 0 {
 			if err := WriteFile(l.Cfg.DataDir(), store, []byte(out)); err != nil {
-				return "", die("%v", err)
+				return "", false, die("%v", err)
 			}
 			moved = append(moved, "git's credential store")
 			if tok == "" {
@@ -98,15 +106,49 @@ func (l *Launcher) migrateGitHubToken() (string, error) {
 			}
 		}
 	}
-	if len(moved) == 0 {
-		return "", nil
+	_, err := os.Lstat(l.forgeMigrated())
+	first := os.IsNotExist(err)
+	if err != nil && !first {
+		return "", false, die("%v", err)
 	}
-	if validToken(tok) {
+	adopt := false
+	if len(moved) > 0 && first && validToken(tok) {
+		_, err := providers.ReadKey(l.forgeToken())
+		adopt = err != nil
+	}
+	if adopt {
 		if err := l.setGitHubToken(tok); err != nil {
-			return "", err
+			return "", false, err
 		}
 	}
-	return strings.Join(moved, " and "), nil
+	if first {
+		if err := l.markForgeMigrated(); err != nil {
+			return "", false, err
+		}
+	}
+	return strings.Join(moved, " and "), adopt, nil
+}
+
+// markForgeMigrated writes the marker: from now on a token in the agents' state is discarded.
+func (l *Launcher) markForgeMigrated() error {
+	if err := Mkdirs(l.Cfg.DataDir(), l.Cfg.DataDir()+"/proxy"); err != nil {
+		return die("%v", err)
+	}
+	if err := WriteFile(l.Cfg.DataDir(), l.forgeMigrated(), []byte("the GitHub tokens of the agents' state are no longer adopted (lea github login sets the proxy's)\n")); err != nil {
+		return die("%v", err)
+	}
+	return nil
+}
+
+// logGitHubMigration says what migrateGitHubToken did.
+func (l *Launcher) logGitHubMigration(what string, adopted bool) {
+	switch {
+	case what == "":
+	case adopted:
+		l.logf("moved the GitHub token of %s to the proxy: agents use it through gh and git, and can no longer read it", what)
+	default:
+		l.logf("warning: removed a GitHub token from %s (the agents' state, which any agent can write) and discarded it: the proxy keeps its own; to change lea's token, run lea github login on the host", what)
+	}
 }
 
 // ghConfigVersioned gives gh's config.yml at path a version when it has none: without one, gh
@@ -240,12 +282,11 @@ func (l *Launcher) github(args []string) error {
 		if err := l.setGitHubToken(tok); err != nil {
 			return err
 		}
-		if _, err := l.migrateGitHubToken(); err != nil {
+		// The proxy has a token now: one in the agents' state is removed and discarded.
+		if what, _, err := l.migrateGitHubToken(); err != nil {
 			return err
-		}
-		// The token just given wins over one the migration found.
-		if err := l.setGitHubToken(tok); err != nil {
-			return err
+		} else if what != "" {
+			l.logf("removed a GitHub token from %s (the agents' state) and discarded it", what)
 		}
 		l.logf("GitHub token saved for the proxy (%s): agents use it through gh and git and never see it; running leas use it at their next request", l.forgeToken())
 		return nil
