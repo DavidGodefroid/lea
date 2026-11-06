@@ -104,7 +104,7 @@ launcher() {
   [[ "$output" == *"FAIL  LockHTTP gate mounts: the console's home"* ]]
   [[ "$output" == *"FAIL  LockHTTP gate: does not answer"* ]]
   [[ "$output" == *"FAIL  squid: listens on ':::3128'"* ]]
-  [[ "$output" == *"warn  lockhttp console: down"*"run \`lox up\`"* ]]
+  [[ "$output" == *"warn  lockhttp console: down"*"run \`lox run\`"* ]]
 }
 
 @test "a gate left in the network namespace of a proxy started again is a failure" {
@@ -119,11 +119,11 @@ launcher() {
   export FAKE_DOCKER_OUT_INSPECT__F_AT_LEA_LOCKHTTP_GATE="true|ghcr.io/davidgodefroid/lockhttp@$D|gate|/tmp/run>/run/lockhttp;"
   run lea__doctor_lockhttp
   [ "$status" -eq 1 ]
-  [[ "$output" == *"FAIL  LockHTTP gate mounts: no socket volume of lox up's lockhttp lock"*"run \`lox up\`"* ]]
-  # The fixed volume of a console of lockhttp's own launcher is not lox up's.
+  [[ "$output" == *"FAIL  LockHTTP gate mounts: no socket volume of lox run's lockhttp lock"*"run \`lox run\`"* ]]
+  # The fixed volume of a console of lockhttp's own launcher is not lox run's.
   export FAKE_DOCKER_OUT_INSPECT__F_AT_LEA_LOCKHTTP_GATE="true|ghcr.io/davidgodefroid/lockhttp@$D|gate|lockhttp-run/x>/run/lockhttp;"
   run lea__doctor_lockhttp
-  [[ "$output" == *"FAIL  LockHTTP gate mounts: no socket volume of lox up's lockhttp lock"* ]]
+  [[ "$output" == *"FAIL  LockHTTP gate mounts: no socket volume of lox run's lockhttp lock"* ]]
   export FAKE_DOCKER_OUT_INSPECT__F_AT_LEA_LOCKHTTP_GATE=
   export FAKE_DOCKER_RC_INSPECT__F_AT_LEA_LOCKHTTP_GATE=1
   run lea__doctor_lockhttp
@@ -199,7 +199,7 @@ launcher() {
   # A later host path holding -home/ is no console home (an earlier pattern matched across mounts).
   [ "$(lea__lockhttp_gate_mounts "$ok>/run/lockhttp;/home/u/my-home/lea/gate>/etc/lockhttp-gate;")" = ok ]
   [ "$(lea__lockhttp_gate_mounts "/srv/lockfamily-x-home/y>/etc/x;$ok>/run/lockhttp;")" = ok ]
-  # lox up's socket volume must be the entry on /run/lockhttp, not a pattern spanning two entries.
+  # lox run's socket volume must be the entry on /run/lockhttp, not a pattern spanning two entries.
   [ "$(lea__lockhttp_gate_mounts "lockfamily-1a2b3c4d_web-run/v>/lockhttp-home;/tmp/run>/run/lockhttp;")" = none ]
   [ "$(lea__lockhttp_gate_mounts "lockfamily-1a2b3c4d_web-gate/v>/lockhttp-home;lockhttp-run/v>/run/lockhttp;")" = none ]
   [ "$(lea__lockhttp_gate_mounts "lockfamily-zz_web-run/v>/run/lockhttp;")" = none ]

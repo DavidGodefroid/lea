@@ -6,10 +6,7 @@ const Usage = `Usage:
                               set up lea on this workstation (once; rerun at will)
   lea locksql | lea lockmq | lea lockfile
                               whether agents reach that tool's console, and how it runs
-                              (under lox up only; lea never starts it)
-  lea lock open|close locksql [profile] | lea lock list
-                              lox up's locksql console in a pane of the deck, under the agent
-                              (the deck's L): its own questions, typed by you only
+                              (under lox run only, in another terminal: lea starts none)
   lea                         open the deck: your agents on the left, the selected one on the right
                               (keys: j/k select, enter focus, ctrl+space back, n new, x stop, q quit)
   lea new [-r role] [-p provider] [-m model] [--repo R] [--branch B] [--brief file] [name] [-- args]

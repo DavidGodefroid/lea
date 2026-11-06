@@ -153,7 +153,7 @@ func (l *Launcher) doctorLocks(proj string) error {
 	}
 	l.doctorLox(set, ok, warn)
 	if s == nil {
-		warn("locks lox runs", "no lox up state for "+proj+" (.lockfamily/up.json): no lock to compare with lea's clients")
+		warn("locks lox runs", "no lox run state for "+proj+" (.lockfamily/up.json): no lock to compare with lea's clients")
 		return nil
 	}
 	on := l.Cfg.ToolsOn(proj, func(string, ...any) {})
@@ -208,7 +208,7 @@ func (l *Launcher) doctorLox(set *locks.Set, ok func(string), warn func(string, 
 
 // lockHello is the hello handshake, of protocol major protocol (lea's client's), of the console of the lock lk of up.json s: lea's core binary
 // run in lea's image (lea lock-hello) with only the lock's socket volume mounted, once docker
-// confirms it is lox up's (lockUpVolumeWrong), as the host user in the Lock's clients group, with
+// confirms it is lox run's (lockUpVolumeWrong), as the host user in the Lock's clients group, with
 // no network and no capability. nil and why when lea cannot ask it.
 func (l *Launcher) lockHello(proj string, s *lockUpState, lk UpLock, protocol int) (*locks.Hello, string) {
 	reg, _ := locks.Get(lk.Type)
@@ -225,7 +225,7 @@ func (l *Launcher) lockHello(proj string, s *lockUpState, lk UpLock, protocol in
 		"--mount", "type=bind,src=" + l.Core + ",dst=/usr/local/bin/lea,readonly",
 		"--entrypoint", "/usr/local/bin/lea", l.Cfg.Get("LEA_IMAGE"), "lock-hello", "--uid", reg.UID, "--protocol", strconv.Itoa(protocol), reg.SocketDir()}
 	// The console's socket, named as lockkit names it (the projects directory's hash, or "user",
-	// and the profile lox up says it serves): a 2710 socket directory cannot be listed.
+	// and the profile lox run says it serves): a 2710 socket directory cannot be listed.
 	if lk.Profile != "" {
 		args = append(args, locks.SocketNames(reg.SocketDir(), proj, lk.Profile)...)
 	}

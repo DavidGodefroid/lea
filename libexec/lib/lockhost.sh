@@ -1,8 +1,8 @@
 # shellcheck shell=sh
 # lockmq and lockfile, lock tools whose console runs in its own container, hub-attached only:
-# lockhub's `lox up` runs it for the projects directory (lockkit's isolation checks refuse a
+# lockhub's `lox run` runs it for the projects directory (lockkit's isolation checks refuse a
 # console in lea's container). lea only lets its agents reach the console's socket: the socket
-# volume of lox up's lock (.lockfamily/up.json) on /run/<tool> and the tool's clients group
+# volume of lox run's lock (.lockfamily/up.json) on /run/<tool> and the tool's clients group
 # (internal/launcher/lockhost.go). lea never starts, sees or drives a console, holds none of its
 # credentials, and runs no maintenance on its volumes.
 
@@ -37,11 +37,11 @@ lea__tool_on() {
 }
 
 # lea__tool_by_lock TOOL: TOOL is on although LEA_<TOOL> is not 1: the launcher turned it on for a
-# lock of TOOL that lox up runs for the projects directory. Logs so and succeeds; fails otherwise.
+# lock of TOOL that lox run runs for the projects directory. Logs so and succeeds; fails otherwise.
 lea__tool_by_lock() {
   case $1 in locksql) _tb_v=${LEA_LOCKSQL:-0} ;; *) _tb_v=$(lea__lockhost_get "$1") ;; esac
   [ "$_tb_v" != 1 ] || return 1
-  lea_log "$1 is on for lea while lox up runs a $1 lock here (lea's agents reach it; $(lea__tool_var "$1")=0 in your configuration keeps it off)"
+  lea_log "$1 is on for lea while lox run runs a $1 lock here (lea's agents reach it; $(lea__tool_var "$1")=0 in your configuration keeps it off)"
 }
 
 # lea__tool_var TOOL: TOOL's switch, LEA_LOCKSQL, LEA_LOCKMQ or LEA_LOCKFILE.
@@ -97,11 +97,11 @@ lea__lockhost_install_hint() {
 }
 
 # lea__lockhost_console_hint TOOL: how TOOL's console runs (lea never starts it): hub-attached
-# only, under lox up. lea's agents run as your uid, which names no account in the console's image:
+# only, under lox run. lea's agents run as your uid, which names no account in the console's image:
 # the console serves it only when told so (the lock's allowed_uids: lox add fills it when lea is on
 # your PATH; lea never edits it).
 lea__lockhost_console_hint() {
-  lea_log "$1 console: it runs under lox up only: no such lock yet: \`lox add $1\` (lox add fills allowed_uids: [$(id -u)] in .lockfamily/lockfamily.yaml when lea is on your PATH; lea's agents get its socket once lea restarts: lea stop, then lea)"
+  lea_log "$1 console: it runs under lox run only: no such lock yet: \`lox add $1\` (lox add fills allowed_uids: [$(id -u)] in .lockfamily/lockfamily.yaml when lea is on your PATH; lea's agents get its socket once lea restarts: lea stop, then lea)"
   lea_log "  (allowed_uids $(id -u): lea's agents run as your uid, which has no account in the console's image; edit it by hand only for a lock added without lea on your PATH)"
 }
 
@@ -145,17 +145,17 @@ lea__init_lockhost() {
         fi
       fi ;;
     lockfile)
-      lea_log "lockfile: with its launcher, in your projects directory, run lockfile profile add --profile NAME --source s3|sftp|local ... (it writes .lockfile/config.toml, which lox up reviews), then, once lox up runs, lockfile plugin install NAME@VERSION" ;;
+      lea_log "lockfile: with its launcher, in your projects directory, run lockfile profile add --profile NAME --source s3|sftp|local ... (it writes .lockfile/config.toml, which lox run reviews), then, once lox run runs, lockfile plugin install NAME@VERSION" ;;
   esac
   lea__lockhost_console_hint "$_ih_t"
 }
 
 # lea lockmq | lea lockfile: whether the tool is on, and how its console runs. It never starts a
-# console: lox up does.
+# console: lox run does.
 lea_lockhost() {
   _lh_t=$1
   shift
-  [ $# -eq 0 ] || lea_die "usage: lea $_lh_t (lea never starts the console: lox up does)"
+  [ $# -eq 0 ] || lea_die "usage: lea $_lh_t (lea never starts the console: lox run does)"
   if ! lea__tool_on "$_lh_t"; then
     lea_log "$_lh_t is off ($(lea__lockhost_var "$_lh_t")=0): lea init --$_lh_t turns it on"
     return 0

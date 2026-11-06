@@ -23,7 +23,7 @@ const (
 
 // statusReport stores an agent's context % and cost from its status line, and records the key
 // paths of Claude's status-line JSON whenever they change, so the field names can be checked.
-// Only agents report: the user has no status line. The answer names the locks lox up runs that
+// Only agents report: the user has no status line. The answer names the locks lox run runs that
 // the agent's container does not mount (locks_added): its status line says to restart lea.
 func (d *Daemon) statusReport(ctx context.Context, o Origin, me string, raw json.RawMessage) (any, error) {
 	if o.Container == "" {

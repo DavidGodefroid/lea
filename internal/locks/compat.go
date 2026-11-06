@@ -85,9 +85,9 @@ func lockVersion(c Client, o Observed) (version, variant string, protocol int, f
 // refuse to talk.
 func Check(c Client, o Observed) Verdict {
 	subj := fmt.Sprintf("lock %s (%s)", o.Instance, o.Type)
-	pinFix := fmt.Sprintf("lox add %s %s --version %s, then lox up", o.Type, o.Instance, c.Pin.Version)
+	pinFix := fmt.Sprintf("lox add %s %s --version %s, then lox run", o.Type, o.Instance, c.Pin.Version)
 	if c.Version != "" && c.Version != c.Pin.Version {
-		pinFix = fmt.Sprintf("lox add %s %s --version %s, then lox up", o.Type, o.Instance, c.Version)
+		pinFix = fmt.Sprintf("lox add %s %s --version %s, then lox run", o.Type, o.Instance, c.Version)
 	}
 	ver, variant, proto, fromImage := lockVersion(c, o)
 	clientDesc := "lea's " + o.Type + " client"

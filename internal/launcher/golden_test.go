@@ -251,8 +251,8 @@ func commandSetup(t *testing.T, root string, sc commandScenario) (*world, []stri
 	if r := (&Launcher{Root: w.root}).proxyRules(); r != "" {
 		w.env["FAKE_DOCKER_OUT_INSPECT___FORMAT"] = "@" + r
 	}
-	// The recorded scenarios run without the hub: `lox init` is the business of the hub scenarios,
-	// which turn it back on (and the daemon's matching record) in their setup.
+	// The recorded scenarios run without the hub: the hub scenarios turn it back on (and the
+	// daemon's matching record) in their setup.
 	writeUserConf(t, w, "LEA_HUB=0\n")
 	if err := os.WriteFile(w.data+"/lea/host/daemon.hub", []byte("off"), 0o600); err != nil {
 		t.Fatal(err)
@@ -513,27 +513,29 @@ func TestCommandsMatchTheGoldenFiles(t *testing.T) {
 		{name: "first run home is not a projects dir", cwd: "../home", unset: []string{"LEA_PROJECTS_DIR"}, exit: 1,
 			want:   []string{"lea: error: first run: $W/home cannot be a projects directory: it is / or contains your home directory: cd into the directory that holds your projects and run lea again, or LEA_PROJECTS_DIR=DIR lea"},
 			absent: []string{"lea-sh [init]", "docker [run]"}},
-		// The workspace has no hub yet (no up.json) and the hub is on: lea starts it with lox init.
-		{name: "hub started by lox init", setup: hubOn,
-			want:   []string{"lox [version]\nlox [init]", "lea: first run: starting the Lock Family hub (lox init)", open},
-			absent: []string{"lea: error"}},
-		{name: "hub up and up.json present", setup: hubWithUpJSON, absent: []string{"lox [", "first run:"}, want: []string{open}},
-		{name: "new starts the hub by lox init", args: []string{"new"}, setup: hubOn,
-			want:   []string{"lox [version]\nlox [init]", "lea: first run: starting the Lock Family hub (lox init)", "core [deck-open]", "core [new]"},
-			absent: []string{"lea: error"}},
+		// lea runs no lox command at start (#300): no lox init for a workspace without a hub, no
+		// lox up, no lox attach. Without locks it says nothing of lox run.
+		{name: "hub on runs no lox", setup: hubOn, want: []string{open}, absent: []string{"lox [", "first run:", "lox run", "lea: error"}},
+		{name: "hub up and up.json present", setup: hubWithUpJSON, absent: []string{"lox [", "first run:", "lox run"}, want: []string{open}},
 		{name: "new without the hub", args: []string{"new"}, absent: []string{"lox [", "first run:"}, want: []string{"core [new]"}},
-		{name: "shell starts the hub by lox init", args: []string{"shell"}, setup: hubOn,
-			want:   []string{"lox [version]\nlox [init]", "lea: first run: starting the Lock Family hub (lox init)", "[lea-session] [--shell]"},
-			absent: []string{"lea: error"}},
-		{name: "hub lox missing", setup: func(w *world) { hubOn(w); withoutLox(w) }, exit: 1,
-			want:   []string{"lea: error: lox not found: lea starts the Lock Family hub with it: brew install davidgodefroid/tap/lox, then run lea again (LEA_HUB=0 lea runs without the hub)"},
-			absent: []string{"lox [", "docker [run]", "attach-session"}},
-		{name: "hub lox too old", setup: hubOn, env: map[string]string{"FAKE_LOX_VERSION": "0.4.0"}, exit: 1,
-			want:   []string{"lox [version]", "lea: error: lox 0.4.0 is older than 0.5.0, which lea needs to start the hub: brew upgrade lox, then run lea again (LEA_HUB=0 lea runs without the hub)"},
-			absent: []string{"lox [init]", "first run:", "attach-session"}},
-		{name: "hub lox init fails", setup: hubOn, env: map[string]string{"FAKE_LOX_RC_INIT": "1"}, exit: 1,
-			want:   []string{"lox [version]\nlox [init]", "lea: error: lox init failed (above): fix it, then run lea again (LEA_HUB=0 lea runs without the hub)"},
-			absent: []string{"attach-session"}},
+		// A workspace with locks and no lox run serving them: lea says to run it in another
+		// terminal, then starts anyway (lea, new, shell), lox installed or not.
+		{name: "locks without lox run say to run it", setup: hubWithLocks,
+			want:   []string{"lea: " + LoxRunHint, open},
+			absent: []string{"lox [", "lea: error"}},
+		{name: "new with locks says to run lox run", args: []string{"new"}, setup: hubWithLocks,
+			want:   []string{"lea: " + LoxRunHint, "core [deck-open]", "core [new]"},
+			absent: []string{"lox [", "lea: error"}},
+		{name: "shell with locks says to run lox run", args: []string{"shell"}, setup: hubWithLocks,
+			want:   []string{"lea: " + LoxRunHint, "[lea-session] [--shell]"},
+			absent: []string{"lox [", "lea: error"}},
+		{name: "locks without lox installed start anyway", setup: func(w *world) { hubWithLocks(w); withoutLox(w) },
+			want:   []string{"lea: " + LoxRunHint, open},
+			absent: []string{"lox [", "lea: error"}},
+		// LEA_LOX_UP is obsolete: lea warns, and runs no lox up.
+		{name: "obsolete LEA_LOX_UP warns", setup: func(w *world) { hubWithLocks(w); writeUserConf(w.t, w, "LEA_LOX_UP=1\n") },
+			want:   []string{"lea: warning: LEA_LOX_UP=1 is obsolete and ignored: lea no longer runs lox up", open},
+			absent: []string{"lox [", "lea: error"}},
 		{name: "old form refused", args: []string{"$W/projects"}, exit: 2,
 			want: []string{"lea: error: lea no longer takes a directory"}, absent: []string{"docker"}},
 		// The usage goes to stderr, which only the lea: lines of are compared.
@@ -644,6 +646,11 @@ func TestCommandsMatchTheGoldenFiles(t *testing.T) {
 				os.WriteFile(w.dir+"/bin/uname", []byte("#!/bin/sh\necho 7.0.0-38-generic\n"), 0o755)
 			},
 			want: []string{"ok    docker reachable", "warn  kernel 7.0.0-38-generic: no known minimum for ubuntu 24.04"}, absent: []string{"core [delivery]"}},
+		// lea lock was removed (#300): lea shows no lock console, and says lox run shows what the
+		// locks ask; it calls neither the core nor lox.
+		{name: "lock is removed", args: []string{"lock", "open", "locksql"}, exit: 2,
+			want:   []string{"lea: error: lea lock was removed: lea shows no lock console. Open another terminal (outside lea) and run `lox run`"},
+			absent: []string{"core [lock]", "lox ["}},
 		// lea delivery: the core form, with this projects dir's container and the directory.
 		{name: "delivery on", args: []string{"delivery", "on"},
 			want: []string{"core [delivery] [--container] [lea-$ID] [--projects] [$W/projects] [on]"}},
@@ -803,6 +810,16 @@ func hubWithUpJSON(w *world) {
 		w.t.Fatal(err)
 	}
 	if err := os.WriteFile(w.proj+"/.lockfamily/up.json", []byte("{}"), 0o600); err != nil {
+		w.t.Fatal(err)
+	}
+}
+
+// hubWithLocks is a workspace that declares locks (.lockfamily/lockfamily.yaml) and no lox run
+// serving them (no session journal).
+func hubWithLocks(w *world) {
+	w.t.Helper()
+	hubWithUpJSON(w)
+	if err := os.WriteFile(w.proj+"/.lockfamily/lockfamily.yaml", []byte("locks: {}\n"), 0o644); err != nil {
 		w.t.Fatal(err)
 	}
 }

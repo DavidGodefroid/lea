@@ -142,13 +142,10 @@ type Daemon struct {
 	hubOff bool
 	// hubDown: the hub's facade did not answer last (hubswitch.go); the deck says so.
 	hubDown bool
-	// hubQueue is the hub's queue as the decks show it, hubLocks the Locks it counted (hubdeck.go,
-	// #158).
+	// hubQueue is the hub's queue, each ticket with the agent it waits for, hubLocks the Locks it
+	// counted (hubdeck.go, #158).
 	hubQueue []hubEntry
 	hubLocks map[string]bool
-	// hubKeys is the directory of the host facades' keys lox up writes (hubreveal.go; "": no
-	// reveal).
-	hubKeys string
 	// pressClock is the pressure's clock (nil: time.Now), a test seam.
 	pressClock func() time.Time
 	// Shedding (shed.go, #132): its thresholds, each container's state, and whether pauses or
@@ -160,7 +157,11 @@ type Daemon struct {
 	// read (none when lea cannot trust it), the instances of the last trusted one, its last
 	// warnings (said once), each container's mounts, and test seams (the debounce, the events,
 	// the warnings' logger).
-	lockWatch      LockWatch
+	lockWatch LockWatch
+	// loxRun is whether lox run serves the workspace's decisions, as RunLoxRunWatch last read it
+	// (loxrun.go, #300).
+	loxRun         string
+	loxRunWatch    LoxRunWatch
 	upLocks        []UpLock
 	upKnown        map[string]bool
 	lockLastWarn   string
@@ -1210,8 +1211,6 @@ func (d *Daemon) dispatchHooks(ctx context.Context, o Origin, me string, req wir
 		return d.grantCheck(o, me, req.Params)
 	case "status_report":
 		return d.statusReport(ctx, o, me, req.Params)
-	case "lock_request":
-		return d.lockRequest(ctx, o, me, req.Params)
 	default:
 		return nil, fmt.Errorf("unknown method %q", req.Method)
 	}

@@ -23,7 +23,7 @@ type Lock struct {
 	// Switch is the configuration key that turns lea's wiring of it on or off (LEA_LOCKSQL ...).
 	Switch string
 	// GID is its clients group in lea's image and in the lock's own: the agents get it with
-	// --group-add, and lox up writes it in up.json (client_gid).
+	// --group-add, and lox run writes it in up.json (client_gid).
 	GID string
 	// UID is its console account in both images: the socket must be served by it.
 	UID string

@@ -46,7 +46,6 @@ const usage = `usage: lea <command>
   attach-container <name>    bind a container's bus socket (used by the launcher)
   deck --container NAME      the agent column (run by lea's tmux session)
   deck --placeholder         the empty slot (run by lea's tmux session)
-  deck --ticket NAME         the hub ticket shown in the slot (run by lea's tmux session)
   deck --thread KEY [--compose]
                              an agent's messages (run in a deck popup)
   deck-open --container NAME [--workdir DIR] [--no-default] [--fresh]
@@ -107,8 +106,6 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		return runDeckStop(args[1:], stderr)
 	case "new":
 		return runNew(args[1:], stdout, stderr)
-	case "lock":
-		return runLock(args[1:], stdout, stderr)
 	case "lock-hello":
 		return runLockHello(args[1:], stdout, stderr)
 	case "delivery":
