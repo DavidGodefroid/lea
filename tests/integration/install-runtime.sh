@@ -1,7 +1,7 @@
 #!/bin/sh
 # Installs a sandboxed OCI runtime on this host and registers it with dockerd (#106), as lea's CI
 # does before `LEA_TEST_RUNTIME=<name> make test-isolation`. Linux, Docker Engine, sudo.
-#   tests/integration/install-runtime.sh runsc   gVisor (GVISOR_RELEASE), registered as runsc
+#   tests/integration/install-runtime.sh runsc   gVisor (GVISOR_RELEASE, under /opt/gvisor), registered as runsc
 #   tests/integration/install-runtime.sh kata    Kata Containers (KATA_VERSION, QEMU, runtime-rs), as kata
 # It rewrites /etc/docker/daemon.json (keeping its other keys) and restarts dockerd: running
 # containers stop, unless they have a restart policy. Pinned releases, checksum-checked.
@@ -36,12 +36,15 @@ case ${1:-} in
   runsc)
     arch=$(uname -m)
     base=https://storage.googleapis.com/gvisor/releases/release/$GVISOR_RELEASE/$arch
-    (cd "$work" && curl -fsSLO "$base/runsc" && curl -fsSLO "$base/runsc.sha512" && sha512sum -c runsc.sha512)
-    sudo install -m 0755 "$work/runsc" /usr/local/bin/runsc
+    # The release is one tarball: runsc, its shim and its helpers (gvisor-bin/), kept together.
+    (cd "$work" && curl -fsSLO "$base/gvisor.tar.bz2" && curl -fsSLO "$base/gvisor.tar.bz2.sha512" && sha512sum -c gvisor.tar.bz2.sha512)
+    sudo rm -rf /opt/gvisor; sudo mkdir -p /opt/gvisor
+    sudo tar -xjf "$work/gvisor.tar.bz2" -C /opt/gvisor
+    sudo ln -sf /opt/gvisor/runsc /usr/local/bin/runsc
     # The flags lea needs (README, "A second kernel: gVisor or Kata"): its bus socket and the lock
     # consoles' sockets are host Unix sockets the agents connect to (--host-uds=open), the
     # clipboard is a host FIFO (--host-fifo=open).
-    register runsc '{"path":"/usr/local/bin/runsc","runtimeArgs":["--host-uds=open","--host-fifo=open"]}'
+    register runsc '{"path":"/opt/gvisor/runsc","runtimeArgs":["--host-uds=open","--host-fifo=open"]}'
     runsc --version
     ;;
   kata)
