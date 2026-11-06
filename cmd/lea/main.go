@@ -71,7 +71,7 @@ const usage = `usage: lea <command>
   sound [on|off]             show or switch lea's sounds (until the daemon restarts)
   hook claude <event>        Claude Code hook (inside lea)
   repair-transcript <id>     cut a session's transcript after its last valid line before a resume (inside lea)
-  lock-hello --uid UID DIR [SOCKET...]
+  lock-hello --uid UID [--protocol N] DIR [SOCKET...]
                              the hello handshake of lock console sockets of DIR, served by
                              UID, as JSON (lea doctor runs it in lea's image)
   mcp                        MCP server for agents (inside lea)

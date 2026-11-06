@@ -168,7 +168,7 @@ func (l *Launcher) doctorLocks(proj string) error {
 			c := l.lockClient(set, typ)
 			o := locks.Observed{Type: typ, Instance: lk.Instance, Image: imgs[lk.Instance]}
 			if _, match := c.Pin.ImageOf(o.Image); !match || c.Version != c.Pin.Version {
-				o.Hello, o.HelloErr = l.lockHello(proj, s, lk)
+				o.Hello, o.HelloErr = l.lockHello(proj, s, lk, c.Pin.Protocol)
 			}
 			v := locks.Check(c, o)
 			switch v.Status {
@@ -206,11 +206,11 @@ func (l *Launcher) doctorLox(set *locks.Set, ok func(string), warn func(string, 
 	}
 }
 
-// lockHello is the hello handshake of the console of the lock lk of up.json s: lea's core binary
+// lockHello is the hello handshake, of protocol major protocol (lea's client's), of the console of the lock lk of up.json s: lea's core binary
 // run in lea's image (lea lock-hello) with only the lock's socket volume mounted, once docker
 // confirms it is lox up's (lockUpVolumeWrong), as the host user in the Lock's clients group, with
 // no network and no capability. nil and why when lea cannot ask it.
-func (l *Launcher) lockHello(proj string, s *lockUpState, lk UpLock) (*locks.Hello, string) {
+func (l *Launcher) lockHello(proj string, s *lockUpState, lk UpLock, protocol int) (*locks.Hello, string) {
 	reg, _ := locks.Get(lk.Type)
 	if why := l.lockUpVolumeWrong(lk.Volume, s.Project, proj, lk.Instance, lk.Type); why != "" {
 		return nil, why
@@ -223,7 +223,7 @@ func (l *Launcher) lockHello(proj string, s *lockUpState, lk UpLock) (*locks.Hel
 		"--group-add", reg.GID, "--label", "lea.prefix=" + l.prefix(), "--label", "lea.role=lock-hello",
 		"--mount", lockUpMount(lockUpSocket{Volume: lk.Volume, Dst: reg.SocketDir()}),
 		"--mount", "type=bind,src=" + l.Core + ",dst=/usr/local/bin/lea,readonly",
-		"--entrypoint", "/usr/local/bin/lea", l.Cfg.Get("LEA_IMAGE"), "lock-hello", "--uid", reg.UID, reg.SocketDir()}
+		"--entrypoint", "/usr/local/bin/lea", l.Cfg.Get("LEA_IMAGE"), "lock-hello", "--uid", reg.UID, "--protocol", strconv.Itoa(protocol), reg.SocketDir()}
 	// The console's socket, named as lockkit names it (the projects directory's hash, or "user",
 	// and the profile lox up says it serves): a 2710 socket directory cannot be listed.
 	if lk.Profile != "" {

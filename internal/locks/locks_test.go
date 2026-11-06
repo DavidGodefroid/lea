@@ -3,6 +3,7 @@ package locks
 import (
 	"bufio"
 	"encoding/json"
+	"fmt"
 	"net"
 	"os"
 	"path/filepath"
@@ -151,8 +152,10 @@ func TestCheckVerdicts(t *testing.T) {
 	}
 }
 
-// fakeConsole serves one hello answer per connection on a socket in dir.
-func fakeConsole(t *testing.T, dir, name, answer string) {
+// fakeConsole serves one hello answer per connection on a socket in dir, as a console of protocol
+// major speaks: a handshake of another major gets lockkit's refusal (console/server.go hello),
+// which does not answer the console's major but says it.
+func fakeConsole(t *testing.T, dir, name string, speaks int, answer string) {
 	t.Helper()
 	ln, err := net.Listen("unix", filepath.Join(dir, name))
 	if err != nil {
@@ -172,8 +175,13 @@ func fakeConsole(t *testing.T, dir, name, answer string) {
 					Method string         `json:"method"`
 					Params map[string]any `json:"params"`
 				}
-				if json.Unmarshal([]byte(line), &req) != nil || req.Method != "hello" || req.Params["protocol_major"] != float64(1) {
-					c.Write([]byte(`{"jsonrpc":"2.0","id":1,"error":{"code":-32600,"message":"bad"}}` + "\n"))
+				if json.Unmarshal([]byte(line), &req) != nil || req.Method != "hello" || req.Params["client"] != "lea-doctor" {
+					c.Write([]byte(`{"jsonrpc":"2.0","id":1,"error":{"code":-32602,"message":"invalid params for hello"}}` + "\n"))
+					return
+				}
+				if req.Params["protocol_major"] != float64(speaks) {
+					c.Write([]byte(fmt.Sprintf(`{"jsonrpc":"2.0","id":1,"error":{"code":-32600,"message":"protocol mismatch: client speaks %v, console speaks %d; use the same locksql version on both sides"}}`,
+						req.Params["protocol_major"], speaks) + "\n"))
 					return
 				}
 				c.Write([]byte(answer + "\n"))
@@ -188,13 +196,13 @@ func TestAskHello(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { os.RemoveAll(dir) })
-	fakeConsole(t, dir, "a-uat.sock", `{"jsonrpc":"2.0","id":1,"result":{"protocol_major":1,"console_version":"0.17.0","profile":"uat"}}`)
-	fakeConsole(t, dir, "b-prod.sock", `{"jsonrpc":"2.0","id":1,"error":{"code":-32001,"message":"protocol mismatch: use the same locksql version"}}`)
+	fakeConsole(t, dir, "a-uat.sock", 1, `{"jsonrpc":"2.0","id":1,"result":{"protocol_major":1,"console_version":"0.17.0","profile":"uat"}}`)
+	fakeConsole(t, dir, "b-prod.sock", 1, `{"jsonrpc":"2.0","id":1,"error":{"code":-32001,"message":"protocol mismatch: use the same locksql version"}}`)
 	os.WriteFile(filepath.Join(dir, "notes.txt"), []byte("x"), 0o644)
 	old := peerUID
 	t.Cleanup(func() { peerUID = old })
 	peerUID = func(net.Conn) (int, error) { return 10001, nil }
-	rs, err := AskHello(dir, nil, 10001, 2*time.Second)
+	rs, err := AskHello(dir, nil, 10001, 1, 2*time.Second)
 	if err != nil || len(rs) != 2 {
 		t.Fatalf("%v %+v", err, rs)
 	}
@@ -205,12 +213,88 @@ func TestAskHello(t *testing.T) {
 		t.Errorf("b: %+v", rs[1])
 	}
 	// A socket another uid serves is never asked.
-	rs, _ = AskHello(dir, nil, 10011, 2*time.Second)
+	rs, _ = AskHello(dir, nil, 10011, 1, 2*time.Second)
 	if rs[0].Hello != nil || !strings.Contains(rs[0].Err, "not by the console account (uid 10011)") {
 		t.Errorf("other uid: %+v", rs[0])
 	}
-	if _, err := AskHello(t.TempDir(), nil, 10001, time.Second); err == nil || !strings.Contains(err.Error(), "no console socket") {
+	if _, err := AskHello(t.TempDir(), nil, 10001, 1, time.Second); err == nil || !strings.Contains(err.Error(), "no console socket") {
 		t.Errorf("empty dir: %v", err)
+	}
+}
+
+// A console of another protocol major refuses lea's handshake as lockkit's does (it never answers
+// its own major): lea reads the refusal as a mismatch, with the major the console says, sends the
+// major it is asked to, and Check fails the pair with the fix.
+func TestAskHelloProtocolMismatch(t *testing.T) {
+	dir, err := os.MkdirTemp("", "lh")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.RemoveAll(dir) })
+	fakeConsole(t, dir, "a-v2.sock", 2, `{"jsonrpc":"2.0","id":1,"result":{"protocol_major":2,"console_version":"1.0.0","profile":"dev"}}`)
+	old := peerUID
+	t.Cleanup(func() { peerUID = old })
+	peerUID = func(net.Conn) (int, error) { return 10001, nil }
+	rs, err := AskHello(dir, nil, 10001, 1, time.Second)
+	if err != nil || len(rs) != 1 || rs[0].Err != "" || rs[0].Hello == nil || !rs[0].Hello.Refused || rs[0].Hello.ProtocolMajor != 2 {
+		t.Fatalf("%v %+v", err, rs)
+	}
+	// The refusal survives lea lock-hello's JSON, as lea doctor reads it.
+	b, _ := json.Marshal(rs)
+	var back []HelloAt
+	if json.Unmarshal(b, &back) != nil || back[0].Hello == nil || !back[0].Hello.Refused || back[0].Hello.ProtocolMajor != 2 {
+		t.Errorf("round trip: %s", b)
+	}
+	sql := client(t, "locksql")
+	v := Check(sql, Observed{Type: "locksql", Instance: "crm", Image: "ghcr.io/davidgodefroid/locksql@sha256:" + strings.Repeat("b", 64), Hello: rs[0].Hello})
+	if v.Status != Fail {
+		t.Errorf("a refused handshake does not fail: %+v", v)
+	}
+	for _, w := range []string{"incompatible: its console refuses the handshake of lea's locksql client " + sql.Pin.Version, "speaks protocol 1 (the console speaks protocol 2)",
+		"every call of lea's agents is refused", "lea update (a lea whose set speaks protocol 2), or lox add locksql crm --version " + sql.Pin.Version} {
+		if !strings.Contains(v.Detail, w) {
+			t.Errorf("%q lacks %q", v.Detail, w)
+		}
+	}
+	// The major lea's client speaks is the one sent: the same console accepts a handshake of 2.
+	rs, err = AskHello(dir, nil, 10001, 2, time.Second)
+	if err != nil || rs[0].Hello == nil || rs[0].Hello.Refused || rs[0].Hello.ProtocolMajor != 2 || rs[0].Hello.ConsoleVersion != "1.0.0" {
+		t.Errorf("protocol 2: %v %+v", err, rs)
+	}
+	if _, err := AskHello(dir, nil, 10001, 0, time.Second); err == nil {
+		t.Error("protocol 0 accepted")
+	}
+}
+
+func TestMismatch(t *testing.T) {
+	for name, c := range map[string]struct {
+		code  int
+		msg   string
+		nilH  bool
+		major int
+	}{
+		"lockkit's refusal":          {-32600, "protocol mismatch: client speaks 1, console speaks 3; use the same lockmq version on both sides", false, 3},
+		"a refusal naming no major":  {-32600, "protocol mismatch", false, 0},
+		"the major lea sent":         {-32600, "protocol mismatch: client speaks 1, console speaks 1; x", false, 0},
+		"another code":               {-32001, "protocol mismatch: client speaks 1, console speaks 2", true, 0},
+		"another invalid request":    {-32600, "not now", true, 0},
+		"an absurd major is unknown": {-32600, "protocol mismatch: client speaks 1, console speaks 99999999999999999999; x", false, 0},
+	} {
+		h := mismatch(c.code, c.msg, 1)
+		if (h == nil) != c.nilH || (h != nil && (!h.Refused || h.ProtocolMajor != c.major)) {
+			t.Errorf("%s: %+v", name, h)
+		}
+	}
+	// A refusal naming no major still fails, with the set's fix.
+	sql := client(t, "locksql")
+	v := Check(sql, Observed{Type: "locksql", Instance: "crm", Hello: &Hello{Refused: true}})
+	if v.Status != Fail || !strings.Contains(v.Detail, "(the console speaks another protocol)") || !strings.HasSuffix(v.Detail, ": lox add locksql crm --version "+sql.Pin.Version+", then lox up") {
+		t.Errorf("%+v", v)
+	}
+	// An older protocol: the lock is older, lox brings the newer one.
+	v = Check(Client{Pin: Pin{Version: "v1.0.0", Protocol: 2}, Version: "v1.0.0"}, Observed{Type: "locksql", Instance: "crm", Hello: &Hello{Refused: true, ProtocolMajor: 1}})
+	if v.Status != Fail || !strings.Contains(v.Detail, "brew upgrade lox, then lox add locksql crm --version v1.0.0") {
+		t.Errorf("older: %+v", v)
 	}
 }
 
@@ -235,16 +319,16 @@ func TestAskHelloNamed(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { os.RemoveAll(dir) })
-	fakeConsole(t, dir, "a-uat.sock", `{"jsonrpc":"2.0","id":1,"result":{"protocol_major":1,"console_version":"v0.8.0","profile":"uat"}}`)
+	fakeConsole(t, dir, "a-uat.sock", 1, `{"jsonrpc":"2.0","id":1,"result":{"protocol_major":1,"console_version":"v0.8.0","profile":"uat"}}`)
 	old := peerUID
 	t.Cleanup(func() { peerUID = old })
 	peerUID = func(net.Conn) (int, error) { return 10031, nil }
-	rs, err := AskHello(dir, []string{"a-uat.sock", "b-x.sock"}, 10031, time.Second)
+	rs, err := AskHello(dir, []string{"a-uat.sock", "b-x.sock"}, 10031, 1, time.Second)
 	if err != nil || len(rs) != 2 || rs[0].Hello == nil || rs[0].Hello.ConsoleVersion != "v0.8.0" || rs[1].Hello != nil || !strings.Contains(rs[1].Err, "no console answers") {
 		t.Fatalf("%v %+v", err, rs)
 	}
 	for _, bad := range []string{"../x.sock", "a/b.sock", "x"} {
-		if _, err := AskHello(dir, []string{bad}, 10031, time.Second); err == nil {
+		if _, err := AskHello(dir, []string{bad}, 10031, 1, time.Second); err == nil {
 			t.Errorf("%q accepted", bad)
 		}
 	}

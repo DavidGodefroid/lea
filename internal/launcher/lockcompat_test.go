@@ -1,9 +1,16 @@
 package launcher
 
 import (
+	"bufio"
+	"encoding/json"
+	"fmt"
+	"net"
 	"os"
+	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/DavidGodefroid/lea/internal/locks"
 )
@@ -73,7 +80,9 @@ func TestDoctorLockCompatibility(t *testing.T) {
 	w.env["FAKE_LOX_VERSION"] = strings.TrimPrefix(set.Lox, "v")
 	// lockmq answers the handshake of an older release, lockfile of another protocol.
 	w.env["FAKE_DOCKER_OUT_RUN___RM_AT_USER_P_SOCK"] = `[{"socket":"x-default.sock","hello":{"protocol_major":1,"console_version":"0.6.0","profile":"default"}}]`
-	w.env["FAKE_DOCKER_OUT_RUN___RM_AT__RUN_LOCKFILE"] = `[{"socket":"x-default.sock","hello":{"protocol_major":2,"console_version":"9.1.0","profile":"default"}}]`
+	// lockfile's console speaks protocol 2: it refuses lea's handshake as lockkit's does, and the
+	// probe's answer is lea lock-hello's (locks.AskHello's) on such a console.
+	w.env["FAKE_DOCKER_OUT_RUN___RM_AT__RUN_LOCKFILE"] = refusingConsoleHello(t, lf.Protocol, lf.Protocol+1)
 	l := w.launcher()
 	err := l.doctorLocks(w.proj)
 	o := w.out.String()
@@ -86,8 +95,8 @@ func TestDoctorLockCompatibility(t *testing.T) {
 		"ok    lock crm (locksql): runs locksql " + sq.Version + ", the release of lea's locksql client " + sq.Version,
 		"warn  lock events (lockmq): runs lockmq v0.6.0 (its console's handshake), older than lea's lockmq client " + mq.Version +
 			" (same protocol 1): brew upgrade lox, then lox add lockmq events --version " + mq.Version + ", then lox up",
-		"FAIL  lock docs (lockfile): incompatible: it runs lockfile v9.1.0 (its console's handshake), protocol 2; lea's lockfile client " + lf.Version +
-			" speaks protocol 1, so every call of lea's agents is refused: lea update",
+		"FAIL  lock docs (lockfile): incompatible: its console refuses the handshake of lea's lockfile client " + lf.Version +
+			", which speaks protocol 1 (the console speaks protocol 2), so every call of lea's agents is refused: lea update (a lea whose set speaks protocol 2), or lox add lockfile docs --version " + lf.Version,
 	} {
 		if !strings.Contains(o, want) {
 			t.Errorf("doctor lacks %q:\n%s", want, o)
@@ -107,12 +116,89 @@ func TestDoctorLockCompatibility(t *testing.T) {
 			if strings.HasPrefix(c, want) && strings.Contains(c, "[--group-add] ["+reg.GID+"]") &&
 				strings.Contains(c, "[type=volume,src="+upProjectOf(w)+"_"+name+"-run,dst=/run/"+typ+",readonly]") &&
 				strings.Contains(c, "[type=bind,src="+w.core+",dst=/usr/local/bin/lea,readonly]") &&
-				strings.HasSuffix(c, "[lea:dev] [lock-hello] [--uid] ["+reg.UID+"] [/run/"+typ+"]"+map[string]string{"lockmq": " [" + strings.Join(locks.SocketNames("/run/lockmq", w.proj, "p"), "] [") + "]"}[typ]) {
+				strings.HasSuffix(c, "[lea:dev] [lock-hello] [--uid] ["+reg.UID+"] [--protocol] ["+strconv.Itoa(set.Pins[typ].Protocol)+"] [/run/"+typ+"]"+map[string]string{"lockmq": " [" + strings.Join(locks.SocketNames("/run/lockmq", w.proj, "p"), "] [") + "]"}[typ]) {
 				ok = true
 			}
 		}
 		if !ok {
 			t.Errorf("%s: no handshake probe as expected:\n%s", typ, strings.Join(w.calls(), "\n"))
+		}
+	}
+}
+
+// refusingConsoleHello is lea lock-hello's output (locks.AskHello's JSON) for a handshake of
+// protocol sent to a console of protocol speaks that refuses it as lockkit's console does
+// (console/server.go hello: invalid-request, "protocol mismatch: client speaks N, console speaks
+// M"; it never answers its own major).
+func refusingConsoleHello(t *testing.T, sent, speaks int) string {
+	t.Helper()
+	dir, err := os.MkdirTemp("", "lh")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.RemoveAll(dir) })
+	ln, err := net.Listen("unix", filepath.Join(dir, "x-default.sock"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ln.Close()
+	go func() {
+		c, err := ln.Accept()
+		if err != nil {
+			return
+		}
+		defer c.Close()
+		line, _ := bufio.NewReader(c).ReadString('\n')
+		var req struct {
+			Params struct {
+				ProtocolMajor int `json:"protocol_major"`
+			} `json:"params"`
+		}
+		_ = json.Unmarshal([]byte(line), &req)
+		if req.Params.ProtocolMajor == speaks {
+			fmt.Fprintf(c, `{"jsonrpc":"2.0","id":1,"result":{"protocol_major":%d,"console_version":"9.1.0","profile":"default"}}`+"\n", speaks)
+			return
+		}
+		fmt.Fprintf(c, `{"jsonrpc":"2.0","id":1,"error":{"code":-32600,"message":"protocol mismatch: client speaks %d, console speaks %d; use the same lockfile version on both sides"}}`+"\n",
+			req.Params.ProtocolMajor, speaks)
+	}()
+	rs, err := locks.AskHello(dir, nil, os.Getuid(), sent, 2*time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, _ := json.Marshal(rs)
+	return string(b)
+}
+
+// lea doctor fails, status 1, when a lock lox runs speaks another protocol than lea's client: its
+// console refuses lea's handshake as lockkit's does; the same lock speaking lea's protocol passes.
+func TestDoctorFailsOnARefusedHandshake(t *testing.T) {
+	set := shippedSet(t)
+	lf := set.Pins["lockfile"]
+	for _, c := range []struct {
+		speaks, status int
+		want           string
+	}{
+		{lf.Protocol + 1, 1, "FAIL  lock docs (lockfile): incompatible: its console refuses the handshake of lea's lockfile client " + lf.Version},
+		{lf.Protocol, 0, "warn  lock docs (lockfile): runs lockfile v9.1.0 (its console's handshake), newer than lea's lockfile client " + lf.Version},
+	} {
+		w := newWorld(t, repoRoot(t))
+		writeUserConf(t, w, "")
+		writeUp(t, w, lockUp("docs", "lockfile"))
+		writeFamily(t, w, map[string][2]string{"docs": {"lockfile", "ghcr.io/davidgodefroid/lockfile@sha256:" + strings.Repeat("d", 64)}})
+		labels(w, "docs", "lockfile", "socket")
+		w.env["FAKE_LOX_VERSION"] = strings.TrimPrefix(set.Lox, "v")
+		w.env["FAKE_DOCKER_OUT_RUN___RM_AT__RUN_LOCKFILE"] = refusingConsoleHello(t, lf.Protocol, c.speaks)
+		st := w.launcher().Main([]string{"doctor"})
+		o := w.out.String()
+		if !strings.Contains(o, c.want) {
+			t.Errorf("console of protocol %d: doctor lacks %q:\n%s", c.speaks, c.want, o)
+		}
+		if c.status == 1 && st != 1 {
+			t.Errorf("a refused handshake: lea doctor exits %d", st)
+		}
+		if c.status == 0 && (st != 0 || strings.Contains(o, "FAIL")) {
+			t.Errorf("a compatible lock: status %d:\n%s", st, o)
 		}
 	}
 }

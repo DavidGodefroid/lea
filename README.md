@@ -817,7 +817,9 @@ each lock lox runs with lea's client of its type, from the image `lockfamily.yam
 another image, from the lock console's own hello handshake (`lea lock-hello`, run in lea's image
 with only that lock's socket volume), and says what to run: `lea update` for a lock newer than
 lea's client, `brew upgrade lox` then `lox add TYPE NAME --version` for an older one; a pair whose
-protocols differ fails (every call of the agents would be refused). `lea` warns at the start about
+protocols differ fails (every call of the agents would be refused). The handshake speaks the
+protocol of lea's client (`lea lock-hello --protocol N`): a console of another protocol refuses it
+("protocol mismatch", naming its own), and `lea doctor` fails that lock with the fix. `lea` warns at the start about
 a lock that `lockfamily.yaml` pins to an image of another release. `LEA_LOCKSQL_REF`,
 `LEA_LOCKMQ_REF` and `LEA_LOCKFILE_REF` remain for this release as a dev override of a client's
 version (`lea doctor` warns while one is set); `LEA_LOCKSQL_IMAGE` is obsolete.

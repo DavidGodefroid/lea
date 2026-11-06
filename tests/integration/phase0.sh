@@ -459,11 +459,22 @@ for x in "crm locksql 10000 10001 $sq_v dev" "events lockmq 10010 10011 $mq_v p"
   h=$(docker run --rm --pull never --network none --read-only --cap-drop ALL --security-opt no-new-privileges \
     --user "$uid:$(id -g)" --group-add "$3" --mount "type=volume,src=${p}_$1-run,dst=/run/$2,readonly" \
     --mount "type=bind,src=$root/build/lea,dst=/usr/local/bin/lea,readonly" --entrypoint /usr/local/bin/lea \
-    lea:dev lock-hello --uid "$4" "/run/$2" "$ph-$6.sock" "user-$6.sock" 2>&1) || true
+    lea:dev lock-hello --uid "$4" --protocol 1 "/run/$2" "$ph-$6.sock" "user-$6.sock" 2>&1) || true
   if [ "$(printf '%s' "$h" | jq -r '[.[] | select(.hello)][0].hello.protocol_major' 2>/dev/null)" = 1 ] &&
+    [ "$(printf '%s' "$h" | jq -r '[.[] | select(.hello)][0].hello.refused // false' 2>/dev/null)" = false ] &&
     [ "$(printf '%s' "$h" | jq -r '[.[] | select(.hello)][0].hello.console_version' 2>/dev/null | sed 's/^v//')" = "$5" ]; then
     ok "lea lock-hello: the $1 console ($2) answers protocol 1, version $5"
   else ko "lea lock-hello on $1 ($2): $h"; fi
+  # A client of another protocol major: the real console refuses the handshake (lockkit's
+  # "protocol mismatch", which names the console's major), and lea reads it as a mismatch with
+  # protocol 1 (what lea doctor fails, lea#134), not as an unreadable answer.
+  h=$(docker run --rm --pull never --network none --read-only --cap-drop ALL --security-opt no-new-privileges \
+    --user "$uid:$(id -g)" --group-add "$3" --mount "type=volume,src=${p}_$1-run,dst=/run/$2,readonly" \
+    --mount "type=bind,src=$root/build/lea,dst=/usr/local/bin/lea,readonly" --entrypoint /usr/local/bin/lea \
+    lea:dev lock-hello --uid "$4" --protocol 2 "/run/$2" "$ph-$6.sock" "user-$6.sock" 2>&1) || true
+  if [ "$(printf '%s' "$h" | jq -r '[.[] | select(.hello)][0].hello | "\(.refused) \(.protocol_major)"' 2>/dev/null)" = "true 1" ]; then
+    ok "lea lock-hello --protocol 2: the $1 console ($2) refuses it as protocol 1's"
+  else ko "lea lock-hello --protocol 2 on $1 ($2): $h"; fi
 done
 
 say "negative control: lea's image as the session account, without the clients groups"

@@ -19,6 +19,10 @@ type Hello struct {
 	ProtocolMajor  int    `json:"protocol_major"`
 	ConsoleVersion string `json:"console_version"`
 	Profile        string `json:"profile"`
+	// Refused: the console refused the handshake of lea's client's protocol major (lockkit's
+	// "protocol mismatch"), ProtocolMajor being the one it says it speaks (0: it did not say).
+	// lea sets it, never the console's answer.
+	Refused bool `json:"refused,omitempty"`
 }
 
 // Observed is what lea knows of one lock lox runs.
@@ -52,6 +56,14 @@ type Verdict struct {
 func lockVersion(c Client, o Observed) (version, variant string, protocol int, fromImage bool) {
 	if v, ok := c.Pin.ImageOf(o.Image); ok {
 		return c.Pin.Version, v, c.Pin.Protocol, true
+	}
+	if o.Hello != nil && o.Hello.Refused {
+		// The console refused lea's protocol: another major, the one it said or an unknown one (-1).
+		p := o.Hello.ProtocolMajor
+		if p < 1 || p == c.Pin.Protocol {
+			p = -1
+		}
+		return "", "", p, false
 	}
 	if o.Hello != nil {
 		v := o.Hello.ConsoleVersion
@@ -114,6 +126,18 @@ func Check(c Client, o Observed) Verdict {
 			fix = "lea update (a lea whose set has " + o.Type + " " + ver + "), or " + pinFix
 		case older:
 			fix = "brew upgrade lox, then " + pinFix
+		case ver == "" && proto > c.Pin.Protocol:
+			fix = "lea update (a lea whose set speaks protocol " + fmt.Sprint(proto) + "), or " + pinFix
+		case ver == "" && proto > 0:
+			fix = "brew upgrade lox, then " + pinFix
+		}
+		if o.Hello != nil && o.Hello.Refused {
+			speaks := "another protocol"
+			if proto > 0 {
+				speaks = fmt.Sprintf("protocol %d", proto)
+			}
+			return Verdict{Fail, subj, fmt.Sprintf("incompatible: its console refuses the handshake of %s, which speaks protocol %d (the console speaks %s), so every call of lea's agents is refused: %s",
+				clientDesc, c.Pin.Protocol, speaks, fix)}
 		}
 		return Verdict{Fail, subj, fmt.Sprintf("incompatible: it runs %s%s, protocol %d; %s speaks protocol %d, so every call of lea's agents is refused: %s",
 			lockDesc, how, proto, clientDesc, c.Pin.Protocol, fix)}

@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -48,13 +49,15 @@ func socketName(dir, key, profile string) string {
 
 var socketNameRe = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_.~-]{0,100}\.sock$`)
 
-// AskHello sends the hello handshake (lockkit's ipc: one JSON-RPC line each way) to the console
+// AskHello sends the hello handshake of protocol major protocol (the one lea's client of the lock
+// speaks: its Pin.Protocol) (lockkit's ipc: one JSON-RPC line each way) to the console
 // sockets names in dir, or to every *.sock of dir without names (a socket directory its group
 // may only traverse, 2710, cannot be listed: lea names the socket), and reports each answer. A
 // socket served by another uid than the console account uid is not asked: lea trusts no other
-// process's answer. Each socket gets timeout to answer. Only hello is sent: it changes nothing in
+// process's answer. A console of another protocol major refuses the handshake (lockkit's
+// "protocol mismatch"): its Hello is then Refused, with the major the console says it speaks. Each socket gets timeout to answer. Only hello is sent: it changes nothing in
 // the console.
-func AskHello(dir string, names []string, uid int, timeout time.Duration) ([]HelloAt, error) {
+func AskHello(dir string, names []string, uid, protocol int, timeout time.Duration) ([]HelloAt, error) {
 	if len(names) == 0 {
 		ents, err := os.ReadDir(dir)
 		if errors.Is(err, os.ErrPermission) {
@@ -69,12 +72,15 @@ func AskHello(dir string, names []string, uid int, timeout time.Duration) ([]Hel
 			}
 		}
 	}
+	if protocol < 1 {
+		return nil, fmt.Errorf("%d is not a protocol major", protocol)
+	}
 	var out []HelloAt
 	for _, n := range names {
 		if !socketNameRe.MatchString(n) || strings.Contains(n, "..") {
 			return nil, fmt.Errorf("%q is not a console socket's name", n)
 		}
-		h, err := askOne(filepath.Join(dir, n), uid, timeout)
+		h, err := askOne(filepath.Join(dir, n), uid, protocol, timeout)
 		r := HelloAt{Socket: n, Hello: h}
 		if err != nil {
 			r.Err = err.Error()
@@ -88,7 +94,7 @@ func AskHello(dir string, names []string, uid int, timeout time.Duration) ([]Hel
 	return out, nil
 }
 
-func askOne(path string, uid int, timeout time.Duration) (*Hello, error) {
+func askOne(path string, uid, protocol int, timeout time.Duration) (*Hello, error) {
 	c, err := net.DialTimeout("unix", path, timeout)
 	if err != nil {
 		return nil, fmt.Errorf("no console answers (%v)", errors.Unwrap(err))
@@ -102,7 +108,7 @@ func askOne(path string, uid int, timeout time.Duration) (*Hello, error) {
 		return nil, fmt.Errorf("served by uid %d, not by the console account (uid %d): not asked", got, uid)
 	}
 	_ = c.SetDeadline(time.Now().Add(timeout))
-	req := `{"jsonrpc":"2.0","id":1,"method":"hello","params":{"protocol_major":1,"client":"lea-doctor"}}` + "\n"
+	req := fmt.Sprintf(`{"jsonrpc":"2.0","id":1,"method":"hello","params":{"protocol_major":%d,"client":"lea-doctor"}}`, protocol) + "\n"
 	if _, err := io.WriteString(c, req); err != nil {
 		return nil, fmt.Errorf("cannot write the handshake: %v", err)
 	}
@@ -114,6 +120,7 @@ func askOne(path string, uid int, timeout time.Duration) (*Hello, error) {
 		ID     int64  `json:"id"`
 		Result *Hello `json:"result"`
 		Error  *struct {
+			Code    int    `json:"code"`
 			Message string `json:"message"`
 		} `json:"error"`
 	}
@@ -121,15 +128,41 @@ func askOne(path string, uid int, timeout time.Duration) (*Hello, error) {
 		return nil, errors.New("not a console's answer to the handshake")
 	}
 	if resp.Error != nil {
-		// A console of another protocol major refuses the handshake, saying so.
+		// A console of another protocol major refuses the handshake, saying so (lockkit's
+		// console/server.go hello): it is a mismatch, not an unreadable answer.
+		if h := mismatch(resp.Error.Code, resp.Error.Message, protocol); h != nil {
+			return h, nil
+		}
 		return nil, fmt.Errorf("the console refused the handshake: %s", clip(resp.Error.Message))
 	}
 	if resp.Result == nil || resp.Result.ProtocolMajor < 1 {
 		return nil, errors.New("the console's answer names no protocol")
 	}
+	resp.Result.Refused = false
 	resp.Result.ConsoleVersion = clip(resp.Result.ConsoleVersion)
 	resp.Result.Profile = clip(resp.Result.Profile)
 	return resp.Result, nil
+}
+
+// codeInvalidRequest is JSON-RPC's (and lockkit's ipc.CodeInvalidRequest) code of a refused request.
+const codeInvalidRequest = -32600
+
+var mismatchRe = regexp.MustCompile(`^protocol mismatch: client speaks (\d+), console speaks (\d+)\b`)
+
+// mismatch is the Refused Hello of lockkit's refusal of a handshake of another protocol major
+// (code invalid-request, "protocol mismatch: client speaks N, console speaks M; ..."), the
+// console's major M when it says one other than the one lea sent (0 otherwise); nil for any other error.
+func mismatch(code int, msg string, sent int) *Hello {
+	if code != codeInvalidRequest || !strings.HasPrefix(msg, "protocol mismatch") {
+		return nil
+	}
+	h := &Hello{Refused: true}
+	if m := mismatchRe.FindStringSubmatch(msg); m != nil {
+		if n, err := strconv.Atoi(m[2]); err == nil && n >= 1 && n < 1<<16 && n != sent {
+			h.ProtocolMajor = n
+		}
+	}
+	return h
 }
 
 // clip keeps a console's text printable and short: lea prints it.
