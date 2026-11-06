@@ -117,6 +117,8 @@ type=bind,src=$W/home/.claude/hooks,dst=$W/home/.claude/hooks,readonly
 --mount
 type=bind,src=$W/home/.claude/skills,dst=$W/home/.claude/skills,readonly
 --mount
+type=bind,src=$W/data/lea/state/claude/$ID.permissions.json,dst=/etc/lea/claude-permissions.json,readonly
+--mount
 type=bind,src=$W/home/.claude/CLAUDE.md,dst=$W/home/.claude/CLAUDE.md,readonly
 --mount
 type=bind,src=$W/home/.claude/projects/$SLUG,dst=$W/home/.claude/projects/$SLUG

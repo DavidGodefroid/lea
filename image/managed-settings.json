@@ -6,7 +6,22 @@
     "OTEL_EXPORTER_OTLP_PROTOCOL": "http/protobuf",
     "OTEL_EXPORTER_OTLP_ENDPOINT": "http://lea-proxy:4318",
     "OTEL_RESOURCE_ATTRIBUTES": "service.name=lea,service.version=@LEA_VERSION@",
-    "DISABLE_UPDATES": "1"
+    "DISABLE_UPDATES": "1",
+    "LEA_BUS_SOCK": "/run/lea/bus/bus.sock",
+    "SSH_AUTH_SOCK": "/run/lea/ssh-agent.sock",
+    "GH_CONFIG_DIR": "/lea/state/gh",
+    "GLAB_CONFIG_DIR": "/lea/state/glab-cli"
+  },
+  "allowManagedPermissionRulesOnly": true,
+  "permissions": {
+    "allow": [
+      "Bash(go *)",
+      "Bash(go-cross *)",
+      "Bash(staticcheck *)",
+      "Bash(govulncheck *)"
+    ],
+    "defaultMode": "default",
+    "disableBypassPermissionsMode": "disable"
   },
   "hooks": {
     "SessionStart": [
@@ -46,7 +61,8 @@
         "hooks": [
           {
             "type": "command",
-            "command": "[ -x /usr/local/bin/lea ] && exec /usr/local/bin/lea hook claude PreToolUse; exit 0"
+            "command": "[ -x /usr/local/bin/lea ] && exec /usr/local/bin/lea hook claude PreToolUse; echo 'lea: /usr/local/bin/lea is missing: lea refuses the call (its guard fails closed)' >&2; exit 2",
+            "onFailure": "block"
           }
         ]
       }

@@ -523,8 +523,9 @@ func (l *Launcher) claudeRO(sbase, src, placeholder, dst string) ([]string, erro
 }
 
 // claudeMounts is lea_claude_mounts: a private ~/.claude per projects dir, holding its own
-// writable copies of settings.json and plugins (claudeLayer), the allow-list of host entries
-// read-only, the project's transcripts and lea's own .claude.json. No host entry is ever mounted
+// writable copies of settings.json and plugins (claudeLayer), the host's permission rules for the
+// managed settings (hostPermissionsFile), the allow-list of host entries read-only, the project's
+// transcripts and lea's own .claude.json. No host entry is ever mounted
 // writable but this projects dir's transcripts.
 func (l *Launcher) claudeMounts(home, proj, st string) ([]string, error) {
 	if err := noComma(home, proj, st); err != nil {
@@ -552,6 +553,9 @@ func (l *Launcher) claudeMounts(home, proj, st string) ([]string, error) {
 		}
 	}
 	if err := l.claudeLayer(src, priv, sbase); err != nil {
+		return nil, err
+	}
+	if err := add(l.hostPermissionsFile(src, priv, sbase)); err != nil {
 		return nil, err
 	}
 	// The shell's "$_src"/*.md: $_src is quoted, so HOME is never a pattern; no hidden names;

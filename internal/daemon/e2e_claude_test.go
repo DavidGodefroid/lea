@@ -74,6 +74,8 @@ type claudeE2E struct {
 	// ctx is the running daemon's lifetime, which stop ends.
 	ctx  context.Context
 	stop context.CancelFunc
+	// managed: the test wrote the managed settings (writeManagedEnv), and removes them at its end.
+	managed bool
 }
 
 func newClaudeE2E(t *testing.T) *claudeE2E {

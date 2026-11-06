@@ -165,9 +165,11 @@ host_claude_sum() {
 }
 host_sum=$(host_claude_sum)
 # lea copies a real file only (a symbolic link is skipped).
-settings_sha=
+settings_sha='' host_rule=''
 if [ -f "$HOME/.claude/settings.json" ] && [ ! -L "$HOME/.claude/settings.json" ]; then
   settings_sha=$(sha256sum <"$HOME/.claude/settings.json" | cut -d' ' -f1)
+  # One of the host's own allow rules: the managed settings must carry it (#111).
+  host_rule=$(jq -r '[.permissions.allow[]? | strings | select(length > 0 and length <= 1024)][0] // empty' "$HOME/.claude/settings.json" 2>/dev/null || true)
 fi
 mk="$projects/lea-it-market"
 mkdir -p "$mk/.claude-plugin" "$mk/plugins/lea-it/.claude-plugin" "$mk/plugins/lea-it/commands"
@@ -276,7 +278,7 @@ else echo "FAIL no forge-migrated marker: a token planted in the state could rep
 echo "isolation: the checks inside lea"
 LEA_PROJECTS_DIR="$projects" timeout 900 "$root/bin/lea" shell -- env FORGE_NEEDLE="$forge_needle" FORGE_EXPECT="$forge_expect" CANARY_IP="$canary_ip" GW_IP="$gw_ip" HOST_IP="$host_ip" \
   SIBLING_IP="$sibling_ip" HOST_KERNEL="$(uname -r)" SECOND_KERNEL="${runtime:+1}" HOST_FACADE="$facade" HOST_CRED_SHA="$cred_sha" HOST_HIST_SHA="$hist_sha" \
-  HOST_SETTINGS_SHA="$settings_sha" LEA_IT_MARKET="$mk" sh "$projects/inside-isolation.sh" || rc=$?
+  HOST_SETTINGS_SHA="$settings_sha" HOST_ALLOW_RULE="$host_rule" LEA_IT_MARKET="$mk" sh "$projects/inside-isolation.sh" || rc=$?
 # What the agents did to their copies never reached the host (#111).
 if [ "$(host_claude_sum)" = "$host_sum" ]; then echo "ok   host ~/.claude settings.json and plugins unchanged"
 else echo "FAIL host ~/.claude settings.json and plugins unchanged"; rc=1; fi

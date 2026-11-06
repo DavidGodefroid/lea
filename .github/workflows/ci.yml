@@ -171,7 +171,7 @@ jobs:
                    'keyctl refused (seccomp)' 'perf_event_open refused (seccomp)' 'reboot refused (seccomp)' 'vmsplice refused (seccomp)' 'NETLINK_AUDIT socket refused (seccomp)' \
                    'NETLINK_AUDIT socket with high protocol bits refused (seccomp)' 'AF_ALG socket with high family bits refused (seccomp)' \
                    'sudo absent' 'no setuid or setgid file' \
-                   'settings.json is a copy of the host'"'"'s' '/permissions adds a rule' '/plugin install works' 'marketplace update works' 'managed settings carry lea'"'"'s hooks' 'managed settings are not writable' 'host ~/.claude settings.json and plugins unchanged'; do
+                   'settings.json is a copy of the host'"'"'s' '/permissions adds a rule' '/plugin install works' 'marketplace update works' 'managed settings carry lea'"'"'s hooks' 'permission rules are managed only' 'the host'"'"'s permission rules are managed' 'an agent'"'"'s rule is not managed' 'the host'"'"'s rules are not writable' 'managed settings are not writable' 'host ~/.claude settings.json and plugins unchanged'; do
             grep -qxF "ok   $c" isolation.log || { echo "isolation: '$c' did not run" >&2; exit 1; }
           done
   # The same isolation checks with the agent container on a sandboxed runtime (#106, LEA_RUNTIME):
@@ -327,6 +327,8 @@ jobs:
           grep -q -- '^--- PASS: TestClaudeResumesATruncatedTranscript ' claude-e2e.log
           grep -q -- '^--- PASS: TestClaudeManagedSettingsGuardATamperedAgent ' claude-e2e.log
           grep -q -- '^--- PASS: TestClaudeManagedAndFlagHooksRunOnce ' claude-e2e.log
+          grep -q -- '^--- PASS: TestClaudeManagedPermissionsIgnoreAWidenedSettings ' claude-e2e.log
+          grep -q -- '^--- PASS: TestClaudeManagedHooksIgnoreATamperedEnv ' claude-e2e.log
           n=$(grep -c -- '^--- PASS: TestClaude' claude-e2e.log)
           echo "$n Claude e2e tests passed"
           [ "$n" -eq 10 ]

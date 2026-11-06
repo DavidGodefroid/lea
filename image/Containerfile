@@ -88,6 +88,8 @@ COPY image/containers.conf.tmpl /usr/local/share/lea/containers.conf.tmpl
 COPY image/storage.conf /etc/containers/storage.conf
 COPY image/ssh_config.tmpl /usr/local/share/lea/ssh_config.tmpl
 COPY image/managed-settings.json /etc/claude-code/managed-settings.json
+# The entrypoint starts each boot from this copy, adding the host's permission rules (#111).
+COPY image/managed-settings.json /usr/local/share/lea/managed-settings.json
 COPY image/claude-settings.json /usr/local/share/lea/claude-settings.json
 COPY image/claude-plugin /usr/local/share/lea/claude-plugin
 COPY image/forge-gh/config.yml /usr/local/share/lea/forge-gh/config.yml
@@ -98,9 +100,9 @@ COPY image/go-cross /usr/local/bin/
 COPY --from=go /usr/local/go /usr/local/go
 COPY --from=go-tools /out/ /usr/local/bin/
 # The Claude Code version lea's CI verified the managed settings with (managed-check).
-RUN sed -i "s/@LEA_VERSION@/${LEA_VERSION}/" /etc/claude-code/managed-settings.json /usr/local/share/lea/claude-settings.json \
+RUN sed -i "s/@LEA_VERSION@/${LEA_VERSION}/" /etc/claude-code/managed-settings.json /usr/local/share/lea/managed-settings.json /usr/local/share/lea/claude-settings.json \
  && echo "${CLAUDE_CODE_VERSION}" >/usr/local/share/lea/claude-code-version \
- && chmod 0644 /etc/claude-code/managed-settings.json /usr/local/share/lea/claude-settings.json /usr/local/share/lea/claude-code-version \
+ && chmod 0644 /etc/claude-code/managed-settings.json /usr/local/share/lea/managed-settings.json /usr/local/share/lea/claude-settings.json /usr/local/share/lea/claude-code-version \
  && chmod -R u=rwX,go=rX /usr/local/share/lea/claude-plugin /usr/local/share/lea/forge-gh \
  && chmod 0755 /usr/local/libexec/lea/entrypoint /usr/local/libexec/lea/user-init /usr/local/libexec/lea/lea-crun /usr/local/libexec/lea/managed-check /usr/local/bin/lea-session /usr/local/bin/lea-agent /usr/local/bin/wl-copy /usr/local/bin/go-cross
 # No way back to root once the entrypoint has dropped to the developer (#100): sudo is not in the

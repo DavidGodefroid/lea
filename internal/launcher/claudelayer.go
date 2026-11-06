@@ -258,3 +258,69 @@ func copyFile(src, dst string, perm fs.FileMode) error {
 	}
 	return out.Close()
 }
+
+// HostPermissionsPath is where the container reads the host's permission rules (#111): the root
+// entrypoint merges them into the managed settings, the only source of permission rules Claude
+// Code honours in lea (allowManagedPermissionRulesOnly). Read-only, outside ~/.claude.
+const HostPermissionsPath = "/etc/lea/claude-permissions.json"
+
+// permissionModes are the default modes lea takes from the host's settings: never
+// bypassPermissions, which the managed settings disable.
+var permissionModes = map[string]bool{"default": true, "acceptEdits": true, "plan": true, "dontAsk": true, "auto": true}
+
+// hostPermissions is the permissions of the host's ~/.claude/settings.json (src) as lea passes
+// them to its container: the allow, ask and deny rules and the additional directories (strings
+// only, at most 1000 of each, 1024 bytes each) and a default mode lea accepts. The host's file is
+// the user's, which no agent writes; the container's copy of it (claudeLayer) is the agents' and
+// never a source of rules. "{}" when the host has none, or a file lea cannot read.
+func hostPermissions(src string) []byte {
+	out := map[string]any{}
+	b, err := readRegular(src + "/settings.json")
+	if err != nil {
+		return []byte("{}\n")
+	}
+	var s struct {
+		Permissions map[string]json.RawMessage `json:"permissions"`
+	}
+	if json.Unmarshal(b, &s) != nil {
+		return []byte("{}\n")
+	}
+	for _, k := range []string{"allow", "ask", "deny", "additionalDirectories"} {
+		var raw []any
+		if json.Unmarshal(s.Permissions[k], &raw) != nil {
+			continue
+		}
+		var rules []string
+		for _, r := range raw {
+			if v, ok := r.(string); ok && v != "" && len(v) <= 1024 && len(rules) < 1000 {
+				rules = append(rules, v)
+			}
+		}
+		if len(rules) > 0 {
+			out[k] = rules
+		}
+	}
+	var mode string
+	if json.Unmarshal(s.Permissions["defaultMode"], &mode) == nil && permissionModes[mode] {
+		out["defaultMode"] = mode
+	}
+	j, _ := json.MarshalIndent(out, "", "  ")
+	return append(j, '\n')
+}
+
+// hostPermissionsFile writes hostPermissions next to the container's private ~/.claude (priv),
+// out of the agents' sight, and returns its mount: read-only at HostPermissionsPath.
+func (l *Launcher) hostPermissionsFile(src, priv, sbase string) ([]string, error) {
+	p := priv + ".permissions.json"
+	if err := noComma(p); err != nil {
+		return nil, err
+	}
+	if err := WriteFile(sbase, p, hostPermissions(src)); err != nil {
+		return nil, die("%v", err)
+	}
+	// Readable by the container's root under every runtime and engine (a user namespace, a VM).
+	if err := os.Chmod(p, 0o644); err != nil {
+		return nil, die("%v", err)
+	}
+	return []string{"--mount", "type=bind,src=" + p + ",dst=" + HostPermissionsPath + ",readonly"}, nil
+}

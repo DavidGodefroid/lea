@@ -119,6 +119,8 @@ LEA_BUS_SOCK=/run/lea/bus/bus.sock
 --mount
 type=bind,src=$W/data/lea/state/claude/$ID,dst=$W/home/.claude
 --mount
+type=bind,src=$W/data/lea/state/claude/$ID.permissions.json,dst=/etc/lea/claude-permissions.json,readonly
+--mount
 type=bind,src=$W/home/.claude/projects/$SLUG,dst=$W/home/.claude/projects/$SLUG
 --mount
 type=bind,src=$W/data/lea/state/claude.json,dst=$W/home/.claude.json

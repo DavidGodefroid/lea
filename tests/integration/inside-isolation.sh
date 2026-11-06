@@ -168,6 +168,14 @@ if [ -n "${LEA_IT_MARKET:-}" ]; then
 fi
 m=/etc/claude-code/managed-settings.json
 must   "managed settings carry lea's hooks"      /usr/local/libexec/lea/managed-check
+# The permission rules are the managed ones only (#111): the host's joined lea's at start, and
+# what the agents write into their copy (the /permissions check above) is not among them.
+must   "permission rules are managed only"        jq -e '.allowManagedPermissionRulesOnly == true and .permissions.disableBypassPermissionsMode == "disable"' "$m"
+if [ -n "${HOST_ALLOW_RULE:-}" ]; then
+  must "the host's permission rules are managed"  jq -e --arg r "$HOST_ALLOW_RULE" '.permissions.allow | index($r)' "$m"
+fi
+mustnt "an agent's rule is not managed"           jq -e '.permissions.allow | index("Bash(lea-isolation *)")' "$m"
+mustnt "the host's rules are not writable"        sh -c 'echo "{}" >/etc/lea/claude-permissions.json'
 must   "managed settings are root's"             test "$(stat -c %u "$m")" = 0
 mustnt "managed settings are not writable"       touch "$m"
 mustnt "managed settings cannot be replaced"     sh -c 'echo "{}" >"$1.new" && mv "$1.new" "$1"' sh "$m"

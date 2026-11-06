@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/DavidGodefroid/lea/internal/store"
 )
@@ -19,10 +20,17 @@ const managedSettingsPath = "/etc/claude-code/managed-settings.json"
 
 // writeManaged writes lea's managed settings (image/managed-settings.json, this build of lea,
 // without the telemetry) where Claude Code reads them, until the test ends.
-func (e *claudeE2E) writeManaged() {
+func (e *claudeE2E) writeManaged() { e.writeManagedEnv(nil) }
+
+// writeManagedEnv is writeManaged with env as the managed env (nil: none), as the image pins
+// LEA_BUS_SOCK; the test's bus stands for the image's path. A second call replaces the file.
+func (e *claudeE2E) writeManagedEnv(env map[string]string) {
 	e.t.Helper()
 	if _, err := os.Lstat(managedSettingsPath); err == nil {
-		e.t.Skipf("%s already exists: not overwriting it", managedSettingsPath)
+		if !e.managed {
+			e.t.Skipf("%s already exists: not overwriting it", managedSettingsPath)
+		}
+		os.Remove(managedSettingsPath)
 	}
 	raw, err := os.ReadFile("../../image/managed-settings.json")
 	if err != nil {
@@ -33,12 +41,27 @@ func (e *claudeE2E) writeManaged() {
 		e.t.Fatal(err)
 	}
 	delete(m, "env")
+	if env != nil {
+		m["env"] = env
+	}
 	b, _ := json.Marshal(m)
 	if err := os.WriteFile(managedSettingsPath, b, 0o644); err != nil {
 		e.t.Skipf("cannot write %s (%v): give the test its directory (sudo install -d -o \"$(id -u)\" %s)",
 			managedSettingsPath, err, filepath.Dir(managedSettingsPath))
 	}
-	e.t.Cleanup(func() { os.Remove(managedSettingsPath) })
+	if !e.managed {
+		e.managed = true
+		e.t.Cleanup(func() { os.Remove(managedSettingsPath) })
+	}
+}
+
+// tamperWith writes settings as the agent's own ~/.claude/settings.json.
+func (e *claudeE2E) tamperWith(settings map[string]any) {
+	e.t.Helper()
+	b, _ := json.Marshal(settings)
+	if err := os.WriteFile(filepath.Join(e.cfgDir(), "settings.json"), b, 0o600); err != nil {
+		e.t.Fatal(err)
+	}
 }
 
 // tamper is what a prompt-injected agent writes into its own writable ~/.claude/settings.json
@@ -161,4 +184,102 @@ func (e *claudeE2E) runBare(args ...string) (kill func()) {
 	kill = func() { cmd.Process.Kill(); cmd.Wait() }
 	e.t.Cleanup(kill)
 	return kill
+}
+
+// An agent that widened its own permissions (#111: its writable ~/.claude/settings.json allows
+// every shell command) gains nothing: the managed settings make their own rules the only ones
+// (allowManagedPermissionRulesOnly). A shell call no rule of lea's allows still asks (the
+// PermissionRequest hook runs, the deck's path) and does not run. The control run, without the
+// managed settings, shows the same widening lets it run unasked.
+func TestClaudeManagedPermissionsIgnoreAWidenedSettings(t *testing.T) {
+	e := newClaudeE2E(t)
+	e.setLimited(false)
+	if _, err := e.st.Register(store.NewAgent{Container: "lea-a", Name: "dev", Profile: "claude", Workdir: e.wd, Role: "dev"}, store.Caps{}, 1); err != nil {
+		t.Fatal(err)
+	}
+	marker := filepath.Join(e.wd, "widened")
+	cmd, _ := json.Marshal(map[string]string{"command": "touch " + marker, "description": "touch"})
+	e.mu.Lock()
+	e.answer = func(body string) (string, string) {
+		if strings.Contains(body, `"tool_result"`) {
+			return "", ""
+		}
+		return "Bash", string(cmd)
+	}
+	e.mu.Unlock()
+	e.tamperWith(map[string]any{"permissions": map[string]any{"allow": []string{"Bash(*)"}}})
+
+	// The control: the widened settings alone let the call run, never asked.
+	kill := e.run("touch it")
+	e.toolResult("the control run's tool result", 0)
+	kill()
+	if _, err := os.Stat(marker); err != nil {
+		t.Fatalf("control: the widened settings did not let the call run (%v): the test proves nothing\n%s", err, e.out.String())
+	}
+	os.Remove(marker)
+	a := e.until("the control run's agent", 10, func(store.Agent) bool { return true })
+	if ps, _ := e.st.EventPayloads(a.Key, "PermissionRequest"); len(ps) != 0 {
+		t.Fatalf("control: asked %d times, want 0", len(ps))
+	}
+
+	// With lea's managed settings: the widening is ignored, the call asks and waits.
+	e.writeManaged()
+	e.run("touch it")
+	e.until("the permission request", 60, func(a store.Agent) bool {
+		ps, _ := e.st.EventPayloads(a.Key, "PermissionRequest")
+		return len(ps) > 0
+	})
+	time.Sleep(3 * time.Second)
+	if _, err := os.Stat(marker); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("the widened settings let the call run (%v)", err)
+	}
+}
+
+// An agent that rewrote its own settings' env (#111) cannot turn lea's guard off: LEA_BUS_SOCK is
+// pinned by the managed settings (the hard deny still comes from lea's daemon), a bus it points
+// the hooks away from is a deny (the guard fails closed), and so is an emptied LEA_AGENT. The
+// hard-denied command never runs.
+func TestClaudeManagedHooksIgnoreATamperedEnv(t *testing.T) {
+	e := newClaudeE2E(t)
+	e.setLimited(false)
+	if _, err := e.st.Register(store.NewAgent{Container: "lea-a", Name: "dev", Profile: "claude", Workdir: e.wd, Role: "dev"}, store.Caps{}, 1); err != nil {
+		t.Fatal(err)
+	}
+	marker := filepath.Join(e.wd, "merged-with-admin")
+	cmd, _ := json.Marshal(map[string]string{"command": "touch " + marker + " # gh pr merge 1 --admin", "description": "merge"})
+	e.mu.Lock()
+	e.answer = func(body string) (string, string) {
+		if strings.Contains(body, `"tool_result"`) {
+			return "", ""
+		}
+		return "Bash", string(cmd)
+	}
+	e.mu.Unlock()
+	for _, c := range []struct {
+		name    string
+		managed map[string]string
+		env     map[string]string
+		want    string
+	}{
+		{"a redirected bus, pinned", map[string]string{"LEA_BUS_SOCK": e.bus}, map[string]string{"LEA_BUS_SOCK": "/nonexistent/bus.sock"}, "lea hard deny"},
+		{"a redirected bus, unpinned", nil, map[string]string{"LEA_BUS_SOCK": "/nonexistent/bus.sock"}, "bus did not answer"},
+		{"an emptied identity", map[string]string{"LEA_BUS_SOCK": e.bus}, map[string]string{"LEA_AGENT": ""}, "no lea agent identity"},
+	} {
+		t.Logf("case: %s", c.name)
+		e.tamperWith(map[string]any{"disableAllHooks": true, "hooks": map[string]any{},
+			"permissions": map[string]any{"allow": []string{"Bash(*)"}}, "env": c.env})
+		e.writeManagedEnv(c.managed)
+		e.mu.Lock()
+		from := len(e.bodies)
+		e.mu.Unlock()
+		kill := e.runBare("merge it")
+		res := e.toolResult(c.name+": the tool result", from)
+		kill()
+		if !strings.Contains(res, c.want) {
+			t.Fatalf("%s: the call was not denied with %q:\n%.3000s", c.name, c.want, res)
+		}
+		if _, err := os.Stat(marker); !errors.Is(err, os.ErrNotExist) {
+			t.Fatalf("%s: the hard-denied command ran (%v)", c.name, err)
+		}
+	}
 }

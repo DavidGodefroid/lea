@@ -206,3 +206,59 @@ func TestClaudeLayerNeverWritesThroughALink(t *testing.T) {
 		t.Errorf("a symlinked host settings.json: %q", w3.errb.String())
 	}
 }
+
+// TestHostPermissionsComeFromTheHostOnly: the rules lea hands the managed settings (#111) are the
+// host's settings.json's, filtered (strings, a mode other than bypassPermissions), never the
+// container's copy, which the agents write; the file sits outside the private ~/.claude, and is
+// mounted read-only.
+func TestHostPermissionsComeFromTheHostOnly(t *testing.T) {
+	w, src, priv, st := layerWorld(t)
+	os.WriteFile(src+"/settings.json", []byte(`{"permissions":{"allow":["Bash(ls)",7,"",{"x":1}],"deny":["Read(./.env)"],`+
+		`"ask":"Bash(rm *)","additionalDirectories":["/srv"],"defaultMode":"bypassPermissions","disableBypassPermissionsMode":"x"},"hooks":{}}`), 0o644)
+	a, err := w.launcher().claudeMounts(w.home, w.proj, st)
+	if err != nil {
+		t.Fatal(err)
+	}
+	p := priv + ".permissions.json"
+	if !strings.Contains(strings.Join(a, " "), "type=bind,src="+p+",dst="+HostPermissionsPath+",readonly") {
+		t.Fatalf("no read-only mount of %s: %v", p, a)
+	}
+	got := func() string {
+		b, err := os.ReadFile(p)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return strings.Join(strings.Fields(string(b)), "")
+	}
+	if g := got(); g != `{"additionalDirectories":["/srv"],"allow":["Bash(ls)"],"deny":["Read(./.env)"]}` {
+		t.Fatalf("host permissions %s", g)
+	}
+	// The agents widen their copy: nothing of it reaches the file.
+	os.WriteFile(priv+"/settings.json", []byte(`{"permissions":{"allow":["Bash(*)"],"defaultMode":"acceptEdits"}}`), 0o644)
+	mounts(t, w, st)
+	if g := got(); strings.Contains(g, "Bash(*)") || strings.Contains(g, "acceptEdits") {
+		t.Fatalf("the container's copy reached the host permissions: %s", g)
+	}
+	// A mode lea accepts is the host's.
+	os.WriteFile(src+"/settings.json", []byte(`{"permissions":{"defaultMode":"plan"}}`), 0o644)
+	mounts(t, w, st)
+	if g := got(); g != `{"defaultMode":"plan"}` {
+		t.Fatalf("plan: %s", g)
+	}
+	// No host settings, a broken file or a link: no rules.
+	for _, mk := range []func(){
+		func() { os.Remove(src + "/settings.json") },
+		func() { os.WriteFile(src+"/settings.json", []byte("not json"), 0o644) },
+		func() {
+			os.Remove(src + "/settings.json")
+			os.WriteFile(w.home+"/elsewhere.json", []byte(`{"permissions":{"allow":["Bash(*)"]}}`), 0o644)
+			os.Symlink(w.home+"/elsewhere.json", src+"/settings.json")
+		},
+	} {
+		mk()
+		mounts(t, w, st)
+		if g := got(); g != "{}" {
+			t.Fatalf("no host rules: %s", g)
+		}
+	}
+}

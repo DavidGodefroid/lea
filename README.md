@@ -50,8 +50,8 @@ and your network. lea moves the boundary from the prompt to the container.
   read `~/.ssh` or call your intranet.
 - **Many agents, one deck.** States, context use, branches and each agent's own task report at a
   glance; one key to reach the next agent that needs you.
-- **Your Claude Code, unchanged.** Your settings, skills, plugins, hooks and agents. `/plugin
-  install` and `/permissions` work inside lea, on lea's own copy: nothing reaches your host. lea
+- **Your Claude Code, unchanged.** Your settings, permission rules, skills, plugins, hooks and
+  agents. `/plugin install` works inside lea, on lea's own copy: nothing reaches your host. lea
   runs the real Claude Code with your subscription or API key.
 - **Local and open.** No account, no server, no forge lock-in. Apache 2.0.
 
@@ -595,8 +595,9 @@ vllm      https://vllm.example.com/v1         key=/home/me/.config/lea/keys/vllm
 
 Each projects directory's container has its own writable copy of your `~/.claude/settings.json`
 and `~/.claude/plugins`, made from yours on the host when it first starts. Inside lea,
-`/plugin install`, `/plugin marketplace add`, the marketplaces' auto-update and `/permissions` work
-as on the host, on that copy, for every agent of that projects directory:
+`/plugin install`, `/plugin marketplace add` and the marketplaces' auto-update work as on the
+host, on that copy, for every agent of that projects directory. Permission rules are the exception:
+they come from your host's `settings.json` only (below).
 
 - **Kept across restarts.** The copy lives in lea's data (`state/claude/<id>/`); `lea stop` and
   the next `lea` keep what the agents installed or allowed.
@@ -618,9 +619,27 @@ as on the host, on that copy, for every agent of that projects directory:
   come in through `--settings` (an organisation's server-managed settings replace the file-based
   ones); Claude Code runs each once. `lea doctor` checks the managed settings in the image and in
   every running container, and that Claude Code is the version lea's CI verified them with.
+- **Permission rules come from your host only.** The managed settings make their own rules the
+  only ones Claude Code honours (`allowManagedPermissionRulesOnly`), disable bypass mode
+  (`disableBypassPermissionsMode`) and set the default mode: an agent that writes `allow` rules
+  into its copy, into a project's `.claude/settings*.json` or a `defaultMode` there gains nothing.
+  At each start the container's root adds your host's own `permissions` (`allow`, `ask`, `deny`,
+  `additionalDirectories`, and `defaultMode` unless it is `bypassPermissions`) to lea's, read
+  from your host's `~/.claude/settings.json` by lea on the host and mounted read-only, never from
+  the copy. So a rule you add with `/permissions` inside lea, or the deck's "always", is not kept:
+  add it to your host's `settings.json`, then restart lea (`lea stop`, then `lea`).
+- **The guard fails closed.** lea's PreToolUse hook denies a call it cannot check: lea missing, a
+  crash or a timeout (`onFailure: "block"`), a bus that does not answer, a Claude Code without a
+  lea agent identity (`LEA_AGENT`: run Claude in lea as an agent, from the deck or
+  `lea-agent run`). The variables the hooks read that lea sets alike in every container
+  (`LEA_BUS_SOCK`, `SSH_AUTH_SOCK`, `GH_CONFIG_DIR`, `GLAB_CONFIG_DIR`) are pinned in the managed
+  settings and the `--settings` file, above an agent's own `env`.
 
 The worst a compromised agent can do is change its own container's copy, which it could already
-do by running code in its container: there is no persistence on your host.
+do by running code in its container: there is no persistence on your host, and no wider
+permission. The agents of one container share one user, so they are one trust domain: an agent
+that names another agent of its container in `LEA_AGENT` is still guarded by the same hard denies
+and the container's grants.
 
 ### Control tower
 
