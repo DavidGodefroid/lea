@@ -96,6 +96,11 @@ type Daemon struct {
 	sounder  Sounder
 	soundOff bool
 	rang     map[string]time.Time
+	// noDeck: LEA_DECK=0 (#135): the host CLI answers lea's approvals (lea requests, lea approve,
+	// lea deny), no sound rings, and notifier tells the user, on the desktop, what waits for them.
+	noDeck   bool
+	notifier Notifier
+	notified map[string]time.Time
 	// subs: the subagents each agent runs (trackSubagents); subTTL forgets them (a test seam).
 	subs   map[string]*subagents
 	subTTL time.Duration
@@ -188,7 +193,7 @@ func New(st *store.Store, runDir string, now func() int64) *Daemon {
 	}
 	return &Daemon{subs: map[string]*subagents{}, subTTL: subagentTTL, afterFunc: time.AfterFunc, st: st, lim: bus.Default, now: now, runDir: runDir,
 		attached: map[string]string{}, notify: map[string]chan struct{}{},
-		verdicts: map[int64]chan string{}, asks: map[string]pendingAsk{}, blocks: map[string]int{}, stopped: map[string]bool{}, rewakes: map[string]int{}, rewoken: map[string][]int64{}, woken: map[string]bool{}, keyMu: map[string]*sync.Mutex{}, statusPaths: map[string]string{}, named: map[string]bool{}, rang: map[string]time.Time{},
+		verdicts: map[int64]chan string{}, asks: map[string]pendingAsk{}, blocks: map[string]int{}, stopped: map[string]bool{}, rewakes: map[string]int{}, rewoken: map[string][]int64{}, woken: map[string]bool{}, keyMu: map[string]*sync.Mutex{}, statusPaths: map[string]string{}, named: map[string]bool{}, rang: map[string]time.Time{}, notified: map[string]time.Time{},
 		resumeDelay: DefaultResumeDelay, windows: map[string][]limitWindow{}, limitJobs: map[string]string{},
 		stackIdle: DefaultStackIdle, parkTimers: map[string]*time.Timer{}, parked: map[string]string{},
 		keepalive: DefaultKeepalive, keepTimers: map[string]*time.Timer{}, resumeFails: map[string]resumeFail{}, resuming: map[string]bool{},
@@ -380,7 +385,7 @@ func (d *Daemon) dispatch(ctx context.Context, o Origin, req wire.Request) (any,
 		v, err := d.send(me, p.To, p.Body, p.Kind, p.ReplyTo)
 		if err == nil && o.Container != "" && p.To == "user" && p.Kind == "request" {
 			// A request to the user waits for them: lea needs the developer (#294).
-			d.sound(ctx, o.Container, SoundAttention)
+			d.attention(ctx, o.Container, me, shortName(me)+" sends you a request: lea inbox")
 		}
 		return v, err
 	case "msg_reply":
@@ -394,7 +399,7 @@ func (d *Daemon) dispatch(ctx context.Context, o Origin, req wire.Request) (any,
 		v, to, err := d.reply(me, p.ID, p.Status, p.Body)
 		if err == nil && o.Container != "" && to == "user" && p.Status == "needs_user" {
 			// An answer to the user that needs them waits for them (#294).
-			d.sound(ctx, o.Container, SoundAttention)
+			d.attention(ctx, o.Container, me, shortName(me)+" needs you in its answer: lea inbox")
 		}
 		return v, err
 	case "msg_inbox":
@@ -1062,7 +1067,7 @@ func (d *Daemon) dispatchHooks(ctx context.Context, o Origin, me string, req wir
 				d.keepActivity(me, s)
 				d.changed()
 				if waits {
-					d.sound(ctx, o.Container, SoundAttention)
+					d.waitsForUser(ctx, o.Container, me)
 				}
 			}
 		}
@@ -1127,6 +1132,8 @@ func (d *Daemon) dispatchHooks(ctx context.Context, o Origin, me string, req wir
 		if err != nil {
 			return nil, err
 		}
+		// Without the deck the user answers on the host (#135): a notification says so.
+		d.desktop(fmt.Sprintf("%s#p%d", me, id), fmt.Sprintf("%s asks to use %s: lea approve p%d or lea deny p%d (lea requests)", shortName(me), capTool(p.Tool), id, id))
 		ch := make(chan string, 1)
 		d.mu.Lock()
 		d.verdicts[id] = ch

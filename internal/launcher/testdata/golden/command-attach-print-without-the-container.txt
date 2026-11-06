@@ -1,0 +1,6 @@
+status 1
+-- calls
+docker [inspect] [-f] [{{.State.Running}}] [lea-$ID]
+-- lea
+lea: error: lea-$ID is not running: start it with lea first (or lea new for an agent)
+-- stdout

@@ -144,7 +144,8 @@ projects directory). Press `n` for another agent.
 - Linux, macOS, or Windows with WSL2 (run lea from WSL).
 - Docker Engine (Linux) or Docker Desktop, running, usable without `sudo`; a patched host
   kernel (see [How lea keeps your machine safe](#how-lea-keeps-your-machine-safe)).
-- On macOS, tmux 3.2 or later (`brew install tmux`); the Linux release brings its own.
+- On macOS, tmux 3.2 or later (`brew install tmux`); the Linux release brings its own. Without
+  the deck (`--no-deck`), only `lea new` needs it.
 - `curl`, `tar`, `ssh-keygen`.
 - A Claude subscription or API key for Claude Code.
 
@@ -285,6 +286,38 @@ profile and state in the bottom border.
 - **Permissions.** When an agent asks for a permission, its row shows the request and the deck
   answers it. Unanswered after `LEA_APPROVAL_TIMEOUT` seconds (60), Claude asks in its own
   terminal as usual; `LEA_APPROVALS=pane` keeps Claude's dialog only.
+
+## Without the deck
+
+The deck is optional. `lea config deck off` (or `sh install.sh --no-deck [--tool CMD]`, or
+answering no in `lea init`) makes `lea` run your own tool inside the lea container instead:
+Claude Code by default, or any command (`lea config tool codex`, `lea config tool aider --model
+x`; a command and its arguments, never run through a shell). Arguments after `lea` go to it
+(`lea --resume`). `lea config deck on` brings the deck back. Either switch applies at the next
+`lea`, with the same container: nothing is rebuilt and running agents are not touched.
+
+What stays the same: the container and its confinement (proxy and egress allowlist, seccomp,
+AppArmor, no host secrets), grants, lea's daemon and MCP server, and the Locks' sockets. The
+`docker run` arguments are the deck's, to the byte. tmux is not needed (`lea new` still needs it,
+for its agents' terminals).
+
+- **Your tool from an IDE or another terminal.** `lea attach` runs the tool in the container
+  like `lea` does; `lea attach --print` prints the `docker exec` command that does it in the
+  running container, as is, for a second terminal or an IDE's terminal (VS Code Dev Containers
+  and JetBrains can also attach to the running `lea-<id>` container).
+- **lea's agents.** `lea new` and a lead's spawns still run under the daemon. `lea board`
+  (`--watch`: again every 2 s) follows them, and `lea attach AGENT` joins one agent's terminal
+  (detach with abduco's `ctrl+\`).
+- **What waits for you.** A permission request of one of lea's agents, a spawn request routed to
+  you, a request or a blocked agent comes as a desktop notification (`notify-send`, or
+  `osascript` on macOS) instead of the deck's sound. `lea requests` lists the permissions (`pN`)
+  and spawn requests (`sN`); `lea approve pN [always]`, `lea deny pN`, `lea approve sN` and
+  `lea deny sN [reason]` answer them. Unanswered after `LEA_APPROVAL_TIMEOUT` seconds, the
+  agent asks in its own terminal. Lock requests (locksql, lockmq, lockfile, lockhttp) are not
+  lea's: `lox run` decides them, deck or not.
+- **Off without the deck:** the agent column, lea's sounds and the deck's keys.
+
+`lea doctor` shows the mode and does not flag a missing tmux with `LEA_DECK=0`.
 
 ## Git and forges
 
@@ -846,6 +879,10 @@ directory of the projects directory; `--branch B` has it work in its own git wor
 
 ```sh
 lea                          # the deck, for $LEA_PROJECTS_DIR (unset: the working directory, on the first run)
+                             # (LEA_DECK=0: your own tool in the lea container, see Without the deck)
+lea attach [--print] [AGENT] # the tool in the lea container, or an agent's terminal (--print: the command)
+lea requests                 # what waits for you; lea approve ID [always], lea deny ID [reason]
+lea config deck on|off       # the deck, or your own tool (lea config tool CMD...), from the next lea
 lea new [name] [-- args]     # one more agent (its CLI's arguments after --; -p provider, -m model)
 lea shell [-- cmd...]        # a shell, or one command, in the same lea
 lea stop [--all] [--forget] # stop this lea (--all: every lea); the next lea resumes its agents

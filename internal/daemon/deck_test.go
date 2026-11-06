@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"reflect"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -302,5 +303,24 @@ func TestLockAndHubMethodsAreGone(t *testing.T) {
 	}
 	if err := call(t, e.bus, "lead", "lock_request", map[string]any{"tool": "locksql", "profile": "prod"}, nil); err == nil || !strings.Contains(err.Error(), "unknown method") {
 		t.Fatalf("lock_request from an agent: %v", err)
+	}
+}
+
+// Without the deck (LEA_DECK=0, #135) nobody is attached to a deck, yet a permission request is
+// not handed straight back to the agent's own dialog: it waits for the host CLI (lea approve),
+// and the user is told on the desktop how to answer it.
+func TestWithoutTheDeckAnApprovalWaitsForLeaApprove(t *testing.T) {
+	e, notes, _ := noDeckEnv(t)
+	got := ask(t, e, 3, false)
+	p := waitPending(t, e)
+	want := "lea needs you: dev asks to use Bash: lea approve p" + strconv.FormatInt(p.ID, 10) + " or lea deny p" + strconv.FormatInt(p.ID, 10) + " (lea requests)"
+	if n := waitNotes(notes, 1); len(n) != 1 || n[0] != want {
+		t.Fatalf("notes %q, want %q", n, want)
+	}
+	if err := call(t, e.api, "", "approval_decide", map[string]any{"id": p.ID, "verdict": "allow"}, nil); err != nil {
+		t.Fatal(err)
+	}
+	if r := receive(t, got); r.Verdict != "allow" || r.ID != p.ID {
+		t.Fatalf("verdict %+v", r)
 	}
 }

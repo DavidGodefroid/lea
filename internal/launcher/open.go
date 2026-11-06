@@ -76,9 +76,10 @@ func (l *Launcher) up(proj string) (*upState, error) {
 	return u, nil
 }
 
-// session is lea__session: the deck, unless --shell asks for lea-session.
+// session is lea__session: the deck, unless --shell (a shell or a command) or --claude (Claude
+// Code with lea's hooks, LEA_DECK=0's default tool) asks for lea-session.
 func (l *Launcher) session(proj string, args []string) error {
-	if len(args) == 0 || args[0] != "--shell" {
+	if len(args) == 0 || args[0] != "--shell" && args[0] != "--claude" {
 		return l.deck(proj, args)
 	}
 	u, err := l.up(proj)
@@ -295,4 +296,18 @@ func deckArgsRefused(args []string) error {
 		return die("with the deck, claude arguments go to a new agent: lea new -- %s", strings.Join(args, " "))
 	}
 	return nil
+}
+
+// toolArgs is lea-session's arguments for LEA_TOOL with the arguments typed after lea (a leading
+// -- dropped): Claude Code goes through lea-session --claude (lea's hooks, settings and plugin, as
+// a deck agent's), any other tool through --shell, which runs it as is (#135).
+func (l *Launcher) toolArgs(extra []string) []string {
+	if len(extra) > 0 && extra[0] == "--" {
+		extra = extra[1:]
+	}
+	argv := append(l.Cfg.Tool(), extra...)
+	if argv[0] == DefaultTool {
+		return append([]string{"--claude"}, argv[1:]...)
+	}
+	return append([]string{"--shell"}, argv...)
 }

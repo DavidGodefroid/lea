@@ -11,7 +11,7 @@ lea_load_config() {
   _lc_env=${LEA_PROJECTS_DIR:-}
   _lc_appr=${LEA_APPROVALS:-}
   _lc_appt=${LEA_APPROVAL_TIMEOUT:-}
-  # shellcheck source=/dev/null
+  # shellcheck source=/dev/null disable=SC2153 # LEA_ROOT is lea-sh's (not a misspelt LEA_TOOL)
   . "$LEA_ROOT/config/lea.conf"
   _lc_user=$(lea_user_config_path)
   case $_lc_user in /*) ;; *) _lc_user=./$_lc_user ;; esac
@@ -29,6 +29,10 @@ lea_load_config() {
   if [ "$LEA_APPROVAL_TIMEOUT" -lt 1 ] || [ "$LEA_APPROVAL_TIMEOUT" -gt 600 ]; then
     lea_die "LEA_APPROVAL_TIMEOUT must be a number of seconds from 1 to 600 without leading zeros, not '$LEA_APPROVAL_TIMEOUT'"
   fi
+  # The deck or the user's own tool in the lea container (#135).
+  LEA_DECK=${LEA_DECK:-1}
+  case $LEA_DECK in 0|1) ;; *) lea_die "LEA_DECK must be 1 (the lea deck) or 0 (your own tool, LEA_TOOL, in the lea container), not '$LEA_DECK'" ;; esac
+  lea__check_tool
   LEA_INTERNAL_HOSTS=${LEA_INTERNAL_HOSTS:-$LEA_ROOT/config/internal-hosts}
   lea__check_egress_allow
   # The git SSH endpoints (none by default: git over HTTPS needs none). LEA_GITLAB_SSH and
@@ -82,7 +86,28 @@ lea_load_config() {
   export LEA_PREFIX LEA_IMAGE LEA_PROXY_IMAGE LEA_CTL LEA_CTL_IMAGE LEA_GIT_SSH LEA_GIT_KNOWN_HOSTS LEA_LOCKSQL LEA_LOCKSQL_REF \
     LEA_LOCKMQ LEA_LOCKFILE LEA_LOCKMQ_REF LEA_LOCKFILE_REF LEA_LOCKHTTP LEA_LOCKHTTP_MITM \
     LEA_OTEL_UPSTREAM LEA_NESTED_NETWORKS LEA_K8S_NAMESPACE LEA_INTERNAL_HOSTS LEA_EGRESS_ALLOW LEA_PROJECTS_DIR \
-    LEA_APPROVALS LEA_APPROVAL_TIMEOUT LEA_SOUND LEA_SOUND_ATTENTION
+    LEA_APPROVALS LEA_APPROVAL_TIMEOUT LEA_SOUND LEA_SOUND_ATTENTION LEA_DECK LEA_TOOL
+}
+
+# lea__check_tool: LEA_TOOL is the command lea runs in the lea container with LEA_DECK=0, as an
+# argv (never through a shell): at most 32 words separated by blanks, each made of letters,
+# digits and _ . / : = @ % + , - only, the first one not an option. Empty: claude. Normalized to
+# words joined by one space.
+lea__check_tool() {
+  _ct_n=0 _ct_out='' _ct_bad=''
+  set -f
+  for _ct_w in ${LEA_TOOL:-}; do
+    _ct_n=$((_ct_n + 1))
+    case $_ct_w in *[!ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_./:=@%+,-]*) _ct_bad=1 ;; esac
+    if [ "$_ct_n" -eq 1 ]; then case $_ct_w in -*) _ct_bad=1 ;; esac; fi
+    _ct_out="$_ct_out $_ct_w"
+  done
+  set +f
+  if [ -n "$_ct_bad" ] || [ "$_ct_n" -gt 32 ]; then
+    lea_die "LEA_TOOL must be a command and its arguments separated by spaces (at most 32 words of letters, digits and _ . / : = @ % + , -, the first one not an option), not '${LEA_TOOL:-}'"
+  fi
+  LEA_TOOL=${_ct_out# }
+  LEA_TOOL=${LEA_TOOL:-claude}
 }
 
 # lea__check_egress_allow: LEA_EGRESS_ALLOW lists at most 64 domain names, separated by commas or

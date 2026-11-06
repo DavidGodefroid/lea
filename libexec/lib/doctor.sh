@@ -37,7 +37,15 @@ lea_doctor() {
     if docker image inspect "$_dimg" >/dev/null 2>&1; then lea__ok "image $_dimg"
     else lea__fail "image $_dimg" "not present: run lea init"; _drc=1; fi
   done
-  if _dtb=$(lea_tmux_bin); then
+  # LEA_DECK=0 (#135): lea runs your own tool in its container, without the deck; tmux only hosts
+  # the terminals of lea's agents (lea new), so a missing or old one is no warning.
+  if [ "${LEA_DECK:-1}" = 0 ]; then
+    lea__ok "deck off (LEA_DECK=0): lea runs ${LEA_TOOL:-claude} in the lea container (lea config deck on: the deck)"
+    _dtv=
+    if _dtb=$(lea_tmux_bin); then _dtv=$("$_dtb" -V 2>/dev/null || true); fi
+    if [ -n "$_dtv" ] && lea_tmux_version_ok "$_dtv"; then lea__ok "tmux ($_dtv, $(lea_tmux_source "$_dtb"))"
+    else lea__ok "tmux not needed without the deck (lea new needs tmux $LEA_TMUX_MIN or later for its agents' terminals)"; fi
+  elif _dtb=$(lea_tmux_bin); then
     _dtv=$("$_dtb" -V 2>/dev/null || true)
     if lea_tmux_version_ok "$_dtv"; then lea__ok "tmux ($_dtv, $(lea_tmux_source "$_dtb"))"
     else lea__fail "tmux" "$_dtv is older than $LEA_TMUX_MIN: $(lea_tmux_install_hint), or $(lea_tmux_build_hint)"; _drc=1; fi

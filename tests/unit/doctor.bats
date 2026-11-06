@@ -684,3 +684,19 @@ fake_docker_key() {
   run lea_doctor
   [[ "$output" != *"kata seccomp"* ]]
 }
+
+@test "without the deck (LEA_DECK=0) a missing or old tmux is no warning (#135)" {
+  no_tmux
+  export LEA_DECK=0 LEA_TOOL=claude
+  run lea_doctor
+  [[ "$output" == *"ok    deck off (LEA_DECK=0): lea runs claude in the lea container"* ]]
+  [[ "$output" == *"ok    tmux not needed without the deck"* ]]
+  [[ "$output" != *"FAIL  tmux"* ]] && [[ "$output" != *"warn  tmux"* ]]
+  fake_tmux "tmux 3.0"
+  run lea_doctor
+  [[ "$output" == *"ok    tmux not needed without the deck"* ]]
+  [[ "$output" != *"FAIL  tmux"* ]]
+  export FAKE_TMUX_VERSION="tmux 3.4"
+  run lea_doctor
+  [[ "$output" == *"ok    tmux (tmux 3.4, host)"* ]]
+}

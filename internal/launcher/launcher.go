@@ -422,7 +422,15 @@ func (l *Launcher) dispatch(args []string) error {
 		if len(rest) > 0 && rest[0] == "ctl" {
 			return l.configCtl(rest[1:])
 		}
+		if len(rest) > 0 && rest[0] == "deck" {
+			return l.configDeck(rest[1:])
+		}
+		if len(rest) > 0 && rest[0] == "tool" {
+			return l.configTool(rest[1:])
+		}
 		return l.config(rest)
+	case "attach":
+		return l.attach(rest)
 	case "ctl":
 		return l.ctl(rest)
 	default:
@@ -431,7 +439,13 @@ func (l *Launcher) dispatch(args []string) error {
 				return err
 			}
 		}
-		if err := l.refuseEarly(args, true); err != nil {
+		// LEA_DECK=0 (#135): the user's own tool in the same container, without the deck or tmux.
+		noDeck := l.Cfg.NoDeck()
+		deckArgs := args
+		if noDeck {
+			deckArgs = nil
+		}
+		if err := l.refuseEarly(deckArgs, !noDeck); err != nil {
 			return err
 		}
 		if err := l.firstRun(); err != nil {
@@ -445,6 +459,9 @@ func (l *Launcher) dispatch(args []string) error {
 			return err
 		}
 		l.autoUpdate()
+		if l.Cfg.NoDeck() {
+			return l.session(proj, l.toolArgs(args))
+		}
 		return l.session(proj, args)
 	}
 }

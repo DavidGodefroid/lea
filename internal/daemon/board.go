@@ -80,7 +80,7 @@ func (d *Daemon) taskUpdate(ctx context.Context, o Origin, me string, raw json.R
 		d.changed()
 	}
 	if !wasBlocked && strings.TrimSpace(p.BlockedOn) != "" {
-		d.sound(ctx, o.Container, SoundAttention)
+		d.attention(ctx, o.Container, me, shortName(me)+" is blocked on you: lea board")
 	}
 	return struct{}{}, nil
 }

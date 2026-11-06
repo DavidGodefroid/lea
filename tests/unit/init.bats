@@ -881,3 +881,74 @@ c - -" ]
   lea_init --first-run </dev/null 2>/dev/null
   grep -qx "LEA_PROJECTS_DIR='$P'" "$U"
 }
+
+# The deck or your own tool in the lea container (#135).
+@test "non-interactive init leaves the deck switch as it is" {
+  run lea_init </dev/null
+  [ "$status" -eq 0 ]
+  ! grep -q '^LEA_DECK=' "$U"
+  ! grep -q '^LEA_TOOL=' "$U"
+}
+
+@test "--no-deck --tool records LEA_DECK=0 and LEA_TOOL, --deck records LEA_DECK=1" {
+  run lea_init --no-deck --tool 'codex --model gpt-5' </dev/null
+  [ "$status" -eq 0 ]
+  grep -qx "LEA_DECK='0'" "$U"
+  grep -qx "LEA_TOOL='codex --model gpt-5'" "$U"
+  [[ "$output" == *"no deck: lea runs codex --model gpt-5 in the lea container"* ]]
+  run lea_init --no-deck </dev/null
+  grep -qx "LEA_TOOL='claude'" "$U" || grep -qx "LEA_TOOL='codex --model gpt-5'" "$U"
+  run lea_init --deck </dev/null
+  [ "$status" -eq 0 ]
+  grep -qx "LEA_DECK='1'" "$U"
+  [[ "$output" == *"the deck: lea opens it (LEA_DECK=1"* ]]
+}
+
+@test "a --tool with shell metacharacters is refused before anything is written" {
+  run lea_init --no-deck --tool 'claude; rm -rf ~' </dev/null
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"LEA_TOOL must be a command and its arguments separated by spaces"* ]]
+  [ ! -e "$U" ] || ! grep -q '^LEA_PROJECTS_DIR=' "$U"
+  run lea_init --tool </dev/null
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"--tool needs a command"* ]]
+}
+
+@test "interactive init asks for the deck: yes keeps it, no asks which command to start" {
+  interactive
+  _in_deck= _in_tool= _in_only=
+  run lea__init_deck <<<"y"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"Use the lea deck (agents in a column, approvals, board)? [Y/n]"* ]]
+  grep -qx "LEA_DECK='1'" "$U"
+  run lea__init_deck <<<$'n\naider --model x'
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"Command to start in the lea container [claude]:"* ]]
+  grep -qx "LEA_DECK='0'" "$U"
+  grep -qx "LEA_TOOL='aider --model x'" "$U"
+  # No answer: the default, the deck.
+  run lea__init_deck <<<""
+  grep -qx "LEA_DECK='1'" "$U"
+  # No + an empty command: claude.
+  run lea__init_deck <<<$'no\n'
+  grep -qx "LEA_DECK='0'" "$U"
+  grep -qx "LEA_TOOL='claude'" "$U"
+  # Already off: the question defaults to no, and the end of input changes nothing.
+  LEA_DECK=0
+  run lea__init_deck </dev/null
+  [[ "$output" == *"[y/N]"* ]]
+  grep -qx "LEA_DECK='0'" "$U"
+  run lea__init_deck <<<$'n\nsh -c x;y'
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"LEA_TOOL must be a command"* ]]
+}
+
+@test "interactive init does not ask for the deck without a terminal" {
+  unset LEA_INIT_NONINTERACTIVE
+  lea__init_tty() { return 1; }
+  _in_deck= _in_tool= _in_only=
+  run lea__init_deck <<<"n"
+  [ "$status" -eq 0 ]
+  [[ "$output" != *"Use the lea deck"* ]]
+  [ ! -e "$U" ] || ! grep -q '^LEA_DECK=' "$U"
+}

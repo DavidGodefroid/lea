@@ -9,6 +9,10 @@ const Usage = `Usage:
                               (under lox run only, in another terminal: lea starts none)
   lea                         open the deck: your agents on the left, the selected one on the right
                               (keys: j/k select, enter focus, ctrl+space back, n new, x stop, q quit)
+                              (LEA_DECK=0: your own tool, LEA_TOOL, in the lea container instead)
+  lea attach [--print] [AGENT]
+                              run LEA_TOOL in the lea container, or join an agent's terminal;
+                              --print: the docker exec command, for an IDE or another terminal
   lea new [-r role] [-p provider] [-m model] [--repo R] [--branch B] [--brief file] [name] [-- args]
                               start one more agent in the deck (roles: lead, dev, reviewer;
                               providers: claude, codex and those of ~/.config/lea/providers)
@@ -27,12 +31,17 @@ const Usage = `Usage:
   lea kube refresh            mint a read-only Kubernetes token (8 h)
   lea board --md              the board: every agent's task, as markdown
   lea agents                  list agents (lea msg <agent> <text>, lea inbox, lea approvals, lea requests)
+  lea requests                what waits for you: permissions and spawn requests of lea's agents
+                              (lea approve ID [always], lea deny ID [reason]); Lock requests: lox run
   lea stop [--all] [--forget]
                               stop lea; its agents resume at the next lea (--forget drops them)
   lea config export [--output FILE] [--include-personal]
                               the shared part of your configuration, as a file for your team
   lea config import FILE [--dry-run] [--replace] [--yes]
                               take a team's configuration (lea config --help: what needs a flag)
+  lea config deck on|off      the deck, or your own tool in the lea container (from the next lea)
+  lea config tool CMD [ARG...]
+                              the tool lea runs in the lea container without the deck (claude)
   lea update [--deps ask|all|none]
                               the latest lea, then each newer locksql release (lockmq and
                               lockfile: their launchers update themselves)

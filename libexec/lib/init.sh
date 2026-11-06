@@ -10,6 +10,7 @@ lea_init_apparmor() {
   if [ -e "${LEA_APPARMOR_ABI_DIR:-/etc/apparmor.d/abi}/4.0" ]; then _in_abi=4.0 _in_userns='  userns,'; else _in_abi=3.0 _in_userns=''; fi
   _in_out=$(lea_host_dir)/apparmor-lea
   lea_mkdirs "$(lea_data_dir)" "$(lea_host_dir)"
+  # shellcheck disable=SC2153 # LEA_ROOT is lea-sh's (not a misspelt LEA_TOOL)
   _in_prof=$(sed -e "s|@ABI@|$_in_abi|" -e "s|^@USERNS@\$|$_in_userns|" "$LEA_ROOT/apparmor/lea.tmpl")
   lea_write_file "$(lea_data_dir)" "$_in_out" <<EOT
 $_in_prof
@@ -262,9 +263,59 @@ lea__init_wants() {
   case " $_in_only " in *" $1 "*) return 0 ;; *) return 1 ;; esac
 }
 
+# lea__init_read DEFAULT: one answer, DEFAULT when empty; status 1 at the end of input.
+lea__init_read() {
+  IFS= read -r _ir_a || return 1
+  _ir_a=${_ir_a:-$1}
+}
+
+# lea__init_tool CMD: LEA_TOOL=CMD, checked as lea loads it (dies with lea__check_tool's text).
+lea__init_tool() {
+  LEA_TOOL=$1
+  lea__check_tool
+}
+
+# lea__init_deck: the deck or your own tool in the lea container (#135). --deck / --no-deck
+# [--tool CMD] decide without asking; otherwise a bare lea init, on a terminal only, asks,
+# defaulting to the current choice; the end of input, or no terminal, keeps it as it is.
+lea__init_deck() {
+  case $_in_deck in
+    '')
+      if [ -n "$_in_tool" ]; then lea_user_config_set LEA_TOOL "$LEA_TOOL"; fi
+      # A lea init for some Locks only (--locksql, --no-lockmq ...) asks nothing else.
+      [ -z "$_in_only" ] && [ -z "${LEA_INIT_NONINTERACTIVE:-}" ] && lea__init_tty || return 0
+      if [ "${LEA_DECK:-1}" = 0 ]; then printf 'Use the lea deck (agents in a column, approvals, board)? [y/N] ' >&2
+      else printf 'Use the lea deck (agents in a column, approvals, board)? [Y/n] ' >&2; fi
+      _id_d=y
+      if [ "${LEA_DECK:-1}" = 0 ]; then _id_d=n; fi
+      lea__init_read "$_id_d" || return 0
+      case $_ir_a in
+        [yY] | [yY][eE][sS]) _in_deck=1 ;;
+        *)
+          _in_deck=0
+          if [ -z "$_in_tool" ]; then
+            printf 'Command to start in the lea container [%s]: ' "${LEA_TOOL:-claude}" >&2
+            lea__init_read "${LEA_TOOL:-claude}" || _ir_a=${LEA_TOOL:-claude}
+            lea__init_tool "$_ir_a"
+          fi ;;
+      esac ;;
+  esac
+  if [ "$_in_deck" = 1 ]; then
+    if [ -n "$_in_tool" ]; then lea_user_config_set LEA_DECK 1 LEA_TOOL "$LEA_TOOL"; else lea_user_config_set LEA_DECK 1; fi
+    LEA_DECK=1
+    lea_log "the deck: lea opens it (LEA_DECK=1; lea config deck off: your own tool instead)"
+  else
+    lea_user_config_set LEA_DECK 0 LEA_TOOL "$LEA_TOOL"
+    LEA_DECK=0
+    lea_log "no deck: lea runs $LEA_TOOL in the lea container (LEA_DECK=0, LEA_TOOL; lea config deck on: the deck)"
+  fi
+  export LEA_DECK LEA_TOOL
+}
+
 lea_init() {
-  _in_only=
-  for _in_a in "$@"; do
+  _in_only='' _in_deck='' _in_tool=''
+  while [ $# -gt 0 ]; do
+    _in_a=$1
     case $_in_a in
       --no-locksql | --locksql | --lockmq | --no-lockmq | --lockfile | --no-lockfile)
         _in_t=${_in_a#--}
@@ -277,9 +328,15 @@ lea_init() {
       --no-lockmq) lea__lockhost_set lockmq 0 ;;
       --lockfile) lea__lockhost_set lockfile 1 ;;
       --no-lockfile) lea__lockhost_set lockfile 0 ;;
+      --deck) _in_deck=1 ;;
+      --no-deck) _in_deck=0 ;;
+      --tool)
+        if [ $# -lt 2 ] || [ -z "$2" ]; then lea_die "lea init: --tool needs a command (--tool claude)"; fi
+        _in_tool=$2; lea__init_tool "$2"; shift ;;
       --first-run) LEA_INIT_NONINTERACTIVE=1 LEA_FIRST_RUN=1 ;;
-      *) lea_die "usage: lea init [--no-locksql | --locksql] [--lockmq | --no-lockmq] [--lockfile | --no-lockfile] [--first-run]" ;;
+      *) lea_die "usage: lea init [--no-locksql | --locksql] [--lockmq | --no-lockmq] [--lockfile | --no-lockfile] [--deck | --no-deck [--tool CMD]] [--first-run]" ;;
     esac
+    shift
   done
   _in_s=$(lea_state_dir)
   _in_um=$(umask)
@@ -301,6 +358,7 @@ lea_init() {
   fi
   if lea__init_wants lockmq; then lea__init_lockhost lockmq; fi
   if lea__init_wants lockfile; then lea__init_lockhost lockfile; fi
+  lea__init_deck
   lea_init_apparmor
   if [ -z "${LEA_FIRST_RUN:-}" ]; then lea_log "ready. Run: lea"; fi
   umask "$_in_um"
