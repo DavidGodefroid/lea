@@ -1,5 +1,65 @@
 # Changelog
 
+## v0.10.0 (2026-11-06)
+
+Upgrading from v0.9.x:
+
+- lea refuses to start an agent container on an internal network without
+  `gateway_mode_ipv4=isolated` (#307): Docker Engine older than 28.0, Podman, or a network left by
+  an older lea. Upgrade Docker or remove the old network; `LEA_ALLOW_GATEWAY=1` opts in to the
+  weaker network. `lea doctor` prints each internal network's gateway mode and fails on a
+  non-isolated one.
+- The GitHub token now lives in the proxy only (#304): agents use it through `gh` and `git` but
+  cannot read it. A token found in an agent's state is adopted once, when the proxy has none, and
+  is otherwise discarded; `lea github login` sets it.
+- The agent image has no `sudo` and no setuid/setgid file any more (#100, #305).
+
+Changes:
+
+- Optional deck (#323): `LEA_DECK=0` (`lea init`, `install.sh --no-deck [--tool CMD]`,
+  `lea config deck on|off`, `lea config tool`) runs your own tool in the lea container.
+  `lea attach [--print] [AGENT]`; `lea requests`, `lea approve` and `lea deny` answer lea's
+  permission and spawn requests, with desktop notifications without the deck; `lea board --watch`.
+- Plugins and permissions work inside lea (#111, #311): each projects directory's container has its
+  own writable copy of `~/.claude/settings.json` and `~/.claude/plugins`, kept across restarts and
+  never written back to the host, so `/plugin install`, marketplaces and `/permissions` work. lea's
+  hooks are now in Claude Code's managed settings, so an agent cannot remove them, and
+  `lea doctor` checks them.
+- `LEA_RUNTIME` runs the agent containers on gVisor (`runsc`) or Kata Containers (`kata`), a second
+  kernel between the agents and the host; `lea doctor` shows each container's runtime (#106, #309).
+- Limits (#132, #303): lea restarts an idle lea container to apply limits it could not apply in
+  place; rootless Podman without the cpu, memory or pids controller starts without that limit
+  (with a warning) instead of failing; `lea doctor` reports stale limits and cgroup delegation.
+  Fixed: limits were never applied to running containers on Docker 29 (`PidsLimit` printed as
+  `<no value>`).
+- The deck's width is resizable (`<`/`>`, a border drag, `LEA_DECK_WIDTH`), persisted across
+  restarts and clamped to 24..min(60, half the window) (#275, #318).
+- Deck folders are calm section headers (#295, #322): each shows its agent count and a status
+  summary (needs you, working, limited, done); folder agents lose the vertical guide, and a blank
+  line separates the folders and the root agents after them.
+- An idle agent is woken for a message in its inbox after a lea daemon restart, after its session
+  is resumed, and after more than an hour idle (#297, #317). Wakes are held while the agent is
+  paused or limited, are rate-limited per agent, and show as "woken by lea" in the deck.
+- Security (#100, #305): lea's seccomp profile is Docker's default (pinned moby/profiles) plus a
+  reviewed, justified list of the syscalls the nested Podman needs; keyctl, reboot, syslog,
+  fanotify, the new mount API's fsopen family and others are refused again. The AppArmor profile
+  restores docker-default's `/proc` write denies.
+- Security (#102, #308): lea-proxy runs confined: all capabilities dropped except SETUID/SETGID,
+  no-new-privileges, a read-only root, pids and memory limits; squid, the TCP forwarders and
+  lea-keyproxy no longer run as root.
+- `lea doctor` and the README list the credentials an agent can still read (#103, #304).
+- Bash guard: a jq filter such as `.[]` is no longer denied as a glob on a protected file; glob
+  brackets follow bash's rules (still failing closed), and redirect targets are checked as globs
+  (#273, #314).
+- Deck: an agent spawned by a lead in a folder always joins that folder, even when a layout save
+  happens in the same second (#296, #316).
+- Drag-selecting in a pane and holding the pointer at its top or bottom edge (or past it) keeps
+  scrolling the history, faster the longer it is held (#280, #321).
+- install.sh creates its install directories 0755 under any umask; an existing group-writable one
+  gets a warning with the fix (lockfamily#15, #313).
+- Tests: the daemon's keepalive, subagent TTL and stack idle timers are driven by the test instead
+  of racing the wall clock (#278, #315).
+
 ## v0.9.0 (2026-11-06)
 
 Upgrading from v0.8.x:
