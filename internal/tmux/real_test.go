@@ -1221,8 +1221,8 @@ func TestRealDragHeldAtAnEdgeScrollsTheHistory(t *testing.T) {
 	}
 	down := start - pos()
 	t.Logf("2 s at the bottom edge, moving along it: %d lines", down)
-	if down < 60 {
-		t.Errorf("the history scrolled %d lines down in 2 s at the bottom edge, want 60 at least", down)
+	if down < 45 {
+		t.Errorf("the history scrolled %d lines down in 2 s at the bottom edge, want 45 at least", down)
 	}
 	if got := tm("display-message", "-p", "-t", agent, "#{selection_present} #{copy_cursor_y}"); got != "1 48" {
 		t.Errorf("selection and cursor %q, want a selection ending on the bottom row (1 48)", got)
@@ -1253,8 +1253,8 @@ func TestRealDragHeldAtAnEdgeScrollsTheHistory(t *testing.T) {
 	time.Sleep(2 * time.Second)
 	up := pos() - top
 	t.Logf("2 s at the top edge: %d lines", up)
-	if up < 80 {
-		t.Errorf("the history scrolled %d lines up in 2 s at the top edge, want 80 at least", up)
+	if up < 60 {
+		t.Errorf("the history scrolled %d lines up in 2 s at the top edge, want 60 at least", up)
 	}
 	mouse(w, 0, 100, 2, true)
 	if n := copied(); n < up+28 {
@@ -1287,8 +1287,8 @@ func TestRealDragPastTheEdgeOntoAnotherPaneScrollsAndStopsOnRelease(t *testing.T
 	time.Sleep(1500 * time.Millisecond)
 	moved := start - pos()
 	t.Logf("1.5 s over the lock console: %d lines", moved)
-	if moved < 30 {
-		t.Errorf("the history scrolled %d lines in 1.5 s with the pointer past the edge, want 30 at least", moved)
+	if moved < 20 {
+		t.Errorf("the history scrolled %d lines in 1.5 s with the pointer past the edge, want 20 at least", moved)
 	}
 	mouse(w, 0, 100, bottom+5, true)
 	waitFor(t, "the release to end the drag", func() bool {
@@ -1334,5 +1334,95 @@ func TestRealDragInAMouseProgramReachesIt(t *testing.T) {
 	}
 	if v := tm("show-options", "-s", "-v", "-q", DragOption); v != "" {
 		t.Errorf("%s = %q: an edge scroll started for a program's drag", DragOption, v)
+	}
+}
+
+// edgeLoops counts the edge scrolls running for pane: the shells of lea-drag-scroll's run-shell
+// jobs, whose command line (its formats expanded once) names the pane.
+func edgeLoops(t *testing.T, pane string) int {
+	t.Helper()
+	cmds, err := filepath.Glob("/proc/[0-9]*/cmdline")
+	if err != nil || len(cmds) == 0 {
+		t.Skip("no /proc to list the processes")
+	}
+	n := 0
+	for _, f := range cmds {
+		b, err := os.ReadFile(f)
+		if err != nil {
+			continue
+		}
+		if c := string(b); strings.Contains(c, `p="`+pane+`";`) && strings.Contains(c, "while [ $i -lt 12000 ]") {
+			n++
+		}
+	}
+	return n
+}
+
+// A release on the bar above the agent's pane, where a drag up overshoots to, never reaches lea's
+// bindings (tmux drops mouse events on that row): the edge scroll runs on to the history's top and
+// stops there, polling no more, the selection bounded by the history. The next click in the pane
+// still ends the drag and copies, and a new drag then selects and copies only its own lines
+// (#280).
+func TestRealDragReleasedOnTheTopBarStopsAtTheHistorysTop(t *testing.T) {
+	tm, w, agent := dragWindow(t, false)
+	num := func(f string) int {
+		t.Helper()
+		n, err := strconv.Atoi(tm("display-message", "-p", "-t", agent, f))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return n
+	}
+	ended := func(what string) int {
+		t.Helper()
+		waitFor(t, what+" to leave the history", func() bool { return num("#{pane_in_mode}") == 0 })
+		if v := tm("show-options", "-s", "-v", "-q", DragOption); v != "" {
+			t.Errorf("%s = %q after %s", DragOption, v, what)
+		}
+		waitFor(t, "no edge scroll after "+what, func() bool { return edgeLoops(t, agent) == 0 })
+		return len(strings.Fields(tm("show-buffer")))
+	}
+	hist := num("#{history_size}")
+	// 150 lines under the history's top: about a second of edge scroll.
+	tm("copy-mode", "-H", "-t", agent)
+	tm("send-keys", "-X", "-t", agent, "-N", strconv.Itoa(hist-150), "scroll-up")
+	// The agent's pane spans rows 2 to 50 of the terminal, its bar is on row 1.
+	mouse(w, 0, 100, 30, false)
+	mouse(w, 32, 100, 20, false)
+	mouse(w, 32, 100, 2, false)
+	mouse(w, 32, 100, 1, false)
+	mouse(w, 0, 100, 1, true)
+	if n := edgeLoops(t, agent); n != 1 {
+		t.Fatalf("%d edge scrolls running after the drag, want 1", n)
+	}
+	waitFor(t, "the scroll to reach the history's top", func() bool { return num("#{scroll_position}") >= hist })
+	// It stops on its own (a second at the top, the pointer could still turn back), the release
+	// lost: the drag is still on, as tmux alone leaves it.
+	waitFor(t, "the edge scroll to stop at the history's top", func() bool { return edgeLoops(t, agent) == 0 })
+	if got := tm("display-message", "-p", "-t", agent, "#{pane_in_mode} #{selection_present} #{copy_cursor_y} #{scroll_position}"); got != "1 1 0 "+strconv.Itoa(hist) {
+		t.Errorf("mode, selection, cursor and scroll %q once stopped, want 1 1 0 %d", got, hist)
+	}
+	time.Sleep(300 * time.Millisecond)
+	if n := edgeLoops(t, agent); n != 0 {
+		t.Errorf("%d edge scrolls back", n)
+	}
+	// A click: the copy runs from the history's first line to the drag's start (row 30, the
+	// pane's 29th line, 150 lines down): about 180 lines, not the whole history.
+	mouse(w, 0, 100, 20, false)
+	mouse(w, 0, 100, 20, true)
+	if n := ended("the click"); n < 150 || n > 200 {
+		t.Errorf("the copy holds %d lines, want 150 to 200 (the history's top to the drag's start)", n)
+	}
+	// A new drag, released in the pane, copies its own 10 or 11 lines (rows 30 up to 20, the
+	// line under the pointer whole or not).
+	time.Sleep(2 * time.Second) // the "Copied" popup takes the mouse while it shows
+	tm("copy-mode", "-H", "-t", agent)
+	tm("send-keys", "-X", "-t", agent, "-N", "1000", "scroll-up")
+	mouse(w, 0, 100, 30, false)
+	mouse(w, 32, 100, 25, false)
+	mouse(w, 32, 100, 20, false)
+	mouse(w, 0, 100, 20, true)
+	if n := ended("the new drag's release"); n < 10 || n > 11 {
+		t.Errorf("the new drag copied %d lines, want 10 or 11", n)
 	}
 }

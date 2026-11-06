@@ -114,8 +114,11 @@ func TestConfRunsLeasOwnTmuxNotThePATHs(t *testing.T) {
 		}
 		if strings.Contains(l, "-S ") {
 			runs++
-			// The edge scroll's loop names lea's tmux once, as $t.
-			if strings.Contains(l, "lea-drag-scroll=") && strings.Contains(l, `t=\"`+bin+`\";`) && strings.Contains(l, `\"\$t\" -S`) {
+			// The edge scroll's loop names lea's tmux once, as $t, and runs every tmux as "$t".
+			if strings.Contains(l, "lea-drag-scroll=") {
+				if !strings.Contains(l, `t=\"`+bin+`\";`) || strings.Count(l, " -S ") != strings.Count(l, `\"\$t\" -S `) {
+					t.Errorf("the edge scroll does not run every tmux as %s: %s", bin, l)
+				}
 				continue
 			}
 			if !regexp.MustCompile(`\\+"` + regexp.QuoteMeta(bin) + `\\+" -S`).MatchString(l) {
@@ -197,10 +200,12 @@ func TestConfDragsScrollAtTheEdges(t *testing.T) {
 	for _, want := range []string{
 		"set -sF " + DragCountOption + " '#{e|+:0#{" + DragCountOption + "},1}' ; set -sF " + DragOption + " '#{" + DragCountOption + "}' ; run-shell -b '",
 		`k="#{` + DragOption + `}"`,
-		// It stops on its own: out of the history, its drag ended or replaced, ten minutes.
-		`"##{pane_in_mode} ##{copy_cursor_y} ##{pane_height} ##{` + DragOption + `}"`,
+		// It stops on its own: out of the history, its drag ended or replaced, the history's end
+		// reached that way (a second on: a release lost on the bar above the pane), ten minutes.
+		`"##{pane_in_mode} ##{copy_cursor_y} ##{pane_height} ##{` + DragOption + `} ##{scroll_position} ##{history_size}"`,
 		`[ "$1" = 1 ] && [ "$4" = "$k" ] || exit 0`, `[ $i -lt 12000 ]`,
-		`if [ "$2" = 0 ]; then c=cursor-up; elif [ "$2" = $(($3 - 1)) ]; then c=cursor-down;`,
+		`if [ "$2" = 0 ]; then c=cursor-up; f=$(($5 >= $6)); elif [ "$2" = $(($3 - 1)) ]; then c=cursor-down; f=$(($5 == 0));`,
+		`if [ $f = 1 ]; then e=$((e + 1)); [ $e -lt 20 ] || exit 0; continue; fi; e=0;`,
 		` -X -t "$p" -N $m $c; done; exit 0'`,
 	} {
 		if !strings.Contains(unq, want) {
