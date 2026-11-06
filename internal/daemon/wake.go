@@ -18,10 +18,11 @@ import (
 // the agents idle in the store as idle (idleSince), so the job's watch on the new daemon answers.
 //
 // The daemon holds a wake (the watch keeps waiting, the messages stay unread) while the agent is
-// paused in the deck, stopped by the user or ended, stopped on its usage limit (its own resume
-// comes first), or woken rewakeBurst times within rewakeWindow: two agents that keep writing to
-// each other cannot keep each other awake. A wake shows in the deck ("woken by lea") until its
-// turn ends or the user types, and is recorded as an event.
+// paused in the deck, at work (a stale turn-over mark must not wake it mid-turn), stopped by the
+// user or ended, stopped on its usage limit (its own resume comes first), or woken rewakeBurst
+// times within rewakeWindow: two agents that keep writing to each other cannot keep each other
+// awake. A wake shows in the deck ("woken by lea") until its turn ends or the user types, and is
+// recorded as an event.
 
 var (
 	// rewakeBurst wakes of one agent within rewakeWindow seconds at most; the next waits.
@@ -36,7 +37,9 @@ func (d *Daemon) rewakeHold(me string) time.Duration {
 		switch {
 		case a.Paused, a.LimitUntil != 0:
 			return pausedRecheck
-		case a.State == "stopped", a.State == "done", a.State == "blocked":
+		case a.State == "stopped", a.State == "done", a.State == "blocked", a.State == "working":
+			// Working too: the store may show the agent mid-turn while its turn-over mark is
+			// stale (the user typed while the daemon was down); never wake an agent mid-turn.
 			return pausedRecheck
 		}
 	}

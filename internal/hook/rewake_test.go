@@ -47,24 +47,26 @@ func TestRewakeExitsTwoOnAMessage(t *testing.T) {
 	}
 }
 
-// A superseded rewake job ends quietly: exit 0 wakes nobody.
+// A superseded rewake job ends quietly: exit 0 wakes nobody. The superseding one also ends
+// before the test returns (fastRewake's life): it never lingers to race another test's timings.
 func TestASupersededRewakeExitsZero(t *testing.T) {
-	defer func(g time.Duration) { rewakeGrace = g }(rewakeGrace)
-	rewakeGrace = 0
+	fastRewake(t, 2*time.Second)
 	_, bus := start(t)
 	runHook(bus, "SessionStart", `{"session_id":"s1"}`, nil)
 	runHook(bus, "Stop", `{"session_id":"s1"}`, nil)
-	done := make(chan int, 1)
+	done := make(chan int, 2)
 	go func() { c, _ := runRewake(bus); done <- c }()
 	time.Sleep(150 * time.Millisecond)
-	go runRewake(bus)
-	select {
-	case c := <-done:
-		if c != 0 {
-			t.Fatalf("code=%d", c)
+	go func() { c, _ := runRewake(bus); done <- c }()
+	for range 2 {
+		select {
+		case c := <-done:
+			if c != 0 {
+				t.Fatalf("code=%d", c)
+			}
+		case <-time.After(5 * time.Second):
+			t.Fatal("a rewake hook never ended")
 		}
-	case <-time.After(5 * time.Second):
-		t.Fatal("the old rewake hook was not superseded")
 	}
 }
 

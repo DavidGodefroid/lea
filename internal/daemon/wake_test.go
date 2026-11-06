@@ -152,6 +152,35 @@ func TestARewakeWaitsForALimitedAgent(t *testing.T) {
 	}
 }
 
+// An agent at work is not woken mid-turn, even with a stale turn-over mark: the user typed
+// while the daemon was down, and the restart took the store's idle for turn-over, but the store
+// also shows the agent working. The watch holds until the turn really ends (Stop), then wakes it.
+func TestARewakeWaitsForAWorkingAgent(t *testing.T) {
+	e := start(t)
+	tm := newManualTimers(t)
+	tm.use(e.d)
+	hookEvent(t, e, "dev", "SessionStart")
+	hookEvent(t, e, "dev", "Stop")
+	// The user typed while the daemon was down: the store shows the agent at work, however its
+	// turn-over mark got here.
+	if err := e.d.st.SetState("lea-a/dev", "working", "", e.clock.Load()); err != nil {
+		t.Fatal(err)
+	}
+	w := rewakeWatch(t, e, "dev")
+	userSends(t, e, "dev", "hello")
+	quiet(t, w, "working")
+	if ds := tm.delays(); len(ds) == 0 || ds[len(ds)-1] != pausedRecheck {
+		t.Fatalf("recheck delays=%v", ds)
+	}
+	hookEvent(t, e, "dev", "Stop") // the turn is over: the held wake fires
+	for len(tm.delays()) > 0 {
+		tm.fire(t)
+	}
+	if r := next(t, w); r.Count != 1 {
+		t.Fatalf("notice=%+v", r)
+	}
+}
+
 // A paused agent is not woken; letting it continue (the deck's p) wakes the held watch at once.
 func TestARewakeWaitsForAPausedAgent(t *testing.T) {
 	e := start(t)
