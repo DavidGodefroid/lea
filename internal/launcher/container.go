@@ -558,7 +558,7 @@ func (l *Launcher) runArgs(proj, pip string) ([]string, error) {
 		func() ([]string, error) {
 			if vm {
 				// Kata (#106): a host FIFO does not cross into its VM, and the container would not start.
-				l.logf("the clipboard is off under %s: a virtual machine runtime cannot share lea's clipboard FIFO", l.Cfg.Get("LEA_RUNTIME"))
+				l.logf("the clipboard is off under %s: a virtual machine runtime cannot share lea's clipboard FIFO; its agents cannot reach lea's bus (messaging) or the Lock consoles either: a host Unix socket does not cross into the VM", l.Cfg.Get("LEA_RUNTIME"))
 				return nil, nil
 			}
 			return l.clipboardArgs()

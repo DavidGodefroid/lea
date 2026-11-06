@@ -188,6 +188,9 @@ jobs:
           done
           [ "$(grep -c "^ok   lea-test-[0-9a-f]* runs on the $LEA_TEST_RUNTIME runtime\$" isolation.log)" -eq 2 ] || { echo "isolation: the agent containers are not on $LEA_TEST_RUNTIME" >&2; exit 1; }
           grep -q "^ok   a kernel other than the host's" isolation.log || { echo "isolation: the second-kernel check did not run" >&2; exit 1; }
+          # lea's bus crosses gVisor (--host-uds=open), not Kata's VM (README, "A second kernel").
+          if [ "$LEA_TEST_RUNTIME" = runsc ]; then bus="is reachable"; else bus="is not reachable"; fi
+          grep -qx "info lea's bus socket $bus" isolation.log || { echo "isolation: lea's bus socket was expected to be $bus" >&2; exit 1; }
       - name: the runtime's logs, on failure
         if: failure()
         run: |

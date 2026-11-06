@@ -978,16 +978,16 @@ dockerd), and `LEA_TEST_RUNTIME=runsc make test-isolation` runs the isolation ch
 
 | | gVisor (`runsc`) | Kata (`kata`) |
 |---|---|---|
-| Minimum release | release-20260803.0 (the first after the Unix-socket file-descriptor fix of 30 July 2026 that OpenAI's sandbox report led to); lea's CI runs release-20261102.0 | 3.27.0 (CVE-2026-24834, guest privilege escalation through virtio-pmem); 4.1.0 or later recommended (Kata's August 2026 hardening); lea's CI runs 4.3.1 (runtime-rs, QEMU) |
-| dockerd registration | `"runsc": {"path": "/opt/gvisor/runsc", "runtimeArgs": ["--host-uds=open", "--host-fifo=open"]}` | `"kata": {"runtimeType": "io.containerd.kata.v2"}`, and in Kata's `configuration.toml`, `disable_guest_seccomp = false` and `"--xattr"` in `virtio_fs_extra_args` (the nested Podman's `newuidmap` needs its file capability) |
-| Nested Podman (`docker`, `docker compose` in lea) | works, but its containers share lea's network namespace (gVisor refuses the bind mount Podman keeps a network namespace with): their ports are lea's, and a port below 1024 cannot be bound | works with the guest kernel (`/dev/fuse`, `/dev/net/tun` and the overlay storage in the VM) |
-| lea's bus, the Lock consoles' sockets | work (`--host-uds=open` lets the sandbox connect to host Unix sockets) | see `make test-isolation`'s `info` line: a host Unix socket does not cross virtio-fs |
+| Minimum release | release-20260803.0, the first weekly release after gVisor's 30 July 2026 change to file descriptors passed over Unix sockets (the fix tied to OpenAI's sandbox report); lea's CI runs release-20261102.0 | 3.27.0 (CVE-2026-24834, guest privilege escalation through virtio-pmem); 4.2.0 or later recommended, the first release after the two Kata changes of August 2026 that the same report cites; lea's CI runs 4.3.1 (runtime-rs, QEMU) |
+| dockerd registration | `"runsc": {"path": "/opt/gvisor/runsc", "runtimeArgs": ["--oci-seccomp", "--host-uds=open", "--host-fifo=open"]}` | `"kata": {"runtimeType": "io.containerd.kata.v2"}`, and in Kata's `configuration.toml`, `disable_guest_seccomp = false` and `"--xattr"` in `virtio_fs_extra_args` (the nested Podman's `newuidmap` needs its file capability) |
+| Nested Podman (`docker`, `docker compose` in lea) | works, but its containers share lea's network namespace (gVisor refuses the bind mount Podman keeps a network namespace with): their ports are lea's, and a port below 1024 cannot be bound | works, with its own network namespaces; its images live in a tmpfs inside the VM (rootless Podman cannot unpack a layer on virtio-fs), so they count against the container's memory and are pulled again after each restart |
+| lea's bus (messaging between agents), the Lock consoles' sockets | work (`--host-uds=open` lets the sandbox connect to host Unix sockets) | unavailable: a host Unix socket does not cross into the VM (lea says so at start; `make test-isolation` prints `info lea's bus socket is not reachable`) |
 | Clipboard (copy from an agent to the host) | works (`--host-fifo=open`) | off: a host FIFO cannot be bound into the VM (lea leaves it out and says so) |
-| seccomp, AppArmor | lea's seccomp profile is applied by the Sentry; AppArmor does not apply inside (the host confines `runsc` itself) | lea's seccomp profile is applied in the guest (with `disable_guest_seccomp = false`); AppArmor does not apply inside the VM |
+| seccomp, AppArmor | lea's seccomp profile is applied inside the sandbox only with `--oci-seccomp` (runsc ignores it otherwise); runsc ignores the AppArmor profile, the Sentry runs under gVisor's own seccomp filter | lea's seccomp profile is applied in the guest only with `disable_guest_seccomp = false`; the AppArmor profile is not applied in the VM |
 | Cost | syscall-heavy work (builds, `git`, package installs) is slower; little memory | a VM per container: its memory (the guest's default size) and a few seconds more at start |
 
-`--host-uds=open` and `--host-fifo=open` widen what the sandbox may open on the host: they are
-what lea needs (its bus socket, the Lock consoles' sockets, the clipboard FIFO), on paths lea
+`--host-uds=open` and `--host-fifo=open` widen what the sandbox may open on the host (gVisor
+advises against host sockets where they are not needed): they are what lea needs (its bus socket, the Lock consoles' sockets, the clipboard FIFO), on paths lea
 mounts; leave them out and lea starts, but without messaging between agents, the Locks or the
 clipboard. Keep the host patched anyway: the second kernel narrows the shared kernel's surface,
 it does not remove it.

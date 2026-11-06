@@ -41,10 +41,11 @@ case ${1:-} in
     sudo rm -rf /opt/gvisor; sudo mkdir -p /opt/gvisor
     sudo tar -xjf "$work/gvisor.tar.bz2" -C /opt/gvisor
     sudo ln -sf /opt/gvisor/runsc /usr/local/bin/runsc
-    # The flags lea needs (README, "A second kernel: gVisor or Kata"): its bus socket and the lock
+    # The flags lea needs (README, "A second kernel: gVisor or Kata"): lea's seccomp profile applied
+    # inside the sandbox (--oci-seccomp: runsc ignores it otherwise), its bus socket and the lock
     # consoles' sockets are host Unix sockets the agents connect to (--host-uds=open), the
     # clipboard is a host FIFO (--host-fifo=open).
-    register runsc '{"path":"/opt/gvisor/runsc","runtimeArgs":["--host-uds=open","--host-fifo=open"]}'
+    register runsc '{"path":"/opt/gvisor/runsc","runtimeArgs":["--oci-seccomp","--host-uds=open","--host-fifo=open"]}'
     runsc --version
     ;;
   kata)
