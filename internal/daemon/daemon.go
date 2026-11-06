@@ -60,6 +60,11 @@ type Daemon struct {
 	// afterWait is a test seam: it runs after an approval waiter woke, before it deregisters.
 	afterWait func()
 
+	// afterFunc arms the daemon's timers (the suspension keepalives, the subagent TTL). A test
+	// seam (#278): a test replaces it with timers it fires itself instead of racing the wall
+	// clock on a loaded runner.
+	afterFunc func(time.Duration, func()) *time.Timer
+
 	blocks map[string]int
 	// stopped: agents whose turn ended (Stop) and no new one began (prompt or stop block).
 	stopped map[string]bool
@@ -177,7 +182,7 @@ func New(st *store.Store, runDir string, now func() int64) *Daemon {
 	if err := st.ClearSubagents(); err != nil {
 		log.Printf("lea daemon: clear subagents: %v", err)
 	}
-	return &Daemon{subs: map[string]*subagents{}, subTTL: subagentTTL, st: st, lim: bus.Default, now: now, runDir: runDir,
+	return &Daemon{subs: map[string]*subagents{}, subTTL: subagentTTL, afterFunc: time.AfterFunc, st: st, lim: bus.Default, now: now, runDir: runDir,
 		attached: map[string]string{}, notify: map[string]chan struct{}{},
 		verdicts: map[int64]chan string{}, asks: map[string]pendingAsk{}, blocks: map[string]int{}, stopped: map[string]bool{}, rewakes: map[string]int{}, keyMu: map[string]*sync.Mutex{}, statusPaths: map[string]string{}, named: map[string]bool{}, rang: map[string]time.Time{},
 		resumeDelay: DefaultResumeDelay, windows: map[string][]limitWindow{}, limitJobs: map[string]string{},
