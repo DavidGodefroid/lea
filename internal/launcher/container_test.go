@@ -889,6 +889,43 @@ func TestProxyRunsConfined(t *testing.T) {
 	}
 }
 
+// An older proxy image (no lea.confine label: its entrypoint writes into its root and starts squid
+// as root) runs as before, with a warning; one that cannot be inspected is confined.
+func TestProxyConfinementNeedsAConfinableImage(t *testing.T) {
+	proxyRun := func(w *world) string {
+		t.Helper()
+		if err := w.launcher().ensureProxy(w.proj); err != nil {
+			t.Fatal(err)
+		}
+		for _, c := range w.calls() {
+			if strings.HasPrefix(c, "docker [run]") && strings.Contains(c, "[--name] [lea-proxy]") {
+				return c
+			}
+		}
+		t.Fatalf("no proxy run:\n%s", strings.Join(w.calls(), "\n"))
+		return ""
+	}
+	w := newWorld(t, repoRoot(t))
+	w.env["FAKE_DOCKER_OUT_INSPECT___TYPE"] = ""
+	if run := proxyRun(w); strings.Contains(run, "[--cap-drop] [ALL]") || strings.Contains(run, "[--read-only]") {
+		t.Errorf("an older image runs confined:\n%s", run)
+	}
+	if !strings.Contains(w.errb.String(), "predates the proxy's confinement") {
+		t.Errorf("no warning: %q", w.errb.String())
+	}
+	if !w.hasCall(`docker [inspect] [--type] [image] [-f] [{{index .Config.Labels "lea.confine"}}] [lea-proxy:dev]`) {
+		t.Errorf("the image label is not read:\n%s", strings.Join(w.calls(), "\n"))
+	}
+	w = newWorld(t, repoRoot(t))
+	w.env["FAKE_DOCKER_RC_INSPECT___TYPE"] = "1"
+	if run := proxyRun(w); !strings.Contains(run, "[--cap-drop] [ALL]") || !strings.Contains(run, "[--read-only]") {
+		t.Errorf("an image that cannot be inspected runs unconfined:\n%s", run)
+	}
+	if strings.Contains(w.errb.String(), "predates") {
+		t.Errorf("warning for an uninspectable image: %q", w.errb.String())
+	}
+}
+
 // A running proxy started from another image than LEA_PROXY_IMAGE is now (a rebuilt or updated
 // image: its rules are copied in) is replaced; when the image cannot be inspected, its labels
 // decide alone.

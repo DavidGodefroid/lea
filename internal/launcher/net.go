@@ -49,11 +49,25 @@ func (l *Launcher) ensureNetworks(id string) error {
 // and SETGID (its entrypoint starts each service under a user of its own with su-exec: none of
 // them runs as root), no-new-privileges, a read-only root with tmpfs where it writes, and pids and
 // memory limits. Part of proxyRules: a lea that confines it otherwise replaces a running proxy.
+// Only an image whose entrypoint runs so (its label lea.confine=1) gets it: proxyConfinable.
 var proxyConfine = []string{"--cap-drop", "ALL", "--cap-add", "SETUID", "--cap-add", "SETGID",
 	"--security-opt", "no-new-privileges", "--read-only",
 	"--tmpfs", "/run:rw,nosuid,nodev,noexec,size=16m", "--tmpfs", "/tmp:rw,nosuid,nodev,noexec,size=64m",
 	"--tmpfs", "/var/cache/squid:rw,nosuid,nodev,noexec,size=16m",
 	"--pids-limit", "512", "--memory", "1g"}
+
+// proxyConfinable tells whether the proxy image runs under proxyConfine: its label lea.confine
+// is 1. An older image (a release before the confinement, a pinned LEA_PROXY_IMAGE) writes its
+// configuration in its root and starts squid as root: it runs as before, with a warning. An image
+// that cannot be inspected gets the confinement (docker run then pulls or fails on it).
+func (l *Launcher) proxyConfinable(image string) bool {
+	out, err := l.output(false, "docker", "inspect", "--type", "image", "-f", `{{index .Config.Labels "lea.confine"}}`, image)
+	if err != nil || out == "1" {
+		return true
+	}
+	l.logf("warning: the proxy image %s predates the proxy's confinement (no capability, read-only, no root service): it runs without it; use a newer lea-proxy image (lea update, or make build)", image)
+	return false
+}
 
 // proxyRules is a digest (12 hex digits) of the files the proxy renders its rules and refusal
 // pages from (the lea root's proxy/) and of proxyConfine, "" when there is no rule file: a lea
@@ -160,7 +174,9 @@ func (l *Launcher) ensureProxy(proj string) error {
 	a := []string{"run", "-d", "--name", name, "--restart", "unless-stopped", "--network", l.prefix() + "-egress",
 		"--label", "lea.prefix=" + l.prefix(), "--label", "lea.role=proxy", "--label", "lea.git-ssh=" + l.Cfg.GitSSH(),
 		"--label", "lea.egress-allow=" + allow}
-	a = append(a, proxyConfine...)
+	if l.proxyConfinable(l.Cfg.Get("LEA_PROXY_IMAGE")) {
+		a = append(a, proxyConfine...)
+	}
 	if fw.stamp != "" {
 		a = append(a, "--label", "lea.providers="+fw.stamp)
 	}
