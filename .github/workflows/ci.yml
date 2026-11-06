@@ -170,7 +170,8 @@ jobs:
                    'a nested image builds' 'a nested container reaches the proxy over pasta' 'unprivileged user namespace (rootless Podman needs it)' \
                    'keyctl refused (seccomp)' 'perf_event_open refused (seccomp)' 'reboot refused (seccomp)' 'vmsplice refused (seccomp)' 'NETLINK_AUDIT socket refused (seccomp)' \
                    'NETLINK_AUDIT socket with high protocol bits refused (seccomp)' 'AF_ALG socket with high family bits refused (seccomp)' \
-                   'sudo absent' 'no setuid or setgid file'; do
+                   'sudo absent' 'no setuid or setgid file' \
+                   'settings.json is a copy of the host'"'"'s' '/permissions adds a rule' '/plugin install works' 'marketplace update works' 'managed settings carry lea'"'"'s hooks' 'permission rules are managed only' 'the host'"'"'s permission rules are managed' 'an agent'"'"'s rule is not managed' 'the host'"'"'s rules are not writable' 'managed settings are not writable' 'host ~/.claude settings.json and plugins unchanged'; do
             grep -qxF "ok   $c" isolation.log || { echo "isolation: '$c' did not run" >&2; exit 1; }
           done
   # The same isolation checks with the agent container on a sandboxed runtime (#106, LEA_RUNTIME):
@@ -313,6 +314,9 @@ jobs:
           node-version: 22
       # Its postinstall links the platform binary, as in image/Containerfile.
       - run: npm install -g "@anthropic-ai/claude-code@$(sed -n 's/^ARG CLAUDE_CODE_VERSION=//p' image/Containerfile)"
+      # The managed-settings tests (#111) write Claude Code's file-based managed settings where
+      # it reads them, and remove them after.
+      - run: sudo install -d -o "$(id -u)" /etc/claude-code
       - name: the Claude e2e tests, none skipped
         shell: bash
         # Every TestClaude test; the count below is theirs (add one with each new test).
@@ -321,9 +325,13 @@ jobs:
           if grep -- '--- SKIP' claude-e2e.log; then echo "a Claude e2e test was skipped" >&2; exit 1; fi
           grep -q -- '^--- PASS: TestClaudePhase3SuspendResumeEndToEnd ' claude-e2e.log
           grep -q -- '^--- PASS: TestClaudeResumesATruncatedTranscript ' claude-e2e.log
+          grep -q -- '^--- PASS: TestClaudeManagedSettingsGuardATamperedAgent ' claude-e2e.log
+          grep -q -- '^--- PASS: TestClaudeManagedAndFlagHooksRunOnce ' claude-e2e.log
+          grep -q -- '^--- PASS: TestClaudeManagedPermissionsIgnoreAWidenedSettings ' claude-e2e.log
+          grep -q -- '^--- PASS: TestClaudeManagedHooksIgnoreATamperedEnv ' claude-e2e.log
           n=$(grep -c -- '^--- PASS: TestClaude' claude-e2e.log)
           echo "$n Claude e2e tests passed"
-          [ "$n" -eq 10 ]
+          [ "$n" -eq 14 ]
   # The lockmq / lockfile socket wiring (tests/integration/lockhost.sh, phase 0): the lockmq
   # client of the release image/Containerfile pins (sha256-checked) reaches a console's socket
   # through its volume, as lea wires it, with no host account; outsiders and other uids refused.

@@ -1,6 +1,7 @@
 // Package hook implements `lea hook <vendor> <event>`: it reports agent state to the daemon and
 // returns the vendor's hook output. It never fails the agent: when the bus is unreachable it
-// prints nothing and exits 0.
+// prints nothing and exits 0. Claude's PreToolUse is the exception: lea's guard (hard denies,
+// grants) fails closed, and denies the call it could not check (failClosed).
 package hook
 
 import (
@@ -66,6 +67,12 @@ func truncate(s string, n int) string {
 func Claude(ctx context.Context, event string, stdin io.Reader, stdout io.Writer, getenv func(string) string) {
 	c := caller{identity.BusSock(getenv), identity.Agent(getenv)}
 	if c.agent == "" {
+		// A Claude without lea's identity runs lea's hooks only in a lea container (the image's
+		// managed settings): an agent's own claude, or one whose settings unset LEA_AGENT. Its
+		// tool calls cannot be checked: refused.
+		if event == "PreToolUse" {
+			failClosed(stdout, "this Claude Code has no lea agent identity (LEA_AGENT): only lea's agents (lea-agent run, the deck) run tools in lea")
+		}
 		return
 	}
 	in, _ := io.ReadAll(io.LimitReader(stdin, maxInput))
@@ -127,6 +134,9 @@ func Claude(ctx context.Context, event string, stdin io.Reader, stdout io.Writer
 	defer cancel()
 	if err := c.call(bctx, "hook_event",
 		map[string]any{"event": event, "session_id": p.SessionID, "payload": payload}, nil); err != nil {
+		if event == "PreToolUse" {
+			failClosed(stdout, "lea's bus did not answer ("+truncate(err.Error(), 200)+"); retry in a moment")
+		}
 		return
 	}
 	switch event {
@@ -157,9 +167,11 @@ func Claude(ctx context.Context, event string, stdin io.Reader, stdout io.Writer
 		}
 	case "PreToolUse":
 		// The user's grants (lea grant add) and lea's hard denies: the daemon reads the tool input
-		// and the working directory in memory and never stores them. No answer, an error or an unknown verdict prints
-		// nothing: the call takes the normal path (Claude's checks, the deck).
+		// and the working directory in memory and never stores them. No verdict prints nothing:
+		// the call takes the normal path (Claude's checks, the deck). No answer or an error is a
+		// deny: the hard denies were not checked.
 		if p.ToolName == "" {
+			failClosed(stdout, "the hook input names no tool")
 			return
 		}
 		input := p.ToolInput
@@ -180,7 +192,8 @@ func Claude(ctx context.Context, event string, stdin io.Reader, stdout io.Writer
 				env[k] = truncate(v, 256)
 			}
 		}
-		if c.call(bctx, "grant_check", map[string]any{"tool": p.ToolName, "input": input, "cwd": truncate(p.Cwd, 4096), "env": env}, &r) != nil {
+		if err := c.call(bctx, "grant_check", map[string]any{"tool": p.ToolName, "input": input, "cwd": truncate(p.Cwd, 4096), "env": env}, &r); err != nil {
+			failClosed(stdout, "lea could not check the call ("+truncate(err.Error(), 200)+"); retry in a moment")
 			return
 		}
 		if r.Verdict != "allow" && r.Verdict != "deny" {
@@ -243,6 +256,14 @@ func Claude(ctx context.Context, event string, stdin io.Reader, stdout io.Writer
 		json.NewEncoder(stdout).Encode(map[string]any{"hookSpecificOutput": map[string]any{
 			"hookEventName": "PermissionRequest", "decision": decision}})
 	}
+}
+
+// failClosed denies the PreToolUse call lea's guard could not check: a missing identity, an
+// unreachable bus, an error. Claude Code shows the reason to the model.
+func failClosed(stdout io.Writer, why string) {
+	json.NewEncoder(stdout).Encode(map[string]any{"hookSpecificOutput": map[string]any{
+		"hookEventName": "PreToolUse", "permissionDecision": "deny",
+		"permissionDecisionReason": "lea refused the call, its guard fails closed: " + why}})
 }
 
 // alwaysRules returns Claude's own "don't ask again" suggestions for this request when it sent

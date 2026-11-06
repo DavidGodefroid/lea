@@ -255,7 +255,47 @@ seccomp_copy() { mkdir -p "$BATS_TEST_TMPDIR/i/seccomp"; cp "$I"/seccomp/* "$BAT
   for r in 'Bash(go *)' 'Bash(go-cross *)' 'Bash(staticcheck *)' 'Bash(govulncheck *)'; do
     jq -e --arg r "$r" '.permissions.allow | index($r)' "$s" >/dev/null
   done
-  [ "$(jq -r '.permissions // "none"' "$I/managed-settings.json")" = none ]
+  # Claude Code honours the managed rules only (#111): lea's are there too.
+  for r in 'Bash(go *)' 'Bash(go-cross *)' 'Bash(staticcheck *)' 'Bash(govulncheck *)'; do
+    jq -e --arg r "$r" '.permissions.allow | index($r)' "$I/managed-settings.json" >/dev/null
+  done
+}
+
+# An agent can rewrite its own ~/.claude/settings.json (#111) and a project's .claude/settings*.json:
+# the permission rules are the managed settings' only, bypass mode is off, the default mode is
+# lea's, and the --settings file (server-managed hosts) disables bypass too.
+@test "managed settings: permission rules managed only, bypass disabled, default mode pinned" {
+  m="$I/managed-settings.json" s="$I/claude-settings.json"
+  [ "$(jq -r .allowManagedPermissionRulesOnly "$m")" = true ]
+  [ "$(jq -r .permissions.disableBypassPermissionsMode "$m")" = disable ]
+  [ "$(jq -r .permissions.defaultMode "$m")" = default ]
+  [ "$(jq -r .permissions.disableBypassPermissionsMode "$s")" = disable ]
+}
+
+# The variables lea's hooks read that lea sets the same in every container are pinned in the
+# managed settings and the --settings file, both above an agent's own settings (#111).
+@test "managed settings pin the bus socket, the ssh-agent socket and gh's and glab's config dirs" {
+  for f in "$I/managed-settings.json" "$I/claude-settings.json"; do
+    [ "$(jq -r .env.LEA_BUS_SOCK "$f")" = /run/lea/bus/bus.sock ]
+    [ "$(jq -r .env.SSH_AUTH_SOCK "$f")" = /run/lea/ssh-agent.sock ]
+    [ "$(jq -r .env.GH_CONFIG_DIR "$f")" = /lea/state/gh ]
+    [ "$(jq -r .env.GLAB_CONFIG_DIR "$f")" = /lea/state/glab-cli ]
+  done
+  grep -q 'SSH_AUTH_SOCK=/run/lea/ssh-agent.sock' "$I/Containerfile"
+  grep -q 'GH_CONFIG_DIR=/lea/state/gh' "$I/Containerfile"
+  grep -q 'GLAB_CONFIG_DIR=/lea/state/glab-cli' "$I/Containerfile"
+}
+
+# The guard fails closed (#111): a missing lea exits 2 (a deny), and a crash or a timeout blocks
+# the call too (onFailure).
+@test "lea's PreToolUse hook fails closed when lea is missing, crashes or times out" {
+  for f in "$I/managed-settings.json" "$I/claude-settings.json"; do
+    jq -e '.hooks.PreToolUse[0].hooks[0] | .onFailure == "block" and (.command | startswith("[ -x /usr/local/bin/lea ] && exec /usr/local/bin/lea hook claude PreToolUse;") and endswith("exit 2"))' "$f" >/dev/null
+  done
+  c=$(jq -r '.hooks.PreToolUse[0].hooks[0].command' "$I/managed-settings.json" | sed 's|/usr/local/bin/lea|/nonexistent/lea|g')
+  run sh -c "$c"
+  [ "$status" -eq 2 ]
+  [[ "$output" == *"lea refuses the call"* ]]
 }
 
 @test "Containerfile installs the Locks' clients of consoles in other containers, from the set" {
@@ -436,8 +476,12 @@ lea_sha256_file() { sha256sum "$1" | cut -d' ' -f1; }
   grep -q 'chmod 0755 .*/usr/local/bin/lea-agent' "$c"
 }
 
-@test "lea's Claude hooks live in a --settings file, not in managed settings" {
-  s="$I/claude-settings.json"
+# lea's hooks are in the managed settings (#111), which an agent's own writable settings cannot
+# undo, and in the --settings file too, which keeps them on a host whose organisation has
+# server-managed settings (Claude Code then skips the file-based ones): the same commands, which
+# Claude Code runs once (TestClaudeManagedAndFlagHooksRunOnce).
+@test "lea's Claude hooks are in the managed settings and the --settings file, identical" {
+  s="$I/claude-settings.json" m="$I/managed-settings.json"
   for e in SessionStart UserPromptSubmit PreToolUse PostToolUse PermissionRequest Notification SubagentStart SubagentStop Stop StopFailure SessionEnd; do
     jq -e --arg e "$e" '.hooks[$e][0].hooks[0].command | contains("/usr/local/bin/lea hook claude " + $e)' "$s" >/dev/null
   done
@@ -452,9 +496,133 @@ lea_sha256_file() { sha256sum "$1" | cut -d' ' -f1; }
   # days, so its timeout is LimitWait's.
   jq -e '.hooks.Stop[0].hooks[1] | (.command | contains("/usr/local/bin/lea hook claude Rewake")) and .asyncRewake == true and .timeout == 691200' "$s" >/dev/null
   jq -e '.hooks.SessionStart[0].hooks[2] | (.command | contains("/usr/local/bin/lea hook claude Rewake")) and .asyncRewake == true and .timeout == 691200' "$s" >/dev/null
-  [ "$(jq -r '.hooks // "none"' "$I/managed-settings.json")" = none ]
+  jq -e --slurpfile f "$s" '.hooks == $f[0].hooks' "$m" >/dev/null
+  [ "$(jq -r '.disableAllHooks // .allowManagedHooksOnly // "none"' "$m")" = none ]
   grep -q '^COPY image/claude-settings.json /usr/local/share/lea/claude-settings.json$' "$I/Containerfile"
+  grep -q '^COPY image/managed-settings.json /etc/claude-code/managed-settings.json$' "$I/Containerfile"
   grep -q 'settings=${LEA_CLAUDE_SETTINGS:-/usr/local/share/lea/claude-settings.json}' "$I/lea-session"
+}
+
+# managed_check: image/managed-check on copies of the repository's files, owned by the test's
+# user, with a claude that reports VERSION (default: the Containerfile's pin).
+managed_check() {
+  d=$BATS_TEST_TMPDIR/mc
+  mkdir -p "$d/etc/claude-code" "$d/bin"
+  [ -f "$d/etc/claude-code/managed-settings.json" ] || cp "$I/managed-settings.json" "$d/etc/claude-code/managed-settings.json"
+  chmod 0755 "$d/etc/claude-code"
+  pin=$(sed -n 's/^ARG CLAUDE_CODE_VERSION=//p' "$I/Containerfile")
+  echo "$pin" >"$d/pin"
+  printf '#!/bin/sh
+echo "%s (Claude Code)"
+' "${VERSION:-$pin}" >"$d/bin/claude"
+  chmod +x "$d/bin/claude"
+  PATH="$d/bin:$PATH" LEA_MANAGED_SETTINGS="$d/etc/claude-code/managed-settings.json" LEA_CLAUDE_SETTINGS="${LEA_CLAUDE_SETTINGS_OVERRIDE:-$I/claude-settings.json}" \
+    LEA_CLAUDE_PIN="$d/pin" LEA_MANAGED_OWNER=$(id -u) run "$I/managed-check"
+}
+
+@test "managed-check confirms lea's hooks in the managed settings, with the verified Claude Code (#111)" {
+  [ -x "$I/managed-check" ]
+  grep -q '^COPY image/lea-crun image/managed-check /usr/local/libexec/lea/$' "$I/Containerfile"
+  grep -q 'echo "${CLAUDE_CODE_VERSION}" >/usr/local/share/lea/claude-code-version' "$I/Containerfile"
+  managed_check
+  [ "$status" -eq 0 ]
+  [[ "$output" == "lea's hooks and managed-only permission rules in "*", Claude Code $(sed -n 's/^ARG CLAUDE_CODE_VERSION=//p' "$I/Containerfile")" ]]
+}
+
+@test "managed-check fails closed: a hook missing, other hooks, hooks off, a writable file, a drop-in, another Claude Code" {
+  m=$BATS_TEST_TMPDIR/mc/etc/claude-code/managed-settings.json
+  mkdir -p "${m%/*}"
+  jq 'del(.hooks.PreToolUse)' "$I/managed-settings.json" >"$m"
+  managed_check
+  [ "$status" -eq 1 ]; [[ "$output" == *"lacks lea's PreToolUse hook"* ]]
+  jq '.hooks.Stop[0].hooks[0].command += " "' "$I/managed-settings.json" >"$m"
+  managed_check
+  [ "$status" -eq 1 ]; [[ "$output" == *"do not carry the same hooks"* ]]
+  jq '.disableAllHooks = true' "$I/managed-settings.json" >"$m"
+  managed_check
+  [ "$status" -eq 1 ]; [[ "$output" == *"turns hooks off"* ]]
+  cp "$I/managed-settings.json" "$m"; chmod 0666 "$m"
+  managed_check
+  [ "$status" -eq 1 ]; [[ "$output" == *"is writable by others than root"* ]]
+  chmod 0644 "$m"; mkdir "${m%/*}/managed-settings.d"
+  managed_check
+  [ "$status" -eq 1 ]; [[ "$output" == *"managed-settings.d exists"* ]]
+  rmdir "${m%/*}/managed-settings.d"
+  VERSION=0.0.1 managed_check
+  [ "$status" -eq 1 ]; [[ "$output" == *"Claude Code 0.0.1 is not "*"the version lea verified"* ]]
+}
+
+# A guard that fails open, permission rules an agent's settings can widen, a hook env it can
+# redirect: each one fails the check (#111). Both files change alike, so the hooks stay identical.
+@test "managed-check fails closed: a guard that fails open, rules not managed only, bypass on, an unpinned env" {
+  m=$BATS_TEST_TMPDIR/mc/etc/claude-code/managed-settings.json
+  mkdir -p "${m%/*}"
+  s=$BATS_TEST_TMPDIR/claude-settings.json
+  for edit in \
+    '.hooks.PreToolUse[0].hooks[0].command |= sub("exit 2$"; "exit 0")@@does not fail closed' \
+    'del(.hooks.PreToolUse[0].hooks[0].onFailure)@@does not fail closed' \
+    '.allowManagedPermissionRulesOnly = false@@managed only' \
+    'del(.allowManagedPermissionRulesOnly)@@managed only' \
+    'del(.permissions.disableBypassPermissionsMode)@@managed only' \
+    '.permissions.defaultMode = "bypassPermissions"@@managed only' \
+    'del(.env.LEA_BUS_SOCK)@@does not pin LEA_BUS_SOCK=/run/lea/bus/bus.sock' \
+    '.env.GH_CONFIG_DIR = "/tmp/gh"@@does not pin GH_CONFIG_DIR=/lea/state/gh'; do
+    jq "${edit%%@@*}" "$I/managed-settings.json" >"$m"
+    jq --slurpfile m "$m" '.hooks = $m[0].hooks' "$I/claude-settings.json" >"$s"
+    LEA_CLAUDE_SETTINGS_OVERRIDE="$s" managed_check
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"${edit#*@@}"* ]] || { echo "$edit: $output"; false; }
+  done
+}
+
+# The entrypoint's managed-settings block: the image's file, then the host's rules (#111).
+merge_permissions() {
+  r=$BATS_TEST_TMPDIR/root
+  mkdir -p "$r/etc/claude-code" "$r/etc/lea" "$r/usr/local/share/lea"
+  cp "$I/managed-settings.json" "$r/usr/local/share/lea/managed-settings.json"
+  sed -n '/^# The permission rules are the managed settings/,/^if \[ "\${LEA_LOCKHTTP:-0}" = 1 \]; then$/p' "$I/entrypoint" | sed '$d' |
+    sed -e "s|/etc/|$r/etc/|g" -e "s|/usr/local/share/|$r/usr/local/share/|g" >"$BATS_TEST_TMPDIR/merge.sh"
+  grep -q 'allowManagedPermissionRulesOnly' "$BATS_TEST_TMPDIR/merge.sh"
+  run sh -eu "$BATS_TEST_TMPDIR/merge.sh"
+  M=$r/etc/claude-code/managed-settings.json
+}
+
+@test "the entrypoint adds the host's permission rules to the managed ones, once, never bypass (#111)" {
+  merge_permissions
+  [ "$status" -eq 0 ]
+  # No host file: the image's file as it is.
+  [ "$(jq -cS . "$M")" = "$(jq -cS . "$I/managed-settings.json")" ]
+  printf '%s\n' '{"allow":["Bash(npm test)",3,""],"ask":["Bash(git push *)"],"deny":["Read(./.env)"],"additionalDirectories":["/srv"],"defaultMode":"bypassPermissions"}' \
+    >"$r/etc/lea/claude-permissions.json"
+  merge_permissions
+  [ "$status" -eq 0 ]
+  [ "$(jq -c .permissions.allow "$M")" = '["Bash(go *)","Bash(go-cross *)","Bash(staticcheck *)","Bash(govulncheck *)","Bash(npm test)"]' ]
+  [ "$(jq -c .permissions.ask "$M")" = '["Bash(git push *)"]' ]
+  [ "$(jq -c .permissions.deny "$M")" = '["Read(./.env)"]' ]
+  [ "$(jq -c .permissions.additionalDirectories "$M")" = '["/srv"]' ]
+  [ "$(jq -r .permissions.defaultMode "$M")" = default ]
+  [ "$(jq -r .permissions.disableBypassPermissionsMode "$M")" = disable ]
+  [ "$(jq -r .allowManagedPermissionRulesOnly "$M")" = true ]
+  jq -e --slurpfile f "$I/managed-settings.json" '.hooks == $f[0].hooks and .env == $f[0].env' "$M" >/dev/null
+  # A restart begins again from the image's file: nothing twice.
+  merge_permissions
+  [ "$(jq '.permissions.allow | length' "$M")" = 5 ]
+  # A mode lea accepts is the host's.
+  printf '%s\n' '{"defaultMode":"acceptEdits"}' >"$r/etc/lea/claude-permissions.json"
+  merge_permissions
+  [ "$(jq -r .permissions.defaultMode "$M")" = acceptEdits ]
+  # A file jq cannot read leaves lea's rules alone, and says so.
+  printf 'not json\n' >"$r/etc/lea/claude-permissions.json"
+  merge_permissions
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"could not be read; lea's own apply"* ]]
+  [ "$(jq -cS . "$M")" = "$(jq -cS . "$I/managed-settings.json")" ]
+}
+
+@test "the entrypoint keeps the managed settings root's, with no drop-in directory (#111)" {
+  grep -q '^chown -R 0:0 /etc/claude-code$' "$I/entrypoint"
+  grep -q '^chmod 0644 /etc/claude-code/managed-settings.json$' "$I/entrypoint"
+  grep -q '^rm -rf /etc/claude-code/managed-settings.d$' "$I/entrypoint"
 }
 
 # lea's Claude plugin comes with the image: a manifest named lea and the control-tower skill.
@@ -487,7 +655,7 @@ lea_sha256_file() { sha256sum "$1" | cut -d' ' -f1; }
   [ "$(jq -cS .env "$s")" = "$(jq -cS .env "$I/managed-settings.json")" ]
   [ "$(jq -r .env.OTEL_EXPORTER_OTLP_ENDPOINT "$s")" = "http://lea-proxy:4318" ]
   [ "$(jq -r '.env.OTEL_LOG_USER_PROMPTS // "unset"' "$s")" = unset ]
-  grep -q 's/@LEA_VERSION@/${LEA_VERSION}/" /etc/claude-code/managed-settings.json /usr/local/share/lea/claude-settings.json' "$I/Containerfile"
+  grep -q 's/@LEA_VERSION@/${LEA_VERSION}/" /etc/claude-code/managed-settings.json /usr/local/share/lea/managed-settings.json /usr/local/share/lea/claude-settings.json' "$I/Containerfile"
 }
 
 @test "lea's Claude settings run lea statusline as the status line, guarded on the core binary" {
@@ -499,9 +667,11 @@ lea_sha256_file() { sha256sum "$1" | cut -d' ' -f1; }
 # Moved from the retired core.bats.
 @test "lea's Claude settings register every hook guarded on the core binary, permission timeout above the approval maximum" {
   f="$LEA_ROOT/image/claude-settings.json"
-  for e in SessionStart UserPromptSubmit PreToolUse PostToolUse PermissionRequest Notification SubagentStart SubagentStop Stop SessionEnd; do
+  for e in SessionStart UserPromptSubmit PostToolUse PermissionRequest Notification SubagentStart SubagentStop Stop SessionEnd; do
     jq -e --arg e "$e" '.hooks[$e][0].hooks[0].command | contains("lea hook claude " + $e) and startswith("[ -x /usr/local/bin/lea ]") and endswith("exit 0")' "$f" >/dev/null
   done
+  # PreToolUse is guarded too, and fails closed (exit 2) without the core binary.
+  jq -e '.hooks.PreToolUse[0].hooks[0].command | contains("lea hook claude PreToolUse") and startswith("[ -x /usr/local/bin/lea ]") and endswith("exit 2")' "$f" >/dev/null
   jq -e '.hooks.PermissionRequest[0].hooks[0].timeout >= 610' "$f" >/dev/null
 }
 

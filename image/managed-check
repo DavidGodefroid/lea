@@ -1,0 +1,55 @@
+#!/bin/sh
+# lea doctor's check of lea's Claude managed settings (#111), run in lea's image or in a running
+# lea container. An agent may rewrite its own ~/.claude/settings.json and install plugins; what it
+# must not undo, lea's hooks (the PreToolUse guard and its hard denies, grants, approvals), is in
+# /etc/claude-code/managed-settings.json, which Claude Code ranks above every other source and
+# whose hooks it runs whatever a lower source's disableAllHooks says. This checks that file is
+# there, the agents' user cannot change it, it carries every one of lea's hooks (exactly those of
+# the --settings file, which Claude Code runs once) with a PreToolUse guard that fails closed,
+# keeps the permission rules managed only, pins the variables the hooks read, and Claude Code is
+# the version lea's CI verified that behaviour with (TestClaudeManagedSettingsGuardATamperedAgent,
+# TestClaudeManagedPermissionsIgnoreAWidenedSettings, TestClaudeManagedHooksIgnoreATamperedEnv).
+# One line; exit 1 on any failure.
+set -u
+m=${LEA_MANAGED_SETTINGS:-/etc/claude-code/managed-settings.json}
+s=${LEA_CLAUDE_SETTINGS:-/usr/local/share/lea/claude-settings.json}
+pin=${LEA_CLAUDE_PIN:-/usr/local/share/lea/claude-code-version}
+owner=${LEA_MANAGED_OWNER:-0}
+fail() { echo "$1"; exit 1; }
+d=$(dirname "$m")
+if [ ! -f "$m" ] || [ -L "$m" ]; then fail "$m is missing"; fi
+if [ ! -d "$d" ] || [ -L "$d" ]; then fail "$d is not a directory"; fi
+for p in "$d" "$m"; do
+  [ "$(stat -c %u "$p")" = "$owner" ] || fail "$p is not owned by root"
+  [ -z "$(find "$p" -maxdepth 0 -perm /022)" ] || fail "$p is writable by others than root"
+done
+[ ! -e "$d/managed-settings.d" ] || fail "$d/managed-settings.d exists: lea does not ship one"
+for e in SessionStart UserPromptSubmit PreToolUse PostToolUse PermissionRequest Notification SubagentStart SubagentStop Stop StopFailure SessionEnd; do
+  jq -e --arg e "$e" '[.hooks[$e][]?.hooks[]?.command] | any(contains("/usr/local/bin/lea hook claude " + $e))' "$m" >/dev/null 2>&1 ||
+    fail "$m lacks lea's $e hook"
+done
+jq -e --slurpfile f "$s" '.hooks == $f[0].hooks' "$m" >/dev/null 2>&1 ||
+  fail "$m and $s do not carry the same hooks (Claude Code would run some twice)"
+jq -e '(.disableAllHooks // false) == false and (.allowManagedHooksOnly // false) == false' "$m" >/dev/null 2>&1 ||
+  fail "$m turns hooks off"
+# lea's guard fails closed: a missing lea, a crash or a timeout of its PreToolUse hook blocks the
+# call (exit 2, onFailure), never lets it through.
+jq -e '[.hooks.PreToolUse[]?.hooks[]? | select(.command | contains("/usr/local/bin/lea hook claude PreToolUse"))]
+  | length > 0 and all(.onFailure == "block" and (.command | endswith("exit 2")))' "$m" >/dev/null 2>&1 ||
+  fail "$m: lea's PreToolUse hook does not fail closed"
+# The permission rules are the managed ones only (#111): an agent's own settings.json, a
+# project's .claude/settings*.json or --allowedTools cannot widen them, nor turn bypass on.
+jq -e '.allowManagedPermissionRulesOnly == true and .permissions.disableBypassPermissionsMode == "disable"
+  and (.permissions.defaultMode // "default") != "bypassPermissions"' "$m" >/dev/null 2>&1 ||
+  fail "$m does not keep the permission rules managed only (allowManagedPermissionRulesOnly, disableBypassPermissionsMode)"
+# The variables lea's hooks read that lea sets the same in every container: pinned, so that an
+# agent's own settings cannot point the hooks at another bus or gh at another config.
+for kv in LEA_BUS_SOCK=/run/lea/bus/bus.sock SSH_AUTH_SOCK=/run/lea/ssh-agent.sock GH_CONFIG_DIR=/lea/state/gh GLAB_CONFIG_DIR=/lea/state/glab-cli; do
+  jq -e --arg k "${kv%%=*}" --arg v "${kv#*=}" '.env[$k] == $v' "$m" >/dev/null 2>&1 || fail "$m does not pin ${kv%%=*}=${kv#*=}"
+done
+want=$(cat "$pin" 2>/dev/null) || fail "$pin is missing"
+have=$(claude --version 2>/dev/null | awk '{ print $1; exit }')
+if [ -z "$have" ] || [ "$have" != "$want" ]; then
+  fail "Claude Code ${have:-unknown} is not $want, the version lea verified its managed settings with"
+fi
+echo "lea's hooks and managed-only permission rules in $m, Claude Code $have"

@@ -1,11 +1,13 @@
 package hook
 
 import (
+	"bytes"
 	"context"
 	"database/sql"
 	"encoding/json"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/DavidGodefroid/lea/internal/client"
 	"github.com/DavidGodefroid/lea/internal/store"
@@ -187,9 +189,42 @@ func TestPreToolUseHint(t *testing.T) {
 	}
 }
 
-func TestPreToolUseSilentWithoutDaemon(t *testing.T) {
-	if out := runHook("/nonexistent/bus.sock", "PreToolUse", preToolUse("gh pr merge 1 --squash"), nil); out != "" {
-		t.Fatalf("out=%q", out)
+// lea's guard fails closed (#111): a PreToolUse it cannot check (no bus, no identity, an identity
+// the daemon refuses, no tool) is a deny, never the normal path. The other events stay silent.
+func TestPreToolUseFailsClosed(t *testing.T) {
+	began := time.Now()
+	d, why := hookDecision(t, runHook("/nonexistent/bus.sock", "PreToolUse", preToolUse("gh pr merge 1 --squash"), nil))
+	if d != "deny" || !strings.Contains(why, "fails closed") || !strings.Contains(why, "bus did not answer") {
+		t.Fatalf("no bus: %q %q", d, why)
+	}
+	if time.Since(began) > 3*time.Second {
+		t.Fatalf("no bus: answered after %s", time.Since(began))
+	}
+	if out := runHook("/nonexistent/bus.sock", "PostToolUse", `{"session_id":"s","tool_name":"Bash"}`, nil); out != "" {
+		t.Fatalf("PostToolUse without a bus: %q", out)
+	}
+	_, bus := start(t)
+	for name, env := range map[string]map[string]string{
+		"no LEA_AGENT":    {"LEA_BUS_SOCK": bus},
+		"empty LEA_AGENT": {"LEA_BUS_SOCK": bus, "LEA_AGENT": ""},
+	} {
+		var out bytes.Buffer
+		Claude(context.Background(), "PreToolUse", strings.NewReader(preToolUse("ls")), &out, envOf(env))
+		if d, why := hookDecision(t, out.String()); d != "deny" || !strings.Contains(why, "no lea agent identity") {
+			t.Fatalf("%s: %q %q", name, d, why)
+		}
+	}
+	// An identity the daemon refuses: hook_event fails, the call is denied.
+	if d, why := hookDecision(t, runHook(bus, "PreToolUse", preToolUse("ls"), map[string]string{"LEA_AGENT": "bad name"})); d != "deny" ||
+		!strings.Contains(why, "invalid agent name") {
+		t.Fatalf("refused identity: %q %q", d, why)
+	}
+	if d, why := hookDecision(t, runHook(bus, "PreToolUse", `{"session_id":"s1"}`, nil)); d != "deny" || !strings.Contains(why, "names no tool") {
+		t.Fatalf("no tool: %q %q", d, why)
+	}
+	// A call the guard checked and has no verdict for still takes the normal path.
+	if out := runHook(bus, "PreToolUse", preToolUse("ls"), nil); out != "" {
+		t.Fatalf("no verdict: %q", out)
 	}
 }
 

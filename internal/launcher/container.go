@@ -18,8 +18,9 @@ import (
 	"golang.org/x/sys/unix"
 )
 
-// claudeShared is LEA_CLAUDE_SHARED: the ~/.claude entries mounted read-only.
-var claudeShared = []string{"settings.json", "keybindings.json", "hooks", "skills", "plugins", "mods", "dev-mods",
+// claudeShared is LEA_CLAUDE_SHARED: the ~/.claude entries mounted read-only. settings.json and
+// plugins are not among them: each container gets its own writable copy (claudeLayered, #111).
+var claudeShared = []string{"keybindings.json", "hooks", "skills", "mods", "dev-mods",
 	"output-styles", "agents", "commands"}
 
 // userName is lea_user_name: `id -un` (it asks NSS; the pure-Go os/user reads /etc/passwd only),
@@ -521,26 +522,11 @@ func (l *Launcher) claudeRO(sbase, src, placeholder, dst string) ([]string, erro
 	return []string{"--mount", "type=bind,src=" + src + ",dst=" + dst + ",readonly"}, nil
 }
 
-// pluginsData lays a private read-write plugins/data over the read-only ~/.claude/plugins: Claude
-// Code mkdirs each plugin's CLAUDE_PLUGIN_DATA there before running its hooks (#90). The mount point
-// must exist in the host's plugins; when lea cannot make it, it says so and the agent starts without.
-func (l *Launcher) pluginsData(src, priv, sbase string) ([]string, error) {
-	p := src + "/plugins"
-	if !isDir(p) || isSymlink(p) {
-		return nil, nil
-	}
-	if err := Mkdirs(src, p+"/data"); err != nil {
-		l.logf("no writable %s/data: %v", p, err)
-		return nil, nil
-	}
-	if err := Mkdirs(sbase, priv+"/plugins-data"); err != nil {
-		return nil, die("%v", err)
-	}
-	return []string{"--mount", "type=bind,src=" + priv + "/plugins-data,dst=" + p + "/data"}, nil
-}
-
-// claudeMounts is lea_claude_mounts: a private ~/.claude per projects dir, the allow-list of
-// host entries read-only, the project's transcripts and lea's own .claude.json.
+// claudeMounts is lea_claude_mounts: a private ~/.claude per projects dir, holding its own
+// writable copies of settings.json and plugins (claudeLayer), the host's permission rules for the
+// managed settings (hostPermissionsFile), the allow-list of host entries read-only, the project's
+// transcripts and lea's own .claude.json. No host entry is ever mounted
+// writable but this projects dir's transcripts.
 func (l *Launcher) claudeMounts(home, proj, st string) ([]string, error) {
 	if err := noComma(home, proj, st); err != nil {
 		return nil, err
@@ -566,11 +552,12 @@ func (l *Launcher) claudeMounts(home, proj, st string) ([]string, error) {
 			return nil, err
 		}
 	}
-	m, err := l.pluginsData(src, priv, sbase)
-	if err != nil {
+	if err := l.claudeLayer(src, priv, sbase); err != nil {
 		return nil, err
 	}
-	a = append(a, m...)
+	if err := add(l.hostPermissionsFile(src, priv, sbase)); err != nil {
+		return nil, err
+	}
 	// The shell's "$_src"/*.md: $_src is quoted, so HOME is never a pattern; no hidden names;
 	// byte order (dash sorts its globs with strcmp).
 	var mds []string

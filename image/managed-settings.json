@@ -6,6 +6,170 @@
     "OTEL_EXPORTER_OTLP_PROTOCOL": "http/protobuf",
     "OTEL_EXPORTER_OTLP_ENDPOINT": "http://lea-proxy:4318",
     "OTEL_RESOURCE_ATTRIBUTES": "service.name=lea,service.version=@LEA_VERSION@",
-    "DISABLE_UPDATES": "1"
+    "DISABLE_UPDATES": "1",
+    "LEA_BUS_SOCK": "/run/lea/bus/bus.sock",
+    "SSH_AUTH_SOCK": "/run/lea/ssh-agent.sock",
+    "GH_CONFIG_DIR": "/lea/state/gh",
+    "GLAB_CONFIG_DIR": "/lea/state/glab-cli"
+  },
+  "allowManagedPermissionRulesOnly": true,
+  "permissions": {
+    "allow": [
+      "Bash(go *)",
+      "Bash(go-cross *)",
+      "Bash(staticcheck *)",
+      "Bash(govulncheck *)"
+    ],
+    "defaultMode": "default",
+    "disableBypassPermissionsMode": "disable"
+  },
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "[ -x /usr/local/bin/lea ] && exec /usr/local/bin/lea hook claude SessionStart; exit 0"
+          },
+          {
+            "type": "command",
+            "command": "[ -x /usr/local/bin/lea ] && exec /usr/local/bin/lea hook claude LimitResume; exit 0",
+            "asyncRewake": true,
+            "timeout": 691200
+          },
+          {
+            "type": "command",
+            "command": "[ -x /usr/local/bin/lea ] && exec /usr/local/bin/lea hook claude Rewake; exit 0",
+            "asyncRewake": true,
+            "timeout": 691200
+          }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "[ -x /usr/local/bin/lea ] && exec /usr/local/bin/lea hook claude UserPromptSubmit; exit 0"
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "[ -x /usr/local/bin/lea ] && exec /usr/local/bin/lea hook claude PreToolUse; echo 'lea: /usr/local/bin/lea is missing: lea refuses the call (its guard fails closed)' >&2; exit 2",
+            "onFailure": "block"
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "[ -x /usr/local/bin/lea ] && exec /usr/local/bin/lea hook claude PostToolUse; exit 0"
+          }
+        ]
+      },
+      {
+        "matcher": "^mcp__lock[a-z]*__",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "[ -x /usr/local/bin/lea ] && exec /usr/local/bin/lea hook claude Rewake; exit 0",
+            "asyncRewake": true,
+            "timeout": 691200
+          }
+        ]
+      }
+    ],
+    "PermissionRequest": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "timeout": 620,
+            "command": "[ -x /usr/local/bin/lea ] && exec /usr/local/bin/lea hook claude PermissionRequest; exit 0"
+          }
+        ]
+      }
+    ],
+    "Notification": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "[ -x /usr/local/bin/lea ] && exec /usr/local/bin/lea hook claude Notification; exit 0"
+          }
+        ]
+      }
+    ],
+    "SubagentStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "[ -x /usr/local/bin/lea ] && exec /usr/local/bin/lea hook claude SubagentStart; exit 0"
+          }
+        ]
+      }
+    ],
+    "SubagentStop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "[ -x /usr/local/bin/lea ] && exec /usr/local/bin/lea hook claude SubagentStop; exit 0"
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "[ -x /usr/local/bin/lea ] && exec /usr/local/bin/lea hook claude Stop; exit 0"
+          },
+          {
+            "type": "command",
+            "command": "[ -x /usr/local/bin/lea ] && exec /usr/local/bin/lea hook claude Rewake; exit 0",
+            "asyncRewake": true,
+            "timeout": 691200
+          }
+        ]
+      }
+    ],
+    "StopFailure": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "[ -x /usr/local/bin/lea ] && exec /usr/local/bin/lea hook claude StopFailure; exit 0"
+          },
+          {
+            "type": "command",
+            "command": "[ -x /usr/local/bin/lea ] && exec /usr/local/bin/lea hook claude LimitWait; exit 0",
+            "asyncRewake": true,
+            "timeout": 691200
+          }
+        ]
+      }
+    ],
+    "SessionEnd": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "[ -x /usr/local/bin/lea ] && exec /usr/local/bin/lea hook claude SessionEnd; exit 0"
+          }
+        ]
+      }
+    ]
   }
 }

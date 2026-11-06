@@ -59,21 +59,16 @@ func (l *Launcher) ctlRunArgs(projects []string, sock string, sockGID int) ([]st
 		return nil, err
 	}
 	bind(data, false)
-	// ~/.claude: only what lea gives an agent container (claudeMounts). The shared entries and
-	// *.md read-only; each projects dir's projects/<slug>, made here, writable; never the other
-	// projects' transcripts nor the credentials. plugins/data, the mount point of the agents'
-	// private plugin data, is made here too: lea-ctl sees plugins read-only.
+	// ~/.claude: only what lea gives an agent container (claudeMounts). The shared entries, the
+	// sources of the containers' own copies (settings.json, plugins: claudeLayer copies them into
+	// lea's data) and *.md read-only; each projects dir's projects/<slug>, made here, writable;
+	// never the other projects' transcripts nor the credentials.
 	c := home + "/.claude"
 	if err := os.MkdirAll(c, 0o700); err != nil {
 		return nil, err
 	}
 	for _, e := range l.ctlClaudeEntries() {
 		bind(c+"/"+e, true)
-		if e == "plugins" {
-			if err := Mkdirs(c, c+"/plugins/data"); err != nil {
-				l.logf("no writable %s/plugins/data: %v", c, err)
-			}
-		}
 	}
 	for _, p := range projects {
 		t := c + "/projects/" + Slug(p)
@@ -114,7 +109,7 @@ func (l *Launcher) ctlRunArgs(projects []string, sock string, sockGID int) ([]st
 }
 
 // ctlClaudeEntries are the ~/.claude entries lea-ctl mounts read-only, sorted: the real (not
-// symlinked) shared entries and *.md files claudeMounts gives agent containers.
+// symlinked) shared and layered entries and *.md files claudeMounts gives agent containers.
 func (l *Launcher) ctlClaudeEntries() []string {
 	c := l.Cfg.Get("HOME") + "/.claude"
 	ok := func(name string) bool {
@@ -122,7 +117,7 @@ func (l *Launcher) ctlClaudeEntries() []string {
 		return !strings.Contains(name, ",") && !isSymlink(p) && (isDir(p) || isRegular(p))
 	}
 	var es []string
-	for _, e := range claudeShared {
+	for _, e := range append(append([]string{}, claudeShared...), claudeLayered...) {
 		if ok(e) {
 			es = append(es, e)
 		}
