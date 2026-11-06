@@ -9,7 +9,9 @@ import (
 	"github.com/charmbracelet/lipgloss"
 )
 
-// Width is the deck pane's width, border included (agents.DeckWidth).
+// Width is the deck pane's default width, border included (agents.DeckWidth): the fallback
+// while the deck does not know its size yet. The width the user chooses is applied to the pane
+// itself (width.go); the rendering follows the real pane width.
 const Width = 34
 
 // folderIndent is how many cells an agent in a folder is shifted right of a root agent.
@@ -138,6 +140,7 @@ var helpLines = []string{
 	"p           pause (y), resume",
 	"a d A       allow deny always",
 	"x           stop or remove",
+	"< >         deck width",
 	"S           sounds",
 	",           settings",
 	"ctrl+space  deck or terminal",

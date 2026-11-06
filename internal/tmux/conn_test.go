@@ -8,7 +8,6 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -197,18 +196,19 @@ func TestSocketPathAndItsLimit(t *testing.T) {
 func TestWriteConf(t *testing.T) {
 	dir := t.TempDir()
 	p := filepath.Join(dir, "tmux.conf")
-	if err := WriteConf(p); err != nil {
+	bin := filepath.Join(dir, "bin", "tmux") // lea's tmux, absolute: no lookup in PATH
+	if err := WriteConf(p, bin); err != nil {
 		t.Fatal(err)
 	}
 	b, err := os.ReadFile(p)
-	if err != nil || string(b) != Conf() {
+	if want, _ := ConfFor(bin); err != nil || string(b) != want {
 		t.Fatalf("content mismatch: %v", err)
 	}
 	if fi, _ := os.Stat(p); fi.Mode().Perm() != 0o600 {
 		t.Fatalf("mode %v", fi.Mode().Perm())
 	}
 	for _, want := range []string{"set -g prefix None", "set -g remain-on-exit on", "set -g set-clipboard off",
-		"bind-key -n C-Space", "if-shell -F '#{@lea_deck}' 'resize-pane -t :.0 -x " + strconv.Itoa(DeckWidth) + "'",
+		"bind-key -n C-Space", "set-hook -g window-resized", `#{@lea_deck_width}`,
 		"set -gqu remain-on-exit-format", "'#{&&:#{!=:#{@lea_role},deck},#{!=:#{@lea_role},lock}}' 'copy-mode -H -e'",
 		"'#{!=:#{@lea_role},lock}' 'copy-mode -H -M'", `if [ "#{@lea_role}" = lock ]; then :; elif`} {
 		if !strings.Contains(Conf(), want) {
@@ -234,7 +234,7 @@ func TestWriteConf(t *testing.T) {
 	}
 	link := filepath.Join(dir, "link.conf")
 	os.Symlink(filepath.Join(dir, "elsewhere"), link)
-	if err := WriteConf(link); err == nil {
+	if err := WriteConf(link, bin); err == nil {
 		t.Fatal("wrote through a symlink")
 	}
 }

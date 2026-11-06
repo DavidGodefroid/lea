@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"regexp"
 	"slices"
 	"strconv"
 	"strings"
@@ -32,19 +33,20 @@ type fpane struct {
 }
 
 type fakeSession struct {
-	mu      sync.Mutex
-	panes   []*fpane
-	opts    map[string]string
-	log     []string
-	n       int
-	events  chan tmux.Event
-	clients []string
-	names   map[string]string // window id → name
-	marked  map[string]bool   // window id → its @lea_deck mark is set
-	stacked map[string]bool   // window id → panes split top to bottom
-	fail    string            // a command name that fails
-	onFail  func()            // called when fail triggers (e.g. to cancel the request)
-	exitOn  string            // a pane respawned into an argv holding it exits at once (and closes)
+	mu       sync.Mutex
+	panes    []*fpane
+	opts     map[string]string
+	log      []string
+	n        int
+	events   chan tmux.Event
+	clients  []string
+	names    map[string]string // window id → name
+	marked   map[string]bool   // window id → its @lea_deck mark is set
+	stacked  map[string]bool   // window id → panes split top to bottom
+	winWidth int               // the window's width in formats (0: unknown)
+	fail     string            // a command name that fails
+	onFail   func()            // called when fail triggers (e.g. to cancel the request)
+	exitOn   string            // a pane respawned into an argv holding it exits at once (and closes)
 }
 
 func newFakeSession(deckCmd []string) *fakeSession {
@@ -271,12 +273,11 @@ func (f *fakeSession) Run(ctx context.Context, args ...string) ([]string, error)
 		}
 		f.opts[args[3]] = args[4]
 		return nil, nil
-	case "display-message": // display-message -p -t =SESSION: '#{NAME}'
+	case "display-message": // display-message -p -t =SESSION: FORMAT
 		if err := sessionTarget(flag("-t")); err != nil {
 			return nil, err
 		}
-		name := strings.TrimSuffix(strings.TrimPrefix(args[len(args)-1], "#{"), "}")
-		return []string{f.opts[name]}, nil
+		return []string{f.expand(args[len(args)-1])}, nil
 	case "split-window":
 		t, err := must(flag("-t"))
 		if err != nil {
@@ -363,6 +364,20 @@ func (f *fakeSession) Run(ctx context.Context, args ...string) ([]string, error)
 		return nil, nil
 	}
 	return nil, fmt.Errorf("fake tmux: unexpected command %q", args)
+}
+
+var formatVar = regexp.MustCompile(`#\{[^}]+\}`)
+
+// expand substitutes the formats the manager reads: the session options, and #{window_width}
+// (winWidth, 0 until a test sets it).
+func (f *fakeSession) expand(format string) string {
+	return formatVar.ReplaceAllStringFunc(format, func(m string) string {
+		name := m[2 : len(m)-1]
+		if name == "window_width" {
+			return strconv.Itoa(f.winWidth)
+		}
+		return f.opts[name]
+	})
 }
 
 // sessionTarget checks the "=SESSION:" form real tmux needs for set-option and display-message:
