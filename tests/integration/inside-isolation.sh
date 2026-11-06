@@ -19,10 +19,27 @@ fi
 # Hash of a file, or "absent".
 sha_of() { if [ -f "$1" ]; then sha256sum <"$1" | cut -d' ' -f1; else echo absent; fi; }
 
+# A sandboxed runtime (LEA_RUNTIME=runsc or kata, #106): the agents run on a kernel of their own
+# (gVisor's Sentry, Kata's guest), not the host's.
+if [ "${SECOND_KERNEL:-}" = 1 ] && [ -n "${HOST_KERNEL:-}" ]; then
+  must   "a kernel other than the host's ($(uname -r), host $HOST_KERNEL)" test "$(uname -r)" != "$HOST_KERNEL"
+fi
+# lea's bus (messaging between agents): a host Unix socket the daemon binds in the bus directory.
+# Not a containment check: says whether the runtime lets a host socket through (#106).
+if [ -n "${LEA_BUS_SOCK:-}" ]; then
+  if python3 -I -c 'import socket, sys; socket.socket(socket.AF_UNIX).connect(sys.argv[1])' "$LEA_BUS_SOCK" 2>/dev/null; then
+    echo "info lea's bus socket is reachable"
+  else
+    echo "info lea's bus socket is not reachable"
+  fi
+fi
 mustnt "no host Docker socket"                 test -S /var/run/docker.sock
 mustnt "no host Docker socket (/run)"          test -S /run/docker.sock
 must   "docker is the nested Podman"            sh -c 'docker version 2>/dev/null | grep -qi podman'
-must   "a nested container runs"                docker run --rm busybox:1.37 true
+# Its engine's output goes to a log, shown when it fails.
+runlog=$(mktemp)
+if docker run --rm busybox:1.37 true >"$runlog" 2>&1; then ok "a nested container runs"; else ko "a nested container runs"; sed 's/^/     | /' "$runlog"; fi
+rm -f "$runlog"
 mustnt "decoy unreachable directly"             curl -s --max-time 5 --noproxy '*' "http://$CANARY_IP/"
 mustnt "decoy unreachable through the proxy"    curl -sf --max-time 5 "http://$CANARY_IP/"
 mustnt "host port unreachable via the bridge"   curl -s --max-time 5 --noproxy '*' "http://$GW_IP:18080/"
@@ -115,23 +132,27 @@ if [ -n "${HOST_HIST_SHA:-}" ]; then
 fi
 must   "only this projects dir under ~/.claude/projects" sh -c '[ "$(ls -A "$HOME/.claude/projects" | wc -l)" -eq 1 ]'
 must   "public HTTPS works through the proxy"   curl -sf --max-time 20 -o /dev/null https://registry.npmjs.org/
+# The Claude API answers through the proxy (any HTTP status: no key is sent, 4xx is expected).
+must   "the Claude API answers through the proxy" sh -c 'c=$(curl -s --max-time 20 -o /dev/null -w "%{http_code}" https://api.anthropic.com/v1/messages); [ "${c:-000}" != 000 ]'
 # Plain HTTP between nested containers stays direct (containers.conf: http_proxy = false): a
 # server, and a client in its network namespace fetching it at the namespace's own address (a
 # private one, not in NO_PROXY, which the proxy would refuse). Not over a network of their own:
 # the nested Podman cannot create one (README, Known limitations): netavark writes
 # net/ipv4/conf/<bridge>/route_localnet in the rootless network namespace, whose value comes from
 # the host's net.ipv4.conf.default (1 is needed, 0 is the usual default), and Docker mounts
-# /proc/sys read-only. Its engine's output goes to a log, shown when it fails.
+# /proc/sys read-only. Port 8080: under gVisor the nested containers share lea's network namespace
+# (image/entrypoint), where an unprivileged user binds no port below 1024. Its engine's output goes
+# to a log, shown when it fails.
 # shellcheck disable=SC2317,SC2329 # run by must
 nested_http() (
   exec 2>>"$1"
-  docker run -d --rm --name lea-it-web busybox:1.37 sh -c 'mkdir -p /w && echo hi >/w/index.html && httpd -f -p 80 -h /w' >&2
+  docker run -d --rm --name lea-it-web busybox:1.37 sh -c 'mkdir -p /w && echo hi >/w/index.html && httpd -f -p 8080 -h /w' >&2
   rc=1
   for _ in 1 2 3 4 5; do
     if docker run --rm --network container:lea-it-web busybox:1.37 sh -c '
       a=$(ip -4 -o addr show scope global | awk "{ print \$4 }" | cut -d/ -f1 | head -n 1)
       echo "address: ${a:-none}; HTTP proxy: ${http_proxy:-${HTTP_PROXY:-none}}" >&2
-      [ -z "${http_proxy:-}${HTTP_PROXY:-}" ] && [ -n "$a" ] && wget -T 10 -qO- "http://$a/"' | grep -qx hi; then rc=0; break; fi
+      [ -z "${http_proxy:-}${HTTP_PROXY:-}" ] && [ -n "$a" ] && wget -T 10 -qO- "http://$a:8080/"' | grep -qx hi; then rc=0; break; fi
     sleep 1
   done
   docker rm -f -t 0 lea-it-web >/dev/null 2>&1

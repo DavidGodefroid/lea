@@ -463,6 +463,33 @@ func TestProtectedCwdAndGlobs(t *testing.T) {
 		{"glob build", "/w", "Bash", "rm -rf build/*", ""},
 		{"glob out", "/w", "Bash", "rm -f *.out", ""},
 		{"glob go test", "/w", "Bash", "go test ./internal/*/...", ""},
+		// #273: bash's bracket rules. An unmatched [ is literal: a jq filter's .[] names no file.
+		{"jq filter", "/work", "Bash", "gh issue list --jq '.[] | .title'", ""},
+		{"jq filter tsv", "/work", "Bash", "gh search issues --json number,title --jq '.[] | [.number, .title] | @tsv'", ""},
+		{"jq filter issue repro", "/work", "Bash", `gh search issues --owner DavidGodefroid --created 2026-11-04 --include-prs --limit 200 ` +
+			`--json repository,number,title,state,isPullRequest --jq '.[] | [.repository.name, .number, .state, ` +
+			`(if .isPullRequest then "PR" else "issue" end), .title] | @tsv'`, ""},
+		{"jq filter unknown cwd", "", "Bash", "gh issue list --jq '.[] | .title'", ""},
+		{"empty brackets in sh -c", "/work", "Bash", "sh -c 'ls .[]'", ""},
+		{"empty brackets in home", "/home/u", "Bash", "sh -c 'touch .[]'", ""},
+		{"jq index", "/work", "Bash", "gh pr list --jq '.[0] | .title'", ""},
+		// A real class on a protected file still fails closed.
+		{"class with leading ]", "/work", "Bash", "sh -c 'cat > .[]g]itconfig'", Deny},
+		{"class with leading ] unknown cwd", "", "Bash", "sh -c 'cat > .[]g]itconfig'", Deny},
+		{"class gitconfig", "/work", "Bash", "sh -c 'echo x > .gitconfi[g]'", Deny},
+		{"class bashrc", "/work", "Bash", "sh -c 'echo x > .bash[r]c'", Deny},
+		{"class bang negation", "/home/u", "Bash", "echo x > .[!x]itconfig", Deny},
+		{"class caret negation", "/home/u", "Bash", "echo x > .[^x]ashrc", Deny},
+		{"class range", "/home/u", "Bash", "echo x > .[a-h]itconfig", Deny},
+		{"class trailing dash", "/home/u", "Bash", "echo x > .[g-]itconfig", Deny},
+		{"class negated leading ]", "/home/u", "Bash", "echo x > .[!]x]itconfig", Deny},
+		{"class posix", "/home/u", "Bash", "echo x > .[[:alpha:]]itconfig", Deny},
+		{"class not first member", "/home/u", "Bash", "echo x > .[ag]itconfigX", Deny},
+		{"class settings", "/w", "Bash", "cp x .claude/sett[ai]ngs.json", Deny},
+		{"class holding [", "/home/u", "Bash", "echo x > .[[g]itconfig", Deny},
+		{"redirect unclosed bracket", "/home/u", "Bash", "echo x > .[gitconfig", ""},
+		{"redirect glob", "/home/u", "Bash", "echo x > .gitconf*", Deny},
+		{"escaped bracket", "/home/u", "Bash", `echo x > .\[g]itconfig`, ""},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -900,5 +927,48 @@ func TestHint(t *testing.T) {
 	shared.Branch = ""
 	if d := Decide("Bash", bash("gh pr merge 42 --squash"), shared, gh, now, false); !strings.Contains(d.Hint, "another agent") {
 		t.Fatalf("shared branch: %+v", d)
+	}
+}
+
+// TestBashBrackets: glob components read with bash's bracket rules (#273), translated for
+// path.Match, and fail closed on what lea does not translate.
+func TestBashBrackets(t *testing.T) {
+	for _, tc := range []struct {
+		g, gg string
+		ok    bool
+	}{
+		{".[]", `.\[\]`, true},
+		{".[0]", ".[0]", true},
+		{".[]g]itconfig", `.[\]g]itconfig`, true},
+		{".[!]g]x", `.[^\]g]x`, true},
+		{".[^a]", ".[^a]", true},
+		{"[-a]", `[\-a]`, true},
+		{"[a-]", `[a\-]`, true},
+		{"[a-z]", "[a-z]", true},
+		{"a[b", `a\[b`, true},
+		{"a]b", `a\]b`, true},
+		{`a\`, `a\\`, true},
+		{`\[g]`, `\[g\]`, true},
+		{"[[:alpha:]]x", "", false},
+	} {
+		gg, ends, ok := goGlob(tc.g)
+		if ok != tc.ok || (ok && gg != tc.gg) {
+			t.Errorf("goGlob(%q) = %q, %v; want %q, %v", tc.g, gg, ok, tc.gg, tc.ok)
+		}
+		if ok && (len(ends) == 0 || ends[len(ends)-1] != len(gg)) {
+			t.Errorf("goGlob(%q) ends %v, len %d", tc.g, ends, len(gg))
+		}
+	}
+	for g, want := range map[string]bool{
+		".[]": false, ".[0]": false, ".[]]": false, ".[": false, ".]": false, ".[[]": false,
+		".[]g]itconfig": true, ".gitconfi[g]": true, ".[!x]itconfig": true, ".[ag]itconfigX": true,
+		".[g-]itconfig": true, ".[[:lower:]]itconfig": true, ".[!g]itconfig": false,
+	} {
+		if got := (scan{}).globProtected(g, false); got != want {
+			t.Errorf("globProtected(%q) = %v, want %v", g, got, want)
+		}
+	}
+	if got := concrete(`.[\]g]x[^a]`); got != ".]xb" {
+		t.Errorf("concrete = %q", got)
 	}
 }

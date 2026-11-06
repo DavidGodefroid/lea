@@ -97,23 +97,6 @@ func (c Client) SplitShell(ctx context.Context, key string, below bool) (Agent, 
 	return a, err
 }
 
-// LockOpen opens tool's console in the container's deck (the deck's L), or shows the open one,
-// under the agent; it answers "opened" or "already-open".
-func (c Client) LockOpen(ctx context.Context, container, tool string) (string, error) {
-	var r struct{ Status string }
-	err := c.call(ctx, "lock_open", map[string]any{"container": container, "tool": tool}, &r)
-	return r.Status, err
-}
-
-// LockDecide answers an agent's request that the user open a lock console (the card's a or d):
-// open opens it as L would, else the request is declined. It answers the console's status
-// ("opened", "already-open") or "declined".
-func (c Client) LockDecide(ctx context.Context, container string, id int64, open bool) (string, error) {
-	var r struct{ Status string }
-	err := c.call(ctx, "lock_request_decide", map[string]any{"container": container, "id": id, "open": open}, &r)
-	return r.Status, err
-}
-
 // Label is an agent's display label ("" when none), from the host's agents_list.
 func (c Client) Label(ctx context.Context, key string) (string, error) {
 	var as []struct{ Key, Label string }
@@ -144,34 +127,4 @@ func (c Client) SetSound(ctx context.Context, on bool) (string, error) {
 	var r struct{ Sound string }
 	err := c.call(ctx, "sound", map[string]any{"on": on}, &r)
 	return r.Sound, err
-}
-
-// HubDecide answers one of the hub's tickets for an agent of container (the hub card's a or d),
-// or with panel any of them (the hub panel's); retype is the name typed when the ticket asks for one.
-func (c Client) HubDecide(ctx context.Context, container string, panel bool, instance, id string, approved bool, retype string) error {
-	return c.call(ctx, "hub_decide", map[string]any{"container": container, "panel": panel, "instance": instance, "id": id,
-		"approved": approved, "retype": retype}, nil)
-}
-
-// HubShow shows a ticket of the hub panel (instance/id) whole in the container's slot, the note
-// under it; ref and note "" hide it (#284). seq orders the calls: the daemon drops one older than
-// the last it took.
-func (c Client) HubShow(ctx context.Context, container, ref, note string, seq int64) error {
-	return c.call(ctx, "hub_show", map[string]any{"container": container, "ref": ref, "note": note, "seq": seq}, nil)
-}
-
-// HubReveal asks the Lock, through the daemon and the hub, for the clear values of a pending
-// ticket of an agent of container (the hub card's o or Ctrl-O), or with panel of any (the panel's).
-func (c Client) HubReveal(ctx context.Context, container string, panel bool, instance, id string) (HubClear, error) {
-	var r HubClear
-	err := c.call(ctx, "hub_reveal", map[string]any{"container": container, "panel": panel, "instance": instance, "id": id}, &r)
-	return r, err
-}
-
-// HubRenew asks the Lock again for an expired ticket of an agent of container (the card's r), or
-// with panel of any (the panel's).
-func (c Client) HubRenew(ctx context.Context, container string, panel bool, instance, id string) (HubRenewed, error) {
-	var r HubRenewed
-	err := c.call(ctx, "hub_renew", map[string]any{"container": container, "panel": panel, "instance": instance, "id": id}, &r)
-	return r, err
 }

@@ -11,6 +11,8 @@ import (
 	"sync"
 	"syscall"
 	"time"
+
+	"github.com/DavidGodefroid/lea/internal/locks"
 )
 
 // Launcher is one run of the host launcher.
@@ -48,6 +50,7 @@ type Launcher struct {
 	exiting     int               // exit functions running; Interrupt waits for them
 	drained     bool              // Interrupt has run every exit function
 	exited      bool              // exitSettled called exit (a test's exit returns)
+	ctrlWarned  bool              // withoutMissingControllers warned (once per lea)
 }
 
 // root is the launcher that holds the run state: l itself, or the launcher a drain view was
@@ -452,7 +455,7 @@ const ToolsOnVar = "LEA_TOOLS_ON"
 func (l *Launcher) exportToolsOn() {
 	on, _ := l.Cfg.ProjectsLockTools()
 	var ts []string
-	for _, t := range []string{"locksql", "lockmq", "lockfile"} {
+	for _, t := range locks.Names() {
 		if on[t] {
 			ts = append(ts, t)
 		}
@@ -460,28 +463,30 @@ func (l *Launcher) exportToolsOn() {
 	l.Cfg.Export(ToolsOnVar, strings.Join(ts, " "))
 }
 
-// lockConsole is lea lock: a lock console in this projects dir's deck, through the core (the
-// daemon opens the pane), which the launcher tells the container's name.
-func (l *Launcher) lockConsole(args []string) error {
-	if len(args) == 0 || strings.HasPrefix(args[0], "-") {
-		l.logf("error: usage: lea lock open|close TOOL [PROFILE] | lea lock list")
-		return exitError{2}
-	}
-	proj, err := l.projectsDir()
-	if err != nil {
-		return err
-	}
-	if l.coreCall(append([]string{"lock", "--container", l.Cfg.ContainerName(proj)}, args...)...) != nil {
-		return exitError{1}
-	}
-	return nil
+// exportLimits hands lea doctor the limits the configuration resolves to (#132): LEA_LIMITS_WANT
+// as the engine's inspect tells them, LEA_LIMITS_DIGEST the lea.limits label of a container
+// started with them. Doctor reports a missing cgroup controller itself, so the launcher's warning
+// about it is not printed here.
+func (l *Launcher) exportLimits() {
+	l.root().ctrlWarned = true
+	r := l.resolvedLimits()
+	l.Cfg.Export("LEA_LIMITS_WANT", r.nanos())
+	l.Cfg.Export("LEA_LIMITS_DIGEST", r.digest())
+}
+
+// lockConsole is lea lock, removed (#300): lea shows no lock console; lox run, in a terminal of
+// its own outside lea, shows what the locks ask.
+func (l *Launcher) lockConsole([]string) error {
+	l.logf("error: lea lock was removed: lea shows no lock console. " + LoxRunHint + " (lox attach NAME reaches a lock's own console)")
+	return exitError{2}
 }
 
 // doctor is lea doctor: the workstation's checks (lea-sh doctor), then, when the projects
-// directory resolves, its lea's delivery (issue #92) through the core, which reads the grants
+// directory resolves, lea's Lock clients against the locks lox runs (doctorLocks) and its lea's delivery (issue #92) through the core, which reads the grants
 // from the daemon and the credentials from lea's state. The worst of the two is the status.
 func (l *Launcher) doctor() error {
 	l.exportToolsOn()
+	l.exportLimits()
 	err := l.sh("doctor")
 	proj, perr := l.projectsDir()
 	if perr != nil {
@@ -492,6 +497,10 @@ func (l *Launcher) doctor() error {
 		if err == nil {
 			err = exitError{1}
 		}
+	}
+	// Lea's Lock clients against the locks lox runs (lea#134).
+	if lerr := l.doctorLocks(proj); lerr != nil && err == nil {
+		err = lerr
 	}
 	if l.coreCall("delivery", "--container", l.Cfg.ContainerName(proj), "--projects", proj, "check", "--state", l.Cfg.StateDir()) != nil && err == nil {
 		return exitError{1}

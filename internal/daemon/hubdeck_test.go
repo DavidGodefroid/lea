@@ -8,7 +8,6 @@ import (
 	"time"
 
 	"github.com/DavidGodefroid/lea/internal/agents"
-	"github.com/DavidGodefroid/lea/internal/deck"
 )
 
 const ticketB, ticketC = "01JB0000000000000000000002", "01JB0000000000000000000003"
@@ -47,13 +46,33 @@ func hubEnv(t *testing.T, h *fakeHub) (env, string, string) {
 	return e, dev, dev2
 }
 
-func cardsOf(e env, keys ...string) agents.Snapshot {
-	var snap agents.Snapshot
+// queuedTicket is what lea knows of a queued ticket: which agent waits on it, verified (its own
+// wait names it) or claimed (its requester names the agent).
+type queuedTicket struct {
+	ID, Lock, Instance string
+	Verified, Expired  bool
+}
+
+// queuedFor is, for each agent key, the queued tickets lea attributes to it, oldest first.
+type queuedFor struct {
+	Agents []struct{ Hub []queuedTicket }
+}
+
+func cardsOf(e env, keys ...string) queuedFor {
+	e.d.mu.Lock()
+	entries := e.d.hubQueue
+	e.d.mu.Unlock()
+	var out queuedFor
 	for _, k := range keys {
-		snap.Agents = append(snap.Agents, agents.Row{Key: k})
+		var row struct{ Hub []queuedTicket }
+		for _, q := range entries {
+			if q.agent != "" && q.agent == k {
+				row.Hub = append(row.Hub, queuedTicket{ID: q.t.ID, Lock: q.t.Lock, Instance: q.t.Instance, Verified: q.verified, Expired: q.t.Expired})
+			}
+		}
+		out.Agents = append(out.Agents, row)
 	}
-	e.d.addHubCards(&snap)
-	return snap
+	return out
 }
 
 func lockView(e env, lock string) *agents.LockView {
@@ -65,9 +84,9 @@ func lockView(e env, lock string) *agents.LockView {
 	return nil
 }
 
-// The hub's pending tickets show on the agents that wait on them: one the agent's own wait names
-// (verified), one whose requester claims the agent's session (unverified); a ticket no agent of
-// lea claims shows nowhere. The Lock's counter follows the queue.
+// The hub's pending tickets are attributed to the agents that wait on them: one the agent's own
+// wait names (verified), one whose requester claims the agent's session (unverified); a ticket no
+// agent of lea claims is no agent's. The Lock's counter follows the queue. lea shows no ticket.
 func TestHubQueueShowsEachTicketOnItsAgent(t *testing.T) {
 	h := &fakeHub{queue: []map[string]any{
 		queued(ticketA, "crm", "locksql", "someone", "", true, "r"), // lockkit's retype flag: not what is typed
@@ -81,14 +100,10 @@ func TestHubQueueShowsEachTicketOnItsAgent(t *testing.T) {
 	}
 	snap := cardsOf(e, dev, dev2)
 	a, b := snap.Agents[0].Hub, snap.Agents[1].Hub
-	if len(a) != 1 || a[0].ID != ticketA || a[0].Lock != "locksql" || a[0].Instance != "crm" || !a[0].Verified ||
-		!a[0].Production || a[0].Retype != "crm" || a[0].Header != "db / crm · write" || len(a[0].Body) != 1 {
+	if len(a) != 1 || a[0].ID != ticketA || a[0].Lock != "locksql" || a[0].Instance != "crm" || !a[0].Verified {
 		t.Fatalf("dev-1's cards %+v", a)
 	}
-	if strings.ContainsRune(a[0].Note, '\x1b') {
-		t.Fatalf("note not cleaned: %q", a[0].Note)
-	}
-	if len(b) != 1 || b[0].ID != ticketB || b[0].Verified || b[0].Production || b[0].Retype != "" {
+	if len(b) != 1 || b[0].ID != ticketB || b[0].Verified {
 		t.Fatalf("dev-2's cards %+v", b)
 	}
 	if v := lockView(e, "locksql"); v == nil || v.Pending != 1 || v.Console != "up" {
@@ -111,204 +126,6 @@ func TestHubQueueShowsEachTicketOnItsAgent(t *testing.T) {
 	}
 }
 
-// The deck answers a ticket of one of its agents through the facade (facade "deck", the typed
-// name for production); a ticket of another container's agent, or none, is refused, and the
-// hub's refusals come back as one line.
-// Denying a production ticket from the deck needs no name typed.
-func TestHubDenyProductionNeedsNoName(t *testing.T) {
-	h := &fakeHub{queue: []map[string]any{queued(ticketA, "crm", "locksql", "dev-1", "", true, "")}}
-	e, dev, _ := hubEnv(t, h)
-	e.d.SetAgents(&fakeAgents{})
-	e.d.st.AddHubWait(dev, ticketA, "locksql", "crm", 1)
-	if _, err := e.d.pollHubQueue(e.ctx, 0); err != nil {
-		t.Fatal(err)
-	}
-	if err := call(t, e.api, "", "hub_decide", map[string]any{"container": "lea-a", "instance": "crm", "id": ticketA,
-		"approved": false, "retype": ""}, nil); err != nil {
-		t.Fatal(err)
-	}
-	h.mu.Lock()
-	defer h.mu.Unlock()
-	if len(h.decided) != 1 || !strings.Contains(h.decided[0], `"approved":false`) {
-		t.Fatalf("decided %q", h.decided)
-	}
-}
-
-// A production ticket whose queue item names nothing to type (lockhub#105, lea#260) is approved
-// with no name: the card asks for none and the daemon sends none.
-func TestHubProductionTicketWithNoRetypeIsApprovedPlainly(t *testing.T) {
-	h := &fakeHub{queue: []map[string]any{queuedAs(ticketA, "crm", "locksql", "dev-1", "", true, "r")}}
-	e, dev, _ := hubEnv(t, h)
-	e.d.SetAgents(&fakeAgents{})
-	e.d.st.AddHubWait(dev, ticketA, "locksql", "crm", 1)
-	if _, err := e.d.pollHubQueue(e.ctx, 0); err != nil {
-		t.Fatal(err)
-	}
-	if c := cardsOf(e, dev).Agents[0].Hub; len(c) != 1 || !c[0].Production || c[0].Retype != "" {
-		t.Fatalf("production card %+v: the hub asks for no name", c)
-	}
-	if err := call(t, e.api, "", "hub_decide", map[string]any{"container": "lea-a", "instance": "crm", "id": ticketA,
-		"approved": true, "retype": ""}, nil); err != nil {
-		t.Fatal(err)
-	}
-	h.mu.Lock()
-	defer h.mu.Unlock()
-	if len(h.decided) != 1 || !strings.Contains(h.decided[0], `"approved":true`) || strings.Contains(h.decided[0], `"retype"`) {
-		t.Fatalf("decided %q", h.decided)
-	}
-}
-
-func TestHubDecideFromTheDeck(t *testing.T) {
-	// No lockkit retype flag: the card asks for the name the queue item gives (lockhub#105).
-	h := &fakeHub{queue: []map[string]any{queued(ticketA, "crm", "locksql", "dev-1", "", true, "")}}
-	e, dev, _ := hubEnv(t, h)
-	e.d.SetAgents(&fakeAgents{})
-	e.d.st.AddHubWait(dev, ticketA, "locksql", "crm", 1)
-	if _, err := e.d.pollHubQueue(e.ctx, 0); err != nil {
-		t.Fatal(err)
-	}
-	if c := cardsOf(e, dev).Agents[0].Hub; len(c) != 1 || !c[0].Production || c[0].Retype != "crm" {
-		t.Fatalf("production card %+v: approving it must ask for the instance name", c)
-	}
-	decide := func(container, id string, approved bool, retype string) error {
-		return call(t, e.api, "", "hub_decide", map[string]any{"container": container, "instance": "crm", "id": id,
-			"approved": approved, "retype": retype}, nil)
-	}
-	if err := decide("lea-b", ticketA, true, "crm"); err == nil {
-		t.Fatal("another container's deck decided the ticket")
-	}
-	if err := decide("lea-a", ticketB, true, ""); err == nil {
-		t.Fatal("a ticket not in the queue was decided")
-	}
-	// A wrong or empty name is refused by the daemon itself, though this hub would accept it:
-	// fail closed.
-	for _, typed := range []string{"crn", "", "r", "CRM"} {
-		if err := decide("lea-a", ticketA, true, typed); err == nil || !strings.Contains(err.Error(), "typed") {
-			t.Fatalf("approved with %q typed: %v", typed, err)
-		}
-	}
-	// The hub's own refusal comes back as one line.
-	h.mu.Lock()
-	h.decideStatus = 422
-	h.mu.Unlock()
-	if err := decide("lea-a", ticketA, true, "crm"); err == nil || !strings.Contains(err.Error(), "typed") {
-		t.Fatalf("retype refusal: %v", err)
-	}
-	h.mu.Lock()
-	h.decideStatus = 0
-	h.mu.Unlock()
-	if err := decide("lea-a", ticketA, true, "crm"); err != nil {
-		t.Fatal(err)
-	}
-	h.mu.Lock()
-	got := h.decided
-	h.mu.Unlock()
-	if len(got) != 2 || !strings.HasPrefix(got[1], "crm/"+ticketA+"/decide ") || !strings.Contains(got[1], `"approved":true`) ||
-		!strings.Contains(got[1], `"facade":"deck"`) || !strings.Contains(got[1], `"retype":"crm"`) {
-		t.Fatalf("decided %q", got)
-	}
-	if snap := cardsOf(e, dev); len(snap.Agents[0].Hub) != 0 {
-		t.Fatalf("the decided ticket still shows: %+v", snap.Agents[0].Hub)
-	}
-	if !deckMethods["hub_decide"] {
-		t.Fatal("hub_decide is not host-only")
-	}
-}
-
-// End to end (#158): a ticket in the hub's queue reaches the deck's snapshot on the agent that
-// waits on it, the deck's client approves it through the daemon to the facade socket, and the
-// card and the Lock's count go once the queue no longer holds it.
-func TestHubTicketApprovedFromTheDeck(t *testing.T) {
-	h := &fakeHub{queue: []map[string]any{queued(ticketA, "crm", "locksql", "dev-1", "", false, "")}}
-	e, dev, _ := hubEnv(t, h)
-	e.d.SetAgents(&fakeAgents{rows: []agents.Row{{Key: dev, Name: "dev-1"}}})
-	e.d.st.AddHubWait(dev, ticketA, "locksql", "crm", 1)
-	if _, err := e.d.pollHubQueue(e.ctx, 0); err != nil {
-		t.Fatal(err)
-	}
-	c := deck.Client{Sock: e.api}
-	snap, err := c.Watch(e.ctx, "lea-a", 0)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(snap.Agents) != 1 || len(snap.Agents[0].Hub) != 1 || snap.Agents[0].Hub[0].ID != ticketA || !snap.Agents[0].Hub[0].Verified {
-		t.Fatalf("snapshot %+v", snap.Agents)
-	}
-	if len(snap.Locks) != 1 || snap.Locks[0].Lock != "locksql" || snap.Locks[0].Pending != 1 {
-		t.Fatalf("locks %+v", snap.Locks)
-	}
-	card := snap.Agents[0].Hub[0]
-	if err := c.HubDecide(e.ctx, "lea-a", false, card.Instance, card.ID, true, ""); err != nil {
-		t.Fatal(err)
-	}
-	h.mu.Lock()
-	got := h.decided
-	h.queue = nil // the hub took the decision
-	h.mu.Unlock()
-	if len(got) != 1 || !strings.Contains(got[0], `"approved":true`) || !strings.Contains(got[0], `"facade":"deck"`) {
-		t.Fatalf("decided %q", got)
-	}
-	if _, err := e.d.pollHubQueue(e.ctx, 0); err != nil {
-		t.Fatal(err)
-	}
-	if snap, err = c.Watch(e.ctx, "lea-a", 0); err != nil || len(snap.Agents[0].Hub) != 0 || snap.Locks[0].Pending != 0 {
-		t.Fatalf("after: %v %+v %+v", err, snap.Agents, snap.Locks)
-	}
-}
-
-// An agent cannot answer a ticket: hub_decide is the host's alone. A typed name longer than the
-// hub takes, or with control characters, never reaches it. A screen lea had to cut is marked,
-// so the deck sends it to lox approve; the claimed name shows.
-func TestHubDecideIsTheHostsAndTheScreenIsNeverCutSilently(t *testing.T) {
-	long := queued(ticketA, "crm", "locksql", "dev-1\x1b[2J", "", true, "crm")
-	var body []string
-	for i := 0; i < maxHubLines+1; i++ {
-		body = append(body, "line")
-	}
-	long["ticket"].(map[string]any)["screen"].(map[string]any)["body"] = body
-	h := &fakeHub{queue: []map[string]any{long}}
-	e, dev, _ := hubEnv(t, h)
-	e.d.SetAgents(&fakeAgents{})
-	e.d.st.AddHubWait(dev, ticketA, "locksql", "crm", 1)
-	if _, err := e.d.pollHubQueue(e.ctx, 0); err != nil {
-		t.Fatal(err)
-	}
-	c := cardsOf(e, dev).Agents[0].Hub
-	if len(c) != 1 || !c[0].Truncated || strings.ContainsRune(c[0].Claimed, '\x1b') || !strings.HasPrefix(c[0].Claimed, "dev-1") {
-		t.Fatalf("card %+v", c)
-	}
-	p := map[string]any{"container": "lea-a", "instance": "crm", "id": ticketA, "approved": true, "retype": "crm"}
-	if err := call(t, e.bus, "dev-1", "hub_decide", p, nil); err == nil {
-		t.Fatal("an agent decided a ticket")
-	}
-	for _, bad := range []string{strings.Repeat("c", 129), "cr\x1bm"} {
-		p["retype"] = bad
-		if err := call(t, e.api, "", "hub_decide", p, nil); err == nil {
-			t.Fatalf("retype %q reached the hub", bad)
-		}
-	}
-	h.mu.Lock()
-	defer h.mu.Unlock()
-	if len(h.decided) != 0 {
-		t.Fatalf("decided %q", h.decided)
-	}
-}
-
-// One line of the Lock's screen longer than lea passes whole marks the card cut.
-func TestHubLongLineMarksTheCardCut(t *testing.T) {
-	q := queued(ticketA, "crm", "locksql", "dev-1", "", false, "")
-	q["ticket"].(map[string]any)["screen"].(map[string]any)["body"] = []string{strings.Repeat("x", maxHubLine+1)}
-	e, dev, _ := hubEnv(t, &fakeHub{queue: []map[string]any{q}})
-	e.d.st.AddHubWait(dev, ticketA, "locksql", "crm", 1)
-	if _, err := e.d.pollHubQueue(e.ctx, 0); err != nil {
-		t.Fatal(err)
-	}
-	if c := cardsOf(e, dev).Agents[0].Hub; len(c) != 1 || !c[0].Truncated {
-		t.Fatalf("card %+v", c)
-	}
-}
-
-// A store that fails shows no ticket (none can be put on its agent).
 func TestHubQueueShowsNothingWhenTheStoreFails(t *testing.T) {
 	e, dev, _ := hubEnv(t, &fakeHub{queue: []map[string]any{queued(ticketA, "crm", "locksql", "dev-1", "", false, "")}})
 	e.d.st.AddHubWait(dev, ticketA, "locksql", "crm", 1)
@@ -460,37 +277,18 @@ func TestHubQueueDoesNotShowAnAbandonedTicketOnALiveAgentOfTheSameName(t *testin
 	}
 }
 
-// The hub's refusals of a decision read as what they mean (#256): a ticket whose lock is no longer
-// declared (401 of a hub before lockhub#103, lock_removed after) is an orphan, not an
-// authentication failure; any other refusal names the hub's error code, never its free text.
-func TestHubDecideRefusalsAreReadable(t *testing.T) {
-	h := &fakeHub{queue: []map[string]any{queued(ticketA, "crm", "locksql", "dev-1", "", false, "")}}
-	e, dev, _ := hubEnv(t, h)
-	e.d.SetAgents(&fakeAgents{})
-	e.d.st.AddHubWait(dev, ticketA, "locksql", "crm", 1)
+// A ticket for no agent of lea rings no deck (#294, #300): lox run, outside lea, is where it is
+// decided, and where the user is called.
+func TestHubQueueRingsNoDeck(t *testing.T) {
+	e, rang := soundEnv(t)
+	spawned(t, e, "dev-1", "dev", "")
+	h := &fakeHub{queue: []map[string]any{queued(ticketA, "crm", "locksql", "ghost", "s-9", false, "")}}
+	e.d.SetHubFacade(SocketFacade{Path: serveHub(t, h)})
 	if _, err := e.d.pollHubQueue(e.ctx, 0); err != nil {
 		t.Fatal(err)
 	}
-	for _, c := range []struct {
-		status int
-		body   map[string]any
-		want   string
-	}{
-		{401, map[string]any{"error": "unauthorized", "message": "unknown lock instance"}, "lock no longer exists"},
-		{410, map[string]any{"error": "lock_removed", "message": "the ticket's lock is no longer declared"}, "lock no longer exists"},
-		{410, map[string]any{"error": "expired", "message": "x"}, "the ticket expired"},
-		{503, map[string]any{"error": "audit_down", "message": "x"}, "audit log"},
-		{500, map[string]any{"error": "internal", "message": "\x1b[2Jsecret"}, "internal (HTTP 500)"},
-		{502, map[string]any{"error": 7}, "HTTP 502"},
-	} {
-		h.mu.Lock()
-		h.decideStatus, h.decideBody = c.status, c.body
-		h.mu.Unlock()
-		err := call(t, e.api, "", "hub_decide", map[string]any{"container": "lea-a", "instance": "crm", "id": ticketA,
-			"approved": false, "retype": ""}, nil)
-		if err == nil || !strings.Contains(err.Error(), c.want) || strings.Contains(err.Error(), "Unauthorized") ||
-			strings.Contains(err.Error(), "secret") {
-			t.Errorf("HTTP %d %v: %v, want %q", c.status, c.body, err, c.want)
-		}
+	time.Sleep(50 * time.Millisecond)
+	if r := rang(); len(r) != 0 {
+		t.Fatalf("sounds for a hub ticket: %v", r)
 	}
 }

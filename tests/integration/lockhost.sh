@@ -1,6 +1,6 @@
 #!/bin/sh
 # End-to-end test of the lockmq / lockfile wiring (#149), without lea's image: the real lockmq
-# client of the release lea pins (sha256 of image/Containerfile), the accounts, system.toml and
+# client of the release lea pins (config/locks.lock, the set image/Containerfile installs), the accounts, system.toml and
 # socket directories image/Containerfile gives lea's image, and a stand-in console serving the
 # socket as the tool's console account in a named volume, in containers sharing one kernel.
 #   - an agent wired as lea wires it (the volume on /run/<tool>, --group-add of the tool's clients
@@ -26,14 +26,16 @@ fail=0
 ok() { echo "ok    $1"; }
 ko() { echo "FAIL  $1"; fail=1; }
 
-# The lockmq client, checked against the pin of the image.
-v=$(sed -n "s/.*MQ=\([0-9.]*\) LF=.*/\1/p" "$root/image/Containerfile")
-pin=$(sed -n "s/.*$arch) mq=\([0-9a-f]*\) lf=.*/\1/p" "$root/image/Containerfile")
+# The lockmq client, checked against the set's pin (the one image/Containerfile installs).
+A=$(printf '%s' "$arch" | tr '[:lower:]' '[:upper:]')
+v=$(sed -n 's/^LOCKS_LOCKMQ_VERSION=v\([0-9.]*\)$/\1/p' "$root/config/locks.lock")
+pin=$(sed -n "s/^LOCKS_LOCKMQ_SHA256_$A=\([0-9a-f]*\)\$/\1/p" "$root/config/locks.lock")
+if [ -z "$v" ] || [ -z "$pin" ]; then echo "lockhost: config/locks.lock pins no lockmq client" >&2; exit 1; fi
 a=lockmq_${v}_linux_$arch.tar.gz
 curl -fsSL -o "$work/$a" "https://github.com/DavidGodefroid/lockmq/releases/download/v$v/$a"
 echo "$pin  $work/$a" | sha256sum -c >/dev/null || { echo "lockhost: $a does not match its pin" >&2; exit 1; }
 tar -xzf "$work/$a" -C "$work" lockmq
-ok "lockmq client of the pinned release (sha256 of image/Containerfile)"
+ok "lockmq client of the pinned release (sha256 of config/locks.lock)"
 
 # tool UID GID MODE: the ids and the socket directory's mode image/Containerfile gives the tool.
 if ! { grep -q 'groupadd -g 10010 lockmq-clients && useradd -r -u 10011 ' "$root/image/Containerfile" &&

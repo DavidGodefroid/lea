@@ -69,20 +69,50 @@ lea_doctor() {
   done
   if [ "$_dnets" -eq 0 ]; then lea__ok "internal networks: none (each lea creates its own at start)"; fi
 
-  # The running lea containers' CPU and memory limits (#132): one started by an older lea, or
-  # before a limit changed, gets them at the next lea in its projects directory.
+  # The running lea containers' limits (#132): one started by an older lea, or before a limit
+  # changed, gets them at the next lea in its projects directory. The Go launcher hands over the
+  # limits the configuration resolves to (LEA_LIMITS_WANT: NanoCpus Memory MemorySwap PidsLimit,
+  # 0 for none) and their digest, the lea.limits label of a container started with them.
   for _dctr in $(docker ps --filter "label=lea.prefix=$LEA_PREFIX" --filter label=lea.role=session --format '{{.Names}}' 2>/dev/null || true); do
-    _dlim=$(docker inspect --format '{{.HostConfig.NanoCpus}} {{.HostConfig.Memory}}' "$_dctr" 2>/dev/null || true)
-    case $_dlim in *[!0-9\ ]*|'') continue ;; esac
-    _dcpu=${_dlim%% *}; _dmem=${_dlim#* }; _dmiss=
-    if [ "$_dcpu" = 0 ] && [ "${LEA_CPUS:-75%}" != 0 ]; then _dmiss="CPU"; fi
-    if [ "$_dmem" = 0 ] && [ "${LEA_MEMORY:-50%}" != 0 ]; then _dmiss="${_dmiss:+$_dmiss and }memory"; fi
-    if [ -n "$_dmiss" ]; then
-      lea__warn "$_dctr limits" "no $_dmiss limit: run lea in its projects directory to apply LEA_CPUS and LEA_MEMORY"
+    _dlim=$(docker inspect --format '{{.HostConfig.NanoCpus}} {{.HostConfig.Memory}} {{.HostConfig.MemorySwap}} {{with .HostConfig.PidsLimit}}{{.}}{{else}}0{{end}} {{index .Config.Labels "lea.limits"}}' "$_dctr" 2>/dev/null || true)
+    _dcpu=; _dmem=; _dswp=; _dpid=; _ddig=
+    read -r _dcpu _dmem _dswp _dpid _ddig <<EOF
+$_dlim
+EOF
+    [ -n "$_dmem" ] || continue
+    _dswp=${_dswp:-0}; _dpid=${_dpid:-0}
+    if [ "$_dpid" = '<nil>' ]; then _dpid=0; fi
+    case "$_dcpu $_dmem $_dswp $_dpid" in *[!0-9\ -]*) continue ;; esac
+    _dmiss=
+    _wcpu=; _wmem=; _wswp=; _wpid=; _wx=
+    read -r _wcpu _wmem _wswp _wpid _wx <<EOF
+${LEA_LIMITS_WANT:-}
+EOF
+    if [ -n "$_wpid" ] && [ -z "$_wx" ]; then
+      # A configured limit the container does not have: stale. A limit turned off (0) is only
+      # taken away by a restart, which is not stale.
+      if [ "$_wcpu" != 0 ] && [ "$_dcpu" != "$_wcpu" ]; then _dmiss="$(lea__doctor_cpus "$_dcpu") (configured $(lea__doctor_cpus "$_wcpu"))"; fi
+      if [ "$_wmem" != 0 ] && { [ "$_dmem" != "$_wmem" ] || [ "$_dswp" != "$_wswp" ]; }; then
+        _dmiss="${_dmiss:+$_dmiss, }$(lea__doctor_mib "$_dmem") (configured $(lea__doctor_mib "$_wmem"))"
+      fi
+      if [ "$_wpid" != 0 ] && [ "$_dpid" != "$_wpid" ]; then _dmiss="${_dmiss:+$_dmiss, }pids $(lea__doctor_pids "$_dpid") (configured $_wpid)"; fi
+      if [ -n "$_dmiss" ]; then
+        _dwhy="digest ${_ddig:-none: started by an older lea}, configured ${LEA_LIMITS_DIGEST:-?}"
+        if [ "$_ddig" = "${LEA_LIMITS_DIGEST:-}" ]; then _dwhy="changed since it started (docker update)"; fi
+        lea__warn "$_dctr limits" "stale ($_dwhy): $_dmiss; run lea in its projects directory: it applies them, or restarts the container once no agent or session runs in it"
+        continue
+      fi
     else
-      lea__ok "$_dctr limits: $(awk -v c="$_dcpu" -v m="$_dmem" 'BEGIN { printf "%s CPUs, %s MiB", (c ? c / 1e9 : "no limit on"), (m ? int(m / 1048576) : "no limit on") }')"
+      if [ "$_dcpu" = 0 ] && [ "${LEA_CPUS:-75%}" != 0 ]; then _dmiss="CPU"; fi
+      if [ "$_dmem" = 0 ] && [ "${LEA_MEMORY:-50%}" != 0 ]; then _dmiss="${_dmiss:+$_dmiss and }memory"; fi
+      if [ -n "$_dmiss" ]; then
+        lea__warn "$_dctr limits" "no $_dmiss limit: run lea in its projects directory to apply LEA_CPUS and LEA_MEMORY"
+        continue
+      fi
     fi
+    lea__ok "$_dctr limits: $(lea__doctor_cpus "$_dcpu"), $(lea__doctor_mib "$_dmem")"
   done
+  lea__doctor_delegation
 
   # Each running lea container's agents and their CPU windows (#132): nproc, PHPStan, Go... see
   # that many CPUs in the agent and in its nested containers.
@@ -92,6 +122,7 @@ lea_doctor() {
     else lea__ok "$_dctr CPU windows: none (no agent runs, or LEA_AGENT_CPUS=0)"; fi
   done
 
+  lea__doctor_runtime || _drc=1
   lea__doctor_pressure
 
   # The domains the proxy always allows: EGRESS_ALWAYS of proxy/render-squid-conf.sh.
@@ -106,19 +137,14 @@ lea_doctor() {
   if [ -n "$LEA_OTEL_UPSTREAM" ]; then lea__ok "telemetry upstream $LEA_OTEL_UPSTREAM"
   else lea__ok "telemetry: off (LEA_OTEL_UPSTREAM)"; fi
 
-  # On through a lock of lox up alone, locksql needs no image of lea's (lea init builds it for
-  # LEA_LOCKSQL=1), nor when its declared locks pin their own image: only the lock is checked.
-  if lea__tool_on locksql; then
-    if [ "$LEA_LOCKSQL" = 1 ] && ! lea__locksql_pinned; then
-      if docker image inspect "$LEA_LOCKSQL_IMAGE" >/dev/null 2>&1; then lea__ok "locksql image $LEA_LOCKSQL_IMAGE"
-      else lea__warn "locksql image" "$LEA_LOCKSQL_IMAGE absent: run lea init (or set LEA_LOCKSQL=0)"; fi
-    fi
-    lea__doctor_locksql_lock
-  fi
+  # locksql needs no image of lea's (lox runs the lock's): only the lock is checked. The Go
+  # launcher then compares each lock lox runs with lea's client of its type (lea#134).
+  if lea__tool_on locksql; then lea__doctor_locksql_lock; fi
   lea__doctor_lockhost lockmq
   lea__doctor_lockhost lockfile
   lea__doctor_lockhttp || _drc=1
   lea__doctor_hub
+  lea__doctor_lox
 
   if [ -f "$_dds/kube/config" ]; then
     if [ -n "$(find "$_dds/kube/config" -mmin -480 2>/dev/null)" ]; then lea__ok "kubernetes token"
@@ -129,22 +155,22 @@ lea_doctor() {
   return "$_drc"
 }
 
-# lea__doctor_locksql_lock: the locksql console runs hub-attached only, under lox up: lea's agents
-# reach the socket volume of lox up's locksql lock of the projects directory (docker's labels say
+# lea__doctor_locksql_lock: the locksql console runs hub-attached only, under lox run: lea's agents
+# reach the socket volume of lox run's locksql lock of the projects directory (docker's labels say
 # whose), never a fixed one. A locksql-run volume is what a standalone console of an earlier lea
 # left: lea mounts it no more.
 lea__doctor_locksql_lock() {
   _dl_hint="no such lock yet: \`lox add locksql\` (lox add fills allowed_uids: [$(id -u)] in .lockfamily/lockfamily.yaml when lea is on your PATH; lea's agents get its socket once lea restarts: lea stop, then lea)"
   if [ -z "${LEA_PROJECTS_DIR:-}" ]; then
-    lea__warn "locksql lock" "no projects directory (lea init): lox up runs the console for one"
+    lea__warn "locksql lock" "no projects directory (lea init): lox run runs the console for one"
   elif ! _dl_v=$(docker volume ls --filter label=dev.lockfamily.role=socket --filter label=dev.lockfamily.type=locksql \
     --filter "label=dev.lockfamily.workspace=$LEA_PROJECTS_DIR" --format '{{.Name}}' 2>/dev/null); then
-    lea__warn "locksql lock" "could not list lox up's volumes (docker volume ls)"
+    lea__warn "locksql lock" "could not list lox run's volumes (docker volume ls)"
   else
     case $(printf '%s\n' "$_dl_v" | grep -c .) in
-      0) lea__warn "locksql lock" "no socket volume of a locksql lock of lox up for $LEA_PROJECTS_DIR: lea's agents get no locksql socket; $_dl_hint" ;;
-      1) lea__ok "locksql lock of lox up (socket volume $_dl_v)" ;;
-      *) lea__ok "$(printf '%s\n' "$_dl_v" | grep -c .) locksql locks of lox up (lea's agents reach each on /run/locksql/<instance>)" ;;
+      0) lea__warn "locksql lock" "no socket volume of a locksql lock of lox run for $LEA_PROJECTS_DIR: lea's agents get no locksql socket; $_dl_hint" ;;
+      1) lea__ok "locksql lock of lox run (socket volume $_dl_v)" ;;
+      *) lea__ok "$(printf '%s\n' "$_dl_v" | grep -c .) locksql locks of lox run (lea's agents reach each on /run/locksql/<instance>)" ;;
     esac
   fi
   if docker volume inspect locksql-run >/dev/null 2>&1; then
@@ -163,7 +189,168 @@ lea__doctor_hub() {
     lea__warn "approval hub" "LEA_HUB=1 but no facade socket to read (set LEA_HUB_SOCKET, or XDG_RUNTIME_DIR): agents are not suspended on a Lock call that waits for the hub (LEA_HUB=0 to silence this)"
   elif [ -S "$_dhs" ]; then lea__ok "approval hub facade $_dhs"
   else
-    lea__warn "approval hub" "LEA_HUB=1 but no lockhub facade at $_dhs (lox up starts it): agents are not suspended on a Lock call that waits for the hub (LEA_HUB=0 to silence this)"
+    lea__warn "approval hub" "LEA_HUB=1 but no lockhub facade at $_dhs (lox run starts it): agents are not suspended on a Lock call that waits for the hub (LEA_HUB=0 to silence this)"
+  fi
+}
+
+# lea__doctor_lox: approvals live outside lea (#300): lox run, in a terminal of its own, starts the
+# workspace's hub and locks and decides the agents' Lock requests. lea runs no lox command but
+# lox version; it says whether lox is at least the set's (LOCKS_LOX_VERSION of config/locks.lock,
+# lea#134) and, when the projects directory declares locks, whether a lox run serves them: lox
+# run's session journal
+# ($XDG_STATE_HOME/lockfamily/<project>/runs.jsonl) ends with a start or a mode switch while it
+# serves, and where pgrep can tell, a lox run process of this user runs. A LEA_LOX_UP still set is
+# obsolete.
+lea__doctor_lox() {
+  if [ -n "${LEA_LOX_UP:-}" ]; then
+    lea__warn "LEA_LOX_UP" "obsolete and ignored: lea no longer runs lox up; remove it from your configuration"
+  fi
+  _dxl=
+  if [ -n "${LEA_PROJECTS_DIR:-}" ] && { [ -f "$LEA_PROJECTS_DIR/.lockfamily/lockfamily.yaml" ] || [ -f "$LEA_PROJECTS_DIR/.lockfamily/up.json" ]; }; then
+    _dxl=1
+  fi
+  _dxmin=$(lea__lockset LOCKS_LOX_VERSION); _dxmin=${_dxmin#v}
+  if ! command -v lox >/dev/null 2>&1; then
+    if [ -n "$_dxl" ]; then lea__warn "lox" "not found: brew install davidgodefroid/tap/lox, then run \`lox run\` in another terminal (outside lea)"; fi
+  else
+    _dxv=$(lox version 2>/dev/null </dev/null | sed -n '1s/^lox //p') || _dxv=
+    case $_dxv in
+      '') lea__warn "lox" "lox version printed no version: reinstall it (brew reinstall davidgodefroid/tap/lox)" ;;
+      dev) lea__ok "lox dev (its version is not checked)" ;;
+      *) if [ -n "$_dxmin" ] && ! lea_version_ge "$_dxv" "$_dxmin"; then
+           lea__warn "lox" "$_dxv is older than $_dxmin, which has lox run: brew upgrade lox"
+         else lea__ok "lox $_dxv"; fi ;;
+    esac
+  fi
+  [ -n "$_dxl" ] || return 0
+  _dxp=$(lea_abspath "$LEA_PROJECTS_DIR" 2>/dev/null) || _dxp=$LEA_PROJECTS_DIR
+  _dxj=${XDG_STATE_HOME:-$HOME/.local/state}/lockfamily/lockfamily-$(printf '%s' "$_dxp" | lea_sha256 | cut -c1-8)/runs.jsonl
+  _dxe=
+  if [ -f "$_dxj" ]; then
+    _dxe=$(tail -c 65536 "$_dxj" | grep -o '"event":"[a-z]*"' | cut -d'"' -f4 | grep -xE 'start|mode|stop' | tail -n 1) || _dxe=
+  fi
+  _dxs=
+  case $_dxe in start | mode) _dxs=1 ;; esac
+  if [ -n "$_dxs" ] && command -v pgrep >/dev/null 2>&1 && ! pgrep -u "$(id -u)" -f '(^|/)lox run( |$)' >/dev/null 2>&1; then
+    _dxs= # its journal says it serves, but no lox run runs: it was killed before its stop
+  fi
+  if [ -n "$_dxs" ]; then lea__ok "lox run: serves the decisions of $LEA_PROJECTS_DIR"
+  else lea__warn "lox run" "not serving the locks of $LEA_PROJECTS_DIR: their requests wait. Open another terminal (outside lea) and run \`lox run\` to approve the agents' connections and writes."
+  fi
+}
+
+# lea__doctor_runtime: the agent containers' OCI runtime (#106): LEA_RUNTIME (empty: the engine's
+# default, runc), a runtime the engine must know (runsc for gVisor, kata for Kata: a second kernel
+# between the agents and the host's), and the one each running lea container was started on.
+lea__doctor_runtime() {
+  _drtd=$(docker info --format '{{.DefaultRuntime}}' 2>/dev/null | tr -cd 'A-Za-z0-9._-' || true)
+  _drta=$(docker info --format '{{range $k, $v := .Runtimes}}{{$k}} {{end}}' 2>/dev/null | tr -cd 'A-Za-z0-9._ -' || true)
+  _drtrc=0
+  case ${LEA_RUNTIME:-} in
+    '') lea__ok "agent runtime: ${_drtd:-the engine default} (LEA_RUNTIME empty; runsc or kata adds a second kernel: README)" ;;
+    [!A-Za-z0-9]* | *[!A-Za-z0-9._-]*) lea__fail "agent runtime" "LEA_RUNTIME '$LEA_RUNTIME' is not a runtime name"; return 1 ;;
+    *)
+      if [ -n "$_drta" ] && ! printf ' %s ' "$_drta" | grep -qF " $LEA_RUNTIME "; then
+        lea__fail "agent runtime $LEA_RUNTIME" "the engine has no such runtime (it knows: ${_drta% }): install it and register it with dockerd (README), or leave LEA_RUNTIME empty"; _drtrc=1
+      else
+        lea__ok "agent runtime: $LEA_RUNTIME (LEA_RUNTIME; the engine's default: ${_drtd:-unknown})"
+      fi ;;
+  esac
+  _drtw=${LEA_RUNTIME:-$_drtd}
+  [ "$_drtrc" != 0 ] || [ -z "$_drtw" ] || lea__doctor_runtime_seccomp "$_drtw"
+  for _dctr in $(docker ps --filter "label=lea.prefix=$LEA_PREFIX" --filter label=lea.role=session --format '{{.Names}}' 2>/dev/null || true); do
+    _drtc=$(docker inspect --format '{{.HostConfig.Runtime}}' "$_dctr" 2>/dev/null | tr -cd 'A-Za-z0-9._-' || true)
+    [ -n "$_drtc" ] || continue
+    if [ -n "$_drtw" ] && [ "$_drtc" != "$_drtw" ]; then
+      lea__warn "$_dctr runtime" "runs on $_drtc, not $_drtw: run 'lea stop', then lea, to restart it on $_drtw"
+    else
+      lea__ok "$_dctr runtime: $_drtc"
+    fi
+  done
+  return "$_drtrc"
+}
+
+# lea__doctor_runtime_seccomp NAME: whether runtime NAME applies lea's seccomp profile (#106). gVisor
+# applies it inside the sandbox only with --oci-seccomp in its dockerd registration, Kata in the
+# guest only with disable_guest_seccomp = false in its configuration.toml (its default is true):
+# without them the agents run without lea's profile (AF_ALG, socketcall), silently.
+lea__doctor_runtime_seccomp() {
+  _drsj=$(docker info --format "{{json (index .Runtimes \"$1\")}}" 2>/dev/null | tr -d '\n' || true)
+  # Not readable (Podman): nothing said. A shim runtime (runtimeType, Kata's) reads {}: dockerd
+  # leaves its type and options out of docker info, so its name tells Kata.
+  case $_drsj in '' | null) return 0 ;; esac
+  _drsp=$(printf '%s' "$_drsj" | sed -n 's/.*"path":"\([^"]*\)".*/\1/p')
+  _drst=$(printf '%s' "$_drsj" | sed -n 's/.*"runtimeType":"\([^"]*\)".*/\1/p')
+  if [ "$1" = runsc ] || [ "${_drsp##*/}" = runsc ]; then
+    if printf '%s' "$_drsj" | grep -qE '"--?oci-seccomp(=true)?"'; then
+      lea__ok "$1 seccomp: lea's profile applied in the sandbox (--oci-seccomp)"
+    else
+      lea__warn "$1 seccomp" "its dockerd registration has no --oci-seccomp: runsc ignores lea's seccomp profile, so the agents run without it; add \"--oci-seccomp\" to its runtimeArgs (README, a second kernel), restart dockerd, then lea stop and lea"
+    fi
+    return 0
+  fi
+  case $1:$_drst in *kata*:* | *:*kata*) ;; *) return 0 ;; esac
+  # The file Kata reads: the registration's ConfigPath, else the first that exists of its shim's
+  # flavour (runtime-rs, or the Go runtime), /etc before the defaults.
+  _drsl=$(printf '%s' "$_drsj" | sed -n 's/.*"ConfigPath":"\([^"]*\)".*/\1/p')
+  if [ -z "$_drsl" ]; then
+    case $_drst in /*) _drsb=$_drst ;; *) _drsb=$(command -v containerd-shim-kata-v2 2>/dev/null || true) ;; esac
+    _drsb=$(readlink -f "$_drsb" 2>/dev/null || printf '%s' "$_drsb")
+    _drsr="/etc/kata-containers/runtime-rs/configuration.toml /usr/share/defaults/kata-containers/runtime-rs/configuration.toml /opt/kata/share/defaults/kata-containers/runtime-rs/configuration.toml"
+    _drsg="/etc/kata-containers/configuration.toml /usr/share/defaults/kata-containers/configuration.toml /opt/kata/share/defaults/kata-containers/configuration.toml"
+    case $_drsb in */runtime-rs/*) _drss=$_drsr ;; '') _drss="$_drsr|$_drsg" ;; *) _drss=$_drsg ;; esac
+    _drss=${LEA_KATA_CONFIGS:-$_drss}
+    _drsl=
+    _drsifs=$IFS; IFS='|'
+    for _drsgrp in $_drss; do
+      IFS=$_drsifs
+      for _drsf in $_drsgrp; do
+        if [ -e "$_drsf" ]; then _drsl="${_drsl:+$_drsl }$_drsf"; break; fi
+      done
+    done
+    IFS=$_drsifs
+    [ -n "$_drsl" ] || { lea__warn "$1 seccomp" "no Kata configuration.toml found ($(printf '%s' "$_drss" | tr '|' ' ')): check that Kata's sets disable_guest_seccomp = false, or lea's seccomp profile is not applied in the guest"; return 0; }
+  fi
+  _drsn=0
+  for _drsf in $_drsl; do
+    [ -e "$_drsf" ] || continue
+    _drsn=$((_drsn + 1))
+    if [ ! -r "$_drsf" ]; then
+      lea__warn "$1 seccomp" "cannot read $_drsf: check it sets disable_guest_seccomp = false, or Kata does not apply lea's seccomp profile in the guest"
+      continue
+    fi
+    _drsv=$(sed -n 's/^[[:space:]]*disable_guest_seccomp[[:space:]]*=[[:space:]]*\([a-z]*\).*/\1/p' "$_drsf" | tail -n 1)
+    if [ "$_drsv" = false ]; then
+      lea__ok "$1 seccomp: lea's profile applied in the guest (disable_guest_seccomp = false in $_drsf)"
+    else
+      lea__warn "$1 seccomp" "$_drsf does not set disable_guest_seccomp = false (Kata's default is true): Kata does not apply lea's seccomp profile in the guest, so the agents run without it; set it (README, a second kernel), then lea stop and lea"
+    fi
+  done
+  [ "$_drsn" != 0 ] || lea__warn "$1 seccomp" "$_drsl does not exist (ConfigPath of its registration): Kata cannot read it"
+  return 0
+}
+
+# lea__doctor_cpus/_mib/_pids: an inspected limit (NanoCpus, bytes, pids; 0 for none), read.
+lea__doctor_cpus() { awk -v c="$1" 'BEGIN { if (c > 0) printf "%s CPUs", c / 1e9; else printf "no CPU limit" }'; }
+lea__doctor_mib() { awk -v m="$1" 'BEGIN { if (m > 0) printf "%d MiB", int(m / 1048576); else printf "no memory limit" }'; }
+lea__doctor_pids() { if [ "$1" -gt 0 ] 2>/dev/null; then printf '%s' "$1"; else printf 'no limit'; fi; }
+
+# lea__doctor_delegation: under rootless Podman, the cgroup controllers systemd delegates to the
+# user (#132). Without cpu (or memory, pids) Podman refuses that limit: lea starts its container
+# without it, so the host has no ceiling there.
+lea__doctor_delegation() {
+  _dctl=$(docker info --format '{{.Host.Security.Rootless}} {{.Host.CgroupControllers}}' 2>/dev/null || true)
+  case $_dctl in "true "*) ;; *) return 0 ;; esac
+  _dctl=$(printf '%s' "${_dctl#true }" | tr -d '[]')
+  [ -n "$(printf '%s' "$_dctl" | tr -d ' ')" ] || return 0
+  _dmissc=
+  for _dc in cpu memory pids; do
+    case " $_dctl " in *" $_dc "*) ;; *) _dmissc="${_dmissc:+$_dmissc, }$_dc" ;; esac
+  done
+  if [ -n "$_dmissc" ]; then
+    lea__warn "cgroup delegation" "rootless Podman does not get the $_dmissc controller, so lea's container runs without that limit: sudo systemctl edit user@.service, add [Service] Delegate=cpu cpuset io memory pids, log in again, then lea stop and lea"
+  else
+    lea__ok "cgroup delegation: cpu, memory and pids (rootless Podman)"
   fi
 }
 

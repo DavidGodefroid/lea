@@ -17,6 +17,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/DavidGodefroid/lea/internal/locks"
 	"github.com/DavidGodefroid/lea/internal/providers"
 )
 
@@ -30,7 +31,7 @@ var protectedKeys = map[string]bool{
 // ExportedKeys are the keys lea_load_config exports to every child: the daemon, docker, the
 // core subcommands and libexec/lea-sh.
 var ExportedKeys = []string{
-	"LEA_PREFIX", "LEA_IMAGE", "LEA_PROXY_IMAGE", "LEA_CTL", "LEA_CTL_IMAGE", "LEA_GIT_SSH", "LEA_GIT_KNOWN_HOSTS", "LEA_LOCKSQL", "LEA_LOCKSQL_IMAGE", "LEA_LOCKSQL_REF",
+	"LEA_PREFIX", "LEA_IMAGE", "LEA_PROXY_IMAGE", "LEA_CTL", "LEA_CTL_IMAGE", "LEA_GIT_SSH", "LEA_GIT_KNOWN_HOSTS", "LEA_LOCKSQL", "LEA_LOCKSQL_REF",
 	"LEA_LOCKMQ", "LEA_LOCKFILE", "LEA_LOCK_TOOL_TIMEOUT", "LEA_LOCKMQ_REF", "LEA_LOCKFILE_REF", "LEA_LOCKHTTP", "LEA_LOCKHTTP_MITM", "LEA_HUB", "LEA_HUB_KEEPALIVE",
 	"LEA_OTEL_UPSTREAM", "LEA_NESTED_NETWORKS", "LEA_K8S_NAMESPACE", "LEA_INTERNAL_HOSTS", "LEA_EGRESS_ALLOW", "LEA_PROJECTS_DIR",
 	"LEA_APPROVALS", "LEA_APPROVAL_TIMEOUT", "LEA_SOUND", "LEA_SOUND_ATTENTION",
@@ -227,28 +228,27 @@ func (c *Config) resolve(root string) error {
 	if err := CheckOtelUpstream(c.Get("LEA_OTEL_UPSTREAM")); err != nil {
 		return err
 	}
-	ls := nonEmpty(c.Get("LEA_LOCKSQL"), "0")
-	if ls != "0" && ls != "1" {
-		return fmt.Errorf("LEA_LOCKSQL must be 1 (wire lea for a locksql console) or 0, not '%s'", ls)
-	}
-	c.final["LEA_LOCKSQL"] = ls
-	for _, t := range lockHostTools {
-		on := nonEmpty(c.Get(t.env), "0")
+	for _, t := range locks.Registry {
+		on := nonEmpty(c.Get(t.Switch), "0")
 		if on != "0" && on != "1" {
-			return fmt.Errorf("%s must be 1 (reach a %s console on this host) or 0, not '%s'", t.env, t.name, on)
+			return fmt.Errorf("%s must be 1 (lea's agents reach a %s lock lox runs) or 0, not '%s'", t.Switch, t.Name, on)
 		}
-		c.final[t.env] = on
-		// Empty: no pinned release (config/lea.conf pins one), and lea init installs nothing.
-		ref := c.Get(t.env + "_REF")
-		if ref != "" && !releaseVersion.MatchString(ref) {
-			return fmt.Errorf("%s_REF must be a %s release (vX.Y.Z), not '%s'", t.env, t.name, ref)
+		c.final[t.Switch] = on
+		// LEA_<LOCK>_REF: a dev override of config/locks.lock's release (lea doctor warns), for
+		// one release: a release, or for locksql the absolute path of a checkout.
+		ref := c.Get(t.Switch + "_REF")
+		if ref != "" && !releaseVersion.MatchString(ref) && !(t.Name == "locksql" && filepath.IsAbs(ref)) {
+			return fmt.Errorf("%s_REF must be a %s release (vX.Y.Z), not '%s'", t.Switch, t.Name, ref)
 		}
-		if t.name == "lockfile" && ref != "" && !lockfileSafe(ref) {
+		if t.Name == "lockfile" && ref != "" && !lockfileSafe(ref) {
 			return fmt.Errorf("LEA_LOCKFILE_REF %s is refused: lockfile v0.1.0 lets a plugin escape its sandbox (v0.1.1 or later)", ref)
 		}
 	}
 	if err := c.resolveAgentCPUs(); err != nil {
 		return err
+	}
+	if rt := c.Get("LEA_RUNTIME"); rt != "" && !runtimeName.MatchString(rt) {
+		return fmt.Errorf("LEA_RUNTIME must be empty (the engine's default runtime) or the name of a runtime Docker knows (runsc, kata...), not '%s'", rt)
 	}
 	ctl := nonEmpty(c.Get("LEA_CTL"), "0")
 	if ctl != "0" && ctl != "1" {
@@ -279,11 +279,6 @@ func (c *Config) resolve(root string) error {
 		return fmt.Errorf("LEA_HUB must be 1 (lea follows the Lock Family approval hub) or 0, not '%s'", hub)
 	}
 	c.final["LEA_HUB"] = hub
-	loxUp := nonEmpty(c.Get("LEA_LOX_UP"), "0")
-	if loxUp != "0" && loxUp != "1" {
-		return fmt.Errorf("LEA_LOX_UP must be 1 (lea runs lox up when the Lock Family's hub is down) or 0, not '%s'", loxUp)
-	}
-	c.final["LEA_LOX_UP"] = loxUp
 	if err := c.resolveLimits(); err != nil {
 		return err
 	}
@@ -345,34 +340,9 @@ func (c *Config) resolveAgentCPUs() error {
 // lockProfile is a lock tool's profile name (agents.lockProfileRe).
 var lockProfile = regexp.MustCompile(`^[a-z0-9][a-z0-9_-]{0,31}$`)
 
-// maxLockAgentProfiles caps an allow-list of profiles agents may ask for.
-const maxLockAgentProfiles = 32
-
-// lockAgentProfiles parses an allow-list of lock profiles agents may ask the user to open:
-// profile names separated by spaces or commas; empty (the default) allows none.
-func lockAgentProfiles(v string) ([]string, error) {
-	ps := strings.FieldsFunc(v, func(r rune) bool { return r == ' ' || r == ',' || r == '\t' })
-	if len(ps) > maxLockAgentProfiles {
-		return nil, fmt.Errorf("at most %d profiles", maxLockAgentProfiles)
-	}
-	for _, p := range ps {
-		if !lockProfile.MatchString(p) {
-			return nil, fmt.Errorf("invalid profile name '%s' (lowercase letters, digits, _ and -, at most 32)", p)
-		}
-	}
-	return ps, nil
-}
-
-// LocksqlAgentProfiles are the locksql profiles agents may ask the user to open
-// (LEA_LOCKSQL_AGENT_PROFILES); none by default. Only the daemon reads it, when an agent asks: an
-// invalid list refuses every request (and nothing else).
-func (c *Config) LocksqlAgentProfiles() ([]string, error) {
-	ps, err := lockAgentProfiles(c.Get("LEA_LOCKSQL_AGENT_PROFILES"))
-	if err != nil {
-		return nil, fmt.Errorf("LEA_LOCKSQL_AGENT_PROFILES: %v", err)
-	}
-	return ps, nil
-}
+// runtimeName is an OCI runtime's name as dockerd's configuration gives it (runsc, kata,
+// io.containerd.kata.v2): passed as one argument to --runtime.
+var runtimeName = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$`)
 
 var providerName = regexp.MustCompile(`^[a-z][a-z0-9-]{0,15}$`)
 
@@ -641,7 +611,7 @@ func (c *Config) ToolsOn(proj string, logf func(string, ...any)) map[string]bool
 	return on
 }
 
-// LockTools is ToolsOn and, for each tool on that lox up runs several locks of, the instances an
+// LockTools is ToolsOn and, for each tool on that lox run runs several locks of, the instances an
 // agent container started now reaches (upTools: those lockUpSockets mounts on
 // /run/<tool>/<instance>, before docker's checks), sorted; a tool with one lock has no entry.
 // up.json is read once for both.
@@ -656,8 +626,8 @@ func (c *Config) LockTools(proj string, logf func(string, ...any)) (on map[strin
 		}
 	}
 	on = map[string]bool{}
-	for tool, key := range lockToolKeys {
-		on[tool] = c.toolOn(key, named[tool])
+	for _, t := range locks.Registry {
+		on[t.Name] = c.toolOn(t.Switch, named[t.Name])
 	}
 	if s == nil {
 		return on, nil

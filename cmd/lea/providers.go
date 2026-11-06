@@ -27,7 +27,7 @@ func daemonProvidersStamp(exe string) string {
 }
 
 // daemonLockTools is the lock tools lea wires for the configured projects directory and the
-// instances of each tool lox up runs several locks of, from lea's config files and its up.json,
+// instances of each tool lox run runs several locks of, from lea's config files and its up.json,
 // read at each call (launcher.Config.ProjectsLockTools); nil when the configuration does not load.
 func daemonLockTools(exe string) (map[string]bool, map[string][]string) {
 	cfg, err := loadLeaConfig(exe)
@@ -50,7 +50,7 @@ func loadLeaConfig(exe string) (*launcher.Config, error) {
 // daemonLockWatch is the up.json of the configured projects directory (its physical path) the
 // daemon watches for a lock added while lea runs: read with the launcher's trust checks and
 // the tools on as a container started now gets them, without a lock whose socket volume docker
-// does not label as lox up's (Config.UpLocksMounted), compared with the volumes
+// does not label as lox run's (Config.UpLocksMounted), compared with the volumes
 // each container of that projects directory mounts (docker inspect). ok is false without a
 // projects directory or a configuration that loads.
 func daemonLockWatch(exe string, docker agents.Docker) (w daemon.LockWatch, ok bool) {
@@ -85,5 +85,27 @@ func daemonLockWatch(exe string, docker agents.Docker) (w daemon.LockWatch, ok b
 			}
 			return vols, nil
 		},
+	}, true
+}
+
+// daemonLoxRun tells the daemon whether lox run serves the projects directory's decisions
+// (#300): "off" when it has locks and none serves, so that the deck says to run it.
+func daemonLoxRun(exe string) (daemon.LoxRunWatch, bool) {
+	cfg, err := loadLeaConfig(exe)
+	if err != nil {
+		return nil, false
+	}
+	proj := cfg.Get("LEA_PROJECTS_DIR")
+	if proj == "" {
+		return nil, false
+	}
+	if r, err := filepath.EvalSymlinks(proj); err == nil {
+		proj = r
+	}
+	return func() string {
+		if !cfg.HasLocks(proj) {
+			return launcher.LoxRunUnknown
+		}
+		return launcher.LoxRunState(os.Getenv, proj)
 	}, true
 }

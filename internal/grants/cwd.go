@@ -91,7 +91,7 @@ func (s scan) dirs(cmd string, dirs []string, unknown bool, depth int) bool {
 	r := 0
 	for k, w := range segs {
 		for ; r < len(redirs) && redirs[r].seg <= k; r++ {
-			if s.names(dirs, unknown, redirs[r].target) {
+			if s.names(dirs, unknown, redirWord(redirs[r].target)) {
 				return true
 			}
 		}
@@ -152,7 +152,7 @@ func (s scan) dirs(cmd string, dirs []string, unknown bool, depth int) bool {
 		}
 	}
 	for ; r < len(redirs); r++ {
-		if s.names(dirs, unknown, redirs[r].target) {
+		if s.names(dirs, unknown, redirWord(redirs[r].target)) {
 			return true
 		}
 	}
@@ -162,6 +162,20 @@ func (s scan) dirs(cmd string, dirs []string, unknown bool, depth int) bool {
 		}
 	}
 	return false
+}
+
+// redirWord is redirect target t as a word segments returns: bash expands a redirect's word as it
+// does any other (a tilde, a brace, a glob), so its unquoted glob characters are marked wild. The
+// target split keeps is plain (no quote, escape or expansion).
+func redirWord(t string) string {
+	var b strings.Builder
+	for i := 0; i < len(t); i++ {
+		if strings.IndexByte("*?[]{}", t[i]) >= 0 || (t[i] == '~' && i == 0) {
+			b.WriteString(wild)
+		}
+		b.WriteByte(t[i])
+	}
+	return b.String()
 }
 
 // moveTo returns dirs with d, as each of them reads it, added; ok is false when lea cannot read
@@ -235,22 +249,26 @@ func tail(x string) bool {
 	return !strings.HasPrefix(x, "/") && !strings.HasPrefix(x, "~") && tailRe.MatchString(path.Clean(x))
 }
 
-// comp is one component of a protected path: what matches it (nil: any name) and the names
-// that stand for it, for a glob to be matched against.
+// comp is one component of a protected path: what matches it (nil: any name), the names that
+// stand for it, for a glob to be matched against, and whether a name that starts with one of
+// them matches too (prefix).
 type comp struct {
-	re    *regexp.Regexp
-	names []string
+	re     *regexp.Regexp
+	names  []string
+	prefix bool
 }
 
 // lit is a component named n; pre one that starts with n (protectedPathRe does not end it).
 func lit(n string) comp {
-	return comp{regexp.MustCompile("^" + regexp.QuoteMeta(n) + "$"), []string{n}}
+	return comp{regexp.MustCompile("^" + regexp.QuoteMeta(n) + "$"), []string{n}, false}
 }
-func pre(n string) comp { return comp{regexp.MustCompile("^" + regexp.QuoteMeta(n)), []string{n}} }
+func pre(n string) comp {
+	return comp{regexp.MustCompile("^" + regexp.QuoteMeta(n)), []string{n}, true}
+}
 
 // protectedGlobs are the paths of protectedPathRe, component by component.
 var protectedGlobs = func() [][]comp {
-	settings := comp{regexp.MustCompile(`^settings[^/]*\.json`), []string{"settings.json", "settings.local.json"}}
+	settings := comp{regexp.MustCompile(`^settings[^/]*\.json`), []string{"settings.json", "settings.local.json"}, true}
 	gs := [][]comp{
 		{lit(".claude"), settings}, {lit(".claude"), pre("hooks")}, {lit(".claude"), pre("shell-snapshots")},
 		{lit(".claude"), pre("session-env")},
@@ -317,42 +335,151 @@ func (s scan) compMatch(g string, c comp) bool {
 	if !s.loose && !strings.HasPrefix(g, ".") && strings.HasPrefix(c.names[0], ".") {
 		return false
 	}
+	gg, ends, ok := goGlob(g)
+	if !ok {
+		return true
+	}
 	for _, n := range c.names {
-		if m, err := path.Match(g, n); err != nil || m {
+		if m, err := path.Match(gg, n); err != nil || m {
 			return true
 		}
+		// A name that starts with n is c's too: some run of the glob's first tokens matches n
+		// (what is left always matches something).
+		for k := 0; c.prefix && k < len(ends)-1; k++ {
+			if m, err := path.Match(gg[:ends[k]], n); err != nil || m {
+				return true
+			}
+		}
 	}
-	return c.re.MatchString(concrete(g))
+	return c.re.MatchString(concrete(gg))
 }
 
-// concrete is one name glob component g matches: stars match nothing, ? and a class one
-// character.
-func concrete(g string) string {
+// goGlob translates glob component g from bash's bracket rules to path.Match's, token by token
+// (ends: where each token of gg ends). Bash reads [! as [^; a ] right after [, [! or [^ as a
+// member of the class ([]a] matches ] or a); a - first or last in a class as a member; and a [
+// that no ] closes as a literal [. So .[] only ever names the file .[], while .[]g]itconfig
+// matches .gitconfig. ok is false for a class lea does not translate ([:alpha:], [=a=], [.a.]):
+// the caller then fails closed, as it does on a pattern path.Match still rejects.
+func goGlob(g string) (gg string, ends []int, ok bool) {
 	var b strings.Builder
 	for i := 0; i < len(g); i++ {
-		switch g[i] {
+		switch ch := g[i]; ch {
+		case '\\':
+			if i+1 < len(g) {
+				i++
+				b.WriteByte('\\')
+				b.WriteByte(g[i])
+			} else {
+				b.WriteString(`\\`)
+			}
+		case ']':
+			b.WriteString(`\]`)
+		case '[':
+			end, posix := classEnd(g, i)
+			if posix {
+				return "", nil, false
+			}
+			if end < 0 {
+				b.WriteString(`\[`)
+				break
+			}
+			j := i + 1
+			b.WriteByte('[')
+			if g[j] == '!' || g[j] == '^' {
+				b.WriteByte('^')
+				j++
+			}
+			for k := j; k < end; k++ {
+				switch m := g[k]; {
+				case m == '\\':
+					k++
+					b.WriteByte('\\')
+					b.WriteByte(g[k])
+				case m == ']', m == '-' && (k == j || k == end-1):
+					b.WriteByte('\\')
+					b.WriteByte(m)
+				default:
+					b.WriteByte(m)
+				}
+			}
+			b.WriteByte(']')
+			i = end
+		default:
+			b.WriteByte(ch)
+		}
+		ends = append(ends, b.Len())
+	}
+	return b.String(), ends, true
+}
+
+// classEnd is where the bracket class bash reads at g[i] ('[') ends: the index of its closing ],
+// or -1 when nothing closes it (the [ is then a literal). posix: the class holds a [:…:], [=…=]
+// or [.….] lea does not translate.
+func classEnd(g string, i int) (end int, posix bool) {
+	j := i + 1
+	if j < len(g) && (g[j] == '!' || g[j] == '^') {
+		j++
+	}
+	if j < len(g) && g[j] == ']' {
+		j++
+	}
+	for ; j < len(g); j++ {
+		switch g[j] {
+		case '\\':
+			j++
+		case '[':
+			if j+1 < len(g) && strings.IndexByte(":=.", g[j+1]) >= 0 {
+				posix = true
+			}
+		case ']':
+			return j, posix
+		}
+	}
+	return -1, false
+}
+
+// concrete is one name Go glob gg (goGlob's) matches: stars match nothing, ? one character and a
+// class its first member (or, negated, the first character it lets through).
+func concrete(gg string) string {
+	var b strings.Builder
+	for i := 0; i < len(gg); i++ {
+		switch gg[i] {
 		case '*':
 		case '?':
 			b.WriteByte('x')
 		case '[':
-			j := strings.IndexByte(g[i+1:], ']')
-			if j < 0 {
+			j := i + 1
+			for ; j < len(gg) && gg[j] != ']'; j++ {
+				if gg[j] == '\\' {
+					j++
+				}
+			}
+			if j >= len(gg) { // goGlob closes every class it writes
 				b.WriteByte('[')
 				continue
 			}
-			if cl := g[i+1 : i+1+j]; cl != "" && cl[0] != '!' && cl[0] != '^' {
-				b.WriteByte(cl[0])
-			} else {
-				b.WriteByte('x')
+			cl := gg[i : j+1]
+			switch {
+			case gg[i+1] == '^':
+				for c := byte('a'); c <= '~'; c++ {
+					if m, _ := path.Match(cl, string(c)); m {
+						b.WriteByte(c)
+						break
+					}
+				}
+			case gg[i+1] == '\\':
+				b.WriteByte(gg[i+2])
+			default:
+				b.WriteByte(gg[i+1])
 			}
-			i += j + 1
+			i = j
 		case '\\':
-			if i+1 < len(g) {
+			if i+1 < len(gg) {
 				i++
-				b.WriteByte(g[i])
+				b.WriteByte(gg[i])
 			}
 		default:
-			b.WriteByte(g[i])
+			b.WriteByte(gg[i])
 		}
 	}
 	return b.String()

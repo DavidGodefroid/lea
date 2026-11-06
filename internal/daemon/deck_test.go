@@ -20,14 +20,12 @@ type fakeAgents struct {
 	changed int
 	// unattached: no user terminal shows the deck (Attached reports false).
 	unattached bool
-	newErr     error // New fails with it
-	// lockCheckErr: LockCheckRequest refuses with it; lockOpenErr: LockOpen fails with it.
-	lockCheckErr, lockOpenErr error
-	parkOut                   string        // what ParkStack reports
-	parkErr                   error         // ParkStack fails with it
-	parkHold                  chan struct{} // when set, ParkStack waits for it to close
-	newHold                   chan struct{} // when set, New waits for it to close
-	rows                      []agents.Row  // the rows Watch reports
+	newErr     error         // New fails with it
+	parkOut    string        // what ParkStack reports
+	parkErr    error         // ParkStack fails with it
+	parkHold   chan struct{} // when set, ParkStack waits for it to close
+	newHold    chan struct{} // when set, New waits for it to close
+	rows       []agents.Row  // the rows Watch reports
 	// st, when set, is where SoftStop and ResumeSuspended record the state they leave.
 	st        *store.Store
 	resumeErr error // ResumeSuspended fails with it
@@ -154,34 +152,6 @@ func (f *fakeAgents) OpenShell(ctx context.Context, c string) (agents.Row, error
 func (f *fakeAgents) SplitShell(ctx context.Context, k string, below bool) (agents.Row, error) {
 	f.rec(fmt.Sprintf("split %s below=%v", k, below))
 	return agents.Row{Key: agents.ShellKey("lea-a", "sh-1"), Name: "sh-1", Kind: agents.KindShell}, nil
-}
-func (f *fakeAgents) LockOpen(ctx context.Context, c, tool, profile string) (string, error) {
-	f.rec(fmt.Sprintf("lock-open %s %s %q", c, tool, profile))
-	f.mu.Lock()
-	err := f.lockOpenErr
-	f.mu.Unlock()
-	if err != nil {
-		return "", err
-	}
-	return "opened", nil
-}
-func (f *fakeAgents) ShowTicket(ctx context.Context, c, ref, note string, seq int64) error {
-	f.rec(fmt.Sprintf("show-ticket %s %s %q", c, ref, note))
-	return nil
-}
-func (f *fakeAgents) LockCheckRequest(ctx context.Context, c, tool, profile string) error {
-	f.rec(fmt.Sprintf("lock-check %s %s %q", c, tool, profile))
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	return f.lockCheckErr
-}
-func (f *fakeAgents) LockClose(ctx context.Context, c, tool, profile string) (string, error) {
-	f.rec(fmt.Sprintf("lock-close %s %s %q", c, tool, profile))
-	return "closed", nil
-}
-func (f *fakeAgents) LockList(ctx context.Context, c string) ([]agents.LockRow, error) {
-	f.rec("lock-list " + c)
-	return []agents.LockRow{{ID: "locksql/prod", Shown: true}}, nil
 }
 func (f *fakeAgents) Changed() { f.mu.Lock(); f.changed++; f.mu.Unlock() }
 
@@ -320,30 +290,17 @@ func TestHookStateChangesNotifyTheDeck(t *testing.T) {
 	}
 }
 
-// The lock console methods reach the manager from the host API, with what the user typed; an
-// agent reaches none of them (TestDeckMethodsAreHostOnly covers every deck method).
-func TestLockMethodsOnTheHostAPI(t *testing.T) {
+// The lock console and hub ticket methods are gone (#300): the host API answers none of them, and
+// a deck snapshot says whether lox run serves (loxrun.go).
+func TestLockAndHubMethodsAreGone(t *testing.T) {
 	e := start(t)
-	fa := &fakeAgents{}
-	e.d.SetAgents(fa)
-	var r struct{ Status string }
-	if err := call(t, e.api, "", "lock_open", map[string]any{"container": "lea-a", "tool": "locksql", "profile": "prod"}, &r); err != nil || r.Status != "opened" {
-		t.Fatalf("lock_open: %+v %v", r, err)
-	}
-	if err := call(t, e.api, "", "lock_close", map[string]any{"container": "lea-a", "tool": "locksql"}, &r); err != nil || r.Status != "closed" {
-		t.Fatalf("lock_close: %+v %v", r, err)
-	}
-	var rows []agents.LockRow
-	if err := call(t, e.api, "", "lock_list", map[string]any{"container": "lea-a"}, &rows); err != nil || len(rows) != 1 || rows[0].ID != "locksql/prod" {
-		t.Fatalf("lock_list: %+v %v", rows, err)
-	}
-	want := []string{`lock-open lea-a locksql "prod"`, `lock-close lea-a locksql ""`, "lock-list lea-a"}
-	if !reflect.DeepEqual(fa.calls, want) {
-		t.Fatalf("calls=%q", fa.calls)
-	}
-	for _, m := range []string{"lock_open", "lock_close", "lock_list"} {
-		if err := call(t, e.bus, "lead", m, map[string]any{"container": "lea-a", "tool": "locksql"}, nil); err == nil || !strings.Contains(err.Error(), "host only") {
-			t.Fatalf("%s from an agent: %v", m, err)
+	e.d.SetAgents(&fakeAgents{})
+	for _, m := range []string{"lock_open", "lock_close", "lock_list", "lock_request_decide", "hub_decide", "hub_reveal", "hub_renew", "hub_show"} {
+		if err := call(t, e.api, "", m, map[string]any{"container": "lea-a", "tool": "locksql"}, nil); err == nil || !strings.Contains(err.Error(), "unknown method") {
+			t.Fatalf("%s on the host API: %v", m, err)
 		}
+	}
+	if err := call(t, e.bus, "lead", "lock_request", map[string]any{"tool": "locksql", "profile": "prod"}, nil); err == nil || !strings.Contains(err.Error(), "unknown method") {
+		t.Fatalf("lock_request from an agent: %v", err)
 	}
 }

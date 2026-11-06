@@ -1,0 +1,123 @@
+#!/bin/sh
+# tools/locks-bump --lockkit vX.Y.Z --lox vX.Y.Z --locksql vX.Y.Z --lockmq vX.Y.Z --lockfile vX.Y.Z
+#   --lockhttp vX.Y.Z [--out FILE]
+# Rewrites config/locks.lock (or FILE) whole, as one set (lea#134): for each Lock, the release's
+# checksums.txt once cosign proves its release workflow signed it at that very tag, the sha256 of
+# its client archives (linux amd64 and arm64) read from it, and its release image (and variants)
+# by the digest ghcr.io serves, once cosign proves the same workflow signed that digest; lox's
+# release (lockhub) the same way; the protocol major, lockkit's at its tag (every Lock of the set is
+# built on that lockkit). Nothing is written unless every pin verifies. Needs cosign, curl
+# and jq, and network access to GitHub and ghcr.io. Run by .github/workflows/locks.yml.
+# tools/locks-bump --check [FILE]: the set's format only (no network): every key, each identity
+# naming its version, images by digest.
+set -eu
+root=$(cd "$(dirname "$0")/.." && pwd -P)
+out=$root/config/locks.lock
+die() { echo "locks-bump: $*" >&2; exit 1; }
+semver() { printf '%s\n' "$1" | grep -Eqx 'v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)'; }
+identity() { printf 'https://github.com/DavidGodefroid/%s/.github/workflows/release.yml@refs/tags/%s' "$1" "$2"; }
+up() { printf '%s' "$1" | tr '[:lower:]' '[:upper:]'; }
+
+# check FILE: the set's format, as lea reads it (internal/locks.ParseSet is the authority; this
+# catches a broken bump before a pull request).
+check() {
+  f=$1
+  [ -f "$f" ] || die "no $f"
+  bad=$(grep -v '^#' "$f" | grep -v '^$' | grep -Ev '^LOCKS_[A-Z0-9_]+=[^ '"'"'"$`\\]+$' || true)
+  [ -z "$bad" ] || die "$f: not KEY=VALUE: $bad"
+  get() { sed -n "s/^$1=//p" "$f"; }
+  printf '%s\n' "$(get LOCKS_SET)" | grep -Eqx 'lockkit-v[0-9]+\.[0-9]+\.[0-9]+' || die "$f: LOCKS_SET"
+  v=$(get LOCKS_LOX_VERSION)
+  if ! semver "$v" || [ "$(get LOCKS_LOX_IDENTITY)" != "$(identity lockhub "$v")" ]; then die "$f: lox"; fi
+  for t in locksql lockmq lockfile lockhttp; do
+    T=$(up "$t") v=$(get "LOCKS_${T}_VERSION")
+    semver "$v" || die "$f: LOCKS_${T}_VERSION"
+    [ "$(get "LOCKS_${T}_PROTOCOL")" -ge 1 ] 2>/dev/null || die "$f: LOCKS_${T}_PROTOCOL"
+    [ "$(get "LOCKS_${T}_IDENTITY")" = "$(identity "$t" "$v")" ] || die "$f: LOCKS_${T}_IDENTITY"
+    printf '%s\n' "$(get "LOCKS_${T}_IMAGE")" | grep -Eqx "ghcr\.io/davidgodefroid/$t@sha256:[0-9a-f]{64}" || die "$f: LOCKS_${T}_IMAGE"
+    [ "$t" = lockhttp ] && continue
+    for a in AMD64 ARM64; do
+      printf '%s\n' "$(get "LOCKS_${T}_SHA256_$a")" | grep -Eqx '[0-9a-f]{64}' || die "$f: LOCKS_${T}_SHA256_$a"
+    done
+  done
+  echo "locks-bump: $f is a well-formed set"
+}
+
+if [ "${1:-}" = --check ]; then check "${2:-$out}"; exit 0; fi
+
+kit='' lox='' sql='' mq='' lf='' lh=''
+while [ $# -gt 0 ]; do
+  [ $# -ge 2 ] || die "$1 needs a value"
+  case $1 in
+    --lockkit) kit=$2 ;; --lox) lox=$2 ;; --locksql) sql=$2 ;; --lockmq) mq=$2 ;; --lockfile) lf=$2 ;;
+    --lockhttp) lh=$2 ;; --out) out=$2 ;;
+    *) die "unknown option $1" ;;
+  esac
+  shift 2
+done
+for v in "$kit" "$lox" "$sql" "$mq" "$lf" "$lh"; do semver "$v" || die "every release is vX.Y.Z (got '$v')"; done
+for c in cosign curl jq; do command -v "$c" >/dev/null 2>&1 || die "$c is missing"; done
+w=$(mktemp -d)
+trap 'rm -rf "$w"' EXIT
+
+# checksums REPO TAG: the release's checksums.txt, in $w/REPO, once its signature verifies.
+checksums() {
+  d=$w/$1 u=https://github.com/DavidGodefroid/$1/releases/download/$2
+  mkdir -p "$d"
+  for f in checksums.txt checksums.txt.sigstore.json; do curl -fsSL -o "$d/$f" "$u/$f" || die "cannot download $u/$f"; done
+  cosign verify-blob --bundle "$d/checksums.txt.sigstore.json" --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+    --certificate-identity "$(identity "$1" "$2")" "$d/checksums.txt" >/dev/null 2>&1 ||
+    die "$1 $2: its checksums.txt is not signed by its release workflow at $2"
+}
+
+# archive REPO VERSION ARCH: the sha256 of the client archive in the verified checksums.txt.
+archive() {
+  s=$(awk -v a="${1}_${2#v}_linux_$3.tar.gz" '$2 == a { print $1 }' "$w/$1/checksums.txt")
+  printf '%s\n' "$s" | grep -Eqx '[0-9a-f]{64}' || die "$1 $2: no linux $3 archive in its checksums.txt"
+  printf '%s' "$s"
+}
+
+# image REPO TAG [VARIANT]: ghcr.io/davidgodefroid/REPO@<digest> of the release's image (its
+# VARIANT image: <version>-VARIANT), once cosign verifies that digest's signature by the release.
+image() {
+  ref=${2#v}${3:+-$3}
+  tok=$(curl -fsS "https://ghcr.io/token?scope=repository:davidgodefroid/$1:pull" | jq -r .token) || die "no ghcr.io token for $1"
+  dg=$(curl -fsSI -H "Authorization: Bearer $tok" \
+    -H 'Accept: application/vnd.oci.image.index.v1+json, application/vnd.docker.distribution.manifest.list.v2+json' \
+    "https://ghcr.io/v2/davidgodefroid/$1/manifests/$ref" | tr -d '\r' | sed -n 's/^[Dd]ocker-[Cc]ontent-[Dd]igest: *//p')
+  printf '%s\n' "$dg" | grep -Eqx 'sha256:[0-9a-f]{64}' || die "no digest for ghcr.io/davidgodefroid/$1:$ref"
+  cosign verify --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+    --certificate-identity "$(identity "$1" "$2")" "ghcr.io/davidgodefroid/$1@$dg" >/dev/null 2>&1 ||
+    die "ghcr.io/davidgodefroid/$1@$dg is not signed by $1's release workflow at $2"
+  printf 'ghcr.io/davidgodefroid/%s@%s' "$1" "$dg"
+}
+
+checksums lockhub "$lox"
+# The protocol major every Lock of the set speaks: lockkit's ipc.ProtocolMajor at that tag.
+proto=$(curl -fsSL "https://raw.githubusercontent.com/DavidGodefroid/lockkit/refs/tags/$kit/ipc/rpc.go" |
+  sed -n 's/^const ProtocolMajor = \([1-9][0-9]*\)$/\1/p')
+[ -n "$proto" ] || die "lockkit $kit: no ProtocolMajor in its ipc/rpc.go"
+{
+  sed -n '1,/^# A key is LOCKS_/p' "$root/config/locks.lock"
+  echo "LOCKS_SET=lockkit-$kit"
+  echo "LOCKS_LOX_VERSION=$lox"
+  echo "LOCKS_LOX_IDENTITY=$(identity lockhub "$lox")"
+  for p in "locksql $sql" "lockmq $mq" "lockfile $lf" "lockhttp $lh"; do
+    # shellcheck disable=SC2086 # two words
+    set -- $p
+    T=$(up "$1")
+    echo "LOCKS_${T}_VERSION=$2"
+    echo "LOCKS_${T}_PROTOCOL=$proto"
+    echo "LOCKS_${T}_IMAGE=$(image "$1" "$2")"
+    if [ "$1" = locksql ]; then echo "LOCKS_${T}_IMAGE_VAULT=$(image "$1" "$2" vault)"; fi
+    echo "LOCKS_${T}_IDENTITY=$(identity "$1" "$2")"
+    if [ "$1" != lockhttp ]; then
+      checksums "$1" "$2"
+      echo "LOCKS_${T}_SHA256_AMD64=$(archive "$1" "$2" amd64)"
+      echo "LOCKS_${T}_SHA256_ARM64=$(archive "$1" "$2" arm64)"
+    fi
+  done
+} >"$w/locks.lock"
+check "$w/locks.lock" >/dev/null
+cp "$w/locks.lock" "$out.tmp" && mv "$out.tmp" "$out"
+echo "locks-bump: $out: lockkit-$kit (locksql $sql, lockmq $mq, lockfile $lf, lockhttp $lh, lox $lox), every pin verified"

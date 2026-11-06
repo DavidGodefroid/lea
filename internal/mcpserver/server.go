@@ -85,7 +85,7 @@ func proxy(parent context.Context, sock, agent, method string, timeout time.Dura
 	return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: string(res)}}}
 }
 
-// LockGuidance is what lea's MCP server tells the agent of the lock tools lox up runs several
+// LockGuidance is what lea's MCP server tells the agent of the lock tools lox run runs several
 // locks of (LEA_<TOOL>_INSTANCES, set by the launcher with each lock on /run/<tool>/<instance>):
 // one sentence per tool with two or more instances, "" otherwise. A Claude agent gets no lock
 // MCP server from lea (a Codex agent gets one per instance): it calls the clients itself.
@@ -179,16 +179,7 @@ func New(sock, agent, version, instructions string) *mcp.Server {
 		func(ctx context.Context, _ *mcp.CallToolRequest, in empty) (*mcp.CallToolResult, any, error) {
 			return proxy(ctx, sock, agent, "grants_list", short, in), nil, nil
 		})
-	mcp.AddTool(s, &mcp.Tool{Name: "lock_request", Description: "Ask the user to open a lock tool's console (locksql) for a profile the user allowed agents to ask for. The user sees the request in the deck and opens the console, or not; you never see, type into or answer a console. The answer is requested, or why it was refused; what the user decided arrives later as a message. One request per tool per minute per container."},
-		func(ctx context.Context, _ *mcp.CallToolRequest, in lockRequestIn) (*mcp.CallToolResult, any, error) {
-			return proxy(ctx, sock, agent, "lock_request", short, in), nil, nil
-		})
 	return s
-}
-
-type lockRequestIn struct {
-	Tool    string `json:"tool" jsonschema:"the lock tool: locksql"`
-	Profile string `json:"profile" jsonschema:"the console profile, one the user allowed agents to ask for"`
 }
 
 type leaseIn struct {
