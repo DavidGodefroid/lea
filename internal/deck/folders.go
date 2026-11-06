@@ -26,15 +26,23 @@ import (
 
 // Layout is what the deck persists of its folders. Saved is when the deck last wrote it (unix
 // seconds, 0 for a layout written before #241). Known lists the agents with a lead the layout
-// has already seen, oldest first (#296): an agent with a lead that is not in it is new to the
-// layout, and joins its lead's folder (fileSpawned). Format is layoutKnown once Known is the
+// has already seen, each with the second it was created in, oldest first (#296): an agent with a
+// lead that is not in it, or was created later than its entry (a done agent's key respawned), is
+// new to the layout, and joins its lead's folder (fileSpawned). Format is layoutKnown once Known is the
 // record; a layout written before #296 (0) only has Saved, and an agent started later than
 // that is the one new to it.
 type Layout struct {
 	Folders []Folder `json:"folders"`
 	Saved   int64    `json:"saved,omitempty"`
 	Format  int      `json:"format,omitempty"`
-	Known   []string `json:"known,omitempty"`
+	Known   []Seen   `json:"known,omitempty"`
+}
+
+// Seen is one agent the layout has seen: its key and the second that incarnation was created in.
+// store.Register reuses a done agent's key for a new agent; a later Created tells it apart.
+type Seen struct {
+	Key     string `json:"key"`
+	Created int64  `json:"created"`
 }
 
 // layoutKnown is the Format of a layout whose Known list decides which agents are new (#296).
@@ -124,10 +132,10 @@ func (l Layout) check() error {
 	}
 	known := map[string]bool{}
 	for _, k := range l.Known {
-		if !agentKey.MatchString(k) || known[k] {
-			return fmt.Errorf("%w: known agent key %q", errBadLayout, k)
+		if !agentKey.MatchString(k.Key) || known[k.Key] || k.Created < 0 {
+			return fmt.Errorf("%w: known agent key %q", errBadLayout, k.Key)
 		}
-		known[k] = true
+		known[k.Key] = true
 	}
 	ids, keys := map[string]bool{}, map[string]bool{}
 	for _, f := range l.Folders {
@@ -382,7 +390,7 @@ func (m Model) nextFolderID() string {
 
 // cloneLayout copies l, so that a change never shows through an older model.
 func cloneLayout(l Layout) Layout {
-	out := Layout{Folders: make([]Folder, len(l.Folders)), Saved: l.Saved, Format: l.Format, Known: append([]string(nil), l.Known...)}
+	out := Layout{Folders: make([]Folder, len(l.Folders)), Saved: l.Saved, Format: l.Format, Known: append([]Seen(nil), l.Known...)}
 	for i, f := range l.Folders {
 		f.Agents = append([]string(nil), f.Agents...)
 		out.Folders[i] = f
@@ -407,7 +415,7 @@ func (m *Model) save() {
 		}
 		kept := m.layout.Known[:0:0]
 		for _, k := range m.layout.Known {
-			if m.index(k) >= 0 {
+			if m.index(k.Key) >= 0 {
 				kept = append(kept, k)
 			}
 		}
@@ -510,13 +518,14 @@ func (m Model) setColour(key, name string) Model {
 	return m
 }
 
-// fileSpawned puts each agent with a lead (Parent) that is new to the layout (not in Known)
-// and in no folder into the folder of its lead, at its end. It runs on every snapshot, and
+// fileSpawned puts each agent with a lead (Parent) that is new to the layout (not in Known, or
+// created later than its Known entry: a done agent's key store.Register gave a new agent) and
+// in no folder into the folder of its lead, at its end. It runs on every snapshot, and
 // records every agent with a lead it lists in Known, filed or not, so it files an agent once:
 // an agent the user moves out is never moved back, even after a deck restart (the move saves
 // Known). An agent started while no deck was attached is new too, and is filed on the next
-// attach. Known is a set of keys, not a time: an agent created in the same second as a save
-// (another child filed, a fold, a move) is still new (#296).
+// attach. Known is a record per agent, not a save time: an agent created in the same second as
+// a save (another child filed, a fold, a move) is still new (#296).
 //
 // A layout written before #296 (Format 0) first takes as known the agents it lists that started
 // no later than its last save, all of them for a layout that never recorded one (written before
@@ -527,17 +536,20 @@ func (m *Model) fileSpawned() {
 		m.layout.Format = layoutKnown
 		for _, a := range m.agents {
 			if !isShell(a) && a.Parent != "" && (m.layout.Saved == 0 || a.Created <= m.layout.Saved) {
-				m.layout.Known = append(m.layout.Known, a.Key)
+				m.layout.Known = append(m.layout.Known, Seen{Key: a.Key, Created: a.Created})
 			}
 		}
 	}
-	known := make(map[string]bool, len(m.layout.Known))
+	known := make(map[string]int64, len(m.layout.Known))
 	for _, k := range m.layout.Known {
-		known[k] = true
+		known[k.Key] = k.Created
 	}
 	var fresh []Agent
 	for _, a := range m.agents {
-		if !isShell(a) && a.Parent != "" && !known[a.Key] && agentKey.MatchString(a.Key) {
+		if isShell(a) || a.Parent == "" || !agentKey.MatchString(a.Key) || a.Created < 0 {
+			continue
+		}
+		if c, ok := known[a.Key]; !ok || a.Created > c {
 			fresh = append(fresh, a)
 		}
 	}
@@ -545,9 +557,20 @@ func (m *Model) fileSpawned() {
 		return
 	}
 	m.layout = cloneLayout(m.layout)
+	renewed := map[string]bool{}
+	for _, a := range fresh {
+		renewed[a.Key] = true
+	}
+	kept := m.layout.Known[:0]
+	for _, k := range m.layout.Known {
+		if !renewed[k.Key] {
+			kept = append(kept, k)
+		}
+	}
+	m.layout.Known = kept
 	filed := false
 	for _, a := range fresh {
-		m.layout.Known = append(m.layout.Known, a.Key)
+		m.layout.Known = append(m.layout.Known, Seen{Key: a.Key, Created: a.Created})
 		if m.folderOf(a.Key) >= 0 {
 			continue
 		}
@@ -558,7 +581,7 @@ func (m *Model) fileSpawned() {
 		m.layout, filed = withAgentIn(m.layout, a.Key, fi), true
 	}
 	if n := len(m.layout.Known) - maxKnown; n > 0 {
-		m.layout.Known = append([]string(nil), m.layout.Known[n:]...)
+		m.layout.Known = append([]Seen(nil), m.layout.Known[n:]...)
 	}
 	if filed {
 		m.save()

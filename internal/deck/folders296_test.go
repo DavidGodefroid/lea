@@ -156,7 +156,7 @@ func TestALayoutBeforeKnownKeepsItsAgentsInPlace(t *testing.T) {
 	}
 	known := map[string]bool{}
 	for _, k := range l.Known {
-		known[k] = true
+		known[k.Key] = true
 	}
 	if l.Format != layoutKnown || !known["lea-a/in"] || !known["lea-a/out"] || !known["lea-a/newer"] {
 		t.Fatalf("saved %+v", l)
@@ -172,11 +172,11 @@ func TestALayoutBeforeKnownKeepsItsAgentsInPlace(t *testing.T) {
 // Known forgets the agents no longer listed on a save, keeps at most maxKnown keys, and a
 // layout with a bad Known or Format is refused.
 func TestKnownIsPrunedBoundedAndChecked(t *testing.T) {
-	st := &memStore{l: Layout{Saved: 9_000, Format: layoutKnown, Known: []string{"lea-a/gone"},
+	st := &memStore{l: Layout{Saved: 9_000, Format: layoutKnown, Known: []Seen{{Key: "lea-a/gone", Created: 100}},
 		Folders: []Folder{{ID: "f1", Name: "web", Agents: []string{"lea-a/lead"}}}}}
 	m, lead := towerDeck(t, st)
 	m, _ = step(t, m, snapshotMsg{snap: Snapshot{Version: 8, Agents: []Agent{lead, spawned("kid", "lea-a/lead", 9_500)}}})
-	if len(st.l.Known) != 1 || st.l.Known[0] != "lea-a/kid" {
+	if len(st.l.Known) != 1 || st.l.Known[0] != (Seen{Key: "lea-a/kid", Created: 9_500}) {
 		t.Fatalf("known %v", st.l.Known)
 	}
 	// A child with a key reused from a gone agent's is new again.
@@ -192,7 +192,7 @@ func TestKnownIsPrunedBoundedAndChecked(t *testing.T) {
 		many = append(many, spawned("k"+itoa(i), "lea-a/nobody", 9_500))
 	}
 	m, _ = step(t, m, snapshotMsg{snap: Snapshot{Version: 10, Agents: many}})
-	if len(m.layout.Known) != maxKnown || m.layout.Known[maxKnown-1] != "lea-a/k"+itoa(maxKnown+3) {
+	if len(m.layout.Known) != maxKnown || m.layout.Known[maxKnown-1].Key != "lea-a/k"+itoa(maxKnown+3) {
 		t.Fatalf("known %d keys", len(m.layout.Known))
 	}
 	if err := m.layout.check(); err != nil {
@@ -201,12 +201,77 @@ func TestKnownIsPrunedBoundedAndChecked(t *testing.T) {
 
 	for _, l := range []Layout{
 		{Format: 2},
-		{Format: layoutKnown, Known: []string{"lea-a/x", "lea-a/x"}},
-		{Format: layoutKnown, Known: []string{"not a key"}},
-		{Format: layoutKnown, Known: make([]string, maxKnown+1)},
+		{Format: layoutKnown, Known: []Seen{{Key: "lea-a/x"}, {Key: "lea-a/x", Created: 1}}},
+		{Format: layoutKnown, Known: []Seen{{Key: "not a key"}}},
+		{Format: layoutKnown, Known: []Seen{{Key: "lea-a/x", Created: -1}}},
+		{Format: layoutKnown, Known: make([]Seen, maxKnown+1)},
 	} {
 		if err := l.check(); err == nil {
 			t.Fatalf("accepted %+v", l.Format)
+		}
+	}
+}
+
+// A done agent whose key store.Register reuses for a new agent (a later Created) is new to the
+// layout again: moved out of its folder, then respawned, it joins its new lead's folder, whether
+// that is the same lead or another lead in another folder. The same incarnation is never moved
+// back, and the respawn is filed once, across a restart too.
+func TestARespawnedDoneKeyFollowsItsNewLead(t *testing.T) {
+	for name, tc := range map[string]struct {
+		lead2  string
+		folder int
+		order  string
+	}{
+		"same lead":    {"lea-a/lead", 0, "[web] lead kid [misc] lead2"},
+		"another lead": {"lea-a/lead2", 1, "[web] lead [misc] lead2 kid"},
+	} {
+		path := filepath.Join(t.TempDir(), "lea-a.json")
+		st := FileStore{Path: path}
+		if err := st.Save(Layout{Saved: 9_000, Folders: []Folder{
+			{ID: "f1", Name: "web", Agents: []string{"lea-a/lead"}},
+			{ID: "f2", Name: "misc", Agents: []string{"lea-a/lead2"}}}}); err != nil {
+			t.Fatal(err)
+		}
+		lead, lead2 := launched(ag("lead", "idle", 1), 100), launched(ag("lead2", "idle", 1), 100)
+		m := sized(newModel(&fakeAPI{}).WithLayout(st), 34, 30)
+		m, _ = step(t, m, snapshotMsg{snap: Snapshot{Version: 7, Agents: []Agent{lead, lead2}}})
+		kid := spawned("kid", "lea-a/lead", clock.Unix())
+		m, _ = step(t, m, snapshotMsg{snap: Snapshot{Version: 8, Agents: []Agent{lead, lead2, kid}}})
+		if m.folderOf("lea-a/kid") != 0 {
+			t.Fatalf("%s: kid not filed: %+v", name, m.layout)
+		}
+		m.selected = "lea-a/kid"
+		m = typed(t, m, "u")
+		if m.folderOf("lea-a/kid") >= 0 {
+			t.Fatalf("%s: kid not moved out: %+v", name, m.layout)
+		}
+		done := kid
+		done.State = "done"
+		m, _ = step(t, m, snapshotMsg{snap: Snapshot{Version: 9, Agents: []Agent{lead, lead2, done}}})
+		if m.folderOf("lea-a/kid") >= 0 {
+			t.Fatalf("%s: done kid moved back: %+v", name, m.layout)
+		}
+		again := spawned("kid", tc.lead2, 10_500)
+		agents := []Agent{lead, lead2, again}
+		m, _ = step(t, m, snapshotMsg{snap: Snapshot{Version: 10, Agents: agents}})
+		if got := m.folderOf("lea-a/kid"); got != tc.folder {
+			t.Fatalf("%s: respawned kid in folder %d, want %d: %+v", name, got, tc.folder, m.layout)
+		}
+		if got := order(m); got != tc.order {
+			t.Fatalf("%s: order %q", name, got)
+		}
+		l, err := st.Load()
+		if err != nil || len(l.Known) != 1 || l.Known[0] != (Seen{Key: "lea-a/kid", Created: 10_500}) {
+			t.Fatalf("%s: saved known %+v %v", name, l.Known, err)
+		}
+		// Moved out again, the respawn stays out, after a restart too.
+		m.selected = "lea-a/kid"
+		m = typed(t, m, "u")
+		m, _ = step(t, m, snapshotMsg{snap: Snapshot{Version: 11, Agents: agents}})
+		r := sized(newModel(&fakeAPI{}).WithLayout(st), 34, 30)
+		r, _ = step(t, r, snapshotMsg{snap: Snapshot{Version: 12, Agents: agents}})
+		if m.folderOf("lea-a/kid") >= 0 || r.folderOf("lea-a/kid") >= 0 {
+			t.Fatalf("%s: respawn moved back: %+v / %+v", name, m.layout, r.layout)
 		}
 	}
 }
