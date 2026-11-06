@@ -425,3 +425,122 @@ func TestCodexLockCallOutlivesTheDefaultToolTimeout(t *testing.T) {
 		}
 	}
 }
+
+// envLockMCP is a stdio MCP server standing in for a Lock's client: on start it writes the
+// identity variables it was given to the file argv[1] names, then answers as a Lock with no tool.
+const envLockMCP = `
+import json, os, sys
+with open(sys.argv[1] + ".tmp", "w") as f:
+    json.dump({k: os.environ.get(k) for k in ("LEA_AGENT", "LEA_AGENT_TOKEN", "LEA_PROXY_TOKEN")}, f)
+os.rename(sys.argv[1] + ".tmp", sys.argv[1])
+def send(m):
+    sys.stdout.write(json.dumps(m) + "\n"); sys.stdout.flush()
+for line in sys.stdin:
+    try:
+        m = json.loads(line)
+    except ValueError:
+        continue
+    i, meth = m.get("id"), m.get("method")
+    if meth == "initialize":
+        send({"jsonrpc": "2.0", "id": i, "result": {"protocolVersion": m["params"].get("protocolVersion", "2025-06-18"),
+              "capabilities": {"tools": {}}, "serverInfo": {"name": "locksql", "version": "0"}}})
+    elif meth == "tools/list":
+        send({"jsonrpc": "2.0", "id": i, "result": {"tools": []}})
+    elif i is not None:
+        send({"jsonrpc": "2.0", "id": i, "result": {}})
+`
+
+// A Lock's MCP server started by the real Codex gets the agent's LEA_AGENT and LEA_AGENT_TOKEN
+// (#253): Codex clears an MCP server's environment, and lea's env_vars passes these two on, so
+// the Lock's client can name the requester of a call, a plan or a grant. Another variable of the
+// agent (LEA_PROXY_TOKEN) is not passed on.
+func TestCodexPassesTheAgentIdentityToALockServer(t *testing.T) {
+	codex := os.Getenv("LEA_E2E_CODEX")
+	if codex == "" {
+		t.Skip("LEA_E2E_CODEX is not set")
+	}
+	if _, err := exec.LookPath("python3"); err != nil {
+		t.Skip("no python3 for the pseudo-terminal and the fake Lock")
+	}
+	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		io.ReadAll(r.Body)
+		w.Header().Set("Content-Type", "text/event-stream")
+		for _, ev := range []string{
+			`{"type":"response.created","response":{"id":"resp_1"}}`,
+			`{"type":"response.output_item.done","item":{"type":"message","role":"assistant","id":"m1","content":[{"type":"output_text","text":"done"}]}}`,
+			`{"type":"response.completed","response":{"id":"resp_1","usage":{"input_tokens":1,"output_tokens":1,"total_tokens":2}}}`,
+		} {
+			var e struct{ Type string }
+			_ = json.Unmarshal([]byte(ev), &e)
+			io.WriteString(w, "event: "+e.Type+"\ndata: "+ev+"\n\n")
+		}
+	}))
+	defer up.Close()
+	dir := t.TempDir()
+	key := filepath.Join(dir, "key")
+	os.WriteFile(key, []byte("sk-e2e-secret\n"), 0o600)
+	upURL, _ := url.Parse(up.URL + "/v1")
+	fake := filepath.Join(dir, "fake-lock.py")
+	os.WriteFile(fake, []byte(envLockMCP), 0o600)
+	seen := filepath.Join(dir, "lock-env.json")
+
+	p := providers.Provider{Name: "llm", CLI: providers.Codex, Endpoint: &providers.Endpoint{URL: upURL, KeyFile: key},
+		Locks: []providers.Lock{{Name: "locksql", Instance: "orders", TimeoutSec: 1500}}}
+	wd := filepath.Join(dir, "projects")
+	os.Mkdir(wd, 0o755)
+	// The user's -c points the model at the fake upstream itself (the forwarder is not what this
+	// test is about) and the server at the fake client; its env_vars stays lea's.
+	user := []string{"-c", `model_providers.lea-llm.base_url="` + up.URL + `/v1"`,
+		"-c", `mcp_servers.locksql-orders.command="python3"`, "-c", `mcp_servers.locksql-orders.args=["-I","` + fake + `","` + seen + `"]`}
+	argv, err := p.Argv("dev-1", wd, "qwen3-coder", "", user, "say hi")
+	if err != nil {
+		t.Fatal(err)
+	}
+	const token = "0123456789abcdef0123456789abcdef"
+	if strings.Contains(strings.Join(argv, " "), token) {
+		t.Fatal("the token is in the argv")
+	}
+	cmd := exec.Command("python3", append([]string{"-I", "-c", ptyRun, "40", codex}, argv...)...)
+	cmd.Dir = wd
+	home := filepath.Join(dir, "home")
+	os.MkdirAll(filepath.Join(home, ".codex"), 0o700)
+	cmd.Env = []string{"PATH=" + os.Getenv("PATH"), "HOME=" + home, "CODEX_HOME=" + filepath.Join(home, ".codex"),
+		"TERM=xterm-256color", "LEA_BUS_SOCK=" + filepath.Join(dir, "no-bus.sock"), "NO_PROXY=*",
+		"LEA_AGENT=dev-1", "LEA_AGENT_TOKEN=" + token, "LEA_PROXY_TOKEN=proxy-secret"}
+	done := make(chan []byte, 1)
+	go func() { out, _ := cmd.CombinedOutput(); done <- out }()
+	deadline := time.After(35 * time.Second)
+	for {
+		if b, err := os.ReadFile(seen); err == nil {
+			endPty(cmd, done)
+			var env map[string]*string
+			if err := json.Unmarshal(b, &env); err != nil {
+				t.Fatalf("the fake Lock wrote %q: %v", b, err)
+			}
+			str := func(k string) string {
+				if env[k] == nil {
+					return "<unset>"
+				}
+				return *env[k]
+			}
+			if str("LEA_AGENT") != "dev-1" || str("LEA_AGENT_TOKEN") != token {
+				t.Fatalf("the Lock's MCP server got LEA_AGENT=%s LEA_AGENT_TOKEN=%s", str("LEA_AGENT"), str("LEA_AGENT_TOKEN"))
+			}
+			if env["LEA_PROXY_TOKEN"] != nil {
+				t.Fatalf("the Lock's MCP server got LEA_PROXY_TOKEN=%s", *env["LEA_PROXY_TOKEN"])
+			}
+			return
+		}
+		select {
+		case out := <-done:
+			t.Fatalf("codex ended before it started the Lock's MCP server:\n%s", ansi.ReplaceAll(out, nil))
+		case <-deadline:
+			out := endPty(cmd, done)
+			if len(out) > 4000 {
+				out = out[len(out)-4000:]
+			}
+			t.Fatalf("codex did not start the Lock's MCP server in 35 s; its screen ends with:\n%s", ansi.ReplaceAll(out, nil))
+		case <-time.After(200 * time.Millisecond):
+		}
+	}
+}
