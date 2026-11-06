@@ -578,3 +578,65 @@ func TestStatusReportNamesTheDeployWindow(t *testing.T) {
 		t.Fatalf("outside a tower's tree: %v", r)
 	}
 }
+
+// In a tower's tree a merge no grant pins is denied, whatever its form: it never reaches the deck,
+// where an "always" or a user's Bash(gh pr merge:*) rule would skip the production policy (#110).
+// Outside a tower's tree such a call takes the normal path, as before.
+func TestGrantCheckDeniesAnUngrantedMergeInATowersTree(t *testing.T) {
+	e := start(t)
+	tw := spawned(t, e, "tw", "tower", "")
+	lead := spawned(t, e, "lead", "lead", tw)
+	_, err := e.d.st.Register(store.NewAgent{Container: "lea-a", Name: "dev1", Profile: "claude", Workdir: "/p", Role: "dev", Parent: lead,
+		Repo: "shop", Branch: "fix/7"}, store.Caps{}, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := e.d.st.Register(store.NewAgent{Container: "lea-a", Name: "solo", Profile: "claude", Workdir: "/p", Role: "dev",
+		Repo: "shop", Branch: "fix/8"}, store.Caps{}, 1); err != nil {
+		t.Fatal(err)
+	}
+	check := func(agent, cwd, tool string, input any) map[string]any {
+		t.Helper()
+		var r map[string]any
+		in := map[string]any{"tool": tool, "input": input, "cwd": "/p/.lea/worktrees/shop/" + cwd, "env": map[string]string{"HOME": "/home/u"}}
+		if err := call(t, e.bus, agent, "grant_check", in, &r); err != nil {
+			t.Fatal(err)
+		}
+		return r
+	}
+	forms := []string{"gh pr merge 7 --squash", "gh api -X PUT repos/someone/shop/pulls/7/merge",
+		"gh api graphql -f query=mutation-mergePullRequest", "gh api graphql -F query=@merge.graphql",
+		"curl -X PUT https://api.github.com/repos/someone/shop/pulls/7/merge"}
+	// No merge grant at all: every form is denied in the tree, for the dev and the lead alike.
+	for _, cmd := range forms {
+		for _, who := range []struct{ name, cwd string }{{"dev1", "dev1"}, {"lead", "lead"}} {
+			r := check(who.name, who.cwd, "Bash", map[string]string{"command": cmd})
+			if r["verdict"] != "deny" || !strings.Contains(fmt.Sprint(r["reason"]), "matches no grant") {
+				t.Fatalf("%s %q: %v", who.name, cmd, r)
+			}
+		}
+		if r := check("solo", "solo", "Bash", map[string]string{"command": cmd}); r["verdict"] != "" {
+			t.Fatalf("solo %q: %v", cmd, r)
+		}
+	}
+	if r := check("dev1", "dev1", "mcp__github__merge_pull_request", map[string]any{"pullNumber": 7}); r["verdict"] != "deny" {
+		t.Fatalf("MCP merge: %v", r)
+	}
+	// A call that is no merge keeps the normal path.
+	if r := check("dev1", "dev1", "Bash", map[string]string{"command": "gh pr view 7 --json mergeable"}); r["verdict"] != "" {
+		t.Fatalf("pr view: %v", r)
+	}
+	// With the tree's merge grant, gh pr merge N is pinned under the policy; the API forms stay denied.
+	if _, err := e.d.st.AddGrant(grants.Grant{Container: "lea-a", Action: grants.Merge, Repo: "shop", GitHub: "github.com/someone/shop",
+		Created: 1, Expires: grants.Standing}); err != nil {
+		t.Fatal(err)
+	}
+	if r := check("dev1", "dev1", "Bash", map[string]string{"command": forms[0]}); r["verdict"] != "allow" || !strings.Contains(fmt.Sprint(r["command"]), "lea_isprod") {
+		t.Fatalf("granted merge: %v", r)
+	}
+	for _, cmd := range forms[1:] {
+		if r := check("dev1", "dev1", "Bash", map[string]string{"command": cmd}); r["verdict"] != "deny" {
+			t.Fatalf("granted tree, %q: %v", cmd, r)
+		}
+	}
+}

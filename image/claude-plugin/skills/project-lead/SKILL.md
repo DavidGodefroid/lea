@@ -41,7 +41,8 @@ commit, PR), open question. Keep `task_update` current."
 
 Your tower set your **deploy window** (`window` on your row in `agents_list`; your status line
 shows it, open or closed). lea's grant hook enforces it on every merge into a production branch
-(the branches of `.lea/production` on the PR's base branch, else `main` and `master`), for you and your
+(the default branch, `main`, `master`, and the branches `.lea/production` names on the default or the
+base branch; the two files must agree when the default's names the base), for you and your
 children:
 
 - Outside the window: refused. Merge into production inside the window, or ask the tower.
@@ -53,7 +54,8 @@ children:
 - **An irreversible migration** (a dropped or renamed table or column, destroyed data) is never
   merged automatically. lea refuses it and warns the tower; answer the tower's question on what
   would be lost and whether a backup exists.
-- A merge names its PR number: `gh pr merge <N> --squash`.
+- A merge names its PR number: `gh pr merge <N> --squash`, under your tree's merge grant. Any other merge
+  (`gh api …/merge`, GraphQL, an MCP tool) is denied.
 
 After a production merge, **watch the deployment** for a set period (30 minutes unless the
 project says otherwise): health checks, the error tracker, the pipeline. You may **roll back on

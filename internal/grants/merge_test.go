@@ -2,9 +2,11 @@ package grants
 
 import (
 	"context"
+	"encoding/json"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -53,20 +55,28 @@ func TestParseWindowAndOpen(t *testing.T) {
 	}
 }
 
-// fakeGH answers the policy's gh calls from files in its directory: pr.json (the PR view), the
-// production file (production.<ref> on that ref, else production on any ref; absent: a 404), the
-// sensitive file (absent: a 404), files.txt (the API's files, jq-applied by the
-// fake as the policy expects: one "F path" line per file and the added lines).
+// fakeGH answers the policy's gh calls from files in its directory: base.txt (the PR view),
+// default.txt (the repository's default branch), the .lea files (production.<ref> or
+// sensitive.<ref> on that ref, else production or sensitive on any ref; absent: a 404, as gh
+// reports it), files.txt (the API's files, jq-applied by the fake as the policy expects: "F path"
+// per file, "P path" per previous name, "N path" per file without a patch, and the added lines).
+// err.<what> makes that call fail with a non-404 error (err.default, err.production.<ref>,
+// err.sensitive.<ref>).
 const fakeGH = `#!/bin/sh
 d=$(dirname "$0")
 echo "$*" >> "$d/gh.log"
+lea_file() {
+  ref=${2##*ref=}
+  if [ -f "$d/err.$1.$ref" ]; then echo "gh: Server Error (HTTP 502)" >&2; exit 1; fi
+  if [ -f "$d/$1.$ref" ]; then cat "$d/$1.$ref"; elif [ -f "$d/$1" ]; then cat "$d/$1"
+  else echo '{"message":"Not Found"}'; echo "gh: Not Found (HTTP 404)" >&2; exit 1; fi
+}
 case "$*" in
-  "pr view 7 --json baseRefName,headRefOid "*) cat "$d/base.txt" ;;
+  "pr view 7 --json baseRefName,headRefOid,changedFiles "*) cat "$d/base.txt" ;;
   "pr view 7 --json statusCheckRollup "*) cat "$d/ci.txt" ;;
-  "api -X GET -H Accept: application/vnd.github.raw repos/someone/shop/contents/.lea/production -f ref="*)
-    ref=${*##*ref=}
-    if [ -f "$d/production.$ref" ]; then cat "$d/production.$ref"; elif [ -f "$d/production" ]; then cat "$d/production"; else exit 1; fi ;;
-  "api -X GET -H Accept: application/vnd.github.raw repos/someone/shop/contents/.lea/sensitive -f ref="*) [ -f "$d/sensitive" ] && cat "$d/sensitive" || exit 1 ;;
+  "api repos/someone/shop --jq .default_branch") [ -f "$d/err.default" ] && { echo "gh: API rate limit exceeded (HTTP 403)" >&2; exit 1; }; cat "$d/default.txt" ;;
+  "api -X GET -H Accept: application/vnd.github.raw repos/someone/shop/contents/.lea/production -f ref="*) lea_file production "$*" ;;
+  "api -X GET -H Accept: application/vnd.github.raw repos/someone/shop/contents/.lea/sensitive -f ref="*) lea_file sensitive "$*" ;;
   "api --paginate repos/someone/shop/pulls/7/files "*) cat "$d/files.txt" ;;
   *) echo "unexpected gh $*" >&2; exit 3 ;;
 esac
@@ -79,16 +89,22 @@ d=$(dirname "$0")
 
 type policyCase struct {
 	base, ci, files, production, sensitive string
-	// productionAt are .lea/production files on given refs (production.<ref>).
-	productionAt map[string]string
-	policy       MergePolicy
+	// def is the repository's default branch ("" main).
+	def string
+	// productionAt and sensitiveAt are .lea files on given refs (production.<ref>).
+	productionAt, sensitiveAt map[string]string
+	// changed is the PR's count of changed files (0: the F lines of files).
+	changed int
+	// errs are the calls that fail with a non-404 error (fakeGH's err.<what>).
+	errs   []string
+	policy MergePolicy
 }
 
 const headSHA = "0123456789abcdef0123456789abcdef01234567"
 
 func runPolicy(t *testing.T, c policyCase) (out string, merged bool, dir string) {
 	t.Helper()
-	for _, p := range []string{shPath, envPath, grepPath, headPath} {
+	for _, p := range []string{shPath, envPath, grepPath, headPath, trPath, mktempPath, rmPath} {
 		if _, err := os.Stat(p); err != nil {
 			t.Skipf("%s: %v", p, err)
 		}
@@ -99,9 +115,22 @@ func runPolicy(t *testing.T, c policyCase) (out string, merged bool, dir string)
 			t.Fatal(err)
 		}
 	}
+	changed := c.changed
+	if changed == 0 {
+		for _, l := range strings.Split(c.files, "\n") {
+			if strings.HasPrefix(l, "F ") {
+				changed++
+			}
+		}
+	}
+	def := c.def
+	if def == "" {
+		def = "main"
+	}
 	write("gh", fakeGH, 0o755)
 	write("lea", fakeLea, 0o755)
-	write("base.txt", c.base+" "+headSHA+"\n", 0o644)
+	write("base.txt", c.base+" "+headSHA+" "+strconv.Itoa(changed)+"\n", 0o644)
+	write("default.txt", def+"\n", 0o644)
 	write("ci.txt", c.ci+"\n", 0o644)
 	write("files.txt", c.files, 0o644)
 	if c.production != "" {
@@ -112,6 +141,12 @@ func runPolicy(t *testing.T, c policyCase) (out string, merged bool, dir string)
 	}
 	if c.sensitive != "" {
 		write("sensitive", c.sensitive, 0o644)
+	}
+	for ref, body := range c.sensitiveAt {
+		write("sensitive."+ref, body, 0o644)
+	}
+	for _, e := range c.errs {
+		write("err."+e, "", 0o644)
 	}
 	script := mergePolicyScript("7", "github.com/someone/shop", c.policy) + `echo "MERGED $lea_head"` + "\n"
 	script = strings.ReplaceAll(script, "'"+ghPath+"'", "'"+filepath.Join(dir, "gh")+"'")
@@ -148,7 +183,10 @@ func TestMergePolicyScript(t *testing.T) {
 		{"no window", policyCase{base: "main", ci: green, files: plain, policy: MergePolicy{Lead: "lead-shop"}}, false, "has no deploy window"},
 		{"low risk inside the window", policyCase{base: "main", ci: green, files: plain, policy: open}, true, ""},
 		{"a production file names the branch", policyCase{base: "release", ci: green, files: plain, production: "release\n", policy: closed}, false, "outside the deploy window"},
-		{"main is not production when the file says so", policyCase{base: "main", ci: "not green", files: plain, production: "release\n", policy: closed}, true, ""},
+		// main, master and the default branch are production whatever .lea/production says.
+		{"main stays production when the file names another branch", policyCase{base: "main", ci: "not green", files: plain, production: "release\n", policy: closed}, false, "outside the deploy window"},
+		{"master is production", policyCase{base: "master", def: "develop", ci: green, files: plain, policy: closed}, false, "outside the deploy window"},
+		{"the default branch is production", policyCase{base: "develop", def: "develop", ci: green, files: plain, production: "release\n", policy: closed}, false, "outside the deploy window"},
 		{"no approval", policyCase{base: "main", ci: green, files: plain, policy: MergePolicy{Lead: "l", Window: "w", Open: true}}, false, "no reviewer agent approved"},
 		{"approval of another head", policyCase{base: "main", ci: green, files: plain,
 			policy: MergePolicy{Lead: "l", Window: "w", Open: true, Approved: []string{strings.Repeat("a", 40)}}}, false, "at its head " + headSHA},
@@ -168,8 +206,42 @@ func TestMergePolicyScript(t *testing.T) {
 		{"a CRLF production file naming another branch", policyCase{base: "release", ci: green, files: plain, productionAt: map[string]string{"release": "# prod\r\n release \r\n"}, policy: closed}, false, "outside the deploy window"},
 		{"the default branch's production file does not apply", policyCase{base: "main", ci: "not green", files: plain,
 			productionAt: map[string]string{"develop": "\n", "main": "main\n"}, policy: closed}, false, "outside the deploy window"},
-		{"the default branch's file does not make main production", policyCase{base: "main", ci: "not green", files: plain,
-			productionAt: map[string]string{"develop": "main\n", "main": "release\n"}, policy: closed}, true, ""},
+		// The default branch's list is the trusted one: a base branch cannot drop its own protection.
+		{"the default branch's list names the base, the base's file is missing", policyCase{base: "release", def: "develop", ci: green, files: plain,
+			productionAt: map[string]string{"develop": "release\n"}, policy: open}, false, "missing or differs"},
+		{"the default branch's list names the base, the base's file differs", policyCase{base: "release", def: "develop", ci: green, files: plain,
+			productionAt: map[string]string{"develop": "release\n", "release": "staging\n"}, policy: open}, false, "missing or differs"},
+		{"the base's file removed its own name", policyCase{base: "release", def: "develop", ci: green, files: plain,
+			productionAt: map[string]string{"develop": "release\nstaging\n", "release": "staging\n"}, policy: open}, false, "missing or differs"},
+		{"both lists agree", policyCase{base: "release", def: "develop", ci: green, files: plain,
+			productionAt: map[string]string{"develop": "# prod\nrelease\n", "release": "release\r\n"}, policy: closed}, false, "outside the deploy window"},
+		{"both lists agree, inside the window", policyCase{base: "release", def: "develop", ci: green, files: plain,
+			productionAt: map[string]string{"develop": "release\n", "release": "release\n"}, policy: open}, true, ""},
+		{"the base's own list still counts", policyCase{base: "release", def: "develop", ci: green, files: plain,
+			productionAt: map[string]string{"release": "release\n"}, policy: closed}, false, "outside the deploy window"},
+		{"a branch no list names is not production", policyCase{base: "staging", def: "develop", ci: "not green", files: plain,
+			productionAt: map[string]string{"develop": "release\n", "release": "release\n"}, policy: closed}, true, ""},
+		// Any forge error but a 404 refuses the merge, production branch or not.
+		{"the default branch cannot be read", policyCase{base: "staging", ci: green, files: plain, errs: []string{"default"}, policy: open}, false, "cannot read the default branch"},
+		{"the default branch's production file: an API error", policyCase{base: "staging", def: "develop", ci: green, files: plain,
+			productionAt: map[string]string{"staging": "\n"}, errs: []string{"production.develop"}, policy: open}, false, "cannot read .lea/production (not a 404) on the default branch develop"},
+		{"the base's production file: an API error", policyCase{base: "release", def: "develop", ci: green, files: plain,
+			productionAt: map[string]string{"develop": "release\n"}, errs: []string{"production.release"}, policy: open}, false, "cannot read .lea/production (not a 404) on the base branch release"},
+		{"the sensitive file: an API error", policyCase{base: "main", ci: green, files: plain, errs: []string{"sensitive.main"}, policy: open}, false, "cannot read .lea/sensitive (not a 404) on the base branch main"},
+		{"the sensitive file: a 404 is the defaults", policyCase{base: "main", ci: green, files: files("F src/Payment.go"), policy: open}, false, "src/payment.go"},
+		// What lea could not read fails closed.
+		{"a file without a patch", policyCase{base: "main", ci: green, files: files("F db/big.sql", "N db/big.sql", "F src/x.go", "+x"), sensitive: "nothing/*\n", policy: open},
+			false, "shows no diff of a file of PR 7 (large, binary or a pure rename), so lea cannot check it for an irreversible migration; it goes to your tower: db/big.sql"},
+		{"a deleted file without a patch", policyCase{base: "main", ci: green, files: files("F db/old.bin"), sensitive: "nothing/*\n", policy: open}, true, ""},
+		{"a truncated file list", policyCase{base: "main", ci: green, files: plain, changed: 3001, sensitive: "nothing/*\n", policy: open}, false, "files listed/changed 1/3001"},
+		{"no file count", policyCase{base: "main", ci: green, files: plain, changed: -1, policy: open}, false, "has no count of changed files"},
+		// Case-insensitive, trimmed sensitive patterns; the old name of a renamed file counts.
+		{"a mixed-case default path", policyCase{base: "main", ci: green, files: files("F src/Auth/Login.go", "+x"), policy: open}, false, "src/auth/login.go"},
+		{"a mixed-case Dockerfile", policyCase{base: "main", ci: green, files: files("F DOCKERFILE.prod"), policy: open}, false, "dockerfile.prod"},
+		{"a mixed-case pattern", policyCase{base: "main", ci: green, files: files("F BILLING/x.go"), sensitive: "Billing/*\n", policy: open}, false, "billing/x.go"},
+		{"a pattern with blanks", policyCase{base: "main", ci: green, files: files("F billing/x.go"), sensitive: "  billing/*\t \n", policy: open}, false, "billing/x.go"},
+		{"lea's files, mixed case", policyCase{base: "main", ci: green, files: files("F .LEA/production"), sensitive: "nothing/*\n", policy: open}, false, ".lea/production"},
+		{"a file renamed away from a sensitive path", policyCase{base: "main", ci: green, files: files("F src/x.go", "P src/auth/old.go"), policy: open}, false, "src/auth/old.go"},
 		{"a CRLF sensitive list", policyCase{base: "main", ci: green, files: files("F billing/x.go"), sensitive: "# ours\r\nbilling/*\r\n", policy: open}, false, "billing/x.go"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -253,5 +325,40 @@ func TestCommandAppliesTheMergePolicy(t *testing.T) {
 	}
 	if MergeNumber(Request{Action: Merge, Args: []string{"pr", "merge", "7"}}) != "7" || MergeNumber(Request{Action: Merge, Args: []string{"pr", "merge", "x"}}) != "" {
 		t.Fatal("MergeNumber")
+	}
+}
+
+// MergeAttempt sees a merge in every form a tower's tree must not run without a grant, and no
+// merge in commands that only read or name merges.
+func TestMergeAttempt(t *testing.T) {
+	bash := func(cmd string) json.RawMessage {
+		b, _ := json.Marshal(map[string]string{"command": cmd})
+		return b
+	}
+	for _, cmd := range []string{
+		"gh pr merge 7", "gh pr merge 7 --squash --auto", "gh pr -R someone/shop merge 7", "cd x && gh pr merge fix/7",
+		`gh pr "merge" 7`, "glab mr merge 3", "gh alias set pm 'pr merge'",
+		"gh api -X PUT repos/someone/shop/pulls/7/merge", `gh api --method PUT "/repos/someone/shop/pulls/$N/merge"`,
+		"curl -X PUT https://api.github.com/repos/someone/shop/pulls/7/merge", "gh api repos/someone/shop/merges -f base=main -f head=dev",
+		`gh api graphql -f query='mutation { mergePullRequest(input: {pullRequestId: "x"}) { clientMutationId } }'`,
+		`gh api graphql -f query='mutation { enablePullRequestAutoMerge(input: {pullRequestId: "x"}) { clientMutationId } }'`,
+		"gh api graphql -F query=@q.graphql", "gh api graphql --input q.json",
+		"glab api -X PUT projects/1/merge_requests/3/merge",
+	} {
+		if !MergeAttempt("Bash", bash(cmd)) {
+			t.Errorf("%q: not seen as a merge", cmd)
+		}
+	}
+	for _, cmd := range []string{
+		"gh pr view 7 --json mergeable,mergedAt", "gh pr list --search is:merged", "git merge origin/main", "git log --merges",
+		"gh pr checkout 7 && git merge main", "gh api repos/someone/shop/pulls/7", "gh api graphql -f query='{ viewer { login } }'",
+	} {
+		if MergeAttempt("Bash", bash(cmd)) {
+			t.Errorf("%q: seen as a merge", cmd)
+		}
+	}
+	if !MergeAttempt("mcp__github__merge_pull_request", json.RawMessage(`{}`)) || MergeAttempt("mcp__lea__merge_blocked", json.RawMessage(`{}`)) ||
+		MergeAttempt("Read", json.RawMessage(`{"file_path":"merge"}`)) {
+		t.Fatal("MCP and other tools")
 	}
 }

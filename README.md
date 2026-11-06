@@ -625,16 +625,20 @@ owners whose repositories it takes charge of), each lead follows the `/lea:proje
 and runs its own team, and the tower brings you only the decisions that are yours, one question at
 a time. The tower gives each lead a deploy window (`lead_window`, e.g.
 `mon-sun 21:30-23:59 Europe/Brussels`): lea's grant hook refuses a merge by that lead or its team
-into a production branch (`.lea/production` on the PR's base branch, one per line, else `main` and `master`) outside
+into a production branch (the repository's default branch, `main`, `master`, and the branches `.lea/production` names
+on the default branch or on the PR's base branch, one per line; when the default branch's list names the base branch,
+the base branch's own file must list the same branches, or the merge is refused) outside
 the window, and inside it lets through only a low-risk PR: CI green on its head, a reviewer
 agent's approval of that head (`review_approve`), and no file matching the repository's
 `.lea/sensitive` patterns (lea's defaults without it: migrations, auth, payment, secrets, infra,
-CI). A PR holding an irreversible migration (a dropped or renamed table or column, destroyed data;
+CI; paths and patterns compared lower-cased), and no file GitHub shows no diff of. Any error reading GitHub but a 404
+of a `.lea` file refuses the merge. A PR holding an irreversible migration (a dropped or renamed table or column, destroyed data;
 SQL and the Rails, Knex, Alembic, Django and Laravel equivalents)
 is never merged automatically, and the tower gets a dedicated warning to put to you. These checks
 run in the pinned `gh pr merge <N>` a merge grant allows (lea reads the PR from GitHub just before
 merging, and merges only the head it checked); in a tower's tree a merge that names no PR number,
-or a GitLab merge, is refused.
+or a GitLab merge, is refused, and so is any merge no grant pins (`gh pr merge` without a grant,
+`gh api …/pulls/N/merge`, GraphQL `mergePullRequest`, an MCP merge tool), whatever the deck or a user rule allows.
 
 The tower never does the work itself, not even a `git push`: every request goes to an agent. The
 plugin enforces it with a hook: once `/lea:control-tower` runs, the session may only use lea's

@@ -355,6 +355,7 @@ func (d *Daemon) grantCheck(o Origin, me string, raw json.RawMessage) (any, erro
 		return nil, err
 	}
 	finished := p.Tool == grants.StopTool && d.finishedChild(o, me, p.Input)
+	tower, _ := d.towerOf(c.Lineage)
 	var policy *grants.MergePolicy
 	if _, req, ok := grants.Classify(p.Tool, p.Input, c); ok && req.Action == grants.Merge {
 		// A tower's tree merges into production only inside its lead's window, and only a
@@ -370,6 +371,15 @@ func (d *Daemon) grantCheck(o Origin, me string, raw json.RawMessage) (any, erro
 	dec := grants.Decide(p.Tool, p.Input, c, gs, now, finished)
 	if dec.Verdict == grants.Allow && policy != nil {
 		d.merges.add(me, grants.MergeNumber(dec.Request), now)
+	}
+	if dec.Verdict == "" && tower != "" && grants.MergeAttempt(p.Tool, p.Input) {
+		// In a tower's tree a merge runs only as a grant pins it, under the production-merge
+		// policy (#110): a merge no grant covers (gh pr merge N without one, gh api …/merge,
+		// GraphQL mergePullRequest, an MCP merge tool) never reaches the deck, where an "always"
+		// or a user's Bash(gh pr merge:*) rule would skip the policy.
+		dec = grants.Decision{Verdict: grants.Deny, Reason: "lea: in a tower's tree a merge runs only through the merge grant of the tower's tree " +
+			"(gh pr merge N, which lea pins and checks against the production-merge policy: deploy window, CI, review, sensitive paths); " +
+			"this merge matches no grant, so it is denied: use gh pr merge N under that grant, or ask your lead or tower"}
 	}
 	if dec.Verdict == "" {
 		// A push no grant rewrote runs as the agent wrote it: its bare branch must not be a tag.
