@@ -245,8 +245,8 @@ func TestArgvCodexLockServers(t *testing.T) {
 	}
 	j := strings.Join(got, " ")
 	for _, w := range []string{
-		`-c mcp_servers.locksql.command="/usr/local/bin/locksql" -c mcp_servers.locksql.args=["mcp"] -c mcp_servers.locksql.tool_timeout_sec=1500 -c mcp_servers.locksql.default_tools_approval_mode="approve"`,
-		`-c mcp_servers.lockfile.command="/usr/local/bin/lockfile" -c mcp_servers.lockfile.args=["mcp"] -c mcp_servers.lockfile.tool_timeout_sec=900 -c mcp_servers.lockfile.default_tools_approval_mode="approve"`,
+		`-c mcp_servers.locksql.command="/usr/local/bin/locksql" -c mcp_servers.locksql.args=["mcp"] -c mcp_servers.locksql.env_vars=["LEA_AGENT","LEA_AGENT_TOKEN"] -c mcp_servers.locksql.tool_timeout_sec=1500 -c mcp_servers.locksql.default_tools_approval_mode="approve"`,
+		`-c mcp_servers.lockfile.command="/usr/local/bin/lockfile" -c mcp_servers.lockfile.args=["mcp"] -c mcp_servers.lockfile.env_vars=["LEA_AGENT","LEA_AGENT_TOKEN"] -c mcp_servers.lockfile.tool_timeout_sec=900 -c mcp_servers.lockfile.default_tools_approval_mode="approve"`,
 	} {
 		if !strings.Contains(j, w) {
 			t.Errorf("missing %s in %s", w, j)
@@ -279,8 +279,8 @@ func TestArgvCodexLockServerPerInstance(t *testing.T) {
 	}
 	j := strings.Join(got, " ")
 	for _, w := range []string{
-		`-c mcp_servers.locksql-orders.command="/usr/local/bin/locksql" -c mcp_servers.locksql-orders.args=["mcp","--instance","orders"] -c mcp_servers.locksql-orders.tool_timeout_sec=1500 -c mcp_servers.locksql-orders.default_tools_approval_mode="approve"`,
-		`-c mcp_servers.locksql-stock.command="/usr/local/bin/locksql" -c mcp_servers.locksql-stock.args=["mcp","--instance","stock"] -c mcp_servers.locksql-stock.tool_timeout_sec=1500 -c mcp_servers.locksql-stock.default_tools_approval_mode="approve"`,
+		`-c mcp_servers.locksql-orders.command="/usr/local/bin/locksql" -c mcp_servers.locksql-orders.args=["mcp","--instance","orders"] -c mcp_servers.locksql-orders.env_vars=["LEA_AGENT","LEA_AGENT_TOKEN"] -c mcp_servers.locksql-orders.tool_timeout_sec=1500 -c mcp_servers.locksql-orders.default_tools_approval_mode="approve"`,
+		`-c mcp_servers.locksql-stock.command="/usr/local/bin/locksql" -c mcp_servers.locksql-stock.args=["mcp","--instance","stock"] -c mcp_servers.locksql-stock.env_vars=["LEA_AGENT","LEA_AGENT_TOKEN"] -c mcp_servers.locksql-stock.tool_timeout_sec=1500 -c mcp_servers.locksql-stock.default_tools_approval_mode="approve"`,
 	} {
 		if !strings.Contains(j, w) {
 			t.Errorf("missing %s in %s", w, j)

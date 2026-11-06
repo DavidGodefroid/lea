@@ -84,7 +84,7 @@ jobs:
         with:
           node-version: 22
       - run: npm install -g --ignore-scripts "@openai/codex@$(sed -n 's/^ARG CODEX_VERSION=//p' image/Containerfile)"
-      - run: LEA_E2E_CODEX="$(command -v codex)" go test -count=1 -run 'TestCodex(ReachesAnEndpointThroughTheForwarder|IgnoresAPlantedProjectConfig|LockCallOutlivesTheDefaultToolTimeout)' -v ./internal/providers/
+      - run: LEA_E2E_CODEX="$(command -v codex)" go test -count=1 -run 'TestCodex(ReachesAnEndpointThroughTheForwarder|IgnoresAPlantedProjectConfig|LockCallOutlivesTheDefaultToolTimeout|PassesTheAgentIdentityToALockServer)' -v ./internal/providers/
   # The agent-side isolation (tests/integration/isolation.sh, I2/I11): from inside a real lea, no
   # decoy, host port or sibling lea is reachable, .lockfamily is read-only (EROFS) and the hub's
   # facade socket is not visible. The two images come from the GitHub Actions cache when unchanged.
