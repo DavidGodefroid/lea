@@ -176,6 +176,25 @@ jobs:
             sed -e "s|@ABI@|$abi|" -e "s|^@USERNS@\$|$userns|" apparmor/lea.tmpl | sudo tee /etc/apparmor.d/lea >/dev/null
             sudo apparmor_parser -r /etc/apparmor.d/lea
           fi
+      - name: PROBE (temporary) which docker run flags the runtime accepts
+        if: matrix.runtime == 'kata'
+        run: |
+          t=$(mktemp -d); mkfifo "$t/fifo"; : >"$t/file"; mkdir "$t/dir"
+          p() { n=$1; shift; if out=$(timeout 120 docker run --rm --runtime kata "$@" lea:dev true 2>&1); then echo "PROBE ok   $n"; else echo "PROBE FAIL $n: $(printf '%s' "$out" | head -c 300)"; fi; }
+          p plain --entrypoint true
+          p init --init --entrypoint true
+          p fuse --device /dev/fuse --entrypoint true
+          p tun --device /dev/net/tun --entrypoint true
+          p seccomp --security-opt seccomp=$PWD/image/seccomp.json --entrypoint true
+          p apparmor --security-opt apparmor=lea --entrypoint true
+          p caps --cap-drop NET_RAW --cap-drop MKNOD --cap-drop AUDIT_WRITE --entrypoint true
+          p dirbind --mount type=bind,src=$t/dir,dst=/x --entrypoint true
+          p filebind --mount type=bind,src=$t/file,dst=/x --entrypoint true
+          p filebind-ro --mount type=bind,src=$t/file,dst=/x,readonly --entrypoint true
+          p fifobind --mount type=bind,src=$t/fifo,dst=/x --entrypoint true
+          p volume --mount type=volume,src=lea-probe-vol,dst=/lea/podman --entrypoint true
+          p limits --cpus 2 --memory 4096m --memory-swap 4096m --pids-limit 16384 --entrypoint true
+          docker volume rm lea-probe-vol >/dev/null 2>&1 || true
       - name: make test-isolation on ${{ matrix.runtime }}, every check run
         shell: bash
         env:

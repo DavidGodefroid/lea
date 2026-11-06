@@ -27,7 +27,10 @@ fi
 mustnt "no host Docker socket"                 test -S /var/run/docker.sock
 mustnt "no host Docker socket (/run)"          test -S /run/docker.sock
 must   "docker is the nested Podman"            sh -c 'docker version 2>/dev/null | grep -qi podman'
-must   "a nested container runs"                docker run --rm busybox:1.37 true
+# Its engine's output goes to a log, shown when it fails.
+runlog=$(mktemp)
+if docker run --rm busybox:1.37 true >"$runlog" 2>&1; then ok "a nested container runs"; else ko "a nested container runs"; sed 's/^/     | /' "$runlog"; fi
+rm -f "$runlog"
 mustnt "decoy unreachable directly"             curl -s --max-time 5 --noproxy '*' "http://$CANARY_IP/"
 mustnt "decoy unreachable through the proxy"    curl -sf --max-time 5 "http://$CANARY_IP/"
 mustnt "host port unreachable via the bridge"   curl -s --max-time 5 --noproxy '*' "http://$GW_IP:18080/"
@@ -104,17 +107,19 @@ must   "the Claude API answers through the proxy" sh -c 'c=$(curl -s --max-time 
 # the nested Podman cannot create one (README, Known limitations): netavark writes
 # net/ipv4/conf/<bridge>/route_localnet in the rootless network namespace, whose value comes from
 # the host's net.ipv4.conf.default (1 is needed, 0 is the usual default), and Docker mounts
-# /proc/sys read-only. Its engine's output goes to a log, shown when it fails.
+# /proc/sys read-only. Port 8080: under gVisor the nested containers share lea's network namespace
+# (image/entrypoint), where an unprivileged user binds no port below 1024. Its engine's output goes
+# to a log, shown when it fails.
 # shellcheck disable=SC2317,SC2329 # run by must
 nested_http() (
   exec 2>>"$1"
-  docker run -d --rm --name lea-it-web busybox:1.37 sh -c 'mkdir -p /w && echo hi >/w/index.html && httpd -f -p 80 -h /w' >&2
+  docker run -d --rm --name lea-it-web busybox:1.37 sh -c 'mkdir -p /w && echo hi >/w/index.html && httpd -f -p 8080 -h /w' >&2
   rc=1
   for _ in 1 2 3 4 5; do
     if docker run --rm --network container:lea-it-web busybox:1.37 sh -c '
       a=$(ip -4 -o addr show scope global | awk "{ print \$4 }" | cut -d/ -f1 | head -n 1)
       echo "address: ${a:-none}; HTTP proxy: ${http_proxy:-${HTTP_PROXY:-none}}" >&2
-      [ -z "${http_proxy:-}${HTTP_PROXY:-}" ] && [ -n "$a" ] && wget -T 10 -qO- "http://$a/"' | grep -qx hi; then rc=0; break; fi
+      [ -z "${http_proxy:-}${HTTP_PROXY:-}" ] && [ -n "$a" ] && wget -T 10 -qO- "http://$a:8080/"' | grep -qx hi; then rc=0; break; fi
     sleep 1
   done
   docker rm -f -t 0 lea-it-web >/dev/null 2>&1
