@@ -210,7 +210,7 @@ func TestWriteConf(t *testing.T) {
 	for _, want := range []string{"set -g prefix None", "set -g remain-on-exit on", "set -g set-clipboard off",
 		"bind-key -n C-Space", "set-hook -g window-resized", `#{@lea_deck_width}`,
 		"set -gqu remain-on-exit-format", "'#{&&:#{!=:#{@lea_role},deck},#{!=:#{@lea_role},lock}}' 'copy-mode -H -e'",
-		"'#{!=:#{@lea_role},lock}' 'copy-mode -H -M'", `if [ "#{@lea_role}" = lock ]; then :; elif`} {
+		"'#{!=:#{@lea_role},lock}' 'copy-mode -H -M ; lea-drag-scroll'", `if [ "#{@lea_role}" = lock ]; then :; elif`} {
 		if !strings.Contains(Conf(), want) {
 			t.Fatalf("config lacks %q", want)
 		}
