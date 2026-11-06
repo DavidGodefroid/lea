@@ -14,6 +14,7 @@ import (
 
 	"github.com/DavidGodefroid/lea/internal/launcher"
 	"github.com/DavidGodefroid/lea/internal/providers"
+	"github.com/DavidGodefroid/lea/internal/tmux"
 )
 
 // Kind is how a setting is edited.
@@ -87,6 +88,9 @@ var catalog = []Setting{
 		Help: "agents can copy to your host clipboard"},
 	{Key: "LEA_AUTOUPDATE", Group: "Updates", Name: "Auto-update", Kind: Toggle, Default: "1", Apply: ApplyNextStart,
 		Help: "look for a new release once a day, active at the next lea"},
+	{Key: "LEA_DECK_WIDTH", Group: "Deck", Name: "Deck width", Kind: Text, Default: strconv.Itoa(tmux.DeckWidth),
+		Apply: ApplyNow, Live: true,
+		Help: "the deck column's width, its border included (24 to 60, at most half the window); < and > in the deck move it, its border drags it", check: deckWidth},
 }
 
 // Store reads and writes the settings of the lea installed at Root, for the deck run from Cwd
@@ -166,6 +170,11 @@ func (s Store) Set(key, value string) error {
 	}
 	if err := d.validate(value); err != nil {
 		return err
+	}
+	if key == "LEA_DECK_WIDTH" {
+		// A number out of the bounds is clamped, never refused.
+		n, _ := strconv.Atoi(value)
+		value = strconv.Itoa(tmux.ClampDeckWidth(n, 0))
 	}
 	c, _, err := s.load()
 	if err != nil {
@@ -257,6 +266,15 @@ func seconds(v string) error {
 	n, err := strconv.Atoi(v)
 	if err != nil || strings.Trim(v, "0123456789") != "" || v[0] == '0' || n < 1 || n > 600 {
 		return fmt.Errorf("the approval timeout is a number of seconds from 1 to 600, not %q", v)
+	}
+	return nil
+}
+
+// deckWidth is the deck column's width: a number of columns, clamped to the bounds when set.
+func deckWidth(v string) error {
+	n, err := strconv.Atoi(v)
+	if err != nil || strings.Trim(v, "0123456789") != "" || v[0] == '0' || n < 1 {
+		return fmt.Errorf("the deck width is a number of columns from %d to %d without leading zeros, not %q", tmux.DeckWidthMin, tmux.DeckWidthMax, v)
 	}
 	return nil
 }

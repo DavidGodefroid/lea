@@ -117,6 +117,8 @@ jobs:
   # facade socket is not visible. The two images come from the GitHub Actions cache when unchanged.
   isolation:
     runs-on: ubuntu-latest
+    # actions: read: gh run view --log inside lea (#103), with the workflow's token.
+    permissions: { contents: read, actions: read }
     timeout-minutes: 40
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
@@ -153,10 +155,17 @@ jobs:
           fi
       - name: make test-isolation, every check run
         shell: bash
+        # gh and git in lea with the token in the proxy only (#103): the workflow's own token.
+        env:
+          LEA_IT_GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           make test-isolation 2>&1 | tee isolation.log
           if grep -E '^FAIL |^note: ' isolation.log; then echo "an isolation check failed or was skipped" >&2; exit 1; fi
           for c in '.lockfamily write gets EROFS' 'host facade socket not visible' 'no facade socket in the container' 'sibling lea unreachable directly' 'host port unreachable via host IP' 'public HTTPS works through the proxy' 'nested HTTP between containers is direct' \
+                   'the GitHub token moved to the proxy' 'the GitHub token left the agents'"'"' state' 'no GitHub token readable in /lea/state or ~' \
+                   'no copy of the GitHub token readable' 'the GitHub relay runs as nobody' 'gh api works with the token added by the proxy' \
+                   "git reaches github.com through the proxy's forwarder" 'gh run view --log follows the redirect to its own host' \
+                   "gh: a call off lea's allowlist is refused" "gh: a GraphQL mutation off lea's allowlist is refused" \
                    'proxy confined: CapDrop' 'proxy confined: ReadonlyRootfs' 'proxy confined: no root process but PID 1' \
                    'a nested image builds' 'a nested container reaches the proxy over pasta' 'unprivileged user namespace (rootless Podman needs it)' \
                    'keyctl refused (seccomp)' 'perf_event_open refused (seccomp)' 'reboot refused (seccomp)' 'vmsplice refused (seccomp)' 'NETLINK_AUDIT socket refused (seccomp)' \

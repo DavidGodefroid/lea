@@ -640,6 +640,12 @@ func (l *Launcher) runArgs(proj, pip string) ([]string, error) {
 	if err := Mkdirs(l.Cfg.DataDir(), st+"/ssh", st+"/git", st+"/gh", st+"/glab-cli", st+"/containers", st+"/go", st+"/kube"); err != nil {
 		return nil, die("%v", err)
 	}
+	// No GitHub token where an agent reads it (#103): the proxy holds it.
+	what, adopted, err := l.migrateGitHubToken()
+	if err != nil {
+		return nil, err
+	}
+	l.logGitHubMigration(what, adopted)
 	rt, vm, err := l.agentRuntime()
 	if err != nil {
 		return nil, err

@@ -33,6 +33,8 @@ type Launcher struct {
 	// is the clock of the update check (time.Now when nil).
 	Version string
 	Now     func() time.Time
+	// bridgeAddrs reads the host's IPv4 addresses on a network bridge (hostBridgeAddrs when nil).
+	bridgeAddrs func(name string) (addrs []string, found bool, err error)
 
 	// drainOf is set on the view an exit function runs with: the launcher whose run state it
 	// shares. While its function runs (active), the view may start children and take locks even
@@ -386,6 +388,8 @@ func (l *Launcher) dispatch(args []string) error {
 		return l.lockConsole(rest)
 	case "delivery":
 		return l.delivery(rest)
+	case "github":
+		return l.github(rest)
 	case "shell":
 		if len(rest) > 0 {
 			if err := l.oldForm(rest[0]); err != nil {

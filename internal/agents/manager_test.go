@@ -101,11 +101,15 @@ func TestEnsureBuildsTheDeckLayoutOnce(t *testing.T) {
 	}
 }
 
-// TestConfKeepsTheDeckWidth ties the width lea.tmux.conf restores on a resize to DeckWidth.
+// TestConfKeepsTheDeckWidth ties the width lea.tmux.conf restores on a resize to the server's
+// @lea_deck_width option (the user's width), never a constant baked into the configuration.
 func TestConfKeepsTheDeckWidth(t *testing.T) {
-	m := regexp.MustCompile(`resize-pane -t :\.0 -x (\d+)`).FindAllStringSubmatch(tmux.Conf(), -1)
-	if len(m) != 1 || m[0][1] != fmt.Sprint(DeckWidth) {
-		t.Fatalf("lea.tmux.conf resizes the deck with %q, want exactly one -x %d", m, DeckWidth)
+	c := tmux.Conf()
+	if !strings.Contains(c, `resize-pane -t \\\"#{session_name}:.0\\\" -x \\\"#{e|+:#{`+tmux.DeckWidthOption+`},0}\\\"`) {
+		t.Fatal("lea.tmux.conf does not resize the deck to the @lea_deck_width option (arithmetic)")
+	}
+	if m := regexp.MustCompile(`resize-pane [^;]*-x [0-9]`).FindString(c); m != "" {
+		t.Fatalf("a fixed deck width is baked into lea.tmux.conf: %q", m)
 	}
 }
 
@@ -712,6 +716,35 @@ func TestAReattachedAgentOutOfTheSlotIsNotResized(t *testing.T) {
 	}
 }
 
+// The repaint nudge moves the deck around the user's width (@lea_deck_width), not the default:
+// one column wider, then back to it.
+func TestAReattachedAgentIsMadeToRedrawAtTheUsersWidth(t *testing.T) {
+	e := newEnv(t)
+	rec := &laterRec{}
+	e.m.later = rec.later
+	s := e.ensure(t, "/p")
+	s.locked(func() { s.opts[tmux.DeckWidthOption] = "50" })
+	e.spawn(t, "")
+	e.ctr.setLive(C, "claude-1")
+	p := s.byAgent("claude-1")
+	deck := s.byRole(roleDeck).id
+	s.locked(func() { p.dead = true })
+	e.m.Ensure(bg, C, "")
+	if len(rec.fns) != 1 {
+		t.Fatalf("scheduled %v", rec.waits)
+	}
+	mark := s.mark()
+	rec.fns[0]()
+	if got := s.since(mark); !slices.Contains(got, "resize-pane -t "+deck+" -x 51") || len(rec.fns) != 2 {
+		t.Fatalf("log %q, scheduled %v", got, rec.waits)
+	}
+	mark = s.mark()
+	rec.fns[1]()
+	if got := s.since(mark); !slices.Contains(got, "resize-pane -t "+deck+" -x 50") {
+		t.Fatalf("log %q", got)
+	}
+}
+
 const (
 	sid1 = "0b6f5a1e-4c1d-4f7a-9d2e-1a2b3c4d5e6f"
 	sid2 = "9c8d7e6f-5a4b-4c3d-8e2f-6a5b4c3d2e1f"
@@ -1058,6 +1091,37 @@ func TestReconcileRestoresTheDeckWidth(t *testing.T) {
 	}
 	if deck.width != DeckWidth {
 		t.Fatalf("deck width %d, want %d", deck.width, DeckWidth)
+	}
+}
+
+// The layout repairs to the user's deck width (the server's @lea_deck_width option), clamped to
+// its bounds: 24 at least, 60 or half the window at most; the default while nothing is set.
+func TestReconcileRepairsToTheConfiguredDeckWidth(t *testing.T) {
+	e := newEnv(t)
+	s := e.ensure(t, "/p")
+	deck := s.byRole(roleDeck)
+	for _, c := range []struct {
+		opt       string
+		win, want int
+	}{
+		{"50", 0, 50},
+		{"100", 0, 60},   // past the maximum: clamped
+		{"10", 0, 24},    // below the minimum: clamped
+		{"100", 100, 50}, // past half the window: clamped
+		{"abc", 0, DeckWidth},
+		{"", 0, DeckWidth}, // unset: the default
+	} {
+		s.locked(func() {
+			s.opts[tmux.DeckWidthOption] = c.opt
+			s.winWidth = c.win
+			deck.width = DeckWidth
+		})
+		if err := e.m.Ensure(bg, C, ""); err != nil {
+			t.Fatal(err)
+		}
+		if deck.width != c.want {
+			t.Errorf("option %q window %d: deck width %d, want %d", c.opt, c.win, deck.width, c.want)
+		}
 	}
 }
 

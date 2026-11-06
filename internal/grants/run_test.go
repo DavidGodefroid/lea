@@ -174,14 +174,18 @@ func TestPinnedPushNeverReadsTheRepositoryConfig(t *testing.T) {
 		t.Fatalf("%v %s", err, out)
 	}
 	push := Command(Request{Prog: "git", Args: []string{"push", "-u", "origin", "feat/73-x"}}, c, g)
-	if !strings.Contains(push, "github.com/someone/lea.git") || !strings.Contains(push, "refs/heads/feat/73-x") || !strings.Contains(push, "--git-dir") {
+	// GitHub: to the proxy's forge forwarder, which holds the token (#103), never through a proxy.
+	if !strings.Contains(push, "'http://lea-proxy:4401/someone/lea.git'") || !strings.Contains(push, "'http.http://lea-proxy:4401/.proxy='") ||
+		!strings.Contains(push, "refs/heads/feat/73-x") || !strings.Contains(push, "--git-dir") {
 		t.Fatalf("push %s", push)
 	}
 	exec.Command(gitPath, "-C", wt, "branch", "feat/73-x").Run()
 	// The guard ran on a clean config; the agent plants the redirection right after it.
 	script := strings.SplitN(lastWord(t, push), "\n", 2)[1]
-	if out, err := exec.Command(gitPath, "-C", wt, "config", "url."+evil+".insteadOf", "https://github.com/").CombinedOutput(); err != nil {
-		t.Fatalf("%v %s", err, out)
+	for _, from := range []string{"https://github.com/", "http://lea-proxy:4401/"} {
+		if out, err := exec.Command(gitPath, "-C", wt, "config", "--add", "url."+evil+".insteadOf", from).CombinedOutput(); err != nil {
+			t.Fatalf("%v %s", err, out)
+		}
 	}
 	env := []string{"PATH=/usr/bin:/bin", "GIT_CONFIG_GLOBAL=/dev/null", "GIT_TERMINAL_PROMPT=0", "HOME=" + root}
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
@@ -242,7 +246,7 @@ func TestPinnedMergeChecksThePRHead(t *testing.T) {
 		dir := t.TempDir()
 		fake := filepath.Join(dir, "gh")
 		log := filepath.Join(dir, "log")
-		// The fake gh answers gh auth token, and records the token and config dir of the calls after.
+		// The fake gh records the token and config dir of its calls.
 		body := "#!/bin/sh\nif [ \"$1 $2\" = 'auth token' ]; then echo tok; exit 0; fi\necho \"$GH_TOKEN|$GH_CONFIG_DIR\" >> " + log + ".env\n" +
 			"echo \"$*\" >> " + log + "\nif [ \"$2\" = view ]; then printf '%s\\n' '" + tc.head + "'; fi\n"
 		if err := os.WriteFile(fake, []byte(body), 0o755); err != nil {
@@ -252,7 +256,7 @@ func TestPinnedMergeChecksThePRHead(t *testing.T) {
 		out, err := exec.Command(shPath, "-c", script).CombinedOutput()
 		got, _ := os.ReadFile(log)
 		merged := strings.Contains(string(got), "pr merge 42 --squash -R github.com/o/lea")
-		if env, _ := os.ReadFile(log + ".env"); tc.head != "" && !strings.HasPrefix(string(env), "tok|"+noConfigDir+"\n") {
+		if env, _ := os.ReadFile(log + ".env"); tc.head != "" && !strings.HasPrefix(string(env), ghPlaceholder+"|"+forgeGHConfig+"\n") {
 			t.Fatalf("head %q: gh ran with %q", tc.head, env)
 		}
 		if merged != tc.merged || (err == nil) != tc.merged {
@@ -380,11 +384,22 @@ func TestPinnedGhIgnoresTheAgentsGhConfig(t *testing.T) {
 			t.Fatalf("%s: the agent's server got %d requests, err %v, out %s", call, n, err, out)
 		}
 	}
-	// No token in the agent's config: refused before gh talks to anyone.
-	os.WriteFile(filepath.Join(cfg, "hosts.yml"), nil, 0o600)
+	// Every pinned gh call takes lea's config (the relay's socket) and the placeholder token: the
+	// agent's token, if any, is never read (#103).
 	d := Decide("Bash", bash("gh pr merge 42 --squash"), c, []Grant{all(Merge)}, now, false)
-	if out, err := exec.Command(shPath, "-c", d.Command).CombinedOutput(); err == nil || !strings.Contains(string(out), "no GitHub token") {
-		t.Fatalf("no token: err %v, out %s", err, out)
+	if w := lastWord(t, d.Command); !strings.Contains(w, "export GH_TOKEN='"+ghPlaceholder+"' GH_CONFIG_DIR='"+forgeGHConfig+"'") || strings.Contains(w, "auth token") {
+		t.Fatalf("pinned gh: %s", d.Command)
+	}
+}
+
+// TestForgeGHConfigPointsAtTheRelay: the image's gh config of pinned calls sends gh to lea's relay.
+func TestForgeGHConfigPointsAtTheRelay(t *testing.T) {
+	b, err := os.ReadFile("../../image/forge-gh/config.yml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(b), "\nhttp_unix_socket: /run/lea-forge/gh.sock\n") {
+		t.Fatalf("config.yml: %s", b)
 	}
 }
 
@@ -433,9 +448,10 @@ func TestPinnedCallsGoThroughLeaProxy(t *testing.T) {
 		}
 		return string(out)
 	}
+	// git push goes to the forge forwarder at lea's proxy address (#103): never a proxy.
 	out := run(Command(Request{Prog: "git", Args: []string{"push", "origin", "feat/73-x"}}, c, g))
-	if h := leaHits(); len(h) == 0 || h[0] != "CONNECT github.com:443" {
-		t.Fatalf("git push did not go through lea's proxy: %v, out %s", h, out)
+	if !strings.Contains(out, "127.0.0.1") || !strings.Contains(out, "4401") || len(leaHits()) != 0 || len(evilHits()) != 0 {
+		t.Fatalf("git push did not go to lea's forge forwarder: lea %v, agent %v, out %s", leaHits(), evilHits(), out)
 	}
 	if _, err := os.Stat(ghPath); err != nil {
 		t.Skipf("%s: %v", ghPath, err)
@@ -449,7 +465,7 @@ func TestPinnedCallsGoThroughLeaProxy(t *testing.T) {
 		t.Fatalf("merge: %+v", d)
 	}
 	out = run(d.Command)
-	if h := leaHits(); len(h) < 2 || h[len(h)-1] != "CONNECT api.github.com:443" {
+	if h := leaHits(); len(h) < 1 || h[len(h)-1] != "CONNECT api.github.com:443" {
 		t.Fatalf("gh did not go through lea's proxy: %v, out %s", h, out)
 	}
 	if h := evilHits(); len(h) != 0 {

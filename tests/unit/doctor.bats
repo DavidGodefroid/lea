@@ -85,13 +85,28 @@ lockfamily-1a2b3c4d_b-run'
   [[ "$output" != *"locksql-run"* ]]
 }
 
-@test "a non-isolated internal network is a warning" {
+@test "a non-isolated internal network is a failure (#105)" {
   fake_tmux
   export FAKE_DOCKER_OUT_NETWORK_LS=lea-internal-abc
   export FAKE_DOCKER_OUT_NETWORK_INSPECT='true nat'
   run lea_doctor
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"FAIL  lea-internal-abc gateway_mode_ipv4=nat: not isolated"*"LEA_ALLOW_GATEWAY=1"* ]]
+  export FAKE_DOCKER_OUT_NETWORK_INSPECT='true <no value>'
+  run lea_doctor
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"FAIL  lea-internal-abc gateway_mode_ipv4=unset: not isolated"* ]]
+}
+
+@test "a non-isolated internal network is a warning with LEA_ALLOW_GATEWAY=1" {
+  fake_tmux
+  export FAKE_DOCKER_OUT_NETWORK_LS=lea-internal-abc
+  export FAKE_DOCKER_OUT_NETWORK_INSPECT='true nat'
+  export LEA_ALLOW_GATEWAY=1
+  run lea_doctor
   [ "$status" -eq 0 ]
-  [[ "$output" == *"warn  lea-internal-abc isolated from the host"* ]]
+  [[ "$output" == *"warn  lea-internal-abc gateway_mode_ipv4=nat: not isolated"*"(LEA_ALLOW_GATEWAY=1)"* ]]
+  [[ "$output" != *FAIL* ]]
 }
 
 @test "an internal network that is not --internal is a failure" {
@@ -106,8 +121,8 @@ lockfamily-1a2b3c4d_b-run'
   export FAKE_DOCKER_OUT_NETWORK_LS=$'lea-internal-abc\nlea-internal-def\nlea-egress'
   export FAKE_DOCKER_OUT_NETWORK_INSPECT='true isolated'
   run lea_doctor
-  [[ "$output" == *"ok    lea-internal-abc isolated from the host"* ]]
-  [[ "$output" == *"ok    lea-internal-def isolated from the host"* ]]
+  [[ "$output" == *"ok    lea-internal-abc gateway_mode_ipv4=isolated"* ]]
+  [[ "$output" == *"ok    lea-internal-def gateway_mode_ipv4=isolated"* ]]
   [[ "$output" != *"lea-egress"* ]]
 }
 
@@ -431,6 +446,36 @@ host_minimums() {
   run lea_doctor
   [[ "$output" == *"ok    approval hub facade $LEA_HUB_SOCKET"* ]]
   [[ "$output" != *"warn  approval hub"* ]]
+}
+
+@test "doctor lists the credentials an agent can read, by path, never their value (#103)" {
+  run lea_doctor
+  [[ "$output" == *"ok    agent-readable credentials: none"* ]]
+  [[ "$output" == *"ok    not agent-readable: no GitHub token (lea github login keeps one in the proxy)"* ]]
+  mkdir -p "$S/claude/abc" "$S/codex/abc" "$S/gh" "$S/git" "$S/glab-cli" "$S/containers" "$S/kube" "$S/../proxy/forge"
+  printf '{"claudeAiOauth":{"accessToken":"sk-ant-oat-secret"}}\n' >"$S/claude/abc/.credentials.json"
+  printf '{"tokens":{}}\n' >"$S/codex/abc/auth.json"
+  printf 'github.com:\n    oauth_token: gho_secretvalue\n' >"$S/gh/hosts.yml"
+  printf 'https://u:glpat-secret@gitlab.com\n' >"$S/git/credentials"
+  printf 'hosts:\n    gitlab.com:\n        token: glpat-secret\n' >"$S/glab-cli/config.yml"
+  printf '{"auths":{}}\n' >"$S/containers/auth.json"
+  : >"$S/kube/config"
+  printf 'ghp_proxyvalue\n' >"$S/../proxy/forge/github.com"
+  run lea_doctor
+  [[ "$output" == *"ok    agent-readable: ~/.claude/.credentials.json (Claude Code's OAuth login; it refreshes it)"* ]]
+  [[ "$output" == *"ok    agent-readable: ~/.codex/auth.json (Codex's login)"* ]]
+  [[ "$output" == *"warn  agent-readable: /lea/state/gh/hosts.yml: holds a gh token"* ]]
+  [[ "$output" == *"ok    agent-readable: /lea/state/git/credentials (git's credential store: 1 entries, other forges)"* ]]
+  [[ "$output" == *"ok    agent-readable: /lea/state/glab-cli/config.yml (glab's GitLab token)"* ]]
+  [[ "$output" == *"ok    agent-readable: /lea/state/containers/auth.json (podman and docker registry logins)"* ]]
+  [[ "$output" == *"ok    agent-readable: ~/.kube/lea/config"* ]]
+  [[ "$output" == *"ok    not agent-readable: the GitHub token (in the proxy, lea github status)"* ]]
+  [[ "$output" != *"agent-readable credentials: none"* ]]
+  [[ "$output" != *secret* ]]
+  [[ "$output" != *proxyvalue* ]]
+  printf 'https://u:ghp_x@github.com\n' >"$S/git/credentials"
+  run lea_doctor
+  [[ "$output" == *"warn  agent-readable: /lea/state/git/credentials: holds a github.com token"* ]]
 }
 
 # fake_pgrep RC: a pgrep first on PATH that exits RC (0: a lox run runs, 1: none does).

@@ -64,8 +64,14 @@ lea_doctor() {
     _dint=${_dinfo%% *}; _dmode=${_dinfo#* }
     if [ "$_dint" = true ]; then lea__ok "$_dnet is internal"
     else lea__fail "$_dnet is internal" "not created with --internal: lea stop --all, then restart lea"; _drc=1; fi
-    if [ "$_dmode" = isolated ]; then lea__ok "$_dnet isolated from the host"
-    else lea__warn "$_dnet isolated from the host" "gateway_mode_ipv4=${_dmode:-unset}; run make test-isolation"; fi
+    # #105: the launcher refuses such a network unless LEA_ALLOW_GATEWAY=1, so does the doctor.
+    case $_dmode in ''|'<no value>') _dmode='unset' ;; esac
+    if [ "$_dmode" = isolated ]; then lea__ok "$_dnet gateway_mode_ipv4=isolated"
+    elif [ "${LEA_ALLOW_GATEWAY:-0}" = 1 ]; then
+      lea__warn "$_dnet gateway_mode_ipv4=$_dmode" "not isolated: host services are reachable from its agents (LEA_ALLOW_GATEWAY=1)"
+    else
+      lea__fail "$_dnet gateway_mode_ipv4=$_dmode" "not isolated: host services are reachable from its agents; lea stop --all, then restart lea on Docker Engine 28.0 or later (or set LEA_ALLOW_GATEWAY=1)"; _drc=1
+    fi
   done
   if [ "$_dnets" -eq 0 ]; then lea__ok "internal networks: none (each lea creates its own at start)"; fi
 
@@ -145,6 +151,8 @@ EOF
   lea__doctor_lockhttp || _drc=1
   lea__doctor_hub
   lea__doctor_lox
+
+  lea__doctor_secrets "$_dds"
 
   if [ -f "$_dds/kube/config" ]; then
     if [ -n "$(find "$_dds/kube/config" -mmin -480 2>/dev/null)" ]; then lea__ok "kubernetes token"
@@ -417,7 +425,7 @@ lea__doctor_host_versions() {
       if [ -n "$_hvpmin" ] && ! lea_version_ge "$_hve" "$_hvpmin"; then
         lea__warn "Podman $_hve" "older than $_hvpmin (CVE-2026-57231): update Podman"
       else
-        lea__warn "Podman $_hve" "lea is built for Docker Engine; Podman minimum ${_hvpmin:-none} met; its networks have no gateway_mode_ipv4=isolated"
+        lea__warn "Podman $_hve" "lea is built for Docker Engine; Podman minimum ${_hvpmin:-none} met; its networks have no gateway_mode_ipv4=isolated (lea starts agents only with LEA_ALLOW_GATEWAY=1)"
       fi ;;
     *) lea__warn "Docker Engine" "version unknown (not Docker Engine?)" ;;
   esac
@@ -435,4 +443,40 @@ lea__doctor_host_versions() {
     lea__fail "kernel" "$_hvk is older than $_hvkmin for $_hvid $_hvver ($LEA__KERNEL_CVES): update the host kernel"; _hvrc=1
   fi
   return "$_hvrc"
+}
+
+# lea__doctor_secrets STATE: every credential an agent of lea can read (issue #103), by its path
+# in the lea container, never its value; a GitHub token left in an agent's state is a warning (the
+# next lea moves it to the proxy).
+# shellcheck disable=SC2088 # the paths are printed as the agent sees them, ~ included
+lea__doctor_secrets() {
+  _dsn=0
+  _dsr() { lea__ok "agent-readable: $1"; _dsn=$((_dsn + 1)); }
+  for _dsf in "$1"/claude/*/.credentials.json; do
+    if [ -f "$_dsf" ]; then _dsr "~/.claude/.credentials.json (Claude Code's OAuth login; it refreshes it)"; break; fi
+  done
+  for _dsf in "$1"/codex/*/auth.json; do
+    if [ -f "$_dsf" ]; then _dsr "~/.codex/auth.json (Codex's login)"; break; fi
+  done
+  if [ -f "$1/gh/hosts.yml" ] && grep -q 'oauth_token' "$1/gh/hosts.yml" 2>/dev/null; then
+    lea__warn "agent-readable: /lea/state/gh/hosts.yml" "holds a gh token (a gh auth login in lea): the next lea moves a github.com one to the proxy; on the host, gh auth token | lea github login"
+    _dsn=$((_dsn + 1))
+  fi
+  if [ -s "$1/git/credentials" ]; then
+    if grep -qi '@github\.com' "$1/git/credentials" 2>/dev/null; then
+      lea__warn "agent-readable: /lea/state/git/credentials" "holds a github.com token: the next lea moves it to the proxy"
+      _dsn=$((_dsn + 1))
+    else
+      _dsr "/lea/state/git/credentials (git's credential store: $(grep -c . "$1/git/credentials") entries, other forges)"
+    fi
+  fi
+  if [ -f "$1/glab-cli/config.yml" ] && grep -q 'token:' "$1/glab-cli/config.yml" 2>/dev/null; then
+    _dsr "/lea/state/glab-cli/config.yml (glab's GitLab token)"
+  fi
+  if [ -s "$1/containers/auth.json" ]; then _dsr "/lea/state/containers/auth.json (podman and docker registry logins)"; fi
+  if [ -f "$1/kube/config" ]; then _dsr "~/.kube/lea/config (read-only: a view token of lea kube refresh, 8 h)"; fi
+  if [ "$_dsn" -eq 0 ]; then lea__ok "agent-readable credentials: none"; fi
+  if [ -s "$(dirname "$1")/proxy/forge/github.com" ]; then _dsg="the GitHub token (in the proxy, lea github status)"
+  else _dsg="no GitHub token (lea github login keeps one in the proxy)"; fi
+  lea__ok "not agent-readable: $_dsg, provider API keys (proxy), lea's SSH key (ssh-agent socket only)"
 }

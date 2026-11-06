@@ -26,7 +26,7 @@ func TestRealLayoutRepair(t *testing.T) {
 	t.Cleanup(func() { os.RemoveAll(dir) })
 	t.Setenv("TMUX_TMPDIR", dir)
 	conf := filepath.Join(dir, "tmux.conf")
-	if err := tmux.WriteConf(conf); err != nil {
+	if err := tmux.WriteConf(conf, ""); err != nil {
 		t.Fatal(err)
 	}
 	// The deck and the placeholder run this stand-in for lea.
@@ -126,7 +126,7 @@ func TestRealShellExitClosesItsPane(t *testing.T) {
 	t.Cleanup(func() { os.RemoveAll(dir) })
 	t.Setenv("TMUX_TMPDIR", dir)
 	conf := filepath.Join(dir, "tmux.conf")
-	if err := tmux.WriteConf(conf); err != nil {
+	if err := tmux.WriteConf(conf, ""); err != nil {
 		t.Fatal(err)
 	}
 	bin := filepath.Join(dir, "lea")
@@ -204,7 +204,7 @@ func TestRealRepairSettles(t *testing.T) {
 	t.Cleanup(func() { os.RemoveAll(dir) })
 	t.Setenv("TMUX_TMPDIR", dir)
 	conf := filepath.Join(dir, "tmux.conf")
-	if err := tmux.WriteConf(conf); err != nil {
+	if err := tmux.WriteConf(conf, ""); err != nil {
 		t.Fatal(err)
 	}
 	stub := []byte("#!/bin/sh\nexec sleep 600\n")
@@ -256,7 +256,7 @@ func TestRealRetiredPanesGo(t *testing.T) {
 	t.Cleanup(func() { os.RemoveAll(dir) })
 	t.Setenv("TMUX_TMPDIR", dir)
 	conf := filepath.Join(dir, "tmux.conf")
-	if err := tmux.WriteConf(conf); err != nil {
+	if err := tmux.WriteConf(conf, ""); err != nil {
 		t.Fatal(err)
 	}
 	bin := filepath.Join(dir, "lea")

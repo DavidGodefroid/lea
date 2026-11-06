@@ -159,7 +159,7 @@ func runDaemon(stderr io.Writer) int {
 	defer stop()
 	d := daemon.New(st, filepath.Join(host, "run"), func() int64 { return time.Now().Unix() })
 	conf := filepath.Join(host, "tmux.conf")
-	if err := tmux.WriteConf(conf); err != nil {
+	if err := tmux.WriteConf(conf, os.Getenv("LEA_TMUX_BIN")); err != nil {
 		fmt.Fprintln(stderr, "lea:", clean(err.Error(), false))
 		return 1
 	}

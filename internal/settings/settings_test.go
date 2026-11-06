@@ -243,6 +243,33 @@ func TestARefusedWriteLeavesNoFile(t *testing.T) {
 	}
 }
 
+// LEA_DECK_WIDTH is a Deck setting, applied at once and live; a number out of the bounds is
+// clamped, never refused.
+func TestDeckWidthIsClampedToItsBounds(t *testing.T) {
+	w := newWorld(t, "")
+	st := w.store()
+	if s := find(t, list(t, w), "LEA_DECK_WIDTH"); s.Group != "Deck" || !s.Live || s.Apply != ApplyNow ||
+		s.Default != "34" || s.Value != "34" || s.Source != SourceDefault {
+		t.Fatalf("LEA_DECK_WIDTH = %+v", s)
+	}
+	for _, bad := range []string{"x", "", "0", "1.5", "-3", "34px", "2 4", "034"} {
+		if err := st.Set("LEA_DECK_WIDTH", bad); err == nil {
+			t.Errorf("LEA_DECK_WIDTH=%q accepted", bad)
+		}
+	}
+	if _, err := os.Stat(w.user); err == nil {
+		t.Fatal("a refused width wrote the file")
+	}
+	for v, want := range map[string]string{"10": "24", "24": "24", "34": "34", "60": "60", "61": "60", "999": "60"} {
+		if err := st.Set("LEA_DECK_WIDTH", v); err != nil {
+			t.Fatalf("LEA_DECK_WIDTH=%q: %v", v, err)
+		}
+		if s := find(t, list(t, w), "LEA_DECK_WIDTH"); s.Value != want || s.Source != SourceFile {
+			t.Errorf("LEA_DECK_WIDTH=%q read back %q from %q, want %q", v, s.Value, s.Source, want)
+		}
+	}
+}
+
 func TestOtelAndSoundValues(t *testing.T) {
 	w := newWorld(t, "")
 	st := w.store()

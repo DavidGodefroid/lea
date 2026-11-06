@@ -79,17 +79,32 @@ if [ -s "$conf/peek.conf" ]; then
   su-exec squid:squid squid -N -f "$conf/peek.conf" &
   wait_port 3129 "the peek squid"
 fi
-if [ ! -s /etc/lea/endpoints ]; then
+# The forge forwarder (port 4401, issue #103) holds the GitHub token of lea github login: the
+# launcher always mounts its key directory, so lea-keyproxy runs even without endpoints.
+forge=0
+if [ -d /etc/lea/forge ]; then forge=1; fi
+if [ ! -s /etc/lea/endpoints ] && [ "$forge" = 0 ]; then
   # squid becomes PID 1: no root process is left in the container.
   exec su-exec squid:squid squid -N -f "$conf/squid.conf"
 fi
 # lea-keyproxy runs as the owner of the endpoints file lea wrote: lea's user, who owns the key
 # files (which root without CAP_DAC_OVERRIDE could not read either). Under rootless Podman, lea's
 # user is the container's root: lea-keyproxy then runs as that root, lea's user on the host. Each
-# key file must be readable by it: a proxy that could not forward a key fails at start.
-kp_user=$(owner /etc/lea/endpoints)
-# shellcheck disable=SC2016 # awk's fields
-keys=$(su-exec "$kp_user" awk '!/^[[:space:]]*(#|$)/ && $3 != "" { print $3 }' /etc/lea/endpoints)
+# key file must be readable by it: a proxy that could not forward a key fails at start. Without
+# endpoints, the owner of the forge key directory (lea's user too, who wrote the GitHub token).
+keys=''
+if [ -s /etc/lea/endpoints ]; then
+  kp_user=$(owner /etc/lea/endpoints)
+  # shellcheck disable=SC2016 # awk's fields
+  keys=$(su-exec "$kp_user" awk '!/^[[:space:]]*(#|$)/ && $3 != "" { print $3 }' /etc/lea/endpoints)
+else
+  kp_user=$(owner /etc/lea/forge)
+fi
+# (Tested as that user: root without CAP_DAC_READ_SEARCH may not even look into the directory.)
+if [ "$forge" = 1 ] && ! su-exec "$kp_user" sh -c '[ ! -e /etc/lea/forge/github.com ] || [ -r /etc/lea/forge/github.com ]'; then
+  echo "lea-proxy: the GitHub token /etc/lea/forge/github.com is not readable by $kp_user" >&2
+  exit 1
+fi
 for key in $keys; do
   if ! su-exec "$kp_user" test -r "$key"; then
     echo "lea-proxy: the key file $key is not readable by the owner ($kp_user) of the endpoints file" >&2
@@ -104,16 +119,19 @@ squid_pid=$!
 wait_port 3128 "squid"
 via=http://127.0.0.1:3128
 if [ "$lockhttp" = 1 ]; then via=http://127.0.0.1:3130; fi
-if [ "${LEA_LOCKHTTP_MITM:-0}" = 1 ]; then
-  # The gate decrypts and re-signs with lea's CA: keyproxy trusts its certificate (never the key).
-  LEA_KEYPROXY_TOKEN=$kp_token su-exec "$kp_user" lea-keyproxy -endpoints /etc/lea/endpoints -listen :4400 -via "$via" -sources /etc/lockhttp-gate/sources.json -ca-cert /etc/lockhttp-gate/ca.pem &
-elif [ "$lockhttp" = 1 ]; then
-  LEA_KEYPROXY_TOKEN=$kp_token su-exec "$kp_user" lea-keyproxy -endpoints /etc/lea/endpoints -listen :4400 -via "$via" -sources /etc/lockhttp-gate/sources.json &
+set -- -endpoints /etc/lea/endpoints -listen :4400 -via "$via"
+if [ "$forge" = 1 ]; then set -- "$@" -forge-listen :4401 -forge-keys /etc/lea/forge; fi
+if [ "$lockhttp" = 1 ]; then set -- "$@" -sources /etc/lockhttp-gate/sources.json; fi
+# The gate decrypts and re-signs with lea's CA: keyproxy trusts its certificate (never the key).
+if [ "${LEA_LOCKHTTP_MITM:-0}" = 1 ]; then set -- "$@" -ca-cert /etc/lockhttp-gate/ca.pem; fi
+if [ "$lockhttp" = 1 ]; then
+  LEA_KEYPROXY_TOKEN=$kp_token su-exec "$kp_user" lea-keyproxy "$@" &
 else
-  su-exec "$kp_user" lea-keyproxy -endpoints /etc/lea/endpoints -listen :4400 -via "$via" &
+  su-exec "$kp_user" lea-keyproxy "$@" &
 fi
-# An invalid endpoints file fails the container: no agent is left with a silent port 4400.
-wait_port 4400 "lea-keyproxy"
+# An invalid endpoints file fails the container: no agent is left with a silent port 4400 (or 4401).
+if [ -s /etc/lea/endpoints ]; then wait_port 4400 "lea-keyproxy"; fi
+if [ "$forge" = 1 ]; then wait_port 4401 "lea-keyproxy's forge forwarder"; fi
 unset kp_token
 # Root without CAP_KILL may not signal the services (other users): on a stop, PID 1 exits, and the
 # kernel ends every other process of the container with it.

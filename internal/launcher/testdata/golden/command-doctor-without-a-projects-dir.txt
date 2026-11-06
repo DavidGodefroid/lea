@@ -6,7 +6,7 @@ docker [system] [info] [--format] [{{.Host.Security.Rootless}} {{.Host.CgroupCon
 docker [info]
 docker [info] [--format] [{{json .SecurityOptions}}]
 docker [version] [--format] [{{range .Server.Components}}{{.Name}}={{.Version}}{{"\n"}}{{end}}]
-docker [--version]
+docker [version] [--format] [{{range .Server.Components}}{{.Name}}={{.Version}}{{"\n"}}{{end}}]
 docker [image] [inspect] [lea:dev]
 docker [image] [inspect] [lea-proxy:dev]
 tmux [-V]
@@ -23,7 +23,7 @@ lox [version]
 -- lea
 -- stdout
 ok    docker reachable
-warn  Docker Engine: version unknown (not Docker Engine?)
+ok    Docker Engine 29.4.2 (containerd ?, runc ?)
 warn  kernel 7.0.0-38-generic: no known minimum for ubuntu 24.04 in $R/config/host-minimums: check that it has the fixes for CVE-2026-74753, CVE-2026-80521, CVE-2026-80841
 ok    state claude.json
 FAIL  user config: $W/config/lea/lea.conf missing: run lea init
@@ -41,4 +41,6 @@ ok    egress allowlist: lea's default (forges, registries, model APIs; LEA_EGRES
 ok    telemetry: off (LEA_OTEL_UPSTREAM)
 warn  approval hub: LEA_HUB=1 but no facade socket to read (set LEA_HUB_SOCKET, or XDG_RUNTIME_DIR): agents are not suspended on a Lock call that waits for the hub (LEA_HUB=0 to silence this)
 ok    lox 0.9.0
+ok    agent-readable credentials: none
+ok    not agent-readable: no GitHub token (lea github login keeps one in the proxy), provider API keys (proxy), lea's SSH key (ssh-agent socket only)
 warn  kubernetes token: none (optional): lea kube refresh

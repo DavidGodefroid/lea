@@ -30,7 +30,9 @@ import (
 )
 
 const (
-	// DeckWidth is the deck pane's width, its border included (spec §4.1: 32 columns inside).
+	// DeckWidth is the deck pane's default width, its border included (spec §4.1: 32 columns
+	// inside): the width until the user chooses one (the deck's < and >, LEA_DECK_WIDTH, a
+	// border drag), which the server's @lea_deck_width option then holds (tmux.DeckWidth).
 	DeckWidth = tmux.DeckWidth
 	// DefaultProfile is the provider of an agent started without one (internal/providers).
 	DefaultProfile = providers.Default
@@ -930,11 +932,28 @@ func (m *Manager) ensureLayout(ctx context.Context, container string, s Session,
 		}
 	}
 	if changed {
-		if _, err := s.Run(ctx, "resize-pane", "-t", deck.ID, "-x", strconv.Itoa(DeckWidth)); err != nil {
+		if _, err := s.Run(ctx, "resize-pane", "-t", deck.ID, "-x", strconv.Itoa(m.deckWidth(ctx, s, container))); err != nil {
 			return false, false, err
 		}
 	}
 	return changed, created, nil
+}
+
+// deckWidth is the width the deck keeps: the server's @lea_deck_width option, which the deck
+// sets from the user's LEA_DECK_WIDTH and a border drag stores, clamped to its bounds; DeckWidth
+// (the default) while the option is unset or unreadable.
+func (m *Manager) deckWidth(ctx context.Context, s Session, container string) int {
+	out, err := s.Run(ctx, "display-message", "-p", "-t", "="+container+":", "#{"+tmux.DeckWidthOption+"}|#{window_width}")
+	if err != nil || len(out) != 1 {
+		return DeckWidth
+	}
+	vs, ws, _ := strings.Cut(out[0], "|")
+	w, _ := strconv.Atoi(vs)
+	if w == 0 {
+		w = DeckWidth
+	}
+	win, _ := strconv.Atoi(ws)
+	return tmux.ClampDeckWidth(w, win)
 }
 
 // reconcile brings panes in line with facts: a live agent without a pane gets one (attach); a
@@ -960,10 +979,13 @@ func (m *Manager) reconcile(ctx context.Context, container string, s Session) er
 			return err
 		}
 	}
-	// A failed second step of the repaint leaves the deck one column wider.
-	if deck, ok := byRole(ps, roleDeck); ok && !changed && deck.Width != DeckWidth {
-		if _, err := s.Run(ctx, "resize-pane", "-t", deck.ID, "-x", strconv.Itoa(DeckWidth)); err != nil {
-			return err
+	// A failed second step of the repaint leaves the deck one column wider; a width the user
+	// chose since (the deck's < and >, a border drag) is kept, never snapped back.
+	if deck, ok := byRole(ps, roleDeck); ok && !changed {
+		if w := m.deckWidth(ctx, s, container); deck.Width != w {
+			if _, err := s.Run(ctx, "resize-pane", "-t", deck.ID, "-x", strconv.Itoa(w)); err != nil {
+				return err
+			}
 		}
 	}
 	live, err := m.cfg.Containers.Live(ctx, container)
@@ -1143,15 +1165,15 @@ const (
 // moment later, its width again: two real size changes. Nothing is typed. A parked pane needs
 // nothing: swapping it into the slot resizes it.
 func (m *Manager) redrawAfterReattach(container, id string) {
-	if !m.resizeDeckBeside(container, id, DeckWidth+1) {
+	if !m.resizeDeckBeside(container, id, 1) {
 		return
 	}
-	m.later(redrawStep, func() { m.resizeDeckBeside(container, "", DeckWidth) })
+	m.later(redrawStep, func() { m.resizeDeckBeside(container, "", 0) })
 }
 
-// resizeDeckBeside sets the deck's width when pane id (any pane when id is "") is the live
-// agent in the slot, and reports whether it did.
-func (m *Manager) resizeDeckBeside(container, id string, width int) bool {
+// resizeDeckBeside sets the deck's width to the user's width plus delta when pane id (any pane
+// when id is "") is the live agent in the slot, and reports whether it did.
+func (m *Manager) resizeDeckBeside(container, id string, delta int) bool {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	s := m.conns[container]
@@ -1168,7 +1190,7 @@ func (m *Manager) resizeDeckBeside(container, id string, width int) bool {
 	if !ok || (id != "" && (slot.ID != id || slot.Dead || slot.Agent == "")) {
 		return false
 	}
-	if _, err := s.Run(ctx, "resize-pane", "-t", deck.ID, "-x", strconv.Itoa(width)); err != nil {
+	if _, err := s.Run(ctx, "resize-pane", "-t", deck.ID, "-x", strconv.Itoa(m.deckWidth(ctx, s, container)+delta)); err != nil {
 		log.Printf("lea daemon: redraw %s: %v", container, err)
 		return false
 	}
@@ -1605,7 +1627,7 @@ func (m *Manager) show(ctx context.Context, s Session, container string, ps []pa
 		relaid = true
 	}
 	if relaid {
-		if _, err := s.Run(ctx, "resize-pane", "-t", deck.ID, "-x", strconv.Itoa(DeckWidth)); err != nil {
+		if _, err := s.Run(ctx, "resize-pane", "-t", deck.ID, "-x", strconv.Itoa(m.deckWidth(ctx, s, container))); err != nil {
 			return err
 		}
 	}
