@@ -143,3 +143,37 @@ func TestRunningContainerOnAnotherRuntimeIsReported(t *testing.T) {
 		t.Errorf("stderr %q", w.errb.String())
 	}
 }
+
+// Kata runs the container in a VM, where a host FIFO cannot be bound: the clipboard is left out
+// (and said), the rest of the run args stay. gVisor keeps it (--host-fifo=open).
+func TestRunArgsClipboardUnderAVMRuntime(t *testing.T) {
+	cases := []struct {
+		rt, runtimes string
+		clipboard    bool
+	}{
+		{"kata", `{"runc":{},"kata":{"runtimeType":"io.containerd.kata.v2"}}`, false},
+		{"vm", `{"runc":{},"vm":{"runtimeType":"io.containerd.kata-qemu.v2"}}`, false},
+		{"runsc", `{"runc":{},"runsc":{"path":"/opt/gvisor/runsc"}}`, true},
+	}
+	for _, c := range cases {
+		w := newWorld(t, repoRoot(t))
+		w.env["LEA_CLIPBOARD"] = "1"
+		writeUserConf(t, w, "LEA_RUNTIME="+c.rt+"\n")
+		fakeRuntimes(w, c.runtimes)
+		args, err := w.launcher().runArgs(w.proj, "172.18.0.5")
+		if err != nil {
+			t.Fatalf("%s: %v", c.rt, err)
+		}
+		got := strings.Contains(strings.Join(args, "\n"), "/lea/clipboard/copy")
+		if got != c.clipboard {
+			t.Errorf("%s: clipboard mounted %v, want %v", c.rt, got, c.clipboard)
+		}
+		said := strings.Contains(w.errb.String(), "the clipboard is off under "+c.rt)
+		if said == c.clipboard {
+			t.Errorf("%s: stderr %q", c.rt, w.errb.String())
+		}
+		if !contains(args, "LEA_BUS_SOCK=/run/lea/bus/bus.sock") || args[len(args)-1] != "lea:dev" {
+			t.Errorf("%s: run args %q", c.rt, args)
+		}
+	}
+}

@@ -2,7 +2,6 @@ package launcher
 
 import (
 	"encoding/json"
-	"slices"
 	"sort"
 	"strings"
 )
@@ -12,34 +11,45 @@ import (
 // a second kernel between the agents and the host's. Only the agent container gets it: the proxy,
 // the LockHTTP gate and lea-ctl stay on the default runtime (they run no agent code).
 
-// engineRuntimes are the runtimes the engine knows (docker info .Runtimes); ok is false when the
-// engine does not tell (Podman has no .Runtimes): lea then lets the engine judge LEA_RUNTIME.
-func (l *Launcher) engineRuntimes() (names []string, ok bool) {
+// engineRuntimes are the runtimes the engine knows (docker info .Runtimes), each with its dockerd
+// configuration (path, runtimeType, runtimeArgs); ok is false when the engine does not tell
+// (Podman has no .Runtimes): lea then lets the engine judge LEA_RUNTIME.
+func (l *Launcher) engineRuntimes() (rts map[string]string, ok bool) {
 	out, err := l.output(false, "docker", "info", "--format", "{{json .Runtimes}}")
 	var m map[string]json.RawMessage
 	if err != nil || json.Unmarshal([]byte(strings.TrimSpace(out)), &m) != nil || len(m) == 0 {
 		return nil, false
 	}
-	for n := range m {
-		names = append(names, n)
+	rts = map[string]string{}
+	for n, c := range m {
+		rts[n] = string(c)
 	}
-	sort.Strings(names)
-	return names, true
+	return rts, true
 }
 
-// runtimeArgs is --runtime LEA_RUNTIME for the agent container, nothing when it is empty. A runtime
+// agentRuntime is the agent container's runtime: --runtime LEA_RUNTIME, nothing when it is empty.
+// vm is true for a runtime that runs the container in a virtual machine (Kata: its name or its
+// dockerd configuration says kata), where a host FIFO cannot be bound (lea's clipboard). A runtime
 // the engine says it does not know refuses the start with what it knows, rather than docker's
 // "unknown or invalid runtime name" after the start snapshot.
-func (l *Launcher) runtimeArgs() ([]string, error) {
+func (l *Launcher) agentRuntime() (args []string, vm bool, err error) {
 	rt := l.Cfg.Get("LEA_RUNTIME")
 	if rt == "" {
-		return nil, nil
+		return nil, false, nil
 	}
-	if names, ok := l.engineRuntimes(); ok && !slices.Contains(names, rt) {
-		return nil, die("LEA_RUNTIME=%s: the container engine has no such runtime (it knows %s): install it and register it with dockerd (README, \"A second kernel: gVisor or Kata\"), or leave LEA_RUNTIME empty",
+	rts, ok := l.engineRuntimes()
+	conf, known := rts[rt]
+	if ok && !known {
+		names := make([]string, 0, len(rts))
+		for n := range rts {
+			names = append(names, n)
+		}
+		sort.Strings(names)
+		return nil, false, die("LEA_RUNTIME=%s: the container engine has no such runtime (it knows %s): install it and register it with dockerd (README, \"A second kernel: gVisor or Kata\"), or leave LEA_RUNTIME empty",
 			rt, strings.Join(names, ", "))
 	}
-	return []string{"--runtime", rt}, nil
+	vm = strings.Contains(strings.ToLower(rt+" "+conf), "kata")
+	return []string{"--runtime", rt}, vm, nil
 }
 
 // checkRuntime warns when a running agent container is not on the runtime LEA_RUNTIME asks for

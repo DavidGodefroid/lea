@@ -552,7 +552,7 @@ func (l *Launcher) runArgs(proj, pip string) ([]string, error) {
 	// lockmq and lockfile: only the socket of a console in its own container, in the tool's
 	// socket volume (lockhost.go).
 	a = append(a, l.lockHostArgs(ups)...)
-	rt, err := l.runtimeArgs()
+	rt, vm, err := l.agentRuntime()
 	if err != nil {
 		return nil, err
 	}
@@ -561,7 +561,14 @@ func (l *Launcher) runArgs(proj, pip string) ([]string, error) {
 	a = append(a, l.limitArgs()...)
 	for _, part := range []func() ([]string, error){
 		func() ([]string, error) { return l.busArgs(proj) },
-		l.clipboardArgs,
+		func() ([]string, error) {
+			if vm {
+				// Kata (#106): a host FIFO does not cross into its VM, and the container would not start.
+				l.logf("the clipboard is off under %s: a virtual machine runtime cannot share lea's clipboard FIFO", l.Cfg.Get("LEA_RUNTIME"))
+				return nil, nil
+			}
+			return l.clipboardArgs()
+		},
 		func() ([]string, error) { return l.claudeMounts(home, proj, st) },
 		func() ([]string, error) { return l.codexMounts(home, proj, st) },
 	} {

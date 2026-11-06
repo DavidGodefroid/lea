@@ -24,6 +24,15 @@ sha_of() { if [ -f "$1" ]; then sha256sum <"$1" | cut -d' ' -f1; else echo absen
 if [ "${SECOND_KERNEL:-}" = 1 ] && [ -n "${HOST_KERNEL:-}" ]; then
   must   "a kernel other than the host's ($(uname -r), host $HOST_KERNEL)" test "$(uname -r)" != "$HOST_KERNEL"
 fi
+# lea's bus (messaging between agents): a host Unix socket the daemon binds in the bus directory.
+# Not a containment check: says whether the runtime lets a host socket through (#106).
+if [ -n "${LEA_BUS_SOCK:-}" ]; then
+  if python3 -I -c 'import socket, sys; socket.socket(socket.AF_UNIX).connect(sys.argv[1])' "$LEA_BUS_SOCK" 2>/dev/null; then
+    echo "info lea's bus socket is reachable"
+  else
+    echo "info lea's bus socket is not reachable"
+  fi
+fi
 mustnt "no host Docker socket"                 test -S /var/run/docker.sock
 mustnt "no host Docker socket (/run)"          test -S /run/docker.sock
 must   "docker is the nested Podman"            sh -c 'docker version 2>/dev/null | grep -qi podman'
