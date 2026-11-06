@@ -152,7 +152,7 @@ func newWorld(t *testing.T, root string) *world {
 		// The same for that image only: a test that answers docker inspect --type for its
 		// containers keeps a confinable proxy image (the proxy's lea.rules covers its confinement).
 		"FAKE_DOCKER_OUT_INSPECT___TYPE_AT_LEA_PROXY_DEV": "1",
-		"PATH":                           repoRoot(t) + "/tests/fakes:" + dir + "/bin:/usr/local/bin:/usr/bin:/bin",
+		"PATH": repoRoot(t) + "/tests/fakes:" + dir + "/bin:/usr/local/bin:/usr/bin:/bin",
 	}
 	// What a daemon started with the default provider settings records.
 	write(w.data+"/lea/host/daemon.providers", DaemonProvidersStamp(nil, nil, stampMap{"LEA_PROVIDER": "claude",
