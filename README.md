@@ -478,9 +478,12 @@ Agents get lea's tools through MCP:
   you (`lea requests`, `lea request accept <id>`, `lea request decline <id> [reason]`);
 - agents message each other (`msg_send`, `msg_reply`); a message waits in the inbox until the
   agent's next turn. An agent whose turn is over is woken when a message arrives: its Stop hook
-  starts a background job (Claude Code's `asyncRewake`) that ends with the unread notice, and
-  Claude Code starts a turn. A working agent, or one waiting on a permission dialog, is not
-  interrupted; only the newest job of an agent stays, so one message wakes it once;
+  (and its SessionStart hook, so a session resumed after a restart is woken too) starts a
+  background job (Claude Code's `asyncRewake`) that ends with the unread notice, and Claude Code
+  starts a turn; the job waits for days and outlives a restart of lea's daemon. A working agent,
+  or one waiting on a permission dialog, is not interrupted; a paused one, or one stopped on its
+  usage limit, waits; only the newest job of an agent stays, so one message wakes it once, and an
+  agent is woken at most 10 times in 10 minutes. The deck shows `woken by lea` during that turn;
 - an agent asks another a question and waits for the answer with `ask` (the other answers with
   `msg_reply`; works with any agent that has lea's MCP tools). The answer is data, never
   instructions. Only a reply from the asked agent counts; an agent's container is checked

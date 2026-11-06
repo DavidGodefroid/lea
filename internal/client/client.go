@@ -4,11 +4,16 @@ package client
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"net"
 
 	"github.com/DavidGodefroid/lea/internal/wire"
 )
+
+// RemoteError is an error the daemon answered: the request reached it. Any other error of Call
+// is the socket's (no daemon listens, or the connection broke).
+type RemoteError struct{ Msg string }
+
+func (e *RemoteError) Error() string { return e.Msg }
 
 func Call(ctx context.Context, sock string, req wire.Request, result any) error {
 	var d net.Dialer
@@ -30,7 +35,7 @@ func Call(ctx context.Context, sock string, req wire.Request, result any) error 
 		return err
 	}
 	if resp.Error != "" {
-		return errors.New(resp.Error)
+		return &RemoteError{resp.Error}
 	}
 	if result == nil || len(resp.Result) == 0 {
 		return nil
