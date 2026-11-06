@@ -5,9 +5,11 @@
 set -eu
 root=$(cd "$(dirname "$0")/../.." && pwd -P)
 
+# The agents' image: lea:dev (make build), or LEA_TEST_IMAGE.
+image=${LEA_TEST_IMAGE:-lea:dev}
 # On hosts where Docker uses AppArmor, lea starts containers with apparmor=lea: it must be loaded.
 if docker info --format '{{json .SecurityOptions}}' 2>/dev/null | grep -q 'name=apparmor'; then
-  if ! docker run --rm --pull never --security-opt apparmor=lea --entrypoint true lea:dev >/dev/null 2>&1; then
+  if ! docker run --rm --pull never --security-opt apparmor=lea --entrypoint true "$image" >/dev/null 2>&1; then
     echo "isolation: the AppArmor profile 'lea' is not usable (or lea:dev is not built): run 'lea init' (AppArmor) and 'make build' first" >&2
     exit 1
   fi
@@ -19,9 +21,9 @@ projects="$work/projects"; mkdir -p "$projects"
 # A second projects dir: its lea container is the sibling that the first one must not reach.
 sibling="$work/sibling"; mkdir -p "$sibling"
 export XDG_DATA_HOME="$work/data"
-cat >"$work/lea.conf" <<'CONF'
+cat >"$work/lea.conf" <<CONF
 LEA_PREFIX=lea-test
-LEA_IMAGE=lea:dev
+LEA_IMAGE=$image
 LEA_PROXY_IMAGE=lea-proxy:dev
 CONF
 export LEA_CONFIG="$work/lea.conf"
@@ -36,6 +38,10 @@ slug=$(printf '%s' "$projects" | sed 's/[^A-Za-z0-9]/-/g')
 id=$(printf '%s' "$projects" | sha256sum | cut -c1-10)
 sid=$(printf '%s' "$sibling" | sha256sum | cut -c1-10)
 holders=
+# The host's settings.json and plugins (#111): each lea container gets its own writable copy, and
+# the host's must be byte-identical after the agents changed theirs. Made here when the host has
+# none (CI), and removed at the end; a local marketplace in the projects dir for /plugin install.
+made_settings=''; made_plugins=''
 # A stand-in for the Lock Family hub's facade socket (I11): the host daemon is pointed at it, and
 # no agent may see it (lea follows the hub by default). Outside the projects dir, as lockhub's is.
 facade_dir="$work/run/lockhub"; facade="$facade_dir/facade.sock"; facade_pid=
@@ -87,6 +93,8 @@ cleanup() {
   if [ -n "$slug" ]; then rm -r "${HOME:?}/.claude/projects/$slug" 2>/dev/null || true; fi
   sslug=$(printf '%s' "$sibling" | sed 's/[^A-Za-z0-9]/-/g')
   if [ -n "$sslug" ]; then rm -r "${HOME:?}/.claude/projects/$sslug" 2>/dev/null || true; fi
+  if [ -n "$made_settings" ]; then rm -f "${HOME:?}/.claude/settings.json"; fi
+  if [ -n "$made_plugins" ]; then rm -rf "${HOME:?}/.claude/plugins"; fi
   rm -rf "${work:?}"
 }
 trap cleanup EXIT
@@ -122,6 +130,31 @@ until python3 -I -c 'import socket, sys; socket.socket(socket.AF_UNIX).connect(s
   sleep 1
 done
 cp "$root/tests/integration/inside-isolation.sh" "$projects/"
+mkdir -p "$HOME/.claude"
+if [ ! -e "$HOME/.claude/settings.json" ]; then
+  printf '{"permissions":{"allow":["Bash(lea-isolation-host *)"]}}\n' >"$HOME/.claude/settings.json"; made_settings=1
+fi
+if [ ! -e "$HOME/.claude/plugins" ]; then
+  mkdir -p "$HOME/.claude/plugins"; printf '{"version":2,"plugins":{}}\n' >"$HOME/.claude/plugins/installed_plugins.json"; made_plugins=1
+fi
+# host_claude_sum: a digest of the host's settings.json and plugins: names, types, modes, link
+# targets and contents.
+host_claude_sum() {
+  (cd "$HOME/.claude" && find settings.json plugins -printf '%p %y %m %l\n' 2>/dev/null | LC_ALL=C sort &&
+    find settings.json plugins -type f -print0 2>/dev/null | LC_ALL=C sort -z | xargs -0 -r sha256sum) | sha256sum | cut -d' ' -f1
+}
+host_sum=$(host_claude_sum)
+# lea copies a real file only (a symbolic link is skipped).
+settings_sha=
+if [ -f "$HOME/.claude/settings.json" ] && [ ! -L "$HOME/.claude/settings.json" ]; then
+  settings_sha=$(sha256sum <"$HOME/.claude/settings.json" | cut -d' ' -f1)
+fi
+mk="$projects/lea-it-market"
+mkdir -p "$mk/.claude-plugin" "$mk/plugins/lea-it/.claude-plugin" "$mk/plugins/lea-it/commands"
+printf '{"name":"lea-it-market","owner":{"name":"lea"},"plugins":[{"name":"lea-it","source":"./plugins/lea-it","description":"lea isolation test plugin"}]}\n' \
+  >"$mk/.claude-plugin/marketplace.json"
+printf '{"name":"lea-it","version":"1.0.0","description":"lea isolation test plugin"}\n' >"$mk/plugins/lea-it/.claude-plugin/plugin.json"
+printf -- '---\ndescription: say ok\n---\nSay ok.\n' >"$mk/plugins/lea-it/commands/ok.md"
 # The internal networks have Docker-allocated subnets: hold both sessions open to read the
 # gateway of this one and the address of the sibling.
 hold "$projects"
@@ -146,5 +179,9 @@ until LEA_PROJECTS_DIR="$sibling" "$root/bin/lea" shell -- curl -s -o /dev/null 
 done
 rc=0
 LEA_PROJECTS_DIR="$projects" "$root/bin/lea" shell -- env CANARY_IP="$canary_ip" GW_IP="$gw_ip" HOST_IP="$host_ip" \
-  SIBLING_IP="$sibling_ip" HOST_FACADE="$facade" HOST_CRED_SHA="$cred_sha" HOST_HIST_SHA="$hist_sha" sh "$projects/inside-isolation.sh" || rc=$?
+  SIBLING_IP="$sibling_ip" HOST_FACADE="$facade" HOST_CRED_SHA="$cred_sha" HOST_HIST_SHA="$hist_sha" \
+  HOST_SETTINGS_SHA="$settings_sha" LEA_IT_MARKET="$mk" sh "$projects/inside-isolation.sh" || rc=$?
+# What the agents did to their copies never reached the host (#111).
+if [ "$(host_claude_sum)" = "$host_sum" ]; then echo "ok   host ~/.claude settings.json and plugins unchanged"
+else echo "FAIL host ~/.claude settings.json and plugins unchanged"; rc=1; fi
 exit "$rc"

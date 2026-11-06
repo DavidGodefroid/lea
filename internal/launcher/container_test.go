@@ -61,9 +61,15 @@ func TestClaudeSharedEntriesAreReadOnly(t *testing.T) {
 		t.Fatal(err)
 	}
 	c := w.home + "/.claude"
-	for _, e := range []string{"settings.json", "skills", "hooks", "CLAUDE.md"} {
+	for _, e := range []string{"skills", "hooks", "CLAUDE.md"} {
 		if !contains(args, "type=bind,src="+c+"/"+e+",dst="+c+"/"+e+",readonly") {
 			t.Errorf("%s not mounted read-only", e)
+		}
+	}
+	// settings.json and plugins are the container's own copies (#111): the host's are not mounted.
+	for _, e := range claudeLayered {
+		if strings.Contains(strings.Join(args, "\n"), "src="+c+"/"+e+",") {
+			t.Errorf("the host's %s is mounted", e)
 		}
 	}
 	for _, a := range args {
@@ -357,8 +363,7 @@ func TestClaudeMountsContents(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, want := range []string{"type=bind,src=" + priv + ",dst=" + c,
-		"type=bind,src=" + c + "/settings.json,dst=" + c + "/settings.json,readonly",
-		"type=bind,src=" + c + "/skills,dst=" + c + "/skills,readonly", "type=bind,src=" + c + "/plugins,dst=" + c + "/plugins,readonly",
+		"type=bind,src=" + c + "/skills,dst=" + c + "/skills,readonly",
 		"type=bind,src=" + c + "/CLAUDE.md,dst=" + c + "/CLAUDE.md,readonly",
 		"type=bind,src=" + c + "/projects/" + slug + ",dst=" + c + "/projects/" + slug,
 		"type=bind,src=" + st + "/claude.json,dst=" + w.home + "/.claude.json"} {
@@ -371,17 +376,21 @@ func TestClaudeMountsContents(t *testing.T) {
 		if strings.HasPrefix(a, "type=") && !strings.HasSuffix(a, ",readonly") {
 			rw++
 		}
-		for _, bad := range []string{".credentials.json", "history.jsonl", "-other", "/hooks", "/output-styles"} {
+		for _, bad := range []string{".credentials.json", "history.jsonl", "-other", "/hooks", "/output-styles", "/settings.json", "/plugins"} {
 			if strings.Contains(a, bad) {
 				t.Errorf("%q mounted: %s", bad, a)
 			}
 		}
 	}
-	if rw != 4 {
-		t.Errorf("%d read-write mounts, want the private base, plugins/data, the transcripts and claude.json", rw)
+	if rw != 3 {
+		t.Errorf("%d read-write mounts, want the private base, the transcripts and claude.json", rw)
 	}
-	if !isDir(priv+"/skills") || !isRegular(priv+"/settings.json") || !isDir(c+"/projects/"+slug) {
+	if !isDir(priv+"/skills") || !isDir(c+"/projects/"+slug) {
 		t.Error("mount points and the transcripts dir are created")
+	}
+	// The container's own copies of settings.json and plugins (#111).
+	if b, _ := os.ReadFile(priv + "/settings.json"); string(b) != "{}" || !isDir(priv+"/plugins") {
+		t.Errorf("the container's copies: settings %q, plugins %v", b, isDir(priv+"/plugins"))
 	}
 	other := w.dir + "/other"
 	os.MkdirAll(other, 0o755)
@@ -414,8 +423,9 @@ func TestClaudeMountsContents(t *testing.T) {
 		},
 		"placeholder": func(w *world, st, c, priv string) string {
 			os.MkdirAll(priv, 0o755)
-			os.Symlink(w.dir+"/planted", priv+"/settings.json")
-			return priv + "/settings.json"
+			os.WriteFile(c+"/keybindings.json", []byte("{}"), 0o600)
+			os.Symlink(w.dir+"/planted", priv+"/keybindings.json")
+			return priv + "/keybindings.json"
 		},
 		"transcripts": func(w *world, st, c, priv string) string {
 			os.MkdirAll(w.dir+"/out", 0o755)
@@ -430,70 +440,6 @@ func TestClaudeMountsContents(t *testing.T) {
 		}
 		if ents, _ := os.ReadDir(w.dir + "/out"); len(ents) != 0 || exists(w.dir+"/planted") {
 			t.Errorf("%s: written through the symlink", name)
-		}
-	}
-}
-
-// TestClaudePluginsDataIsWritable: ~/.claude/plugins stays read-only, but its data/ (where Claude Code
-// mkdirs each plugin's CLAUDE_PLUGIN_DATA) is a private read-write bind laid over it (#90).
-func TestClaudePluginsDataIsWritable(t *testing.T) {
-	setup := func() (*world, string, string, string) {
-		w := newWorld(t, repoRoot(t))
-		st, c := w.data+"/lea/state", w.home+"/.claude"
-		os.MkdirAll(c+"/plugins", 0o755)
-		return w, st, c, st + "/claude/" + ID(w.proj)
-	}
-	index := func(m []string, s string) int {
-		for i, a := range m {
-			if a == s {
-				return i
-			}
-		}
-		return -1
-	}
-	for _, hostHasData := range []bool{true, false} {
-		w, st, c, priv := setup()
-		if hostHasData {
-			os.MkdirAll(c+"/plugins/data/caveman-caveman", 0o755)
-		}
-		m, err := w.launcher().claudeMounts(w.home, w.proj, st)
-		if err != nil {
-			t.Fatal(err)
-		}
-		ro := index(m, "type=bind,src="+c+"/plugins,dst="+c+"/plugins,readonly")
-		rw := index(m, "type=bind,src="+priv+"/plugins-data,dst="+c+"/plugins/data")
-		if ro < 0 || rw < 0 || rw < ro {
-			t.Errorf("host data %v: plugins read-only at %d, plugins/data read-write at %d:\n%s", hostHasData, ro, rw, strings.Join(m, "\n"))
-		}
-		if !isDir(priv+"/plugins-data") || !isDir(c+"/plugins/data") {
-			t.Errorf("host data %v: the private source and the mount point are created", hostHasData)
-		}
-	}
-
-	// No plugins on the host: nothing to lay over.
-	w, st, c, _ := setup()
-	os.RemoveAll(c + "/plugins")
-	if m, err := w.launcher().claudeMounts(w.home, w.proj, st); err != nil || strings.Contains(strings.Join(m, "\n"), "/plugins/data") || exists(c+"/plugins") {
-		t.Errorf("no plugins: %v %q", err, m)
-	}
-
-	// A symlinked plugins/data is skipped with a warning; the agent still starts.
-	w, st, c, _ = setup()
-	os.MkdirAll(w.dir+"/out", 0o755)
-	os.Symlink(w.dir+"/out", c+"/plugins/data")
-	if m, err := w.launcher().claudeMounts(w.home, w.proj, st); err != nil || strings.Contains(strings.Join(m, "\n"), "dst="+c+"/plugins/data") ||
-		!strings.Contains(w.errb.String(), c+"/plugins/data") {
-		t.Errorf("symlinked plugins/data: %v %q", err, w.errb.String())
-	}
-
-	// A mount point lea cannot create is logged; the agent still starts.
-	if os.Getuid() != 0 {
-		w, st, c, _ = setup()
-		os.Chmod(c+"/plugins", 0o555)
-		defer os.Chmod(c+"/plugins", 0o755)
-		if m, err := w.launcher().claudeMounts(w.home, w.proj, st); err != nil || strings.Contains(strings.Join(m, "\n"), "dst="+c+"/plugins/data") ||
-			!strings.Contains(w.errb.String(), c+"/plugins/data") {
-			t.Errorf("uncreatable plugins/data: %v %q", err, w.errb.String())
 		}
 	}
 }

@@ -111,8 +111,6 @@ WAYLAND_DISPLAY=lea-clipboard
 --mount
 type=bind,src=$W/data/lea/state/claude/$ID,dst=$W/home/.claude
 --mount
-type=bind,src=$W/home/.claude/settings.json,dst=$W/home/.claude/settings.json,readonly
---mount
 type=bind,src=$W/home/.claude/hooks,dst=$W/home/.claude/hooks,readonly
 --mount
 type=bind,src=$W/home/.claude/skills,dst=$W/home/.claude/skills,readonly

@@ -19,7 +19,8 @@
 <p align="center"><img src="assets/demo.svg" alt="Three Claude Code agents work in the lea container. One pushes to github.com through the proxy; its attempts to read ~/.ssh and to reach 192.168.1.10 are blocked. Another asks for a permission, answered from the deck." width="900"></p>
 
 lea starts Claude Code in a container that sees one directory of your projects (read/write), a
-read-only allow-list of your `~/.claude` configuration, and nothing else of your machine. The
+read-only allow-list of your `~/.claude` configuration (its own copy of your settings and
+plugins, never written back), and nothing else of your machine. The
 agents get their own container engine (so `make test` and `docker run` work), reach the
 internet only through an egress proxy that refuses your private network, and never see your SSH
 keys or credentials.
@@ -49,8 +50,9 @@ and your network. lea moves the boundary from the prompt to the container.
   read `~/.ssh` or call your intranet.
 - **Many agents, one deck.** States, context use, branches and each agent's own task report at a
   glance; one key to reach the next agent that needs you.
-- **Your Claude Code, unchanged.** Your settings, skills, plugins, hooks and agents, read-only.
-  lea runs the real Claude Code with your subscription or API key.
+- **Your Claude Code, unchanged.** Your settings, skills, plugins, hooks and agents. `/plugin
+  install` and `/permissions` work inside lea, on lea's own copy: nothing reaches your host. lea
+  runs the real Claude Code with your subscription or API key.
 - **Local and open.** No account, no server, no forge lock-in. Apache 2.0.
 
 ```mermaid
@@ -580,6 +582,37 @@ vllm      https://vllm.example.com/v1         key=/home/me/.config/lea/keys/vllm
   a recent vLLM.
 - A change of the providers file restarts the proxy at the next `lea`.
 
+### Plugins and permissions in lea
+
+Each projects directory's container has its own writable copy of your `~/.claude/settings.json`
+and `~/.claude/plugins`, made from yours on the host when it first starts. Inside lea,
+`/plugin install`, `/plugin marketplace add`, the marketplaces' auto-update and `/permissions` work
+as on the host, on that copy, for every agent of that projects directory:
+
+- **Kept across restarts.** The copy lives in lea's data (`state/claude/<id>/`); `lea stop` and
+  the next `lea` keep what the agents installed or allowed.
+- **It follows your host while it is untouched.** When you change your host's settings or install
+  a plugin on the host, the next start takes it into a copy the agents did not change. When both
+  changed, lea keeps the copy and says so once; to take the host's, remove the copy (the path lea
+  prints) and restart lea.
+- **Nothing is ever written back to your host.** The host's `settings.json` and `plugins` are not
+  mounted at all; lea reads them on the host to make the copy, and never copies your plugins' own
+  data (`plugins/data`). To use a plugin you tried in lea on the host, install it there yourself
+  (`claude plugin install <plugin>@<marketplace>`): lea has no path from an agent to your host's
+  configuration, so a prompt-injected agent cannot plant a hook or a plugin that would run the
+  next time you start `claude` outside lea.
+- **lea's guards cannot be undone from there.** lea's hooks (the shell guard and its hard denies,
+  your grants, the approvals in the deck) are in Claude Code's managed settings,
+  `/etc/claude-code/managed-settings.json`, root's in the image: Claude Code ranks them above the
+  agents' settings and runs their hooks even when those set `disableAllHooks`. An agent that
+  deletes lea's hooks or allows every command in its copy is still guarded. The same hooks also
+  come in through `--settings` (an organisation's server-managed settings replace the file-based
+  ones); Claude Code runs each once. `lea doctor` checks the managed settings in the image and in
+  every running container, and that Claude Code is the version lea's CI verified them with.
+
+The worst a compromised agent can do is change its own container's copy, which it could already
+do by running code in its container: there is no persistence on your host.
+
 ### Control tower
 
 lea brings its own Claude Code plugin, `lea`, loaded in every agent (from the image, for the
@@ -920,8 +953,9 @@ so. Changes apply after `lea init` (endpoints, keys, images, locksql) or `lea st
 ## How lea keeps your machine safe
 
 - The container sees the projects directory, a read-only allow-list of `~/.claude`
-  (`settings.json`, `keybindings.json`, `hooks`, `skills`, `plugins`, `agents`, `commands`,
-  `output-styles`, the top-level `*.md` files) and, with locksql, lockmq or lockfile, the socket
+  (`keybindings.json`, `hooks`, `skills`, `agents`, `commands`, `output-styles`, the top-level
+  `*.md` files), its own writable copies of `settings.json` and `plugins` (never written back:
+  [Plugins and permissions in lea](#plugins-and-permissions-in-lea)) and, with locksql, lockmq or lockfile, the socket
   volume of their `lox up` lock. Nothing else.
 - `.lockfamily` in the projects directory (the Lock Family hub's config, the locks' public keys,
   the routing) is read-only in the container: lea makes it, owned by you on the host, when it is
@@ -979,8 +1013,9 @@ so. Changes apply after `lea init` (endpoints, keys, images, locksql) or `lea st
 - Work in lea, not on the host, inside the projects directory: an agent can write files your host
   tools would run. When the last session closes, lea reports changes to git hooks, risky git
   configuration, `.mcp.json` and `.claude/` settings.
-- Change Claude Code's configuration on the host: it is read-only in lea. After editing a single
-  file (`settings.json`, a top-level `*.md`, `keybindings.json`), restart lea (`lea stop`).
+- Change Claude Code's configuration on the host: it is read-only in lea, but for lea's own
+  copies of `settings.json` and `plugins`. After editing a single file (`settings.json`, a
+  top-level `*.md`, `keybindings.json`), restart lea (`lea stop`).
 
 ## FAQ
 
@@ -1004,8 +1039,8 @@ nowhere unless you set `LEA_OTEL_UPSTREAM`.
 
 ## Troubleshooting
 
-- **Start with `lea doctor`.** It checks Docker and the host versions (kernel, Docker Engine,
-  containerd, runc), the images, the proxy and the internal networks, tmux, the AppArmor profile,
+- **Start with `lea doctor`.** It checks lea's managed settings, Docker and the host versions
+  (kernel, Docker Engine, containerd, runc), the images, the proxy and the internal networks, tmux, the AppArmor profile,
   the projects directory and the configuration.
 - **An agent cannot reach a host.** Private and link-local addresses are refused on purpose; add
   the host to `LEA_INTERNAL_HOSTS`. A public domain outside lea's default list goes in

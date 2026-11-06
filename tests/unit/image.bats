@@ -253,8 +253,12 @@ lea_sha256_file() { sha256sum "$1" | cut -d' ' -f1; }
   grep -q 'chmod 0755 .*/usr/local/bin/lea-agent' "$c"
 }
 
-@test "lea's Claude hooks live in a --settings file, not in managed settings" {
-  s="$I/claude-settings.json"
+# lea's hooks are in the managed settings (#111), which an agent's own writable settings cannot
+# undo, and in the --settings file too, which keeps them on a host whose organisation has
+# server-managed settings (Claude Code then skips the file-based ones): the same commands, which
+# Claude Code runs once (TestClaudeManagedAndFlagHooksRunOnce).
+@test "lea's Claude hooks are in the managed settings and the --settings file, identical" {
+  s="$I/claude-settings.json" m="$I/managed-settings.json"
   for e in SessionStart UserPromptSubmit PreToolUse PostToolUse PermissionRequest Notification SubagentStart SubagentStop Stop StopFailure SessionEnd; do
     jq -e --arg e "$e" '.hooks[$e][0].hooks[0].command | contains("/usr/local/bin/lea hook claude " + $e)' "$s" >/dev/null
   done
@@ -265,9 +269,66 @@ lea_sha256_file() { sha256sum "$1" | cut -d' ' -f1; }
   jq -e '.hooks.SessionStart[0].hooks[1] | (.command | contains("/usr/local/bin/lea hook claude LimitResume")) and .asyncRewake == true and .timeout == 691200' "$s" >/dev/null
   # A Lock call's own rewake job (#161): no Stop follows a turn suspended on a pending decision.
   jq -e '.hooks.PostToolUse[1] | .matcher == "^mcp__lock[a-z]*__" and (.hooks[0] | (.command | contains("/usr/local/bin/lea hook claude Rewake")) and .asyncRewake == true and .timeout == 3600)' "$s" >/dev/null
-  [ "$(jq -r '.hooks // "none"' "$I/managed-settings.json")" = none ]
+  jq -e --slurpfile f "$s" '.hooks == $f[0].hooks' "$m" >/dev/null
+  [ "$(jq -r '.disableAllHooks // .allowManagedHooksOnly // "none"' "$m")" = none ]
   grep -q '^COPY image/claude-settings.json /usr/local/share/lea/claude-settings.json$' "$I/Containerfile"
+  grep -q '^COPY image/managed-settings.json /etc/claude-code/managed-settings.json$' "$I/Containerfile"
   grep -q 'settings=${LEA_CLAUDE_SETTINGS:-/usr/local/share/lea/claude-settings.json}' "$I/lea-session"
+}
+
+# managed_check: image/managed-check on copies of the repository's files, owned by the test's
+# user, with a claude that reports VERSION (default: the Containerfile's pin).
+managed_check() {
+  d=$BATS_TEST_TMPDIR/mc
+  mkdir -p "$d/etc/claude-code" "$d/bin"
+  [ -f "$d/etc/claude-code/managed-settings.json" ] || cp "$I/managed-settings.json" "$d/etc/claude-code/managed-settings.json"
+  chmod 0755 "$d/etc/claude-code"
+  pin=$(sed -n 's/^ARG CLAUDE_CODE_VERSION=//p' "$I/Containerfile")
+  echo "$pin" >"$d/pin"
+  printf '#!/bin/sh
+echo "%s (Claude Code)"
+' "${VERSION:-$pin}" >"$d/bin/claude"
+  chmod +x "$d/bin/claude"
+  PATH="$d/bin:$PATH" LEA_MANAGED_SETTINGS="$d/etc/claude-code/managed-settings.json" LEA_CLAUDE_SETTINGS="$I/claude-settings.json" \
+    LEA_CLAUDE_PIN="$d/pin" LEA_MANAGED_OWNER=$(id -u) run "$I/managed-check"
+}
+
+@test "managed-check confirms lea's hooks in the managed settings, with the verified Claude Code (#111)" {
+  [ -x "$I/managed-check" ]
+  grep -q '^COPY image/lea-crun image/managed-check /usr/local/libexec/lea/$' "$I/Containerfile"
+  grep -q 'echo "${CLAUDE_CODE_VERSION}" >/usr/local/share/lea/claude-code-version' "$I/Containerfile"
+  managed_check
+  [ "$status" -eq 0 ]
+  [[ "$output" == "lea's hooks in "*", Claude Code $(sed -n 's/^ARG CLAUDE_CODE_VERSION=//p' "$I/Containerfile")" ]]
+}
+
+@test "managed-check fails closed: a hook missing, other hooks, hooks off, a writable file, a drop-in, another Claude Code" {
+  m=$BATS_TEST_TMPDIR/mc/etc/claude-code/managed-settings.json
+  mkdir -p "${m%/*}"
+  jq 'del(.hooks.PreToolUse)' "$I/managed-settings.json" >"$m"
+  managed_check
+  [ "$status" -eq 1 ]; [[ "$output" == *"lacks lea's PreToolUse hook"* ]]
+  jq '.hooks.Stop[0].hooks[0].command += " "' "$I/managed-settings.json" >"$m"
+  managed_check
+  [ "$status" -eq 1 ]; [[ "$output" == *"do not carry the same hooks"* ]]
+  jq '.disableAllHooks = true' "$I/managed-settings.json" >"$m"
+  managed_check
+  [ "$status" -eq 1 ]; [[ "$output" == *"turns hooks off"* ]]
+  cp "$I/managed-settings.json" "$m"; chmod 0666 "$m"
+  managed_check
+  [ "$status" -eq 1 ]; [[ "$output" == *"is writable by others than root"* ]]
+  chmod 0644 "$m"; mkdir "${m%/*}/managed-settings.d"
+  managed_check
+  [ "$status" -eq 1 ]; [[ "$output" == *"managed-settings.d exists"* ]]
+  rmdir "${m%/*}/managed-settings.d"
+  VERSION=0.0.1 managed_check
+  [ "$status" -eq 1 ]; [[ "$output" == *"Claude Code 0.0.1 is not "*"the version lea verified"* ]]
+}
+
+@test "the entrypoint keeps the managed settings root's, with no drop-in directory (#111)" {
+  grep -q '^chown -R 0:0 /etc/claude-code$' "$I/entrypoint"
+  grep -q '^chmod 0644 /etc/claude-code/managed-settings.json$' "$I/entrypoint"
+  grep -q '^rm -rf /etc/claude-code/managed-settings.d$' "$I/entrypoint"
 }
 
 # lea's Claude plugin comes with the image: a manifest named lea and the control-tower skill.

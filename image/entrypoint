@@ -75,6 +75,12 @@ if [ "${LEA_LOCKHTTP:-0}" = 1 ]; then
   chmod 0644 "$m.new"
   mv "$m.new" "$m"
 fi
+# lea's managed settings (its hooks, #111) are root's: the agents' user can rewrite its own
+# ~/.claude/settings.json, never these, and no drop-in directory may add to them.
+chown -R 0:0 /etc/claude-code
+chmod 0755 /etc/claude-code
+chmod 0644 /etc/claude-code/managed-settings.json
+rm -rf /etc/claude-code/managed-settings.d
 # Each git SSH endpoint goes to its forwarder on the proxy (port 2222 + its index), by IP so that
 # nested containers (GIT_SSH_COMMAND -F /run/lea/ssh_config) reach it too.
 {

@@ -92,6 +92,8 @@ lea_doctor() {
     else lea__ok "$_dctr CPU windows: none (no agent runs, or LEA_AGENT_CPUS=0)"; fi
   done
 
+  lea__doctor_managed || _drc=1
+
   lea__doctor_pressure
 
   # The domains the proxy always allows: EGRESS_ALWAYS of proxy/render-squid-conf.sh.
@@ -127,6 +129,29 @@ lea_doctor() {
     lea__warn "kubernetes token" "none (optional): lea kube refresh"
   fi
   return "$_drc"
+}
+
+# lea__doctor_managed: lea's Claude hooks are in the image's managed settings, which the agents
+# cannot change and the pinned Claude Code honours over their own writable settings (#111):
+# managed-check in the image, then in each running lea container (one started from an older
+# image lacks them until it restarts). Fails closed: a FAIL for anything it cannot confirm.
+lea__doctor_managed() {
+  _dmrc=0
+  if docker image inspect "$LEA_IMAGE" >/dev/null 2>&1; then
+    if _dmo=$(docker run --rm --pull never --network none --entrypoint /usr/local/libexec/lea/managed-check "$LEA_IMAGE" 2>&1); then
+      lea__ok "managed settings (image): ${_dmo:-confirmed}"
+    else
+      lea__fail "managed settings (image)" "${_dmo:-the check did not run}: run lea update, or rebuild the image"; _dmrc=1
+    fi
+  fi
+  for _dctr in $(docker ps --filter "label=lea.prefix=$LEA_PREFIX" --filter label=lea.role=session --format '{{.Names}}' 2>/dev/null || true); do
+    if _dmo=$(docker exec -u "$(id -u):$(id -g)" "$_dctr" /usr/local/libexec/lea/managed-check 2>&1); then
+      lea__ok "$_dctr managed settings: ${_dmo:-confirmed}"
+    else
+      lea__fail "$_dctr managed settings" "${_dmo:-the check did not run}: restart it (lea stop, then lea) on the current image"; _dmrc=1
+    fi
+  done
+  return "$_dmrc"
 }
 
 # lea__doctor_locksql_lock: the locksql console runs hub-attached only, under lox up: lea's agents
