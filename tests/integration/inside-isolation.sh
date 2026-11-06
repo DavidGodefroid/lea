@@ -60,6 +60,19 @@ socket.socket(16, 3, 0).close()
 try: socket.socket(16, 3, 9)
 except OSError as e: sys.exit(e.errno != errno.EINVAL)
 sys.exit(1)'
+# socket(2) through a raw syscall, each argument a full 64-bit register: seccomp compares all 64
+# bits, the kernel reads the low 32 of these ints. Protocol 0x100000009 is NETLINK_AUDIT to the
+# kernel, family 0x100000026 AF_ALG: both refused (image/seccomp/generate.py, ARG_BITS).
+# shellcheck disable=SC2317,SC2329 # run by must
+socket_raw_refused() {
+  python3 -I -c 'import ctypes, platform, sys
+nr = {"x86_64": 41, "aarch64": 198}[platform.machine()]
+libc = ctypes.CDLL(None, use_errno=True); libc.syscall.restype = ctypes.c_long
+fd = libc.syscall(ctypes.c_long(nr), *(ctypes.c_long(int(a, 0)) for a in sys.argv[1:]))
+sys.exit(0 if fd < 0 and ctypes.get_errno() in (1, 22, 97) else 1)' "$@"
+}
+must   "NETLINK_AUDIT socket with high protocol bits refused (seccomp)" socket_raw_refused 16 3 0x100000009
+must   "AF_ALG socket with high family bits refused (seccomp)" socket_raw_refused 0x100000026 5 0
 # The sandbox (#100): the nested rootless Podman builds and runs over pasta under lea's seccomp
 # profile and AppArmor; what it does not need stays refused, and nothing gets root back.
 # Its engine's output goes to a log, shown when it fails.

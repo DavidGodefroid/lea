@@ -958,7 +958,10 @@ so. Changes apply after `lea init` (endpoints, keys, images, locksql) or `lea st
   `CAP_AUDIT_WRITE`), and what lea's earlier profile refused that Docker's default allows
   (`vmsplice`, `cachestat`, `map_shadow_stack`, the futex2 calls, `io_pgetevents`). 32-bit x86
   (i386) programs do not run in lea: their `socketcall` hides the socket family from seccomp, so
-  the profile leaves that architecture out. The AppArmor profile `lea` is docker-default with its
+  the profile leaves that architecture out. seccomp compares 64-bit registers where the kernel
+  reads an `int` argument's low 32 bits, so the generator refuses any test of an `int` argument
+  that high bits could get past (`socket(16, 3, 0x100000009)` is an audit socket to the kernel).
+  The AppArmor profile `lea` is docker-default with its
   `/proc` write denies, plus mounts and user namespaces for the nested Podman.
 - No way back to root in lea: the entrypoint drops to your uid with no capabilities, the image has
   no `sudo` and no setuid or setgid file. `newuidmap` and `newgidmap` keep their file capabilities,

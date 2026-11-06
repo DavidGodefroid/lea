@@ -33,6 +33,42 @@ def reason(entry, what):
     return why.strip()
 
 
+# The width of each syscall argument a rule tests. seccomp compares the 64-bit register while the
+# kernel reads an int argument from its low 32 bits only: socket(16, 3, 0x100000009) is a
+# NETLINK_AUDIT socket that "protocol == 9" misses and "protocol != 9" lets through. So a rule
+# that refuses tests only the low 32 bits of an int argument (MASKED_EQ, mask 0xffffffff), and a
+# rule that allows matches no value with high bits set (EQ, LT, LE below 2^32): such a value then
+# falls to the default action, an error. A test of an argument not listed here fails the build.
+ARG_BITS = {
+    "socket": (32, 32, 32),     # int domain, int type, int protocol
+    "personality": (32,),       # unsigned int persona
+}
+LOW32 = 0xFFFFFFFF
+
+
+def check_arg_widths(rules):
+    for r in rules:
+        for a in r.get("args") or []:
+            for name in r["names"]:
+                bits = ARG_BITS.get(name, ())
+                if a["index"] >= len(bits):
+                    fail("%s: argument %d is tested but its width is not in ARG_BITS" % (name, a["index"]))
+                if bits[a["index"]] != 32:
+                    continue
+                op, v, v2 = a["op"], a["value"], a.get("valueTwo", 0)
+                if r["action"] == "SCMP_ACT_ALLOW":
+                    good = (op == "SCMP_CMP_EQ" and v <= LOW32 or op == "SCMP_CMP_LE" and v <= LOW32
+                            or op == "SCMP_CMP_LT" and v <= LOW32 + 1
+                            or op == "SCMP_CMP_MASKED_EQ" and v >> 32 == LOW32 and v2 <= LOW32)
+                    what = "an allow rule must match no value with high bits set (EQ, LT, LE below 2^32)"
+                else:
+                    good = op == "SCMP_CMP_MASKED_EQ" and v == LOW32 and v2 <= LOW32
+                    what = "a rule that refuses must test its low 32 bits only (MASKED_EQ, mask 0xffffffff)"
+                if not good:
+                    fail("%s: argument %d is a 32-bit int the kernel truncates, compared as %s %d: %s"
+                         % (name, a["index"], op, v, what))
+
+
 def build():
     with open(os.path.join(HERE, "lea.json"), encoding="utf-8") as f:
         spec = json.load(f)
@@ -57,20 +93,24 @@ def build():
 
     # A narrowed rule keeps its names, action and argument tests and adds tests of other arguments:
     # it can only match less, and leaves room for a rule of lea's that no allow rule then overlaps.
+    # One base rule may become several (ORed), each of them narrowed so.
     for n in spec.get("narrow", []):
         why = reason(n, "narrow %s" % n.get("base", {}).get("names"))
-        base, new = n["base"], copy.deepcopy(n["rule"])
+        base, news = n["base"], copy.deepcopy(n.get("rules"))
         hits = [i for i, r in enumerate(prof["syscalls"]) if r == base]
         if len(hits) != 1:
             fail("narrow %s: the base has %d such rules, not one" % (base.get("names"), len(hits)))
+        if not isinstance(news, list) or not news:
+            fail("narrow %s: rules lists the narrowed rules" % base.get("names"))
         old_args = base.get("args") or []
-        new_args = new.get("args") or []
-        if ({k: v for k, v in new.items() if k != "args"} != {k: v for k, v in base.items() if k != "args"}
-                or any(a not in new_args for a in old_args) or len(new_args) <= len(old_args)
-                or {a["index"] for a in old_args} & {a["index"] for a in new_args if a not in old_args}):
-            fail("narrow %s: the rule must be the base rule with tests of other arguments added" % base.get("names"))
-        new["comment"] = "lea: " + why
-        prof["syscalls"][hits[0]] = new
+        for new in news:
+            new_args = new.get("args") or []
+            if ({k: v for k, v in new.items() if k != "args"} != {k: v for k, v in base.items() if k != "args"}
+                    or any(a not in new_args for a in old_args) or len(new_args) <= len(old_args)
+                    or {a["index"] for a in old_args} & {a["index"] for a in new_args if a not in old_args}):
+                fail("narrow %s: the rule must be the base rule with tests of other arguments added" % base.get("names"))
+            new["comment"] = "lea: " + why
+        prof["syscalls"][hits[0]:hits[0] + 1] = news
 
     def names_in(rule_filter):
         return {n for r in prof["syscalls"] if rule_filter(r) for n in r["names"]}
@@ -111,6 +151,7 @@ def build():
         rule["comment"] = "lea: " + why
         lea.append(rule)
     prof["syscalls"] = rules[:1] + lea + rules[1:]
+    check_arg_widths(prof["syscalls"])
     return json.dumps(prof, indent="\t", ensure_ascii=False) + "\n"
 
 

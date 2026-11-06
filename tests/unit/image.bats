@@ -112,36 +112,77 @@ seccomp_copy() { mkdir -p "$BATS_TEST_TMPDIR/i/seccomp"; cp "$I"/seccomp/* "$BAT
         or (.op == "SCMP_CMP_EQ" and .value != 38) or (.op == "SCMP_CMP_LT" and .value <= 38)))] | length == 0)]
     | length' "$f")" -eq 0 ]
   [ "$(jq -c '[.syscalls[] | select(.names == ["socket"] and .action == "SCMP_ACT_ERRNO" and .errnoRet == 97) | .args]' "$f")" = \
-    '[[{"index":0,"value":38,"valueTwo":0,"op":"SCMP_CMP_EQ"}]]' ]
+    '[[{"index":0,"value":4294967295,"valueTwo":38,"op":"SCMP_CMP_MASKED_EQ"}]]' ]
   # Each rule compares an argument once: runc splits a rule that compares one twice into ORed rules.
   [ "$(jq '[.syscalls[] | select((.args // []) | map(.index) | length != (unique | length))] | length' "$f")" -eq 0 ]
 }
 
 # NETLINK_AUDIT (AF_NETLINK 16, protocol 9) gets EINVAL, as in the pre-#100 profile: lea drops
-# CAP_AUDIT_WRITE. moby's allow rule for family 16 is narrowed to protocols other than 9, so no allow
-# rule overlaps the errno rule (crun refuses overlaps: EEXIST); each change carries its reason.
+# CAP_AUDIT_WRITE. moby's allow rule for family 16 is narrowed to the other netlink protocols, each
+# compared in 64 bits (LT 9, EQ 10 to 31), so no allow rule overlaps the errno rule (crun refuses
+# overlaps: EEXIST) and none lets 0x100000009 through, which the kernel truncates to 9; the errno
+# rule compares the low 32 bits only. Each change carries its reason.
 @test "seccomp profile refuses NETLINK_AUDIT sockets and keeps the other netlink sockets" {
   f="$I/seccomp.json"
   [ "$(jq -c '[.syscalls[] | select(.names == ["socket"] and .action == "SCMP_ACT_ERRNO" and .errnoRet == 22) | .args]' "$f")" = \
-    '[[{"index":0,"value":16,"valueTwo":0,"op":"SCMP_CMP_EQ"},{"index":2,"value":9,"valueTwo":0,"op":"SCMP_CMP_EQ"}]]' ]
-  # Every allow rule for socket either tests a family other than 16 or refuses protocol 9.
+    '[[{"index":0,"value":4294967295,"valueTwo":16,"op":"SCMP_CMP_MASKED_EQ"},{"index":2,"value":4294967295,"valueTwo":9,"op":"SCMP_CMP_MASKED_EQ"}]]' ]
+  # Every allow rule for socket tests a family other than 16 or a protocol below 2^32 other than 9.
   [ "$(jq '[.syscalls[] | select(.action == "SCMP_ACT_ALLOW" and (.names | index("socket")))
     | select([(.args // [])[] | select((.index == 0 and ((.op == "SCMP_CMP_EQ" and .value != 16) or (.op == "SCMP_CMP_LT" and .value <= 16)))
-        or (.index == 2 and .op == "SCMP_CMP_NE" and .value == 9))] | length == 0)] | length' "$f")" -eq 0 ]
-  [ "$(jq -c '[.syscalls[] | select(.names == ["socket"] and .action == "SCMP_ACT_ALLOW" and (.args | map(select(.index == 0 and .value == 16)) | length) > 0) | .args]' "$f")" = \
-    '[[{"index":0,"value":16,"op":"SCMP_CMP_EQ"},{"index":2,"value":9,"op":"SCMP_CMP_NE"}]]' ]
+        or (.index == 2 and ((.op == "SCMP_CMP_EQ" and .value != 9 and .value < 4294967296) or (.op == "SCMP_CMP_LT" and .value <= 9))))] | length == 0)] | length' "$f")" -eq 0 ]
+  [ "$(jq -c '[.syscalls[] | select(.names == ["socket"] and .action == "SCMP_ACT_ALLOW" and (.args | map(select(.index == 0 and .value == 16)) | length) > 0)
+    | .args[1] | [.op, .value]]' "$f")" = \
+    "[[\"SCMP_CMP_LT\",9]$(for p in $(seq 10 31); do printf ',["SCMP_CMP_EQ",%d]' "$p"; done)]" ]
   l="$I/seccomp/lea.json"
   [ "$(jq '[.rules[] | select(.rule.errnoRet == 22 and (.why | test("NETLINK_AUDIT")))] | length' "$l")" = 1 ]
   [ "$(jq '[.narrow[] | select(.base.args == [{"index":0,"value":16,"op":"SCMP_CMP_EQ"}] and (.why | test("NETLINK_AUDIT")))] | length' "$l")" = 1 ]
 }
 
+# seccomp compares 64 bits, the kernel reads an int argument's low 32 (socket's family, type and
+# protocol, personality's persona): the generator refuses a comparison that high bits would get past.
+@test "seccomp generator refuses a 64-bit comparison of a 32-bit argument that fails open" {
+  seccomp_copy
+  # The scan's finding: NE 9 on the protocol lets 0x100000009 (NETLINK_AUDIT) through.
+  jq '.narrow[0].rules = [{"names": ["socket"], "action": "SCMP_ACT_ALLOW", "args": [{"index": 0, "value": 16, "op": "SCMP_CMP_EQ"}, {"index": 2, "value": 9, "op": "SCMP_CMP_NE"}]}]' \
+    "$I/seccomp/lea.json" >"$BATS_TEST_TMPDIR/i/seccomp/lea.json"
+  run python3 -I "$G"
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"socket: argument 2 is a 32-bit int the kernel truncates, compared as SCMP_CMP_NE 9: an allow rule must match no value"* ]]
+  # A refusal by EQ misses the same value.
+  jq '(.rules[] | select(.rule.errnoRet == 22) | .rule.args[1]) = {"index": 2, "value": 9, "valueTwo": 0, "op": "SCMP_CMP_EQ"}' \
+    "$I/seccomp/lea.json" >"$BATS_TEST_TMPDIR/i/seccomp/lea.json"
+  run python3 -I "$G"
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"socket: argument 2 is a 32-bit int the kernel truncates, compared as SCMP_CMP_EQ 9: a rule that refuses must test its low 32 bits only"* ]]
+  # An allow rule by GE, or by an EQ above 2^32, also matches high bits.
+  jq '.narrow[0].rules[0].args[1] = {"index": 2, "value": 10, "op": "SCMP_CMP_GE"}' "$I/seccomp/lea.json" >"$BATS_TEST_TMPDIR/i/seccomp/lea.json"
+  run python3 -I "$G"
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"compared as SCMP_CMP_GE 10"* ]]
+  jq '.narrow[0].rules[0].args[1] = {"index": 2, "value": 4294967306, "op": "SCMP_CMP_EQ"}' "$I/seccomp/lea.json" >"$BATS_TEST_TMPDIR/i/seccomp/lea.json"
+  run python3 -I "$G"
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"compared as SCMP_CMP_EQ 4294967306"* ]]
+  # A masked refusal that keeps high bits in its mask.
+  jq '(.rules[] | select(.rule.errnoRet == 97) | .rule.args[0].value) = 8589934591' "$I/seccomp/lea.json" >"$BATS_TEST_TMPDIR/i/seccomp/lea.json"
+  run python3 -I "$G"
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"socket: argument 0 is a 32-bit int the kernel truncates, compared as SCMP_CMP_MASKED_EQ 8589934591"* ]]
+  # An argument whose width the generator does not know.
+  jq '.rules += [{"why": "test", "rule": {"names": ["ioctl"], "action": "SCMP_ACT_ERRNO", "args": [{"index": 1, "value": 4294967295, "valueTwo": 21531, "op": "SCMP_CMP_MASKED_EQ"}], "errnoRet": 1}}]' \
+    "$I/seccomp/lea.json" >"$BATS_TEST_TMPDIR/i/seccomp/lea.json"
+  run python3 -I "$G"
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"ioctl: argument 1 is tested but its width is not in ARG_BITS"* ]]
+}
+
 @test "seccomp generator narrows a base rule only by tests of other arguments, with a reason" {
   seccomp_copy
-  jq '.narrow[0].rule.args[1] = {"index": 0, "value": 9, "op": "SCMP_CMP_NE"}' "$I/seccomp/lea.json" >"$BATS_TEST_TMPDIR/i/seccomp/lea.json"
+  jq '.narrow[0].rules[3].args[1] = {"index": 0, "value": 9, "op": "SCMP_CMP_LT"}' "$I/seccomp/lea.json" >"$BATS_TEST_TMPDIR/i/seccomp/lea.json"
   run python3 -I "$G"
   [ "$status" -ne 0 ]
   [[ "$output" == *"the rule must be the base rule with tests of other arguments added"* ]]
-  jq '.narrow[0].rule.action = "SCMP_ACT_LOG"' "$I/seccomp/lea.json" >"$BATS_TEST_TMPDIR/i/seccomp/lea.json"
+  jq '.narrow[0].rules[0].action = "SCMP_ACT_LOG"' "$I/seccomp/lea.json" >"$BATS_TEST_TMPDIR/i/seccomp/lea.json"
   run python3 -I "$G"
   [ "$status" -ne 0 ]
   [[ "$output" == *"the rule must be the base rule with tests of other arguments added"* ]]
@@ -149,6 +190,10 @@ seccomp_copy() { mkdir -p "$BATS_TEST_TMPDIR/i/seccomp"; cp "$I"/seccomp/* "$BAT
   run python3 -I "$G"
   [ "$status" -ne 0 ]
   [[ "$output" == *"the base has 0 such rules, not one"* ]]
+  jq '.narrow[0].rules = []' "$I/seccomp/lea.json" >"$BATS_TEST_TMPDIR/i/seccomp/lea.json"
+  run python3 -I "$G"
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"rules lists the narrowed rules"* ]]
   jq 'del(.narrow[0].why)' "$I/seccomp/lea.json" >"$BATS_TEST_TMPDIR/i/seccomp/lea.json"
   run python3 -I "$G"
   [ "$status" -ne 0 ]
