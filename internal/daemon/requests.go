@@ -99,6 +99,11 @@ func (d *Daemon) requestSpawn(o Origin, me string, raw json.RawMessage) (any, er
 	}
 	d.wake(lead)
 	d.changed()
+	if lead == "user" {
+		// The user decides: lea needs them (#294); without the deck, on the host (#135).
+		d.attention(context.Background(), o.Container, me, fmt.Sprintf("%s asks for a %s agent: lea approve s%d or lea deny s%d (lea requests)",
+			shortName(me), p.Role, added.ID, added.ID))
+	}
 	return map[string]any{"request": added.ID, "sent_to": shortName(lead)}, nil
 }
 

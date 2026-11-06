@@ -94,7 +94,9 @@ func grantMAC(key []byte, payload string) []byte {
 
 // VerifyGrant is parseGrant for lea's other parts (tests): what tok allows, when key signed it
 // and it has not expired.
-func VerifyGrant(key []byte, tok string, now time.Time) (Grant, error) { return parseGrant(key, tok, now) }
+func VerifyGrant(key []byte, tok string, now time.Time) (Grant, error) {
+	return parseGrant(key, tok, now)
+}
 
 // parseGrant checks tok's signature and expiry; it does not spend it.
 func parseGrant(key []byte, tok string, now time.Time) (Grant, error) {

@@ -1,0 +1,6 @@
+status 2
+-- calls
+
+-- lea
+lea: error: usage: lea attach [--print] [AGENT] (an agent's name: lower-case letters, digits and -)
+-- stdout

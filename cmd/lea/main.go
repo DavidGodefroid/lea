@@ -36,11 +36,14 @@ const usage = `usage: lea <command>
                              and leave it unread (inside lea)
   approvals                  list pending approvals
   approve <id> allow|deny|always   answer an approval
-  board [--md] [--container NAME]   the tasks of every agent, as markdown
+  approve ID [always] | deny ID [reason...]
+                             answer what lea requests lists: pN a permission, sN a spawn request
+  board [--md] [--watch] [--container NAME]   the tasks of every agent, as markdown
+                             (--watch: again every 2 s)
   heavy -- <command> [args...]
                              run a test suite, an analysis, a build in one of the container's
                              heavy slots, on its CPUs, with capped workers (inside lea)
-  requests                   list the spawn requests that wait for you
+  requests                   list what waits for you: permissions (pN) and spawn requests (sN)
   request accept <id> | request decline <id> [reason]
                              answer a spawn request
   attach-container <name>    bind a container's bus socket (used by the launcher)
@@ -92,7 +95,7 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		return 0
 	case "daemon":
 		return runDaemon(stderr)
-	case "agents", "msg", "inbox", "approvals", "approve", "attach-container", "role", "requests", "request", "board", "sound":
+	case "agents", "msg", "inbox", "approvals", "approve", "deny", "attach-container", "role", "requests", "request", "board", "sound":
 		return runHost(args, stdout, stderr)
 	case "grant":
 		return runGrant(args, stdout, stderr)

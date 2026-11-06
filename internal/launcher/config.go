@@ -34,7 +34,7 @@ var ExportedKeys = []string{
 	"LEA_PREFIX", "LEA_IMAGE", "LEA_PROXY_IMAGE", "LEA_CTL", "LEA_CTL_IMAGE", "LEA_GIT_SSH", "LEA_GIT_KNOWN_HOSTS", "LEA_LOCKSQL", "LEA_LOCKSQL_REF",
 	"LEA_LOCKMQ", "LEA_LOCKFILE", "LEA_LOCK_TOOL_TIMEOUT", "LEA_LOCKMQ_REF", "LEA_LOCKFILE_REF", "LEA_LOCKHTTP", "LEA_LOCKHTTP_MITM", "LEA_HUB", "LEA_HUB_KEEPALIVE",
 	"LEA_OTEL_UPSTREAM", "LEA_NESTED_NETWORKS", "LEA_K8S_NAMESPACE", "LEA_INTERNAL_HOSTS", "LEA_EGRESS_ALLOW", "LEA_PROJECTS_DIR",
-	"LEA_APPROVALS", "LEA_APPROVAL_TIMEOUT", "LEA_SOUND", "LEA_SOUND_ATTENTION",
+	"LEA_APPROVALS", "LEA_APPROVAL_TIMEOUT", "LEA_SOUND", "LEA_SOUND_ATTENTION", "LEA_DECK", "LEA_TOOL",
 	"LEA_PROVIDER", "LEA_MODEL", "LEA_PROVIDERS", "LEA_AUTO_RESUME", "LEA_RESUME_DELAY",
 	"LEA_STACK_IDLE", "LEA_HEAVY_SLOTS", "LEA_HEAVY_WORKERS",
 	"LEA_ADMIT_CPU_PSI", "LEA_ADMIT_MEM_PCT", "LEA_ADMIT_MEM_PSI", "LEA_ADMIT_IO_PSI", "LEA_ADMIT_LOAD",
@@ -190,6 +190,17 @@ func (c *Config) resolve(root string) error {
 	if n, ok := plainNumber(at, 3); !ok || n < 1 || n > 600 {
 		return fmt.Errorf("LEA_APPROVAL_TIMEOUT must be a number of seconds from 1 to 600 without leading zeros, not '%s'", at)
 	}
+	// The deck or the user's own tool in the lea container (#135).
+	deck := nonEmpty(c.Get("LEA_DECK"), "1")
+	if deck != "0" && deck != "1" {
+		return fmt.Errorf("LEA_DECK must be 1 (the lea deck) or 0 (your own tool, LEA_TOOL, in the lea container), not '%s'", deck)
+	}
+	c.final["LEA_DECK"] = deck
+	tool, err := ToolArgv(c.Get("LEA_TOOL"))
+	if err != nil {
+		return err
+	}
+	c.final["LEA_TOOL"] = strings.Join(tool, " ")
 	c.final["LEA_INTERNAL_HOSTS"] = nonEmpty(c.Get("LEA_INTERNAL_HOSTS"), root+"/config/internal-hosts")
 	ea, err := egressAllow(c.Get("LEA_EGRESS_ALLOW"))
 	if err != nil {
@@ -379,6 +390,46 @@ func gitEndpoints(v string) ([]string, error) {
 		seen[h] = true
 	}
 	return eps, nil
+}
+
+// DefaultTool is the command `lea` runs in the lea container with LEA_DECK=0 when LEA_TOOL is
+// empty.
+const DefaultTool = "claude"
+
+// toolWord is one word of LEA_TOOL: no shell metacharacter, no quote, no blank.
+var toolWord = regexp.MustCompile(`^[A-Za-z0-9_./:=@%+,-]+$`)
+
+// maxToolWords caps LEA_TOOL.
+const maxToolWords = 32
+
+// ToolArgv is LEA_TOOL as the argv lea runs in the container (#135), as lea__check_tool reads
+// it: words separated by blanks, each made of letters, digits and _ . / : = @ % + , - only, the
+// first one a command (not an option). Empty: DefaultTool. Nothing goes through a shell.
+func ToolArgv(v string) ([]string, error) {
+	ws := strings.Fields(v)
+	if len(ws) == 0 {
+		return []string{DefaultTool}, nil
+	}
+	bad := len(ws) > maxToolWords || strings.HasPrefix(ws[0], "-")
+	for _, w := range ws {
+		bad = bad || !toolWord.MatchString(w)
+	}
+	if bad {
+		return nil, fmt.Errorf("LEA_TOOL must be a command and its arguments separated by spaces (at most %d words of letters, digits and _ . / : = @ %% + , -, the first one not an option), not '%s'", maxToolWords, v)
+	}
+	return ws, nil
+}
+
+// NoDeck reports LEA_DECK=0: lea opens the user's own tool in the lea container, not the deck.
+func (c *Config) NoDeck() bool { return c.Get("LEA_DECK") == "0" }
+
+// Tool is the argv of LEA_TOOL, resolved (DefaultTool when empty).
+func (c *Config) Tool() []string {
+	ws, err := ToolArgv(c.Get("LEA_TOOL"))
+	if err != nil {
+		return []string{DefaultTool}
+	}
+	return ws
 }
 
 // CheckOtelUpstream validates LEA_OTEL_UPSTREAM as lea__check_otel_upstream does: empty, or

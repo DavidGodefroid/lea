@@ -90,7 +90,9 @@ const (
 var machineKeys = map[string]bool{"LEA_PROJECTS_DIR": true, "LEA_CONFIG": true, "LEA_PREFIX": true,
 	"LEA_GIT_KNOWN_HOSTS": true, "LEA_GITLAB_KNOWN_HOSTS": true, "LEA_INTERNAL_HOSTS": true,
 	// What agents may ask of this workstation's lock consoles is its user's choice alone.
-	"LEA_LOCKSQL_AGENT_PROFILES": true}
+	"LEA_LOCKSQL_AGENT_PROFILES": true,
+	// The deck or the user's own tool (#135): how this user works, not the team's configuration.
+	"LEA_DECK": true, "LEA_TOOL": true}
 
 const configUsage = `Usage:
   lea config export [--output FILE] [--include-personal]

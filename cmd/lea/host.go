@@ -45,6 +45,13 @@ func hostCallT(method string, params, result any, timeout time.Duration) error {
 
 const agentTimeout = 60 * time.Second
 
+// boardWatchEvery is how often lea board --watch shows the board again.
+const boardWatchEvery = 2 * time.Second
+
+// boardWait waits d between two boards of lea board --watch; false ends the watch. A test seam:
+// the real one sleeps and never ends it (ctrl+c does).
+var boardWait = func(d time.Duration) bool { time.Sleep(d); return true }
+
 // sweepTimeout bounds the sweep of a fresh container's nested Podman: removing a pile of stacks
 // left by a crash takes a while.
 const sweepTimeout = 5 * time.Minute
@@ -347,6 +354,20 @@ func runDaemon(stderr io.Writer) int {
 			d.SetSoundOn(on)
 		}
 	}
+	// Without the deck (LEA_DECK=0, #135) the host CLI answers lea's approvals, and a desktop
+	// notification says when one waits; the launcher restarts a daemon started with the other.
+	_ = os.Remove(filepath.Join(host, "daemon.deck"))
+	if err := os.WriteFile(filepath.Join(host, "daemon.deck"), []byte(launcher.DaemonDeckStamp(os.Getenv)), 0o600); err != nil {
+		fmt.Fprintln(stderr, "lea:", clean(err.Error(), false))
+		return 1
+	}
+	if os.Getenv("LEA_DECK") == "0" {
+		n := daemon.HostNotifier()
+		if n == nil {
+			fmt.Fprintln(stderr, "lea daemon: LEA_DECK=0 but no notify-send or osascript: nothing tells you when an approval waits (lea requests lists them)")
+		}
+		d.SetNoDeck(n)
+	}
 	// Agents are named after their first prompt unless LEA_AUTONAME=0 or claude is missing.
 	if os.Getenv("LEA_AUTONAME") != "0" {
 		if bin, err := exec.LookPath("claude"); err == nil {
@@ -454,68 +475,42 @@ func runHost(args []string, stdout, stderr io.Writer) int {
 			fmt.Fprintf(stdout, "#%d %s %s %s\n", a.ID, oneLine(a.Agent, 64), oneLine(a.Tool, 64), oneLine(a.Input, 200))
 		}
 		return 0
-	case "approve":
-		if len(args) != 3 || (args[2] != "allow" && args[2] != "deny" && args[2] != "always") {
-			fmt.Fprintln(stderr, "usage: lea approve <id> allow|deny|always")
-			return 2
-		}
-		id, err := strconv.ParseInt(args[1], 10, 64)
-		if err != nil {
-			fmt.Fprintln(stderr, "usage: lea approve <id> allow|deny|always")
-			return 2
-		}
-		if err := hostCall("approval_decide", map[string]any{"id": id, "verdict": args[2]}, nil); err != nil {
-			return fail(err)
-		}
-		return 0
+	case "approve", "deny":
+		return runDecide(args, stdout, stderr)
 	case "board":
-		container := ""
+		container, watch := "", false
 		for i := 1; i < len(args); i++ {
 			switch {
 			case args[i] == "--md":
+			case args[i] == "--watch":
+				watch = true
 			case args[i] == "--container" && i+1 < len(args):
 				container = args[i+1]
 				i++
 			default:
-				fmt.Fprintln(stderr, "usage: lea board [--md] [--container NAME]")
+				fmt.Fprintln(stderr, "usage: lea board [--md] [--watch] [--container NAME]")
 				return 2
 			}
 		}
-		var b board
-		if err := hostCall("board_list", map[string]any{"container": container}, &b); err != nil {
-			return fail(err)
+		for {
+			var b board
+			if err := hostCall("board_list", map[string]any{"container": container}, &b); err != nil {
+				return fail(err)
+			}
+			if !watch {
+				renderBoard(stdout, b)
+				return 0
+			}
+			// --watch (#135, the deck's column without the deck): the board again every 2 s.
+			var out strings.Builder
+			renderBoard(&out, b)
+			fmt.Fprint(stdout, "\x1b[H\x1b[2J"+out.String())
+			if !boardWait(boardWatchEvery) {
+				return 0
+			}
 		}
-		renderBoard(stdout, b)
-		return 0
 	case "requests":
-		var rs []struct {
-			ID                                  int64
-			Container, From, Role, Repo, Branch string
-			Brief, Reason                       string
-			Size                                int
-		}
-		if err := hostCall("request_list", nil, &rs); err != nil {
-			return fail(err)
-		}
-		if len(rs) == 0 {
-			fmt.Fprintln(stdout, "no spawn request waits for you")
-			return 0
-		}
-		for _, r := range rs {
-			where := ""
-			if r.Repo != "" {
-				where += " repo " + r.Repo
-			}
-			if r.Branch != "" {
-				where += " branch " + r.Branch
-			}
-			fmt.Fprintf(stdout, "#%d %s asks for a %s%s: %s (%d bytes)\n", r.ID, oneLine(r.From, 64), oneLine(r.Role, 16), oneLine(where, 200),
-				oneLine(firstLine(r.Brief), 120), r.Size)
-			if r.Reason != "" {
-				fmt.Fprintf(stdout, "    reason: %s\n", oneLine(r.Reason, 200))
-			}
-		}
-		return 0
+		return runRequests(stdout, stderr)
 	case "request":
 		const use = "usage: lea request accept <id> | lea request decline <id> [reason...]"
 		if len(args) < 3 || (args[1] != "accept" && args[1] != "decline") || (args[1] == "accept" && len(args) != 3) {

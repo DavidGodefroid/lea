@@ -277,3 +277,35 @@ setup() { setup_fakes; load_lea; U="$HOME/.config/lea/lea.conf"; }
     [[ "$output" == *"LEA_OTEL_UPSTREAM must be host:port with a plain host name, not '$v'"* ]]
   done
 }
+
+@test "LEA_DECK is 1 by default, 0 or 1 only (the same text as the Go launcher)" {
+  lea_load_config
+  [ "$LEA_DECK" = 1 ] && [ "$LEA_TOOL" = claude ]
+  mkdir -p "${U%/*}"; printf 'LEA_DECK=0\n' >"$U"
+  lea_load_config
+  [ "$LEA_DECK" = 0 ]
+  printf 'LEA_DECK=yes\n' >"$U"
+  run lea_load_config
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"LEA_DECK must be 1 (the lea deck) or 0 (your own tool, LEA_TOOL, in the lea container), not 'yes'"* ]]
+}
+
+@test "LEA_TOOL is an argv of safe words, normalized; metacharacters are refused with the Go launcher's text" {
+  mkdir -p "${U%/*}"
+  printf "LEA_TOOL='  codex   --model=gpt-5 a,b@x%%2+y '\n" >"$U"
+  lea_load_config
+  [ "$LEA_TOOL" = "codex --model=gpt-5 a,b@x%2+y" ]
+  printf "LEA_TOOL='/usr/local/bin/my-tool --x'\n" >"$U"
+  lea_load_config
+  [ "$LEA_TOOL" = "/usr/local/bin/my-tool --x" ]
+  for bad in 'claude; rm -rf /' 'a|b' '$HOME/x' 'a&&b' 'x >y' '~/bin/x' '-p claude' 'a *' 'x"y' 'x(y)' 'x{y}' 'x#y' 'x!y' "sh -c 'x'"; do
+    printf 'LEA_TOOL=%s\n' "'$(printf '%s' "$bad" | sed "s/'/'\\\\''/g")'" >"$U"
+    run lea_load_config
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"LEA_TOOL must be a command and its arguments separated by spaces (at most 32 words of letters, digits and _ . / : = @ % + , -, the first one not an option), not '$bad'"* ]]
+  done
+  printf "LEA_TOOL='%s'\n" "$(printf 'a %.0s' $(seq 33))" >"$U"
+  run lea_load_config
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"LEA_TOOL must be a command"* ]]
+}

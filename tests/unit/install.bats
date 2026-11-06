@@ -455,3 +455,17 @@ legacy_warning="warning: no Sigstore bundle for this release (pre-signing versio
   [ -n "$(find "$BATS_TEST_TMPDIR/nested/a" -maxdepth 0 -perm 0755)" ]
   [ -n "$(find "$LEA_INSTALL_DIR" -maxdepth 0 -perm 0755)" ]
 }
+
+@test "--no-deck --tool reaches lea init, and no tmux is asked for without the deck (#135)" {
+  export FAKE_TMUX_VERSION="tmux 3.1"
+  run sh "$INSTALL" --version v1.2.3 --no-deck --tool claude
+  [ "$status" -eq 0 ]
+  [[ "$output" != *"needs tmux"* ]]
+  run calls
+  [[ "$output" == *"lea [init] [--no-deck] [--tool] [claude]"* ]]
+  run sh "$INSTALL" --version v1.2.3 --deck --no-locksql
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"lea needs tmux 3.2 or later"* ]]
+  run calls
+  [[ "$output" == *"lea [init] [--no-locksql] [--deck]"* ]]
+}

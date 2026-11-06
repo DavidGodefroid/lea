@@ -69,7 +69,7 @@ func (d *Daemon) switchSound(params json.RawMessage) (any, error) {
 // container: the daemon and the agents outlive the deck, and nobody listens then.
 func (d *Daemon) sound(ctx context.Context, container, kind string) {
 	d.mu.Lock()
-	on := d.sounder != nil && !d.soundOff
+	on := d.sounder != nil && !d.soundOff && !d.noDeck // no deck (#135): notifications instead
 	d.mu.Unlock()
 	if !on || !d.deckAttached(ctx, container) {
 		return

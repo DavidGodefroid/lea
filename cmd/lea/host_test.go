@@ -583,7 +583,7 @@ func TestRequestCommands(t *testing.T) {
 	}
 	env := map[string]string{"LEA_DAEMON_SOCK": api}
 	rc, out, e := runEnv(t, env, "requests")
-	if rc != 0 || !strings.Contains(out, fmt.Sprintf("#%d kid asks for a reviewer repo shop: review\\x1b[2J the cart", r.ID)) ||
+	if rc != 0 || !strings.Contains(out, fmt.Sprintf("s%d kid asks for a reviewer repo shop: review\\x1b[2J the cart", r.ID)) ||
 		!strings.Contains(out, fmt.Sprintf("(%d bytes)", len("review\x1b[2J the cart\nsecond line"))) ||
 		!strings.Contains(out, "reason: eyes") || strings.Contains(out, "second line") {
 		t.Fatalf("rc=%d out=%q err=%q", rc, out, e)
@@ -597,7 +597,7 @@ func TestRequestCommands(t *testing.T) {
 	if rc != 0 || !strings.Contains(out, "started claude-1 for request") || len(ca.reqs) != 1 || ca.reqs[0].Role != "reviewer" {
 		t.Fatalf("rc=%d out=%q err=%q reqs=%+v", rc, out, e, ca.reqs)
 	}
-	if rc, out, _ := runEnv(t, env, "requests"); rc != 0 || !strings.Contains(out, "no spawn request waits for you") {
+	if rc, out, _ := runEnv(t, env, "requests"); rc != 0 || !strings.Contains(out, "nothing waits for you: no permission or spawn request") {
 		t.Fatalf("rc=%d out=%q", rc, out)
 	}
 }
@@ -661,6 +661,62 @@ func TestSoundCommand(t *testing.T) {
 	for _, bad := range [][]string{{"sound", "loud"}, {"sound", "on", "off"}} {
 		if rc, _, _ := runEnv(t, env, bad...); rc != 2 {
 			t.Fatalf("%q: rc=%d", bad, rc)
+		}
+	}
+}
+
+// lea requests lists the permissions (pN) and spawn requests (sN) that wait for the user, and
+// lea approve / lea deny answer either (#135): a bare number is a permission, as before.
+func TestApproveAndDenyAnswerWhatRequestsLists(t *testing.T) {
+	ca := &cliAgents{}
+	api, st := startDaemonStore(t, ca)
+	kid, _ := st.Register(store.NewAgent{Container: "lea-a", Name: "kid", Profile: "claude", Workdir: "/p", Role: "dev"}, store.Caps{}, 1)
+	now := time.Now().Unix()
+	p1, _ := st.AddApproval(kid.Key, "Bash", `{"command":"make test"}`, true, now)
+	p2, _ := st.AddApproval(kid.Key, "Edit", `{}`, false, now)
+	p3, _ := st.AddApproval(kid.Key, "Write", `{}`, false, now)
+	s1, _ := st.AddSpawnRequest(store.SpawnRequest{Container: "lea-a", Requester: kid.Key, Lead: "user", Role: "reviewer", Profile: "claude", Brief: "b"},
+		func(int64) string { return "req" }, 2, 3600, now)
+	s2, _ := st.AddSpawnRequest(store.SpawnRequest{Container: "lea-a", Requester: kid.Key, Lead: "user", Role: "dev", Profile: "claude", Brief: "c"},
+		func(int64) string { return "req" }, 2, 3600, now)
+	env := map[string]string{"LEA_DAEMON_SOCK": api}
+	rc, out, e := runEnv(t, env, "requests")
+	for _, want := range []string{fmt.Sprintf("p%d lea-a/kid wants Bash: {\"command\":\"make test\"}\n", p1), fmt.Sprintf("p%d lea-a/kid wants Edit", p2),
+		fmt.Sprintf("s%d kid asks for a reviewer: b (1 bytes)", s1.ID), "answer: lea approve ID"} {
+		if rc != 0 || !strings.Contains(out, want) {
+			t.Fatalf("missing %q: rc=%d out=%q err=%q", want, rc, out, e)
+		}
+	}
+	for _, c := range []struct {
+		args []string
+		out  string
+	}{
+		{[]string{"approve", fmt.Sprintf("p%d", p1), "always"}, fmt.Sprintf("allowed, and always: p%d", p1)},
+		{[]string{"deny", fmt.Sprint(p2)}, fmt.Sprintf("denied: p%d", p2)},
+		{[]string{"approve", fmt.Sprintf("p%d", p3)}, fmt.Sprintf("allowed: p%d", p3)},
+		{[]string{"approve", fmt.Sprintf("s%d", s1.ID)}, fmt.Sprintf("started claude-1 for spawn request s%d", s1.ID)},
+		{[]string{"deny", fmt.Sprintf("s%d", s2.ID), "not", "now"}, fmt.Sprintf("declined spawn request s%d", s2.ID)},
+	} {
+		if rc, out, e := runEnv(t, env, c.args...); rc != 0 || out != c.out+"\n" {
+			t.Fatalf("%q: rc=%d out=%q err=%q", c.args, rc, out, e)
+		}
+	}
+	for _, id := range []int64{p1, p2, p3} {
+		a, _ := st.ApprovalByID(id)
+		if want := map[int64]string{p1: "always", p2: "deny", p3: "allow"}[id]; a.Verdict != want {
+			t.Errorf("p%d: verdict %q, want %q", id, a.Verdict, want)
+		}
+	}
+	if len(ca.reqs) != 1 || ca.reqs[0].Role != "reviewer" {
+		t.Fatalf("reqs=%+v", ca.reqs)
+	}
+	if rc, out, _ := runEnv(t, env, "requests"); rc != 0 || !strings.Contains(out, "nothing waits for you") {
+		t.Fatalf("rc=%d out=%q", rc, out)
+	}
+	for _, bad := range [][]string{{"approve"}, {"deny"}, {"approve", "x1"}, {"approve", "p0"}, {"approve", "s1", "always"}, {"deny", "p1", "why"},
+		{"approve", "p1", "maybe"}, {"approve", "+1"}} {
+		if rc, _, e := runEnv(t, env, bad...); rc != 2 || !strings.Contains(e, "usage: lea approve ID") {
+			t.Errorf("%q: rc=%d err=%q", bad, rc, e)
 		}
 	}
 }

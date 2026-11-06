@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"reflect"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -302,5 +303,53 @@ func TestLockAndHubMethodsAreGone(t *testing.T) {
 	}
 	if err := call(t, e.bus, "lead", "lock_request", map[string]any{"tool": "locksql", "profile": "prod"}, nil); err == nil || !strings.Contains(err.Error(), "unknown method") {
 		t.Fatalf("lock_request from an agent: %v", err)
+	}
+}
+
+// Without the deck (LEA_DECK=0, #135) nobody is attached to a deck, yet a permission request is
+// not handed straight back to the agent's own dialog: it waits for the host CLI (lea approve),
+// and the user is told on the desktop how to answer it.
+func TestWithoutTheDeckAnApprovalWaitsForLeaApprove(t *testing.T) {
+	e, notes, _ := noDeckEnv(t)
+	got := ask(t, e, 3, false)
+	p := waitPending(t, e)
+	want := "lea needs you: dev asks to use Bash: lea approve p" + strconv.FormatInt(p.ID, 10) + " or lea deny p" + strconv.FormatInt(p.ID, 10) + " (lea requests)"
+	if n := waitNotes(notes, 1); len(n) != 1 || n[0] != want {
+		t.Fatalf("notes %q, want %q", n, want)
+	}
+	if err := call(t, e.api, "", "approval_decide", map[string]any{"id": p.ID, "verdict": "allow"}, nil); err != nil {
+		t.Fatal(err)
+	}
+	if r := receive(t, got); r.Verdict != "allow" || r.ID != p.ID {
+		t.Fatalf("verdict %+v", r)
+	}
+}
+
+// Without the deck, an answer given the instant the notification shows (a fast lea approve) is
+// delivered at once: the verdict channel is registered before the user is told, so the agent
+// never waits for its approval timeout. The approval's timer never fires on its own here.
+func TestWithoutTheDeckAnImmediateAnswerIsDeliveredAtOnce(t *testing.T) {
+	e, _, _ := noDeckEnv(t)
+	newManualTimers(t).use(e.d)
+	answered := make(chan error, 1)
+	e.d.SetNoDeck(func(title, body string) {
+		var pend []pendingView
+		if err := call(t, e.api, "", "approval_list", nil, &pend); err != nil || len(pend) != 1 {
+			answered <- fmt.Errorf("pending %+v: %v", pend, err)
+			return
+		}
+		answered <- call(t, e.api, "", "approval_decide", map[string]any{"id": pend[0].ID, "verdict": "allow"}, nil)
+	})
+	got := ask(t, e, 600, false)
+	select {
+	case err := <-answered:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("no notification")
+	}
+	if r := receive(t, got); r.Verdict != "allow" {
+		t.Fatalf("verdict %+v", r)
 	}
 }

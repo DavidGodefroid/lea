@@ -8,8 +8,11 @@
 # (which pulls the images and, unless --no-locksql, builds the locksql console image). Never runs
 # sudo itself: lea init asks once, only for the AppArmor profile on hosts that need it.
 #
-#   sh install.sh [--version vX.Y.Z] [--no-locksql] [--no-init] [--no-link]
+#   sh install.sh [--version vX.Y.Z] [--no-locksql] [--deck | --no-deck [--tool CMD]] [--no-init] [--no-link]
 #
+# --no-deck: lea runs your own tool (--tool, default claude) inside the lea container instead of
+# opening the deck (lea init records it; lea config deck on|off switches later); tmux is then
+# not needed. --deck keeps the deck without asking.
 # --no-link unpacks the release and leaves ~/.local/bin/lea as it is (lea's background update
 # links it once the release's images are in place).
 # LEA_INSTALL_DIR (default ~/.local/share/lea-install) and LEA_BIN_DIR (default ~/.local/bin)
@@ -21,15 +24,21 @@ version=${LEA_VERSION:-}
 init=1
 link=1
 locksql=
+deck=
+tool=
 while [ $# -gt 0 ]; do
   case $1 in
     --version) version=${2:?--version needs a value}; shift ;;
     --version=*) version=${1#*=} ;;
     --no-locksql) locksql=--no-locksql ;;
     --locksql) locksql=--locksql ;;
+    --deck) deck=--deck ;;
+    --no-deck) deck=--no-deck ;;
+    --tool) tool=${2:?--tool needs a command}; shift ;;
+    --tool=*) tool=${1#*=} ;;
     --no-init) init= ;;
     --no-link) link= ;;
-    -h|--help) sed -n '2,17p' "$0" 2>/dev/null | sed 's/^# \{0,1\}//'; exit 0 ;;
+    -h|--help) sed -n '2,20p' "$0" 2>/dev/null | sed 's/^# \{0,1\}//'; exit 0 ;;
     *) echo "lea install: unknown option $1" >&2; exit 2 ;;
   esac
   shift
@@ -163,7 +172,8 @@ else
 fi
 case ":$PATH:" in *":$bindir:"*) ;; *) say "add $bindir to your PATH (in your shell profile) to run lea by name" ;; esac
 if [ -x "$dir/$version/build/tmux" ]; then tmux_ok=1; fi # the archive's own static tmux
-if [ -z "$tmux_ok" ]; then
+# Without the deck (--no-deck) lea needs no tmux; lea new does, for its agents' terminals.
+if [ -z "$tmux_ok" ] && [ "$deck" != --no-deck ]; then
   if [ "$os" = darwin ]; then hint="brew install tmux"
   elif have apt-get; then hint="sudo apt-get install tmux"
   elif have dnf; then hint="sudo dnf install tmux"
@@ -174,11 +184,12 @@ fi
 
 if [ -n "$init" ]; then
   say "running lea init"
+  # shellcheck disable=SC2086 # each one word or empty
+  set -- $locksql $deck
+  if [ -n "$tool" ]; then set -- "$@" --tool "$tool"; fi
   if [ -r /dev/tty ] && (: </dev/tty) 2>/dev/null; then
-    # shellcheck disable=SC2086
-    "$bindir/lea" init $locksql </dev/tty
+    "$bindir/lea" init "$@" </dev/tty
   else
-    # shellcheck disable=SC2086
-    LEA_INIT_NONINTERACTIVE=1 "$bindir/lea" init $locksql
+    LEA_INIT_NONINTERACTIVE=1 "$bindir/lea" init "$@"
   fi
 fi
