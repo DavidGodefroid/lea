@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -273,6 +274,26 @@ func TestARespawnedDoneKeyFollowsItsNewLead(t *testing.T) {
 		if m.folderOf("lea-a/kid") >= 0 || r.folderOf("lea-a/kid") >= 0 {
 			t.Fatalf("%s: respawn moved back: %+v / %+v", name, m.layout, r.layout)
 		}
+	}
+}
+
+// A full Known of the longest agent keys still loads back from the layout file.
+func TestAFullKnownOfLongKeysRoundTrips(t *testing.T) {
+	st := FileStore{Path: filepath.Join(t.TempDir(), "lea-a.json")}
+	l := Layout{Saved: 9_000, Format: layoutKnown}
+	for i := 0; i < maxKnown; i++ {
+		n := itoa(i)
+		l.Known = append(l.Known, Seen{Key: strings.Repeat("c", 64) + "/" + strings.Repeat("n", 64-len(n)) + n, Created: 1 << 40})
+	}
+	if err := l.check(); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.Save(l); err != nil {
+		t.Fatal(err)
+	}
+	got, err := st.Load()
+	if err != nil || len(got.Known) != maxKnown {
+		t.Fatalf("load: %d known, %v", len(got.Known), err)
 	}
 }
 

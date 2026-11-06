@@ -88,8 +88,9 @@ const (
 	maxFolders      = 32
 	maxFolderAgents = 256
 	// maxKnown bounds Known: past it, the oldest keys go first.
-	maxKnown       = 1024
-	maxLayoutBytes = 128 << 10
+	maxKnown = 1024
+	// maxLayoutBytes leaves room for a full Known of the longest keys (about 160 KiB).
+	maxLayoutBytes = 256 << 10
 	// folderPrefix starts a folder row's key; no agent key holds a NUL (deckMenu).
 	folderPrefix = "\x00folder:"
 )
