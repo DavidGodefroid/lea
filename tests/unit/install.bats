@@ -435,7 +435,7 @@ legacy_warning="warning: no Sigstore bundle for this release (pre-signing versio
 }
 
 @test "an existing group-writable lea-install is left as it is, with a warning and the fix" {
-  mkdir -p "$LEA_INSTALL_DIR" "$LEA_BIN_DIR"
+  mkdir -p "$LEA_INSTALL_DIR"
   chmod 0775 "$LEA_INSTALL_DIR"
   run sh -c 'umask 002; sh "$1" --version v1.2.3 --no-init' _ "$INSTALL"
   [ "$status" -eq 0 ]
@@ -445,4 +445,13 @@ legacy_warning="warning: no Sigstore bundle for this release (pre-signing versio
   # The bin dir, created by the installer, is 755 and draws no warning.
   [ -n "$(find "$LEA_BIN_DIR" -maxdepth 0 -perm 0755)" ]
   [[ "$output" != *"$LEA_BIN_DIR is writable"* ]]
+}
+
+@test "under umask 002 nested missing parents of lea-install are created 755" {
+  LEA_INSTALL_DIR="$BATS_TEST_TMPDIR/nested/a/lea-install"
+  run sh -c 'umask 002; sh "$1" --version v1.2.3 --no-init' _ "$INSTALL"
+  [ "$status" -eq 0 ]
+  [ -n "$(find "$BATS_TEST_TMPDIR/nested" -maxdepth 0 -perm 0755)" ]
+  [ -n "$(find "$BATS_TEST_TMPDIR/nested/a" -maxdepth 0 -perm 0755)" ]
+  [ -n "$(find "$LEA_INSTALL_DIR" -maxdepth 0 -perm 0755)" ]
 }
