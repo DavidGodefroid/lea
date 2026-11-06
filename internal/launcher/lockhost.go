@@ -3,22 +3,22 @@ package launcher
 import (
 	"regexp"
 	"strconv"
+
+	"github.com/DavidGodefroid/lea/internal/locks"
 )
 
-// lockHostTool is a lock tool whose console runs in its own container, started by `lox run`: lea's
-// agents reach the console's socket in the lock's socket volume, and nothing else. No host
+// The Locks lea wires are locks.Registry's: each one's console runs in its own container, started
+// by lox, and lea's agents reach its socket in the lock's socket volume, and nothing else. No host
 // account, no /etc/<name>/system.toml on the host: lea's image names the console account and the
-// clients group with the ids of the tool's image (image/Containerfile).
-type lockHostTool struct {
-	name string // lockmq, lockfile: also /run/<name>
-	env  string // its switch, LEA_LOCKMQ or LEA_LOCKFILE
-	gid  string // the tool's clients group in its image (and in lea's)
+// clients group with the ids of the Lock's image (image/Containerfile).
+
+// lockSwitch is the switch of the Lock of type tool ("" for a type lea does not wire).
+func lockSwitch(tool string) string {
+	if lk, ok := locks.Get(tool); ok {
+		return lk.Switch
+	}
+	return ""
 }
-
-// lockToolKeys are the switches of the lock tools lea wires, by tool.
-var lockToolKeys = map[string]string{"locksql": "LEA_LOCKSQL", "lockmq": "LEA_LOCKMQ", "lockfile": "LEA_LOCKFILE"}
-
-var lockHostTools = []lockHostTool{{"lockmq", "LEA_LOCKMQ", "10010"}, {"lockfile", "LEA_LOCKFILE", "10030"}}
 
 var lockVersion = regexp.MustCompile(`^v?([0-9]+)\.([0-9]+)\.([0-9]+)$`)
 
@@ -36,28 +36,37 @@ func lockfileSafe(v string) bool {
 	return n[0] > 0 || n[1] > 1 || (n[1] == 1 && n[2] >= 1)
 }
 
-// lockHostArgs are the docker run arguments that let the session's agents reach the consoles of
-// the lock tools that are on: the socket volume of the tool's lock that `lox run` runs for the
-// projects directory (ups, lockup.go) on /run/<name> (each of several on /run/<name>/<instance>,
-// lockUpArgs), read-only, and the tool's clients group.
-// The consoles run hub-attached only, under lox run: without such a lock the agents get no socket
-// of the tool, and lea says to add one (`lox add <tool>`).
-func (l *Launcher) lockHostArgs(ups map[string][]lockUpSocket) []string {
+// lockArgs are the docker run arguments that let the session's agents reach the consoles of the
+// Locks that are on (locks.Registry, in its order): the socket volume of each lock of the type
+// that lox runs for the projects directory (ups, lockup.go) on /run/<name> (each of several on
+// /run/<name>/<instance>, lockUpArgs), read-only, the Lock's clients group, and its profile
+// directory read-only when it has one (locksql's .locksql).
+// The consoles run hub-attached only, under lox: without such a lock the agents get no socket of
+// the type, never a fixed volume another console could serve, and lea says to add one (`lox add
+// <type>`).
+func (l *Launcher) lockArgs(proj string, ups map[string][]lockUpSocket) ([]string, error) {
 	var a []string
-	for _, t := range lockHostTools {
-		_, up := ups[t.name]
-		if !l.Cfg.toolOn(t.env, up) {
+	for _, lk := range locks.Registry {
+		v, up := ups[lk.Name]
+		if !l.Cfg.toolOn(lk.Switch, up) {
 			continue
 		}
-		v, ok := ups[t.name]
 		switch {
-		case !ok:
-			l.logf("warning: %s: no such lock yet: `lox add %s` (lea's agents get its socket once lea restarts: lea stop, then lea)", t.name, t.name)
+		case !up:
+			l.logf("warning: %s: no such lock yet: `lox add %s` (lea's agents get its socket once lea restarts: lea stop, then lea)", lk.Name, lk.Name)
 		case len(v) == 0:
-			l.logf("warning: %s: lea's agents get no %s socket (see above)", t.name, t.name)
+			l.logf("warning: %s: lea's agents get no %s socket (see above)", lk.Name, lk.Name)
 		default:
-			a = append(a, lockUpArgs(t.env, t.gid, v)...)
+			args := lockUpArgs(lk.Switch, lk.GID, v)
+			if lk.ProfileDir != "" {
+				d, err := roDir(proj+"/"+lk.ProfileDir, "the "+lk.Name+" console only writes there")
+				if err != nil {
+					return nil, err
+				}
+				args = append(args, "--mount", "type=bind,src="+d+",dst="+d+",readonly")
+			}
+			a = append(a, args...)
 		}
 	}
-	return a
+	return a, nil
 }

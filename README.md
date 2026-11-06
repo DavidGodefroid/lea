@@ -340,11 +340,10 @@ client itself, "several locksql locks: orders stock; pass --instance NAME" (the 
 yours). The lock clients themselves also refuse a call that names no lock when several are
 mounted: "several locksql locks: orders stock; pass --instance NAME (or set LOCKSQL_INSTANCE)".
 
-`lea init` builds lea's locksql image (from the source of the release lea pins, cloned at its tag
-and built only once cosign proves that locksql's release workflow signed that release on that very
-commit; a branch is refused) and, when your projects directory has no database profile yet, walks
-you through a first one with it (engine, host, TLS, where the password comes from; never the
-password). `lox run` reviews that profile (`.locksql` in your projects directory) and copies it into
+`lea init` builds and installs no locksql (lox runs the lock's own image): when your projects
+directory has no database profile yet, it walks you through a first one with the locksql client of
+lea's image (the release of `config/locks.lock`; engine, host, TLS, where the password comes from;
+never the password). `lox run` reviews that profile (`.locksql` in your projects directory) and copies it into
 the lock; the agents see `.locksql` read-only. Vault profiles wait for lox run to pass Vault to the
 console (lockhub#45). lea puts no `locksql` command on the host (it removes the link older releases
 made).
@@ -777,19 +776,22 @@ its patch releases install themselves). Running containers keep their image unti
 `LEA_AUTOUPDATE=0` in `~/.config/lea/lea.conf` turns it off; the log is
 `~/.local/share/lea/host/update.log`.
 
-`lea update` then looks for a newer release of each dependency lea installs and that you turned
-on: locksql (its console image), lockmq and lockfile (their binary on this host). It shows the
-current and the available version with a link to the release notes, and asks for each one (no by
-default). `--deps all` takes them all, `--deps none` (and no terminal) none; the background update
-never touches them. An accepted release is checked before anything is built or installed: cosign
-must prove that the tool's release workflow signed it **at that tag** (for locksql, also on the
-very commit that was cloned, whose source is then built); then it is recorded in
-`~/.config/lea/lea.conf` (`LEA_LOCKSQL_REF` and `LEA_LOCKSQL_IMAGE`, `LEA_LOCKMQ_REF`,
-`LEA_LOCKFILE_REF`), and the profiles and volumes stay. Only a plain `vX.Y.Z` newer than the
-current one is offered, never one below a security floor (lockfile v0.1.1); an empty ref or a
-locksql checkout is left alone. A recorded release older than the one a newer lea pins gives way
-to lea's pin. A running console keeps its version until you restart it. lea's image ships the
-lockmq and lockfile clients of the releases lea pins: a newer console may need a newer lea.
+The Locks' clients in lea's image (locksql, lockmq, lockfile) come from one set of releases,
+`config/locks.lock`: for each Lock, the client's release, the protocol its handshake speaks, the
+release's image by digest and the identity that signed it. lea's CI bumps the set as a whole
+(`tools/locks-bump` checks every signature with cosign), and a lea release ships it as it is: `lea
+update` moves the clients together, never one by one, and installs, builds or starts no Lock: lox
+does (`brew upgrade lox`, `lox add TYPE NAME --version vX.Y.Z`, `lox run`). `lea doctor` compares
+each lock lox runs with lea's client of its type, from the image `lockfamily.yaml` pins or, for
+another image, from the lock console's own hello handshake (`lea lock-hello`, run in lea's image
+with only that lock's socket volume), and says what to run: `lea update` for a lock newer than
+lea's client, `brew upgrade lox` then `lox add TYPE NAME --version` for an older one; a pair whose
+protocols differ fails (every call of the agents would be refused). The handshake speaks the
+protocol of lea's client (`lea lock-hello --protocol N`): a console of another protocol refuses it
+("protocol mismatch", naming its own), and `lea doctor` fails that lock with the fix. `lea` warns at the start about
+a lock that `lockfamily.yaml` pins to an image of another release. `LEA_LOCKSQL_REF`,
+`LEA_LOCKMQ_REF` and `LEA_LOCKFILE_REF` remain for this release as a dev override of a client's
+version (`lea doctor` warns while one is set); `LEA_LOCKSQL_IMAGE` is obsolete.
 
 After an update only the current and the previous versions stay in
 `~/.local/share/lea-install` (never the one a running daemon still uses). `lea rollback` links the
@@ -821,7 +823,7 @@ read-only. The screen runs in the deck on the host: agents cannot open or drive 
 | `LEA_GIT_KNOWN_HOSTS` | `~/.config/lea/git_known_hosts` | their pinned host keys |
 | `LEA_LOCKSQL` | `0`, on when `lox run` runs a locksql lock | `1`: wire lea for the locksql console of `lox run` (`lea init --locksql`) |
 | `LEA_LOCKMQ`, `LEA_LOCKFILE` | `0`, asked by `lea init`; on when `lox run` runs a lock of the type and the key is unset (`=0` keeps it off) | let the agents reach a lockmq / lockfile console on this host |
-| `LEA_LOCKMQ_REF`, `LEA_LOCKFILE_REF` | the pinned releases | the release `lea init` installs on the host (lockfile v0.1.1 or later); `lea update` records a newer one you accept |
+| `LEA_LOCKSQL_REF`, `LEA_LOCKMQ_REF`, `LEA_LOCKFILE_REF` | empty: the set of `config/locks.lock` | a dev override of a client's release (lockfile v0.1.1 or later), for this release only; `lea doctor` warns while one is set |
 | `LEA_LOCKHTTP` | `0` | send the agents' web requests through a LockHTTP gate (refuses `LEA_GIT_SSH` and `LEA_OTEL_UPSTREAM`) |
 | `LEA_HUB` | `1` | follow the Lock Family approval hub (lockhub's facade socket: `LEA_HUB_SOCKET`, else `$XDG_RUNTIME_DIR/lockhub/facade.sock`): an agent whose Lock call waits for a decision there is suspended until it comes, and `lox run`, outside lea, decides them (lea shows and answers no ticket); while no hub answers, no agent is suspended, the deck says `lockhub unreachable` and `lea doctor` warns. `0`: lea reads no hub and resumes the agents it suspended. **Upgrading from v0.2**: the default was `0`; put `LEA_HUB=0` in `~/.config/lea/lea.conf` to keep that, then restart lea |
 | `LEA_HUB_KEEPALIVE` | `300` | seconds (`0` to `3600`) an agent suspended on a hub ticket keeps its process before lea stops it alone, keeping its session for the decision or a message to resume it; read only with `LEA_HUB=1` (changing it while the hub is off restarts nothing) |
@@ -849,7 +851,7 @@ read-only. The screen runs in the deck on the host: agents cannot open or drive 
 `lea config export [--output FILE] [--include-personal]` writes the shared part of your
 configuration as one JSON file, fit to commit in a team repository: the keys your
 `~/.config/lea/lea.conf` sets among `LEA_GIT_SSH`, `LEA_EGRESS_ALLOW`, `LEA_OTEL_UPSTREAM`,
-`LEA_IMAGE`, `LEA_PROXY_IMAGE`, `LEA_LOCKSQL`, `LEA_LOCKSQL_IMAGE`, `LEA_LOCKSQL_REF`,
+`LEA_IMAGE`, `LEA_PROXY_IMAGE`, `LEA_LOCKSQL`, `LEA_LOCKSQL_REF`,
 `LEA_RELEASES_URL`, `LEA_NESTED_NETWORKS`, `LEA_K8S_NAMESPACE`,
 `LEA_APPROVALS` and `LEA_APPROVAL_TIMEOUT` (`LEA_SOUND` too with `--include-personal`), and the
 content of your pinned `git_known_hosts` and of your `internal-hosts` file. Never exported:
@@ -975,7 +977,8 @@ nowhere unless you set `LEA_OTEL_UPSTREAM`.
 
 - **Start with `lea doctor`.** It checks Docker and the host versions (kernel, Docker Engine,
   containerd, runc), the images, the proxy and the internal networks, tmux, the AppArmor profile,
-  the projects directory and the configuration.
+  the projects directory and the configuration, then each lock lox runs against lea's client of its
+  type (`config/locks.lock`), with the fix to run when they differ.
 - **An agent cannot reach a host.** Private and link-local addresses are refused on purpose; add
   the host to `LEA_INTERNAL_HOSTS`. A public domain outside lea's default list goes in
   `LEA_EGRESS_ALLOW` (`default,<domain>`); a public IP literal or a DNS-over-HTTPS resolver is

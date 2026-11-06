@@ -17,6 +17,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/DavidGodefroid/lea/internal/locks"
 	"github.com/DavidGodefroid/lea/internal/providers"
 )
 
@@ -30,7 +31,7 @@ var protectedKeys = map[string]bool{
 // ExportedKeys are the keys lea_load_config exports to every child: the daemon, docker, the
 // core subcommands and libexec/lea-sh.
 var ExportedKeys = []string{
-	"LEA_PREFIX", "LEA_IMAGE", "LEA_PROXY_IMAGE", "LEA_CTL", "LEA_CTL_IMAGE", "LEA_GIT_SSH", "LEA_GIT_KNOWN_HOSTS", "LEA_LOCKSQL", "LEA_LOCKSQL_IMAGE", "LEA_LOCKSQL_REF",
+	"LEA_PREFIX", "LEA_IMAGE", "LEA_PROXY_IMAGE", "LEA_CTL", "LEA_CTL_IMAGE", "LEA_GIT_SSH", "LEA_GIT_KNOWN_HOSTS", "LEA_LOCKSQL", "LEA_LOCKSQL_REF",
 	"LEA_LOCKMQ", "LEA_LOCKFILE", "LEA_LOCK_TOOL_TIMEOUT", "LEA_LOCKMQ_REF", "LEA_LOCKFILE_REF", "LEA_LOCKHTTP", "LEA_LOCKHTTP_MITM", "LEA_HUB", "LEA_HUB_KEEPALIVE",
 	"LEA_OTEL_UPSTREAM", "LEA_NESTED_NETWORKS", "LEA_K8S_NAMESPACE", "LEA_INTERNAL_HOSTS", "LEA_EGRESS_ALLOW", "LEA_PROJECTS_DIR",
 	"LEA_APPROVALS", "LEA_APPROVAL_TIMEOUT", "LEA_SOUND", "LEA_SOUND_ATTENTION",
@@ -227,23 +228,19 @@ func (c *Config) resolve(root string) error {
 	if err := CheckOtelUpstream(c.Get("LEA_OTEL_UPSTREAM")); err != nil {
 		return err
 	}
-	ls := nonEmpty(c.Get("LEA_LOCKSQL"), "0")
-	if ls != "0" && ls != "1" {
-		return fmt.Errorf("LEA_LOCKSQL must be 1 (wire lea for a locksql console) or 0, not '%s'", ls)
-	}
-	c.final["LEA_LOCKSQL"] = ls
-	for _, t := range lockHostTools {
-		on := nonEmpty(c.Get(t.env), "0")
+	for _, t := range locks.Registry {
+		on := nonEmpty(c.Get(t.Switch), "0")
 		if on != "0" && on != "1" {
-			return fmt.Errorf("%s must be 1 (reach a %s console on this host) or 0, not '%s'", t.env, t.name, on)
+			return fmt.Errorf("%s must be 1 (lea's agents reach a %s lock lox runs) or 0, not '%s'", t.Switch, t.Name, on)
 		}
-		c.final[t.env] = on
-		// Empty: no pinned release (config/lea.conf pins one), and lea init installs nothing.
-		ref := c.Get(t.env + "_REF")
-		if ref != "" && !releaseVersion.MatchString(ref) {
-			return fmt.Errorf("%s_REF must be a %s release (vX.Y.Z), not '%s'", t.env, t.name, ref)
+		c.final[t.Switch] = on
+		// LEA_<LOCK>_REF: a dev override of config/locks.lock's release (lea doctor warns), for
+		// one release: a release, or for locksql the absolute path of a checkout.
+		ref := c.Get(t.Switch + "_REF")
+		if ref != "" && !releaseVersion.MatchString(ref) && !(t.Name == "locksql" && filepath.IsAbs(ref)) {
+			return fmt.Errorf("%s_REF must be a %s release (vX.Y.Z), not '%s'", t.Switch, t.Name, ref)
 		}
-		if t.name == "lockfile" && ref != "" && !lockfileSafe(ref) {
+		if t.Name == "lockfile" && ref != "" && !lockfileSafe(ref) {
 			return fmt.Errorf("LEA_LOCKFILE_REF %s is refused: lockfile v0.1.0 lets a plugin escape its sandbox (v0.1.1 or later)", ref)
 		}
 	}
@@ -622,8 +619,8 @@ func (c *Config) LockTools(proj string, logf func(string, ...any)) (on map[strin
 		}
 	}
 	on = map[string]bool{}
-	for tool, key := range lockToolKeys {
-		on[tool] = c.toolOn(key, named[tool])
+	for _, t := range locks.Registry {
+		on[t.Name] = c.toolOn(t.Switch, named[t.Name])
 	}
 	if s == nil {
 		return on, nil

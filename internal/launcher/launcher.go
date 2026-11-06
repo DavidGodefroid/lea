@@ -11,6 +11,8 @@ import (
 	"sync"
 	"syscall"
 	"time"
+
+	"github.com/DavidGodefroid/lea/internal/locks"
 )
 
 // Launcher is one run of the host launcher.
@@ -452,7 +454,7 @@ const ToolsOnVar = "LEA_TOOLS_ON"
 func (l *Launcher) exportToolsOn() {
 	on, _ := l.Cfg.ProjectsLockTools()
 	var ts []string
-	for _, t := range []string{"locksql", "lockmq", "lockfile"} {
+	for _, t := range locks.Names() {
 		if on[t] {
 			ts = append(ts, t)
 		}
@@ -468,7 +470,7 @@ func (l *Launcher) lockConsole([]string) error {
 }
 
 // doctor is lea doctor: the workstation's checks (lea-sh doctor), then, when the projects
-// directory resolves, its lea's delivery (issue #92) through the core, which reads the grants
+// directory resolves, lea's Lock clients against the locks lox runs (doctorLocks) and its lea's delivery (issue #92) through the core, which reads the grants
 // from the daemon and the credentials from lea's state. The worst of the two is the status.
 func (l *Launcher) doctor() error {
 	l.exportToolsOn()
@@ -482,6 +484,10 @@ func (l *Launcher) doctor() error {
 		if err == nil {
 			err = exitError{1}
 		}
+	}
+	// Lea's Lock clients against the locks lox runs (lea#134).
+	if lerr := l.doctorLocks(proj); lerr != nil && err == nil {
+		err = lerr
 	}
 	if l.coreCall("delivery", "--container", l.Cfg.ContainerName(proj), "--projects", proj, "check", "--state", l.Cfg.StateDir()) != nil && err == nil {
 		return exitError{1}

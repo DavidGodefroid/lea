@@ -228,7 +228,7 @@ func TestDoctorFollowsUpJSON(t *testing.T) {
 	w.env["FAKE_DOCKER_OUT_VOLUME_LS"] = upProjectOf(w) + "_orders-run"
 	w.launcher().Main([]string{"doctor"})
 	if o := w.out.String(); !strings.Contains(o, "ok    locksql lock of lox run (socket volume "+upProjectOf(w)+"_orders-run)") ||
-		!strings.Contains(o, "lockmq launcher") || strings.Contains(o, "lockfile") || strings.Contains(o, "locksql image") {
+		!strings.Contains(o, "lockmq launcher") || strings.Contains(o, "lockfile launcher") || strings.Contains(o, "locksql image") {
 		t.Errorf("doctor: %s", o)
 	}
 }

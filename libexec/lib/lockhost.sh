@@ -15,13 +15,11 @@ lea__lockhost_var() {
   esac
 }
 
-# lea__lockhost_get TOOL [SUFFIX]: the value of LEA_<TOOL><SUFFIX>, for the two fixed names only.
+# lea__lockhost_get TOOL: the value of LEA_<TOOL>, for the two fixed names only.
 lea__lockhost_get() {
-  case $(lea__lockhost_var "$1")${2:-} in
+  case $(lea__lockhost_var "$1") in
     LEA_LOCKMQ) printf '%s' "${LEA_LOCKMQ:-0}" ;;
     LEA_LOCKFILE) printf '%s' "${LEA_LOCKFILE:-0}" ;;
-    LEA_LOCKMQ_REF) printf '%s' "${LEA_LOCKMQ_REF:-}" ;;
-    LEA_LOCKFILE_REF) printf '%s' "${LEA_LOCKFILE_REF:-}" ;;
   esac
 }
 
@@ -95,7 +93,7 @@ lea__lockhost_launcher() { command -v "$1" 2>/dev/null; }
 # lea__lockhost_install_hint TOOL: how to install TOOL's launcher (lea installs nothing for it).
 lea__lockhost_install_hint() {
   lea_log "$1: install its launcher (it runs $1 in its signed image): see https://github.com/DavidGodefroid/$1#install"
-  lea_log "  V=$(lea__lockhost_get "$1" _REF); curl -fsSLO https://raw.githubusercontent.com/DavidGodefroid/$1/\$V/scripts/install.sh; less install.sh && sh install.sh"
+  lea_log "  V=$(lea__lock_version "$1"); curl -fsSLO https://raw.githubusercontent.com/DavidGodefroid/$1/\$V/scripts/install.sh; less install.sh && sh install.sh"
 }
 
 # lea__lockhost_console_hint TOOL: how TOOL's console runs (lea never starts it): hub-attached
@@ -164,7 +162,7 @@ lea_lockhost() {
   fi
   lea__tool_by_lock "$_lh_t" && _lh_l=1 || _lh_l=0
   if _lh_b=$(lea__lockhost_launcher "$_lh_t"); then
-    lea_log "$_lh_t launcher: $_lh_b (lea's image has the $(lea__lockhost_get "$_lh_t" _REF) client)"
+    lea_log "$_lh_t launcher: $_lh_b (lea's image has the $(lea__lock_version "$_lh_t") client, config/locks.lock)"
   else
     lea__lockhost_install_hint "$_lh_t"
   fi

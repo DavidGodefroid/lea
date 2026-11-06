@@ -22,6 +22,8 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+
+	"github.com/DavidGodefroid/lea/internal/locks"
 )
 
 const (
@@ -100,8 +102,8 @@ func (l Lock) Server() string {
 	return l.Name + "-" + l.Instance
 }
 
-// LockNames are the Locks whose client is in the lea image, in that order.
-var LockNames = []string{"locksql", "lockmq", "lockfile"}
+// LockNames are the Locks whose client is in the lea image, in locks.Registry's order.
+var LockNames = locks.Names()
 
 // lockInstanceRe is a lock's instance name (lox run's, lea's launcher's lockUpInstance).
 var lockInstanceRe = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,62}$`)

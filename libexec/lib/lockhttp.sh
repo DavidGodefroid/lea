@@ -4,10 +4,11 @@
 # launcher pins, as gate (uid 10003 in the image), hub-attached only, with the socket volume of
 # lox run's lockhttp console (<project>_<lock>-run).
 
-# LEA_LOCKHTTP_RELEASE: the lockhttp release lea pins: the one this lea is tested with, whose gate
-# has every flag lea may pass (hub mode v0.3.0, devices v0.4.0, facade keys v0.5.0). lea runs the
-# image of the launcher installed on the host; lea doctor warns when it is older than this one.
-LEA_LOCKHTTP_RELEASE=v0.7.0
+# LEA_LOCKHTTP_RELEASE: the lockhttp release lea pins, config/locks.lock's (the set lea is tested
+# with), whose gate has every flag lea may pass (hub mode v0.3.0, devices v0.4.0, facade keys
+# v0.5.0). lea runs the image of the launcher installed on the host; lea doctor warns when it is
+# older than this one.
+LEA_LOCKHTTP_RELEASE=$(sed -n 's/^LOCKS_LOCKHTTP_VERSION=//p' "${LEA_ROOT:-.}/config/locks.lock" 2>/dev/null | tail -n 1)
 
 # lea__lockhttp_version BIN: the launcher_version line of lockhttp's launcher BIN (its first 64 KiB,
 # as internal/launcher/lockhttp.go reads it), empty when it has none.

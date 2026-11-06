@@ -58,17 +58,15 @@ setup() {
   [[ "$output" == *"ok    state ssh/known_hosts"* ]]
 }
 
-@test "locksql: its image and lox run's lock are checked with LEA_LOCKSQL=1, never with 0" {
-  export FAKE_DOCKER_RC_IMAGE_INSPECT_AT_LOCKSQL_0_16_0=1 FAKE_DOCKER_RC_VOLUME_INSPECT=1
+@test "locksql: lox run's lock is checked with LEA_LOCKSQL=1, never with 0, and no image of lea's" {
+  export FAKE_DOCKER_RC_VOLUME_INSPECT=1
   run lea_doctor
-  [[ "$output" == *"warn  locksql image: locksql:0.16.0 absent: run lea init (or set LEA_LOCKSQL=0)"* ]]
+  [[ "$output" != *"locksql image"* ]]
   [[ "$output" == *"warn  locksql lock: no socket volume of a locksql lock of lox run for $LEA_PROJECTS_DIR"*"no such lock yet: \`lox add locksql\`"* ]]
   [[ "$output" != *"locksql-run"* ]]
   grep -qF "docker [volume] [ls] [--filter] [label=dev.lockfamily.role=socket] [--filter] [label=dev.lockfamily.type=locksql] [--filter] [label=dev.lockfamily.workspace=$LEA_PROJECTS_DIR] [--format] [{{.Name}}]" "$FAKE_LOG"
-  unset FAKE_DOCKER_RC_IMAGE_INSPECT_AT_LOCKSQL_0_16_0
   export FAKE_DOCKER_OUT_VOLUME_LS=lockfamily-1a2b3c4d_crm-run
   run lea_doctor
-  [[ "$output" == *"ok    locksql image locksql:0.16.0"* ]]
   [[ "$output" == *"ok    locksql lock of lox run (socket volume lockfamily-1a2b3c4d_crm-run)"* ]]
   export FAKE_DOCKER_OUT_VOLUME_LS='lockfamily-1a2b3c4d_a-run
 lockfamily-1a2b3c4d_b-run'
@@ -406,7 +404,7 @@ lox_journal() {
   for e in "$@"; do printf '{"at":"2026-11-06T10:00:00Z","event":"%s","user":"me"}\n' "$e" >>"$_lj/runs.jsonl"; done
 }
 
-@test "lox: lea doctor checks its version against host-minimums, and runs nothing else of it" {
+@test "lox: lea doctor checks its version against the lox of config/locks.lock, and runs nothing else of it" {
   run lea_doctor
   [[ "$output" == *"ok    lox 0.9.0"* ]]
   FAKE_LOX_VERSION=0.8.0 run lea_doctor

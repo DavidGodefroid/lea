@@ -106,15 +106,9 @@ lea_doctor() {
   if [ -n "$LEA_OTEL_UPSTREAM" ]; then lea__ok "telemetry upstream $LEA_OTEL_UPSTREAM"
   else lea__ok "telemetry: off (LEA_OTEL_UPSTREAM)"; fi
 
-  # On through a lock of lox run alone, locksql needs no image of lea's (lea init builds it for
-  # LEA_LOCKSQL=1), nor when its declared locks pin their own image: only the lock is checked.
-  if lea__tool_on locksql; then
-    if [ "$LEA_LOCKSQL" = 1 ] && ! lea__locksql_pinned; then
-      if docker image inspect "$LEA_LOCKSQL_IMAGE" >/dev/null 2>&1; then lea__ok "locksql image $LEA_LOCKSQL_IMAGE"
-      else lea__warn "locksql image" "$LEA_LOCKSQL_IMAGE absent: run lea init (or set LEA_LOCKSQL=0)"; fi
-    fi
-    lea__doctor_locksql_lock
-  fi
+  # locksql needs no image of lea's (lox runs the lock's): only the lock is checked. The Go
+  # launcher then compares each lock lox runs with lea's client of its type (lea#134).
+  if lea__tool_on locksql; then lea__doctor_locksql_lock; fi
   lea__doctor_lockhost lockmq
   lea__doctor_lockhost lockfile
   lea__doctor_lockhttp || _drc=1
@@ -170,8 +164,9 @@ lea__doctor_hub() {
 
 # lea__doctor_lox: approvals live outside lea (#300): lox run, in a terminal of its own, starts the
 # workspace's hub and locks and decides the agents' Lock requests. lea runs no lox command but
-# lox version; it says whether lox is recent enough (config/host-minimums) and, when the projects
-# directory declares locks, whether a lox run serves them: lox run's session journal
+# lox version; it says whether lox is at least the set's (LOCKS_LOX_VERSION of config/locks.lock,
+# lea#134) and, when the projects directory declares locks, whether a lox run serves them: lox
+# run's session journal
 # ($XDG_STATE_HOME/lockfamily/<project>/runs.jsonl) ends with a start or a mode switch while it
 # serves, and where pgrep can tell, a lox run process of this user runs. A LEA_LOX_UP still set is
 # obsolete.
@@ -183,8 +178,7 @@ lea__doctor_lox() {
   if [ -n "${LEA_PROJECTS_DIR:-}" ] && { [ -f "$LEA_PROJECTS_DIR/.lockfamily/lockfamily.yaml" ] || [ -f "$LEA_PROJECTS_DIR/.lockfamily/up.json" ]; }; then
     _dxl=1
   fi
-  _dxf=${LEA_HOST_MINIMUMS:-$LEA_ROOT/config/host-minimums}
-  _dxmin=$(awk '$1 == "lox" { print $2; exit }' "$_dxf" 2>/dev/null || true)
+  _dxmin=$(lea__lockset LOCKS_LOX_VERSION); _dxmin=${_dxmin#v}
   if ! command -v lox >/dev/null 2>&1; then
     if [ -n "$_dxl" ]; then lea__warn "lox" "not found: brew install davidgodefroid/tap/lox, then run \`lox run\` in another terminal (outside lea)"; fi
   else

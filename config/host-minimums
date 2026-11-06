@@ -17,7 +17,3 @@ podman 5.8.4
 # once the distribution's changelog shows the three fixes, for example on Ubuntu:
 #   apt changelog linux-image-$(uname -r) | grep -nE 'CVE-2026-(74753|80521|80841)'
 # A distribution without a line gets a warning in lea doctor, never a failure.
-#
-# lox MIN: the oldest lox (lox version) lea doctor accepts: lox run (lockhub v0.9.0), in a terminal
-# of its own outside lea, starts the hub and the locks and decides the agents' requests (#300).
-lox 0.9.0

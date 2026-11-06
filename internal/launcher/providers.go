@@ -8,6 +8,7 @@ import (
 	"strings"
 	"syscall"
 
+	"github.com/DavidGodefroid/lea/internal/locks"
 	"github.com/DavidGodefroid/lea/internal/providers"
 )
 
@@ -40,7 +41,7 @@ func LoadProviders(on map[string]bool, several map[string][]string, get func(str
 }
 
 // LockServers are the enabled Locks a Codex agent gets as MCP servers (on and several:
-// Config.LockTools, in the order locksql, lockmq, lockfile), each with Codex's tool timeout
+// Config.LockTools, in locks.Registry's order), each with Codex's tool timeout
 // LEA_LOCK_TOOL_TIMEOUT seconds (1500 when unset or invalid; 60 to 86400): a Lock call waits for
 // a human. A tool lox run runs several locks of gets one server per instance its agents reach
 // (none when they reach none); otherwise the tool's one server.
@@ -50,7 +51,7 @@ func LockServers(on map[string]bool, several map[string][]string, get func(strin
 		t = n
 	}
 	var out []providers.Lock
-	for _, name := range []string{"locksql", "lockmq", "lockfile"} {
+	for _, name := range locks.Names() {
 		if !on[name] {
 			continue
 		}

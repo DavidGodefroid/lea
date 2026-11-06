@@ -14,6 +14,8 @@ import (
 	"strconv"
 	"strings"
 	"syscall"
+
+	"github.com/DavidGodefroid/lea/internal/locks"
 )
 
 // Locks started by `lox run` (lockhub's docs/lock-up.md): lox run runs each lock's console in its
@@ -178,9 +180,9 @@ func (l *Launcher) lockUpSockets(proj, lf string, on func(tool string) bool) map
 	tools, off := upTools(s, on)
 	// A lock lox run runs for a tool lea leaves off (locksql, lockmq and lockfile are off by
 	// default): said once, the agents get none of its socket.
-	for _, t := range []struct{ typ, env string }{{"locksql", "LEA_LOCKSQL"}, {"lockmq", "LEA_LOCKMQ"}, {"lockfile", "LEA_LOCKFILE"}} {
-		if off[t.typ] {
-			l.logf("%s is off (%s=0), though lox run runs a %s lock here: `lea init --%s` turns it on", t.typ, t.env, t.typ, t.typ)
+	for _, t := range locks.Registry {
+		if off[t.Name] {
+			l.logf("%s is off (%s=0), though lox run runs a %s lock here: `lea init --%s` turns it on", t.Name, t.Switch, t.Name, t.Name)
 		}
 	}
 	out := map[string][]lockUpSocket{}
@@ -217,8 +219,8 @@ func lockUsable(s *lockUpState, name string) (vol, why string) {
 	if lk.Socket != vol {
 		return "", fmt.Sprintf("lock %s: socket volume %q is not lox run's %q: left out", name, lk.Socket, vol)
 	}
-	if g, ok := lockGID[lk.Type]; ok && lk.GID != "" && lk.GID != g {
-		return "", fmt.Sprintf("lock %s (%s): clients group %s, lea's image knows %s: left out (update lea)", name, lk.Type, lk.GID, g)
+	if reg, ok := locks.Get(lk.Type); ok && lk.GID != "" && lk.GID != reg.GID {
+		return "", fmt.Sprintf("lock %s (%s): clients group %s, lea's image knows %s: left out (update lea)", name, lk.Type, lk.GID, reg.GID)
 	}
 	return vol, ""
 }
@@ -254,7 +256,7 @@ func ReadUpLocks(proj string, logf func(string, ...any), on func(tool string) bo
 // gets them (runArgs: a lock lox run runs turns its tool on unless the user turned it off).
 func (c *Config) UpLocks(proj string, logf func(string, ...any)) []UpLock {
 	return ReadUpLocks(proj, logf, func(tool string) bool {
-		key := lockToolKeys[tool]
+		key := lockSwitch(tool)
 		return key != "" && c.toolOn(key, true)
 	})
 }
@@ -299,9 +301,6 @@ func lockUpArgs(env, gid string, socks []lockUpSocket) []string {
 	}
 	return a
 }
-
-// lockGID are the clients groups of the lock tools' images, as lea's image names them.
-var lockGID = map[string]string{"locksql": "10000", "lockmq": "10010", "lockfile": "10030"}
 
 // lockUpUntrusted is why up.json (p, described by fi, in the Lock Family's directory lf) cannot be
 // lox run's: not a regular file, or the file or its directory not the user's or writable by others.
