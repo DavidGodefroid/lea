@@ -257,6 +257,18 @@ release_install_sh() {
   grep -qF 'deny /sys/devices/virtual/powercap/** rwklx,' "$H/apparmor-lea"
 }
 
+@test "AppArmor profile keeps docker-default's /proc write denies (#100)" {
+  export FAKE_DOCKER_OUT_INFO___FORMAT='["name=apparmor"]'
+  export LEA_APPARMOR_ABI_DIR="$BATS_TEST_TMPDIR/none"
+  lea_init_apparmor 2>/dev/null
+  grep -qxF '  deny @{PROC}/* w,' "$H/apparmor-lea"
+  grep -qxF '  deny @{PROC}/{[^1-9],[^1-9][^0-9],[^1-9s][^0-9y][^0-9s],[^1-9][^0-9][^0-9][^0-9/]*}/** w,' "$H/apparmor-lea"
+  grep -qxF '  deny @{PROC}/sys/[^k]** w,' "$H/apparmor-lea"
+  grep -qxF '  deny @{PROC}/sys/kernel/{?,??,[^s][^h][^m]**} w,' "$H/apparmor-lea"
+  run grep -i 'narrowed after validation' "$H/apparmor-lea"
+  [ "$status" -ne 0 ]
+}
+
 @test "AppArmor profile is not reinstalled when identical" {
   export FAKE_DOCKER_OUT_INFO___FORMAT='["name=apparmor"]'
   export LEA_APPARMOR_ABI_DIR="$BATS_TEST_TMPDIR/none"

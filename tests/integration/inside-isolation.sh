@@ -53,6 +53,59 @@ if [ -n "${SIBLING_IP:-}" ]; then
   mustnt "sibling lea refused by the proxy"    curl -sf --max-time 5 "http://$SIBLING_IP:8765/"
 fi
 mustnt "AF_ALG socket refused (seccomp)"       python3 -c 'import socket; socket.socket(38, 5, 0)'
+# NETLINK_AUDIT: EINVAL from seccomp (image/seccomp/lea.json), where the kernel would open the
+# socket in lea's network namespace; other netlink sockets (NETLINK_ROUTE: ip, pasta) stay open.
+must   "NETLINK_AUDIT socket refused (seccomp)" python3 -I -c 'import errno, socket, sys
+socket.socket(16, 3, 0).close()
+try: socket.socket(16, 3, 9)
+except OSError as e: sys.exit(e.errno != errno.EINVAL)
+sys.exit(1)'
+# socket(2) through a raw syscall, each argument a full 64-bit register: seccomp compares all 64
+# bits, the kernel reads the low 32 of these ints. Protocol 0x100000009 is NETLINK_AUDIT to the
+# kernel, family 0x100000026 AF_ALG: both refused (image/seccomp/generate.py, ARG_BITS).
+# shellcheck disable=SC2317,SC2329 # run by must
+socket_raw_refused() {
+  python3 -I -c 'import ctypes, platform, sys
+nr = {"x86_64": 41, "aarch64": 198}[platform.machine()]
+libc = ctypes.CDLL(None, use_errno=True); libc.syscall.restype = ctypes.c_long
+fd = libc.syscall(ctypes.c_long(nr), *(ctypes.c_long(int(a, 0)) for a in sys.argv[1:]))
+sys.exit(0 if fd < 0 and ctypes.get_errno() in (1, 22, 97) else 1)' "$@"
+}
+must   "NETLINK_AUDIT socket with high protocol bits refused (seccomp)" socket_raw_refused 16 3 0x100000009
+must   "AF_ALG socket with high family bits refused (seccomp)" socket_raw_refused 0x100000026 5 0
+# The sandbox (#100): the nested rootless Podman builds and runs over pasta under lea's seccomp
+# profile and AppArmor; what it does not need stays refused, and nothing gets root back.
+# Its engine's output goes to a log, shown when it fails.
+buildlog=$(mktemp)
+if sh -c 'd=$(mktemp -d) && printf "FROM busybox:1.37\nRUN echo built >/lea-built\nRUN test -s /lea-built\n" >"$d/Containerfile" && docker build -t lea-it-build "$d" && docker rmi lea-it-build; rc=$?; rm -rf "$d"; exit $rc' >"$buildlog" 2>&1; then
+  ok "a nested image builds"
+else
+  ko "a nested image builds"; sed 's/^/     | /' "$buildlog"
+fi
+rm -f "$buildlog"
+# Plain HTTP through the proxy from a nested container: any answer of the proxy (an error page for
+# this name) proves pasta's way out of the nested network namespace.
+must   "a nested container reaches the proxy over pasta" sh -c 'docker run --rm busybox:1.37 sh -c "http_proxy=http://\$1:3128 wget -Y on -T 10 -O /dev/null http://lea-isolation.invalid/ 2>&1" sh "$LEA_PROXY_IP" | grep -q "HTTP/1"'
+# Rootless Podman's own user namespace: required (README, Security), so it is a must.
+must   "unprivileged user namespace (rootless Podman needs it)" unshare -U -r true
+# keyctl(KEYCTL_GET_KEYRING_ID, KEY_SPEC_SESSION_KEYRING, 0) and perf_event_open of a software
+# counter: the kernel keyring and perf events are not namespaced (seccomp refuses both). vmsplice on
+# fd -1: EPERM from seccomp, where the kernel itself would answer EBADF (image/seccomp/lea.json).
+# shellcheck disable=SC2317,SC2329 # run by must
+sys_refused() {
+  python3 -I -c 'import ctypes, platform, sys
+nr = {"x86_64": {"keyctl": 250, "perf_event_open": 298, "reboot": 169, "vmsplice": 278}, "aarch64": {"keyctl": 219, "perf_event_open": 241, "reboot": 142, "vmsplice": 75}}[platform.machine()][sys.argv[1]]
+attr = (ctypes.c_uint32 * 32)(); attr[0] = 1; attr[1] = 128  # PERF_TYPE_SOFTWARE, size; config 0: cpu-clock
+args = {"keyctl": (0, -3, 0), "perf_event_open": (attr, 0, -1, -1, 0), "reboot": (0, 0, 0, 0), "vmsplice": (-1, 0, 0, 0)}[sys.argv[1]]
+libc = ctypes.CDLL(None, use_errno=True)
+sys.exit(0 if libc.syscall(nr, *args) < 0 and ctypes.get_errno() == 1 else 1)' "$1"
+}
+must   "keyctl refused (seccomp)"               sys_refused keyctl
+must   "perf_event_open refused (seccomp)"      sys_refused perf_event_open
+must   "reboot refused (seccomp)"               sys_refused reboot
+must   "vmsplice refused (seccomp)"             sys_refused vmsplice
+mustnt "sudo absent"                            command -v sudo
+must   "no setuid or setgid file"               sh -c '[ -z "$(find / -xdev -type f \( -perm -4000 -o -perm -2000 \) -print 2>/dev/null)" ]'
 # The locksql console's own directory: read-only, and a mount point no agent can replace by a
 # symbolic link that the console's bind mount would follow on the host (#121).
 if [ "${LEA_LOCKSQL:-}" = 1 ]; then

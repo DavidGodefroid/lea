@@ -947,10 +947,29 @@ so. Changes apply after `lea init` (endpoints, keys, images, locksql) or `lea st
   the host); only its entrypoint, PID 1, stays root to wait, or squid is PID 1 when no endpoint
   is configured. A proxy that could not read a key file stops at start and says which.
 - lea never gets the Docker socket; the agents' own containers run in a rootless Podman inside
-  lea, under seccomp and, on Linux, AppArmor. lea's seccomp profile (`image/seccomp.json`, not
-  Docker's default) refuses `socketcall` and the kernel crypto API sockets (`AF_ALG`,
-  CVE-2026-31431). 32-bit x86 (i386) programs do not run in lea: their `socketcall` hides the
-  socket family from seccomp, so the profile leaves that architecture out.
+  lea, under seccomp and, on Linux, AppArmor. lea's seccomp profile (`image/seccomp.json`) is
+  Docker's default (moby/profiles, vendored and pinned in `image/seccomp/`) with a reviewed list of
+  changes, each with its reason, in `image/seccomp/lea.json`; `image/seccomp/generate.py` builds
+  the profile from them and CI fails on any other difference. It allows what the nested rootless
+  Podman needs and Docker's default keeps for `CAP_SYS_ADMIN` (`clone` and `unshare` of
+  namespaces, `setns`, `mount`, `umount2`, `open_tree`, `move_mount`, `mount_setattr`,
+  `pivot_root`), so unprivileged user namespaces are available in lea (`unshare -U -r` works: the
+  rootless Podman runs in one). The rest stays refused as in Docker's default: the kernel keyring
+  (`keyctl`; nested containers join no keyring), `perf_event_open`, `bpf`, `reboot`, `syslog`,
+  the new mount API's `fsopen`... It also refuses `socketcall`, the kernel crypto API sockets
+  (`AF_ALG`, CVE-2026-31431), audit netlink sockets (`NETLINK_AUDIT`, as lea drops
+  `CAP_AUDIT_WRITE`), and what lea's earlier profile refused that Docker's default allows
+  (`vmsplice`, `cachestat`, `map_shadow_stack`, the futex2 calls, `io_pgetevents`). 32-bit x86
+  (i386) programs do not run in lea: their `socketcall` hides the socket family from seccomp, so
+  the profile leaves that architecture out. seccomp compares 64-bit registers where the kernel
+  reads an `int` argument's low 32 bits, so the generator refuses any test of an `int` argument
+  that high bits could get past (`socket(16, 3, 0x100000009)` is an audit socket to the kernel).
+  The AppArmor profile `lea` is docker-default with its
+  `/proc` write denies, plus mounts and user namespaces for the nested Podman.
+- No way back to root in lea: the entrypoint drops to your uid with no capabilities, the image has
+  no `sudo` and no setuid or setgid file. `newuidmap` and `newgidmap` keep their file capabilities,
+  which the rootless Podman maps its sub-ids with; that is why lea runs without
+  `no-new-privileges`.
 - Every lea container shares the host kernel (unless `LEA_RUNTIME` puts the agents on gVisor or
   Kata: [a second kernel](#a-second-kernel-gvisor-or-kata)), so the host's patch level is part of the
   containment. The kernel must carry the fixes for CVE-2026-74753, CVE-2026-80521 and CVE-2026-80841; on Ubuntu, check with
@@ -994,7 +1013,7 @@ amd64 and arm64 (`KATA_SHA256` required for any other version or architecture); 
 |---|---|---|
 | Minimum release | release-20260803.0, the first weekly release after gVisor's 30 July 2026 change to file descriptors passed over Unix sockets (the fix tied to OpenAI's sandbox report); lea's CI runs release-20261102.0 | 3.27.0 (CVE-2026-24834, guest privilege escalation through virtio-pmem); 4.2.0 or later recommended, the first release after the two Kata changes of August 2026 that the same report cites; lea's CI runs 4.3.1 (runtime-rs, QEMU) |
 | dockerd registration | `"runsc": {"path": "/opt/gvisor/runsc", "runtimeArgs": ["--oci-seccomp", "--host-uds=open", "--host-fifo=open"]}` | `"kata": {"runtimeType": "io.containerd.kata.v2"}`, and in Kata's `configuration.toml`, `disable_guest_seccomp = false` and `"--xattr"` in `virtio_fs_extra_args` (the nested Podman's `newuidmap` needs its file capability) |
-| Nested Podman (`docker`, `docker compose` in lea) | works, but its containers share lea's network namespace (gVisor refuses the bind mount Podman keeps a network namespace with): their ports are lea's, and a port below 1024 cannot be bound | works, with its own network namespaces; its images live in a tmpfs inside the VM (rootless Podman cannot unpack a layer on virtio-fs), so they count against the container's memory and are pulled again after each restart |
+| Nested Podman (`docker`, `docker compose` in lea) | works, but its containers share lea's network namespace (gVisor refuses the bind mount Podman keeps a network namespace with): their ports are lea's, and a port below 1024 cannot be bound | works, with its own network namespaces; its images and Buildah's `/var/tmp` live in tmpfs inside the VM (rootless Podman cannot unpack a layer, nor Buildah make a RUN step's root, on virtio-fs), so they count against the container's memory and are pulled again after each restart |
 | lea's bus (messaging between agents), the Lock consoles' sockets | work (`--host-uds=open` lets the sandbox connect to host Unix sockets) | unavailable: a host Unix socket does not cross into the VM (lea says so at start; `make test-isolation` prints `info lea's bus socket is not reachable`) |
 | Clipboard (copy from an agent to the host) | works (`--host-fifo=open`) | off: a host FIFO cannot be bound into the VM (lea leaves it out and says so) |
 | seccomp, AppArmor | lea's seccomp profile is applied inside the sandbox only with `--oci-seccomp` (runsc ignores it otherwise); runsc ignores the AppArmor profile, the Sentry runs under gVisor's own seccomp filter | lea's seccomp profile is applied in the guest only with `disable_guest_seccomp = false`; the AppArmor profile is not applied in the VM |

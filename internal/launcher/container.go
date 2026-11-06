@@ -648,10 +648,12 @@ func (l *Launcher) runArgs(proj, pip string) ([]string, error) {
 	// The nested Podman's storage: a volume of its own, kept across restarts. Under Kata (#106) a
 	// volume is a virtio-fs share, where the rootless Podman cannot unpack an image layer (its
 	// chroot's pivot directory gets EACCES): a tmpfs inside the VM instead, its images pulled again
-	// at each start.
-	podmanStore := "type=volume,src=" + p + "-podman-" + id + ",dst=/lea/podman"
+	// at each start. Buildah's working directory (/var/tmp, where a RUN step's root is made) is in
+	// the image's file system, a virtio-fs share too (mkdir in the nested user namespace gets
+	// EACCES): a tmpfs in the VM as well (#100).
+	podmanStore := []string{"--mount", "type=volume,src=" + p + "-podman-" + id + ",dst=/lea/podman"}
 	if vm {
-		podmanStore = "type=tmpfs,dst=/lea/podman,tmpfs-mode=0755"
+		podmanStore = []string{"--mount", "type=tmpfs,dst=/lea/podman,tmpfs-mode=0755", "--mount", "type=tmpfs,dst=/var/tmp,tmpfs-mode=1777"}
 	}
 	a := []string{"-d", "--init", "--name", l.Cfg.ContainerName(proj), "--hostname", "lea",
 		"--network", l.Cfg.InternalNetwork(id),
@@ -671,8 +673,8 @@ func (l *Launcher) runArgs(proj, pip string) ([]string, error) {
 		"--mount", "type=bind,src=" + st + "/glab-cli,dst=/lea/state/glab-cli",
 		"--mount", "type=bind,src=" + st + "/containers,dst=/lea/state/containers",
 		"--mount", "type=bind,src=" + st + "/go,dst=/lea/state/go",
-		"--mount", "type=bind,src=" + st + "/kube,dst=" + home + "/.kube/lea,readonly",
-		"--mount", podmanStore}
+		"--mount", "type=bind,src=" + st + "/kube,dst=" + home + "/.kube/lea,readonly"}
+	a = append(a, podmanStore...)
 	// The Lock Family's directory (hub config, public keys, routing) read-only, as a Lock's profile directory
 	// (lockArgs):
 	// an agent may read it, never change what the locks and the hub trust.
