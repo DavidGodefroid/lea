@@ -178,6 +178,10 @@ func TestRunArgsClipboardUnderAVMRuntime(t *testing.T) {
 		if vol != c.clipboard || tmp == c.clipboard {
 			t.Errorf("%s: podman volume %v, tmpfs %v", c.rt, vol, tmp)
 		}
+		// Buildah's /var/tmp: a tmpfs in Kata's VM too (a RUN step's root cannot be made on virtio-fs).
+		if vt := contains(args, "type=tmpfs,dst=/var/tmp,tmpfs-mode=1777"); vt == c.clipboard {
+			t.Errorf("%s: /var/tmp tmpfs %v", c.rt, vt)
+		}
 		if !contains(args, "LEA_BUS_SOCK=/run/lea/bus/bus.sock") || args[len(args)-1] != "lea:dev" {
 			t.Errorf("%s: run args %q", c.rt, args)
 		}
