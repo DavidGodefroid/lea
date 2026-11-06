@@ -409,8 +409,10 @@ func (m Model) rowLines(inner int) ([]string, []lineOwner) {
 			}
 		}
 		// A calm separation between folders: one blank line above each folder past the first
-		// row. It owns no row: a click on it selects nothing, folds nothing.
-		if e.agent < 0 && i > 0 {
+		// row, and above the first root agent after the folders, so that it does not read as
+		// the last folder's. It owns no row: a click on it selects nothing, folds nothing.
+		afterFolders := e.agent >= 0 && e.in < 0 && i > 0 && (es[i-1].agent < 0 || es[i-1].in >= 0)
+		if (e.agent < 0 && i > 0) || afterFolders {
 			rendered[i] = append([]string{strings.Repeat(" ", inner)}, rendered[i]...)
 			owners[i] = append([]lineOwner{{"", -1}}, owners[i]...)
 		}
@@ -519,9 +521,9 @@ func (m Model) folderSummary(fi int, c charset, maxW int, bg func(lipgloss.Style
 			working++
 		case s == "limited":
 			limited++
-		default:
+		case s == "idle" || s == "done":
 			done++
-		}
+		} // an unknown state counts in the total only, as the folder's dot ignored it
 	}
 	pick := func(u, a string) string {
 		if c.ascii {
@@ -531,18 +533,20 @@ func (m Model) folderSummary(fi int, c charset, maxW int, bg func(lipgloss.Style
 	}
 	type part struct {
 		text string
-		col  lipgloss.AdaptiveColor
+		st   lipgloss.Style
 	}
 	var parts []part
-	add := func(g string, col lipgloss.AdaptiveColor, n int) {
+	add := func(g string, st lipgloss.Style, n int) {
 		if n > 0 {
-			parts = append(parts, part{g + strconv.Itoa(n), col})
+			parts = append(parts, part{g + strconv.Itoa(n), st})
 		}
 	}
-	add(pick("●", "!"), theme.Blocked, blocked)
-	add(pick("◐", "~"), theme.Working, working)
-	add(pick("◷", "~"), theme.Idle, limited)
-	add(pick("✓", "="), theme.Done, done)
+	// Needs you is bold as well as red: it is what the header is for. In ASCII each state keeps
+	// its own glyph ("~" is limited's, as on a row), so they read apart without colour.
+	add(pick("●", "!"), lipgloss.NewStyle().Foreground(theme.Blocked).Bold(true), blocked)
+	add(pick("◐", "+"), lipgloss.NewStyle().Foreground(theme.Working), working)
+	add(pick("◷", "~"), lipgloss.NewStyle().Foreground(theme.Idle), limited)
+	add(pick("✓", "="), lipgloss.NewStyle().Foreground(theme.Done), done)
 	count := strconv.Itoa(total)
 	width := func(ps []part) int {
 		w := len(count)
@@ -558,7 +562,7 @@ func (m Model) folderSummary(fi int, c charset, maxW int, bg func(lipgloss.Style
 	b.WriteString(bg(muted).Render(count))
 	for _, p := range parts {
 		b.WriteString(bg(plain).Render(" "))
-		b.WriteString(bg(lipgloss.NewStyle().Foreground(p.col)).Render(p.text))
+		b.WriteString(bg(p.st).Render(p.text))
 	}
 	return b.String(), width(parts)
 }

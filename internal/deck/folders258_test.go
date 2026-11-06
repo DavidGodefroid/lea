@@ -36,7 +36,7 @@ func TestAgentInAFolderIsIndented(t *testing.T) {
 					t.Fatalf("row %d shows a guide: %q", i, cells(l))
 				}
 			}
-			in1, in2, root1, root2 := []rune(cells(ls[1])), []rune(cells(ls[2])), []rune(cells(ls[3])), []rune(cells(ls[4]))
+			in1, in2, root1, root2 := []rune(cells(ls[1])), []rune(cells(ls[2])), []rune(cells(ls[4])), []rune(cells(ls[5]))
 			// The folder's agent: a plain indent, its name under the folder's name; its detail
 			// starts there too.
 			if string(in1[:4]) != "    " || in1[4] == ' ' || in1[5] != ' ' || (tc.width > 20 && !strings.HasPrefix(string(in1[6:]), "al")) {

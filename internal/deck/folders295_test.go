@@ -34,7 +34,7 @@ func TestExpandedFolderLook(t *testing.T) {
 		m.selected = "lea-a/d"
 		inner := m.innerWidth()
 		ls, owners := m.rowLines(inner)
-		if len(ls) != 11 { // web, a(2), b(2), blank, ops, c(2), d(2)
+		if len(ls) != 12 { // web, a(2), b(2), blank, ops, c(2), blank, d(2)
 			t.Fatalf("width %d: %d lines: %q", width, len(ls), ls)
 		}
 		for i, l := range ls {
@@ -55,6 +55,10 @@ func TestExpandedFolderLook(t *testing.T) {
 		if h := cells(ls[6]); !strings.HasPrefix(h, " ▾ ops") || !strings.Contains(h, "1 ✓1") {
 			t.Fatalf("width %d: ops header %q", width, h)
 		}
+		// The root agent after the folders is set apart too: it does not read as ops's.
+		if strings.TrimSpace(cells(ls[9])) != "" || owners[9] != (lineOwner{"", -1}) || owners[10].key != "lea-a/d" {
+			t.Fatalf("width %d: before d %q owners %+v %+v", width, cells(ls[9]), owners[9], owners[10])
+		}
 	}
 }
 
@@ -65,7 +69,7 @@ func TestFoldedFolderIsOneSummedUpLine(t *testing.T) {
 	m := withFolders(t, st, ag("a", "working", 9_990), ag("b", "idle", 9_990), ag("c", "idle", 9_990))
 	m.selected = "lea-a/c"
 	ls := m.rows(m.innerWidth())
-	if len(ls) != 3 { // web's header, c's two lines
+	if len(ls) != 4 { // web's header, a blank line, c's two lines
 		t.Fatalf("%d lines: %q", len(ls), ls)
 	}
 	if h := cells(ls[0]); !strings.HasPrefix(h, " ▸ web") || !strings.Contains(h, "2 ◐1 ✓1") {
@@ -122,7 +126,7 @@ func TestFolderLookASCII(t *testing.T) {
 	if len(ls) != 5 { // web, a(2), blank, ops folded
 		t.Fatalf("%d lines: %q", len(ls), ls)
 	}
-	if h := cells(ls[0]); !strings.HasPrefix(h, " v web") || !strings.Contains(h, "1 ~1") {
+	if h := cells(ls[0]); !strings.HasPrefix(h, " v web") || !strings.Contains(h, "1 +1") {
 		t.Fatalf("web header %q", h)
 	}
 	if h := cells(ls[4]); !strings.HasPrefix(h, " > ops") || !strings.Contains(h, "1 =1") {
@@ -162,7 +166,8 @@ func TestFolderLookWithoutColour(t *testing.T) {
 // selects the agent.
 func TestMouseHitsTheNewLines(t *testing.T) {
 	st, m := twoFolderDeck(t)
-	// web's header y1, a y2-3, b y4-5, the blank line y6, ops y7, c y8-9, d y10-11.
+	// web's header y1, a y2-3, b y4-5, the blank line y6, ops y7, c y8-9, a blank line y10,
+	// d y11-12.
 	m, _ = step(t, m, click(tea.MouseButtonLeft, 1))
 	if m.selected != folderKey("f1") || !st.l.Folders[0].Folded {
 		t.Fatalf("click on web's header: selected %q saved %+v", m.selected, st.l)
@@ -180,6 +185,51 @@ func TestMouseHitsTheNewLines(t *testing.T) {
 	m, _ = step(t, m, click(tea.MouseButtonLeft, 8))
 	if m.selected != "lea-a/c" {
 		t.Fatalf("click on c: selected %q", m.selected)
+	}
+	m, _ = step(t, m, click(tea.MouseButtonLeft, 10))
+	if m.selected != "lea-a/c" {
+		t.Fatalf("click on the blank line before d: selected %q", m.selected)
+	}
+	m, _ = step(t, m, click(tea.MouseButtonLeft, 12))
+	if m.selected != "lea-a/d" {
+		t.Fatalf("click on d's detail: selected %q", m.selected)
+	}
+}
+
+// Every deck width from 24 to 60, Unicode and ASCII, folded and not, with every state in the
+// summary and long names: no line ever overflows, the count and the needs-you mark stay.
+func TestFolderHeaderNeverOverflows(t *testing.T) {
+	long := strings.Repeat("folder-with-a-long-name", 3)
+	for _, ascii := range []bool{false, true} {
+		for _, folded := range []bool{false, true} {
+			for width := 24; width <= 60; width++ {
+				st := &memStore{l: Layout{Folders: []Folder{{ID: "f1", Name: long, Folded: folded,
+					Agents: []string{"lea-a/a", "lea-a/b", "lea-a/c", "lea-a/d"}}}}}
+				m := withFolders(t, st, withTask(ag("a", "working", 9_990), false, true), ag("b", "working", 9_990),
+					limited("c", clock.Unix()+60), ag("d", "idle", 9_990), ag("e", "idle", 9_990))
+				m = sized(m, width, 40)
+				m.ascii = ascii
+				inner := m.innerWidth()
+				ls := m.rows(inner)
+				for i, l := range ls {
+					if w := lipgloss.Width(l); w != inner {
+						t.Fatalf("ascii %v folded %v width %d: line %d is %d cells, not %d: %q", ascii, folded, width, i, w, inner, cells(l))
+					}
+				}
+				for i, l := range strings.Split(m.View(), "\n") {
+					if w := lipgloss.Width(l); w > width {
+						t.Fatalf("ascii %v folded %v width %d: view line %d is %d cells: %q", ascii, folded, width, i, w, cells(l))
+					}
+				}
+				need := "4 ●1"
+				if ascii {
+					need = "4 !1"
+				}
+				if h := cells(ls[0]); !strings.Contains(h, need) {
+					t.Fatalf("ascii %v folded %v width %d: header %q lacks %q", ascii, folded, width, h, need)
+				}
+			}
+		}
 	}
 }
 
