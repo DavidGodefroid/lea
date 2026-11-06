@@ -1182,8 +1182,17 @@ func (d *Daemon) dispatchHooks(ctx context.Context, o Origin, me string, req wir
 		// A withdrawn request leaves the state to the hook event that withdrew it (even when a
 		// deck verdict raced it: the turn is over either way).
 		if !withdrawn && (v != "" || hookGone) {
-			if _, err := d.st.SetHookState(me, "working", "", d.now()); err != nil {
+			// After Stop, the request was a Stop hook's own (its tools run under the agent's
+			// identity): the turn stays over, so the agent goes back to idle, not working, and
+			// a held rewake watch can still wake it (#297).
+			s := "working"
+			if d.stoppedNow(me) {
+				s = "idle"
+			}
+			if _, err := d.st.SetHookState(me, s, "", d.now()); err != nil {
 				log.Printf("lea daemon: set state of %s: %v", me, err)
+			} else if s == "idle" {
+				d.wake(me)
 			}
 		}
 		d.changed()

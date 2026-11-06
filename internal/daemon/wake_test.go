@@ -181,6 +181,34 @@ func TestARewakeWaitsForAWorkingAgent(t *testing.T) {
 	}
 }
 
+// A Stop hook's own approval, answered in the deck, leaves the stopped agent idle, not working:
+// its turn is over and no Stop follows, so a working state would hold its wake for good. The
+// held watch wakes it as soon as the verdict is in.
+func TestAStopHooksVerdictDoesNotHoldTheWake(t *testing.T) {
+	e := start(t)
+	e.d.SetAgents(&fakeAgents{})
+	tm := newManualTimers(t)
+	tm.use(e.d)
+	hookEvent(t, e, "dev", "SessionStart")
+	hookEvent(t, e, "dev", "Stop")
+	w := rewakeWatch(t, e, "dev")
+	hookEvent(t, e, "dev", "PermissionRequest") // the Stop hook's agent asks
+	got := ask(t, e, 5, false)
+	p := waitPending(t, e)
+	userSends(t, e, "dev", "hello")
+	quiet(t, w, "blocked")
+	if err := call(t, e.api, "", "approval_decide", map[string]any{"id": p.ID, "verdict": "allow"}, nil); err != nil {
+		t.Fatal(err)
+	}
+	receive(t, got)
+	if a, _ := e.d.st.AgentByKey("lea-a/dev"); a.State != "idle" {
+		t.Fatalf("state=%s after the Stop hook's verdict, want idle", a.State)
+	}
+	if r := next(t, w); r.Count != 1 { // no recheck timer fired: the verdict woke it
+		t.Fatalf("notice=%+v", r)
+	}
+}
+
 // A paused agent is not woken; letting it continue (the deck's p) wakes the held watch at once.
 func TestARewakeWaitsForAPausedAgent(t *testing.T) {
 	e := start(t)
