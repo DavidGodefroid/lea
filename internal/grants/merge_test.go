@@ -54,7 +54,8 @@ func TestParseWindowAndOpen(t *testing.T) {
 }
 
 // fakeGH answers the policy's gh calls from files in its directory: pr.json (the PR view), the
-// production and sensitive files (absent: a 404), files.txt (the API's files, jq-applied by the
+// production file (production.<ref> on that ref, else production on any ref; absent: a 404), the
+// sensitive file (absent: a 404), files.txt (the API's files, jq-applied by the
 // fake as the policy expects: one "F path" line per file and the added lines).
 const fakeGH = `#!/bin/sh
 d=$(dirname "$0")
@@ -62,7 +63,9 @@ echo "$*" >> "$d/gh.log"
 case "$*" in
   "pr view 7 --json baseRefName,headRefOid "*) cat "$d/base.txt" ;;
   "pr view 7 --json statusCheckRollup "*) cat "$d/ci.txt" ;;
-  "api -H Accept: application/vnd.github.raw repos/someone/shop/contents/.lea/production") [ -f "$d/production" ] && cat "$d/production" || exit 1 ;;
+  "api -X GET -H Accept: application/vnd.github.raw repos/someone/shop/contents/.lea/production -f ref="*)
+    ref=${*##*ref=}
+    if [ -f "$d/production.$ref" ]; then cat "$d/production.$ref"; elif [ -f "$d/production" ]; then cat "$d/production"; else exit 1; fi ;;
   "api -X GET -H Accept: application/vnd.github.raw repos/someone/shop/contents/.lea/sensitive -f ref="*) [ -f "$d/sensitive" ] && cat "$d/sensitive" || exit 1 ;;
   "api --paginate repos/someone/shop/pulls/7/files "*) cat "$d/files.txt" ;;
   *) echo "unexpected gh $*" >&2; exit 3 ;;
@@ -76,7 +79,9 @@ d=$(dirname "$0")
 
 type policyCase struct {
 	base, ci, files, production, sensitive string
-	policy                                 MergePolicy
+	// productionAt are .lea/production files on given refs (production.<ref>).
+	productionAt map[string]string
+	policy       MergePolicy
 }
 
 const headSHA = "0123456789abcdef0123456789abcdef01234567"
@@ -101,6 +106,9 @@ func runPolicy(t *testing.T, c policyCase) (out string, merged bool, dir string)
 	write("files.txt", c.files, 0o644)
 	if c.production != "" {
 		write("production", c.production, 0o644)
+	}
+	for ref, body := range c.productionAt {
+		write("production."+ref, body, 0o644)
 	}
 	if c.sensitive != "" {
 		write("sensitive", c.sensitive, 0o644)
@@ -152,6 +160,17 @@ func TestMergePolicyScript(t *testing.T) {
 		{"a glob in a file name is not expanded", policyCase{base: "main", ci: green, files: files("F *"), sensitive: "billing/*\n", policy: open}, true, ""},
 		{"irreversible migration", policyCase{base: "main", ci: green, files: files("F db/0042.sql", "+ALTER TABLE orders DROP COLUMN note;"), sensitive: "nothing/*\n", policy: open},
 			false, "irreversible migration"},
+		// .lea/production that names no branch, or names it with a CR, is no list: main stays
+		// production; the base branch's file applies, not another branch's.
+		{"an empty production file", policyCase{base: "main", ci: "not green", files: plain, productionAt: map[string]string{"main": "\n"}, policy: closed}, false, "outside the deploy window"},
+		{"a production file of comments only", policyCase{base: "main", ci: "not green", files: plain, productionAt: map[string]string{"main": "# none\n\n  \n"}, policy: closed}, false, "outside the deploy window"},
+		{"a CRLF production file", policyCase{base: "main", ci: "not green", files: plain, productionAt: map[string]string{"main": "main\r\n"}, policy: closed}, false, "outside the deploy window"},
+		{"a CRLF production file naming another branch", policyCase{base: "release", ci: green, files: plain, productionAt: map[string]string{"release": "# prod\r\n release \r\n"}, policy: closed}, false, "outside the deploy window"},
+		{"the default branch's production file does not apply", policyCase{base: "main", ci: "not green", files: plain,
+			productionAt: map[string]string{"develop": "\n", "main": "main\n"}, policy: closed}, false, "outside the deploy window"},
+		{"the default branch's file does not make main production", policyCase{base: "main", ci: "not green", files: plain,
+			productionAt: map[string]string{"develop": "main\n", "main": "release\n"}, policy: closed}, true, ""},
+		{"a CRLF sensitive list", policyCase{base: "main", ci: green, files: files("F billing/x.go"), sensitive: "# ours\r\nbilling/*\r\n", policy: open}, false, "billing/x.go"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			out, merged, dir := runPolicy(t, tc.c)
@@ -168,6 +187,45 @@ func TestMergePolicyScript(t *testing.T) {
 				t.Fatalf("lea told of a merge: %q", log)
 			}
 		})
+	}
+}
+
+// An irreversible migration of a framework is refused and told to the tower whatever the
+// repository's sensitive list says (#110, C3): one case per family.
+func TestMergePolicyFrameworkMigrations(t *testing.T) {
+	open := MergePolicy{Lead: "lead-shop", Window: "w", Open: true, Approved: []string{headSHA}, Agent: "dev-1"}
+	for _, tc := range []struct{ family, file, line string }{
+		{"SQL", "db/1.sql", "+DROP TABLE orders;"},
+		{"Rails", "db/2.rb", "+    remove_column :orders, :note"},
+		{"Knex", "db/3.js", "+  table.dropColumn('note')"},
+		{"Alembic drop_column", "alembic/versions/4.py", "+    op.drop_column('orders', 'note')"},
+		{"Alembic drop_constraint", "alembic/versions/5.py", "+    op.drop_constraint('fk', 'orders')"},
+		{"Alembic rename", "alembic/versions/6.py", "+    op.alter_column('orders', 'note', new_column_name='memo')"},
+		{"Django RemoveField", "shop/m/0007.py", "+        migrations.RemoveField(model_name='order', name='note'),"},
+		{"Django DeleteModel", "shop/m/0008.py", "+        migrations.DeleteModel(name='Order'),"},
+		{"Django RenameField", "shop/m/0009.py", "+        migrations.RenameField(model_name='order', old_name='note', new_name='memo'),"},
+		{"Django RenameModel", "shop/m/0010.py", "+        migrations.RenameModel(old_name='Order', new_name='Purchase'),"},
+		{"Laravel dropIfExists", "database/m/11.php", "+        Schema::dropIfExists('orders');"},
+		{"Laravel drop", "database/m/12.php", "+        Schema::drop('orders');"},
+		{"Laravel renameColumn", "database/m/13.php", "+            $table->renameColumn('note', 'memo');"},
+		{"Laravel renameTable", "database/m/14.php", "+        Schema::renameTable('orders', 'purchases');"},
+	} {
+		t.Run(tc.family, func(t *testing.T) {
+			out, merged, dir := runPolicy(t, policyCase{base: "main", ci: "green", files: files("F "+tc.file, tc.line), sensitive: "nothing/*\n", policy: open})
+			if merged || !strings.Contains(out, "irreversible migration") {
+				t.Fatalf("merged=%v out:\n%s", merged, out)
+			}
+			log, _ := os.ReadFile(filepath.Join(dir, "lea.log"))
+			if !strings.Contains(string(log), "args hook lea merge-blocked 7") || !strings.Contains(string(log), strings.TrimPrefix(tc.line, "+")) {
+				t.Fatalf("lea was not told: %q", log)
+			}
+		})
+	}
+	// Reversible framework lines are no migration of that kind.
+	for _, line := range []string{"+    op.add_column('orders', sa.Column('memo'))", "+        migrations.AddField(model_name='order', name='memo'),", "+        Schema::create('orders', function ($t) {"} {
+		if _, merged, _ := runPolicy(t, policyCase{base: "main", ci: "green", files: files("F src/x.py", line), sensitive: "nothing/*\n", policy: open}); !merged {
+			t.Fatalf("%q refused", line)
+		}
 	}
 }
 

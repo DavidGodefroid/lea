@@ -41,7 +41,7 @@ commit, PR), open question. Keep `task_update` current."
 
 Your tower set your **deploy window** (`window` on your row in `agents_list`; your status line
 shows it, open or closed). lea's grant hook enforces it on every merge into a production branch
-(the branches of `.lea/production` in the repository, else `main` and `master`), for you and your
+(the branches of `.lea/production` on the PR's base branch, else `main` and `master`), for you and your
 children:
 
 - Outside the window: refused. Merge into production inside the window, or ask the tower.

@@ -35,7 +35,12 @@ var alwaysSensitive = []string{".lea/*"}
 // a column, or destroys data: a POSIX ERE, case-insensitive (grep -iE).
 const irreversibleRe = `^\+.*(drop[[:space:]]+(table|column|schema|database|collection)|rename[[:space:]]+(table|column|to)|` +
 	`truncate[[:space:]]|delete[[:space:]]+from|alter[[:space:]]+table.*[[:space:]]drop[[:space:]]|dropcolumn|droptable|drop_table|` +
-	`remove_column|rename_column|rename_table|dropindex\(|\.drop\()`
+	`remove_column|rename_column|rename_table|dropindex\(|\.drop\(|` +
+	// Alembic (op.drop_column, op.drop_table, op.alter_column(new_column_name=...)), Laravel
+	// (Schema::dropIfExists, Schema::drop(, renameColumn, renameTable), Django (RemoveField,
+	// DeleteModel, RenameField, RenameModel); Rails and Knex are above.
+	`drop_column|op\.drop_|new_column_name|dropifexists|schema::drop\(|renamecolumn|renametable|` +
+	`removefield|deletemodel|renamefield|renamemodel)`
 
 // Paths of the programs the policy runs inside the container.
 const (
@@ -54,7 +59,7 @@ func refuseQuoted(why, expr string) string {
 
 // mergePolicyScript is the script lines that end a gh merge of PR n in the repository gh (a
 // github.com/OWNER/NAME pin) unless, when its base is a production branch (.lea/production on the
-// default branch, one per line; main and master without it), the lead's window is open, a
+// base branch, one per line, # comments; main and master without it or when it names none), the lead's window is open, a
 // reviewer approved its head, its CI is green on that head, it holds no irreversible migration
 // (then the daemon warns the tower) and it touches no sensitive path (.lea/sensitive on the base
 // branch, shell patterns one per line; DefaultSensitive without it). It sets lea_head, the head
@@ -65,12 +70,22 @@ func mergePolicyScript(n, gh string, p MergePolicy) string {
 		return shellWords([]string{ghPath, "pr", "view", n, "--json", fields, "--jq", jq, "-R", gh})
 	}
 	raw := []string{"-H", "Accept: application/vnd.github.raw"}
-	s := "set -f\nlea_nl='\n'\n" +
+	s := "set -f\nlea_nl='\n'\nlea_cr=$(printf '\\r')\n" +
 		"lea_pr=$(" + view("baseRefName,headRefOid", `.baseRefName + " " + .headRefOid`) + ") || exit 1\n" +
 		`lea_base=${lea_pr% *} lea_head=${lea_pr##* }` + "\n" +
 		`case "$lea_head" in ''|*[!0-9a-f]*) ` + refuse("PR "+n+" has no head commit") + ";; esac\n" +
-		"lea_prod=$(" + shellWords(append(append([]string{ghPath, "api"}, raw...), "repos/"+repo+"/contents/.lea/production")) + " 2>/dev/null) || lea_prod='main" + "\n" + "master'\n" +
-		"lea_isprod=0\nIFS=$lea_nl\nfor lea_b in $lea_prod; do [ \"$lea_b\" = \"$lea_base\" ] && lea_isprod=1; done\nunset IFS\n" +
+		// .lea/production is read on the PR's base branch, as .lea/sensitive: a PR merged first
+		// into another branch never changes what counts as production for this one. A line is a
+		// branch once its CR and surrounding blanks are cut; blank and # lines are not; a file
+		// that names no branch is no file (main and master).
+		"lea_prod=$(" + shellWords(append(append([]string{ghPath, "api", "-X", "GET"}, raw...), "repos/"+repo+"/contents/.lea/production")) + ` -f "ref=$lea_base" 2>/dev/null) || lea_prod=` + "\n" +
+		"lea_isprod=0 lea_nprod=0\nIFS=$lea_nl\nfor lea_b in $lea_prod; do\n" +
+		"  lea_b=${lea_b%\"$lea_cr\"}\n" +
+		"  while :; do case \"$lea_b\" in [[:space:]]*) lea_b=${lea_b#?};; *[[:space:]]) lea_b=${lea_b%?};; *) break;; esac; done\n" +
+		"  case \"$lea_b\" in ''|'#'*) continue;; esac\n" +
+		"  lea_nprod=$((lea_nprod + 1)); [ \"$lea_b\" = \"$lea_base\" ] && lea_isprod=1\n" +
+		"done\nunset IFS\n" +
+		"if [ \"$lea_nprod\" = 0 ]; then case \"$lea_base\" in main|master) lea_isprod=1;; esac; fi\n" +
 		"if [ \"$lea_isprod\" = 1 ]; then\n"
 	if !p.Open {
 		why := "PR " + n + " targets the production branch "
@@ -107,7 +122,7 @@ func mergePolicyScript(n, gh string, p MergePolicy) string {
 		shellWords([]string{strings.Join(DefaultSensitive, "\n")}) + "\n" +
 		"  lea_sens=\"$lea_sens$lea_nl\"" + shellWords([]string{strings.Join(alwaysSensitive, "\n")}) + "\n" +
 		"  lea_hit=\n  IFS=$lea_nl\n" +
-		"  for lea_f in $lea_files; do case \"$lea_f\" in 'F '*) lea_f=${lea_f#??};; *) continue;; esac; for lea_p in $lea_sens; do case \"$lea_p\" in '#'*) continue;; esac\n" +
+		"  for lea_f in $lea_files; do case \"$lea_f\" in 'F '*) lea_f=${lea_f#??};; *) continue;; esac; for lea_p in $lea_sens; do lea_p=${lea_p%\"$lea_cr\"}; case \"$lea_p\" in ''|'#'*) continue;; esac\n" +
 		"    case \"$lea_f\" in $lea_p) lea_hit=$lea_f; break 2;; esac; done; done\n" +
 		"  unset IFS\n" +
 		`  [ -z "$lea_hit" ] || { ` + refuseQuoted("PR "+n+" touches a sensitive path (.lea/sensitive), so it goes to your tower: ", "$lea_hit") + "; }\n" +

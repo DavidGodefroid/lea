@@ -587,11 +587,12 @@ owners whose repositories it takes charge of), each lead follows the `/lea:proje
 and runs its own team, and the tower brings you only the decisions that are yours, one question at
 a time. The tower gives each lead a deploy window (`lead_window`, e.g.
 `mon-sun 21:30-23:59 Europe/Brussels`): lea's grant hook refuses a merge by that lead or its team
-into a production branch (`.lea/production` in the repository, else `main` and `master`) outside
+into a production branch (`.lea/production` on the PR's base branch, one per line, else `main` and `master`) outside
 the window, and inside it lets through only a low-risk PR: CI green on its head, a reviewer
 agent's approval of that head (`review_approve`), and no file matching the repository's
 `.lea/sensitive` patterns (lea's defaults without it: migrations, auth, payment, secrets, infra,
-CI). A PR holding an irreversible migration (a dropped or renamed table or column, destroyed data)
+CI). A PR holding an irreversible migration (a dropped or renamed table or column, destroyed data;
+SQL and the Rails, Knex, Alembic, Django and Laravel equivalents)
 is never merged automatically, and the tower gets a dedicated warning to put to you. These checks
 run in the pinned `gh pr merge <N>` a merge grant allows (lea reads the PR from GitHub just before
 merging, and merges only the head it checked); in a tower's tree a merge that names no PR number,
