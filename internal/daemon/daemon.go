@@ -70,6 +70,10 @@ type Daemon struct {
 	stopped map[string]bool
 	// rewakes: the generation of each agent's rewake watch; a newer one supersedes the older.
 	rewakes map[string]int
+	// rewoken: when lea last woke each agent for its inbox (wake.go, #297), for the rate limit;
+	// woken: the agents whose woken turn has not ended yet (store.Agent.Woken).
+	rewoken map[string][]int64
+	woken   map[string]bool
 	keyMu   map[string]*sync.Mutex
 	agents  Agents
 	// statusPaths: the last status-line key paths recorded per agent.
@@ -184,7 +188,7 @@ func New(st *store.Store, runDir string, now func() int64) *Daemon {
 	}
 	return &Daemon{subs: map[string]*subagents{}, subTTL: subagentTTL, afterFunc: time.AfterFunc, st: st, lim: bus.Default, now: now, runDir: runDir,
 		attached: map[string]string{}, notify: map[string]chan struct{}{},
-		verdicts: map[int64]chan string{}, asks: map[string]pendingAsk{}, blocks: map[string]int{}, stopped: map[string]bool{}, rewakes: map[string]int{}, keyMu: map[string]*sync.Mutex{}, statusPaths: map[string]string{}, named: map[string]bool{}, rang: map[string]time.Time{},
+		verdicts: map[int64]chan string{}, asks: map[string]pendingAsk{}, blocks: map[string]int{}, stopped: map[string]bool{}, rewakes: map[string]int{}, rewoken: map[string][]int64{}, woken: map[string]bool{}, keyMu: map[string]*sync.Mutex{}, statusPaths: map[string]string{}, named: map[string]bool{}, rang: map[string]time.Time{},
 		resumeDelay: DefaultResumeDelay, windows: map[string][]limitWindow{}, limitJobs: map[string]string{},
 		stackIdle: DefaultStackIdle, parkTimers: map[string]*time.Timer{}, parked: map[string]string{},
 		keepalive: DefaultKeepalive, keepTimers: map[string]*time.Timer{}, resumeFails: map[string]resumeFail{}, resuming: map[string]bool{},
@@ -239,6 +243,9 @@ func (d *Daemon) AttachContainer(ctx context.Context, name string) (string, erro
 		return "", err
 	}
 	d.attached[name] = p
+	// A daemon that started again knows the container's idle agents as idle: their Rewake jobs,
+	// back on this bus, wake them for a message (#297).
+	d.idleSinceLocked(name)
 	// A daemon that started again takes over the container's suspended agents: their keepalive
 	// timers and queued resumes went with the previous daemon (#162).
 	go d.suspendedSince(name)
@@ -818,6 +825,13 @@ func (d *Daemon) watch(ctx context.Context, me string, timeoutS int, rewake bool
 		d.wake(me) // the older watch sees it is superseded
 	}
 	deadline := time.After(time.Duration(timeoutS) * time.Second)
+	// recheck wakes a held rewake watch to look again (wake.go): the hold may have ended.
+	var recheck *time.Timer
+	defer func() {
+		if recheck != nil {
+			recheck.Stop()
+		}
+	}()
 	for {
 		if err := ctx.Err(); err != nil {
 			return nil, err
@@ -834,8 +848,25 @@ func (d *Daemon) watch(ctx context.Context, me string, timeoutS int, rewake bool
 			idle = stopped
 		}
 		n, err := d.unreadNotice(me)
-		if err != nil || (n["count"] != 0 && idle) {
+		if err != nil {
 			return n, err
+		}
+		if n["count"] != 0 && idle {
+			if !rewake {
+				return n, nil
+			}
+			hold := d.rewakeHold(me)
+			if hold == 0 {
+				d.rewoke(me, n["count"])
+				return n, nil
+			}
+			if recheck != nil {
+				recheck.Stop()
+			}
+			d.mu.Lock()
+			after := d.afterFunc
+			d.mu.Unlock()
+			recheck = after(hold, func() { d.wake(me) })
 		}
 		select {
 		case <-ch:
@@ -892,6 +923,9 @@ func (d *Daemon) pruneForgotten() {
 	for k := range d.keepTimers {
 		keys = append(keys, k)
 	}
+	for k := range d.rewoken {
+		keys = append(keys, k)
+	}
 	d.mu.Unlock()
 	for _, k := range keys {
 		if _, err := d.st.AgentByKey(k); errors.Is(err, store.ErrNotFound) {
@@ -904,6 +938,7 @@ func (d *Daemon) pruneForgotten() {
 			delete(d.limitJobs, k)
 			d.forgetStackLocked(k)
 			d.forgetKeepaliveLocked(k)
+			d.forgetWokenLocked(k)
 			d.mu.Unlock()
 		}
 	}
@@ -971,6 +1006,11 @@ func (d *Daemon) dispatchHooks(ctx context.Context, o Origin, me string, req wir
 			}
 		}
 		switch {
+		case p.Event == "SessionStart" && idleAtStart(p.Payload):
+			// A resumed or cleared session waits at its prompt: its turn is over, and its
+			// Rewake job (SessionStart) wakes it for a message (#297).
+			delete(d.blocks, me)
+			d.stopped[me] = true
 		case p.Event == "UserPromptSubmit" || p.Event == "SessionStart":
 			delete(d.blocks, me)
 			delete(d.stopped, me)
@@ -978,6 +1018,15 @@ func (d *Daemon) dispatchHooks(ctx context.Context, o Origin, me string, req wir
 			d.stopped[me] = true
 		}
 		d.mu.Unlock()
+		switch p.Event {
+		case "UserPromptSubmit", "SessionStart", "SessionEnd", "Stop", "StopFailure":
+			// The woken turn ended, or the user typed.
+			d.endWoken(me)
+		case "Notification":
+			if ok {
+				d.endWoken(me)
+			}
+		}
 		if p.Event == "StopFailure" {
 			d.turnFailed(me, p.Payload)
 		} else {
