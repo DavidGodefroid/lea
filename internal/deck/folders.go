@@ -348,36 +348,6 @@ func (m Model) folderMembers(fi int) []Agent {
 	return out
 }
 
-// folderState is the state a folder's dot shows, the worst of its agents' as a row's dot shows
-// it: blocked when one needs the user, working while one works (a paused agent does not), else
-// idle with its latest agent's time (green, then empty once all have been quiet a while), ""
-// when no agent inside has a state to show.
-func (m Model) folderState(fi int) (string, int64) {
-	state, updated := "", int64(0)
-	for _, a := range m.folderMembers(fi) {
-		s := shownState(a)
-		switch {
-		case a.Paused:
-			continue
-		case s == "blocked":
-			return "blocked", a.Updated
-		case busy(a): // working or waiting (#72)
-			state = "working"
-		case s == "limited":
-			if state == "" || state == "idle" {
-				state = "limited"
-			}
-			updated = max(updated, a.Updated)
-		case s == "idle" || s == "done":
-			if state == "" {
-				state = "idle"
-			}
-			updated = max(updated, a.Updated)
-		}
-	}
-	return state, updated
-}
-
 // nextFolderID is an id no folder has.
 func (m Model) nextFolderID() string {
 	n := 0

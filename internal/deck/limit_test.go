@@ -46,20 +46,21 @@ func TestALimitedAgentShowsWhenItResumes(t *testing.T) {
 	}
 }
 
-// A folder shows limited when an agent is and none works or needs the user.
+// A folder's summary shows a limited agent with its own mark, beside the other states'.
 func TestAFolderWithALimitedAgent(t *testing.T) {
 	st := &memStore{l: Layout{Folders: []Folder{{ID: "f1", Name: "web", Folded: true, Agents: []string{"lea-a/a", "lea-a/b"}}}}}
 	for _, c := range []struct {
 		b    Agent
 		want string
 	}{
-		{ag("b", "idle", 9_990), "limited"},
-		{ag("b", "working", 9_990), "working"},
-		{ag("b", "blocked", 9_990), "blocked"},
+		{ag("b", "idle", 9_990), "✓1"},
+		{ag("b", "working", 9_990), "◐1"},
+		{ag("b", "blocked", 9_990), "●1"},
 	} {
 		m := withFolders(t, st, limited("a", clock.Unix()+60), c.b)
-		if got, _ := m.folderState(0); got != c.want {
-			t.Errorf("with %s: %q, want %q", c.b.State, got, c.want)
+		line := viewLines(m)[1]
+		if !strings.Contains(line, "◷1") || !strings.Contains(line, c.want) {
+			t.Errorf("with %s: line %q, want ◷1 and %q", c.b.State, line, c.want)
 		}
 	}
 }

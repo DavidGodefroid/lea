@@ -392,7 +392,7 @@ func TestRealFoldersPersistAcrossRestarts(t *testing.T) {
 	d.waitFor("the folder web", func(s string) bool { return strings.Contains(s, "▾ web") && !strings.Contains(s, "New folder") })
 	d.keys("j", "o", "1") // a, into the first folder
 	d.waitFor("a in web", func(s string) bool {
-		return strings.Contains(s, "╎") && strings.Contains(s, "web                      1")
+		return strings.Contains(s, "▾ web") && strings.Contains(s, "1 ✓1") && !strings.Contains(s, "╎")
 	})
 	d.keys("k", "\r") // the folder's row, folded
 	d.waitFor("web folded", func(s string) bool { return strings.Contains(s, "▸ web") })
