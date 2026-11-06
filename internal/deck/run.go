@@ -15,7 +15,7 @@ import (
 func Run(api API, container string, ascii bool, notice func() string, st SettingsStore, off string, layout LayoutStore) error {
 	drv := tmuxWidthDrive(os.Getenv)
 	m := New(api, container, ascii, time.Now).WithIntro().WithNotice(notice).WithSettings(st, off).WithLayout(layout).
-		WithWidthDrive(drv.apply, drv.window)
+		WithWidthDrive(drv.apply, drv.window, drv.read)
 	m.restoreWidth()
 	_, err := tea.NewProgram(m, tea.WithAltScreen(), tea.WithReportFocus(), tea.WithMouseAllMotion()).Run()
 	return err

@@ -94,15 +94,67 @@ func TestTheSavedDeckWidthIsRestoredAtStart(t *testing.T) {
 	st.list = append(st.list, settings.Setting{Key: deckWidthKey, Group: "Deck", Name: "Deck width", Help: "the deck column's width",
 		Kind: settings.Text, Value: "48", Source: settings.SourceFile, Apply: settings.ApplyNow, Live: true})
 	rec := &widthRec{}
-	m := newModel(&fakeAPI{}).WithSettings(st, "").WithWidthDrive(rec.apply, func() int { return 200 })
+	m := newModel(&fakeAPI{}).WithSettings(st, "").WithWidthDrive(rec.apply, func() int { return 200 }, nil)
 	m.restoreWidth()
 	if !reflect.DeepEqual(rec.applied, []int{48}) {
 		t.Fatalf("applied %v", rec.applied)
 	}
 	// No store (inside lea): nothing is applied, nothing panics.
-	newModel(&fakeAPI{}).WithWidthDrive(rec.apply, nil).restoreWidth()
+	newModel(&fakeAPI{}).WithWidthDrive(rec.apply, nil, nil).restoreWidth()
 	if len(rec.applied) != 1 {
 		t.Fatalf("applied %v", rec.applied)
+	}
+}
+
+// A border drag stores the width in the tmux server's option; the deck, seeing its pane resized,
+// saves it as LEA_DECK_WIDTH, and a deck started again restores it. Transient widths (the
+// repaint nudge, a terminal resize before the hook) and a window that is not the lea deck window
+// save nothing.
+func TestADraggedWidthIsSavedAndRestored(t *testing.T) {
+	withWidth := func(st *fakeSettings, value string) *fakeSettings {
+		st.list = append(st.list, settings.Setting{Key: deckWidthKey, Group: "Deck", Name: "Deck width", Help: "the deck column's width",
+			Kind: settings.Text, Value: value, Source: settings.SourceDefault, Apply: settings.ApplyNow, Live: true})
+		return st
+	}
+	st := withWidth(someSettings(), "34")
+	m := withSettings(t, &fakeAPI{}, st)
+	m.windowWidth = func() int { return 200 }
+	// The drag ends: the binding stored 49 in the option, the pane takes 49.
+	m.readWidth = func() (int, bool) { return 49, true }
+	m, cmd := step(t, m, tea.WindowSizeMsg{Width: 49, Height: 30})
+	if cmd == nil {
+		t.Fatal("a resize scheduled no read of the width")
+	}
+	m, _ = step(t, m, cmd())
+	if len(st.sets) != 1 || st.sets[0] != "LEA_DECK_WIDTH=49" {
+		t.Fatalf("sets %q, want LEA_DECK_WIDTH=49", st.sets)
+	}
+	// A transient width (the option unchanged at 34... here at 49, the saved one): nothing saved.
+	m, cmd = step(t, m, tea.WindowSizeMsg{Width: 50, Height: 30})
+	m, _ = step(t, m, cmd())
+	if len(st.sets) != 1 {
+		t.Fatalf("a transient width was saved: sets %q", st.sets)
+	}
+	// A window that is not the lea deck window: nothing saved either.
+	m.readWidth = func() (int, bool) { return 52, false }
+	m, cmd = step(t, m, tea.WindowSizeMsg{Width: 52, Height: 30})
+	m, _ = step(t, m, cmd())
+	if len(st.sets) != 1 {
+		t.Fatalf("a width outside the deck window was saved: sets %q", st.sets)
+	}
+	// A deck started again restores the dragged width from the file.
+	rec := &widthRec{}
+	m2 := newModel(&fakeAPI{}).WithSettings(st, "").WithWidthDrive(rec.apply, func() int { return 200 }, nil)
+	m2.restoreWidth()
+	if !reflect.DeepEqual(rec.applied, []int{49}) {
+		t.Fatalf("after a restart: applied %v, want [49]", rec.applied)
+	}
+	// A height-only change reads nothing.
+	m3 := withSettings(t, &fakeAPI{}, st)
+	m3.readWidth = func() (int, bool) { return 52, true }
+	_, cmd = step(t, m3, tea.WindowSizeMsg{Width: 34, Height: 25})
+	if cmd != nil {
+		t.Fatal("a height-only change read the width")
 	}
 }
 

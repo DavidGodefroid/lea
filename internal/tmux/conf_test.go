@@ -15,8 +15,8 @@ func TestConfReadsTheDeckWidthFromTheOption(t *testing.T) {
 	if strings.Contains(c, "@DECK_WIDTH@") || strings.Contains(c, "@DECK_CLAMP@") {
 		t.Fatal("a placeholder is left in the configuration")
 	}
-	if !strings.Contains(c, `resize-pane -t \\\"#{session_name}:.0\\\" -x \\\"#{`+DeckWidthOption+`}\\\"`) {
-		t.Error("the window-resized hook does not resize the deck to the @lea_deck_width option")
+	if !strings.Contains(c, `resize-pane -t \\\"#{session_name}:.0\\\" -x \\\"#{e|+:#{`+DeckWidthOption+`},0}\\\"`) {
+		t.Error("the window-resized hook does not resize the deck to the @lea_deck_width option (arithmetic)")
 	}
 	if m := regexp.MustCompile(`resize-pane [^;]*-x [0-9]`).FindString(c); m != "" {
 		t.Errorf("a fixed width is baked into a resize-pane: %q", m)

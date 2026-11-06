@@ -105,8 +105,8 @@ func TestEnsureBuildsTheDeckLayoutOnce(t *testing.T) {
 // @lea_deck_width option (the user's width), never a constant baked into the configuration.
 func TestConfKeepsTheDeckWidth(t *testing.T) {
 	c := tmux.Conf()
-	if !strings.Contains(c, `resize-pane -t \\\"#{session_name}:.0\\\" -x \\\"#{`+tmux.DeckWidthOption+`}\\\"`) {
-		t.Fatal("lea.tmux.conf does not resize the deck to the @lea_deck_width option")
+	if !strings.Contains(c, `resize-pane -t \\\"#{session_name}:.0\\\" -x \\\"#{e|+:#{`+tmux.DeckWidthOption+`},0}\\\"`) {
+		t.Fatal("lea.tmux.conf does not resize the deck to the @lea_deck_width option (arithmetic)")
 	}
 	if m := regexp.MustCompile(`resize-pane [^;]*-x [0-9]`).FindString(c); m != "" {
 		t.Fatalf("a fixed deck width is baked into lea.tmux.conf: %q", m)

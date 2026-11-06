@@ -250,17 +250,18 @@ type Model struct {
 	settingsOff   string        // why there is none
 	setOpen       bool          // the settings screen (,) is shown
 	setList       []settings.Setting
-	setSel        int               // its selected setting
-	setEditing    bool              // the selected text setting's field is open
-	setDraft      []rune            // the field's text
-	hoverFor      string            // key of the row under the pointer, "" when none
-	hoverSeq      int               // the latest pointer move; older fades are dropped
-	menuPicker    bool              // the open menu picks the folder of agent menuFor (o), or the colour of folder menuFor (c)
-	applyWidth    func(w int) error // resize the deck's pane and store the width (WithWidthDrive); nil: no tmux
-	windowWidth   func() int        // the tmux window's width (WithWidthDrive); nil: unknown
-	layout        Layout            // the folders (folders.go)
-	store         LayoutStore       // where the layout persists, nil when nowhere
-	ticking       bool              // a frame tick is pending
+	setSel        int                // its selected setting
+	setEditing    bool               // the selected text setting's field is open
+	setDraft      []rune             // the field's text
+	hoverFor      string             // key of the row under the pointer, "" when none
+	hoverSeq      int                // the latest pointer move; older fades are dropped
+	menuPicker    bool               // the open menu picks the folder of agent menuFor (o), or the colour of folder menuFor (c)
+	applyWidth    func(w int) error  // resize the deck's pane and store the width (WithWidthDrive); nil: no tmux
+	windowWidth   func() int         // the tmux window's width (WithWidthDrive); nil: unknown
+	readWidth     func() (int, bool) // the tmux server's @lea_deck_width and the deck window's mark (WithWidthDrive); nil: unknown
+	layout        Layout             // the folders (folders.go)
+	store         LayoutStore        // where the layout persists, nil when nowhere
+	ticking       bool               // a frame tick is pending
 	width, height int
 }
 
@@ -348,8 +349,15 @@ func (m Model) call(fn func(ctx context.Context) error) tea.Cmd {
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
+		wchg := msg.Width != m.width && msg.Width > 0
 		m.width, m.height = msg.Width, msg.Height
+		if wchg {
+			// A width the tmux side chose (a border drag) is saved as LEA_DECK_WIDTH.
+			return m, m.noteWidth()
+		}
 		return m, nil
+	case widthReadMsg:
+		return m.keepDraggedWidth(msg)
 	case tea.FocusMsg:
 		m.focused = true
 		return m, nil

@@ -20,6 +20,8 @@ const deckWidthKey = "LEA_DECK_WIDTH"
 type widthDrive struct {
 	apply  func(w int) error // resize the deck's pane and set @lea_deck_width
 	window func() int        // the tmux window's width, 0 when unknown
+	// read is the @lea_deck_width option and whether the deck's window is the lea deck window.
+	read func() (option int, deckWin bool)
 }
 
 // tmuxWidthDrive drives the tmux server the deck runs in, through the tmux binary LEA_TMUX_BIN
@@ -49,14 +51,24 @@ func tmuxWidthDrive(getenv func(string) string) widthDrive {
 			n, _ := strconv.Atoi(strings.TrimSpace(string(out)))
 			return n
 		},
+		read: func() (int, bool) {
+			out, err := exec.Command(bin, "display-message", "-p", "#{@lea_deck}|#{@lea_deck_width}").Output()
+			if err != nil {
+				return 0, false
+			}
+			mark, vs, _ := strings.Cut(strings.TrimSpace(string(out)), "|")
+			n, _ := strconv.Atoi(vs)
+			return n, mark == "1"
+		},
 	}
 }
 
 // WithWidthDrive lets the deck change its own width (the < and > keys, the live LEA_DECK_WIDTH
 // setting, the saved width restored at start): apply resizes the pane and stores the width,
-// window is the tmux window's width for the half-window bound (0 when unknown).
-func (m Model) WithWidthDrive(apply func(w int) error, window func() int) Model {
-	m.applyWidth, m.windowWidth = apply, window
+// window is the tmux window's width for the half-window bound (0 when unknown), read is the
+// width the tmux side last chose (a border drag) and the deck window's mark.
+func (m Model) WithWidthDrive(apply func(w int) error, window func() int, read func() (int, bool)) Model {
+	m.applyWidth, m.windowWidth, m.readWidth = apply, window, read
 	return m
 }
 
@@ -68,23 +80,71 @@ func (m Model) window() int {
 	return m.windowWidth()
 }
 
+// savedWidth is the stored LEA_DECK_WIDTH; ok is false when there is none to read.
+func (m Model) savedWidth() (int, bool) {
+	if m.settings == nil {
+		return 0, false
+	}
+	ss, err := m.settings.List()
+	if err != nil {
+		return 0, false
+	}
+	for _, s := range ss {
+		if s.Key == deckWidthKey {
+			w, err := strconv.Atoi(s.Value)
+			return w, err == nil
+		}
+	}
+	return 0, false
+}
+
+// widthReadMsg is the tmux server's @lea_deck_width after a resize of the deck's pane (a border
+// drag stores it there), and whether the deck's window is the lea deck window.
+type widthReadMsg struct {
+	option  int
+	deckWin bool
+}
+
+// noteWidth reads the width the tmux side holds after the deck's pane was resized, so a width
+// chosen there (a border drag) can be saved; nil without a store and a reader.
+func (m Model) noteWidth() tea.Cmd {
+	if m.settings == nil || m.readWidth == nil {
+		return nil
+	}
+	read := m.readWidth
+	return func() tea.Msg {
+		option, deckWin := read()
+		return widthReadMsg{option, deckWin}
+	}
+}
+
+// keepDraggedWidth saves a width the tmux side chose (a border drag stores it in the server's
+// option) as LEA_DECK_WIDTH, clamped to the bounds. Transient widths save nothing: the repaint
+// nudge and a terminal's resize before the window-resized hook leave the option unchanged. Nor
+// does a loop result: Set writes the file but does not resize the pane.
+func (m Model) keepDraggedWidth(msg widthReadMsg) (tea.Model, tea.Cmd) {
+	if !msg.deckWin || msg.option <= 0 || m.settings == nil {
+		return m, nil
+	}
+	w := tmux.ClampDeckWidth(msg.option, m.window())
+	if saved, ok := m.savedWidth(); ok && saved == w {
+		return m, nil // already recorded (the deck's own < > keys and settings apply)
+	}
+	if err := m.settings.Set(deckWidthKey, strconv.Itoa(w)); err != nil {
+		m.status = oneLine(err.Error())
+	}
+	return m, nil
+}
+
 // restoreWidth applies the saved deck width (LEA_DECK_WIDTH) at start: the session may be new,
-// and the daemon lays the deck out at the default width.
+// and the daemon lays the deck out at the default width. A width chosen by a border drag was
+// saved when the pane resized (keepDraggedWidth), so the file holds it here.
 func (m Model) restoreWidth() {
 	if m.settings == nil || m.applyWidth == nil {
 		return
 	}
-	ss, err := m.settings.List()
-	if err != nil {
-		return
-	}
-	for _, s := range ss {
-		if s.Key == deckWidthKey {
-			if w, err := strconv.Atoi(s.Value); err == nil {
-				_ = m.applyWidth(tmux.ClampDeckWidth(w, m.window()))
-			}
-			return
-		}
+	if w, ok := m.savedWidth(); ok {
+		_ = m.applyWidth(tmux.ClampDeckWidth(w, m.window()))
 	}
 }
 
