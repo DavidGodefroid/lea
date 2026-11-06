@@ -2,6 +2,7 @@ package deck
 
 import (
 	"context"
+	"strconv"
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -9,6 +10,7 @@ import (
 
 	"github.com/DavidGodefroid/lea/internal/settings"
 	"github.com/DavidGodefroid/lea/internal/textsafe"
+	"github.com/DavidGodefroid/lea/internal/tmux"
 )
 
 // The settings screen (,): lea's configuration, grouped, each key with its value. j/k move,
@@ -148,6 +150,13 @@ func (m Model) saveSetting(s settings.Setting, value string) (tea.Model, tea.Cmd
 			defer cancel()
 			st, err := api.SetSound(ctx, on)
 			return soundMsg{st, err}
+		}
+	}
+	if s.Live && s.Key == deckWidthKey && m.applyWidth != nil {
+		if w, err := strconv.Atoi(s.Value); err == nil {
+			if err := m.applyWidth(tmux.ClampDeckWidth(w, m.window())); err != nil {
+				m.status = "deck width: " + oneLine(err.Error())
+			}
 		}
 	}
 	return m, nil

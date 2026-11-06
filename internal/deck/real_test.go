@@ -273,6 +273,26 @@ func TestRealStateColours(t *testing.T) {
 	}
 }
 
+// < and > widen and shrink the deck's own pane in its tmux window, two columns at a time.
+func TestRealAngleBracketsResizeTheDeck(t *testing.T) {
+	d := startRealDeck(t)
+	w := func() int {
+		n, _ := strconv.Atoi(d.tm("display-message", "-p", "-t", d.pane, "#{pane_width}"))
+		return n
+	}
+	if w() != Width {
+		t.Fatalf("width %d, want %d", w(), Width)
+	}
+	d.tm("select-pane", "-t", d.pane) // the deck has the keyboard
+	d.typed(">")
+	d.waitFor("the deck two columns wider", func(string) bool { return w() == Width+2 })
+	// The pane is resized; let the deck take its new width in before the next key.
+	d.waitFor("the deck drawn at the new width", func(s string) bool { return strings.Contains(s, "deck width 36") })
+	time.Sleep(300 * time.Millisecond)
+	d.typed("<")
+	d.waitFor("the deck back to its width", func(string) bool { return w() == Width })
+}
+
 // Folders (#30), typed and clicked as the user does: f makes one and names it, o moves an agent
 // in, enter folds it, ctrl + right click (SGR 18) makes another around the agent under the
 // pointer; the layout is in its file and the deck, started again, shows it as it was.

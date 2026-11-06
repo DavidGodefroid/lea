@@ -1,6 +1,7 @@
 package deck
 
 import (
+	"os"
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -8,9 +9,14 @@ import (
 )
 
 // Run draws the deck until its pane is closed. st is its settings screen's store (nil: none, off
-// says why); the folders persist in layout (nil: not at all). All motion: the pointer over a row, no button held, shows its whole name (hover.go).
+// says why); the folders persist in layout (nil: not at all). The saved deck width
+// (LEA_DECK_WIDTH) is applied to the pane the deck starts in. All motion: the pointer over a
+// row, no button held, shows its whole name (hover.go).
 func Run(api API, container string, ascii bool, notice func() string, st SettingsStore, off string, layout LayoutStore) error {
-	m := New(api, container, ascii, time.Now).WithIntro().WithNotice(notice).WithSettings(st, off).WithLayout(layout)
+	drv := tmuxWidthDrive(os.Getenv)
+	m := New(api, container, ascii, time.Now).WithIntro().WithNotice(notice).WithSettings(st, off).WithLayout(layout).
+		WithWidthDrive(drv.apply, drv.window)
+	m.restoreWidth()
 	_, err := tea.NewProgram(m, tea.WithAltScreen(), tea.WithReportFocus(), tea.WithMouseAllMotion()).Run()
 	return err
 }

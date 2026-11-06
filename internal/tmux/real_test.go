@@ -3,6 +3,7 @@ package tmux
 import (
 	"context"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -172,8 +173,8 @@ func TestRealPanesGetExtendedKeysWithoutAsking(t *testing.T) {
 }
 
 // A terminal resize resizes the client first (client-resized) and the window after it, which
-// spreads the new width over both panes: the deck is put back to 34 columns once the window
-// has its new size.
+// spreads the new width over both panes: the deck is put back to the @lea_deck_width option's
+// width (the default while nothing set it) once the window has its new size.
 func TestRealDeckKeepsItsWidthWhenTheWindowIsResized(t *testing.T) {
 	s := realServer(t)
 	tm := func(args ...string) string {
@@ -193,6 +194,9 @@ func TestRealDeckKeepsItsWidthWhenTheWindowIsResized(t *testing.T) {
 	tm("new-window", "-d", "-t", "=lea-r:", "-n", "deck", "sleep", "600")
 	tm("split-window", "-h", "-t", "=lea-r:deck", "sleep", "600")
 	tm("resize-pane", "-t", "=lea-r:deck.0", "-x", "34")
+	if got := tm("show-options", "-s", "-v", "@lea_deck_width"); got != "34" {
+		t.Fatalf("the conf's default width is %q, want 34", got)
+	}
 	for _, w := range []string{"120", "180"} {
 		tm("resize-window", "-t", "=lea-r:main", "-x", w, "-y", "40")
 		tm("resize-window", "-t", "=lea-r:deck", "-x", w, "-y", "40")
@@ -203,6 +207,75 @@ func TestRealDeckKeepsItsWidthWhenTheWindowIsResized(t *testing.T) {
 			t.Errorf("at %s an unmarked window's left pane was resized to the deck's width", w)
 		}
 	}
+	// The user's width, in the option, is the one kept.
+	tm("set-option", "-s", "@lea_deck_width", "50")
+	tm("resize-window", "-t", "=lea-r:main", "-x", "160", "-y", "40")
+	waitFor(t, "deck width 50", func() bool {
+		return tm("display-message", "-p", "-t", "=lea-r:main.0", "#{pane_width}") == "50"
+	})
+}
+
+// Dragging the border between the deck and the agent pane resizes the deck, and releasing the
+// drag stores the width, clamped to its bounds, in the @lea_deck_width option the resize hook
+// reads. The mouse events are written to an attached terminal as a real one sends them.
+func TestRealDraggingTheBorderResizesAndStoresTheDeckWidth(t *testing.T) {
+	s := realServer(t)
+	tm := func(args ...string) string {
+		t.Helper()
+		out, err := exec.Command("tmux", append([]string{"-L", "lea-test", "-f", s.Conf}, args...)...).CombinedOutput()
+		if err != nil {
+			t.Fatalf("%v: %v: %s", args, err, out)
+		}
+		return strings.TrimSpace(string(out))
+	}
+	tm("new-session", "-d", "-s", "lea-d", "-n", "main", "-x", "200", "-y", "50", "sleep", "600")
+	tm("split-window", "-h", "-t", "=lea-d:main", "sleep", "600")
+	tm("set-option", "-w", "-t", "=lea-d:main", "@lea_deck", "1")
+	tm("resize-pane", "-t", "=lea-d:main.0", "-x", "34")
+	in, w, err := os.Pipe() // keeps the terminal's input open
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer w.Close()
+	att := exec.Command("script", "-qfc", "stty cols 200 rows 50; exec tmux -L lea-test -f "+Quote(s.Conf)+" attach-session -t =lea-d", "/dev/null")
+	att.Stdin = in
+	att.Stdout, att.Stderr = io.Discard, io.Discard
+	att.Env = append(os.Environ(), "TERM=xterm-256color", "SHELL=/bin/sh")
+	if err := att.Start(); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { att.Process.Kill(); att.Wait() })
+	waitFor(t, "the user's terminal to attach", func() bool {
+		out, err := exec.Command("tmux", "-L", "lea-test", "list-clients", "-t", "=lea-d", "-F", "#{client_name}|#{client_control_mode}").Output()
+		if err != nil {
+			return false
+		}
+		for _, l := range strings.Split(strings.TrimSpace(string(out)), "\n") {
+			if _, ctl, ok := strings.Cut(l, "|"); ok && ctl == "0" {
+				return true
+			}
+		}
+		return false
+	})
+	width := func() string { return tm("display-message", "-p", "-t", "=lea-d:main.0", "#{pane_width}") }
+	stored := func() string { return tm("show-options", "-s", "-v", "@lea_deck_width") }
+	// A left-button press (code 0) on the border at column 35, a drag (code 32), the release.
+	drag := func(x0, x1 int) {
+		t.Helper()
+		fmt.Fprintf(w, "\x1b[<0;%d;10M", x0)
+		time.Sleep(200 * time.Millisecond)
+		fmt.Fprintf(w, "\x1b[<32;%d;10M", x1)
+		time.Sleep(200 * time.Millisecond)
+		fmt.Fprintf(w, "\x1b[<0;%d;10m", x1)
+	}
+	drag(35, 50)
+	waitFor(t, "the dragged width", func() bool { return width() == "49" })
+	waitFor(t, "the stored width", func() bool { return stored() == "49" })
+	// Past the bounds the stored width and the pane snap to them: 24 at least, 60 at most.
+	drag(50, 10)
+	waitFor(t, "the width clamped to 24", func() bool { return width() == "24" && stored() == "24" })
+	drag(25, 150)
+	waitFor(t, "the width clamped to 60", func() bool { return width() == "60" && stored() == "60" })
 }
 
 // An agent reattached at the size it already had gets no SIGWINCH and does not repaint. The
@@ -317,10 +390,10 @@ func TestRealConfLocksTheLayoutAndIsIdempotent(t *testing.T) {
 	if out, err := tm("new-session", "-d", "-s", "lea-l", "-n", "deck", "sleep", "600"); err != nil {
 		t.Fatalf("new-session: %v: %s", err, out)
 	}
-	if got, want := keyNames(t, tm, "root"), []string{"C-MouseDown3Pane", "C-Space", "C-v", "MouseDown1Pane", "MouseDown3Pane", "MouseDrag1Pane", "WheelDownPane", "WheelUpPane"}; !slices.Equal(got, want) {
+	if got, want := keyNames(t, tm, "root"), []string{"C-MouseDown3Pane", "C-Space", "C-v", "MouseDown1Pane", "MouseDown3Pane", "MouseDrag1Border", "MouseDrag1Pane", "MouseDragEnd1Border", "WheelDownPane", "WheelUpPane"}; !slices.Equal(got, want) {
 		t.Fatalf("root table %q, want %q", got, want)
 	}
-	for _, k := range []string{"MouseDown3Status", "MouseDrag1Border", "M-MouseDown3Pane"} {
+	for _, k := range []string{"MouseDown3Status", "M-MouseDown3Pane", "DoubleClick1Pane", "TripleClick1Pane"} {
 		if slices.Contains(keyNames(t, tm, "root"), k) {
 			t.Errorf("%s is still bound", k)
 		}

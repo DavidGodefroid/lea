@@ -12,10 +12,46 @@ import (
 //go:embed lea.tmux.conf
 var confTemplate string
 
-// DeckWidth is the deck pane's width, its border included (spec §4.1: 32 columns inside).
+// DeckWidth is the deck pane's default width, its border included (spec §4.1: 32 columns
+// inside). The width the user chooses (the deck's < and >, LEA_DECK_WIDTH, a border drag) lives
+// in the server's DeckWidthOption option instead.
 const DeckWidth = 34
 
-var conf = perKey(strings.ReplaceAll(confTemplate, "@DECK_WIDTH@", strconv.Itoa(DeckWidth)))
+const (
+	// DeckWidthMin and DeckWidthMax bound the deck's width; the maximum is also capped at half
+	// the window.
+	DeckWidthMin = 24
+	DeckWidthMax = 60
+	// DeckWidthOption is the tmux server option holding the chosen deck width: the deck sets it,
+	// the border drag stores it, the conf's window-resized hook and the daemon's layout repair
+	// follow it.
+	DeckWidthOption = "@lea_deck_width"
+)
+
+// ClampDeckWidth clamps w to the deck width's bounds: DeckWidthMin at least, DeckWidthMax or
+// half the window at most, whichever is smaller (window <= 0: no window is known).
+func ClampDeckWidth(w, window int) int {
+	hi := DeckWidthMax
+	if window > 0 && window/2 < hi {
+		hi = window / 2
+	}
+	return min(max(w, DeckWidthMin), hi)
+}
+
+var conf = perKey(strings.NewReplacer(
+	"@DECK_WIDTH@", strconv.Itoa(DeckWidth),
+	"@DECK_MIN@", strconv.Itoa(DeckWidthMin),
+	"@DECK_MAX@", strconv.Itoa(DeckWidthMax),
+	"@DECK_CLAMP@", clampFormat(),
+).Replace(confTemplate))
+
+// clampFormat is the tmux format of the dragged border's width clamped to the deck width's
+// bounds: DeckWidthMin at least, DeckWidthMax or half the window at most. The comparisons are
+// arithmetic ones (e|<:): tmux's < and > compare strings.
+func clampFormat() string {
+	max := fmt.Sprintf(`#{?#{e|<:#{e|/:#{window_width},2},%[1]d},#{e|/:#{window_width},2},%[1]d}`, DeckWidthMax)
+	return fmt.Sprintf(`#{?#{e|<:#{pane_width},%[1]d},%[1]d,#{?#{e|>:#{pane_width},%[2]s},%[2]s,#{pane_width}}}`, DeckWidthMin, max)
+}
 
 // typedKeys are the keys typed into a prompt, quoted for the configuration: printable ASCII but q
 // (bound on its own), and Space, Enter, BSpace, Tab.

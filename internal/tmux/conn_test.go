@@ -8,7 +8,6 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -208,7 +207,7 @@ func TestWriteConf(t *testing.T) {
 		t.Fatalf("mode %v", fi.Mode().Perm())
 	}
 	for _, want := range []string{"set -g prefix None", "set -g remain-on-exit on", "set -g set-clipboard off",
-		"bind-key -n C-Space", "if-shell -F '#{@lea_deck}' 'resize-pane -t :.0 -x " + strconv.Itoa(DeckWidth) + "'",
+		"bind-key -n C-Space", "set-hook -g window-resized", `#{@lea_deck_width}`,
 		"set -gqu remain-on-exit-format", "'#{&&:#{!=:#{@lea_role},deck},#{!=:#{@lea_role},lock}}' 'copy-mode -H -e'",
 		"'#{!=:#{@lea_role},lock}' 'copy-mode -H -M'", `if [ "#{@lea_role}" = lock ]; then :; elif`} {
 		if !strings.Contains(Conf(), want) {

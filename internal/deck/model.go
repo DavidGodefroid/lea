@@ -250,15 +250,17 @@ type Model struct {
 	settingsOff   string        // why there is none
 	setOpen       bool          // the settings screen (,) is shown
 	setList       []settings.Setting
-	setSel        int         // its selected setting
-	setEditing    bool        // the selected text setting's field is open
-	setDraft      []rune      // the field's text
-	hoverFor      string      // key of the row under the pointer, "" when none
-	hoverSeq      int         // the latest pointer move; older fades are dropped
-	menuPicker    bool        // the open menu picks the folder of agent menuFor (o), or the colour of folder menuFor (c)
-	layout        Layout      // the folders (folders.go)
-	store         LayoutStore // where the layout persists, nil when nowhere
-	ticking       bool        // a frame tick is pending
+	setSel        int               // its selected setting
+	setEditing    bool              // the selected text setting's field is open
+	setDraft      []rune            // the field's text
+	hoverFor      string            // key of the row under the pointer, "" when none
+	hoverSeq      int               // the latest pointer move; older fades are dropped
+	menuPicker    bool              // the open menu picks the folder of agent menuFor (o), or the colour of folder menuFor (c)
+	applyWidth    func(w int) error // resize the deck's pane and store the width (WithWidthDrive); nil: no tmux
+	windowWidth   func() int        // the tmux window's width (WithWidthDrive); nil: unknown
+	layout        Layout            // the folders (folders.go)
+	store         LayoutStore       // where the layout persists, nil when nowhere
+	ticking       bool              // a frame tick is pending
 	width, height int
 }
 
@@ -719,6 +721,10 @@ func (m Model) key(k string) (tea.Model, tea.Cmd) {
 			s, err := api.SetSound(ctx, on)
 			return soundMsg{s, err}
 		}
+	case "<":
+		return m.deckBy(-2)
+	case ">":
+		return m.deckBy(2)
 	case "?":
 		m.help = true
 		return m, nil
