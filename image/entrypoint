@@ -90,4 +90,13 @@ chmod 0644 /run/lea/ssh_config
 install -m 0644 /usr/local/share/lea/ssh_config.tmpl /etc/ssh/ssh_config.d/10-lea.conf
 if [ -f /lea/state/ssh/known_hosts ]; then install -m 0644 /lea/state/ssh/known_hosts /run/lea/known_hosts; fi
 
+# The GitHub relay (issue #103): gh's requests (http_unix_socket) go to the proxy's forge
+# forwarder, which holds the token. It runs as nobody in a directory of nobody's: the developer's
+# processes connect, but cannot replace the socket or stop the relay.
+install -d -m 0755 -o 65534 -g 65534 /run/lea-forge
+if [ -x /usr/local/bin/lea ]; then
+  setpriv --reuid 65534 --regid 65534 --clear-groups --no-new-privs \
+    /usr/local/bin/lea forge-relay /run/lea-forge/gh.sock "$LEA_PROXY_IP:4401" </dev/null &
+fi
+
 exec setpriv --reuid "$LEA_UID" --regid "$LEA_GID" --init-groups /usr/local/libexec/lea/user-init

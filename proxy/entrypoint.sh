@@ -60,7 +60,11 @@ if [ -s /etc/squid/peek.conf ]; then
   squid -N -f /etc/squid/peek.conf &
   wait_port 3129 "the peek squid"
 fi
-if [ ! -s /etc/lea/endpoints ]; then
+# The forge forwarder (port 4401, issue #103) holds the GitHub token of lea github login: the
+# launcher always mounts its key directory, so lea-keyproxy runs even without endpoints.
+forge=0
+if [ -d /etc/lea/forge ]; then forge=1; fi
+if [ ! -s /etc/lea/endpoints ] && [ "$forge" = 0 ]; then
   unset LEA_KEYPROXY_TOKEN
   exec squid -N -f /etc/squid/squid.conf
 fi
@@ -73,19 +77,16 @@ wait_port 3128 "squid"
 keyproxy_pid=''
 via=http://127.0.0.1:3128
 if [ "$lockhttp" = 1 ]; then via=http://127.0.0.1:3130; fi
-if [ -s /etc/lea/endpoints ]; then
-  if [ "${LEA_LOCKHTTP_MITM:-0}" = 1 ]; then
-    # The gate decrypts and re-signs with lea's CA: keyproxy trusts its certificate (never the key).
-    lea-keyproxy -endpoints /etc/lea/endpoints -listen :4400 -via "$via" -sources /etc/lockhttp-gate/sources.json -ca-cert /etc/lockhttp-gate/ca.pem &
-  elif [ "$lockhttp" = 1 ]; then
-    lea-keyproxy -endpoints /etc/lea/endpoints -listen :4400 -via "$via" -sources /etc/lockhttp-gate/sources.json &
-  else
-    lea-keyproxy -endpoints /etc/lea/endpoints -listen :4400 -via "$via" &
-  fi
-  keyproxy_pid=$!
-  # An invalid endpoints file fails the container: no agent is left with a silent port 4400.
-  wait_port 4400 "lea-keyproxy"
-fi
+set -- -endpoints /etc/lea/endpoints -listen :4400 -via "$via"
+if [ "$forge" = 1 ]; then set -- "$@" -forge-listen :4401 -forge-keys /etc/lea/forge; fi
+if [ "$lockhttp" = 1 ]; then set -- "$@" -sources /etc/lockhttp-gate/sources.json; fi
+# The gate decrypts and re-signs with lea's CA: keyproxy trusts its certificate (never the key).
+if [ "${LEA_LOCKHTTP_MITM:-0}" = 1 ]; then set -- "$@" -ca-cert /etc/lockhttp-gate/ca.pem; fi
+lea-keyproxy "$@" &
+keyproxy_pid=$!
+# An invalid endpoints file fails the container: no agent is left with a silent port 4400 (or 4401).
+if [ -s /etc/lea/endpoints ]; then wait_port 4400 "lea-keyproxy"; fi
+if [ "$forge" = 1 ]; then wait_port 4401 "lea-keyproxy's forge forwarder"; fi
 unset LEA_KEYPROXY_TOKEN
 # shellcheck disable=SC2317,SC2329 # invoked via trap
 stop() {

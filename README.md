@@ -291,10 +291,30 @@ profile and state in the bottom border.
 lea needs no forge account, and works with any of them.
 
 - **HTTPS, by default.** `git clone`, `pull` and `push` over HTTPS reach GitHub, GitLab, Gitea,
-  Bitbucket or any public forge through the proxy. Log in from a shell in lea (`lea shell`, or `s`
-  in the deck) with the forge's own tool or a token: `gh auth login`, `glab auth login`, or a
-  token in git's credential store. `gh` and `glab` are in the image; what they keep lives in
-  lea's state, never in your home directory.
+  Bitbucket or any public forge through the proxy. `gh` and `glab` are in the image; what they
+  keep lives in lea's state, never in your home directory.
+- **GitHub: the token stays in the proxy.** Give lea a GitHub token on the host, once:
+
+  ```sh
+  gh auth token | lea github login     # or: lea github login < token-file
+  lea github status                    # is there one (never shows it); lea github logout removes it
+  ```
+
+  It is kept in `~/.local/share/lea/proxy/forge/github.com` (mode 0600) and mounted in the proxy
+  container only. The agents' `gh` (through a relay socket, `/run/lea-forge/gh.sock`) and `git`
+  (`https://github.com/` goes to `http://lea-proxy:4401/`) send their requests without it; the
+  proxy's forge forwarder drops whatever credential they carry, adds the token for
+  `api.github.com`, `uploads.github.com` and `github.com`, and goes on over HTTPS through the
+  egress proxy (or the LockHTTP gate). An agent can use the token for what it allows, never read
+  it; the forwarder also refuses the calls that would hand access to someone outside lea (an SSH,
+  GPG or signing key on the account, a deploy key, a webhook, an OAuth authorization: make those
+  on the host). A token an earlier lea, or a `gh auth login` in lea, left in the agents' state
+  (`/lea/state/gh/hosts.yml`, or a `github.com` line of git's store) is moved to the proxy at the
+  next `lea`. Prefer a fine-grained token limited to the repositories of the projects directory,
+  without administration or workflow permissions.
+- **Other forges.** Log in from a shell in lea (`lea shell`, or `s` in the deck): `glab auth
+  login`, or a token in git's credential store. Those tokens stay readable by the agents (see
+  [What an agent can read](#what-an-agent-can-read)).
 - **SSH, if you prefer.** List the endpoints in `~/.config/lea/lea.conf`, pin their host keys,
   and rerun `lea init`: it creates lea's own key and prints the public key to add to your forge.
 
@@ -699,8 +719,8 @@ too: run it plainly.
 **What grants protect against.** Grants and hard denies keep a *confused* agent (one that
 misreads a message, a brief or its own transcript) from merging, pushing or deleting where you did
 not say it may; they are not a sandbox against a *hostile* one. An agent can still write and run
-code through the tools it is allowed (`go run`, a test, a script), and it can read the gh token
-in `/lea/state/gh`: what keeps a hostile agent in check is the container, its network rules and
+code through the tools it is allowed (`go run`, a test, a script), and it can read the token
+of glab's config (GitHub's is the proxy's: it can use it, not read it): what keeps a hostile agent in check is the container, its network rules and
 the scope of the tokens you give lea, not grants. Two ways a hostile agent gets past them, among
 others: a shell function named `/usr/bin/env` in Claude's shell snapshot replaces the pinned
 call, and a loop rewriting the per-call bare repository's config (same user) between lea's check
@@ -798,6 +818,7 @@ lea config import team.json  # take them on another workstation (see Configure)
 LEA_PROJECTS_DIR=~/other lea # another projects directory, for this call only
 lea grant add|ls|revoke      # let agents take an action without asking (see Grants)
 lea delivery on|off|status   # let agents push, open and merge their own PRs (see Let agents deliver)
+lea github login|logout|status  # lea's GitHub token, in the proxy only (see Git and forges)
 ```
 
 A release install updates itself: at most once a day, `lea` looks for a new release in the
@@ -963,7 +984,8 @@ so. Changes apply after `lea init` (endpoints, keys, images, locksql) or `lea st
   inside: if your ingress serves a `Host` other than the SNI, require SNI = Host on it. An IPv4
   literal grants the whole address, every vhost on it included.
 - The API keys of your providers' endpoints stay in the proxy container: no agent mounts a key
-  file, and the key forwarder reaches an endpoint only through the proxy's egress rules.
+  file, and the key forwarder reaches an endpoint only through the proxy's egress rules. So does
+  lea's GitHub token (`lea github login`, see [Git and forges](#git-and-forges)).
 - lea never gets the Docker socket; the agents' own containers run in a rootless Podman inside
   lea, under seccomp and, on Linux, AppArmor. lea's seccomp profile (`image/seccomp.json`, not
   Docker's default) refuses `socketcall` and the kernel crypto API sockets (`AF_ALG`,
@@ -981,6 +1003,28 @@ so. Changes apply after `lea init` (endpoints, keys, images, locksql) or `lea st
   configuration, `.mcp.json` and `.claude/` settings.
 - Change Claude Code's configuration on the host: it is read-only in lea. After editing a single
   file (`settings.json`, a top-level `*.md`, `keybindings.json`), restart lea (`lea stop`).
+
+### What an agent can read
+
+Nothing of your machine's credentials: no API key or token is in the agent container's
+environment or image. What lea gives the agents, though, they run as the owner of, so any agent
+(or anything it runs: a test, a `postinstall`, a nested container with the directory mounted) can
+read it. `lea doctor` lists what is there, by path (never a value):
+
+| Credential | Path in the lea container | Readable by the agents |
+|---|---|---|
+| Claude Code's OAuth login (access and refresh token) | `~/.claude/.credentials.json` | yes, read-write: Claude Code refreshes it. It is lea's own login for this projects directory, never your host's; with LockHTTP's MITM, the gate refuses on the Claude API a token that is not this container's. |
+| Codex's login | `~/.codex/auth.json` | yes, read-write (Codex refreshes it) |
+| GitHub token | none: the proxy's (`lea github login`) | no; usable through `gh` and `git` |
+| GitLab and other forges (`glab auth login`, git's store) | `/lea/state/glab-cli/config.yml`, `/lea/state/git/credentials` | yes |
+| Container registry logins (`podman login`) | `/lea/state/containers/auth.json` | yes |
+| Kubernetes | `~/.kube/lea/config` | yes, read-only: a `view` token of `lea kube refresh`, 8 h |
+| lea's SSH key (`LEA_GIT_SSH`) | `/lea/state/ssh` (read-only) | no: usable through the ssh-agent socket only |
+| Provider API keys (`~/.config/lea/providers`) | none: the proxy's | no; usable through the key forwarder |
+
+Claude Code has no way, today, to take a short-lived token or one a proxy adds: its refresh token
+stays on disk, so scope what that login reaches. Keep the readable ones narrow: a GitLab token
+limited to its projects, registry logins for the registries the agents need.
 
 ## FAQ
 

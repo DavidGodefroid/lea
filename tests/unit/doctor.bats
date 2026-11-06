@@ -390,3 +390,33 @@ host_minimums() {
   [[ "$output" == *"ok    approval hub facade $LEA_HUB_SOCKET"* ]]
   [[ "$output" != *"warn  approval hub"* ]]
 }
+
+@test "doctor lists the credentials an agent can read, by path, never their value (#103)" {
+  run lea_doctor
+  [[ "$output" == *"ok    agent-readable credentials: none"* ]]
+  [[ "$output" == *"ok    not agent-readable: no GitHub token (lea github login keeps one in the proxy)"* ]]
+  mkdir -p "$S/claude/abc" "$S/codex/abc" "$S/gh" "$S/git" "$S/glab-cli" "$S/containers" "$S/kube" "$S/../proxy/forge"
+  printf '{"claudeAiOauth":{"accessToken":"sk-ant-oat-secret"}}\n' >"$S/claude/abc/.credentials.json"
+  printf '{"tokens":{}}\n' >"$S/codex/abc/auth.json"
+  printf 'github.com:\n    oauth_token: gho_secretvalue\n' >"$S/gh/hosts.yml"
+  printf 'https://u:glpat-secret@gitlab.com\n' >"$S/git/credentials"
+  printf 'hosts:\n    gitlab.com:\n        token: glpat-secret\n' >"$S/glab-cli/config.yml"
+  printf '{"auths":{}}\n' >"$S/containers/auth.json"
+  : >"$S/kube/config"
+  printf 'ghp_proxyvalue\n' >"$S/../proxy/forge/github.com"
+  run lea_doctor
+  [[ "$output" == *"ok    agent-readable: ~/.claude/.credentials.json (Claude Code's OAuth login; it refreshes it)"* ]]
+  [[ "$output" == *"ok    agent-readable: ~/.codex/auth.json (Codex's login)"* ]]
+  [[ "$output" == *"warn  agent-readable: /lea/state/gh/hosts.yml: holds a gh token"* ]]
+  [[ "$output" == *"ok    agent-readable: /lea/state/git/credentials (git's credential store: 1 entries, other forges)"* ]]
+  [[ "$output" == *"ok    agent-readable: /lea/state/glab-cli/config.yml (glab's GitLab token)"* ]]
+  [[ "$output" == *"ok    agent-readable: /lea/state/containers/auth.json (podman and docker registry logins)"* ]]
+  [[ "$output" == *"ok    agent-readable: ~/.kube/lea/config"* ]]
+  [[ "$output" == *"ok    not agent-readable: the GitHub token (in the proxy, lea github status)"* ]]
+  [[ "$output" != *"agent-readable credentials: none"* ]]
+  [[ "$output" != *secret* ]]
+  [[ "$output" != *proxyvalue* ]]
+  printf 'https://u:ghp_x@github.com\n' >"$S/git/credentials"
+  run lea_doctor
+  [[ "$output" == *"warn  agent-readable: /lea/state/git/credentials: holds a github.com token"* ]]
+}

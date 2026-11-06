@@ -28,6 +28,7 @@ RUN userdel -r podman \
  && dnf clean all \
  && touch /etc/containers/nodocker \
  && git config --system credential.helper 'store --file=/lea/state/git/credentials' \
+ && git config --system url.http://lea-proxy:4401/.insteadOf https://github.com/ \
  && ln -s /usr/libexec/docker/cli-plugins/docker-compose /usr/local/bin/docker-compose
 RUN npm install -g "@anthropic-ai/claude-code@${CLAUDE_CODE_VERSION}" "@openai/codex@${CODEX_VERSION}" && npm cache clean --force
 RUN case "$TARGETARCH" in \
@@ -100,6 +101,7 @@ COPY image/ssh_config.tmpl /usr/local/share/lea/ssh_config.tmpl
 COPY image/managed-settings.json /etc/claude-code/managed-settings.json
 COPY image/claude-settings.json /usr/local/share/lea/claude-settings.json
 COPY image/claude-plugin /usr/local/share/lea/claude-plugin
+COPY image/forge-gh/config.yml /usr/local/share/lea/forge-gh/config.yml
 COPY image/entrypoint image/user-init /usr/local/libexec/lea/
 COPY image/lea-crun /usr/local/libexec/lea/
 COPY image/lea-session image/lea-agent image/wl-copy /usr/local/bin/
@@ -108,7 +110,7 @@ COPY --from=go /usr/local/go /usr/local/go
 COPY --from=go-tools /out/ /usr/local/bin/
 RUN sed -i "s/@LEA_VERSION@/${LEA_VERSION}/" /etc/claude-code/managed-settings.json /usr/local/share/lea/claude-settings.json \
  && chmod 0644 /etc/claude-code/managed-settings.json /usr/local/share/lea/claude-settings.json \
- && chmod -R u=rwX,go=rX /usr/local/share/lea/claude-plugin \
+ && chmod -R u=rwX,go=rX /usr/local/share/lea/claude-plugin /usr/local/share/lea/forge-gh \
  && chmod 0755 /usr/local/libexec/lea/entrypoint /usr/local/libexec/lea/user-init /usr/local/libexec/lea/lea-crun /usr/local/bin/lea-session /usr/local/bin/lea-agent /usr/local/bin/wl-copy /usr/local/bin/go-cross
 # Go's caches and installed tools live in the persistent state dir go (/lea/state/go); the
 # toolchain never downloads another one (GOTOOLCHAIN=local).
@@ -117,7 +119,12 @@ ENV PATH=/usr/local/go/bin:/lea/state/go/bin:$PATH \
     GOPATH=/lea/state/go \
     GOCACHE=/lea/state/go/cache \
     GOFLAGS=-modcacherw
+# GitHub (issue #103): the token is in the proxy only. git reaches github.com through the proxy's
+# forge forwarder (url.insteadOf above), gh through the relay's socket (http_unix_socket, set in
+# the agents' gh config at start); GH_TOKEN is a placeholder the forwarder replaces, so that gh
+# counts as logged in.
 ENV SSH_AUTH_SOCK=/run/lea/ssh-agent.sock \
+    GH_TOKEN=lea-proxy-adds-the-token \
     GH_CONFIG_DIR=/lea/state/gh \
     GLAB_CONFIG_DIR=/lea/state/glab-cli \
     REGISTRY_AUTH_FILE=/lea/state/containers/auth.json

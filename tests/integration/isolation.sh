@@ -32,6 +32,18 @@ mkdir -p "$work/bin"
 printf '#!/bin/sh\necho "lox dev"\n' >"$work/bin/lox"; chmod +x "$work/bin/lox"
 PATH="$work/bin:$PATH"; export PATH
 state="$XDG_DATA_HOME/lea/state"; mkdir -p "$state"; printf '{}\n' >"$state/claude.json"
+# A GitHub login left in the agents' state by an earlier lea (#103): gh's config and git's store.
+# lea moves it to the proxy at start. LEA_IT_GITHUB_TOKEN (CI: the workflow's token) proves that
+# gh and git work with it; without one, a made-up token must reach GitHub (Bad credentials).
+forge_token=${LEA_IT_GITHUB_TOKEN:-ghp_leaIsolationNotAToken}
+forge_expect=bad; if [ -n "${LEA_IT_GITHUB_TOKEN:-}" ]; then forge_expect=auth; fi
+mkdir -p "$state/gh" "$state/git"
+printf 'github.com:\n    users:\n        lea-it:\n            oauth_token: %s\n    git_protocol: https\n    oauth_token: %s\n    user: lea-it\n' \
+  "$forge_token" "$forge_token" >"$state/gh/hosts.yml"
+printf 'https://lea-it:%s@github.com\n' "$forge_token" >"$state/git/credentials"
+chmod 0600 "$state/gh/hosts.yml" "$state/git/credentials"
+# The first characters of the token: enough to find a copy of it, inside lea, without its value.
+forge_needle=$(printf '%s' "$forge_token" | cut -c1-16)
 slug=$(printf '%s' "$projects" | sed 's/[^A-Za-z0-9]/-/g')
 id=$(printf '%s' "$projects" | sha256sum | cut -c1-10)
 sid=$(printf '%s' "$sibling" | sha256sum | cut -c1-10)
@@ -145,6 +157,13 @@ until LEA_PROJECTS_DIR="$sibling" "$root/bin/lea" shell -- curl -s -o /dev/null 
   sleep 1
 done
 rc=0
-LEA_PROJECTS_DIR="$projects" "$root/bin/lea" shell -- env CANARY_IP="$canary_ip" GW_IP="$gw_ip" HOST_IP="$host_ip" \
-  SIBLING_IP="$sibling_ip" HOST_FACADE="$facade" HOST_CRED_SHA="$cred_sha" HOST_HIST_SHA="$hist_sha" sh "$projects/inside-isolation.sh" || rc=$?
+# The GitHub token went to the proxy (0600, the user's), and out of the agents' state.
+ft="$XDG_DATA_HOME/lea/proxy/forge/github.com"
+if [ "$(cat "$ft" 2>/dev/null)" = "$forge_token" ] && [ "$(stat -c %a "$ft")" = 600 ]; then echo "ok   the GitHub token moved to the proxy"
+else echo "FAIL the GitHub token is not in the proxy's key directory"; rc=1; fi
+if grep -q oauth_token "$state/gh/hosts.yml" || grep -q github.com "$state/git/credentials"; then
+  echo "FAIL the GitHub token is still in the agents' state"; rc=1
+else echo "ok   the GitHub token left the agents' state"; fi
+LEA_PROJECTS_DIR="$projects" "$root/bin/lea" shell -- env FORGE_NEEDLE="$forge_needle" FORGE_EXPECT="$forge_expect" CANARY_IP="$canary_ip" GW_IP="$gw_ip" HOST_IP="$host_ip" \
+  SIBLING_IP="$sibling_ip" HOST_FACADE="$facade" HOST_CRED_SHA="$cred_sha" HOST_HIST_SHA="$hist_sha" sh "$projects/inside-isolation.sh" || rc=1
 exit "$rc"

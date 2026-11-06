@@ -158,6 +158,11 @@ func (l *Launcher) ensureProxy(proj string) error {
 	}
 	a = append(a, "--mount", "type=bind,src="+hosts+",dst=/etc/lea/internal-hosts,readonly")
 	a = append(a, fw.mounts...)
+	fm, err := l.forgeMount()
+	if err != nil {
+		return err
+	}
+	a = append(a, fm...)
 	a = append(a, lh...)
 	a = append(a, "-e", "LEA_GIT_SSH="+l.Cfg.GitSSH(), "-e", "LEA_OTEL_UPSTREAM="+l.Cfg.Get("LEA_OTEL_UPSTREAM"),
 		"-e", "LEA_EGRESS_ALLOW="+allow,

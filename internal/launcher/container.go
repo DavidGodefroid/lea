@@ -492,6 +492,12 @@ func (l *Launcher) runArgs(proj, pip string) ([]string, error) {
 	if err := Mkdirs(l.Cfg.DataDir(), st+"/ssh", st+"/git", st+"/gh", st+"/glab-cli", st+"/containers", st+"/go", st+"/kube"); err != nil {
 		return nil, die("%v", err)
 	}
+	// No GitHub token where an agent reads it (#103): the proxy holds it.
+	if what, err := l.migrateGitHubToken(); err != nil {
+		return nil, err
+	} else if what != "" {
+		l.logf("moved the GitHub token of %s to the proxy: agents use it through gh and git, and can no longer read it", what)
+	}
 	p := l.prefix()
 	a := []string{"-d", "--init", "--name", l.Cfg.ContainerName(proj), "--hostname", "lea",
 		"--network", l.Cfg.InternalNetwork(id),
