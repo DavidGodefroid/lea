@@ -513,45 +513,31 @@ func (l *Launcher) runArgs(proj, pip string) ([]string, error) {
 		"--mount", "type=bind,src=" + st + "/go,dst=/lea/state/go",
 		"--mount", "type=bind,src=" + st + "/kube,dst=" + home + "/.kube/lea,readonly",
 		"--mount", "type=volume,src=" + p + "-podman-" + id + ",dst=/lea/podman"}
-	// The Lock Family's directory (hub config, public keys, routing) read-only, as locksqlDir:
+	// The Lock Family's directory (hub config, public keys, routing) read-only, as a Lock's profile directory
+	// (lockArgs):
 	// an agent may read it, never change what the locks and the hub trust.
 	lf, err := lockfamilyDir(proj)
 	if err != nil {
 		return nil, err
 	}
 	a = append(a, "--mount", "type=bind,src="+lf+",dst="+lf+",readonly")
-	// A tool is on when the user's configuration turns it on, or lox up runs a lock of its type
+	// A Lock is on when the user's configuration turns it on, or lox up runs a lock of its type
 	// and the user did not turn it off (Config.toolOn): a lock the user added is meant for the agents.
 	ups := l.lockUpSockets(proj, lf, func(tool string) bool {
-		if key := lockToolKeys[tool]; key != "" {
+		if key := lockSwitch(tool); key != "" {
 			return l.Cfg.toolOn(key, true)
 		}
 		return false
 	})
-	_, upSql := ups["locksql"]
-	if l.Cfg.toolOn("LEA_LOCKSQL", upSql) {
-		// The socket volume of lox up's locksql lock and its clients group (locksql-clients), as
-		// for lockmq and lockfile (lockHostArgs): the console runs hub-attached only, under lox
-		// up. Without such a lock the agents get no locksql socket, never a fixed volume another
-		// console could serve. Its profile directory read-only (locksqlDir).
-		switch v, ok := ups["locksql"]; {
-		case !ok:
-			l.logf("warning: locksql: no such lock yet: `lox add locksql` (lea's agents get its socket once lea restarts: lea stop, then lea)")
-		case len(v) == 0:
-			l.logf("warning: locksql: lea's agents get no locksql socket (see above)")
-		default:
-			d, err := locksqlDir(proj)
-			if err != nil {
-				return nil, err
-			}
-			a = append(a, lockUpArgs("LEA_LOCKSQL", "10000", v)...)
-			a = append(a, "--mount", "type=bind,src="+d+",dst="+d+",readonly")
-		}
-	}
 	a = append(a, lh...)
-	// lockmq and lockfile: only the socket of a console in its own container, in the tool's
-	// socket volume (lockhost.go).
-	a = append(a, l.lockHostArgs(ups)...)
+	// Each Lock of locks.Registry: only the socket of a console in its own container, in the
+	// lock's socket volume, and its clients group (lockhost.go).
+	la, err := l.lockArgs(proj, ups)
+	if err != nil {
+		return nil, err
+	}
+	a = append(a, la...)
+	l.lockCompatAtStart(proj, ups)
 	rt, vm, err := l.agentRuntime()
 	if err != nil {
 		return nil, err
@@ -712,18 +698,10 @@ func IsTerminal(x any) bool {
 	return term.IsTerminal(f.Fd())
 }
 
-// locksqlDir is locksql's profile directory of the projects directory (<proj>/.locksql: its
-// config and PII rules, which lox up reviews and copies into the lock), made when missing. The
-// agents get it read-only, so none rewrites a profile behind the user's back (#121). A link or a
-// file is refused.
-func locksqlDir(proj string) (string, error) {
-	return roDir(proj+"/.locksql", "the locksql console only writes there")
-}
-
 // lockfamilyDir is the Lock Family's directory of the projects directory (<proj>/.lockfamily: the
 // hub's config, the locks' public keys, the routing), made by lea, owned by the user on the host,
 // when missing. The agents get it read-only, so none rewrites what the locks and the hub trust
-// (the hub plan's I11); a link or a file is refused, as for locksqlDir.
+// (the hub plan's I11); a link or a file is refused, as for a Lock's profile directory.
 func lockfamilyDir(proj string) (string, error) {
 	return roDir(proj+"/.lockfamily", "lox up writes there, on the host only")
 }

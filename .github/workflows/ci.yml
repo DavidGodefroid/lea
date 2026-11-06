@@ -382,7 +382,7 @@ jobs:
           # The hub-only checks wait for each Lock's first hub-only release: a note until then.
           h=$(grep -c '^note: .* the hub-only check is not run' phase0.log || true)
           echo "$n phase0 checks passed, $h hub-only checks not run yet"
-          [ $((n + h)) -eq 31 ]
+          [ $((n + h)) -eq 40 ]
   images:
     runs-on: ubuntu-latest
     steps:

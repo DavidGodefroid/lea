@@ -19,11 +19,12 @@ launcher() {
   for v in v0.1.1 v0.2.0 v0.10.0 v1.0.0; do lea__lockfile_safe "$v"; done
 }
 
-@test "lockmq and lockfile are off by default, pinned to releases" {
+@test "lockmq and lockfile are off by default, their clients the set's releases" {
   [ "$LEA_LOCKMQ" = 0 ]
   [ "$LEA_LOCKFILE" = 0 ]
-  lea__semver "$LEA_LOCKMQ_REF" >/dev/null
-  lea__semver "$LEA_LOCKFILE_REF" >/dev/null
+  [ -z "$LEA_LOCKMQ_REF" ] && [ -z "$LEA_LOCKFILE_REF" ]
+  lea__semver "$(lea__lock_version lockmq)" >/dev/null
+  lea__semver "$(lea__lock_version lockfile)" >/dev/null
 }
 
 @test "the configuration refuses a bad switch, an unpinned ref and lockfile v0.1.0" {
@@ -37,7 +38,7 @@ launcher() {
 
 @test "the image's clients are the releases lea pins, with the tools' own accounts and no host account" {
   c="$LEA_ROOT/image/Containerfile"
-  grep -q "MQ=${LEA_LOCKMQ_REF#v} LF=${LEA_LOCKFILE_REF#v}" "$c"
+  grep -q '^COPY config/locks.lock ' "$c"
   grep -q 'groupadd -g 10010 lockmq-clients && useradd -r -u 10011 ' "$c"
   grep -q 'groupadd -g 10030 lockfile-clients && useradd -r -u 10031 ' "$c"
   grep -q 'install -d -m 2710 -o 10011 -g 10010 /run/lockmq' "$c"
