@@ -84,7 +84,7 @@ fail=0
 ok() { echo "ok   $1"; }
 ko() { echo "FAIL $1"; fail=1; }
 [ -z "${LEA_AGENT:-}" ] && ok "the tool is the user's, not an agent" || ko "LEA_AGENT=$LEA_AGENT in the user's tool"
-[ "$(hostname)" = lea ] && ok "inside the lea container (hostname lea)" || ko "hostname $(hostname)"
+[ "$(cat /proc/sys/kernel/hostname)" = lea ] && ok "inside the lea container (hostname lea)" || ko "hostname $(cat /proc/sys/kernel/hostname)"
 c=$(curl -s -o /dev/null -w '%{http_code}' --max-time 20 https://example.org/ 2>/dev/null); c=${c:-000}
 [ "$c" != 200 ] && ok "egress to a domain off the allowlist refused ($c)" || ko "egress to example.org answered 200"
 curl -sf --max-time 20 -o /dev/null https://registry.npmjs.org/ && ok "an allowed domain answers through the proxy (positive control)" ||
@@ -115,7 +115,7 @@ done
 c1=$(cid)
 cat >"$projects/probe.sh" <<'EOF'
 #!/bin/sh
-printf '%s %s %s\n' "$(hostname)" "$(id -u)" "$(pwd)" >"$(dirname "$0")/.probe"
+printf '%s %s %s\n' "$(cat /proc/sys/kernel/hostname)" "$(id -u)" "$(pwd)" >"$(dirname "$0")/.probe"
 EOF
 "$lea" config tool sh "$projects/probe.sh" >/dev/null 2>&1
 cmd=$("$lea" attach --print)
