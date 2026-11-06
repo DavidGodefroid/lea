@@ -19,11 +19,12 @@ launcher() {
   for v in v0.1.1 v0.2.0 v0.10.0 v1.0.0; do lea__lockfile_safe "$v"; done
 }
 
-@test "lockmq and lockfile are off by default, pinned to releases" {
+@test "lockmq and lockfile are off by default, their clients the set's releases" {
   [ "$LEA_LOCKMQ" = 0 ]
   [ "$LEA_LOCKFILE" = 0 ]
-  lea__semver "$LEA_LOCKMQ_REF" >/dev/null
-  lea__semver "$LEA_LOCKFILE_REF" >/dev/null
+  [ -z "$LEA_LOCKMQ_REF" ] && [ -z "$LEA_LOCKFILE_REF" ]
+  lea__semver "$(lea__lock_version lockmq)" >/dev/null
+  lea__semver "$(lea__lock_version lockfile)" >/dev/null
 }
 
 @test "the configuration refuses a bad switch, an unpinned ref and lockfile v0.1.0" {
@@ -37,7 +38,7 @@ launcher() {
 
 @test "the image's clients are the releases lea pins, with the tools' own accounts and no host account" {
   c="$LEA_ROOT/image/Containerfile"
-  grep -q "MQ=${LEA_LOCKMQ_REF#v} LF=${LEA_LOCKFILE_REF#v}" "$c"
+  grep -q '^COPY config/locks.lock ' "$c"
   grep -q 'groupadd -g 10010 lockmq-clients && useradd -r -u 10011 ' "$c"
   grep -q 'groupadd -g 10030 lockfile-clients && useradd -r -u 10031 ' "$c"
   grep -q 'install -d -m 2710 -o 10011 -g 10010 /run/lockmq' "$c"
@@ -54,11 +55,11 @@ launcher() {
   [ -z "$(calls)" ]
 }
 
-@test "lea lockfile: on, it reports the launcher and that the console runs under lox up only" {
+@test "lea lockfile: on, it reports the launcher and that the console runs under lox run only" {
   LEA_LOCKFILE=1
   run lea_lockhost lockfile
   [[ "$output" == *"lockfile: install its launcher"*"scripts/install.sh"* ]]
-  [[ "$output" == *"lockfile console: it runs under lox up only: no such lock yet: \`lox add lockfile\`"*"allowed_uids: [$(id -u)]"* ]]
+  [[ "$output" == *"lockfile console: it runs under lox run only: no such lock yet: \`lox add lockfile\`"*"allowed_uids: [$(id -u)]"* ]]
   [[ "$output" != *"lockfile-run"* ]]
   launcher lockfile
   run lea_lockhost lockfile
@@ -66,10 +67,10 @@ launcher() {
   if calls | grep -q '^lockfile\|sudo\|migrate-ids\|docker'; then false; fi
 }
 
-@test "lea lockmq follows the launcher's decision (LEA_TOOLS_ON): on for a lock of lox up, off when it says so" {
+@test "lea lockmq follows the launcher's decision (LEA_TOOLS_ON): on for a lock of lox run, off when it says so" {
   LEA_TOOLS_ON="locksql lockmq" run lea_lockhost lockmq
   [ "$status" -eq 0 ]
-  [[ "$output" == *"lockmq is on for lea while lox up runs a lockmq lock here"*"LEA_LOCKMQ=0 in your configuration keeps it off"* ]]
+  [[ "$output" == *"lockmq is on for lea while lox run runs a lockmq lock here"*"LEA_LOCKMQ=0 in your configuration keeps it off"* ]]
   [[ "$output" != *"no such lock yet"* ]]
   LEA_LOCKMQ=1 LEA_TOOLS_ON="" run lea_lockhost lockmq
   [[ "$output" == *"lockmq is off (LEA_LOCKMQ=0)"* ]]
@@ -116,7 +117,7 @@ launcher() {
   LEA_INIT_NONINTERACTIVE=1 run lea__init_lockhost lockmq </dev/null
   [ "$status" -eq 0 ]
   [[ "$output" == *"lockmq: install its launcher"* ]]
-  [[ "$output" == *"lockmq console: it runs under lox up only"* ]]
+  [[ "$output" == *"lockmq console: it runs under lox run only"* ]]
   if calls | grep -q 'sudo\|install'; then false; fi
 }
 
@@ -136,7 +137,7 @@ launcher() {
   launcher lockmq
   run lea__init_lockhost lockmq <<<"y"
   [[ "$output" == *"lockmq has no broker profile for $P yet"* ]]
-  [[ "$output" == *"lockmq console: it runs under lox up only"* ]]
+  [[ "$output" == *"lockmq console: it runs under lox run only"* ]]
   run calls
   [ "$output" = "docker [run] [-it] [--rm] [--network] [none] [--user] [$(id -u):$(id -g)] [-e] [HOME=/tmp] [-v] [$P:$P] [-w] [$P] [--entrypoint] [lockmq] [$LEA_IMAGE] [profile] [add] [--project] [$P]" ]
 }

@@ -428,14 +428,40 @@ const (
 	cpPath     = "/bin/cp"
 )
 
-// ghIsolated is the script lines that run the rest of a pinned gh call with the token of the
-// agent's gh config (GH_TOKEN) and none of the rest of it (GH_CONFIG_DIR=noConfigDir): gh then
-// talks to the forge itself, whatever the agent wrote in its config. gh auth token reads the
-// token only (no request, no alias: auth is gh's own command).
+// forgeGHConfig is the gh config dir of every pinned gh call (issue #103): the image's, root's,
+// with only http_unix_socket set to lea's GitHub relay (/run/lea-forge/gh.sock, nobody's), which
+// carries the call to the proxy's forge forwarder, the only holder of the token. None of the
+// agent's config (its aliases, pager or socket) applies.
+const forgeGHConfig = "/usr/local/share/lea/forge-gh"
+
+// ghPlaceholder is the GH_TOKEN of a pinned gh call: gh counts as logged in, and the forwarder
+// replaces it with the token.
+const ghPlaceholder = "lea-proxy-adds-the-token"
+
+// ghIsolated is the script line that runs the rest of a pinned gh call with lea's gh config
+// (forgeGHConfig) and none of the agent's: gh then talks to GitHub through lea's forwarder,
+// whatever the agent wrote in its config.
 func ghIsolated() string {
-	return "GH_TOKEN=$(" + shellWords([]string{ghPath, "auth", "token", "--hostname", "github.com"}) + " 2>/dev/null) || GH_TOKEN=\n" +
-		`[ -n "$GH_TOKEN" ] || { ` + refuse("no GitHub token in gh's config: gh auth login") + "; }\n" +
-		"export GH_TOKEN GH_CONFIG_DIR=" + shellWords([]string{noConfigDir}) + "\n"
+	return "export GH_TOKEN=" + shellWords([]string{ghPlaceholder}) + " GH_CONFIG_DIR=" + shellWords([]string{forgeGHConfig}) + "\n"
+}
+
+// ForgePort is the proxy's forge forwarder port (lea-keyproxy, internal/keyproxy.ForgePort).
+const ForgePort = "4401"
+
+// forgePushURL is the URL a pinned push to the GitHub pin gh goes to: the forge forwarder on the
+// proxy's address (the host of proxy), which adds the token; "" when proxy has no host.
+func forgePushURL(proxy, gh string) string {
+	m := validProxy.FindStringSubmatch(proxy)
+	path, ok := strings.CutPrefix(gh, "github.com/")
+	if m == nil || !ok {
+		return ""
+	}
+	host := strings.TrimPrefix(proxy, "http://")
+	if i := strings.LastIndexByte(host, '@'); i >= 0 {
+		host = host[i+1:]
+	}
+	host = host[:strings.LastIndexByte(host, ':')]
+	return "http://" + host + ":" + ForgePort + "/" + path + ".git"
 }
 
 // prHeadCheck is the script lines that end the call unless the PR n names (a number or a head
@@ -554,7 +580,19 @@ func pushScript(args []string, wt, gh, proxy string) string {
 		return ""
 	}
 	git := shellWords(gitIn(wt, proxy))
-	bare := shellWords([]string{gitPath, "--git-dir"}) + ` "$tmp" ` + shellWords(pins(proxy))
+	bp := pins(proxy)
+	if _, _, gitlab := gitlabPin(gh); !gitlab {
+		// GitHub: to the forge forwarder, directly (no proxy), over plain HTTP on the internal
+		// network; it adds the token and goes to github.com over HTTPS (#103).
+		u := forgePushURL(proxy, gh)
+		if u == "" {
+			return ""
+		}
+		pa[0] = u
+		base := u[:len(u)-len(strings.TrimPrefix(gh, "github.com/")+".git")]
+		bp = append(bp, "-c", "protocol.http.allow=always", "-c", "http."+base+".proxy=")
+	}
+	bare := shellWords([]string{gitPath, "--git-dir"}) + ` "$tmp" ` + shellWords(bp)
 	s := configGuard(wt) +
 		"common=$(" + git + " rev-parse --path-format=absolute --git-common-dir) || exit 1\n" +
 		"tmp=$(" + shellWords([]string{mktempPath, "-d"}) + ") || exit 1\n" +

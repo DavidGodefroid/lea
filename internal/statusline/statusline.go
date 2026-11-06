@@ -48,7 +48,7 @@ const (
 var keyName = regexp.MustCompile(`^[A-Za-z0-9_]{1,40}$`)
 
 // Run prints the status line for the JSON on stdin and hands post (when not nil) what lea needs
-// from it; post answers the locks lox up runs that the agent's container does not mount, which
+// from it; post answers the locks lox run runs that the agent's container does not mount, which
 // the line names ("+lock orders: restart lea"). When dump is set the raw JSON is also written
 // there (mode 0600). Nothing here may fail Claude: bad input prints "lea" and reports nothing.
 func Run(stdin io.Reader, stdout io.Writer, dump string, post func(Report) []string) error {
@@ -84,7 +84,7 @@ func Run(stdin io.Reader, stdout io.Writer, dump string, post func(Report) []str
 	return dumpErr
 }
 
-// lockInstance is a lock's instance name, as lox up names it (internal/launcher's lockUpInstance).
+// lockInstance is a lock's instance name, as lox run names it (internal/launcher's lockUpInstance).
 var lockInstance = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,62}$`)
 
 // Post sends r to the daemon on the container's bus and returns the locks the daemon says the

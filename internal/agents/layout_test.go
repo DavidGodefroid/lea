@@ -278,7 +278,9 @@ func TestEnsureLeavesAGoodLayoutAlone(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, l := range s.since(mark) {
-		if !strings.HasPrefix(l, "list-panes") {
+		// Reads are not a change: the reconcile lists the panes, and reads the deck width's
+		// option to check the pane's width against it.
+		if !strings.HasPrefix(l, "list-panes") && !strings.HasPrefix(l, "display-message") {
 			t.Errorf("a good layout was changed: %q", l)
 		}
 	}

@@ -17,7 +17,7 @@ func bodyText(m Model) string {
 	return strings.Join(words, " ")
 }
 
-// TestDeckRestartHint: a lock lox up runs that this container does not mount (the daemon's
+// TestDeckRestartHint: a lock lox run runs that this container does not mount (the daemon's
 // Snapshot.LocksAdded) shows, verbatim, on the selected agent; none without it.
 func TestDeckRestartHint(t *testing.T) {
 	const want = "lock orders added: restart lea to use it (lea stop, then lea)"

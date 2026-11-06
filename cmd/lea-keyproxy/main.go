@@ -33,6 +33,8 @@ func run(args []string, stderr io.Writer) error {
 	viaFlag := fs.String("via", "http://127.0.0.1:3128", "the forward proxy every upstream request goes through")
 	sources := fs.String("sources", "", "LockHTTP: the gate's sources.json, which names the calling container (with $LEA_KEYPROXY_TOKEN, the gate's password); empty: -via is plain squid")
 	caCert := fs.String("ca-cert", "", "LockHTTP MITM: a CA certificate (PEM) to trust besides the system's: the gate's, which re-signs decrypted upstreams")
+	forgeListen := fs.String("forge-listen", "", "the forge forwarder's listen address (GitHub, its token from -forge-keys); empty: off")
+	forgeKeys := fs.String("forge-keys", "/etc/lea/forge", "the forge forwarder's key directory (github.com: the GitHub token)")
 	routes := fs.String("routes", "/proc/net/route", "the routing table: connections on the default route's interface (the egress network) are refused; empty refuses none")
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -47,16 +49,19 @@ func run(args []string, stderr io.Writer) error {
 	} else if !errors.Is(err, os.ErrNotExist) {
 		return fmt.Errorf("internal-hosts file: %w", err)
 	}
+	var eps []keyproxy.Endpoint
 	ef, err := os.Open(*endpoints)
-	if err != nil {
+	switch {
+	case err == nil:
+		eps, err = keyproxy.ParseEndpoints(ef, hosts, providers.KeyDir)
+		ef.Close()
+		if err != nil {
+			return fmt.Errorf("endpoints file %s: %w", *endpoints, err)
+		}
+	case !errors.Is(err, os.ErrNotExist) || *forgeListen == "":
 		return fmt.Errorf("endpoints file: %w", err)
 	}
-	eps, err := keyproxy.ParseEndpoints(ef, hosts, providers.KeyDir)
-	ef.Close()
-	if err != nil {
-		return fmt.Errorf("endpoints file %s: %w", *endpoints, err)
-	}
-	if len(eps) == 0 {
+	if len(eps) == 0 && *forgeListen == "" {
 		return errors.New("the endpoints file lists no endpoint")
 	}
 	via, err := url.Parse(*viaFlag)
@@ -102,6 +107,14 @@ func run(args []string, stderr io.Writer) error {
 			}
 		}
 	}
-	fmt.Fprintf(stderr, "lea-keyproxy: %d endpoint(s), listening on %s\n", len(eps), *listen)
-	return keyproxy.Server(*listen, f).ListenAndServe()
+	errs := make(chan error, 2)
+	if *forgeListen != "" {
+		fmt.Fprintf(stderr, "lea-keyproxy: forge forwarder (GitHub) listening on %s\n", *forgeListen)
+		go func() { errs <- keyproxy.Server(*forgeListen, f.Forge(*forgeKeys, nil)).ListenAndServe() }()
+	}
+	if len(eps) > 0 {
+		fmt.Fprintf(stderr, "lea-keyproxy: %d endpoint(s), listening on %s\n", len(eps), *listen)
+		go func() { errs <- keyproxy.Server(*listen, f).ListenAndServe() }()
+	}
+	return <-errs
 }

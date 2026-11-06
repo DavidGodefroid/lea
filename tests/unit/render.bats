@@ -71,7 +71,7 @@ hosts() { printf '%s\n' "$@" >"$BATS_TEST_TMPDIR/hosts"; }
   hosts "issues.example.internal 443"
   run sh "$R" --peek "$BATS_TEST_TMPDIR/hosts"
   [ "$status" -eq 0 ]
-  [[ "$output" == *"http_port 127.0.0.1:3129 ssl-bump tls-cert=/etc/squid/lea-peek.pem generate-host-certificates=off"* ]]
+  [[ "$output" == *"http_port 127.0.0.1:3129 ssl-bump tls-cert=/tmp/lea-peek/lea-peek.pem generate-host-certificates=off"* ]]
   [[ "$output" == *"http_access allow ih_1_dst ih_1_port"* ]]
   [ "$(printf '%s\n' "$output" | grep '^http_access' | tail -n1)" = "http_access deny all" ]
   [[ "$output" == *"external_acl_type lea_sni "*" %ssl::>sni %DST /usr/local/bin/sni-matches.sh"* ]]

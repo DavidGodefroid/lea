@@ -147,7 +147,15 @@ func newWorld(t *testing.T, root string) *world {
 		"FAKE_DOCKER_OUT_SYSTEM_INFO": "34359738368",
 		// Docker's CPUs: 16, so the lea container gets 12.
 		"FAKE_DOCKER_OUT_SYSTEM_INFO_AT____NCPU__": "16",
-		"PATH": repoRoot(t) + "/tests/fakes:" + dir + "/bin:/usr/local/bin:/usr/bin:/bin",
+		// The proxy image's lea.confine label (docker inspect --type image): one that can run confined.
+		"FAKE_DOCKER_OUT_INSPECT___TYPE": "1",
+		// The same for that image only: a test that answers docker inspect --type for its
+		// containers keeps a confinable proxy image (the proxy's lea.rules covers its confinement).
+		"FAKE_DOCKER_OUT_INSPECT___TYPE_AT_LEA_PROXY_DEV": "1",
+		// The engine (docker version): a Docker Engine with gateway_mode_ipv4=isolated (#105); an
+		// unknown engine is refused an internal network.
+		engineFormat: "Engine=29.4.2",
+		"PATH":       repoRoot(t) + "/tests/fakes:" + dir + "/bin:/usr/local/bin:/usr/bin:/bin",
 	}
 	// What a daemon started with the default provider settings records.
 	write(w.data+"/lea/host/daemon.providers", DaemonProvidersStamp(nil, nil, stampMap{"LEA_PROVIDER": "claude",

@@ -1,0 +1,16 @@
+status 1
+-- calls
+tmux [-V]
+docker [image] [inspect] [-f] [{{.Id}}] [lea:dev]
+docker [image] [inspect] [-f] [{{.Id}}] [lea-proxy:dev]
+tmux [-V]
+core [agents]
+core [version]
+docker [network] [inspect] [lea-egress]
+docker [network] [create] [--label] [lea.prefix=lea] [lea-egress]
+docker [network] [inspect] [-f] [{{.Internal}} {{index .Options "com.docker.network.bridge.gateway_mode_ipv4"}}|{{.Id}}|{{index .Options "com.docker.network.bridge.name"}}] [lea-internal-$ID]
+docker [version] [--format] [{{range .Server.Components}}{{.Name}}={{.Version}}{{"\n"}}{{end}}]
+docker [network] [create] [--label] [lea.prefix=lea] [--label] [lea.id=$ID] [--internal] [-o] [com.docker.network.bridge.gateway_mode_ipv4=isolated] [lea-internal-$ID]
+-- lea
+lea: error: Docker refused gateway_mode_ipv4=isolated: lea will not start an agent on a network where the host is reachable (needs Docker Engine 28.0 or later; set LEA_ALLOW_GATEWAY=1 to accept a plain internal network)
+-- stdout

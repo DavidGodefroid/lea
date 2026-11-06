@@ -300,7 +300,7 @@ func TestDeliveryCheck(t *testing.T) {
 	// No credentials in lea's state: delivery cannot push.
 	rc, out := check(host)
 	for _, want := range []string{"ok    delivery fixture (github.com/o/fixture)\n", "ok    delivery gl (gitlab:gitlab.com/o/gl)\n",
-		"FAIL  delivery credentials github.com: none in lea's state: log in from lea (lea shell): gh auth login\n",
+		"FAIL  delivery credentials github.com: none in lea's proxy: on the host, gh auth token | lea github login\n",
 		"FAIL  delivery credentials gitlab.com: none in lea's state: log in from lea (lea shell): glab auth login --hostname gitlab.com\n"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("no credentials: missing %q in %q", want, out)
@@ -321,12 +321,17 @@ func TestDeliveryCheck(t *testing.T) {
 	if rc, out := check(host); rc != 1 || strings.Contains(out, "ok    delivery credentials") {
 		t.Fatalf("look-alikes: rc=%d %q", rc, out)
 	}
-	// gh's login for github.com; git's store alone for gitlab.com pushes, not merge requests
+	// lea's GitHub token; git's store alone for gitlab.com pushes, not merge requests
 	// (pinned glab calls take the token of glab's config only); then glab's login.
-	file("gh/hosts.yml", "github.com:\n    oauth_token: x\n    user: u\n")
+	// GitHub's token is the proxy's (lea github login, #103), never gh's config.
+	forge := filepath.Join(filepath.Dir(state), "proxy", "forge")
+	os.MkdirAll(forge, 0o700)
+	if err := os.WriteFile(filepath.Join(forge, "github.com"), []byte("tok\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
 	file("git/credentials", "https://u:t@gitlab.com\n")
 	rc, out = check(host)
-	if rc != 0 || !strings.Contains(out, "ok    delivery credentials github.com (gh)\n") ||
+	if rc != 0 || !strings.Contains(out, "ok    delivery credentials github.com (lea github login: in the proxy)\n") ||
 		!strings.Contains(out, "warn  delivery credentials gitlab.com: git's store only: pushes work, merge requests need glab auth login --hostname gitlab.com\n") {
 		t.Fatalf("logged in: rc=%d %q", rc, out)
 	}

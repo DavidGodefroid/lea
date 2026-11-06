@@ -33,6 +33,12 @@
             "command": "[ -x /usr/local/bin/lea ] && exec /usr/local/bin/lea hook claude LimitResume; exit 0",
             "asyncRewake": true,
             "timeout": 691200
+          },
+          {
+            "type": "command",
+            "command": "[ -x /usr/local/bin/lea ] && exec /usr/local/bin/lea hook claude Rewake; exit 0",
+            "asyncRewake": true,
+            "timeout": 691200
           }
         ]
       }
@@ -73,7 +79,7 @@
             "type": "command",
             "command": "[ -x /usr/local/bin/lea ] && exec /usr/local/bin/lea hook claude Rewake; exit 0",
             "asyncRewake": true,
-            "timeout": 3600
+            "timeout": 691200
           }
         ]
       }
@@ -130,7 +136,7 @@
             "type": "command",
             "command": "[ -x /usr/local/bin/lea ] && exec /usr/local/bin/lea hook claude Rewake; exit 0",
             "asyncRewake": true,
-            "timeout": 3600
+            "timeout": 691200
           }
         ]
       }

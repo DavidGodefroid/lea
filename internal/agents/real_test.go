@@ -26,7 +26,7 @@ func TestRealLayoutRepair(t *testing.T) {
 	t.Cleanup(func() { os.RemoveAll(dir) })
 	t.Setenv("TMUX_TMPDIR", dir)
 	conf := filepath.Join(dir, "tmux.conf")
-	if err := tmux.WriteConf(conf); err != nil {
+	if err := tmux.WriteConf(conf, ""); err != nil {
 		t.Fatal(err)
 	}
 	// The deck and the placeholder run this stand-in for lea.
@@ -126,7 +126,7 @@ func TestRealShellExitClosesItsPane(t *testing.T) {
 	t.Cleanup(func() { os.RemoveAll(dir) })
 	t.Setenv("TMUX_TMPDIR", dir)
 	conf := filepath.Join(dir, "tmux.conf")
-	if err := tmux.WriteConf(conf); err != nil {
+	if err := tmux.WriteConf(conf, ""); err != nil {
 		t.Fatal(err)
 	}
 	bin := filepath.Join(dir, "lea")
@@ -204,7 +204,7 @@ func TestRealRepairSettles(t *testing.T) {
 	t.Cleanup(func() { os.RemoveAll(dir) })
 	t.Setenv("TMUX_TMPDIR", dir)
 	conf := filepath.Join(dir, "tmux.conf")
-	if err := tmux.WriteConf(conf); err != nil {
+	if err := tmux.WriteConf(conf, ""); err != nil {
 		t.Fatal(err)
 	}
 	stub := []byte("#!/bin/sh\nexec sleep 600\n")
@@ -242,10 +242,10 @@ func TestRealRepairSettles(t *testing.T) {
 	}
 }
 
-// TestRealTicketPaneTakesTheSlot shows a hub ticket against a real tmux server (#284): the ticket
-// pane takes the slot beside the deck, keeps the deck's width, parks when hidden (the placeholder
-// takes the slot back), and the layout repair leaves it parked.
-func TestRealTicketPaneTakesTheSlot(t *testing.T) {
+// TestRealRetiredPanesGo runs against a real tmux server (#300): the panes an earlier lea made for
+// its lock consoles and its hub ticket (roles lock and ticket) go at the next layout repair, the
+// deck and its slot stay.
+func TestRealRetiredPanesGo(t *testing.T) {
 	if _, err := exec.LookPath("tmux"); err != nil {
 		t.Skip("tmux is not installed: make go-test-tmux runs this test")
 	}
@@ -256,7 +256,7 @@ func TestRealTicketPaneTakesTheSlot(t *testing.T) {
 	t.Cleanup(func() { os.RemoveAll(dir) })
 	t.Setenv("TMUX_TMPDIR", dir)
 	conf := filepath.Join(dir, "tmux.conf")
-	if err := tmux.WriteConf(conf); err != nil {
+	if err := tmux.WriteConf(conf, ""); err != nil {
 		t.Fatal(err)
 	}
 	bin := filepath.Join(dir, "lea")
@@ -284,39 +284,22 @@ func TestRealTicketPaneTakesTheSlot(t *testing.T) {
 	if err := m.Ensure(bg, C, ""); err != nil {
 		t.Fatal(err)
 	}
-	// slot is the role of the pane beside the deck, and the deck's width.
-	slot := func() (string, string) {
-		t.Helper()
-		var role, width string
-		for _, l := range strings.Split(tm("list-panes", "-t", "="+C+":deck", "-F", "#{@lea_role}|#{pane_width}"), "\n") {
-			f := strings.Split(l, "|")
-			if f[0] == roleDeck {
-				width = f[1]
-			} else {
-				role = f[0]
-			}
-		}
-		return role, width
-	}
-	if err := m.ShowTicket(bg, C, "crm/T1", "", 0); err != nil {
-		t.Fatal(err)
-	}
-	if role, w := slot(); role != roleTicket || w != "34" {
-		t.Fatalf("slot %q, deck %s wide", role, w)
-	}
-	if got := tm("list-panes", "-s", "-t", "="+C, "-F", "#{@lea_role} #{pane_start_command}"); !strings.Contains(got, roleTicket+" "+bin+" deck --ticket "+C) {
-		t.Fatalf("panes:\n%s", got)
-	}
-	if err := m.ShowTicket(bg, C, "", "", 0); err != nil {
-		t.Fatal(err)
-	}
-	if role, w := slot(); role != rolePlace || w != "34" {
-		t.Fatalf("hidden: slot %q, deck %s wide", role, w)
+	for _, role := range []string{"lock", retiredTicket} {
+		id := tm("new-window", "-d", "-t", "="+C+":", "-n", role, "-P", "-F", "#{pane_id}", "sleep", "600")
+		tm("set-option", "-p", "-t", id, optRole, role)
 	}
 	if err := m.Ensure(bg, C, ""); err != nil {
 		t.Fatal(err)
 	}
-	if role, _ := slot(); role != rolePlace || !strings.Contains(tm("list-panes", "-s", "-t", "="+C, "-F", "#{@lea_role}"), roleTicket) {
-		t.Fatal("the repair moved or removed the parked ticket pane")
+	got := tm("list-panes", "-s", "-t", "="+C, "-F", "#{@lea_role}")
+	for _, role := range []string{"lock", retiredTicket} {
+		for _, l := range strings.Split(got, "\n") {
+			if l == role {
+				t.Fatalf("the %s pane of an earlier lea stays:\n%s", role, got)
+			}
+		}
+	}
+	if !strings.Contains(got, roleDeck) || !strings.Contains(got, rolePlace) {
+		t.Fatalf("the deck or its placeholder went:\n%s", got)
 	}
 }

@@ -1,0 +1,145 @@
+{
+	"base": {
+		"source": "https://raw.githubusercontent.com/moby/profiles/4b8214fc4971e06172938a1f1554ccff6647ee80/seccomp/default.json",
+		"tag": "seccomp/v0.3.0",
+		"sha256": "6416b47770785a41ac59073cdc77d9fe98517df2799dc83ef207e622de3053f6"
+	},
+	"archMap": [
+		{
+			"architecture": "SCMP_ARCH_X86_64",
+			"drop": ["SCMP_ARCH_X86"],
+			"why": "no i386 programs: libseccomp turns the socket rules into socketcall rules without the family test, which would reopen AF_ALG (CVE-2026-31431)"
+		}
+	],
+	"remove": [
+		{
+			"name": "socketcall",
+			"why": "the socket(2) multiplexer hides the socket family behind a pointer seccomp cannot read, so it would bypass the AF_ALG refusal (CVE-2026-31431)"
+		},
+		{
+			"name": "vmsplice",
+			"why": "maps user pages into a pipe by reference, the path of a run of kernel exploits (CVE-2008-0600 and Dirty Pipe's family); lea's profile before #100 refused it (EPERM), with no workload of lea needing it since"
+		},
+		{
+			"name": "cachestat",
+			"why": "tells which pages of any file it can open are in the host's page cache, a side channel on what other containers read; lea's profile before #100 refused it (EPERM), with no workload of lea needing it since"
+		},
+		{
+			"name": "map_shadow_stack",
+			"why": "x86 user shadow stacks are off in lea and glibc runs without them; lea's profile before #100 refused it (EPERM), with no workload of lea needing it since"
+		},
+		{
+			"name": "futex_waitv",
+			"why": "futex2 (Linux 5.16), which glibc does not call (only Wine and Proton do); lea's profile before #100 refused it (EPERM), with no workload of lea needing it since"
+		},
+		{
+			"name": "futex_wake",
+			"why": "futex2 (Linux 6.7), which glibc does not call; lea's profile before #100 refused it (EPERM), with no workload of lea needing it since"
+		},
+		{
+			"name": "futex_wait",
+			"why": "futex2 (Linux 6.7), which glibc does not call; lea's profile before #100 refused it (EPERM), with no workload of lea needing it since"
+		},
+		{
+			"name": "futex_requeue",
+			"why": "futex2 (Linux 6.7), which glibc does not call; futex requeue is where CVE-2014-3153 was; lea's profile before #100 refused it (EPERM), with no workload of lea needing it since"
+		},
+		{
+			"name": "io_pgetevents",
+			"why": "the legacy Linux AIO interface, which no tool lea ships uses; lea's profile before #100 refused it (EPERM), with no workload of lea needing it since"
+		},
+		{
+			"name": "io_pgetevents_time64",
+			"why": "the 32-bit-time io_pgetevents (no x86_64 or aarch64 number); lea's profile before #100 refused it (EPERM), with no workload of lea needing it since"
+		}
+	],
+	"allow": [
+		{
+			"name": "clone",
+			"why": "the nested Podman and crun create the user, mount, PID, network and IPC namespaces of nested containers, flags moby allows only with CAP_SYS_ADMIN"
+		},
+		{
+			"name": "unshare",
+			"why": "rootless Podman enters its user namespace (CLONE_NEWUSER), unpacks image layers in a mount namespace, and Buildah's RUN steps unshare their own"
+		},
+		{
+			"name": "setns",
+			"why": "every podman command joins the user namespace of Podman's pause process, and podman exec and pasta join a nested container's namespaces"
+		},
+		{
+			"name": "mount",
+			"why": "crun mounts a nested container's root file system, /proc, /dev and volumes, fuse-overlayfs its layers and pasta its empty tmpfs root, inside the nested user namespace"
+		},
+		{
+			"name": "umount2",
+			"why": "crun and pasta detach the old root after pivot_root, and Podman unmounts a nested container's storage, shm and network namespace"
+		},
+		{
+			"name": "open_tree",
+			"why": "crun clones the /sys of lea into a nested container (OPEN_TREE_CLONE): a user namespace cannot mount a fresh sysfs without its own network namespace's ownership of it"
+		},
+		{
+			"name": "move_mount",
+			"why": "crun attaches the trees it cloned with open_tree (/sys, bind mounts) inside a nested container"
+		},
+		{
+			"name": "mount_setattr",
+			"why": "crun sets the flags of the trees it cloned (read-only /sys, read-only and nosuid bind mounts), recursively"
+		},
+		{
+			"name": "pivot_root",
+			"why": "crun switches a nested container to its own root file system, and pasta sandboxes itself in an empty tmpfs"
+		}
+	],
+	"narrow": [
+		{
+			"why": "AF_NETLINK (16) sockets stay allowed for the netlink protocols (0 to 31, MAX_LINKS) but NETLINK_AUDIT (9), which lea's NETLINK_AUDIT rule refuses, each compared in 64 bits so that a protocol with high bits set (truncated to an int by the kernel) matches none and gets the default error; an allow rule overlapping the refusal would make crun refuse the profile (EEXIST)",
+			"base": {"names": ["socket"], "action": "SCMP_ACT_ALLOW", "args": [{"index": 0, "value": 16, "op": "SCMP_CMP_EQ"}]},
+			"rules": [
+				{"names": ["socket"], "action": "SCMP_ACT_ALLOW", "args": [{"index": 0, "value": 16, "op": "SCMP_CMP_EQ"}, {"index": 2, "value": 9, "op": "SCMP_CMP_LT"}]},
+				{"names": ["socket"], "action": "SCMP_ACT_ALLOW", "args": [{"index": 0, "value": 16, "op": "SCMP_CMP_EQ"}, {"index": 2, "value": 10, "op": "SCMP_CMP_EQ"}]},
+				{"names": ["socket"], "action": "SCMP_ACT_ALLOW", "args": [{"index": 0, "value": 16, "op": "SCMP_CMP_EQ"}, {"index": 2, "value": 11, "op": "SCMP_CMP_EQ"}]},
+				{"names": ["socket"], "action": "SCMP_ACT_ALLOW", "args": [{"index": 0, "value": 16, "op": "SCMP_CMP_EQ"}, {"index": 2, "value": 12, "op": "SCMP_CMP_EQ"}]},
+				{"names": ["socket"], "action": "SCMP_ACT_ALLOW", "args": [{"index": 0, "value": 16, "op": "SCMP_CMP_EQ"}, {"index": 2, "value": 13, "op": "SCMP_CMP_EQ"}]},
+				{"names": ["socket"], "action": "SCMP_ACT_ALLOW", "args": [{"index": 0, "value": 16, "op": "SCMP_CMP_EQ"}, {"index": 2, "value": 14, "op": "SCMP_CMP_EQ"}]},
+				{"names": ["socket"], "action": "SCMP_ACT_ALLOW", "args": [{"index": 0, "value": 16, "op": "SCMP_CMP_EQ"}, {"index": 2, "value": 15, "op": "SCMP_CMP_EQ"}]},
+				{"names": ["socket"], "action": "SCMP_ACT_ALLOW", "args": [{"index": 0, "value": 16, "op": "SCMP_CMP_EQ"}, {"index": 2, "value": 16, "op": "SCMP_CMP_EQ"}]},
+				{"names": ["socket"], "action": "SCMP_ACT_ALLOW", "args": [{"index": 0, "value": 16, "op": "SCMP_CMP_EQ"}, {"index": 2, "value": 17, "op": "SCMP_CMP_EQ"}]},
+				{"names": ["socket"], "action": "SCMP_ACT_ALLOW", "args": [{"index": 0, "value": 16, "op": "SCMP_CMP_EQ"}, {"index": 2, "value": 18, "op": "SCMP_CMP_EQ"}]},
+				{"names": ["socket"], "action": "SCMP_ACT_ALLOW", "args": [{"index": 0, "value": 16, "op": "SCMP_CMP_EQ"}, {"index": 2, "value": 19, "op": "SCMP_CMP_EQ"}]},
+				{"names": ["socket"], "action": "SCMP_ACT_ALLOW", "args": [{"index": 0, "value": 16, "op": "SCMP_CMP_EQ"}, {"index": 2, "value": 20, "op": "SCMP_CMP_EQ"}]},
+				{"names": ["socket"], "action": "SCMP_ACT_ALLOW", "args": [{"index": 0, "value": 16, "op": "SCMP_CMP_EQ"}, {"index": 2, "value": 21, "op": "SCMP_CMP_EQ"}]},
+				{"names": ["socket"], "action": "SCMP_ACT_ALLOW", "args": [{"index": 0, "value": 16, "op": "SCMP_CMP_EQ"}, {"index": 2, "value": 22, "op": "SCMP_CMP_EQ"}]},
+				{"names": ["socket"], "action": "SCMP_ACT_ALLOW", "args": [{"index": 0, "value": 16, "op": "SCMP_CMP_EQ"}, {"index": 2, "value": 23, "op": "SCMP_CMP_EQ"}]},
+				{"names": ["socket"], "action": "SCMP_ACT_ALLOW", "args": [{"index": 0, "value": 16, "op": "SCMP_CMP_EQ"}, {"index": 2, "value": 24, "op": "SCMP_CMP_EQ"}]},
+				{"names": ["socket"], "action": "SCMP_ACT_ALLOW", "args": [{"index": 0, "value": 16, "op": "SCMP_CMP_EQ"}, {"index": 2, "value": 25, "op": "SCMP_CMP_EQ"}]},
+				{"names": ["socket"], "action": "SCMP_ACT_ALLOW", "args": [{"index": 0, "value": 16, "op": "SCMP_CMP_EQ"}, {"index": 2, "value": 26, "op": "SCMP_CMP_EQ"}]},
+				{"names": ["socket"], "action": "SCMP_ACT_ALLOW", "args": [{"index": 0, "value": 16, "op": "SCMP_CMP_EQ"}, {"index": 2, "value": 27, "op": "SCMP_CMP_EQ"}]},
+				{"names": ["socket"], "action": "SCMP_ACT_ALLOW", "args": [{"index": 0, "value": 16, "op": "SCMP_CMP_EQ"}, {"index": 2, "value": 28, "op": "SCMP_CMP_EQ"}]},
+				{"names": ["socket"], "action": "SCMP_ACT_ALLOW", "args": [{"index": 0, "value": 16, "op": "SCMP_CMP_EQ"}, {"index": 2, "value": 29, "op": "SCMP_CMP_EQ"}]},
+				{"names": ["socket"], "action": "SCMP_ACT_ALLOW", "args": [{"index": 0, "value": 16, "op": "SCMP_CMP_EQ"}, {"index": 2, "value": 30, "op": "SCMP_CMP_EQ"}]},
+				{"names": ["socket"], "action": "SCMP_ACT_ALLOW", "args": [{"index": 0, "value": 16, "op": "SCMP_CMP_EQ"}, {"index": 2, "value": 31, "op": "SCMP_CMP_EQ"}]}
+			]
+		}
+	],
+	"rules": [
+		{
+			"why": "AF_ALG (38), the kernel crypto API, gets EAFNOSUPPORT, the answer of a kernel without it (CVE-2026-31431); moby leaves it out of its socket families; the family is an int, so only its low 32 bits are compared (0x100000026 is AF_ALG to the kernel)",
+			"rule": {
+				"names": ["socket"],
+				"action": "SCMP_ACT_ERRNO",
+				"args": [{"index": 0, "value": 4294967295, "valueTwo": 38, "op": "SCMP_CMP_MASKED_EQ"}],
+				"errnoRet": 97
+			}
+		},
+		{
+			"why": "NETLINK_AUDIT (AF_NETLINK 16, protocol 9) gets EINVAL, as in lea's profile before #100 and in Docker's without CAP_AUDIT_WRITE, which lea drops: the host's audit subsystem is not namespaced and nothing in lea talks to it; family and protocol are ints, so only their low 32 bits are compared (protocol 0x100000009 is NETLINK_AUDIT to the kernel)",
+			"rule": {
+				"names": ["socket"],
+				"action": "SCMP_ACT_ERRNO",
+				"args": [{"index": 0, "value": 4294967295, "valueTwo": 16, "op": "SCMP_CMP_MASKED_EQ"}, {"index": 2, "value": 4294967295, "valueTwo": 9, "op": "SCMP_CMP_MASKED_EQ"}],
+				"errnoRet": 22
+			}
+		}
+	]
+}

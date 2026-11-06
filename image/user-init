@@ -31,5 +31,12 @@ if [ -x /usr/local/bin/lea ] && [ -f "$cj" ] && command -v jq >/dev/null 2>&1 \
   fi
   rm -f "$tmp"
 fi
+# gh sends its requests to the GitHub relay (issue #103): the token is the proxy's. Set in the
+# agents' own gh config (theirs to write: one without it reaches GitHub without a token). A login
+# an agent leaves in it is moved to the proxy at the next lea.
+if command -v gh >/dev/null 2>&1 && [ -n "${GH_CONFIG_DIR:-}" ] && [ -d "$GH_CONFIG_DIR" ]; then
+  gh config set http_unix_socket /run/lea-forge/gh.sock >/dev/null 2>&1 \
+    || echo "lea: warning: could not point gh at lea's GitHub relay" >&2
+fi
 touch /run/lea/ready
 exec sleep infinity

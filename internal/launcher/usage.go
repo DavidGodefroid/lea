@@ -6,10 +6,7 @@ const Usage = `Usage:
                               set up lea on this workstation (once; rerun at will)
   lea locksql | lea lockmq | lea lockfile
                               whether agents reach that tool's console, and how it runs
-                              (under lox up only; lea never starts it)
-  lea lock open|close locksql [profile] | lea lock list
-                              lox up's locksql console in a pane of the deck, under the agent
-                              (the deck's L): its own questions, typed by you only
+                              (under lox run only, in another terminal: lea starts none)
   lea                         open the deck: your agents on the left, the selected one on the right
                               (keys: j/k select, enter focus, ctrl+space back, n new, x stop, q quit)
   lea new [-r role] [-p provider] [-m model] [--repo R] [--branch B] [--brief file] [name] [-- args]
@@ -22,6 +19,10 @@ const Usage = `Usage:
                               each repository here, without asking (standing grants; on lists
                               new or changed pins and their digest, --yes DIGEST records
                               exactly those; off revokes them)
+  lea github login|logout|status
+                              lea's GitHub token, kept by the proxy only (agents use it through
+                              gh and git, never read it); login reads it on stdin:
+                              gh auth token | lea github login
   lea shell [-- cmd...]       open a shell, or run a command, in the same lea
   lea kube refresh            mint a read-only Kubernetes token (8 h)
   lea board --md              the board: every agent's task, as markdown

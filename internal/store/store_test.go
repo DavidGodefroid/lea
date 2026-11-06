@@ -1276,3 +1276,26 @@ func TestRegisterGivesANewIncarnation(t *testing.T) {
 		t.Fatalf("incarnation %q again for a new registration (first %q)", got.Incarnation, a.Incarnation)
 	}
 }
+
+// The woken mark (#297) is set and cleared, and a reused name starts without it.
+func TestSetWoken(t *testing.T) {
+	s := open(t)
+	if _, err := s.RegisterAgent("lea-a", "dev", "default", "/w", 1); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.SetWoken("lea-a/dev", true); err != nil {
+		t.Fatal(err)
+	}
+	if a, err := s.AgentByKey("lea-a/dev"); err != nil || !a.Woken {
+		t.Fatalf("agent=%+v err=%v", a, err)
+	}
+	if err := s.SetState("lea-a/dev", "done", "", 2); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.RegisterAgent("lea-a", "dev", "default", "/w", 3); err != nil {
+		t.Fatal(err)
+	}
+	if a, _ := s.AgentByKey("lea-a/dev"); a.Woken {
+		t.Fatal("a reused name kept the mark")
+	}
+}

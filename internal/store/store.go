@@ -139,6 +139,9 @@ type Agent struct {
 	// Incarnation is random, new each time the agent is registered (created or reused under its
 	// name), and kept across its resumes: what its requester token is bound to (#160).
 	Incarnation string
+	// Woken: lea woke the idle agent for a message in its inbox (#297), until that turn ends or
+	// the user types. Display only.
+	Woken bool
 }
 
 // agentColumns are the agents columns added after phase 0; migrate adds the missing ones to a
@@ -164,6 +167,7 @@ var agentColumns = [][2]string{
 	{"limit_until", "INTEGER NOT NULL DEFAULT 0"},
 	{"limit_tries", "INTEGER NOT NULL DEFAULT 0"},
 	{"incarnation", "TEXT NOT NULL DEFAULT ''"},
+	{"woken", "INTEGER NOT NULL DEFAULT 0"},
 }
 
 // requestColumns are the spawn_requests columns added after it was created.
@@ -262,13 +266,13 @@ func (s *Store) SetHookState(key, state, sessionID string, now int64) (bool, err
 	return s.setState(key, state, sessionID, now, ` AND state<>'stopped'`)
 }
 
-const agentCols = `key, container, name, session_id, state, updated, profile, workdir, created, role, parent, repo, branch, task_id, label, args, prompt, paused, model, limit_until, limit_tries, incarnation`
+const agentCols = `key, container, name, session_id, state, updated, profile, workdir, created, role, parent, repo, branch, task_id, label, args, prompt, paused, model, limit_until, limit_tries, incarnation, woken`
 
 func scanAgent(sc interface{ Scan(...any) error }) (Agent, error) {
 	var a Agent
 	var args string
 	err := sc.Scan(&a.Key, &a.Container, &a.Name, &a.SessionID, &a.State, &a.Updated, &a.Profile, &a.Workdir, &a.Created,
-		&a.Role, &a.Parent, &a.Repo, &a.Branch, &a.TaskID, &a.Label, &args, &a.Prompt, &a.Paused, &a.Model, &a.LimitUntil, &a.LimitTries, &a.Incarnation)
+		&a.Role, &a.Parent, &a.Repo, &a.Branch, &a.TaskID, &a.Label, &args, &a.Prompt, &a.Paused, &a.Model, &a.LimitUntil, &a.LimitTries, &a.Incarnation, &a.Woken)
 	if err == nil && args != "" {
 		err = json.Unmarshal([]byte(args), &a.Args)
 	}
@@ -408,7 +412,7 @@ func (s *Store) Register(n NewAgent, c Caps, now int64) (Agent, error) {
 			return Agent{}, err
 		}
 		_, err = tx.Exec(`UPDATE agents SET profile=?, workdir=?, created=?, updated=?, state='unknown', session_id='',
-			ctx_pct=-1, cost_usd=-1, role=?, parent=?, repo=?, branch=?, task_id=0, label='', args='', prompt='', paused=0, subagents=0, limit_until=0, limit_tries=0, model=?, incarnation=? WHERE key=?`,
+			ctx_pct=-1, cost_usd=-1, role=?, parent=?, repo=?, branch=?, task_id=0, label='', args='', prompt='', paused=0, subagents=0, limit_until=0, limit_tries=0, woken=0, model=?, incarnation=? WHERE key=?`,
 			n.Profile, n.Workdir, now, now, n.Role, n.Parent, n.Repo, n.Branch, n.Model, inc, key)
 	} else {
 		_, err = tx.Exec(`INSERT INTO agents(key, container, name, profile, workdir, created, updated, role, parent, repo, branch, model, incarnation)
@@ -504,6 +508,12 @@ func (s *Store) SetPaused(key string, paused bool) error {
 		return ErrNotFound
 	}
 	return nil
+}
+
+// SetWoken marks the agent woken by lea for a message in its inbox (Agent.Woken), or clears it.
+func (s *Store) SetWoken(key string, woken bool) error {
+	_, err := s.db.Exec(`UPDATE agents SET woken=? WHERE key=?`, woken, key)
+	return err
 }
 
 // SetLimit records an agent's usage-limit state (Agent.LimitUntil, Agent.LimitTries).

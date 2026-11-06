@@ -2,6 +2,9 @@
 # Isolation tests: starts lea under the lea-test prefix and a decoy published on the host,
 # then checks from inside lea that neither the decoy nor the host can be reached.
 # Linux hosts. Creates and removes only lea-test-*, lea-canary* resources.
+# LEA_TEST_RUNTIME=runsc (or kata): the agent containers run on that runtime (LEA_RUNTIME, #106),
+# which must be registered with dockerd (tests/integration/install-runtime.sh); the test then also
+# checks that docker inspect shows it and that the agents see a kernel other than the host's.
 set -eu
 root=$(cd "$(dirname "$0")/../.." && pwd -P)
 
@@ -26,17 +29,34 @@ LEA_PREFIX=lea-test
 LEA_IMAGE=$image
 LEA_PROXY_IMAGE=lea-proxy:dev
 CONF
+runtime=${LEA_TEST_RUNTIME:-}
+case $runtime in *[!A-Za-z0-9._-]*) echo "isolation: LEA_TEST_RUNTIME '$runtime' is not a runtime name" >&2; exit 2 ;; esac
+if [ -n "$runtime" ]; then printf 'LEA_RUNTIME=%s\n' "$runtime" >>"$work/lea.conf"; fi
 export LEA_CONFIG="$work/lea.conf"
-# lea checks that lox is installed before it starts. This test follows no real hub (the stand-in
-# facade socket below is the only hub), so a stand-in lox that reports a dev build satisfies the
-# check on a host without one (CI).
-mkdir -p "$work/bin"
-printf '#!/bin/sh\necho "lox dev"\n' >"$work/bin/lox"; chmod +x "$work/bin/lox"
-PATH="$work/bin:$PATH"; export PATH
 state="$XDG_DATA_HOME/lea/state"; mkdir -p "$state"; printf '{}\n' >"$state/claude.json"
+# A GitHub login left in the agents' state by an earlier lea (#103): gh's config and git's store.
+# lea moves it to the proxy at its first start (the proxy has no token yet). LEA_IT_GITHUB_TOKEN (CI: the workflow's token) proves that
+# gh and git work with it; without one, a made-up token must reach GitHub (Bad credentials).
+forge_token=${LEA_IT_GITHUB_TOKEN:-ghp_leaIsolationNotAToken}
+forge_expect=bad
+if [ -n "${LEA_IT_GITHUB_TOKEN:-}" ]; then
+  forge_expect=auth
+  # gh run view --log: GitHub redirects job logs to Azure blob storage, outside lea's default list.
+  printf 'LEA_EGRESS_ALLOW=default,blob.core.windows.net\n' >>"$LEA_CONFIG"
+fi
+mkdir -p "$state/gh" "$state/git"
+printf 'github.com:\n    users:\n        lea-it:\n            oauth_token: %s\n    git_protocol: https\n    oauth_token: %s\n    user: lea-it\n' \
+  "$forge_token" "$forge_token" >"$state/gh/hosts.yml"
+printf 'https://lea-it:%s@github.com\n' "$forge_token" >"$state/git/credentials"
+chmod 0600 "$state/gh/hosts.yml" "$state/git/credentials"
+# The first characters of the token: enough to find a copy of it, inside lea, without its value.
+forge_needle=$(printf '%s' "$forge_token" | cut -c1-16)
 slug=$(printf '%s' "$projects" | sed 's/[^A-Za-z0-9]/-/g')
 id=$(printf '%s' "$projects" | sha256sum | cut -c1-10)
 sid=$(printf '%s' "$sibling" | sha256sum | cut -c1-10)
+# A third projects dir whose internal network exists without an isolated gateway (#105).
+plain="$work/plain"; mkdir -p "$plain"
+pid=$(printf '%s' "$plain" | sha256sum | cut -c1-10)
 holders=
 # The host's settings.json and plugins (#111): each lea container gets its own writable copy, and
 # the host's must be byte-identical after the agents changed theirs. Made here when the host has
@@ -86,8 +106,8 @@ cleanup() {
   docker rm -f lea-canary >/dev/null 2>&1 || true
   docker network rm lea-canary-net >/dev/null 2>&1 || true
   "$root/bin/lea" stop --all >/dev/null 2>&1 || true
-  docker rm -f "lea-test-$id" "lea-test-$sid" lea-test-proxy >/dev/null 2>&1 || true
-  docker network rm "lea-test-internal-$id" "lea-test-internal-$sid" lea-test-egress >/dev/null 2>&1 || true
+  docker rm -f "lea-test-$id" "lea-test-$sid" "lea-test-$pid" lea-test-proxy >/dev/null 2>&1 || true
+  docker network rm "lea-test-internal-$id" "lea-test-internal-$sid" "lea-test-internal-$pid" lea-test-egress >/dev/null 2>&1 || true
   docker volume rm "lea-test-podman-$id" "lea-test-podman-$sid" >/dev/null 2>&1 || true
   # The session created this per-run projects directory under the real ~/.claude.
   if [ -n "$slug" ]; then rm -r "${HOME:?}/.claude/projects/$slug" 2>/dev/null || true; fi
@@ -170,16 +190,92 @@ fi
 sibling_ip=$(wait_for "the address of lea-test-$sid" \
   docker container inspect -f "{{with index .NetworkSettings.Networks \"lea-test-internal-$sid\"}}{{.IPAddress}}{{end}}" "lea-test-$sid")
 wait_for "lea-test-$id running" sh -c "docker container inspect -f '{{.State.Running}}' lea-test-$id | grep -x true" >/dev/null
+# The runtime both agent containers run on (#106), and the proxy's: always the engine's default.
+default_runtime=$(docker info --format '{{.DefaultRuntime}}')
+for c in "lea-test-$id" "lea-test-$sid"; do
+  got=$(docker container inspect -f '{{.HostConfig.Runtime}}' "$c")
+  if [ "$got" = "${runtime:-$default_runtime}" ]; then echo "ok   $c runs on the ${runtime:-$default_runtime} runtime"
+  else echo "FAIL $c runs on the $got runtime, not ${runtime:-$default_runtime}" >&2; exit 1; fi
+done
+got=$(docker container inspect -f '{{.HostConfig.Runtime}}' lea-test-proxy)
+if [ "$got" = "$default_runtime" ]; then echo "ok   lea-test-proxy keeps the engine's default runtime ($got)"
+else echo "FAIL lea-test-proxy runs on the $got runtime, not the engine's default $default_runtime" >&2; exit 1; fi
+# On a sandboxed runtime, lea doctor confirms it applies lea's seccomp profile (--oci-seccomp for
+# runsc, disable_guest_seccomp = false for Kata): the AF_ALG refusal checked inside depends on it.
+if [ -n "$runtime" ]; then
+  doc=$(LEA_PROJECTS_DIR="$projects" timeout 120 "$root/bin/lea" doctor 2>&1 || true)
+  if printf '%s\n' "$doc" | grep -q "^ok    $runtime seccomp: "; then echo "ok   lea doctor: $runtime applies lea's seccomp profile"
+  else echo "FAIL lea doctor does not confirm that $runtime applies lea's seccomp profile:" >&2; printf '%s\n' "$doc" | grep -E 'runtime|seccomp' >&2; exit 1; fi
+fi
 # Positive control: the sibling's listener answers from inside the sibling.
 i=0
-until LEA_PROJECTS_DIR="$sibling" "$root/bin/lea" shell -- curl -s -o /dev/null --max-time 2 --noproxy '*' "http://$sibling_ip:8765/" >/dev/null 2>&1; do
+until LEA_PROJECTS_DIR="$sibling" timeout 30 "$root/bin/lea" shell -- curl -s -o /dev/null --max-time 2 --noproxy '*' "http://$sibling_ip:8765/" >/dev/null 2>&1; do
   i=$((i + 1))
-  if [ "$i" -ge 30 ]; then echo "isolation: the sibling's listener does not answer (positive control failed)" >&2; exit 1; fi
+  if [ "$i" -ge 20 ]; then
+    echo "isolation: the sibling's listener does not answer (positive control failed)" >&2
+    for l in "$projects.log" "$sibling.log"; do [ ! -f "$l" ] || { echo "--- output of lea ($l):" >&2; tail -40 "$l" >&2; }; done
+    echo "--- docker exec in lea-test-$sid, bypassing lea shell:" >&2
+    timeout 30 docker exec "lea-test-$sid" sh -c "ps -eo pid,args | head -30; curl -s -o /dev/null -w 'HTTP %{http_code}\n' --max-time 5 --noproxy '*' http://$sibling_ip:8765/" >&2 || echo "docker exec: $?" >&2
+    exit 1
+  fi
   sleep 1
 done
+# #105: lea doctor reports the gateway mode of each internal network; lea refuses to start a
+# container on an internal network the host keeps an address on, and creates no container.
+"$root/bin/lea" doctor >"$work/doctor.out" 2>&1 || true
+grep -qF "ok    lea-test-internal-$id gateway_mode_ipv4=isolated" "$work/doctor.out" ||
+  { cat "$work/doctor.out" >&2; echo "isolation: lea doctor does not report lea-test-internal-$id as gateway_mode_ipv4=isolated" >&2; exit 1; }
+docker network create --label lea.prefix=lea-test --label "lea.id=$pid" --internal "lea-test-internal-$pid" >/dev/null
+if LEA_PROJECTS_DIR="$plain" "$root/bin/lea" shell -- true </dev/null >"$work/plain.out" 2>&1; then
+  cat "$work/plain.out" >&2; echo "isolation: lea started on an internal network without gateway_mode_ipv4=isolated" >&2; exit 1
+fi
+grep -qF "lea-test-internal-$pid exists without gateway_mode_ipv4=isolated" "$work/plain.out" ||
+  { cat "$work/plain.out" >&2; echo "isolation: lea's refusal does not name the non-isolated network" >&2; exit 1; }
+if docker container inspect "lea-test-$pid" >/dev/null 2>&1; then
+  echo "isolation: lea created lea-test-$pid on a non-isolated network" >&2; exit 1
+fi
+"$root/bin/lea" doctor >"$work/doctor.out" 2>&1 || true
+grep -qF "FAIL  lea-test-internal-$pid gateway_mode_ipv4=unset" "$work/doctor.out" ||
+  { cat "$work/doctor.out" >&2; echo "isolation: lea doctor does not fail on lea-test-internal-$pid" >&2; exit 1; }
+docker network rm "lea-test-internal-$pid" >/dev/null
+echo "isolation: ok    a non-isolated internal network is refused, and lea doctor fails on it"
+# #105: lea checks the isolation itself, not the option string: an internal network that has
+# gateway_mode_ipv4=isolated but whose bridge holds a host address is refused too. Adding the
+# address needs root (sudo -n): without it the check is noted (a failure in CI).
+docker network create --label lea.prefix=lea-test --label "lea.id=$pid" --internal \
+  -o com.docker.network.bridge.gateway_mode_ipv4=isolated "lea-test-internal-$pid" >/dev/null
+pbr="br-$(docker network inspect -f '{{.Id}}' "lea-test-internal-$pid" | cut -c1-12)"
+if ip -4 addr show dev "$pbr" >/dev/null 2>&1 && sudo -n ip addr add 192.0.2.1/32 dev "$pbr" 2>/dev/null; then
+  if LEA_PROJECTS_DIR="$plain" "$root/bin/lea" shell -- true </dev/null >"$work/plain.out" 2>&1; then
+    cat "$work/plain.out" >&2; echo "isolation: lea started on an isolated network whose bridge holds a host address" >&2; exit 1
+  fi
+  grep -qF "lea-test-internal-$pid has gateway_mode_ipv4=isolated but the host holds 192.0.2.1/32 on its bridge $pbr" "$work/plain.out" ||
+    { cat "$work/plain.out" >&2; echo "isolation: lea's refusal does not name the host address on the bridge" >&2; exit 1; }
+  if docker container inspect "lea-test-$pid" >/dev/null 2>&1; then
+    echo "isolation: lea created lea-test-$pid on a bridge with a host address" >&2; exit 1
+  fi
+  echo "isolation: ok    an isolated network whose bridge holds a host address is refused"
+else
+  echo "note: the bridge $pbr is not visible or sudo -n is unavailable: the host-address check did not run"
+fi
+docker network rm "lea-test-internal-$pid" >/dev/null
 rc=0
-LEA_PROJECTS_DIR="$projects" "$root/bin/lea" shell -- env CANARY_IP="$canary_ip" GW_IP="$gw_ip" HOST_IP="$host_ip" \
-  SIBLING_IP="$sibling_ip" HOST_FACADE="$facade" HOST_CRED_SHA="$cred_sha" HOST_HIST_SHA="$hist_sha" \
+# The GitHub token went to the proxy (0600, the user's), and out of the agents' state.
+ft="$XDG_DATA_HOME/lea/proxy/forge/github.com"
+if [ "$(cat "$ft" 2>/dev/null)" = "$forge_token" ] && [ "$(stat -c %a "$ft")" = 600 ]; then echo "ok   the GitHub token moved to the proxy"
+else echo "FAIL the GitHub token is not in the proxy's key directory"; rc=1; fi
+if grep -q oauth_token "$state/gh/hosts.yml" || grep -q github.com "$state/git/credentials"; then
+  echo "FAIL the GitHub token is still in the agents' state"; rc=1
+else echo "ok   the GitHub token left the agents' state"; fi
+# Adopted once (#103): from now on, a token an agent plants in the state is discarded.
+if [ -f "$XDG_DATA_HOME/lea/proxy/forge-migrated" ]; then echo "ok   the state's tokens are adopted only once"
+else echo "FAIL no forge-migrated marker: a token planted in the state could replace the proxy's"; rc=1; fi
+# The proxy lea started is confined (#102): capabilities, no-new-privileges, read-only root,
+# limits, no root process but PID 1.
+"$root/tests/proxy/check-confined.sh" lea-test-proxy || rc=1
+echo "isolation: the checks inside lea"
+LEA_PROJECTS_DIR="$projects" timeout 900 "$root/bin/lea" shell -- env FORGE_NEEDLE="$forge_needle" FORGE_EXPECT="$forge_expect" CANARY_IP="$canary_ip" GW_IP="$gw_ip" HOST_IP="$host_ip" \
+  SIBLING_IP="$sibling_ip" HOST_KERNEL="$(uname -r)" SECOND_KERNEL="${runtime:+1}" HOST_FACADE="$facade" HOST_CRED_SHA="$cred_sha" HOST_HIST_SHA="$hist_sha" \
   HOST_SETTINGS_SHA="$settings_sha" LEA_IT_MARKET="$mk" sh "$projects/inside-isolation.sh" || rc=$?
 # What the agents did to their copies never reached the host (#111).
 if [ "$(host_claude_sum)" = "$host_sum" ]; then echo "ok   host ~/.claude settings.json and plugins unchanged"

@@ -33,7 +33,7 @@ func lockHostWorld(t *testing.T) string {
 }
 
 // lockHTTPWorld adds what lockhttp's install.sh leaves to lockHostWorld (its launcher, root-owned
-// in /usr/local/bin, pinning testDigest) and what lox up leaves: the lockhttp lock web of the
+// in /usr/local/bin, pinning testDigest) and what lox run leaves: the lockhttp lock web of the
 // projects directory (hubUp). The gate runs hub-attached only.
 func lockHTTPWorld(t *testing.T) (*world, string) {
 	t.Helper()
@@ -42,7 +42,7 @@ func lockHTTPWorld(t *testing.T) (*world, string) {
 	return w, root
 }
 
-// lockHTTPWorldNoUp is lockHTTPWorld without lox up in the projects directory.
+// lockHTTPWorldNoUp is lockHTTPWorld without lox run in the projects directory.
 func lockHTTPWorldNoUp(t *testing.T) (*world, string) {
 	t.Helper()
 	root := lockHostWorld(t)
@@ -81,7 +81,7 @@ func TestLockHTTPOffByDefault(t *testing.T) {
 }
 
 // The proxy keeps squid and keyproxy; the gate runs beside it, from the launcher's pinned image,
-// in the proxy's network namespace, as gate, with lox up's console socket volume and nothing
+// in the proxy's network namespace, as gate, with lox run's console socket volume and nothing
 // else of the console's.
 func TestLockHTTPProxyGetsTheGate(t *testing.T) {
 	w, _ := lockHTTPWorld(t)
@@ -193,7 +193,7 @@ func TestLockHTTPGateFollowsTheProxy(t *testing.T) {
 		w, _ := lockHTTPWorld(t)
 		// The proxy runs with the gate's label: kept.
 		w.env["FAKE_DOCKER_OUT_INSPECT__F"] = "true"
-		w.env["FAKE_DOCKER_OUT_INSPECT___FORMAT"] = "@" + w.launcher().proxyRules() + "^1"
+		w.env["FAKE_DOCKER_OUT_INSPECT___FORMAT"] = "@" + w.launcher().proxyRules(proxyConfine) + "^1"
 		g, err := w.launcher().lockUpGate(w.proj)
 		if err != nil {
 			t.Fatal(err)
@@ -222,7 +222,7 @@ func TestLockHTTPGateFollowsTheProxy(t *testing.T) {
 func TestLockHTTPNewProxyNewGate(t *testing.T) {
 	w, _ := lockHTTPWorld(t)
 	w.env["FAKE_DOCKER_OUT_INSPECT__F"] = "true"
-	w.env["FAKE_DOCKER_OUT_INSPECT___FORMAT"] = "@" + w.launcher().proxyRules()
+	w.env["FAKE_DOCKER_OUT_INSPECT___FORMAT"] = "@" + w.launcher().proxyRules(proxyConfine)
 	w.env["FAKE_DOCKER_OUT_INSPECT___TYPE"] = "true|2026-10-28T10:00:00Z|\ntrue|2026-10-28T10:00:01Z|ghcr.io/davidgodefroid/lockhttp@" + testDigest
 	if err := w.launcher().ensureProxy(w.proj); err != nil {
 		t.Fatal(err)
@@ -236,7 +236,7 @@ func TestLockHTTPNewProxyNewGate(t *testing.T) {
 func TestLockHTTPOffRemovesTheGate(t *testing.T) {
 	w := newWorld(t, repoRoot(t))
 	w.env["FAKE_DOCKER_OUT_INSPECT__F"] = "true"
-	w.env["FAKE_DOCKER_OUT_INSPECT___FORMAT"] = "@" + w.launcher().proxyRules() + "^1"
+	w.env["FAKE_DOCKER_OUT_INSPECT___FORMAT"] = "@" + w.launcher().proxyRules(proxyConfine) + "^1"
 	if err := w.launcher().ensureProxy(w.proj); err != nil {
 		t.Fatal(err)
 	}
@@ -431,7 +431,7 @@ func TestLockHTTPMITMFollowsTheCA(t *testing.T) {
 	image := "ghcr.io/davidgodefroid/lockhttp@" + testDigest
 	stamp := lockhttp.Hash("cert\n")[:12]
 	w.env["FAKE_DOCKER_OUT_INSPECT__F"] = "true"
-	w.env["FAKE_DOCKER_OUT_INSPECT___FORMAT"] = "@" + w.launcher().proxyRules() + "^mitm-" + stamp
+	w.env["FAKE_DOCKER_OUT_INSPECT___FORMAT"] = "@" + w.launcher().proxyRules(proxyConfine) + "^mitm-" + stamp
 	for name, c := range map[string]struct {
 		inspect string
 		replace bool
@@ -472,7 +472,7 @@ func TestLockHTTPMITMFollowsTheCA(t *testing.T) {
 func TestLockHTTPMITMOffRemovesTheSigner(t *testing.T) {
 	w, _ := lockHTTPWorld(t)
 	w.env["FAKE_DOCKER_OUT_INSPECT__F"] = "true"
-	w.env["FAKE_DOCKER_OUT_INSPECT___FORMAT"] = "@" + w.launcher().proxyRules() + "^mitm-0123456789ab"
+	w.env["FAKE_DOCKER_OUT_INSPECT___FORMAT"] = "@" + w.launcher().proxyRules(proxyConfine) + "^mitm-0123456789ab"
 	if err := w.launcher().ensureProxy(w.proj); err != nil {
 		t.Fatal(err)
 	}

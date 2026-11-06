@@ -13,6 +13,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/DavidGodefroid/lea/internal/settings"
 	"github.com/DavidGodefroid/lea/internal/tmux"
 )
 
@@ -25,6 +26,10 @@ const deckHelperEnv = "LEA_DECK_E2E_HELPER"
 
 // deckLayoutEnv is the file where the helper's deck keeps its folders.
 const deckLayoutEnv = "LEA_DECK_E2E_LAYOUT"
+
+// deckSettingsEnv is the directory of the helper's settings (mode "width"): the lea installed
+// at its root/, the user's configuration under its config/.
+const deckSettingsEnv = "LEA_DECK_E2E_SETTINGS"
 
 // e2eLabel is c's label, longer than a row shows.
 const e2eLabel = "refactor-billing-export"
@@ -39,8 +44,14 @@ func TestMain(m *testing.M) {
 			agents = []Agent{ag("green", "idle", now), withTask(ag("wait", "idle", now), true, false),
 				withTask(ag("red", "idle", now), true, true)}
 		}
+		var st SettingsStore
+		if mode == "width" { // the real settings store, in the test's directory
+			dir := os.Getenv(deckSettingsEnv)
+			env := map[string]string{"HOME": dir, "XDG_CONFIG_HOME": dir + "/config"}
+			st = settings.Store{Root: dir + "/root", Cwd: dir, Getenv: func(k string) string { return env[k] }}
+		}
 		if err := Run(e2eAPI{&fakeAPI{snap: Snapshot{Version: 1, Shown: agents[0].Key,
-			Agents: agents}}}, "lea-a", false, nil, nil, "e2e", FileStore{Path: os.Getenv(deckLayoutEnv)}); err != nil {
+			Agents: agents}}}, "lea-a", false, nil, st, "e2e", FileStore{Path: os.Getenv(deckLayoutEnv)}); err != nil {
 			fmt.Fprintln(os.Stderr, err)
 			os.Exit(1)
 		}
@@ -77,7 +88,11 @@ type realDeck struct {
 func startRealDeck(t *testing.T) *realDeck { return startRealDeckMode(t, "1") }
 
 // startRealDeckMode draws the deck the helper's mode names (TestMain).
-func startRealDeckMode(t *testing.T, mode string) *realDeck {
+func startRealDeckMode(t *testing.T, mode string) *realDeck { return startRealDeckEnv(t, mode) }
+
+// startRealDeckEnv draws the deck of the helper's mode with env (NAME=value) added to its
+// environment.
+func startRealDeckEnv(t *testing.T, mode string, env ...string) *realDeck {
 	t.Helper()
 	for _, bin := range []string{"tmux", "script"} {
 		if _, err := exec.LookPath(bin); err != nil {
@@ -92,7 +107,7 @@ func startRealDeckMode(t *testing.T, mode string) *realDeck {
 	t.Setenv("TMUX_TMPDIR", dir)
 	t.Setenv("TERM", "xterm-256color")
 	conf := filepath.Join(dir, "tmux.conf")
-	if err := tmux.WriteConf(conf); err != nil {
+	if err := tmux.WriteConf(conf, ""); err != nil {
 		t.Fatal(err)
 	}
 	tm := func(args ...string) string {
@@ -105,7 +120,7 @@ func startRealDeckMode(t *testing.T, mode string) *realDeck {
 	}
 	t.Cleanup(func() { exec.Command("tmux", "-L", "lea-deck-e2e", "kill-server").Run() })
 	layout := filepath.Join(dir, "host", "deck", "lea-a.json")
-	cmd := []string{"env", deckHelperEnv + "=" + mode, deckLayoutEnv + "=" + layout, self}
+	cmd := append(append([]string{"env", deckHelperEnv + "=" + mode, deckLayoutEnv + "=" + layout}, env...), self)
 	tm(append([]string{"new-session", "-d", "-s", "e2e", "-x", "80", "-y", "24"}, cmd...)...)
 	d := &realDeck{t: t, tm: tm, pane: tm("display-message", "-p", "-t", "e2e:0.0", "#{pane_id}"), cmd: cmd, layout: layout}
 	tm("set-option", "-p", "-t", d.pane, "@lea_role", "deck")
@@ -270,6 +285,100 @@ func TestRealStateColours(t *testing.T) {
 	time.Sleep(300 * time.Millisecond)
 	if next := mark(d.tm("capture-pane", "-p", "-e", "-t", d.pane), "wait"); next == wait {
 		t.Fatalf("the waiting spinner does not turn: %q", next)
+	}
+}
+
+// < and > widen and shrink the deck's own pane in its tmux window, two columns at a time.
+func TestRealAngleBracketsResizeTheDeck(t *testing.T) {
+	d := startRealDeck(t)
+	w := func() int {
+		n, _ := strconv.Atoi(d.tm("display-message", "-p", "-t", d.pane, "#{pane_width}"))
+		return n
+	}
+	if w() != Width {
+		t.Fatalf("width %d, want %d", w(), Width)
+	}
+	d.tm("select-pane", "-t", d.pane) // the deck has the keyboard
+	d.typed(">")
+	d.waitFor("the deck two columns wider", func(string) bool { return w() == Width+2 })
+	// The pane is resized; let the deck take its new width in before the next key.
+	d.waitFor("the deck drawn at the new width", func(s string) bool { return strings.Contains(s, "deck width 36") })
+	time.Sleep(300 * time.Millisecond)
+	d.typed("<")
+	d.waitFor("the deck back to its width", func(string) bool { return w() == Width })
+}
+
+// A border drag is kept (#275): the drag resizes the deck's pane while the server's option still
+// holds the old width, releasing it stores the clamped width there (asynchronously), and the
+// deck saves it as LEA_DECK_WIDTH in the user's configuration once the width holds still. A deck
+// started again in a session laid out at the default width restores it. The mouse events are
+// typed into the client's terminal as a real one sends them.
+func TestRealADraggedWidthIsSavedAndRestored(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(dir, "root", "config"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "root", "config", "lea.conf"), nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	user := filepath.Join(dir, "config", "lea", "lea.conf")
+	d := startRealDeckEnv(t, "width", deckSettingsEnv+"="+dir)
+	d.tm("set-option", "-w", "-t", "e2e:0", "@lea_deck", "1") // the lea deck window
+	width := func() string { return d.tm("display-message", "-p", "-t", d.pane, "#{pane_width}") }
+	stored := func() string { return d.tm("show-options", "-s", "-v", tmux.DeckWidthOption) }
+	saved := func() string {
+		b, _ := os.ReadFile(user)
+		for _, l := range strings.Split(string(b), "\n") {
+			if v, ok := strings.CutPrefix(l, deckWidthKey+"="); ok {
+				return strings.Trim(v, `"'`)
+			}
+		}
+		return ""
+	}
+	d.tm("resize-pane", "-t", d.pane, "-x", "34") // the client's terminal may have spread the window
+	waitUntil(t, "the deck at 34 columns", func() bool { return width() == "34" })
+	time.Sleep(time.Second) // past a settle of that resize
+	if width() != "34" || stored() != "34" || saved() != "" {
+		t.Fatalf("at start: width %s, option %s, saved %q", width(), stored(), saved())
+	}
+	// A left-button press (code 0) on the border, at column 35, a drag (code 32) in steps, the
+	// release.
+	y := d.top + 10
+	d.typed(fmt.Sprintf("\x1b[<0;35;%dM", y))
+	for _, x := range []int{36, 37, 38, 39} {
+		time.Sleep(150 * time.Millisecond)
+		d.typed(fmt.Sprintf("\x1b[<32;%d;%dM", x, y))
+	}
+	time.Sleep(150 * time.Millisecond)
+	d.typed(fmt.Sprintf("\x1b[<0;39;%dm", y))
+	d.waitFor("the dragged width stored", func(string) bool { return width() == "38" && stored() == "38" })
+	waitUntil(t, "LEA_DECK_WIDTH=38 saved", func() bool { return saved() == "38" })
+	// A new session lays the deck out at the default width: the option and the pane back to 34,
+	// the deck started again.
+	d.tm("set-option", "-s", tmux.DeckWidthOption, "34")
+	d.tm("resize-pane", "-t", d.pane, "-x", "34")
+	d.tm(append([]string{"respawn-pane", "-k", "-t", d.pane}, d.cmd...)...)
+	waitUntil(t, "the dragged width restored", func() bool { return width() == "38" && stored() == "38" },
+		func() string { return "width " + width() + ", option " + stored() + ", saved " + saved() })
+	time.Sleep(1500 * time.Millisecond) // past a settle: the restored width saves nothing else
+	if saved() != "38" {
+		t.Fatalf("after the restart LEA_DECK_WIDTH is %q, want 38", saved())
+	}
+}
+
+// waitUntil waits up to 10 seconds for ok; state, if any, says what there was instead.
+func waitUntil(t *testing.T, what string, ok func() bool, state ...func() string) {
+	t.Helper()
+	deadline := time.Now().Add(10 * time.Second)
+	for !ok() {
+		if time.Now().After(deadline) {
+			var was []string
+			for _, f := range state {
+				was = append(was, f())
+			}
+			t.Fatalf("timed out waiting for %s: %s", what, strings.Join(was, "; "))
+		}
+		time.Sleep(50 * time.Millisecond)
 	}
 }
 

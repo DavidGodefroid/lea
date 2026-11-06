@@ -4,13 +4,13 @@
 # never sees it, and that lea-ctl sees lea's paths at their host paths. Then a full lea run there:
 # the daemon, lea's tmux and the deck run in lea-ctl, `docker exec -it lea-ctl tmux attach`
 # reaches them, an agent spawned by that daemon runs in the agent container, its call for the
-# user rings the bell of the attached terminal, and the deck's Lock console pane (lea lock open
-# locksql) attaches, from lea-ctl, to the console of a lox up lock: a stand-in of lox up's state
-# (up.json, the lock's socket volume and console container, labelled as lox up labels them; lea's
-# side of it), never a console of lea's own. Needs the lea, lea-proxy and lea-ctl images (make
-# build), build/lea and script(1). Linux hosts. Creates and removes only lea-ctltest-* resources
-# and the stand-in's, named after the compose project lox up would give its temporary projects
-# directory (lockfamily-<hash>).
+# user rings the bell of the attached terminal, and the agent container mounts the socket volume
+# of a lox run lock read-only: a stand-in of lox run's state (up.json, the lock's socket volume and
+# console container, labelled as lox run labels them; lea's side of it). lea shows no lock console
+# (#300): lea lock is refused. Needs the lea, lea-proxy and lea-ctl images (make build), build/lea
+# and script(1). Linux hosts. Creates and removes only lea-ctltest-* resources and the stand-in's,
+# named after the compose project lox run would give its temporary projects directory
+# (lockfamily-<hash>).
 set -eu
 root=$(cd "$(dirname "$0")/../.." && pwd -P)
 fail() { echo "ctl e2e: $*" >&2; exit 1; }
@@ -19,8 +19,8 @@ work=$(mktemp -d) || exit 1
 work=$(cd "$work" && pwd -P) || exit 1
 projects="$work/projects"; mkdir -p "$projects"
 export XDG_DATA_HOME="$work/data"
-# lox up's state for the projects directory, as lox up writes it (lockhub's docs/lox-up.md): its
-# compose project (from the directory's path), a locksql lock crm, its socket volume with lox up's
+# lox run's state for the projects directory, as lox run writes it (lockhub's docs/lox-run.md): its
+# compose project (from the directory's path), a locksql lock crm, its socket volume with lox run's
 # labels and its console container (compose's project and service labels, a terminal), made
 # before any lea command so that lea's agent containers mount that socket volume.
 lfp=lockfamily-$(printf '%s' "$projects" | sha256sum | cut -c1-8)
@@ -33,7 +33,7 @@ docker volume create --label "com.docker.compose.project=$lfp" --label com.docke
   --label dev.lockfamily.role=socket --label dev.lockfamily.instance=crm --label dev.lockfamily.type=locksql \
   --label "dev.lockfamily.workspace=$projects" "$lockvol" >/dev/null || fail "could not create $lockvol"
 docker pull -q docker.io/library/alpine:3.22 >/dev/null || fail "could not pull alpine"
-# lox up runs compose from its state directory, the file on stdin: compose's labels say so.
+# lox run runs compose from its state directory, the file on stdin: compose's labels say so.
 docker run -d -it --name "$lockstub" --label "com.docker.compose.project=$lfp" --label com.docker.compose.service=lock-crm \
   --label "com.docker.compose.project.working_dir=${XDG_STATE_HOME:-$HOME/.local/state}/lockfamily/$lfp" \
   --label com.docker.compose.project.config_files=- \
@@ -190,30 +190,18 @@ for i in $(seq 20); do
   sleep 1
 done
 
-# The deck's Lock console pane, opened by lea in lea-ctl: it attaches to lox up's console (the
-# stand-in), starts no console of its own, and closing it ends the attach only.
-stub=$(docker inspect -f '{{.Id}}' "$lockstub") || fail "no stand-in console"
+# The agent container reaches lox run's locksql socket volume, read-only. lea shows no lock console
+# (#300): lea lock is refused, no pane of lea's attaches to a console, and lea starts none.
 case $(docker inspect -f '{{range .Mounts}}{{.Name}}:{{.Destination}}:{{.RW}} {{end}}' "$agent") in
   *"$lockvol:/run/locksql:false "*) ;;
-  *) fail "$agent lacks lox up's locksql socket volume, read-only: $(docker inspect -f '{{range .Mounts}}{{.Name}}:{{.Destination}}:{{.RW}} {{end}}' "$agent")" ;;
+  *) fail "$agent lacks lox run's locksql socket volume, read-only: $(docker inspect -f '{{range .Mounts}}{{.Name}}:{{.Destination}}:{{.RW}} {{end}}' "$agent")" ;;
 esac
-out=$("$root/bin/lea" lock open locksql </dev/null 2>&1) || fail "lea lock open failed: $out"
-panes=$(docker exec -u "$u" "$ctl" tmux -L lea list-panes -a -F '#{pane_start_command}')
-case $panes in *"attach --sig-proxy=false --detach-keys ctrl-p,ctrl-q $stub"*) ;; *) fail "no pane attached to lox up's console in $ctl: $panes" ;; esac
-case $panes in *"docker run"*) fail "the deck started a console of its own: $panes" ;; esac
+if out=$("$root/bin/lea" lock open locksql </dev/null 2>&1); then fail "lea lock open said $out: it was removed"; fi
+case $out in *"lea lock was removed"*"run \`lox run\`"*) ;; *) fail "lea lock open: $out" ;; esac
+panes=$(docker exec -u "$u" "$ctl" tmux -L lea list-panes -a -F '#{pane_start_command}|#{@lea_role}')
+case $panes in *"--detach-keys"*|*"|lock"*) fail "a lock console pane in $ctl: $panes" ;; esac
 [ -z "$(docker ps -aq --filter label=lea.lock-for)" ] || fail "a console container of lea's own exists: $(docker ps -a --filter label=lea.lock-for)"
-"$root/bin/lea" lock close locksql </dev/null >/dev/null 2>&1 || fail "lea lock close failed"
-for i in $(seq 20); do
-  docker exec -u "$u" "$ctl" tmux -L lea list-panes -a -F '#{pane_start_command}' | grep -q -- "--detach-keys ctrl-p,ctrl-q $stub" || break
-  [ "$i" -lt 20 ] || fail "the console's pane stays after lea lock close"
-  sleep 1
-done
-[ "$(docker inspect -f '{{.State.Running}}' "$lockstub")" = true ] || fail "lea lock close stopped lox up's console"
-# No console of lox up runs: lea says so, and opens no pane.
-docker stop -t 1 "$lockstub" >/dev/null
-if out=$("$root/bin/lea" lock open locksql </dev/null 2>&1); then fail "lea lock open said $out with no console running"; fi
-case $out in *"run \`lox up\`"*) ;; *) fail "lea lock open without a console: $out" ;; esac
-docker exec -u "$u" "$ctl" tmux -L lea list-panes -a -F '#{@lea_role}' | grep -qx lock && fail "a pane opened without a console"
+[ "$(docker inspect -f '{{.State.Running}}' "$lockstub")" = true ] || fail "lea stopped lox run's console"
 
 # Every container but lea-ctl, now with the agent running: no Docker socket mounted, none seen.
 for c in $(docker ps -q --filter label=lea.prefix=lea-ctltest); do
