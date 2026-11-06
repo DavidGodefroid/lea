@@ -979,7 +979,7 @@ dockerd), and `LEA_TEST_RUNTIME=runsc make test-isolation` runs the isolation ch
 | | gVisor (`runsc`) | Kata (`kata`) |
 |---|---|---|
 | Minimum release | release-20260803.0 (the first after the Unix-socket file-descriptor fix of 30 July 2026 that OpenAI's sandbox report led to); lea's CI runs release-20261102.0 | 3.27.0 (CVE-2026-24834, guest privilege escalation through virtio-pmem); 4.1.0 or later recommended (Kata's August 2026 hardening); lea's CI runs 4.3.1 (runtime-rs, QEMU) |
-| dockerd registration | `"runsc": {"path": "/opt/gvisor/runsc", "runtimeArgs": ["--host-uds=open", "--host-fifo=open"]}` | `"kata": {"runtimeType": "io.containerd.kata.v2"}`, `disable_guest_seccomp = false` in Kata's `configuration.toml` |
+| dockerd registration | `"runsc": {"path": "/opt/gvisor/runsc", "runtimeArgs": ["--host-uds=open", "--host-fifo=open"]}` | `"kata": {"runtimeType": "io.containerd.kata.v2"}`, and in Kata's `configuration.toml`, `disable_guest_seccomp = false` and `"--xattr"` in `virtio_fs_extra_args` (the nested Podman's `newuidmap` needs its file capability) |
 | Nested Podman (`docker`, `docker compose` in lea) | works, but its containers share lea's network namespace (gVisor refuses the bind mount Podman keeps a network namespace with): their ports are lea's, and a port below 1024 cannot be bound | works with the guest kernel (`/dev/fuse`, `/dev/net/tun` and the overlay storage in the VM) |
 | lea's bus, the Lock consoles' sockets | work (`--host-uds=open` lets the sandbox connect to host Unix sockets) | see `make test-isolation`'s `info` line: a host Unix socket does not cross virtio-fs |
 | Clipboard (copy from an agent to the host) | works (`--host-fifo=open`) | off: a host FIFO cannot be bound into the VM (lea leaves it out and says so) |

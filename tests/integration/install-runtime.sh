@@ -61,6 +61,11 @@ case ${1:-} in
     # Kata applies the container's seccomp profile in the guest only when asked (lea's
     # image/seccomp.json, the AF_ALG refusal of make test-isolation).
     sudo sed -i 's/^#\{0,1\}[[:space:]]*disable_guest_seccomp[[:space:]]*=.*/disable_guest_seccomp = false/' "$cfg/configuration-qemu-runtime-rs.toml"
+    # The nested rootless Podman maps its user namespace with newuidmap, whose file capability is an
+    # extended attribute of lea's image: virtiofsd passes extended attributes only with --xattr
+    # (without it newuidmap gets EPERM writing uid_map, and lea never becomes ready).
+    sudo sed -i 's/^virtio_fs_extra_args = \[/virtio_fs_extra_args = ["--xattr", /' "$cfg/configuration-qemu-runtime-rs.toml"
+    grep -E '^(virtio_fs_extra_args|disable_guest_seccomp|shared_fs) ' "$cfg/configuration-qemu-runtime-rs.toml"
     sudo ln -sf /opt/kata/runtime-rs/bin/containerd-shim-kata-v2 /usr/local/bin/containerd-shim-kata-v2
     # The shim (root) opens /dev/kvm; the runner's is root-only by default.
     if [ -e /dev/kvm ]; then sudo chmod 0666 /dev/kvm; else echo "install-runtime: no /dev/kvm: Kata needs hardware virtualisation" >&2; exit 1; fi
