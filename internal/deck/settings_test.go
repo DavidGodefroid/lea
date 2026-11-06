@@ -49,7 +49,7 @@ func someSettings() *fakeSettings {
 			Locked: "set by the environment, which wins over the files"},
 		{Key: "LEA_SOUND", Group: "Sounds", Name: "Sounds", Help: "a sound when an agent waits for you",
 			Kind: settings.Toggle, Value: "1", Source: settings.SourceFile, Apply: settings.ApplyNow, Live: true},
-		{Key: "LEA_SOUND_DONE", Group: "Sounds", Name: "Done sound", Help: "sound file when a turn ends",
+		{Key: "LEA_SOUND_ATTENTION", Group: "Sounds", Name: "Attention sound", Help: "sound file when lea needs you",
 			Kind: settings.Text, Value: "", Source: settings.SourceDefault, Apply: settings.ApplyAfterStop},
 	}}
 }
@@ -79,7 +79,7 @@ func TestCommaOpensTheSettings(t *testing.T) {
 	}
 	ls := viewLines(m)
 	view := strings.Join(ls, "\n")
-	for _, want := range []string{"Settings", "Agents", "Approvals", "deck", "Sounds", "on", "Done sound",
+	for _, want := range []string{"Settings", "Agents", "Approvals", "deck", "Sounds", "on", "Attention sound",
 		"who answers permission", "from: default", "applies after lea stop --all", "5 (env)"} {
 		if !strings.Contains(view, want) {
 			t.Errorf("view lacks %q:\n%s", want, view)
@@ -203,7 +203,7 @@ func TestATextSettingIsEditedInPlace(t *testing.T) {
 	m, _ = step(t, m, tea.KeyMsg{Type: tea.KeyCtrlU})
 	m = typeIn(t, m, "/ok.oga")
 	m, _ = step(t, m, key("enter"))
-	if m.setEditing || len(st.sets) != 1 || st.sets[0] != "LEA_SOUND_DONE=/ok.oga" {
+	if m.setEditing || len(st.sets) != 1 || st.sets[0] != "LEA_SOUND_ATTENTION=/ok.oga" {
 		t.Fatalf("editing %v sets %q", m.setEditing, st.sets)
 	}
 	m, _ = step(t, m, key("enter"))

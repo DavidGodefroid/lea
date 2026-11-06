@@ -82,19 +82,11 @@ type Daemon struct {
 	namer       Namer
 	named       map[string]bool
 	afterName   func()
-	// sounder plays the attention and done sounds (nil: off); rang is when each kind last rang;
+	// sounder plays the attention sound (nil: off); rang is when each kind last rang;
 	// soundOff is the user's switch (lea sound, the deck's S), which keeps the sounder aside.
 	sounder  Sounder
 	soundOff bool
 	rang     map[string]time.Time
-	// doneDelay holds back the done sound: another Stop hook can still block the stop. doneAfter
-	// arms its timers (a test seam). doneTimers: the pending done sound of each agent, cancelled
-	// by its next hook. stopHooks: the agent-type Stop hooks of each stopped agent that have not
-	// answered yet, by agent_id.
-	doneDelay  time.Duration
-	doneAfter  func(time.Duration, func()) doneTimer
-	doneTimers map[string]doneTimer
-	stopHooks  map[string]map[string]bool
 	// subs: the subagents each agent runs (trackSubagents); subTTL forgets them (a test seam).
 	subs   map[string]*subagents
 	subTTL time.Duration
@@ -187,7 +179,6 @@ func New(st *store.Store, runDir string, now func() int64) *Daemon {
 	return &Daemon{subs: map[string]*subagents{}, subTTL: subagentTTL, st: st, lim: bus.Default, now: now, runDir: runDir,
 		attached: map[string]string{}, notify: map[string]chan struct{}{},
 		verdicts: map[int64]chan string{}, asks: map[string]pendingAsk{}, blocks: map[string]int{}, stopped: map[string]bool{}, rewakes: map[string]int{}, keyMu: map[string]*sync.Mutex{}, statusPaths: map[string]string{}, named: map[string]bool{}, rang: map[string]time.Time{},
-		doneDelay: doneDelay, doneAfter: afterFunc, doneTimers: map[string]doneTimer{}, stopHooks: map[string]map[string]bool{},
 		resumeDelay: DefaultResumeDelay, windows: map[string][]limitWindow{}, limitJobs: map[string]string{},
 		stackIdle: DefaultStackIdle, parkTimers: map[string]*time.Timer{}, parked: map[string]string{},
 		keepalive: DefaultKeepalive, keepTimers: map[string]*time.Timer{}, resumeFails: map[string]resumeFail{}, resuming: map[string]bool{},
@@ -373,7 +364,12 @@ func (d *Daemon) dispatch(ctx context.Context, o Origin, req wire.Request) (any,
 		if p.Kind == "question" {
 			return nil, errors.New("kind question is the ask tool's: use ask to wait for an answer")
 		}
-		return d.send(me, p.To, p.Body, p.Kind, p.ReplyTo)
+		v, err := d.send(me, p.To, p.Body, p.Kind, p.ReplyTo)
+		if err == nil && o.Container != "" && p.To == "user" && p.Kind == "request" {
+			// A request to the user waits for them: lea needs the developer (#294).
+			d.sound(ctx, o.Container, SoundAttention)
+		}
+		return v, err
 	case "msg_reply":
 		var p struct {
 			ID           int64
@@ -382,7 +378,12 @@ func (d *Daemon) dispatch(ctx context.Context, o Origin, req wire.Request) (any,
 		if err := json.Unmarshal(req.Params, &p); err != nil {
 			return nil, err
 		}
-		return d.reply(me, p.ID, p.Status, p.Body)
+		v, to, err := d.reply(me, p.ID, p.Status, p.Body)
+		if err == nil && o.Container != "" && to == "user" && p.Status == "needs_user" {
+			// An answer to the user that needs them waits for them (#294).
+			d.sound(ctx, o.Container, SoundAttention)
+		}
+		return v, err
 	case "msg_inbox":
 		return d.inbox(me)
 	case "heavy_acquire":
@@ -418,7 +419,7 @@ func (d *Daemon) dispatch(ctx context.Context, o Origin, req wire.Request) (any,
 	case "lease_release":
 		return d.leaseRelease(o, me, req.Params)
 	case "task_update":
-		return d.taskUpdate(o, me, req.Params)
+		return d.taskUpdate(ctx, o, me, req.Params)
 	case "board_list":
 		return d.boardList(req.Params)
 	case "board_read":
@@ -579,27 +580,28 @@ func (d *Daemon) send(from, to, body, kind string, replyTo int64) (sentView, err
 	return sentView{m.ID, m.Thread}, nil
 }
 
-func (d *Daemon) reply(me string, id int64, status, body string) (sentView, error) {
+// reply answers message id; to is who the answer goes to (the question's sender).
+func (d *Daemon) reply(me string, id int64, status, body string) (v sentView, to string, err error) {
 	switch status {
 	case "ok", "fail", "needs_user":
 	default:
-		return sentView{}, fmt.Errorf("status must be ok, fail or needs_user")
+		return sentView{}, "", fmt.Errorf("status must be ok, fail or needs_user")
 	}
 	p, err := d.st.Get(id)
 	if err != nil {
-		return sentView{}, fmt.Errorf("message %d: %w", id, err)
+		return sentView{}, "", fmt.Errorf("message %d: %w", id, err)
 	}
 	if p.To != me {
-		return sentView{}, fmt.Errorf("message %d is not addressed to you", id)
+		return sentView{}, "", fmt.Errorf("message %d is not addressed to you", id)
 	}
 	if status == "ok" && p.Kind == "spawn_request" {
-		return sentView{}, fmt.Errorf("status ok does not start anything: call agents_spawn with for=\"#N\" to accept, or reply with status fail to decline")
+		return sentView{}, "", fmt.Errorf("status ok does not start anything: call agents_spawn with for=\"#N\" to accept, or reply with status fail to decline")
 	}
-	v, err := d.send(me, p.From, "[status: "+status+"] "+body, "result", id)
+	v, err = d.send(me, p.From, "[status: "+status+"] "+body, "result", id)
 	if err == nil && status == "fail" && p.Kind == "spawn_request" {
 		d.declineRequest(id, me)
 	}
-	return v, err
+	return v, p.From, err
 }
 
 type deliveredView struct {
@@ -866,9 +868,6 @@ func (d *Daemon) pruneForgotten() {
 	for k := range d.named {
 		keys = append(keys, k)
 	}
-	for k := range d.doneTimers {
-		keys = append(keys, k)
-	}
 	for k := range d.subs {
 		keys = append(keys, k)
 	}
@@ -894,8 +893,6 @@ func (d *Daemon) pruneForgotten() {
 			delete(d.stopped, k)
 			delete(d.blocks, k)
 			delete(d.named, k)
-			d.cancelDoneLocked(k)
-			delete(d.stopHooks, k)
 			d.forgetSubagentsLocked(k)
 			delete(d.windows, k)
 			delete(d.limitJobs, k)
@@ -939,7 +936,7 @@ func (d *Daemon) dispatchHooks(ctx context.Context, o Origin, me string, req wir
 			}
 		}
 		if p.Event == "SubagentStart" || p.Event == "SubagentStop" {
-			// Display only: a subagent neither starts nor ends the agent's turn, nor its done sound.
+			// Display only: a subagent neither starts nor ends the agent's turn.
 			return struct{}{}, nil
 		}
 		s, ok := hookState[p.Event]
@@ -956,34 +953,23 @@ func (d *Daemon) dispatchHooks(ctx context.Context, o Origin, me string, req wir
 		}
 		d.mu.Lock()
 		stopped := d.stopped[me]
-		switch {
-		case p.Event == "Notification":
-		case stopped && (p.Event == "PreToolUse" || p.Event == "PostToolUse"):
+		if stopped && (p.Event == "PreToolUse" || p.Event == "PostToolUse") {
 			// After Stop, a tool is an agent-type Stop hook at work, or the agent itself once
 			// another hook blocked the stop: then it works again.
 			var t struct {
-				AgentID  *string `json:"agent_id"`
-				ToolName string  `json:"tool_name"`
+				AgentID *string `json:"agent_id"`
 			}
 			_ = json.Unmarshal(p.Payload, &t)
-			if d.toolAfterStopLocked(me, o.Container, p.Event, t.AgentID, t.ToolName) {
+			if d.toolAfterStopLocked(me, t.AgentID) {
 				stopped = false
 			}
-		default:
-			// A new turn began, or a new Stop comes with its own stop_check.
-			d.cancelDoneLocked(me)
 		}
 		switch {
 		case p.Event == "UserPromptSubmit" || p.Event == "SessionStart":
 			delete(d.blocks, me)
 			delete(d.stopped, me)
-			delete(d.stopHooks, me)
 		case p.Event == "Stop" || p.Event == "StopFailure" || (p.Event == "Notification" && ok):
 			d.stopped[me] = true
-			if p.Event != "Notification" {
-				// Each Stop runs the Stop hooks afresh.
-				delete(d.stopHooks, me)
-			}
 		}
 		d.mu.Unlock()
 		if p.Event == "StopFailure" {
@@ -1040,24 +1026,15 @@ func (d *Daemon) dispatchHooks(ctx context.Context, o Origin, me string, req wir
 		d.mu.Lock()
 		n := d.blocks[me]
 		d.mu.Unlock()
-		// The turn ends unless the stop is blocked: the done sound. Claude runs the Stop hooks in
-		// parallel and another one can still block the stop, so the sound waits for the agent to
-		// stay quiet (armDone).
+		// The turn ends unless the stop is blocked; a turn that simply ends rings nothing (#294).
 		if n >= maxStopBlocks {
-			d.armDone(me, o.Container)
 			return stopVerdict{}, nil
 		}
 		ms, err := d.take(me)
 		if err != nil || len(ms.items) == 0 {
-			if err == nil {
-				d.armDone(me, o.Container)
-			} else {
-				d.cancelDone(me)
-			}
 			return stopVerdict{}, err
 		}
 		d.mu.Lock()
-		d.cancelDoneLocked(me)
 		d.blocks[me] = n + 1
 		delete(d.stopped, me)
 		d.mu.Unlock()

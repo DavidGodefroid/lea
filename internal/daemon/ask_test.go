@@ -280,7 +280,7 @@ func TestLostAnswerGoesBackToTheInbox(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := e.d.reply("lea-a/b", q.ID, "ok", "x"); err != nil {
+	if _, _, err := e.d.reply("lea-a/b", q.ID, "ok", "x"); err != nil {
 		t.Fatal(err)
 	}
 	v, ok, err := e.d.answer("lea-a/a", "lea-a/b", q.ID)
@@ -301,7 +301,7 @@ func TestAnswerAlreadyReadIsNotDeliveredTwice(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := e.d.reply("lea-a/b", q.ID, "ok", "secret answer"); err != nil {
+	if _, _, err := e.d.reply("lea-a/b", q.ID, "ok", "secret answer"); err != nil {
 		t.Fatal(err)
 	}
 	var in []delivered

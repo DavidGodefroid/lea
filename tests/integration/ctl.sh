@@ -162,6 +162,34 @@ for i in $(seq 20); do
   sleep 1
 done
 
+# lea rings only when it needs the user (#294): a turn that simply ends rings nothing, however
+# long the terminal waits (the done sound used to ring 3 s after it)...
+sleep 2 # past soundGap: a second sound could ring
+before=$(tr -cd '\007' <"$log" | wc -c)
+stop=$(docker exec -u "$u" -e LEA_AGENT=e2e-dev "$agent" sh -c 'printf "{\"hook_event_name\":\"Stop\",\"session_id\":\"e2e\"}" | timeout 5 lea hook claude Stop; echo "rc=$?"' 2>&1) || true
+case $stop in *rc=0*) ;; *) fail "the Stop hook failed: $stop" ;; esac
+sleep 6
+[ "$(tr -cd '\007' <"$log" | wc -c)" -eq "$before" ] || fail "a plain turn end rang the bell"
+# ...and a request to the user, through the agent's MCP server (lea mcp, as Claude Code runs it),
+# does ring.
+mcp=$(docker exec -u "$u" -e LEA_AGENT=e2e-dev "$agent" sh -c '{
+  printf "%s\n" "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"initialize\",\"params\":{\"protocolVersion\":\"2025-06-18\",\"capabilities\":{},\"clientInfo\":{\"name\":\"lea-ctl-e2e\",\"version\":\"0\"}}}"
+  sleep 1
+  printf "%s\n" "{\"jsonrpc\":\"2.0\",\"method\":\"notifications/initialized\"}"
+  printf "%s\n" "{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"tools/call\",\"params\":{\"name\":\"msg_send\",\"arguments\":{\"to\":\"user\",\"body\":\"merge now or wait?\",\"kind\":\"request\"}}}"
+  sleep 3
+} | timeout 10 lea mcp' 2>&1) || true
+case $mcp in *'"id":2'*) ;; *) fail "lea mcp did not answer the msg_send call: $mcp" ;; esac
+for i in $(seq 20); do
+  [ "$(tr -cd '\007' <"$log" | wc -c)" -gt "$before" ] && break
+  if [ "$i" -ge 20 ]; then
+    echo "mcp: $mcp" >&2
+    tail -n 40 "$XDG_DATA_HOME/lea/host/daemon.log" >&2 2>/dev/null || true
+    fail "a request to the user rang no bell"
+  fi
+  sleep 1
+done
+
 # The deck's Lock console pane, opened by lea in lea-ctl: it attaches to lox up's console (the
 # stand-in), starts no console of its own, and closing it ends the attach only.
 stub=$(docker inspect -f '{{.Id}}' "$lockstub") || fail "no stand-in console"

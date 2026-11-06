@@ -157,7 +157,7 @@ func TestASettingFieldOpensAModal(t *testing.T) {
 	}
 	m, _ = step(t, m, key("enter"))
 	m = typeIn(t, m, "/a.oga")
-	_, field, _, ls := inputAt(t, m, "Edit Done sound")
+	_, field, _, ls := inputAt(t, m, "Edit Attention sound")
 	if !strings.Contains(ls[field], "/a.oga▍") {
 		t.Fatalf("field %q", ls[field])
 	}

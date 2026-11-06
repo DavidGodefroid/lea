@@ -135,7 +135,7 @@ func TestSetValidatesAndWrites(t *testing.T) {
 		"LEA_SOUND":            {"2", "on"},
 		"LEA_GIT_SSH":          {"h:0", "bad host:22"},
 		"LEA_NOPE":             {"1"},
-		"LEA_SOUND_DONE":       {"a\nb"},
+		"LEA_SOUND_ATTENTION":  {"a\nb"},
 	} {
 		for _, v := range bad {
 			if err := st.Set(key, v); err == nil {
@@ -148,7 +148,7 @@ func TestSetValidatesAndWrites(t *testing.T) {
 	}
 	for key, v := range map[string]string{
 		"LEA_APPROVALS": "pane", "LEA_APPROVAL_TIMEOUT": "120", "LEA_SOUND": "0",
-		"LEA_GIT_SSH": "github.com:22", "LEA_SOUND_DONE": "/it's.oga", "LEA_OTEL_UPSTREAM": "",
+		"LEA_GIT_SSH": "github.com:22", "LEA_SOUND_ATTENTION": "/it's.oga", "LEA_OTEL_UPSTREAM": "",
 	} {
 		if err := st.Set(key, v); err != nil {
 			t.Fatalf("%s=%q: %v", key, v, err)
@@ -156,7 +156,7 @@ func TestSetValidatesAndWrites(t *testing.T) {
 	}
 	ss := list(t, w)
 	for key, v := range map[string]string{"LEA_APPROVALS": "pane", "LEA_APPROVAL_TIMEOUT": "120", "LEA_SOUND": "0",
-		"LEA_GIT_SSH": "github.com:22", "LEA_SOUND_DONE": "/it's.oga"} {
+		"LEA_GIT_SSH": "github.com:22", "LEA_SOUND_ATTENTION": "/it's.oga"} {
 		if s := find(t, ss, key); s.Value != v || s.Source != SourceFile {
 			t.Errorf("%s = %q from %q, want %q", key, s.Value, s.Source, v)
 		}
@@ -248,8 +248,7 @@ func TestOtelAndSoundValues(t *testing.T) {
 	st := w.store()
 	for key, bad := range map[string][]string{
 		"LEA_OTEL_UPSTREAM":   {"1.2.3.4,fork:80", "h;x:80", "h:080", "h"},
-		"LEA_SOUND_ATTENTION": {"--help", "-f", "relative.oga", "~/x.oga"},
-		"LEA_SOUND_DONE":      {"--help", "x"},
+		"LEA_SOUND_ATTENTION": {"--help", "-f", "relative.oga", "~/x.oga", "x"},
 	} {
 		for _, v := range bad {
 			if err := st.Set(key, v); err == nil {
@@ -257,12 +256,15 @@ func TestOtelAndSoundValues(t *testing.T) {
 			}
 		}
 	}
-	for key, v := range map[string]string{"LEA_OTEL_UPSTREAM": "otel.corp:4317", "LEA_SOUND_ATTENTION": "0", "LEA_SOUND_DONE": "/usr/share/x.oga"} {
+	for key, v := range map[string]string{"LEA_OTEL_UPSTREAM": "otel.corp:4317", "LEA_SOUND_ATTENTION": "0"} {
 		if err := st.Set(key, v); err != nil {
 			t.Errorf("%s=%q: %v", key, v, err)
 		}
 	}
-	if err := st.Set("LEA_SOUND_DONE", ""); err != nil {
+	if err := st.Set("LEA_SOUND_ATTENTION", "/usr/share/x.oga"); err != nil {
+		t.Error(err)
+	}
+	if err := st.Set("LEA_SOUND_ATTENTION", ""); err != nil {
 		t.Error(err)
 	}
 }
