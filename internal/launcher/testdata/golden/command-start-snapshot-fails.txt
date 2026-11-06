@@ -18,6 +18,7 @@ docker [--version]
 docker [info] [--format] [{{json .SecurityOptions}}]
 docker [system] [info] [--format] [{{.NCPU}}]
 docker [system] [info] [--format] [{{.MemTotal}}]
+docker [system] [info] [--format] [{{.Host.Security.Rootless}} {{.Host.CgroupControllers}}]
 lea-sh [scan-begin] [$W/projects]
 -- lea
 lea: error: the start snapshot failed (above): lea doctor checks the setup

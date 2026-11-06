@@ -1128,12 +1128,17 @@ func TestRunningContainerGetsTheConfiguredLimits(t *testing.T) {
 	if u := updates(w); len(u) != 0 {
 		t.Fatalf("updates %q, want none", u)
 	}
-	// An engine that cannot update (rootless Podman without the cpu controller): a warning that
-	// says how to apply them, and the session goes on. The next lea neither retries nor warns
-	// again for that container; another container (a new Id) is tried again.
+	// An engine that cannot update (rootless Podman without the cpu controller) while agents run:
+	// a warning that says how the limits get applied, no restart, and the session goes on. The
+	// next lea neither retries nor warns again for that container; another container (a new Id)
+	// is tried again.
 	w = limitsWorld("", "c1 0 0 0 2048", gib+"\n10")
 	w.env["FAKE_DOCKER_RC_UPDATE___CPUS"] = "125"
+	w.env["FAKE_DOCKER_OUT_EXEC__U"] = "dev-1"
 	up(w)
+	if w.hasCall("docker [stop] ["+w.name()+"]") || w.hasCall("docker [run]") {
+		t.Fatalf("restarted with agents live:\n%s", strings.Join(w.calls(), "\n"))
+	}
 	if e := w.errb.String(); !strings.Contains(e, "lea stop") || !strings.Contains(e, "--cpus 12") {
 		t.Errorf("warning %q", e)
 	}
@@ -1206,5 +1211,247 @@ func TestRunArgsRefuseTheEngineSocket(t *testing.T) {
 	w.env["XDG_RUNTIME_DIR"] = w.dir + "/xdg"
 	if _, err := w.launcher().runArgs(w.proj, "172.18.0.5"); err != nil {
 		t.Fatalf("a clean layout: %v", err)
+	}
+}
+
+// The lea.limits digest (#132): equal limits give the same one, any limit that changes changes it.
+func TestLimitsDigest(t *testing.T) {
+	base := limits{cpus: "12", mem: "16384m", swap: "16384m", pids: "16384"}
+	if base.digest() != (limits{cpus: "12", mem: "16384m", swap: "16384m", pids: "16384"}).digest() {
+		t.Fatal("equal limits, different digests")
+	}
+	seen := map[string]bool{base.digest(): true}
+	for _, r := range []limits{
+		{cpus: "16", mem: "16384m", swap: "16384m", pids: "16384"},
+		{cpus: "12", mem: "8192m", swap: "16384m", pids: "16384"},
+		{cpus: "12", mem: "16384m", swap: "-1", pids: "16384"},
+		{cpus: "12", mem: "16384m", swap: "16384m", pids: "4096"},
+		{mem: "16384m", swap: "16384m", pids: "16384"},
+		{},
+	} {
+		if d := r.digest(); seen[d] {
+			t.Errorf("%+v: digest %s already seen", r, d)
+		} else {
+			seen[d] = true
+		}
+	}
+	if got := base.nanos(); got != "12000000000 17179869184 17179869184 16384" {
+		t.Errorf("nanos %q", got)
+	}
+	if got := (limits{}).nanos(); got != "0 0 0 0" {
+		t.Errorf("no limits: nanos %q", got)
+	}
+	// docker run labels the container with the digest of its limits.
+	w := newWorld(t, repoRoot(t))
+	w.env["FAKE_DOCKER_OUT_SYSTEM_INFO_AT____NCPU__"] = "16"
+	w.env["FAKE_DOCKER_OUT_SYSTEM_INFO_AT____MEMTOTAL__"] = "34359738368"
+	args, err := w.launcher().runArgs(w.proj, "172.18.0.5")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Contains(args, "lea.limits="+base.digest()) {
+		t.Fatalf("no lea.limits label: %q", args)
+	}
+}
+
+// Rootless Podman without a cgroup controller (#132): podman run refuses the limit of that
+// controller, so lea drops it, keeps the others, and warns once with the fix.
+func TestMissingControllerDropsItsLimit(t *testing.T) {
+	key := "FAKE_DOCKER_OUT_SYSTEM_INFO_AT_" + fakeKey("{{.Host.Security.Rootless}} {{.Host.CgroupControllers}}")
+	for _, c := range []struct{ info, cpus, mem, pids, warn string }{
+		{"true [memory pids]", "", "16384m", "16384", "without --cpus 12"},
+		{"true [cpuset cpu io memory pids]", "12", "16384m", "16384", ""},
+		{"true [pids]", "", "", "16384", "cpu and memory"},
+		{"false [cpu memory pids]", "12", "16384m", "16384", ""},
+		{"true []", "12", "16384m", "16384", ""}, // cgroup v1, or Podman does not tell
+		{"", "12", "16384m", "16384", ""},        // Docker: no {{.Host}}
+	} {
+		w := newWorld(t, repoRoot(t))
+		w.env["FAKE_DOCKER_RC_SYSTEM_INFO_AT____NCPU__"] = "125"
+		w.env["FAKE_DOCKER_OUT_SYSTEM_INFO_AT____HOST_CPUS__"] = "16"
+		w.env["FAKE_DOCKER_RC_SYSTEM_INFO_AT____MEMTOTAL__"] = "125"
+		w.env["FAKE_DOCKER_OUT_SYSTEM_INFO_AT____HOST_MEMTOTAL__"] = "34359738368"
+		w.env[key] = c.info
+		l := w.launcher()
+		args, err := l.runArgs(w.proj, "172.18.0.5")
+		if err != nil {
+			t.Fatal(err)
+		}
+		cpus, _ := argAfter(args, "--cpus")
+		mem, _ := argAfter(args, "--memory")
+		pids, _ := argAfter(args, "--pids-limit")
+		if cpus != c.cpus || mem != c.mem || pids != c.pids {
+			t.Errorf("%q: --cpus %q --memory %q --pids-limit %q", c.info, cpus, mem, pids)
+		}
+		e := w.errb.String()
+		if c.warn == "" && strings.Contains(e, "cgroup controller") {
+			t.Errorf("%q: warned %q", c.info, e)
+		}
+		if c.warn != "" && (!strings.Contains(e, c.warn) || !strings.Contains(e, "Delegate=cpu cpuset io memory pids")) {
+			t.Errorf("%q: warning %q", c.info, e)
+		}
+		// Once per lea.
+		l.resolvedLimits()
+		if strings.Count(w.errb.String(), "cgroup controller") > 1 {
+			t.Errorf("%q: warned twice: %q", c.info, w.errb.String())
+		}
+	}
+}
+
+// A running container whose limits are stale and cannot be applied in place is restarted with
+// them at once when nothing runs in it; otherwise lea warns, keeps it, and restarts it at a later
+// lea that finds it quiet (#132). Docker's and Podman's info formats both resolve the limits.
+func TestStaleLimitsRestartAQuietContainer(t *testing.T) {
+	mk := func(podman bool) *world {
+		w := newWorld(t, repoRoot(t))
+		running(w)
+		if podman {
+			w.env["FAKE_DOCKER_RC_SYSTEM_INFO_AT____NCPU__"] = "125"
+			w.env["FAKE_DOCKER_OUT_SYSTEM_INFO_AT____HOST_CPUS__"] = "16"
+			w.env["FAKE_DOCKER_RC_SYSTEM_INFO_AT____MEMTOTAL__"] = "125"
+			w.env["FAKE_DOCKER_OUT_SYSTEM_INFO_AT____HOST_MEMTOTAL__"] = "34359738368"
+		} else {
+			w.env["FAKE_DOCKER_OUT_SYSTEM_INFO_AT____NCPU__"] = "16"
+			w.env["FAKE_DOCKER_OUT_SYSTEM_INFO_AT____MEMTOTAL__"] = "34359738368"
+		}
+		// Started by an older lea: no limit at all; the engine refuses docker update.
+		w.env["FAKE_DOCKER_OUT_INSPECT___FORMAT_AT_"+fakeKey(w.name())] = "c1 0 0 0 0"
+		w.env["FAKE_DOCKER_OUT_EXEC_"+fakeKey(w.name())+"_AT__SYS_FS_CGROUP_PIDS_CURRENT"] = "1073741824\n10"
+		w.env["FAKE_DOCKER_RC_UPDATE___CPUS"] = "125"
+		w.env["FAKE_TMUX_RC"] = "1" // no deck session
+		return w
+	}
+	up := func(w *world) *upState {
+		t.Helper()
+		l := w.launcher()
+		u, err := l.up(w.proj)
+		if err != nil {
+			t.Fatal(err)
+		}
+		l.unlock(u.sid)
+		return u
+	}
+	restarted := func(w *world) bool {
+		stop := w.hasCall("docker [stop] [" + w.name() + "]")
+		run := false
+		for _, c := range w.calls() {
+			if strings.HasPrefix(c, "docker [run]") && strings.Contains(c, "[--cpus] [12]") && strings.Contains(c, "[--memory] [16384m]") {
+				run = true
+			}
+		}
+		return stop && run
+	}
+	for _, podman := range []bool{false, true} {
+		// Quiet: no agent, no session, no deck. Restarted with the limits, as a fresh container.
+		w := mk(podman)
+		if u := up(w); !restarted(w) || u.fresh != "--fresh" {
+			t.Fatalf("podman=%v: not restarted (fresh %q):\n%s", podman, u.fresh, strings.Join(w.calls(), "\n"))
+		}
+		if !strings.Contains(w.errb.String(), "restarting the idle") {
+			t.Errorf("podman=%v: stderr %q", podman, w.errb.String())
+		}
+
+		// Agents live: warned, not restarted; a later lea with the agents gone restarts it,
+		// without a second warning.
+		w = mk(podman)
+		w.env["FAKE_DOCKER_OUT_EXEC__U"] = "dev-1"
+		up(w)
+		if restarted(w) || w.hasCall("docker [stop] ["+w.name()+"]") {
+			t.Fatalf("podman=%v: restarted with agents live", podman)
+		}
+		if e := w.errb.String(); !strings.Contains(e, "could not apply the limits --cpus 12") || !strings.Contains(e, "once no agent or session runs") {
+			t.Errorf("podman=%v: warning %q", podman, e)
+		}
+		w.errb.Reset()
+		up(w)
+		if restarted(w) || w.errb.String() != "" {
+			t.Fatalf("podman=%v: second lea with agents: stderr %q", podman, w.errb.String())
+		}
+		delete(w.env, "FAKE_DOCKER_OUT_EXEC__U")
+		os.Remove(w.log)
+		up(w)
+		if !restarted(w) {
+			t.Fatalf("podman=%v: not restarted once the agents were gone:\n%s", podman, strings.Join(w.calls(), "\n"))
+		}
+		if strings.Contains(w.errb.String(), "could not apply") {
+			t.Errorf("podman=%v: warned again: %q", podman, w.errb.String())
+		}
+
+		// A lea --shell session open: not restarted.
+		w = mk(podman)
+		l := w.launcher()
+		if err := l.sessionBegin(ID(w.proj), os.Getpid()); err != nil {
+			t.Fatal(err)
+		}
+		up(w)
+		if restarted(w) {
+			t.Fatalf("podman=%v: restarted under an open session", podman)
+		}
+
+		// A deck open in tmux (even without agents): not restarted.
+		w = mk(podman)
+		w.env["FAKE_TMUX_RC"] = "0"
+		up(w)
+		if restarted(w) {
+			t.Fatalf("podman=%v: restarted under an open deck", podman)
+		}
+
+		// The limits hold: nothing, not even an update.
+		w = mk(podman)
+		w.env["FAKE_DOCKER_OUT_INSPECT___FORMAT_AT_"+fakeKey(w.name())] = "c1 12000000000 17179869184 17179869184 16384"
+		up(w)
+		for _, c := range w.calls() {
+			if strings.HasPrefix(c, "docker [update]") || strings.HasPrefix(c, "docker [run]") || strings.HasPrefix(c, "docker [stop]") {
+				t.Fatalf("podman=%v: limits hold, yet %s", podman, c)
+			}
+		}
+
+		// The update works: applied in place, no restart.
+		w = mk(podman)
+		delete(w.env, "FAKE_DOCKER_RC_UPDATE___CPUS")
+		up(w)
+		if restarted(w) || !w.hasCall("docker [update] [--cpus] [12] [--memory] [16384m] [--memory-swap] [16384m] [--pids-limit] [16384] ["+w.name()+"]") {
+			t.Fatalf("podman=%v: not updated in place:\n%s", podman, strings.Join(w.calls(), "\n"))
+		}
+	}
+}
+
+// A memory limit held back by the usage, while agents run, is said once and weighed again at
+// each lea: applied in place once the usage falls, with no restart (#132).
+func TestHeldLimitIsWeighedAgainAtEachLea(t *testing.T) {
+	w := newWorld(t, repoRoot(t))
+	running(w)
+	w.env["FAKE_DOCKER_OUT_SYSTEM_INFO_AT____NCPU__"] = "16"
+	w.env["FAKE_DOCKER_OUT_SYSTEM_INFO_AT____MEMTOTAL__"] = "34359738368"
+	w.env["FAKE_DOCKER_OUT_INSPECT___FORMAT_AT_"+fakeKey(w.name())] = "c1 12000000000 0 0 16384"
+	usage := "FAKE_DOCKER_OUT_EXEC_" + fakeKey(w.name()) + "_AT__SYS_FS_CGROUP_PIDS_CURRENT"
+	w.env[usage] = "21474836480\n300" // 20 GiB of a 16 GiB limit
+	w.env["FAKE_DOCKER_OUT_EXEC__U"] = "dev-1"
+	up := func() {
+		t.Helper()
+		l := w.launcher()
+		u, err := l.up(w.proj)
+		if err != nil {
+			t.Fatal(err)
+		}
+		l.unlock(u.sid)
+	}
+	up()
+	if e := w.errb.String(); strings.Count(e, "keeps its limits for now") != 1 || !strings.Contains(e, "20480 MiB") {
+		t.Fatalf("first lea: %q", e)
+	}
+	w.errb.Reset()
+	up()
+	if e := w.errb.String(); e != "" {
+		t.Fatalf("second lea warned again: %q", e)
+	}
+	w.env[usage] = "1073741824\n300"
+	os.Remove(w.log)
+	up()
+	if !w.hasCall("docker [update] [--memory] [16384m] [--memory-swap] [16384m] [" + w.name() + "]") {
+		t.Fatalf("not applied once the usage fell:\n%s", strings.Join(w.calls(), "\n"))
+	}
+	if w.hasCall("docker [stop] [" + w.name() + "]") {
+		t.Fatal("restarted")
 	}
 }

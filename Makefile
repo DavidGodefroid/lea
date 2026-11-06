@@ -22,13 +22,15 @@ test-isolation:
 # lea-ctl (#165): lea in its control container on the host's engine; needs make build, build/lea.
 test-ctl:
 	tests/integration/ctl.sh
-# The admission e2e (#132): a real 64 MiB, half-CPU container under a real load, on the host's
-# engine (ENGINE=podman for rootless Podman); a minute at most. Runs on the host, not in a
-# container: the daemon reads the container's cgroup from the host.
+# The host-resource e2e (#132) on the host's engine (ENGINE=podman for rootless Podman), each on
+# small real containers, two minutes at most: admission under a real load (a 64 MiB, half-CPU
+# container), the limits a running container from an older lea gets at the next lea and an OOM
+# kept inside it, and the CPU budget of heavy jobs (6 agents' burners, 2 slots, 2 CPUs). Runs on
+# the host, not in a container: the daemon reads the container's cgroup from the host.
 ENGINE ?= docker
 test-pressure:
 	$(ENGINE) pull -q docker.io/library/alpine:3.22 >/dev/null
-	LEA_E2E_PRESSURE=$(ENGINE) go test -count=1 -run TestPressureE2E -v ./internal/daemon/
+	LEA_E2E_PRESSURE=$(ENGINE) go test -count=1 -run 'TestPressureE2E|TestLimitsE2E|TestHeavyBudgetE2E' -v ./internal/daemon/ ./internal/launcher/ ./cmd/lea/
 GO_IMAGE ?= golang:1.26
 GO_TEST_FLAGS ?=
 GO_CACHE ?= $(HOME)/.cache/lea-go

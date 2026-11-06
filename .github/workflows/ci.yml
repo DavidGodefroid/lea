@@ -30,11 +30,12 @@ jobs:
         with:
           persist-credentials: false
       - run: make test-proxy
-  # Load-aware admission (#132) on a real engine: a 64 MiB, half-CPU container under a real memory
-  # then CPU load; the daemon's sampler reads its cgroup from the host. Docker, and rootless Podman.
+  # Host resources (#132) on a real engine, Docker and rootless Podman: load-aware admission (a
+  # 64 MiB, half-CPU container under a real memory then CPU load), the limits a running container
+  # gets at the next lea and an OOM held inside it, and the CPU budget of heavy jobs.
   pressure:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 15
     strategy:
       fail-fast: false
       matrix:

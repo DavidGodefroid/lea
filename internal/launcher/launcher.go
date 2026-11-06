@@ -48,6 +48,7 @@ type Launcher struct {
 	exiting     int               // exit functions running; Interrupt waits for them
 	drained     bool              // Interrupt has run every exit function
 	exited      bool              // exitSettled called exit (a test's exit returns)
+	ctrlWarned  bool              // withoutMissingControllers warned (once per lea)
 }
 
 // root is the launcher that holds the run state: l itself, or the launcher a drain view was
@@ -460,6 +461,17 @@ func (l *Launcher) exportToolsOn() {
 	l.Cfg.Export(ToolsOnVar, strings.Join(ts, " "))
 }
 
+// exportLimits hands lea doctor the limits the configuration resolves to (#132): LEA_LIMITS_WANT
+// as the engine's inspect tells them, LEA_LIMITS_DIGEST the lea.limits label of a container
+// started with them. Doctor reports a missing cgroup controller itself, so the launcher's warning
+// about it is not printed here.
+func (l *Launcher) exportLimits() {
+	l.root().ctrlWarned = true
+	r := l.resolvedLimits()
+	l.Cfg.Export("LEA_LIMITS_WANT", r.nanos())
+	l.Cfg.Export("LEA_LIMITS_DIGEST", r.digest())
+}
+
 // lockConsole is lea lock: a lock console in this projects dir's deck, through the core (the
 // daemon opens the pane), which the launcher tells the container's name.
 func (l *Launcher) lockConsole(args []string) error {
@@ -482,6 +494,7 @@ func (l *Launcher) lockConsole(args []string) error {
 // from the daemon and the credentials from lea's state. The worst of the two is the status.
 func (l *Launcher) doctor() error {
 	l.exportToolsOn()
+	l.exportLimits()
 	err := l.sh("doctor")
 	proj, perr := l.projectsDir()
 	if perr != nil {

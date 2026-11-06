@@ -69,20 +69,50 @@ lea_doctor() {
   done
   if [ "$_dnets" -eq 0 ]; then lea__ok "internal networks: none (each lea creates its own at start)"; fi
 
-  # The running lea containers' CPU and memory limits (#132): one started by an older lea, or
-  # before a limit changed, gets them at the next lea in its projects directory.
+  # The running lea containers' limits (#132): one started by an older lea, or before a limit
+  # changed, gets them at the next lea in its projects directory. The Go launcher hands over the
+  # limits the configuration resolves to (LEA_LIMITS_WANT: NanoCpus Memory MemorySwap PidsLimit,
+  # 0 for none) and their digest, the lea.limits label of a container started with them.
   for _dctr in $(docker ps --filter "label=lea.prefix=$LEA_PREFIX" --filter label=lea.role=session --format '{{.Names}}' 2>/dev/null || true); do
-    _dlim=$(docker inspect --format '{{.HostConfig.NanoCpus}} {{.HostConfig.Memory}}' "$_dctr" 2>/dev/null || true)
-    case $_dlim in *[!0-9\ ]*|'') continue ;; esac
-    _dcpu=${_dlim%% *}; _dmem=${_dlim#* }; _dmiss=
-    if [ "$_dcpu" = 0 ] && [ "${LEA_CPUS:-75%}" != 0 ]; then _dmiss="CPU"; fi
-    if [ "$_dmem" = 0 ] && [ "${LEA_MEMORY:-50%}" != 0 ]; then _dmiss="${_dmiss:+$_dmiss and }memory"; fi
-    if [ -n "$_dmiss" ]; then
-      lea__warn "$_dctr limits" "no $_dmiss limit: run lea in its projects directory to apply LEA_CPUS and LEA_MEMORY"
+    _dlim=$(docker inspect --format '{{.HostConfig.NanoCpus}} {{.HostConfig.Memory}} {{.HostConfig.MemorySwap}} {{with .HostConfig.PidsLimit}}{{.}}{{else}}0{{end}} {{index .Config.Labels "lea.limits"}}' "$_dctr" 2>/dev/null || true)
+    _dcpu=; _dmem=; _dswp=; _dpid=; _ddig=
+    read -r _dcpu _dmem _dswp _dpid _ddig <<EOF
+$_dlim
+EOF
+    [ -n "$_dmem" ] || continue
+    _dswp=${_dswp:-0}; _dpid=${_dpid:-0}
+    if [ "$_dpid" = '<nil>' ]; then _dpid=0; fi
+    case "$_dcpu $_dmem $_dswp $_dpid" in *[!0-9\ -]*) continue ;; esac
+    _dmiss=
+    _wcpu=; _wmem=; _wswp=; _wpid=; _wx=
+    read -r _wcpu _wmem _wswp _wpid _wx <<EOF
+${LEA_LIMITS_WANT:-}
+EOF
+    if [ -n "$_wpid" ] && [ -z "$_wx" ]; then
+      # A configured limit the container does not have: stale. A limit turned off (0) is only
+      # taken away by a restart, which is not stale.
+      if [ "$_wcpu" != 0 ] && [ "$_dcpu" != "$_wcpu" ]; then _dmiss="$(lea__doctor_cpus "$_dcpu") (configured $(lea__doctor_cpus "$_wcpu"))"; fi
+      if [ "$_wmem" != 0 ] && { [ "$_dmem" != "$_wmem" ] || [ "$_dswp" != "$_wswp" ]; }; then
+        _dmiss="${_dmiss:+$_dmiss, }$(lea__doctor_mib "$_dmem") (configured $(lea__doctor_mib "$_wmem"))"
+      fi
+      if [ "$_wpid" != 0 ] && [ "$_dpid" != "$_wpid" ]; then _dmiss="${_dmiss:+$_dmiss, }pids $(lea__doctor_pids "$_dpid") (configured $_wpid)"; fi
+      if [ -n "$_dmiss" ]; then
+        _dwhy="digest ${_ddig:-none: started by an older lea}, configured ${LEA_LIMITS_DIGEST:-?}"
+        if [ "$_ddig" = "${LEA_LIMITS_DIGEST:-}" ]; then _dwhy="changed since it started (docker update)"; fi
+        lea__warn "$_dctr limits" "stale ($_dwhy): $_dmiss; run lea in its projects directory: it applies them, or restarts the container once no agent or session runs in it"
+        continue
+      fi
     else
-      lea__ok "$_dctr limits: $(awk -v c="$_dcpu" -v m="$_dmem" 'BEGIN { printf "%s CPUs, %s MiB", (c ? c / 1e9 : "no limit on"), (m ? int(m / 1048576) : "no limit on") }')"
+      if [ "$_dcpu" = 0 ] && [ "${LEA_CPUS:-75%}" != 0 ]; then _dmiss="CPU"; fi
+      if [ "$_dmem" = 0 ] && [ "${LEA_MEMORY:-50%}" != 0 ]; then _dmiss="${_dmiss:+$_dmiss and }memory"; fi
+      if [ -n "$_dmiss" ]; then
+        lea__warn "$_dctr limits" "no $_dmiss limit: run lea in its projects directory to apply LEA_CPUS and LEA_MEMORY"
+        continue
+      fi
     fi
+    lea__ok "$_dctr limits: $(lea__doctor_cpus "$_dcpu"), $(lea__doctor_mib "$_dmem")"
   done
+  lea__doctor_delegation
 
   # Each running lea container's agents and their CPU windows (#132): nproc, PHPStan, Go... see
   # that many CPUs in the agent and in its nested containers.
@@ -164,6 +194,30 @@ lea__doctor_hub() {
   elif [ -S "$_dhs" ]; then lea__ok "approval hub facade $_dhs"
   else
     lea__warn "approval hub" "LEA_HUB=1 but no lockhub facade at $_dhs (lox up starts it): agents are not suspended on a Lock call that waits for the hub (LEA_HUB=0 to silence this)"
+  fi
+}
+
+# lea__doctor_cpus/_mib/_pids: an inspected limit (NanoCpus, bytes, pids; 0 for none), read.
+lea__doctor_cpus() { awk -v c="$1" 'BEGIN { if (c > 0) printf "%s CPUs", c / 1e9; else printf "no CPU limit" }'; }
+lea__doctor_mib() { awk -v m="$1" 'BEGIN { if (m > 0) printf "%d MiB", int(m / 1048576); else printf "no memory limit" }'; }
+lea__doctor_pids() { if [ "$1" -gt 0 ] 2>/dev/null; then printf '%s' "$1"; else printf 'no limit'; fi; }
+
+# lea__doctor_delegation: under rootless Podman, the cgroup controllers systemd delegates to the
+# user (#132). Without cpu (or memory, pids) Podman refuses that limit: lea starts its container
+# without it, so the host has no ceiling there.
+lea__doctor_delegation() {
+  _dctl=$(docker info --format '{{.Host.Security.Rootless}} {{.Host.CgroupControllers}}' 2>/dev/null || true)
+  case $_dctl in "true "*) ;; *) return 0 ;; esac
+  _dctl=$(printf '%s' "${_dctl#true }" | tr -d '[]')
+  [ -n "$(printf '%s' "$_dctl" | tr -d ' ')" ] || return 0
+  _dmissc=
+  for _dc in cpu memory pids; do
+    case " $_dctl " in *" $_dc "*) ;; *) _dmissc="${_dmissc:+$_dmissc, }$_dc" ;; esac
+  done
+  if [ -n "$_dmissc" ]; then
+    lea__warn "cgroup delegation" "rootless Podman does not get the $_dmissc controller, so lea's container runs without that limit: sudo systemctl edit user@.service, add [Service] Delegate=cpu cpuset io memory pids, log in again, then lea stop and lea"
+  else
+    lea__ok "cgroup delegation: cpu, memory and pids (rootless Podman)"
   fi
 }
 
