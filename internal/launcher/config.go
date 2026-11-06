@@ -279,6 +279,11 @@ func (c *Config) resolve(root string) error {
 		return fmt.Errorf("LEA_HUB must be 1 (lea follows the Lock Family approval hub) or 0, not '%s'", hub)
 	}
 	c.final["LEA_HUB"] = hub
+	gw := nonEmpty(c.Get("LEA_ALLOW_GATEWAY"), "0")
+	if gw != "0" && gw != "1" {
+		return fmt.Errorf("LEA_ALLOW_GATEWAY must be 0 (lea refuses an internal network the host is reachable from) or 1, not '%s'", gw)
+	}
+	c.final["LEA_ALLOW_GATEWAY"] = gw
 	if err := c.resolveLimits(); err != nil {
 		return err
 	}

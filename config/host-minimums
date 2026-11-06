@@ -9,7 +9,9 @@
 # podman MIN: Podman 5.8.4 fixes CVE-2026-57231 (GHSA-4hq8-gpf5-8p68: an image's key-only ENV
 # passes the host's variable of that name into the container). lea is built for Docker Engine:
 # on a Podman host, below this minimum is a warning (lea doctor and the launcher), never a
-# refusal; Podman's bridge has no gateway_mode_ipv4=isolated.
+# refusal of the engine itself. Podman's bridge has no gateway_mode_ipv4=isolated, so lea refuses
+# to start an agent container there unless LEA_ALLOW_GATEWAY=1 (#105); the same goes for a Docker
+# Engine older than 28.0.
 podman 5.8.4
 #
 # kernel ID VERSION_ID MIN: the oldest kernel release (uname -r, without its flavour suffix) of

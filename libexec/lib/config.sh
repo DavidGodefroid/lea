@@ -70,6 +70,8 @@ lea_load_config() {
   [ -z "$LEA_LOCKMQ_REF" ] || lea__semver "$LEA_LOCKMQ_REF" >/dev/null || lea_die "LEA_LOCKMQ_REF must be a lockmq release (vX.Y.Z), not '$LEA_LOCKMQ_REF'"
   [ -z "$LEA_LOCKFILE_REF" ] || lea__semver "$LEA_LOCKFILE_REF" >/dev/null || lea_die "LEA_LOCKFILE_REF must be a lockfile release (vX.Y.Z), not '$LEA_LOCKFILE_REF'"
   [ -z "$LEA_LOCKFILE_REF" ] || lea__lockfile_safe "$LEA_LOCKFILE_REF" || lea_die "LEA_LOCKFILE_REF $LEA_LOCKFILE_REF is refused: lockfile v0.1.0 lets a plugin escape its sandbox (v0.1.1 or later)"
+  LEA_ALLOW_GATEWAY=${LEA_ALLOW_GATEWAY:-0}
+  case $LEA_ALLOW_GATEWAY in 0|1) ;; *) lea_die "LEA_ALLOW_GATEWAY must be 0 (lea refuses an internal network the host is reachable from) or 1, not '$LEA_ALLOW_GATEWAY'" ;; esac
   LEA_AUTOUPDATE=${LEA_AUTOUPDATE:-1}
   case $LEA_AUTOUPDATE in 0|1) ;; *) lea_die "LEA_AUTOUPDATE must be 1 (check for a new release every day) or 0, not '$LEA_AUTOUPDATE'" ;; esac
   LEA_AUTOUPDATE_SKIP=${LEA_AUTOUPDATE_SKIP:-}

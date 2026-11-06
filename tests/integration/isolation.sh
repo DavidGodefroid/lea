@@ -35,6 +35,9 @@ state="$XDG_DATA_HOME/lea/state"; mkdir -p "$state"; printf '{}\n' >"$state/clau
 slug=$(printf '%s' "$projects" | sed 's/[^A-Za-z0-9]/-/g')
 id=$(printf '%s' "$projects" | sha256sum | cut -c1-10)
 sid=$(printf '%s' "$sibling" | sha256sum | cut -c1-10)
+# A third projects dir whose internal network exists without an isolated gateway (#105).
+plain="$work/plain"; mkdir -p "$plain"
+pid=$(printf '%s' "$plain" | sha256sum | cut -c1-10)
 holders=
 # A stand-in for the Lock Family hub's facade socket (I11): the host daemon is pointed at it, and
 # no agent may see it (lea follows the hub by default). Outside the projects dir, as lockhub's is.
@@ -80,8 +83,8 @@ cleanup() {
   docker rm -f lea-canary >/dev/null 2>&1 || true
   docker network rm lea-canary-net >/dev/null 2>&1 || true
   "$root/bin/lea" stop --all >/dev/null 2>&1 || true
-  docker rm -f "lea-test-$id" "lea-test-$sid" lea-test-proxy >/dev/null 2>&1 || true
-  docker network rm "lea-test-internal-$id" "lea-test-internal-$sid" lea-test-egress >/dev/null 2>&1 || true
+  docker rm -f "lea-test-$id" "lea-test-$sid" "lea-test-$pid" lea-test-proxy >/dev/null 2>&1 || true
+  docker network rm "lea-test-internal-$id" "lea-test-internal-$sid" "lea-test-internal-$pid" lea-test-egress >/dev/null 2>&1 || true
   docker volume rm "lea-test-podman-$id" "lea-test-podman-$sid" >/dev/null 2>&1 || true
   # The session created this per-run projects directory under the real ~/.claude.
   if [ -n "$slug" ]; then rm -r "${HOME:?}/.claude/projects/$slug" 2>/dev/null || true; fi
@@ -167,6 +170,45 @@ until LEA_PROJECTS_DIR="$sibling" timeout 30 "$root/bin/lea" shell -- curl -s -o
   fi
   sleep 1
 done
+# #105: lea doctor reports the gateway mode of each internal network; lea refuses to start a
+# container on an internal network the host keeps an address on, and creates no container.
+"$root/bin/lea" doctor >"$work/doctor.out" 2>&1 || true
+grep -qF "ok    lea-test-internal-$id gateway_mode_ipv4=isolated" "$work/doctor.out" ||
+  { cat "$work/doctor.out" >&2; echo "isolation: lea doctor does not report lea-test-internal-$id as gateway_mode_ipv4=isolated" >&2; exit 1; }
+docker network create --label lea.prefix=lea-test --label "lea.id=$pid" --internal "lea-test-internal-$pid" >/dev/null
+if LEA_PROJECTS_DIR="$plain" "$root/bin/lea" shell -- true </dev/null >"$work/plain.out" 2>&1; then
+  cat "$work/plain.out" >&2; echo "isolation: lea started on an internal network without gateway_mode_ipv4=isolated" >&2; exit 1
+fi
+grep -qF "lea-test-internal-$pid exists without gateway_mode_ipv4=isolated" "$work/plain.out" ||
+  { cat "$work/plain.out" >&2; echo "isolation: lea's refusal does not name the non-isolated network" >&2; exit 1; }
+if docker container inspect "lea-test-$pid" >/dev/null 2>&1; then
+  echo "isolation: lea created lea-test-$pid on a non-isolated network" >&2; exit 1
+fi
+"$root/bin/lea" doctor >"$work/doctor.out" 2>&1 || true
+grep -qF "FAIL  lea-test-internal-$pid gateway_mode_ipv4=unset" "$work/doctor.out" ||
+  { cat "$work/doctor.out" >&2; echo "isolation: lea doctor does not fail on lea-test-internal-$pid" >&2; exit 1; }
+docker network rm "lea-test-internal-$pid" >/dev/null
+echo "isolation: ok    a non-isolated internal network is refused, and lea doctor fails on it"
+# #105: lea checks the isolation itself, not the option string: an internal network that has
+# gateway_mode_ipv4=isolated but whose bridge holds a host address is refused too. Adding the
+# address needs root (sudo -n): without it the check is noted (a failure in CI).
+docker network create --label lea.prefix=lea-test --label "lea.id=$pid" --internal \
+  -o com.docker.network.bridge.gateway_mode_ipv4=isolated "lea-test-internal-$pid" >/dev/null
+pbr="br-$(docker network inspect -f '{{.Id}}' "lea-test-internal-$pid" | cut -c1-12)"
+if ip -4 addr show dev "$pbr" >/dev/null 2>&1 && sudo -n ip addr add 192.0.2.1/32 dev "$pbr" 2>/dev/null; then
+  if LEA_PROJECTS_DIR="$plain" "$root/bin/lea" shell -- true </dev/null >"$work/plain.out" 2>&1; then
+    cat "$work/plain.out" >&2; echo "isolation: lea started on an isolated network whose bridge holds a host address" >&2; exit 1
+  fi
+  grep -qF "lea-test-internal-$pid has gateway_mode_ipv4=isolated but the host holds 192.0.2.1/32 on its bridge $pbr" "$work/plain.out" ||
+    { cat "$work/plain.out" >&2; echo "isolation: lea's refusal does not name the host address on the bridge" >&2; exit 1; }
+  if docker container inspect "lea-test-$pid" >/dev/null 2>&1; then
+    echo "isolation: lea created lea-test-$pid on a bridge with a host address" >&2; exit 1
+  fi
+  echo "isolation: ok    an isolated network whose bridge holds a host address is refused"
+else
+  echo "note: the bridge $pbr is not visible or sudo -n is unavailable: the host-address check did not run"
+fi
+docker network rm "lea-test-internal-$pid" >/dev/null
 rc=0
 # The proxy lea started is confined (#102): capabilities, no-new-privileges, read-only root,
 # limits, no root process but PID 1.
