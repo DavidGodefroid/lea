@@ -5,10 +5,13 @@
 # the projects directory, wired as lea wires it: the socket volume of each lox up lock
 # (<project>_<lock>-run, .lockfamily/up.json) on /run/<tool>, read-only, the --group-add of each
 # clients group (10000, 10010, 10030), no host account and no /etc/<tool>/system.toml on the host.
-#   - each release is the one image/Containerfile pins: its archive matches the pinned sha256 and
-#     the checksums.txt that cosign proves its release workflow signed at that tag; the consoles
-#     run that release's image, by digest, cosign-verified, as do the hub (lockhub
-#     LOCKHUB_VERSION) and the lox CLI of that lockhub release;
+#   - each release is the one config/locks.lock pins (the set image/Containerfile installs, lea#134):
+#     its archive matches the pinned sha256 and the checksums.txt that cosign proves its release
+#     workflow signed at that tag; the consoles run that release's image, by the set's digest,
+#     cosign-verified, as do the hub (lockhub LOCKHUB_VERSION, the set's lox release by default)
+#     and the lox CLI of that lockhub release;
+#   - lea doctor finds each lock lox runs compatible with lea's client of its type, and lea's own
+#     hello probe (lea lock-hello in lea's image) reads each console's protocol and version;
 #   - lox add declares the three locks (allowed_uids: this account's uid, as lea's hints say: lea's
 #     agents run as the host user's uid, which has no account in the consoles' images), lox up
 #     starts them with the hub, and each console's start-up questions (its policy, lockmq's
@@ -29,7 +32,8 @@
 # and the compose project lox up makes for its temporary projects directory, and removes them.
 set -eu
 root=$(cd "$(dirname "$0")/../.." && pwd -P)
-LOCKHUB_VERSION=${LOCKHUB_VERSION:-0.3.0}
+set_v() { sed -n "s/^$1=v\{0,1\}\([0-9][0-9.]*\)\$/\1/p" "$root/config/locks.lock"; }
+LOCKHUB_VERSION=${LOCKHUB_VERSION:-$(set_v LOCKS_LOX_VERSION)}
 case $(uname -m) in x86_64) arch=amd64 ;; aarch64) arch=arm64 ;; *) echo "phase0: no release for $(uname -m)" >&2; exit 1 ;; esac
 id=lea-phase0-$$
 uid=$(id -u)
@@ -182,21 +186,20 @@ for t in locksql lockmq lockfile; do
 done
 if [ -z "$h" ]; then ok "no host account, clients group or /etc/<tool> for locksql, lockmq, lockfile"; else ko "the host has accounts or /etc entries for:$h"; fi
 
-say "the releases image/Containerfile pins"
-sq_v=$(sed -n 's/.* V=\([0-9][0-9.]*\) .*/\1/p' "$cf")
-sq_sum=$(sed -n "s/^ *$arch) sq=\([0-9a-f]\{64\}\) ;;.*/\1/p" "$cf")
-mq_v=$(sed -n 's/.* MQ=\([0-9][0-9.]*\) LF=.*/\1/p' "$cf")
-lf_v=$(sed -n 's/.* MQ=[0-9.]* LF=\([0-9][0-9.]*\) .*/\1/p' "$cf")
-mq_sum=$(sed -n "s/^ *$arch) mq=\([0-9a-f]\{64\}\) lf=.*/\1/p" "$cf")
-lf_sum=$(sed -n "s/^ *$arch) mq=[0-9a-f]* lf=\([0-9a-f]\{64\}\) ;;.*/\1/p" "$cf")
-for x in "$sq_v" "$sq_sum" "$mq_v" "$mq_sum" "$lf_v" "$lf_sum"; do
-  [ -n "$x" ] || die "image/Containerfile no longer pins the clients as this test reads them: update it"
+say "the releases config/locks.lock pins, as one set"
+A=$(printf '%s' "$arch" | tr '[:lower:]' '[:upper:]')
+set_k() { sed -n "s/^$1=//p" "$root/config/locks.lock"; }
+sq_v=$(set_v LOCKS_LOCKSQL_VERSION) sq_sum=$(set_k "LOCKS_LOCKSQL_SHA256_$A")
+mq_v=$(set_v LOCKS_LOCKMQ_VERSION) mq_sum=$(set_k "LOCKS_LOCKMQ_SHA256_$A")
+lf_v=$(set_v LOCKS_LOCKFILE_VERSION) lf_sum=$(set_k "LOCKS_LOCKFILE_SHA256_$A")
+for x in "$sq_v" "$sq_sum" "$mq_v" "$mq_sum" "$lf_v" "$lf_sum" "$LOCKHUB_VERSION"; do
+  [ -n "$x" ] || die "config/locks.lock no longer pins the clients as this test reads them: update it"
 done
-echo "locksql $sq_v, lockmq $mq_v, lockfile $lf_v ($arch)"
-c=$root/config/lea.conf
-if grep -qx "LEA_LOCKSQL_REF=v$sq_v" "$c" && grep -qx "LEA_LOCKMQ_REF=v$mq_v" "$c" && grep -qx "LEA_LOCKFILE_REF=v$lf_v" "$c"; then
-  ok "config/lea.conf pins the same releases (LEA_LOCKSQL_REF, LEA_LOCKMQ_REF, LEA_LOCKFILE_REF)"
-else ko "config/lea.conf and image/Containerfile pin different releases"; fi
+echo "$(set_k LOCKS_SET): locksql $sq_v, lockmq $mq_v, lockfile $lf_v, lox $LOCKHUB_VERSION ($arch)"
+if grep -q '^COPY config/locks.lock /usr/local/share/lea/locks.lock$' "$cf" && ! grep -Eq '(V|MQ|LF)=[0-9]+\.[0-9]' "$cf" &&
+  ! grep -Eq '^LEA_LOCK(SQL|MQ|FILE)_REF=' "$root/config/lea.conf"; then
+  ok "image/Containerfile installs the set's clients, and nothing else pins a release of them"
+else ko "image/Containerfile or config/lea.conf pins a client outside config/locks.lock"; fi
 
 # release TOOL VERSION SHA256: the release archive, its sha256 the pin and in the checksums.txt its
 # release workflow signed at that tag (cosign).
@@ -232,12 +235,18 @@ digest() {
     "ghcr.io/davidgodefroid/$1@$dg" >/dev/null 2>&1 || die "ghcr.io/davidgodefroid/$1@$dg is not signed by $1's release v$2"
   printf 'ghcr.io/davidgodefroid/%s@%s' "$1" "$dg"
 }
+# setimg TOOL IMAGE: ok when IMAGE, the signed release's, is the one the set pins.
+setimg() {
+  if [ "$2" = "$(set_k "LOCKS_$(printf '%s' "$1" | tr '[:lower:]' '[:upper:]')_IMAGE")" ]; then
+    ok "$1 image $2, signed by its release workflow at v$3, the set's"
+  else ko "$1 image $2 (signed at v$3) is not the one config/locks.lock pins"; fi
+}
 sq_img=$(digest locksql "$sq_v")
-ok "locksql image $sq_img, signed by its release workflow at v$sq_v"
+setimg locksql "$sq_img" "$sq_v"
 mq_img=$(digest lockmq "$mq_v")
-ok "lockmq image $mq_img, signed by its release workflow at v$mq_v"
+setimg lockmq "$mq_img" "$mq_v"
 lf_img=$(digest lockfile "$lf_v")
-ok "lockfile image $lf_img, signed by its release workflow at v$lf_v"
+setimg lockfile "$lf_img" "$lf_v"
 hub=$(digest lockhub "$LOCKHUB_VERSION")
 ok "hub image $hub, signed by lockhub's release workflow at v$LOCKHUB_VERSION"
 
@@ -393,7 +402,6 @@ LEA_PREFIX=$id
 LEA_IMAGE=lea:dev
 LEA_PROXY_IMAGE=lea-proxy:dev
 LEA_LOCKSQL=1
-LEA_LOCKSQL_REF=v$sq_v
 LEA_LOCKMQ=1
 LEA_LOCKFILE=1
 LEA_HUB=0
@@ -427,6 +435,33 @@ esac
 for t in locksql lockmq lockfile; do
   out=$(call "$t")
   if running "$t" "$out"; then ok "lea's agent: ${t}_status reaches the running $t console"; else ko "lea's agent: ${t}_status: $out"; fi
+done
+
+say "the Lock clients against the locks lox runs: lea doctor, and lea's hello probe"
+LEA_PROJECTS_DIR="$projects" "$root/bin/lea" doctor </dev/null >"$work/doctor.out" 2>&1 || true
+grep -i 'lock\|lox' "$work/doctor.out" || true
+for x in "crm locksql $sq_v" "events lockmq $mq_v" "docs lockfile $lf_v"; do
+  # shellcheck disable=SC2086 # three words
+  set -- $x
+  if grep -qF "ok    lock $1 ($2): runs $2 v$3, the release of lea's $2 client v$3 (protocol " "$work/doctor.out"; then
+    ok "lea doctor: lock $1 ($2) runs v$3, the release of lea's client"
+  else ko "lea doctor: lock $1 ($2): $(grep -F "lock $1 ($2)" "$work/doctor.out" || echo 'no line')"; fi
+done
+# The probe lea doctor runs for a lock of another image (lea lock-hello), here on each console,
+# its socket named as lockkit names it (the projects directory's hash, the profile): locksql's and
+# lockmq's socket directories (2710) cannot be listed by their clients group.
+ph=$(printf '%s' "$projects" | sha256sum | cut -c1-8)
+for x in "crm locksql 10000 10001 $sq_v dev" "events lockmq 10010 10011 $mq_v p" "docs lockfile 10030 10031 $lf_v samples"; do
+  # shellcheck disable=SC2086 # six words
+  set -- $x
+  h=$(docker run --rm --pull never --network none --read-only --cap-drop ALL --security-opt no-new-privileges \
+    --user "$uid:$(id -g)" --group-add "$3" --mount "type=volume,src=${p}_$1-run,dst=/run/$2,readonly" \
+    --mount "type=bind,src=$root/build/lea,dst=/usr/local/bin/lea,readonly" --entrypoint /usr/local/bin/lea \
+    lea:dev lock-hello --uid "$4" "/run/$2" "$ph-$6.sock" 2>&1) || true
+  if [ "$(printf '%s' "$h" | jq -r '.[0].hello.protocol_major' 2>/dev/null)" = 1 ] &&
+    [ "$(printf '%s' "$h" | jq -r '.[0].hello.console_version' 2>/dev/null | sed 's/^v//')" = "$5" ]; then
+    ok "lea lock-hello: the $1 console ($2) answers protocol 1, version $5"
+  else ko "lea lock-hello on $1 ($2): $h"; fi
 done
 
 say "negative control: lea's image as the session account, without the clients groups"

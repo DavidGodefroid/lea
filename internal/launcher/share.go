@@ -69,7 +69,6 @@ var shareKeys = map[string]shareKey{
 	"LEA_OTEL_UPSTREAM":    {classEgress, false, noteProxy, func(_, v string) error { return CheckOtelUpstream(v) }},
 	"LEA_IMAGE":            {classCode, false, noteInit, checkImage},
 	"LEA_PROXY_IMAGE":      {classCode, false, noteInit, checkImage},
-	"LEA_LOCKSQL_IMAGE":    {classCode, false, noteInit, checkImage},
 	"LEA_LOCKSQL_REF":      {classCode, false, noteInit, checkLocksqlRef},
 	"LEA_RELEASES_URL":     {classCode, false, "applies at the next lea update", checkReleases},
 	"LEA_LOCKSQL":          {"", false, noteInit, checkBit("LEA_LOCKSQL must be 1 (wire lea for a locksql console) or 0")},

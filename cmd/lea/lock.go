@@ -2,15 +2,19 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"log"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
+	"time"
 
 	"github.com/DavidGodefroid/lea/internal/agents"
 	"github.com/DavidGodefroid/lea/internal/launcher"
+	"github.com/DavidGodefroid/lea/internal/locks"
 )
 
 const lockUse = "usage: lea lock open|close TOOL [PROFILE] | lea lock list"
@@ -105,4 +109,29 @@ func lockContainerName(cfg *launcher.Config) func(string) string {
 		}
 		return cfg.ContainerName(p)
 	}
+}
+
+// runLockHello is lea lock-hello --uid UID DIR [SOCKET...]: the hello handshake of each console
+// socket SOCKET of DIR (every one of DIR without), that UID serves, one JSON array on stdout
+// (locks.AskHello). lea doctor runs it in lea's image,
+// with only the lock's socket volume mounted, to learn the protocol and version of the lock lox
+// runs (lea#134). It sends nothing but hello.
+func runLockHello(args []string, stdout, stderr io.Writer) int {
+	if len(args) < 3 || args[0] != "--uid" {
+		fmt.Fprintln(stderr, "usage: lea lock-hello --uid UID DIR [SOCKET...]")
+		return 2
+	}
+	uid, err := strconv.Atoi(args[1])
+	if err != nil || uid < 1 || !filepath.IsAbs(args[2]) {
+		fmt.Fprintln(stderr, "usage: lea lock-hello --uid UID DIR [SOCKET...] (an absolute DIR)")
+		return 2
+	}
+	rs, err := locks.AskHello(args[2], args[3:], uid, 5*time.Second)
+	if err != nil {
+		fmt.Fprintln(stderr, "lea lock-hello:", err)
+		return 1
+	}
+	b, _ := json.Marshal(rs)
+	fmt.Fprintln(stdout, string(b))
+	return 0
 }

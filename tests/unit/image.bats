@@ -51,7 +51,9 @@ setup() { setup_fakes; load_lea; I="$LEA_ROOT/image"; }
   grep -q '^FROM quay.io/podman/stable:v5.8.7-immutable$' "$c"
   grep -q '^ARG CLAUDE_CODE_VERSION=2.1.296$' "$c"
   grep -q '^ARG RTK_VERSION=0.36.0$' "$c"
-  grep -q ' V=0.16.0 ' "$c"
+  # The Locks' clients: no version here, config/locks.lock's set (lea#134).
+  grep -q '^COPY config/locks.lock /usr/local/share/lea/locks.lock$' "$c"
+  ! grep -Eq '(V|MQ|LF)=[0-9]+\.[0-9]+' "$c"
 }
 
 @test "Containerfile ships Go 1.26 by digest, staticcheck and govulncheck pinned, with Go's state in the state dir go" {
@@ -89,17 +91,31 @@ setup() { setup_fakes; load_lea; I="$LEA_ROOT/image"; }
   [ "$(jq -r '.permissions // "none"' "$I/managed-settings.json")" = none ]
 }
 
-@test "Containerfile installs the locksql client of a console in another container" {
+@test "Containerfile installs the Locks' clients of consoles in other containers, from the set" {
   c="$I/Containerfile"
   grep -q 'useradd -r -u 10001 -U -M -s /sbin/nologin locksql' "$c"
-  grep -q "'socket_dir   = \"/run/locksql\"'" "$c"
-  grep -q 'A="locksql_${V}_linux_${TARGETARCH}.tar.gz"' "$c"
-  # Pinned by the archive's sha256, for each architecture.
-  grep -q 'echo "$sq  $A" | sha256sum -c' "$c"
-  grep -Eq 'amd64\) sq=[0-9a-f]{64} ;;' "$c"
-  grep -Eq 'arm64\) sq=[0-9a-f]{64} ;;' "$c"
+  grep -q 'for t in locksql lockmq lockfile; do' "$c"
+  grep -q '"socket_dir   = \\"/run/$t\\""' "$c"
+  grep -q 'a="${t}_${v}_linux_${TARGETARCH}.tar.gz"' "$c"
+  # Each archive pinned by the set's sha256, for each architecture.
+  grep -q 'sum=$(sed -n "s/^LOCKS_${T}_SHA256_${A}=' "$c"
+  grep -q 'echo "$sum  $a" | sha256sum -c' "$c"
+  grep -q 'amd64) A=AMD64 ;;' "$c"
+  grep -q 'arm64) A=ARM64 ;;' "$c"
   grep -q 'install -d -m 2710 -o 10001 -g 10000 /run/locksql' "$c"
   ! grep -q 'LOCKSQL_REF\|COPY --from=locksql' "$c"
+}
+
+@test "the set's version and sha256 lines are the ones the Containerfile reads" {
+  # The sed patterns of the Containerfile, run on the set: every client has its version and both
+  # architectures' sha256.
+  for t in LOCKSQL LOCKMQ LOCKFILE; do
+    v=$(sed -n "s/^LOCKS_${t}_VERSION=v\([0-9][0-9.]*\)\$/\1/p" "$LEA_ROOT/config/locks.lock")
+    [ -n "$v" ]
+    for A in AMD64 ARM64; do
+      [ -n "$(sed -n "s/^LOCKS_${t}_SHA256_${A}=\([0-9a-f]\{64\}\)\$/\1/p" "$LEA_ROOT/config/locks.lock")" ]
+    done
+  done
 }
 
 # render_ssh_config OUT: the entrypoint's /run/lea/ssh_config block, run with its output in OUT.
