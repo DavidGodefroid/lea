@@ -22,7 +22,32 @@ func (l *Launcher) containerRunning(name string) bool {
 	return out == "true"
 }
 
-// ensureNetworks is lea_ensure_networks: the egress network and the container's internal one.
+// isolatedGatewayDocker is the first Docker Engine release with the bridge driver's
+// gateway_mode_ipv4=isolated: an internal network on which the host has no address. An older
+// Engine either refuses the option or ignores it (before gateway_mode_ipv4 existed), leaving the
+// host's gateway address, and every host service bound to 0.0.0.0, reachable from the agents.
+const isolatedGatewayDocker = "28.0"
+
+// allowGateway is LEA_ALLOW_GATEWAY=1: the user accepts an internal network without
+// gateway_mode_ipv4=isolated (an older Docker Engine, Podman). Without it, lea fails closed (#105).
+func (l *Launcher) allowGateway() bool { return l.Cfg.Get("LEA_ALLOW_GATEWAY") == "1" }
+
+// isolatedUnavailable says why this engine cannot give an internal network an isolated gateway,
+// "" when it can or when lea cannot tell (then Docker's answer to the option decides).
+func (l *Launcher) isolatedUnavailable() string {
+	engine, v := l.hostEngine()
+	switch {
+	case engine == "podman":
+		return "Podman " + v + "'s bridge has no gateway_mode_ipv4=isolated"
+	case engine == "docker" && v != "" && !versionAtLeast(v, isolatedGatewayDocker):
+		return "Docker Engine " + v + " is older than " + isolatedGatewayDocker + ", the first with gateway_mode_ipv4=isolated"
+	}
+	return ""
+}
+
+// ensureNetworks is lea_ensure_networks: the egress network and the container's internal one. The
+// internal network must have gateway_mode_ipv4=isolated (no host address on it): when the engine
+// cannot give it, lea refuses to start the container, unless LEA_ALLOW_GATEWAY=1 (#105).
 func (l *Launcher) ensureNetworks(id string) error {
 	inet, egr := l.Cfg.InternalNetwork(id), l.prefix()+"-egress"
 	if l.quiet("docker", "network", "inspect", egr) != nil {
@@ -30,18 +55,36 @@ func (l *Launcher) ensureNetworks(id string) error {
 			return err
 		}
 	}
-	if internal, err := l.output(false, "docker", "network", "inspect", "-f", "{{.Internal}}", inet); err == nil {
+	if info, err := l.output(false, "docker", "network", "inspect", "-f",
+		`{{.Internal}} {{index .Options "com.docker.network.bridge.gateway_mode_ipv4"}}`, inet); err == nil {
+		internal, mode, _ := strings.Cut(info, " ")
 		if internal != "true" {
 			return die("network %s exists but is not an internal network; remove it (docker network rm %s) and retry", inet, inet)
 		}
+		if mode = strings.TrimSpace(mode); mode != "isolated" {
+			if mode == "" || mode == "<no value>" {
+				mode = "unset"
+			}
+			if !l.allowGateway() {
+				return die("network %s exists without gateway_mode_ipv4=isolated (%s): the host is reachable from it; stop its container (lea stop), remove it (docker network rm %s) and retry, or set LEA_ALLOW_GATEWAY=1 to accept it", inet, mode, inet)
+			}
+			l.logf("warning: %s has gateway_mode_ipv4=%s, not isolated: host services are reachable from the agents (LEA_ALLOW_GATEWAY=1)", inet, mode)
+		}
 		return nil
 	}
-	if l.quiet("docker", "network", "create", "--label", "lea.prefix="+l.prefix(), "--label", "lea.id="+id, "--internal",
-		"-o", "com.docker.network.bridge.gateway_mode_ipv4=isolated", inet) != nil {
-		l.logf("warning: Docker refused gateway_mode_ipv4=isolated; %s is created without it (check with: make test-isolation)", inet)
-		return l.run("docker", "network", "create", "--label", "lea.prefix="+l.prefix(), "--label", "lea.id="+id, "--internal", inet)
+	why := l.isolatedUnavailable()
+	if why == "" {
+		if l.quiet("docker", "network", "create", "--label", "lea.prefix="+l.prefix(), "--label", "lea.id="+id, "--internal",
+			"-o", "com.docker.network.bridge.gateway_mode_ipv4=isolated", inet) == nil {
+			return nil
+		}
+		why = "Docker refused gateway_mode_ipv4=isolated"
 	}
-	return nil
+	if !l.allowGateway() {
+		return die("%s: lea will not start an agent on a network where the host is reachable (needs Docker Engine %s or later; set LEA_ALLOW_GATEWAY=1 to accept a plain internal network)", why, isolatedGatewayDocker)
+	}
+	l.logf("warning: %s; %s is created without it (LEA_ALLOW_GATEWAY=1): host services are reachable from the agents", why, inet)
+	return l.run("docker", "network", "create", "--label", "lea.prefix="+l.prefix(), "--label", "lea.id="+id, "--internal", inet)
 }
 
 // proxyRules is a digest (12 hex digits) of the files the proxy renders its rules and refusal
