@@ -292,3 +292,85 @@ func packedRefs(p, b string) (tag, branch bool, err error) {
 	}
 	return tag, branch, sc.Err()
 }
+
+// PushAttempt says whether a Bash call pushes with git (or a transport that writes remote refs),
+// as the agent wrote it: a git call whose subcommand is push, in any simple command or
+// substitution; a command lea cannot split that names one. In a tower's tree the daemon denies a
+// push no grant pinned (#110): lea cannot read the repository's production branches before it
+// runs (the daemon never talks to the forge), and the pinned push checks them.
+func PushAttempt(tool string, input json.RawMessage) bool {
+	raw, ok := bashCommand(tool, input)
+	if !ok {
+		return false
+	}
+	return pushIn(raw, 0)
+}
+
+func pushIn(cmd string, depth int) bool {
+	if lit, ok := literalHeredocs(cmd); ok {
+		cmd = lit
+	}
+	segs, inners, ok := segments(cmd)
+	if !ok || depth > 8 {
+		return pushWordRe.MatchString(unquote.Replace(cmd)) && namesGit(cmd)
+	}
+	for _, in := range inners {
+		if pushIn(in, depth+1) {
+			return true
+		}
+	}
+	for _, w := range segs {
+		p := 0
+		for p < len(w) && isAssignment(w[p]) {
+			p++
+		}
+		if p == len(w) || printsOnly(w[p:]) {
+			continue // echo git push: text
+		}
+		for k := p; k < len(w); k++ {
+			if !isGit(w[k]) {
+				continue
+			}
+			if s := gitSub(w[k:]); s > 0 && pushWord(w[k+s]) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// LocalProduction says whether branch is a production branch as far as the repository at dir
+// shows it on the host, without the forge: main, master or HEAD, the remote's default branch
+// (refs/remotes/origin/HEAD), or a branch its checked-out .lea/production names. What it cannot
+// read counts as nothing: a hint for refusing at spawn time an agent of a tower's tree whose
+// branch is production (#110); the pinned push reads the forge and is the check that holds.
+func LocalProduction(dir, branch string) bool {
+	if Protected(branch) {
+		return true
+	}
+	if dir == "" {
+		return false
+	}
+	if gitdir, ok := findGitDir(dir); ok {
+		common := gitdir
+		if s, err := readSmall(filepath.Join(gitdir, "commondir"), 4096); err == nil {
+			common = strings.TrimSpace(s)
+			if !filepath.IsAbs(common) {
+				common = filepath.Join(gitdir, common)
+			}
+		}
+		if s, err := readSmall(filepath.Join(common, "refs", "remotes", "origin", "HEAD"), 4096); err == nil {
+			if def, ok := strings.CutPrefix(strings.TrimSpace(s), "ref: refs/remotes/origin/"); ok && def == branch {
+				return true
+			}
+		}
+	}
+	if s, err := readSmall(filepath.Join(dir, ".lea", "production"), 64<<10); err == nil {
+		for _, l := range strings.Split(s, "\n") {
+			if l = strings.TrimSpace(l); l != "" && !strings.HasPrefix(l, "#") && l == branch {
+				return true
+			}
+		}
+	}
+	return false
+}

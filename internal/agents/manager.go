@@ -23,6 +23,7 @@ import (
 	"time"
 
 	"github.com/DavidGodefroid/lea/internal/bus"
+	"github.com/DavidGodefroid/lea/internal/grants"
 	"github.com/DavidGodefroid/lea/internal/providers"
 	"github.com/DavidGodefroid/lea/internal/roles"
 	"github.com/DavidGodefroid/lea/internal/store"
@@ -262,6 +263,9 @@ type NewRequest struct {
 	// Hidden leaves the agent in its parking window: an agent another agent started never takes
 	// the slot or the keyboard.
 	Hidden bool
+	// Tree: the agent joins a tower's tree (#110); its Branch may not be a production branch the
+	// repository shows (grants.LocalProduction).
+	Tree bool
 }
 
 type Manager struct {
@@ -1748,6 +1752,10 @@ func (m *Manager) New(ctx context.Context, r NewRequest) (Row, error) {
 		// the one the user trusts and holds both the repo and the worktrees (A14); the first
 		// prompt names the repo.
 		r.Workdir = projects
+	}
+	if r.Tree && r.Branch != "" && grants.LocalProduction(repo, r.Branch) {
+		return Row{}, fmt.Errorf("branch %s is a production branch of the repository (main, master, its default branch or one .lea/production names): "+
+			"an agent of a tower's tree works on a branch of its own and merges through the tree's merge grant", r.Branch)
 	}
 	if r.Workdir == "" {
 		out, err := s.Run(ctx, "display-message", "-p", "-t", "="+r.Container+":", "#{"+optWorkdir+"}")

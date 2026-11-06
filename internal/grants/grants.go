@@ -149,6 +149,9 @@ type Caller struct {
 	// Merge, when set, is the production-merge policy of a caller in a tower's tree (#110): an
 	// allowed gh merge runs only after it passes (mergePolicyScript).
 	Merge *MergePolicy
+	// Tree: the caller is an agent of a tower's tree (#110). A pinned push then runs only after
+	// it checks that its destination is no production branch (pushPolicyScript).
+	Tree bool
 }
 
 // LeaProxy is lea-proxy's forward proxy, as the containers of a lea reach it (the network alias
@@ -423,6 +426,15 @@ func Command(req Request, c Caller, g Grant) string {
 			script = commitScript(req.Args[1:], c.Worktree, c.Proxy)
 		case "push":
 			script = pushScript(req.Args, c.Worktree, g.GitHub, c.Proxy)
+			if c.Tree && script != "" {
+				// The production branches are read on GitHub: no pinned GitLab push in a tower's tree.
+				pa := pushArgs(req.Args, g.GitHub)
+				if gitlab || pa == nil {
+					return ""
+				}
+				// In a subshell: gh's settings (ghIsolated) and set -f stay out of the push.
+				script = "(\n" + ghIsolated() + pushPolicyScript(strings.TrimPrefix(pa[1], "refs/heads/"), g.GitHub) + ") || exit 1\n" + script
+			}
 		}
 	}
 	if script == "" {

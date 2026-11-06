@@ -59,7 +59,8 @@ func TestParseWindowAndOpen(t *testing.T) {
 // default.txt (the repository's default branch), the .lea files (production.<ref> or
 // sensitive.<ref> on that ref, else production or sensitive on any ref; absent: a 404, as gh
 // reports it), files.txt (the API's files, jq-applied by the fake as the policy expects: "F path"
-// per file, "P path" per previous name, "N path" per file without a patch, and the added lines).
+// per file, "P path" per previous name, "N path" per file without a patch, and the added lines),
+// count.txt (the per-page counts: "files names-with-a-control-character").
 // err.<what> makes that call fail with a non-404 error (err.default, err.production.<ref>,
 // err.sensitive.<ref>).
 const fakeGH = `#!/bin/sh
@@ -77,6 +78,7 @@ case "$*" in
   "api repos/someone/shop --jq .default_branch") [ -f "$d/err.default" ] && { echo "gh: API rate limit exceeded (HTTP 403)" >&2; exit 1; }; cat "$d/default.txt" ;;
   "api -X GET -H Accept: application/vnd.github.raw repos/someone/shop/contents/.lea/production -f ref="*) lea_file production "$*" ;;
   "api -X GET -H Accept: application/vnd.github.raw repos/someone/shop/contents/.lea/sensitive -f ref="*) lea_file sensitive "$*" ;;
+  "api --paginate repos/someone/shop/pulls/7/files --jq \"\\(length) "*) cat "$d/count.txt" ;;
   "api --paginate repos/someone/shop/pulls/7/files "*) cat "$d/files.txt" ;;
   *) echo "unexpected gh $*" >&2; exit 3 ;;
 esac
@@ -95,6 +97,8 @@ type policyCase struct {
 	productionAt, sensitiveAt map[string]string
 	// changed is the PR's count of changed files (0: the F lines of files).
 	changed int
+	// count is the per-page count lines ("" one page: the F lines of files, no odd name).
+	count string
 	// errs are the calls that fail with a non-404 error (fakeGH's err.<what>).
 	errs   []string
 	policy MergePolicy
@@ -115,13 +119,19 @@ func runPolicy(t *testing.T, c policyCase) (out string, merged bool, dir string)
 			t.Fatal(err)
 		}
 	}
+	listed := 0
+	for _, l := range strings.Split(c.files, "\n") {
+		if strings.HasPrefix(l, "F ") {
+			listed++
+		}
+	}
 	changed := c.changed
 	if changed == 0 {
-		for _, l := range strings.Split(c.files, "\n") {
-			if strings.HasPrefix(l, "F ") {
-				changed++
-			}
-		}
+		changed = listed
+	}
+	count := c.count
+	if count == "" {
+		count = strconv.Itoa(listed) + " 0\n"
 	}
 	def := c.def
 	if def == "" {
@@ -133,6 +143,7 @@ func runPolicy(t *testing.T, c policyCase) (out string, merged bool, dir string)
 	write("default.txt", def+"\n", 0o644)
 	write("ci.txt", c.ci+"\n", 0o644)
 	write("files.txt", c.files, 0o644)
+	write("count.txt", count, 0o644)
 	if c.production != "" {
 		write("production", c.production, 0o644)
 	}
@@ -234,6 +245,15 @@ func TestMergePolicyScript(t *testing.T) {
 			false, "shows no diff of a file of PR 7 (large, binary or a pure rename), so lea cannot check it for an irreversible migration; it goes to your tower: db/big.sql"},
 		{"a deleted file without a patch", policyCase{base: "main", ci: green, files: files("F db/old.bin"), sensitive: "nothing/*\n", policy: open}, true, ""},
 		{"a truncated file list", policyCase{base: "main", ci: green, files: plain, changed: 3001, sensitive: "nothing/*\n", policy: open}, false, "files listed/changed 1/3001"},
+		// The count comes from jq over the pages, never from the lines a file name could forge.
+		{"pages summed", policyCase{base: "main", ci: green, files: files("F a.go", "F b.go", "F c.go"), count: "2 0\n1 0\n", sensitive: "nothing/*\n", policy: open}, true, ""},
+		{"pages short of the count", policyCase{base: "main", ci: green, files: files("F a.go", "F b.go", "F c.go"), count: "2 0\n", sensitive: "nothing/*\n", policy: open},
+			false, "files listed/changed 2/3"},
+		{"a name with a newline forges F lines", policyCase{base: "main", ci: green, files: files("F x", "F y", "F z"), changed: 3, count: "1 1\n", sensitive: "nothing/*\n", policy: open},
+			false, "holds a newline or a control character"},
+		{"an odd count line", policyCase{base: "main", ci: green, files: plain, count: "1 0 7\n", policy: open}, false, "cannot count the files"},
+		{"a count line without a space", policyCase{base: "main", ci: green, files: plain, count: "10\n", policy: open}, false, "cannot count the files"},
+		{"a count line with a sign", policyCase{base: "main", ci: green, files: plain, count: "-1 0\n", policy: open}, false, "cannot count the files"},
 		{"no file count", policyCase{base: "main", ci: green, files: plain, changed: -1, policy: open}, false, "has no count of changed files"},
 		// Case-insensitive, trimmed sensitive patterns; the old name of a renamed file counts.
 		{"a mixed-case default path", policyCase{base: "main", ci: green, files: files("F src/Auth/Login.go", "+x"), policy: open}, false, "src/auth/login.go"},
@@ -350,6 +370,24 @@ func TestMergeAttempt(t *testing.T) {
 		// An expansion in the path or the method of a write, or unquoted (it may add either).
 		"gh api -XPUT repos/o/r/pulls/7/${M}", "gh api -X PUT repos/o/r/pulls/7/$(echo merge)", "gh api -X $M repos/o/r/pulls/7/x",
 		"gh api repos/o/r/pulls/7/`echo merge` -f merge_method=squash", "gh api repos/o/r/pulls/7/$M", "curl $URL -d x",
+		// A GraphQL call lea cannot read literally: a variable (even double-quoted), a backquote,
+		// a query from a file or stdin, an escape, a curl or wget POST of a body it cannot read,
+		// another program.
+		`gh api graphql -f query="$Q"`, `gh api graphql -f query="it's $Q"`, `gh api graphql -f query="mutation { $(cat m) }"`, "gh api graphql -f query=`cat q`",
+		`gh api graphql -F query=@q.graphql`, `gh api graphql -f query=@-`, `gh api graphql --input -`, `cat q.json | gh api graphql --input -`,
+		`glab api graphql -f query="$Q"`,
+		`curl -X POST https://api.github.com/graphql -d @q.json`, `curl https://api.github.com/graphql --data-binary @-`,
+		`curl -s https://api.github.com/graphql -d "{\"query\": \"$Q\"}"`,
+		`curl https://api.github.com/graphql -d '{"query":"\u006dutation { m\u0065rgePullRequest(input:{}) { clientMutationId } }"}'`,
+		`curl -T q.json https://api.github.com/graphql`, `wget --post-file=q.json https://api.github.com/graphql`,
+		`wget -O- --body-file=q.json --method=POST https://gitlab.example.com/api/graphql`,
+		`python3 -c 'import requests; requests.post("https://api.github.com/graphql", json=q)'`,
+		`curl -X POST https://api.github.com/graph%71l -d @q`,
+		// Options from a file: curl -K, wget -i or -e.
+		"curl -K req.cfg", "curl -sK req.cfg", "curl --config req.cfg", "wget -i urls.txt", "wget -e 'method=PUT' https://x",
+		// Other merge endpoints.
+		"curl -X POST https://api.bitbucket.org/2.0/repositories/o/r/pullrequests/7/merge",
+		"gh api -X PUT repos/o/r/pulls/7//merge", "gh alias import aliases.yml",
 	} {
 		if !MergeAttempt("Bash", bash(cmd)) {
 			t.Errorf("%q: not seen as a merge", cmd)
@@ -361,6 +399,11 @@ func TestMergeAttempt(t *testing.T) {
 		// A read whose expansions are double-quoted, a write with no expansion and no merge path.
 		`gh api "repos/someone/shop/pulls/$N"`, `gh api -X GET "repos/o/r/pulls/$N/files"`, "gh api -X PATCH repos/o/r/pulls/7 -f title=x",
 		"echo $HOME && git status", "gh api repos/o/r/pulls/7%2Ffiles",
+		// A literal GraphQL query or mutation that is no merge, its variables single-quoted.
+		`gh api graphql -f query='query($n: Int!) { repository(owner: "o", name: "r") { pullRequest(number: $n) { mergeable } } }' -F n=7`,
+		`gh api graphql -f query='mutation { addComment(input: {subjectId: "x", body: "y"}) { clientMutationId } }'`,
+		`curl -s -X POST https://api.github.com/graphql -d '{"query":"{ viewer { login } }"}'`,
+		"grep -rn graphql src/", "curl -i https://api.github.com/repos/o/r",
 	} {
 		if MergeAttempt("Bash", bash(cmd)) {
 			t.Errorf("%q: seen as a merge", cmd)
@@ -410,6 +453,109 @@ func TestBranchWrite(t *testing.T) {
 		"mcp__github__list_branches": false, "mcp__lea__update_branch": false, "Read": false} {
 		if got := BranchWrite(tool, json.RawMessage(`{}`)) != ""; got != want {
 			t.Errorf("%s: %v", tool, got)
+		}
+	}
+}
+
+// runPushPolicy runs pushPolicyScript for a push to branch against fakeGH (default.txt, the
+// production files, err.<what>), as the pinned push runs it: it says whether the push would go on.
+func runPushPolicy(t *testing.T, branch string, c policyCase) (out string, pushed bool, log string) {
+	t.Helper()
+	for _, p := range []string{shPath, grepPath, mktempPath, rmPath} {
+		if _, err := os.Stat(p); err != nil {
+			t.Skipf("%s: %v", p, err)
+		}
+	}
+	dir := t.TempDir()
+	write := func(name, s string) {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(s), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	def := c.def
+	if def == "" {
+		def = "main"
+	}
+	write("gh", fakeGH)
+	write("default.txt", def+"\n")
+	for ref, body := range c.productionAt {
+		write("production."+ref, body)
+	}
+	for _, e := range c.errs {
+		write("err."+e, "")
+	}
+	script := "(\n" + pushPolicyScript(branch, "github.com/someone/shop") + ") || exit 1\necho PUSHED\n"
+	script = strings.ReplaceAll(script, "'"+ghPath+"'", "'"+filepath.Join(dir, "gh")+"'")
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	b, _ := exec.CommandContext(ctx, shPath, "-c", script).CombinedOutput()
+	l, _ := os.ReadFile(filepath.Join(dir, "gh.log"))
+	return string(b), strings.Contains(string(b), "PUSHED"), string(l)
+}
+
+// In a tower's tree a pinned push never goes to a production branch (#110, re-review B1): the
+// default branch (main or not), main, master, or a branch .lea/production names on the default
+// branch or on the branch itself; any forge error but a 404 refuses it.
+func TestPushPolicyScript(t *testing.T) {
+	for _, tc := range []struct {
+		name, branch string
+		c            policyCase
+		pushed       bool
+		want         string
+	}{
+		{"a branch of its own", "fix/7", policyCase{}, true, ""},
+		{"a branch of its own, lists naming others", "fix-7", policyCase{def: "develop",
+			productionAt: map[string]string{"develop": "release\n", "fix-7": "# none\nstaging\n"}}, true, ""},
+		{"main", "main", policyCase{def: "develop"}, false, "production branch main"},
+		{"master", "master", policyCase{}, false, "production branch master"},
+		{"a default branch other than main", "develop", policyCase{def: "develop"}, false, "the repository's default branch"},
+		{"listed on the default branch", "release", policyCase{productionAt: map[string]string{"main": "# prod\nrelease\n"}}, false,
+			".lea/production on the default branch names it"},
+		{"listed with a CR and blanks", "release", policyCase{productionAt: map[string]string{"main": " release \r\n"}}, false,
+			".lea/production on the default branch names it"},
+		{"listed on its own branch only", "release", policyCase{productionAt: map[string]string{"release": "release\n"}}, false,
+			"its own .lea/production names it"},
+		{"the default branch cannot be read", "fix/7", policyCase{errs: []string{"default"}}, false, "cannot read the default branch"},
+		{"the default branch's list: an API error", "fix/7", policyCase{errs: []string{"production.main"}}, false,
+			"cannot read .lea/production (not a 404) on the default branch main"},
+		{"the branch's own list: an API error", "fix-7", policyCase{errs: []string{"production.fix-7"}}, false,
+			"cannot read .lea/production (not a 404) on the branch fix-7"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			out, pushed, log := runPushPolicy(t, tc.branch, tc.c)
+			if pushed != tc.pushed || tc.want != "" && !strings.Contains(out, tc.want) {
+				t.Fatalf("pushed=%v out:\n%s\ngh:\n%s", pushed, out, log)
+			}
+		})
+	}
+}
+
+// Command pins a push of a caller of a tower's tree behind the production-branch check, in a
+// subshell before the push; a GitLab pin is not pinned there (the check reads GitHub).
+func TestCommandAppliesThePushPolicy(t *testing.T) {
+	for _, b := range []string{"release", "develop", "feat/73-x"} {
+		c := dev
+		c.Branch, c.Tree = b, true
+		g := all(CommitIdentity)
+		g.GitHub, g.Branch = "github.com/someone/shop", "*"
+		cmd := Command(Request{Prog: "git", Args: []string{"push", "origin", b}}, c, g)
+		script := lastWord(t, cmd)
+		if !strings.HasPrefix(script, "(\n") || !strings.Contains(script, "lea_dst='"+b+"'") || !strings.Contains(script, ") || exit 1\n") ||
+			strings.Index(script, "lea_dst=") > strings.Index(script, " push ") {
+			t.Fatalf("%s: policy missing or after the push: %s", b, script)
+		}
+		d := Decide("Bash", bash("git push origin "+b), c, []Grant{g}, now, false)
+		if d.Verdict != Allow || !strings.Contains(d.Command, "lea_dst") {
+			t.Fatalf("%s: %+v", b, d)
+		}
+		c.Tree = false
+		if cmd := Command(Request{Prog: "git", Args: []string{"push", "origin", b}}, c, g); cmd == "" || strings.Contains(cmd, "lea_dst") {
+			t.Fatalf("%s outside a tower's tree: %s", b, cmd)
+		}
+		c.Tree = true
+		g.GitHub = "gitlab.com/someone/shop"
+		if cmd := Command(Request{Prog: "git", Args: []string{"push", "origin", b}}, c, g); cmd != "" {
+			t.Fatalf("%s: GitLab push pinned in a tower's tree: %s", b, cmd)
 		}
 	}
 }

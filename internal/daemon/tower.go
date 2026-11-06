@@ -200,6 +200,21 @@ func (d *Daemon) towerOf(lineage []string) (tower, below string) {
 	return "", ""
 }
 
+// inTowerTree says whether the agent me is a tower or one of its descendants.
+func (d *Daemon) inTowerTree(me string) bool {
+	lineage := []string{}
+	for k := me; k != "" && len(lineage) < maxLineage && !contains(lineage, k); {
+		lineage = append(lineage, k)
+		a, err := d.st.AgentByKey(k)
+		if err != nil {
+			break
+		}
+		k = a.Parent
+	}
+	tower, _ := d.towerOf(lineage)
+	return tower != ""
+}
+
 // mergePolicy is the production-merge policy of a caller of a tower's tree for a merge of PR pr
 // ("" when it names none), nil outside one: the window of its lead (the tower's child of its
 // lineage; the tower itself has none) and the approvals of that PR.

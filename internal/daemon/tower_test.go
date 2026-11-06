@@ -608,7 +608,11 @@ func TestGrantCheckDeniesAnUngrantedMergeInATowersTree(t *testing.T) {
 		"gh api graphql -f query=mutation-mergePullRequest", "gh api graphql -F query=@merge.graphql",
 		"curl -X PUT https://api.github.com/repos/someone/shop/pulls/7/merge",
 		// Percent-escaped and expanded merge paths (the forwarder decodes and lower-cases the path).
-		"gh api -XPUT repos/someone/shop/pull%73/7/merge", "gh api -XPUT repos/someone/shop/pulls/7/${M}"}
+		"gh api -XPUT repos/someone/shop/pull%73/7/merge", "gh api -XPUT repos/someone/shop/pulls/7/${M}",
+		// GraphQL calls lea cannot read literally, options from a file, other merge endpoints.
+		"curl -X POST https://api.github.com/graphql -d @q.json", "gh api graphql --input -", "curl -K req.cfg",
+		`python3 -c 'import requests; requests.post("https://api.github.com/graphql", json=q)'`,
+		"curl -X POST https://api.bitbucket.org/2.0/repositories/o/r/pullrequests/7/merge"}
 	// No merge grant at all: every form is denied in the tree, for the dev and the lead alike.
 	for _, cmd := range forms {
 		for _, who := range []struct{ name, cwd string }{{"dev1", "dev1"}, {"lead", "lead"}} {
@@ -691,5 +695,119 @@ func TestGrantCheckDeniesBranchWritesInATowersTree(t *testing.T) {
 	// Reads keep the normal path.
 	if r := check("dev1", "Bash", map[string]string{"command": "gh api repos/someone/shop/contents/.lea/production"}); r["verdict"] != "" {
 		t.Fatalf("contents read: %v", r)
+	}
+}
+
+// In a tower's tree a push never reaches a production branch (#110, re-review B1): a push no
+// grant pins is denied whatever its form (its own branch may be production: release, a default
+// branch other than main), and a granted push is pinned behind the production-branch check.
+// Outside a tower's tree a push takes the normal path, as before.
+func TestGrantCheckGuardsPushesInATowersTree(t *testing.T) {
+	e := start(t)
+	tw := spawned(t, e, "tw", "tower", "")
+	lead := spawned(t, e, "lead", "lead", tw)
+	for _, a := range []store.NewAgent{
+		{Name: "dev1", Role: "dev", Parent: lead, Branch: "release"},
+		{Name: "dev2", Role: "dev", Parent: lead, Branch: "develop"},
+		{Name: "solo", Role: "dev", Branch: "staging"},
+	} {
+		a.Container, a.Profile, a.Workdir, a.Repo = "lea-a", "claude", "/p", "shop"
+		if _, err := e.d.st.Register(a, store.Caps{}, 1); err != nil {
+			t.Fatal(err)
+		}
+	}
+	check := func(agent, cmd string) map[string]any {
+		t.Helper()
+		var r map[string]any
+		in := map[string]any{"tool": "Bash", "input": map[string]string{"command": cmd}, "cwd": "/p/.lea/worktrees/shop/" + agent,
+			"env": map[string]string{"HOME": "/home/u"}}
+		if err := call(t, e.bus, agent, "grant_check", in, &r); err != nil {
+			t.Fatal(err)
+		}
+		return r
+	}
+	raw := func(b string) []string {
+		return []string{"git push origin " + b, "git push -u origin " + b, "git push origin refs/heads/" + b, "git push origin HEAD:refs/heads/" + b,
+			"git push origin " + b + ":refs/heads/" + b, "cd /p/.lea/worktrees/shop && git push origin " + b, "git add -A && git commit -m x && git push origin " + b}
+	}
+	denied := []string{"git push origin +release", "git push --all origin", "git push --mirror origin", "git push origin HEAD:release", "git push -f origin release", "echo $(git push origin release)"}
+	// No push grant: every push of the tree is denied, for the dev and the lead alike.
+	for _, who := range []struct{ name, branch string }{{"dev1", "release"}, {"dev2", "develop"}} {
+		for _, cmd := range raw(who.branch) {
+			if r := check(who.name, cmd); r["verdict"] != "deny" || !strings.Contains(fmt.Sprint(r["reason"]), "tower's tree") {
+				t.Fatalf("%s %q: %v", who.name, cmd, r)
+			}
+		}
+	}
+	for _, cmd := range denied {
+		if r := check("dev1", cmd); r["verdict"] != "deny" {
+			t.Fatalf("%q: %v", cmd, r)
+		}
+	}
+	if r := check("lead", "git push origin main"); r["verdict"] != "deny" {
+		t.Fatalf("lead: %v", r)
+	}
+	// What only names a push is not one.
+	for _, cmd := range []string{"echo git push origin release", "git status", `gh pr create --title x --body "then git push origin release"`} {
+		if r := check("dev1", cmd); r["verdict"] == "deny" && strings.Contains(fmt.Sprint(r["reason"]), "git push runs only") {
+			t.Fatalf("%q: %v", cmd, r)
+		}
+	}
+	// Outside a tower's tree: never the tree's deny.
+	if r := check("solo", "git push origin staging"); strings.Contains(fmt.Sprint(r["reason"]), "tower's tree") {
+		t.Fatalf("solo: %v", r)
+	}
+	// The tree's push grant (commit-identity, part of the delivery grants): pinned behind the check.
+	if _, err := e.d.st.AddGrant(grants.Grant{Container: "lea-a", Action: grants.CommitIdentity, Repo: "shop", GitHub: "github.com/someone/shop",
+		Created: 1, Expires: grants.Standing}); err != nil {
+		t.Fatal(err)
+	}
+	for _, who := range []struct{ name, branch string }{{"dev1", "release"}, {"dev2", "develop"}} {
+		r := check(who.name, "git push origin "+who.branch)
+		cmd := fmt.Sprint(r["command"])
+		if r["verdict"] != "allow" || !strings.Contains(cmd, "lea_dst=") || !strings.Contains(cmd, who.branch) || !strings.Contains(cmd, ".lea/production") {
+			t.Fatalf("granted %s: %v", who.name, r)
+		}
+		// A refspec the grant does not pin stays denied.
+		for _, c := range raw(who.branch)[2:5] {
+			if r := check(who.name, c); r["verdict"] != "deny" {
+				t.Fatalf("granted tree, %q: %v", c, r)
+			}
+		}
+	}
+	if r := check("solo", "git push origin staging"); r["verdict"] != "allow" || strings.Contains(fmt.Sprint(r["command"]), "lea_dst") {
+		t.Fatalf("solo, granted: %v", r)
+	}
+}
+
+// An agent of a tower's tree is never started on a production branch (#110): main, master and
+// HEAD are refused by the daemon, and the manager is told the agent joins a tree (it reads the
+// repository's default branch and .lea/production).
+func TestSpawnRefusesAProductionBranchInATowersTree(t *testing.T) {
+	e := start(t)
+	ta := newTreeAgents(e, 0)
+	e.d.SetAgents(ta)
+	tw := spawned(t, e, "tw", "tower", "")
+	spawned(t, e, "l1", "lead", tw)
+	spawned(t, e, "solo-lead", "lead", "")
+	for _, who := range []string{"tw", "l1"} {
+		role := "dev"
+		if who == "tw" {
+			role = "lead"
+		}
+		for _, b := range []string{"main", "master", "HEAD", "refs/heads/main"} {
+			if _, err := spawnAs(t, e, who, map[string]any{"role": role, "brief": "x", "branch": b}); err == nil || !strings.Contains(err.Error(), "production branch") {
+				t.Fatalf("%s branch %s: %v", who, b, err)
+			}
+		}
+		if _, err := spawnAs(t, e, who, map[string]any{"role": role, "brief": "x", "branch": "fix/7"}); err != nil {
+			t.Fatal(err)
+		}
+		if !ta.req.Tree {
+			t.Fatalf("%s: the manager was not told the agent joins a tree", who)
+		}
+	}
+	if _, err := spawnAs(t, e, "solo-lead", map[string]any{"role": "dev", "brief": "x", "branch": "fix/9"}); err != nil || ta.req.Tree {
+		t.Fatalf("outside a tree: tree=%v err=%v", ta.req.Tree, err)
 	}
 }

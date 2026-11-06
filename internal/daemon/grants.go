@@ -356,6 +356,8 @@ func (d *Daemon) grantCheck(o Origin, me string, raw json.RawMessage) (any, erro
 	}
 	finished := p.Tool == grants.StopTool && d.finishedChild(o, me, p.Input)
 	tower, _ := d.towerOf(c.Lineage)
+	// A pinned push of the tree checks that it goes to no production branch (#110).
+	c.Tree = tower != ""
 	var policy *grants.MergePolicy
 	if _, req, ok := grants.Classify(p.Tool, p.Input, c); ok && req.Action == grants.Merge {
 		// A tower's tree merges into production only inside its lead's window, and only a
@@ -389,6 +391,15 @@ func (d *Daemon) grantCheck(o Origin, me string, raw json.RawMessage) (any, erro
 		if why := grants.BranchWrite(p.Tool, p.Input); why != "" {
 			dec = grants.Decision{Verdict: grants.Deny, Reason: "lea: " + why}
 		}
+	}
+	if dec.Verdict == "" && tower != "" && grants.PushAttempt(p.Tool, p.Input) {
+		// Nor does a push no grant pinned: lea reads the production branches (the default branch,
+		// main, master, .lea/production) on the forge, which only the pinned push does; as the
+		// agent wrote it, the push could reach a production branch (its own branch may be one, or
+		// a refspec name one) and skip the whole production-merge policy (#110).
+		dec = grants.Decision{Verdict: grants.Deny, Reason: "lea: in a tower's tree a git push runs only through the tree's push grant " +
+			"(git push origin <your branch>, which lea pins and checks against the production branches: the default branch, main, master, " +
+			".lea/production); this push matches no grant, so it is denied: push plainly under that grant, or ask your lead or tower"}
 	}
 	if dec.Verdict == "" {
 		// A push no grant rewrote runs as the agent wrote it: its bare branch must not be a tag.

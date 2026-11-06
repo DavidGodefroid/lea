@@ -1,6 +1,7 @@
 package grants
 
 import (
+	"encoding/json"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -190,5 +191,44 @@ func TestRawPushRefusesWhatItCannotRead(t *testing.T) {
 	os.Mkdir(filepath.Join(common, "reftable"), 0o755)
 	if why := RawPush("Bash", push, caller(wt, wt)); why == "" {
 		t.Fatal("reftable allowed")
+	}
+}
+
+func TestPushAttempt(t *testing.T) {
+	for _, cmd := range []string{"git push origin release", "git push -u origin HEAD:refs/heads/release", "cd x && git push origin refs/heads/release",
+		"git -C /p push origin +release", "GIT_PAGER=cat git push --all origin", "git send-pack x", "git push --mirror origin",
+		"echo ok; git push origin develop", "x=$(git push origin release)", "git push origin release <<EOF\nx\nEOF"} {
+		if !PushAttempt("Bash", bash(cmd)) {
+			t.Errorf("%q: no push seen", cmd)
+		}
+	}
+	for _, cmd := range []string{"git status", "echo git push origin release", `gh pr create --title x --body "git push origin release"`,
+		"git log --grep push", "grep -rn 'git push' docs/"} {
+		if PushAttempt("Bash", bash(cmd)) {
+			t.Errorf("%q: seen as a push", cmd)
+		}
+	}
+	if PushAttempt("Read", json.RawMessage(`{"file_path":"git push"}`)) {
+		t.Fatal("Read")
+	}
+}
+
+// LocalProduction reads, on the host, the hints of a production branch: main, master, HEAD, the
+// remote's default branch, the checked-out .lea/production.
+func TestLocalProduction(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(dir, ".git", "refs", "remotes", "origin"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	os.MkdirAll(filepath.Join(dir, ".lea"), 0o755)
+	os.WriteFile(filepath.Join(dir, ".git", "refs", "remotes", "origin", "HEAD"), []byte("ref: refs/remotes/origin/develop\n"), 0o644)
+	os.WriteFile(filepath.Join(dir, ".lea", "production"), []byte("# prod\r\n release \r\n\n"), 0o644)
+	for b, want := range map[string]bool{"main": true, "master": true, "HEAD": true, "develop": true, "release": true, "fix/7": false, "# prod": false} {
+		if got := LocalProduction(dir, b); got != want {
+			t.Errorf("%s: %v", b, got)
+		}
+	}
+	if LocalProduction("", "develop") || !LocalProduction("", "main") || LocalProduction(filepath.Join(dir, "none"), "release") {
+		t.Fatal("no repository")
 	}
 }

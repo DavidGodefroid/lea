@@ -56,7 +56,8 @@ children:
   would be lost and whether a backup exists.
 - A merge names its PR number: `gh pr merge <N> --squash`, under your tree's merge grant. Any other merge
   (`gh api …/merge`, GraphQL, an MCP tool) is denied, and so is any API write to a branch (the contents API,
-  git refs): push to your own branch and merge.
+  git refs): push to your own branch and merge. A push runs only under your tree's push grant
+  (`git push origin <your branch>`), and never to a production branch: lea refuses it.
 
 After a production merge, **watch the deployment** for a set period (30 minutes unless the
 project says otherwise): health checks, the error tracker, the pipeline. You may **roll back on

@@ -691,9 +691,15 @@ run in the pinned `gh pr merge <N>` a merge grant allows (lea reads the PR from 
 merging, and merges only the head it checked); in a tower's tree a merge that names no PR number,
 or a GitLab merge, is refused, and so is any merge no grant pins (`gh pr merge` without a grant,
 `gh api …/pulls/N/merge`, percent-escaped or not, an API write whose path or method holds a shell expansion, GraphQL
-`mergePullRequest`, an MCP merge tool), whatever the deck or a user rule allows. A tower's tree never writes a branch
+`mergePullRequest`, any GraphQL call lea cannot read literally in the command (a shell variable, a query from a file or
+stdin, an escape, a program other than `gh`/`glab api`, `curl`, `wget` or `xh`), `curl -K` or `wget -i`, an MCP merge
+tool), whatever the deck or a user rule allows. A tower's tree never writes a branch
 through the API either: the contents API (PUT, DELETE), git refs (create, update, delete), `merge-upstream` and the
 GraphQL ref mutations are denied, so the trusted `.lea/production` and the production branches move only by a merge.
+Nor does it push to a production branch: lea never starts an agent of the tree on `main`, `master` or a branch the
+repository shows as production, a push no grant pins is denied in the tree, and the pinned `git push origin <branch>`
+first reads the default branch and `.lea/production` (on the default branch and on the pushed branch) from GitHub and
+refuses a production branch, or any read error but a 404.
 
 The tower never does the work itself, not even a `git push`: every request goes to an agent. The
 plugin enforces it with a hook: once `/lea:control-tower` runs, the session may only use lea's
