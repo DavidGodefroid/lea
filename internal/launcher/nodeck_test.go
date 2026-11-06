@@ -137,7 +137,10 @@ func TestShellLine(t *testing.T) {
 // change applies; a bad value writes nothing.
 func TestConfigDeckAndTool(t *testing.T) {
 	w := newWorld(t, repoRoot(t))
-	conf := func() string { b, _ := os.ReadFile(filepath.Join(w.env["XDG_CONFIG_HOME"], "lea", "lea.conf")); return string(b) }
+	conf := func() string {
+		b, _ := os.ReadFile(filepath.Join(w.env["XDG_CONFIG_HOME"], "lea", "lea.conf"))
+		return string(b)
+	}
 	l := w.launcher()
 	if err := l.dispatch([]string{"config", "deck", "off"}); err != nil {
 		t.Fatal(err)
