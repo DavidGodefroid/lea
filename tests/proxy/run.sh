@@ -113,7 +113,13 @@ fg=http://198.51.100.2:4401
 fwd "forge: an SSH key on the account refused"  403 "" -- -X POST -H Host:api.github.com "$fg/user/keys"
 fwd "forge: a webhook refused"                   403 "" -- -X POST -H Host:api.github.com "$fg/repos/o/r/hooks"
 fwd "forge: TRACE refused"                       405 "" -- -X TRACE -H Host:api.github.com "$fg/user"
-fwd "forge: another host refused"                403 "" -- -H Host:gist.github.com "$fg/x"
+fwd "forge: another port of the proxy's refused" 400 "" -- -H Host:lea-proxy:3128 "$fg/x"
+# Another host (a redirect gh follows: job logs at *.blob.core.windows.net) goes to that host,
+# without the token, under the egress rules: never to github.com.
+fwd "forge: another host goes to that host"      502 "" -- -H Host:public.test -H "Authorization: token placeholder" "$fg/actions-results/x?sig=sas-not-logged"
+fwd "forge: another host follows the allowlist"  403 "" -- -H Host:x.blob.core.windows.net "http://198.51.100.3:4401/actions-results/x"
+fwd "forge: an allowlisted host goes out"        502 "" -- -H Host:public.test "http://198.51.100.3:4401/x"
+fwd "forge: git at the proxy's address is github.com" 502 "" -- -H Host:198.51.100.2:4401 "$fg/o/r.git/info/refs"
 fwd "forge: '..' path refused"                   400 "" -- --path-as-is -H Host:api.github.com "$fg/repos/../user"
 # api.github.com resolves to a plain web server here: the forwarder's TLS to it fails (502).
 fwd "forge: a call goes out over TLS through squid" 502 "" -- -H Host:api.github.com -H "Authorization: token placeholder" "$fg/user"
@@ -122,6 +128,10 @@ got=$(dc exec -T outsider curl -s -o /dev/null --max-time 15 --noproxy '*' -w '%
 if [ "$got" = "403" ]; then echo "ok   forge forwarder refuses the egress network (403)"; else echo "FAIL forge forwarder on the egress network: expected 403, got $got"; fail=1; fi
 if dc logs proxy 2>&1 | grep -q 'forge api.github.com "GET" "/user" 502'; then echo "ok   forge: the forwarder logs host, method, path and status"
 else echo "FAIL forge: no log line of the forwarded call"; fail=1; fi
+if dc logs proxy 2>&1 | grep -q 'forge public.test "GET" "/actions-results/x" 502' && dc logs proxy 2>&1 | grep -q 'forge github.com "GET" "/o/r.git/info/refs" 502' \
+  && dc logs proxy-allow 2>&1 | grep -q 'forge x.blob.core.windows.net "GET" "/actions-results/x" 403'; then
+  echo "ok   forge: another host goes to its own upstream, the proxy's address to github.com"
+else echo "FAIL forge: the forwarder's upstreams (log lines)"; fail=1; fi
 # LockHTTP: the agents go through the gate on :3130, squid is out of their reach, the allowlist is
 # the gate's business (the squid floor stays), and lea-keyproxy reaches upstreams through the gate
 # with its token and the calling container (sources.json names 198.51.100.5 lea-test).
@@ -150,7 +160,7 @@ else echo "FAIL lockhttp: forwarder request in the gate log:"; printf '%s\n' "$g
 if dc exec -T lockhttp-gate grep -q '"console":"up"' /run/lockhttp-gate/status.json; then echo "ok   lockhttp: the gate writes its status"
 else echo "FAIL lockhttp: no gate status"; fail=1; fi
 # Nothing secret in the logs (the forwarder logs name, method, path and status only).
-if dc logs proxy 2>&1 | grep -q -e test-key-123 -e agent-token -e stream=true -e lea-proxy-test-token; then
+if dc logs proxy 2>&1 | grep -q -e test-key-123 -e agent-token -e stream=true -e lea-proxy-test-token -e sas-not-logged; then
   echo "FAIL the proxy logs hold a key, a client credential or a query"; fail=1
 else
   echo "ok   the proxy logs hold no key, credential or query"

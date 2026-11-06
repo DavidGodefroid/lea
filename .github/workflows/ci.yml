@@ -90,6 +90,8 @@ jobs:
   # facade socket is not visible. The two images come from the GitHub Actions cache when unchanged.
   isolation:
     runs-on: ubuntu-latest
+    # actions: read: gh run view --log inside lea (#103), with the workflow's token.
+    permissions: { contents: read, actions: read }
     timeout-minutes: 40
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
@@ -135,7 +137,7 @@ jobs:
           for c in '.lockfamily write gets EROFS' 'host facade socket not visible' 'no facade socket in the container' 'sibling lea unreachable directly' 'host port unreachable via host IP' 'public HTTPS works through the proxy' 'nested HTTP between containers is direct' \
                    'the GitHub token moved to the proxy' 'the GitHub token left the agents'"'"' state' 'no GitHub token readable in /lea/state or ~' \
                    'no copy of the GitHub token readable' 'the GitHub relay runs as nobody' 'gh api works with the token added by the proxy' \
-                   "git reaches github.com through the proxy's forwarder"; do
+                   "git reaches github.com through the proxy's forwarder" 'gh run view --log follows the redirect to its own host'; do
             grep -qxF "ok   $c" isolation.log || { echo "isolation: '$c' did not run" >&2; exit 1; }
           done
   # The phase-2 exit demo, lea's side (tests/integration/hubdeck.sh): lox up with the released,

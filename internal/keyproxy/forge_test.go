@@ -50,13 +50,15 @@ func newForgeRig(t *testing.T) *forgeRig {
 		t.Fatal(err)
 	}
 	upURL, _ := url.Parse(up.URL)
-	r.fw = httptest.NewServer(f.Forge(r.keyDir, func(h string) *url.URL {
+	g := f.Forge(r.keyDir, func(h string) *url.URL {
 		r.mu.Lock()
 		r.hosts = append(r.hosts, h)
 		r.mu.Unlock()
 		u := *upURL
 		return &u
-	}))
+	}).(*forge)
+	g.self = testSelf
+	r.fw = httptest.NewServer(g)
 	t.Cleanup(r.fw.Close)
 	return r
 }
@@ -121,6 +123,9 @@ func (s *syncBuf) String() string {
 
 const testToken = "ghp_testTokenNotASecret"
 
+// testSelf is the proxy's address in the tests.
+func testSelf(ip net.IP) bool { return ip.Equal(net.ParseIP("172.18.0.5")) }
+
 func TestForgeInjectsTheTokenForGitHubOnly(t *testing.T) {
 	r := newForgeRig(t)
 	writeKey(t, r.keyDir, GitHubTokenFile, testToken)
@@ -155,6 +160,11 @@ func TestForgeInjectsTheTokenForGitHubOnly(t *testing.T) {
 	if host != "github.com" || req.Header.Get("Authorization") != want || req.URL.Path != "/o/r.git/git-upload-pack" {
 		t.Errorf("git: host %q, Authorization %q, path %q", host, req.Header.Get("Authorization"), req.URL.Path)
 	}
+	// git at the proxy's address (a pinned push): github.com too.
+	r.send(t, "GET", "172.18.0.5:4401", "/o/r.git/info/refs?service=git-upload-pack", nil)
+	if req, _, host = r.last(t); host != "github.com" || req.Header.Get("Authorization") != want {
+		t.Errorf("git at the proxy's address: host %q, Authorization %q", host, req.Header.Get("Authorization"))
+	}
 	for _, m := range []string{"PUT", "PATCH", "DELETE", "HEAD"} {
 		if code, _, _ := r.send(t, m, "api.github.com", "/repos/o/r/pulls/1/merge", nil); code != 200 {
 			t.Errorf("%s: %d", m, code)
@@ -171,7 +181,28 @@ func TestForgeInjectsTheTokenForGitHubOnly(t *testing.T) {
 			t.Errorf("%s: host %q, Authorization %q", h, host, req.Header.Get("Authorization"))
 		}
 	}
-	if strings.Contains(r.logs.String(), testToken) || strings.Contains(r.logs.String(), "per_page") {
+	// A redirect gh follows (job logs, artifacts: GitHub sends them to Azure blob storage), and
+	// other forges' hosts: to their own host, never github.com, never with the token.
+	sas := "/actions-results/abc/logs/job.txt?rsct=text%2Fplain&se=2026-11-06T10%3A00%3A00Z&sig=SASsig"
+	for _, c := range []struct{ host, up string }{
+		{"productionresultssa1.blob.core.windows.net", "productionresultssa1.blob.core.windows.net"},
+		{"x.blob.core.windows.net:443", "x.blob.core.windows.net"},
+		{"ghes.example.com", "ghes.example.com"},
+		{"ghes.example.com:8443", "ghes.example.com:8443"},
+		{"acme.ghe.com", "acme.ghe.com"},
+		{"api.githubcopilot.com", "api.githubcopilot.com"},
+		{"gist.github.com", "gist.github.com"},
+	} {
+		code, _, body := r.send(t, "GET", c.host, sas, map[string]string{"Authorization": "token lea-proxy-adds-the-token"})
+		if code != 200 || body != "GET "+sas {
+			t.Fatalf("%s: %d %q", c.host, code, body)
+		}
+		req, _, host := r.last(t)
+		if host != c.up || req.Header.Get("Authorization") != "" || req.URL.RawQuery != strings.SplitN(sas, "?", 2)[1] {
+			t.Errorf("%s: upstream %q, Authorization %q, query %q", c.host, host, req.Header.Get("Authorization"), req.URL.RawQuery)
+		}
+	}
+	if strings.Contains(r.logs.String(), testToken) || strings.Contains(r.logs.String(), "per_page") || strings.Contains(r.logs.String(), "SASsig") {
 		t.Errorf("the log holds the token or a query: %s", r.logs.String())
 	}
 }
@@ -214,8 +245,10 @@ func TestForgeRefusals(t *testing.T) {
 		{"escaped slash", "GET", "api.github.com", "/repos/a%2fb", http.StatusBadRequest},
 		{"bad escape", "GET", "api.github.com", "/x%zz", http.StatusBadRequest},
 		{"backslash", "GET", "api.github.com", "/x\\y", http.StatusBadRequest},
-		{"another GitHub name", "GET", "gist.github.com", "/x", http.StatusForbidden},
-		{"a look-alike", "GET", "evilgithub.com", "/x", http.StatusForbidden},
+		{"another port of the proxy's", "GET", "lea-proxy:3128", "/x", http.StatusBadRequest},
+		{"another port of the proxy's address", "GET", "172.18.0.5:4400", "/x", http.StatusBadRequest},
+		{"a bad host name", "GET", "a_b.example", "/x", http.StatusBadRequest},
+		{"a bad port", "GET", "api.github.com:x", "/x", http.StatusBadRequest},
 		{"new SSH key", "POST", "api.github.com", "/user/keys", http.StatusForbidden},
 		{"new GPG key", "POST", "api.github.com", "/user/gpg_keys", http.StatusForbidden},
 		{"new signing key", "POST", "api.github.com", "/user/ssh_signing_keys", http.StatusForbidden},
@@ -249,12 +282,30 @@ func TestForgeHost(t *testing.T) {
 	for in, want := range map[string]string{
 		"api.github.com": "api.github.com", "API.GitHub.com.": "api.github.com", "api.github.com:443": "api.github.com",
 		"uploads.github.com": "uploads.github.com", "github.com": "github.com", "codeload.github.com": "codeload.github.com",
-		"objects.githubusercontent.com": "objects.githubusercontent.com", "lea-proxy:4401": "github.com",
-		"172.18.0.5:4401": "github.com", "": "github.com", "gist.github.com": "", "notgithub.com": "", "githubusercontent.com": "",
+		"objects.githubusercontent.com": "objects.githubusercontent.com",
+		// The forwarder's own address: git, upstream github.com.
+		"lea-proxy": "github.com", "lea-proxy:4401": "github.com", "LEA-PROXY.:4401": "github.com",
+		"172.18.0.5": "github.com", "172.18.0.5:4401": "github.com",
+		// Anything else is its own upstream, not github.com.
+		"x.blob.core.windows.net": "x.blob.core.windows.net", "productionresultssa12.blob.core.windows.net:443": "productionresultssa12.blob.core.windows.net",
+		"ghes.example.com:8443": "ghes.example.com:8443", "acme.ghe.com": "acme.ghe.com", "api.githubcopilot.com": "api.githubcopilot.com",
+		"notgithub.com": "notgithub.com", "10.0.0.9:4401": "10.0.0.9:4401", "[fd00::1]:443": "[fd00::1]",
+		// Refused.
+		"": "", "lea-proxy:3128": "", "172.18.0.5:80": "", "a_b.example": "", "x..example": "", "api.github.com:0": "",
+		"api.github.com:065": "", "api.github.com:99999": "", "evil.example/x": "", "u@evil.example": "",
 	} {
-		if got := forgeHost(in); got != want {
+		if got, _ := forgeHost(in, testSelf); got != want {
 			t.Errorf("forgeHost(%q) = %q, want %q", in, got, want)
 		}
+	}
+}
+
+func TestLocalIP(t *testing.T) {
+	if !localIP(net.ParseIP("127.0.0.1")) {
+		t.Error("127.0.0.1 is not local")
+	}
+	if localIP(net.ParseIP("192.0.2.77")) {
+		t.Error("192.0.2.77 (TEST-NET-1) is local")
 	}
 }
 

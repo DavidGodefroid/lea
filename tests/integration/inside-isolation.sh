@@ -106,6 +106,13 @@ if [ -n "${FORGE_NEEDLE:-}" ]; then
     # 60 an hour is GitHub's limit without a token.
     must "gh api works with the token added by the proxy" sh -c 'l=$(gh api rate_limit --jq .rate.limit) && [ "$l" -gt 60 ]'
     must "git reaches github.com through the proxy's forwarder" git ls-remote https://github.com/DavidGodefroid/lea HEAD
+    # GitHub redirects job logs to Azure blob storage: gh follows the redirect through the relay
+    # too, and the forwarder sends it there (not to github.com), without the token.
+    must "gh run view --log follows the redirect to its own host" sh -c '
+      R=DavidGodefroid/lea
+      r=$(gh run list -R "$R" -s success -L 1 --json databaseId --jq ".[0].databaseId") && [ -n "$r" ] &&
+      j=$(gh run view -R "$R" "$r" --json jobs --jq ".jobs[0].databaseId") && [ -n "$j" ] &&
+      [ "$(gh run view -R "$R" --job "$j" --log | wc -c)" -gt 0 ]'
   else
     must "gh api reaches GitHub with the token added by the proxy" sh -c 'gh api rate_limit 2>&1 | grep -q "Bad credentials"'
   fi

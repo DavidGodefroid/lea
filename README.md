@@ -305,7 +305,12 @@ lea needs no forge account, and works with any of them.
   (`https://github.com/` goes to `http://lea-proxy:4401/`) send their requests without it; the
   proxy's forge forwarder drops whatever credential they carry, adds the token for
   `api.github.com`, `uploads.github.com` and `github.com`, and goes on over HTTPS through the
-  egress proxy (or the LockHTTP gate). An agent can use the token for what it allows, never read
+  egress proxy (or the LockHTTP gate). `gh` sends every request through the socket, the redirects
+  it follows included: the forwarder sends each to its own host, with the token for those three
+  only (a job log's or an artifact's redirect to `*.blob.core.windows.net` goes there without it;
+  that domain is not in lea's default allowlist: `gh run view --log` and `gh run download` need
+  `LEA_EGRESS_ALLOW="default,blob.core.windows.net"`). Only `lea-proxy:4401` (git) means
+  `github.com`. An agent can use the token for what it allows, never read
   it; the forwarder also refuses the calls that would hand access to someone outside lea (an SSH,
   GPG or signing key on the account, a deploy key, a webhook, an OAuth authorization: make those
   on the host). A token an earlier lea, or a `gh auth login` in lea, left in the agents' state

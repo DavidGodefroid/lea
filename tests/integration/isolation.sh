@@ -36,7 +36,12 @@ state="$XDG_DATA_HOME/lea/state"; mkdir -p "$state"; printf '{}\n' >"$state/clau
 # lea moves it to the proxy at start. LEA_IT_GITHUB_TOKEN (CI: the workflow's token) proves that
 # gh and git work with it; without one, a made-up token must reach GitHub (Bad credentials).
 forge_token=${LEA_IT_GITHUB_TOKEN:-ghp_leaIsolationNotAToken}
-forge_expect=bad; if [ -n "${LEA_IT_GITHUB_TOKEN:-}" ]; then forge_expect=auth; fi
+forge_expect=bad
+if [ -n "${LEA_IT_GITHUB_TOKEN:-}" ]; then
+  forge_expect=auth
+  # gh run view --log: GitHub redirects job logs to Azure blob storage, outside lea's default list.
+  printf 'LEA_EGRESS_ALLOW=default,blob.core.windows.net\n' >>"$LEA_CONFIG"
+fi
 mkdir -p "$state/gh" "$state/git"
 printf 'github.com:\n    users:\n        lea-it:\n            oauth_token: %s\n    git_protocol: https\n    oauth_token: %s\n    user: lea-it\n' \
   "$forge_token" "$forge_token" >"$state/gh/hosts.yml"
