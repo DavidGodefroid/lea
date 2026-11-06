@@ -91,6 +91,13 @@
 			"why": "crun switches a nested container to its own root file system, and pasta sandboxes itself in an empty tmpfs"
 		}
 	],
+	"narrow": [
+		{
+			"why": "AF_NETLINK (16) sockets stay allowed but for NETLINK_AUDIT (9), which lea's NETLINK_AUDIT rule refuses: an allow rule overlapping it would make crun refuse the profile (EEXIST)",
+			"base": {"names": ["socket"], "action": "SCMP_ACT_ALLOW", "args": [{"index": 0, "value": 16, "op": "SCMP_CMP_EQ"}]},
+			"rule": {"names": ["socket"], "action": "SCMP_ACT_ALLOW", "args": [{"index": 0, "value": 16, "op": "SCMP_CMP_EQ"}, {"index": 2, "value": 9, "op": "SCMP_CMP_NE"}]}
+		}
+	],
 	"rules": [
 		{
 			"why": "AF_ALG (38), the kernel crypto API, gets EAFNOSUPPORT, the answer of a kernel without it (CVE-2026-31431); moby leaves it out of its socket families",
@@ -99,6 +106,15 @@
 				"action": "SCMP_ACT_ERRNO",
 				"args": [{"index": 0, "value": 38, "valueTwo": 0, "op": "SCMP_CMP_EQ"}],
 				"errnoRet": 97
+			}
+		},
+		{
+			"why": "NETLINK_AUDIT (AF_NETLINK 16, protocol 9) gets EINVAL, as in lea's profile before #100 and in Docker's without CAP_AUDIT_WRITE, which lea drops: the host's audit subsystem is not namespaced and nothing in lea talks to it",
+			"rule": {
+				"names": ["socket"],
+				"action": "SCMP_ACT_ERRNO",
+				"args": [{"index": 0, "value": 16, "valueTwo": 0, "op": "SCMP_CMP_EQ"}, {"index": 2, "value": 9, "valueTwo": 0, "op": "SCMP_CMP_EQ"}],
+				"errnoRet": 22
 			}
 		}
 	]

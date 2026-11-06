@@ -954,7 +954,8 @@ so. Changes apply after `lea init` (endpoints, keys, images, locksql) or `lea st
   rootless Podman runs in one). The rest stays refused as in Docker's default: the kernel keyring
   (`keyctl`; nested containers join no keyring), `perf_event_open`, `bpf`, `reboot`, `syslog`,
   the new mount API's `fsopen`... It also refuses `socketcall`, the kernel crypto API sockets
-  (`AF_ALG`, CVE-2026-31431), and what lea's earlier profile refused that Docker's default allows
+  (`AF_ALG`, CVE-2026-31431), audit netlink sockets (`NETLINK_AUDIT`, as lea drops
+  `CAP_AUDIT_WRITE`), and what lea's earlier profile refused that Docker's default allows
   (`vmsplice`, `cachestat`, `map_shadow_stack`, the futex2 calls, `io_pgetevents`). 32-bit x86
   (i386) programs do not run in lea: their `socketcall` hides the socket family from seccomp, so
   the profile leaves that architecture out. The AppArmor profile `lea` is docker-default with its

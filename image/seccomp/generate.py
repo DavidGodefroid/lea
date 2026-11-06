@@ -55,6 +55,23 @@ def build():
                 fail("archMap: %s is not a sub-architecture of %s in the base" % (d, a["architecture"]))
         hits[0]["subArchitectures"] = [s for s in subs if s not in a["drop"]]
 
+    # A narrowed rule keeps its names, action and argument tests and adds tests of other arguments:
+    # it can only match less, and leaves room for a rule of lea's that no allow rule then overlaps.
+    for n in spec.get("narrow", []):
+        why = reason(n, "narrow %s" % n.get("base", {}).get("names"))
+        base, new = n["base"], copy.deepcopy(n["rule"])
+        hits = [i for i, r in enumerate(prof["syscalls"]) if r == base]
+        if len(hits) != 1:
+            fail("narrow %s: the base has %d such rules, not one" % (base.get("names"), len(hits)))
+        old_args = base.get("args") or []
+        new_args = new.get("args") or []
+        if ({k: v for k, v in new.items() if k != "args"} != {k: v for k, v in base.items() if k != "args"}
+                or any(a not in new_args for a in old_args) or len(new_args) <= len(old_args)
+                or {a["index"] for a in old_args} & {a["index"] for a in new_args if a not in old_args}):
+            fail("narrow %s: the rule must be the base rule with tests of other arguments added" % base.get("names"))
+        new["comment"] = "lea: " + why
+        prof["syscalls"][hits[0]] = new
+
     def names_in(rule_filter):
         return {n for r in prof["syscalls"] if rule_filter(r) for n in r["names"]}
 

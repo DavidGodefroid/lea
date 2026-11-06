@@ -159,7 +159,7 @@ jobs:
           for c in '.lockfamily write gets EROFS' 'host facade socket not visible' 'no facade socket in the container' 'sibling lea unreachable directly' 'host port unreachable via host IP' 'public HTTPS works through the proxy' 'nested HTTP between containers is direct' \
                    'proxy confined: CapDrop' 'proxy confined: ReadonlyRootfs' 'proxy confined: no root process but PID 1' \
                    'a nested image builds' 'a nested container reaches the proxy over pasta' 'unprivileged user namespace (rootless Podman needs it)' \
-                   'keyctl refused (seccomp)' 'perf_event_open refused (seccomp)' 'reboot refused (seccomp)' 'vmsplice refused (seccomp)' \
+                   'keyctl refused (seccomp)' 'perf_event_open refused (seccomp)' 'reboot refused (seccomp)' 'vmsplice refused (seccomp)' 'NETLINK_AUDIT socket refused (seccomp)' \
                    'sudo absent' 'no setuid or setgid file'; do
             grep -qxF "ok   $c" isolation.log || { echo "isolation: '$c' did not run" >&2; exit 1; }
           done

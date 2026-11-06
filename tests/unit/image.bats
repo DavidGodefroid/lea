@@ -117,6 +117,44 @@ seccomp_copy() { mkdir -p "$BATS_TEST_TMPDIR/i/seccomp"; cp "$I"/seccomp/* "$BAT
   [ "$(jq '[.syscalls[] | select((.args // []) | map(.index) | length != (unique | length))] | length' "$f")" -eq 0 ]
 }
 
+# NETLINK_AUDIT (AF_NETLINK 16, protocol 9) gets EINVAL, as in the pre-#100 profile: lea drops
+# CAP_AUDIT_WRITE. moby's allow rule for family 16 is narrowed to protocols other than 9, so no allow
+# rule overlaps the errno rule (crun refuses overlaps: EEXIST); each change carries its reason.
+@test "seccomp profile refuses NETLINK_AUDIT sockets and keeps the other netlink sockets" {
+  f="$I/seccomp.json"
+  [ "$(jq -c '[.syscalls[] | select(.names == ["socket"] and .action == "SCMP_ACT_ERRNO" and .errnoRet == 22) | .args]' "$f")" = \
+    '[[{"index":0,"value":16,"valueTwo":0,"op":"SCMP_CMP_EQ"},{"index":2,"value":9,"valueTwo":0,"op":"SCMP_CMP_EQ"}]]' ]
+  # Every allow rule for socket either tests a family other than 16 or refuses protocol 9.
+  [ "$(jq '[.syscalls[] | select(.action == "SCMP_ACT_ALLOW" and (.names | index("socket")))
+    | select([(.args // [])[] | select((.index == 0 and ((.op == "SCMP_CMP_EQ" and .value != 16) or (.op == "SCMP_CMP_LT" and .value <= 16)))
+        or (.index == 2 and .op == "SCMP_CMP_NE" and .value == 9))] | length == 0)] | length' "$f")" -eq 0 ]
+  [ "$(jq -c '[.syscalls[] | select(.names == ["socket"] and .action == "SCMP_ACT_ALLOW" and (.args | map(select(.index == 0 and .value == 16)) | length) > 0) | .args]' "$f")" = \
+    '[[{"index":0,"value":16,"op":"SCMP_CMP_EQ"},{"index":2,"value":9,"op":"SCMP_CMP_NE"}]]' ]
+  l="$I/seccomp/lea.json"
+  [ "$(jq '[.rules[] | select(.rule.errnoRet == 22 and (.why | test("NETLINK_AUDIT")))] | length' "$l")" = 1 ]
+  [ "$(jq '[.narrow[] | select(.base.args == [{"index":0,"value":16,"op":"SCMP_CMP_EQ"}] and (.why | test("NETLINK_AUDIT")))] | length' "$l")" = 1 ]
+}
+
+@test "seccomp generator narrows a base rule only by tests of other arguments, with a reason" {
+  seccomp_copy
+  jq '.narrow[0].rule.args[1] = {"index": 0, "value": 9, "op": "SCMP_CMP_NE"}' "$I/seccomp/lea.json" >"$BATS_TEST_TMPDIR/i/seccomp/lea.json"
+  run python3 -I "$G"
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"the rule must be the base rule with tests of other arguments added"* ]]
+  jq '.narrow[0].rule.action = "SCMP_ACT_LOG"' "$I/seccomp/lea.json" >"$BATS_TEST_TMPDIR/i/seccomp/lea.json"
+  run python3 -I "$G"
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"the rule must be the base rule with tests of other arguments added"* ]]
+  jq '.narrow[0].base.args[0].value = 99' "$I/seccomp/lea.json" >"$BATS_TEST_TMPDIR/i/seccomp/lea.json"
+  run python3 -I "$G"
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"the base has 0 such rules, not one"* ]]
+  jq 'del(.narrow[0].why)' "$I/seccomp/lea.json" >"$BATS_TEST_TMPDIR/i/seccomp/lea.json"
+  run python3 -I "$G"
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"a one-line reason (why) is required"* ]]
+}
+
 # #100: once the entrypoint drops to the developer, nothing gives root back; crun joins no keyring.
 @test "Containerfile removes sudo and every setuid or setgid bit" {
   c="$I/Containerfile"

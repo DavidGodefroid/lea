@@ -495,6 +495,28 @@
 		},
 		{
 			"names": [
+				"socket"
+			],
+			"action": "SCMP_ACT_ERRNO",
+			"args": [
+				{
+					"index": 0,
+					"value": 16,
+					"valueTwo": 0,
+					"op": "SCMP_CMP_EQ"
+				},
+				{
+					"index": 2,
+					"value": 9,
+					"valueTwo": 0,
+					"op": "SCMP_CMP_EQ"
+				}
+			],
+			"errnoRet": 22,
+			"comment": "lea: NETLINK_AUDIT (AF_NETLINK 16, protocol 9) gets EINVAL, as in lea's profile before #100 and in Docker's without CAP_AUDIT_WRITE, which lea drops: the host's audit subsystem is not namespaced and nothing in lea talks to it"
+		},
+		{
+			"names": [
 				"process_vm_readv",
 				"process_vm_writev",
 				"ptrace"
@@ -618,8 +640,14 @@
 					"index": 0,
 					"value": 16,
 					"op": "SCMP_CMP_EQ"
+				},
+				{
+					"index": 2,
+					"value": 9,
+					"op": "SCMP_CMP_NE"
 				}
-			]
+			],
+			"comment": "lea: AF_NETLINK (16) sockets stay allowed but for NETLINK_AUDIT (9), which lea's NETLINK_AUDIT rule refuses: an allow rule overlapping it would make crun refuse the profile (EEXIST)"
 		},
 		{
 			"names": [

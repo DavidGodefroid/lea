@@ -53,6 +53,13 @@ if [ -n "${SIBLING_IP:-}" ]; then
   mustnt "sibling lea refused by the proxy"    curl -sf --max-time 5 "http://$SIBLING_IP:8765/"
 fi
 mustnt "AF_ALG socket refused (seccomp)"       python3 -c 'import socket; socket.socket(38, 5, 0)'
+# NETLINK_AUDIT: EINVAL from seccomp (image/seccomp/lea.json), where the kernel would open the
+# socket in lea's network namespace; other netlink sockets (NETLINK_ROUTE: ip, pasta) stay open.
+must   "NETLINK_AUDIT socket refused (seccomp)" python3 -I -c 'import errno, socket, sys
+socket.socket(16, 3, 0).close()
+try: socket.socket(16, 3, 9)
+except OSError as e: sys.exit(e.errno != errno.EINVAL)
+sys.exit(1)'
 # The sandbox (#100): the nested rootless Podman builds and runs over pasta under lea's seccomp
 # profile and AppArmor; what it does not need stays refused, and nothing gets root back.
 # Its engine's output goes to a log, shown when it fails.
