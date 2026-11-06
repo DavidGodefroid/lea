@@ -981,8 +981,9 @@ container left on another runtime gets a warning; `lea doctor` shows `LEA_RUNTIM
 engine knows it, and the runtime of each running lea container (`docker inspect -f
 '{{.HostConfig.Runtime}}' <container>` shows it too). `tests/integration/install-runtime.sh runsc`
 (or `kata`) does the installation the way lea's CI does (sudo, pinned releases checked against
-their sha256: gVisor's published digest, Kata's pinned in the script for 4.3.1 on amd64 and arm64,
-`KATA_SHA256` required for any other Kata version or architecture; it restarts dockerd), and `LEA_TEST_RUNTIME=runsc make test-isolation` runs the isolation checks on it.
+digests pinned in the script: gVisor's sha512 for release-20261102.0 on x86_64 and aarch64
+(`GVISOR_SHA512` required for any other release or architecture), Kata's sha256 for 4.3.1 on
+amd64 and arm64 (`KATA_SHA256` required for any other version or architecture); it restarts dockerd), and `LEA_TEST_RUNTIME=runsc make test-isolation` runs the isolation checks on it.
 
 | | gVisor (`runsc`) | Kata (`kata`) |
 |---|---|---|

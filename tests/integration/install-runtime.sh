@@ -2,6 +2,7 @@
 # Installs a sandboxed OCI runtime on this host and registers it with dockerd (#106), as lea's CI
 # does before `LEA_TEST_RUNTIME=<name> make test-isolation`. Linux, Docker Engine, sudo.
 #   tests/integration/install-runtime.sh runsc   gVisor (GVISOR_RELEASE, under /opt/gvisor), registered as runsc
+#     (sha512 pinned for 20261102.0 x86_64/aarch64; set GVISOR_SHA512 for any other release or architecture)
 #   tests/integration/install-runtime.sh kata    Kata Containers (KATA_VERSION, QEMU, runtime-rs), as kata
 #     (sha256 pinned for 4.3.1 amd64/arm64; set KATA_SHA256 for any other version or architecture)
 # It rewrites /etc/docker/daemon.json (keeping its other keys) and restarts dockerd: running
@@ -36,9 +37,26 @@ PY
 case ${1:-} in
   runsc)
     arch=$(uname -m)
-    base=https://storage.googleapis.com/gvisor/releases/release/$GVISOR_RELEASE/$arch
     # The release is one tarball: runsc, its shim and its helpers (gvisor-bin/), kept together.
-    (cd "$work" && curl -fsSLO "$base/gvisor.tar.bz2" && curl -fsSLO "$base/gvisor.tar.bz2.sha512" && sha512sum -c gvisor.tar.bz2.sha512)
+    # Its .sha512 sits in the same bucket as the tarball, so it would check the transport only:
+    # the sha512 of each tarball is pinned here (checked against an independent download).
+    # GVISOR_SHA512 overrides it, and is required whenever GVISOR_RELEASE or the architecture is
+    # not one pinned below. The tarball is extracted as root, so it is never extracted unchecked.
+    sha=${GVISOR_SHA512:-}
+    if [ -z "$sha" ]; then
+      case $GVISOR_RELEASE-$arch in
+        20261102.0-x86_64) sha=2e6671bb2d033b871c5811ab57e16ac570988b0e0054c525f911cfaf191bab3ca4efb08e0a98daa4b9e7d248f9e5776ef2ef2f8a6b82d829646a42924c98bb05 ;;
+        20261102.0-aarch64) sha=574b5775b4417618f63c8506e6bb237e370df85722832a5d0c3831382155e55e59d4cfa993a1e9bbe1b1cf04346ffd48b20aaa879c6ed9a52c680f762fd19980 ;;
+        *) echo "install-runtime: no pinned sha512 for gVisor $GVISOR_RELEASE $arch: set GVISOR_SHA512" >&2; exit 1 ;;
+      esac
+    fi
+    case $sha in
+      *[!0-9a-f]*) echo "install-runtime: GVISOR_SHA512 is not a lowercase hex sha512" >&2; exit 1 ;;
+    esac
+    [ ${#sha} -eq 128 ] || { echo "install-runtime: GVISOR_SHA512 is not a lowercase hex sha512" >&2; exit 1; }
+    base=https://storage.googleapis.com/gvisor/releases/release/$GVISOR_RELEASE/$arch
+    (cd "$work" && curl -fsSLO "$base/gvisor.tar.bz2")
+    (cd "$work" && echo "$sha  gvisor.tar.bz2" | sha512sum -c -) || { echo "install-runtime: gVisor $GVISOR_RELEASE $arch: sha512 mismatch" >&2; exit 1; }
     sudo rm -rf /opt/gvisor; sudo mkdir -p /opt/gvisor
     sudo tar -xjf "$work/gvisor.tar.bz2" -C /opt/gvisor
     sudo ln -sf /opt/gvisor/runsc /usr/local/bin/runsc
