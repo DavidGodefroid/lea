@@ -11,7 +11,7 @@ import (
 	"testing"
 )
 
-// upProject is lox up's compose project of w's projects directory (lockhub's family.Project).
+// upProject is lox run's compose project of w's projects directory (lockhub's family.Project).
 func upProjectOf(w *world) string {
 	h := sha256.Sum256([]byte(w.proj))
 	return "lockfamily-" + hex.EncodeToString(h[:4])
@@ -29,7 +29,7 @@ func writeUp(t *testing.T, w *world, locks string) {
 	}
 }
 
-// labels makes the fake docker answer lox up's labels for the socket volume of name (type typ).
+// labels makes the fake docker answer lox run's labels for the socket volume of name (type typ).
 func labels(w *world, name, typ, role string) {
 	labelsWith(w, name, typ, role, upProjectOf(w), name, w.proj)
 }
@@ -50,8 +50,8 @@ func locksqlOn(t *testing.T, w *world) {
 	writeUserConf(t, w, string(b)+"LEA_LOCKSQL=1\n")
 }
 
-// locksqlUp is lox up running a locksql lock, crm, for w's projects directory, with locksql on
-// (its socket comes from lox up only).
+// locksqlUp is lox run running a locksql lock, crm, for w's projects directory, with locksql on
+// (its socket comes from lox run only).
 func locksqlUp(t *testing.T, w *world) {
 	t.Helper()
 	locksqlOn(t, w)
@@ -64,7 +64,7 @@ func lockUp(name, typ string) string {
 	return `"` + name + `":{"type":"` + typ + `","socket_volume":"PROJECT_` + name + `-run"}`
 }
 
-// Locks of lox up: their socket volumes replace the fixed ones, for the tools that are on.
+// Locks of lox run: their socket volumes replace the fixed ones, for the tools that are on.
 func TestLockUpSocketVolumes(t *testing.T) {
 	w := newWorld(t, repoRoot(t))
 	writeUserConf(t, w, "LEA_LOCKSQL=1\nLEA_LOCKMQ=1\nLEA_LOCKFILE=1\n")
@@ -74,7 +74,7 @@ func TestLockUpSocketVolumes(t *testing.T) {
 	labels(w, "docs", "lockfile", "socket")
 	args := lockArgs(t, w)
 	// Read-only: the console made the directory; connecting writes nothing. No stale-ids check of
-	// lockfile's (lox up's console made the volume with lockfile's ids).
+	// lockfile's (lox run's console made the volume with lockfile's ids).
 	for _, m := range []string{"type=volume,src=" + upProjectOf(w) + "_crm-run,dst=/run/locksql,readonly",
 		"type=volume,src=" + upProjectOf(w) + "_events-run,dst=/run/lockmq,readonly",
 		"type=volume,src=" + upProjectOf(w) + "_docs-run,dst=/run/lockfile,readonly"} {
@@ -93,7 +93,7 @@ func TestLockUpSocketVolumes(t *testing.T) {
 	}
 }
 
-// Whatever up.json says, only a volume docker labels as lox up's socket volume of that lock is
+// Whatever up.json says, only a volume docker labels as lox run's socket volume of that lock is
 // mounted: not a lock's home, not a volume of another project or instance.
 func TestLockUpRefusesOtherVolumes(t *testing.T) {
 	for name, c := range map[string]struct{ up, role string }{
@@ -125,7 +125,7 @@ func TestLockUpRefusesOtherVolumes(t *testing.T) {
 					t.Errorf("mounted %s", a)
 				}
 			}
-			// lox up runs the tool: the agents get none of its sockets, not another console's.
+			// lox run runs the tool: the agents get none of its sockets, not another console's.
 			for _, a := range args {
 				if strings.Contains(a, "locksql-run") || a == "LEA_LOCKSQL=1" {
 					t.Errorf("fixed locksql socket mounted instead: %s", a)
@@ -201,7 +201,7 @@ func TestLockUpSocketsEachChecked(t *testing.T) {
 			t.Errorf("forged volume mounted: %s", a)
 		}
 	}
-	if !strings.Contains(w.errb.String(), "warning: lock stock (locksql): volume "+upProjectOf(w)+"_stock-run is not lox up's socket volume") {
+	if !strings.Contains(w.errb.String(), "warning: lock stock (locksql): volume "+upProjectOf(w)+"_stock-run is not lox run's socket volume") {
 		t.Errorf("warning: %s", w.errb.String())
 	}
 }
@@ -241,7 +241,7 @@ func TestLockUpArgsSeveralFromTheFlag(t *testing.T) {
 	}
 }
 
-// A tool the user turned off stays off, lox up or not.
+// A tool the user turned off stays off, lox run or not.
 func TestLockUpToolOff(t *testing.T) {
 	w := newWorld(t, repoRoot(t))
 	writeUserConf(t, w, "LEA_LOCKMQ=0\n")
@@ -254,7 +254,7 @@ func TestLockUpToolOff(t *testing.T) {
 	}
 }
 
-// An up.json others could write is not lox up's.
+// An up.json others could write is not lox run's.
 func TestLockUpFileMustBeTheUsers(t *testing.T) {
 	w := newWorld(t, repoRoot(t))
 	writeUp(t, w, lockUp("crm", "locksql"))
@@ -305,118 +305,9 @@ func TestLockUpOtherWorkspace(t *testing.T) {
 	}
 }
 
-// LoxConsole finds lox up's running console of a lock for the deck's pane: from up.json lea
-// trusts, the lock's socket volume as docker labels it, and the one container of lox up's service
-// lock-<instance> that runs and mounts that very volume on /run/<tool>; anything else is an error
-// that says to run `lox up`.
-func TestLoxConsole(t *testing.T) {
-	const id = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
-	inspectKey := "FAKE_DOCKER_OUT_INSPECT___TYPE_AT_" + fakeKey(id)
-	// inspect is the one inspect of the console: id, running, compose's project, service,
-	// working_dir and config_files labels, the volume on /run/locksql; mod changes field i.
-	inspect := func(w *world, cfg *Config, mod map[int]string) string {
-		f := []string{id, "true", upProjectOf(w), "lock-crm", loxStateDir(cfg, upProjectOf(w)), "-", upProjectOf(w) + "_crm-run"}
-		for i, v := range mod {
-			f[i] = v
-		}
-		return strings.Join(f, "|")
-	}
-	setup := func(t *testing.T, locks string) (*world, *Config) {
-		w := newWorld(t, repoRoot(t))
-		t.Setenv("PATH", w.env["PATH"]) // exec.Command looks docker up in the process's PATH
-		if locks != "" {
-			writeUp(t, w, locks)
-		}
-		labels(w, "crm", "locksql", "socket")
-		labels(w, "uat", "locksql", "socket")
-		w.env["FAKE_DOCKER_OUT_PS__A"] = id + " running"
-		cfg, err := LoadConfig(w.getenv, w.root, w.proj)
-		if err != nil {
-			t.Fatal(err)
-		}
-		w.env[inspectKey] = inspect(w, cfg, nil)
-		return w, cfg
-	}
-	crm := lockUp("crm", "locksql")
-	crmProd := `"crm":{"type":"locksql","socket_volume":"PROJECT_crm-run","profile":"prod"}`
-	w, cfg := setup(t, crm)
-	inst, c, err := LoxConsole(cfg, w.environ(), w.proj, "locksql", "")
-	if err != nil || inst != "crm" || c != id {
-		t.Fatalf("LoxConsole: %q %q %v", inst, c, err)
-	}
-	if !w.hasCall("docker [ps] [-a] [--no-trunc] [--filter] [label=com.docker.compose.project="+upProjectOf(w)+"] [--filter] [label=com.docker.compose.service=lock-crm] [--format] [{{.ID}} {{.State}}]") ||
-		!w.hasCall("docker [inspect] [--type] [container] [-f]") || !w.hasCall("["+id+"]") {
-		t.Fatalf("calls:\n%s", strings.Join(w.calls(), "\n"))
-	}
-	// The compose.yaml of lox up's state directory (lox attach's, an older lox up's) is lox up's too.
-	w, cfg = setup(t, crm)
-	w.env[inspectKey] = inspect(w, cfg, map[int]string{5: loxStateDir(cfg, upProjectOf(w)) + "/compose.yaml"})
-	if _, _, err := LoxConsole(cfg, w.environ(), w.proj, "locksql", ""); err != nil {
-		t.Fatalf("state compose.yaml: %v", err)
-	}
-	// The profile picks the lock that serves it; lox up leaves the default one out of up.json.
-	w, cfg = setup(t, crmProd+","+`"uat":{"type":"locksql","socket_volume":"PROJECT_uat-run","profile":"uat"}`)
-	if inst, _, err := LoxConsole(cfg, w.environ(), w.proj, "locksql", "prod"); err != nil || inst != "crm" {
-		t.Fatalf("profile prod: %q %v", inst, err)
-	}
-	w, cfg = setup(t, crm+","+`"uat":{"type":"locksql","socket_volume":"PROJECT_uat-run","profile":"uat"}`)
-	if inst, _, err := LoxConsole(cfg, w.environ(), w.proj, "locksql", "default"); err != nil || inst != "crm" {
-		t.Fatalf("profile default: %q %v", inst, err)
-	}
-	for name, c := range map[string]struct {
-		locks, profile string
-		mod            map[int]string
-		env            map[string]string
-		want           string
-	}{
-		"no up.json":          {"", "", nil, nil, "no locksql console of lox up"},
-		"no locksql lock":     {lockUp("events", "lockmq"), "", nil, nil, "no locksql lock of lox up for $P: no such lock yet: `lox add locksql`"},
-		"no lock of profile":  {crmProd, "uat", nil, nil, `serves the profile "uat"`},
-		"default not prod":    {crmProd, "default", nil, nil, `serves the profile "default"`},
-		"two locks":           {crm + "," + lockUp("uat", "locksql"), "", nil, nil, "lox up runs 2 locksql locks (crm, uat)"},
-		"other socket volume": {`"crm":{"type":"locksql","socket_volume":"PROJECT_crm-home"}`, "", nil, nil, "is not lox up's"},
-		"no container":        {crm, "", nil, map[string]string{"FAKE_DOCKER_OUT_PS__A": ""}, "lox up runs no console for it"},
-		"two containers":      {crm, "", nil, map[string]string{"FAKE_DOCKER_OUT_PS__A": id + " running\n" + strings.Repeat("ab", 32) + " running"}, "2 containers"},
-		"stopped":             {crm, "", nil, map[string]string{"FAKE_DOCKER_OUT_PS__A": id + " exited"}, "its console is not running (exited)"},
-		"a short id":          {crm, "", nil, map[string]string{"FAKE_DOCKER_OUT_PS__A": "0123456789ab running"}, "no container id"},
-		"other volume mount":  {crm, "", map[int]string{6: "lockhttp-run"}, nil, "not its console"},
-		"no mount":            {crm, "", map[int]string{6: ""}, nil, "not its console"},
-		"stopped meanwhile":   {crm, "", map[int]string{1: "false"}, nil, "is not lox up's running console"},
-		"other id":            {crm, "", map[int]string{0: strings.Repeat("ab", 32)}, nil, "is not lox up's running console"},
-		"other service":       {crm, "", map[int]string{3: "lock-uat"}, nil, "is not lox up's running console"},
-		// A compose file an agent wrote in the workspace (name: lockfamily-<hash>, service
-		// lock-crm, that volume), run there by the user: not lox up's run.
-		"spoofed config_files": {crm, "", map[int]string{5: "/home/u/projects/compose.yaml"}, nil, "was not started by lox up"},
-		"spoofed working_dir":  {crm, "", map[int]string{4: "/home/u/projects"}, nil, "was not started by lox up"},
-		"inspect fails":        {crm, "", nil, map[string]string{"FAKE_DOCKER_RC_INSPECT___TYPE": "1"}, "could not inspect its console"},
-		"ps fails":             {crm, "", nil, map[string]string{"FAKE_DOCKER_RC_PS__A": "1"}, "could not list lox up's containers"},
-	} {
-		t.Run(name, func(t *testing.T) {
-			w, cfg := setup(t, c.locks)
-			if c.mod != nil {
-				w.env[inspectKey] = inspect(w, cfg, c.mod)
-			}
-			for k, v := range c.env {
-				w.env[k] = v
-			}
-			inst, id, err := LoxConsole(cfg, w.environ(), w.proj, "locksql", c.profile)
-			c.want = strings.ReplaceAll(c.want, "$P", w.proj)
-			if err == nil || !strings.Contains(err.Error(), c.want) || inst != "" || id != "" {
-				t.Fatalf("%q %q %v, want %q", inst, id, err, c.want)
-			}
-		})
-	}
-	// A socket volume docker does not label as lox up's.
-	w, cfg = setup(t, crm)
-	labelsWith(w, "crm", "locksql", "socket", "lockfamily-00000000", "crm", w.proj)
-	if _, _, err := LoxConsole(cfg, w.environ(), w.proj, "locksql", ""); err == nil || !strings.Contains(err.Error(), "is not lox up's socket volume") {
-		t.Fatalf("foreign volume: %v", err)
-	}
-}
-
 // A socket volume that a container of another compose run mounts (a compose file an agent wrote
-// in the workspace, run there by the user) is no lox up socket: the agents get none of it. lox
-// up's own console, and containers no compose made (lea's), are fine.
+// in the workspace, run there by the user) is no lox run socket: the agents get none of it. lox
+// run's own console, and containers no compose made (lea's), are fine.
 func TestLockUpSocketServedByAnotherComposeRun(t *testing.T) {
 	w := newWorld(t, repoRoot(t))
 	locksqlUp(t, w)
@@ -439,7 +330,7 @@ func TestLockUpSocketServedByAnotherComposeRun(t *testing.T) {
 	labelsOf(lea, map[string]string{"lea.role": "session"})
 	w.env["FAKE_DOCKER_OUT_PS___NO_TRUNC"] = lox + "\n" + lea
 	if !contains(lockArgs(t, w), mount) {
-		t.Fatalf("lox up's console and lea's own container: not mounted; %s", w.errb.String())
+		t.Fatalf("lox run's console and lea's own container: not mounted; %s", w.errb.String())
 	}
 	for name, c := range map[string]struct {
 		lb   map[string]string
@@ -451,7 +342,7 @@ func TestLockUpSocketServedByAnotherComposeRun(t *testing.T) {
 		"stdin, elsewhere":       {compose(upProjectOf(w), "/tmp", "-"), "", "lea trusts none of its socket"},
 		// A path with the separator of a joined format: decoded from JSON, still refused.
 		"a | in its paths": {compose(upProjectOf(w), state+"|x", state+"|-"), "", "lea trusts none of its socket"},
-		// Only the service label: still compose's, and not lox up's run.
+		// Only the service label: still compose's, and not lox run's run.
 		"one compose label": {map[string]string{"com.docker.compose.service": "lock-crm"}, "", "lea trusts none of its socket"},
 		"malformed id":      {nil, lox + "\nnot-an-id", "cannot read the containers of"},
 		"unreadable labels": {nil, lox + "\n" + other, "cannot read the containers of"},
@@ -510,7 +401,7 @@ func TestLockUsable(t *testing.T) {
 	for name, want := range map[string]string{
 		"orders":    "",
 		"Bad Name":  `lock "Bad Name": not an instance name: locksql left out`,
-		"inventory": `lock inventory: socket volume "other-volume" is not lox up's "lockfamily-0123abcd_inventory-run": left out`,
+		"inventory": `lock inventory: socket volume "other-volume" is not lox run's "lockfamily-0123abcd_inventory-run": left out`,
 		"shop":      "lock shop (lockmq): clients group 4242, lea's image knows 10010: left out (update lea)",
 	} {
 		vol, why := lockUsable(s, name)
@@ -521,7 +412,7 @@ func TestLockUsable(t *testing.T) {
 }
 
 // The daemon's watch reads the locks a container started now really mounts: a lock whose socket
-// volume docker does not label as lox up's is left out, with why, so it never asks for a restart
+// volume docker does not label as lox run's is left out, with why, so it never asks for a restart
 // that cannot give it.
 func TestUpLocksMountedLeavesOutRejectedVolumes(t *testing.T) {
 	w := newWorld(t, repoRoot(t))
@@ -538,7 +429,7 @@ func TestUpLocksMountedLeavesOutRejectedVolumes(t *testing.T) {
 	if len(got) != 1 || got[0].Instance != "orders" {
 		t.Fatalf("locks %v", got)
 	}
-	if len(warns) != 1 || !strings.Contains(warns[0], "lock stock (locksql)") || !strings.Contains(warns[0], "not lox up's socket volume") {
+	if len(warns) != 1 || !strings.Contains(warns[0], "lock stock (locksql)") || !strings.Contains(warns[0], "not lox run's socket volume") {
 		t.Fatalf("warnings %q", warns)
 	}
 }

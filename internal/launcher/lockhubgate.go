@@ -22,8 +22,8 @@ import (
 	"github.com/DavidGodefroid/lockkit/ticket"
 )
 
-// LockHTTP's gate asks the hub (lockhub's docs/lox-up.md, "Why lockhttp is different"): the gate
-// runs hub-attached only, for the lockhttp lock `lox up` runs for the projects directory. lea's
+// LockHTTP's gate asks the hub (lockhub's docs/lox-run.md, "Why lockhttp is different"): the gate
+// runs hub-attached only, for the lockhttp lock `lox run` runs for the projects directory. lea's
 // gate (beside lea's proxy, in its network namespace) mounts that lock's socket volume on
 // /run/lockhttp and its gate volume as its --home, reads the hub's key, the host facades' keys
 // and, for a lock that pins them (locks.<name>.devices), the approval devices from lea's own
@@ -31,7 +31,7 @@ import (
 // addresses the gate refuses as targets: no agent reaches the hub through it. Everything up.json
 // names is checked first (the volumes' and the network's labels, the key's form); anything lea
 // cannot trust, or no up.json naming a lockhttp lock, stops lea with why, and says to run `lox
-// up`: there is no gate without the hub.
+// run`: there is no gate without the hub.
 
 // gateHubDir is where the gate reads lea's copies of the hub's inputs (read-only).
 const gateHubDir = "/run/lockfamily"
@@ -52,12 +52,12 @@ type gateHub struct {
 // gateProfile is a console profile's name (lockhub's lockfamily.yaml rule).
 var gateProfile = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$`)
 
-// gateHubURL is the hub on its network: lox up's service lockhub (a name no resolver outside the
+// gateHubURL is the hub on its network: lox run's service lockhub (a name no resolver outside the
 // network is asked for), on a port.
 var gateHubURL = regexp.MustCompile(`^http://lockhub:([1-9][0-9]{0,3}|[1-5][0-9]{4}|6[0-4][0-9]{3}|65[0-4][0-9]{2}|655[0-2][0-9]|6553[0-5])$`)
 
 // lockUpGate is what the gate needs to ask the hub of the projects directory proj; an error (why,
-// and to run `lox up`) without lox up's trusted up.json naming a lockhttp lock, or when lea cannot
+// and to run `lox run`) without lox run's trusted up.json naming a lockhttp lock, or when lea cannot
 // trust what it says of it.
 func (l *Launcher) lockUpGate(proj string) (*gateHub, error) {
 	lf, err := lockfamilyDir(proj)
@@ -66,7 +66,7 @@ func (l *Launcher) lockUpGate(proj string) (*gateHub, error) {
 	}
 	s, p := l.readLockUp(proj, lf)
 	if s == nil {
-		return nil, die("LEA_LOCKHTTP=1: no trusted %s naming a lockhttp lock: run `lox up` (the LockHTTP gate asks its hub only)", p)
+		return nil, die("LEA_LOCKHTTP=1: no trusted %s naming a lockhttp lock: run `lox run` (the LockHTTP gate asks its hub only)", p)
 	}
 	var names []string
 	for n, lk := range s.Locks {
@@ -79,23 +79,23 @@ func (l *Launcher) lockUpGate(proj string) (*gateHub, error) {
 	}
 	sort.Strings(names)
 	warn := func(why string) (*gateHub, error) {
-		return nil, die("LEA_LOCKHTTP=1: %s: lockhttp: %s: lea's LockHTTP gate cannot ask the hub, and asks nothing else (fix it, then run `lox up`)", p, why)
+		return nil, die("LEA_LOCKHTTP=1: %s: lockhttp: %s: lea's LockHTTP gate cannot ask the hub, and asks nothing else (fix it, then run `lox run`)", p, why)
 	}
 	if len(names) > 1 {
-		return warn(fmt.Sprintf("lox up runs %q: lea's gate asks for one", names))
+		return warn(fmt.Sprintf("lox run runs %q: lea's gate asks for one", names))
 	}
-	// lox up says what the gate pins (its devices, required and sealed, its reveals) only from
+	// lox run says what the gate pins (its devices, required and sealed, its reveals) only from
 	// lockhttp_gate 1 on: before, a lock's devices: true in lockfamily.yaml would not reach the
 	// gate, and it would take the hub's approvals the human meant to be device-signed.
 	if s.LockHTTPGate != 1 {
-		return warn("lox up does not say what this lock's gate pins (lockhttp_gate 1; update lockhub)")
+		return warn("lox run does not say what this lock's gate pins (lockhttp_gate 1; update lockhub)")
 	}
 	name, lk := names[0], s.Locks[names[0]]
 	if !lockUpInstance.MatchString(name) {
 		return warn("not an instance name")
 	}
 	if lk.Socket != s.Project+"_"+name+"-run" || lk.GateHome != s.Project+"_"+name+"-gate" {
-		return warn("its volumes are not lox up's")
+		return warn("its volumes are not lox run's")
 	}
 	if why := l.lockUpVolumeWrong(lk.Socket, s.Project, proj, name, "lockhttp"); why != "" {
 		return warn(why)
@@ -106,7 +106,7 @@ func (l *Launcher) lockUpGate(proj string) (*gateHub, error) {
 		return warn(why)
 	}
 	if s.HubNetwork != s.Project+"_lockhub" {
-		return warn(fmt.Sprintf("hub network %q is not lox up's", s.HubNetwork))
+		return warn(fmt.Sprintf("hub network %q is not lox run's", s.HubNetwork))
 	}
 	why, subnets := l.lockUpLabelsWrong("network", s.HubNetwork, "{{range .IPAM.Config}}{{.Subnet}} {{end}}", map[string]string{
 		"com.docker.compose.project": s.Project, "com.docker.compose.network": "lockhub", "dev.lockfamily.role": "hub",
@@ -129,7 +129,7 @@ func (l *Launcher) lockUpGate(proj string) (*gateHub, error) {
 	if !lockHTTPAtLeast(ver, "0.3.0") {
 		return warn("the pinned lockhttp " + orUnknown(ver) + " has no hub mode (v0.3.0 or later)")
 	}
-	// The console's profile, as lox up runs it (its socket's name derives from it).
+	// The console's profile, as lox run runs it (its socket's name derives from it).
 	prof := lk.Profile
 	if prof == "" {
 		prof = "default"
@@ -148,7 +148,7 @@ func (l *Launcher) lockUpGate(proj string) (*gateHub, error) {
 	if len(g.subnets) == 0 {
 		return warn(s.HubNetwork + " has no subnet")
 	}
-	// The facade keys only for a lock lox up lets reveal (locks.<name>.reveal), checked as the gate
+	// The facade keys only for a lock lox run lets reveal (locks.<name>.reveal), checked as the gate
 	// reads them, written in canonical form.
 	if lk.Reveal && len(s.FacadeKeys) > 0 && string(s.FacadeKeys) != "null" {
 		if !lockHTTPAtLeast(ver, "0.5.0") {
@@ -167,7 +167,7 @@ func (l *Launcher) lockUpGate(proj string) (*gateHub, error) {
 			return warn("devices: " + err.Error())
 		}
 		// Risk classes that must be device-signed, and lea cannot say so to the gate: no gate, or
-		// it would take the hub's approvals of them from any facade (lox up refuses that too).
+		// it would take the hub's approvals of them from any facade (lox run refuses that too).
 		switch {
 		case g.devices == nil && len(lk.RequireDevice) > 0:
 			return warn("require_device " + strings.Join(lk.RequireDevice, ",") + " but no device is paired")
@@ -314,7 +314,7 @@ func orUnknown(v string) string {
 func (l *Launcher) lockUpLabelsWrong(kind, name, more string, labels map[string]string) (string, string) {
 	o, err := l.output(false, "docker", kind, "inspect", "--format", "{{json .Labels}}|"+more, name)
 	if err != nil {
-		return "no " + kind + " " + name + " (run lox up)", ""
+		return "no " + kind + " " + name + " (run lox run)", ""
 	}
 	js, rest, _ := strings.Cut(o, "|")
 	var lb map[string]string
@@ -328,7 +328,7 @@ func (l *Launcher) lockUpLabelsWrong(kind, name, more string, labels map[string]
 	sort.Strings(keys)
 	for _, k := range keys {
 		if lb[k] != labels[k] {
-			return kind + " " + name + " is not lox up's (label " + k + ")", ""
+			return kind + " " + name + " is not lox run's (label " + k + ")", ""
 		}
 	}
 	return "", rest
@@ -431,7 +431,7 @@ func (l *Launcher) writeGateHub(g *gateHub) (string, error) {
 	return dir, nil
 }
 
-// joinHubNetwork disconnects the proxy from any lox up hub network but g's and, with connect,
+// joinHubNetwork disconnects the proxy from any lox run hub network but g's and, with connect,
 // connects it (only it: the gate shares its namespace) to g's; nil g leaves none.
 func (l *Launcher) joinHubNetwork(proxy string, g *gateHub, connect bool) error {
 	// The proxy (the gate's namespace) on a hub network whose subnets the gate does not refuse
@@ -462,9 +462,9 @@ func (l *Launcher) joinHubNetwork(proxy string, g *gateHub, connect bool) error 
 
 var lockUpHubNet = regexp.MustCompile(`^lockfamily-[0-9a-f]{8}_lockhub$`)
 
-// staleGate is err (lea cannot run the gate under lox up: it stops before it changes anything),
+// staleGate is err (lea cannot run the gate under lox run: it stops before it changes anything),
 // told with what still runs: a standalone gate of an earlier lea (no lea.lockhttp-hub label: it
-// asks a console of its own, on lockhttp-run, not lox up's hub) keeps serving the agents that
+// asks a console of its own, on lockhttp-run, not lox run's hub) keeps serving the agents that
 // run. lea removes it only when it is lea's own (its prefix and role labels) and no lea agent of
 // this prefix runs, so that nothing goes through it; with agents running it stays (removing it
 // would cut their web in the middle of their work) and lea says which agents and how to stop it.
@@ -474,7 +474,7 @@ func (l *Launcher) staleGate(err error) error {
 		`{{.Id}}|{{.State.Running}}|{{index .Config.Labels "lea.prefix"}}|{{index .Config.Labels "lea.role"}}|{{index .Config.Labels "lea.lockhttp-hub"}}|{{range .Mounts}}{{if eq .Destination "/run/lockhttp"}}{{.Name}}{{end}}{{end}}`, name)
 	f := strings.Split(strings.TrimSpace(o), "|")
 	if ierr != nil || len(f) != 6 || f[1] != "true" || f[4] != "" {
-		return err // no gate, a stopped one, or one that asks a hub: nothing serves without lox up
+		return err // no gate, a stopped one, or one that asks a hub: nothing serves without lox run
 	}
 	if f[2] != l.prefix() || f[3] != "lockhttp-gate" || !dockerID.MatchString(f[0]) {
 		return die("%v. The container %s runs, and it is not a gate lea started (labels lea.prefix, lea.role): lea leaves it alone; look at it (docker inspect %s)", dieMsg(err), name, name)
@@ -519,7 +519,7 @@ func (l *Launcher) staleGate(err error) error {
 	} else if len(running) > 0 {
 		who = "the agents of " + strings.Join(running, ", ")
 	}
-	return die("%s. Meanwhile the standalone LockHTTP gate %s of an earlier lea still runs: it asks the console of the volume %s, not lox up's hub, for %s; lea leaves it, since removing it would cut their web. Once `lox up` runs, lea stop --all (it stops the gate with the proxy), then lea",
+	return die("%s. Meanwhile the standalone LockHTTP gate %s of an earlier lea still runs: it asks the console of the volume %s, not lox run's hub, for %s; lea leaves it, since removing it would cut their web. Once `lox run` runs, lea stop --all (it stops the gate with the proxy), then lea",
 		dieMsg(err), name, vol, who)
 }
 

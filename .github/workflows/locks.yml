@@ -1,0 +1,51 @@
+# Bumps the Lock clients lea's image ships as one set (config/locks.lock, lea#134): run it with the
+# releases of a Lock Family set (one lockkit release, each Lock built on it); tools/locks-bump
+# checks every release's signature (cosign) and rewrites the file whole, and this opens the pull
+# request. A set is never bumped Lock by Lock. The pull request's own checks (ci: phase0 runs the
+# new clients against the new locks under lox) decide whether it merges.
+name: locks
+on:
+  workflow_dispatch:
+    inputs:
+      lockkit: {description: "lockkit release of the set (vX.Y.Z)", required: true}
+      lox: {description: "lockhub (lox) release (vX.Y.Z)", required: true}
+      locksql: {description: "locksql release (vX.Y.Z)", required: true}
+      lockmq: {description: "lockmq release (vX.Y.Z)", required: true}
+      lockfile: {description: "lockfile release (vX.Y.Z)", required: true}
+      lockhttp: {description: "lockhttp release (vX.Y.Z)", required: true}
+permissions:
+  contents: read
+jobs:
+  bump:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+        with:
+          cosign-release: v3.1.3
+      - name: tools/locks-bump, every pin verified
+        env:
+          KIT: ${{ inputs.lockkit }}
+          LOX: ${{ inputs.lox }}
+          SQL: ${{ inputs.locksql }}
+          MQ: ${{ inputs.lockmq }}
+          LF: ${{ inputs.lockfile }}
+          LH: ${{ inputs.lockhttp }}
+        run: tools/locks-bump --lockkit "$KIT" --lox "$LOX" --locksql "$SQL" --lockmq "$MQ" --lockfile "$LF" --lockhttp "$LH"
+      - name: open the pull request
+        env:
+          GH_TOKEN: ${{ github.token }}
+          KIT: ${{ inputs.lockkit }}
+        run: |
+          if git diff --quiet config/locks.lock; then echo "config/locks.lock already pins this set"; exit 0; fi
+          b="locks/lockkit-$KIT-${{ github.run_id }}"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git switch -c "$b"
+          git commit -qm "feat(lock): pin the Lock clients of the lockkit $KIT set" config/locks.lock
+          git push -q origin "$b"
+          gh pr create --base main --head "$b" --title "feat(lock): pin the Lock clients of the lockkit $KIT set" \
+            --body "$(printf 'Bumps config/locks.lock to the lockkit %s set (tools/locks-bump verified every signature).\n\n## Changelog\n\n- The Lock clients in lea'"'"'s image move to the lockkit %s set.\n' "$KIT" "$KIT")"

@@ -1,11 +1,7 @@
 status 0
 -- calls
-tmux [-V]
 docker [image] [inspect] [-f] [{{.Id}}] [lea:dev]
 docker [image] [inspect] [-f] [{{.Id}}] [lea-proxy:dev]
-lox [version]
-lox [init]
-tmux [-V]
 core [agents]
 core [version]
 docker [network] [inspect] [lea-egress]
@@ -17,8 +13,13 @@ docker [container] [inspect] [--format] [{{with index .NetworkSettings.Networks 
 docker [inspect] [-f] [{{.State.Running}}] [lea-$ID]
 docker [inspect] [--format] [{{.Id}} {{.HostConfig.NanoCpus}} {{.HostConfig.Memory}} {{.HostConfig.MemorySwap}} {{with .HostConfig.PidsLimit}}{{.}}{{else}}0{{end}}] [lea-$ID]
 core [attach-container] [lea-$ID]
-core [deck-open] [--container] [lea-$ID] [--workdir] [$W/projects]
-tmux [-L] [lea] [-f] [$W/data/lea/host/tmux.conf] [attach-session] [-t] [=lea-$ID]
+docker [exec] [-i] [-u] [$UID:$GID] [-e] [TERM=xterm-256color] [-w] [$W/projects] [lea-$ID] [lea-session] [--shell]
+docker [exec] [-u] [$UID:$GID] [lea-$ID] [lea-agent] [ls]
+docker [stop] [lea-$ID]
+docker [network] [disconnect] [-f] [lea-internal-$ID] [lea-proxy]
+docker [network] [rm] [lea-internal-$ID]
+tmux [-L] [lea] [-f] [$W/data/lea/host/tmux.conf] [list-sessions]
 -- lea
-lea: first run: starting the Lock Family hub (lox init)
+lea: Open another terminal (outside lea) and run `lox run` to approve the agents' connections and writes.
+lea: WARNING: no start snapshot for $W/projects; the exit scan cannot compare
 -- stdout

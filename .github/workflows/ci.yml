@@ -133,42 +133,18 @@ jobs:
           for c in '.lockfamily write gets EROFS' 'host facade socket not visible' 'no facade socket in the container' 'sibling lea unreachable directly' 'host port unreachable via host IP' 'public HTTPS works through the proxy' 'nested HTTP between containers is direct'; do
             grep -qxF "ok   $c" isolation.log || { echo "isolation: '$c' did not run" >&2; exit 1; }
           done
-  # The phase-2 exit demo, lea's side (tests/integration/hubdeck.sh): lox up with the released,
-  # cosign-verified lockhub and a LockHTTP lock; the gate holds an agent's write, lea's deck
-  # approves its ticket through the real facade socket, and the gate lets the write out.
-  hubdeck:
-    runs-on: ubuntu-latest
-    timeout-minutes: 20
-    steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-        with:
-          persist-credentials: false
-      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
-        with:
-          go-version-file: go.mod
-      - uses: sigstore/cosign-installer@7e8b541eb2e61bf99390e1afd4be13a184e9ebc5 # v3.10.1
-        with:
-          cosign-release: v2.6.1
-      - name: make test-hubdeck, the deck's test run
-        shell: bash
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          make test-hubdeck 2>&1 | tee hubdeck.log
-          grep -q -- '^--- PASS: TestHubDeckApprovesARealLockhubTicket ' hubdeck.log
-          grep -qx 'hubdeck: OK' hubdeck.log
   # lea's first run on a machine without images (tests/integration/firstrun.sh): a fresh HOME and
   # XDG_* directories, no lea images, the lox CLI of the checksum-verified lockhub release on
-  # PATH; `lea shell -- true` pulls both release images (cosign-verified), starts the hub with
-  # `lox init`, and a second run pulls nothing and starts no hub. The lox release is 0.5.0, the
-  # floor of config/host-minimums: until lockhub's v0.5.0 is tagged the first step finds no
-  # release, every other step is skipped and the job succeeds with a notice; once it exists the
-  # test runs with no soft-fail.
+  # PATH behind a recorder; `lea shell -- true` pulls both release images (cosign-verified) and
+  # runs no lox command (#300); with locks declared, a second run pulls nothing, still runs no lox
+  # command, and says to run `lox run` in another terminal, as lea doctor does. The lox release is
+  # 0.9.0 (lox run), LOCKS_LOX_VERSION of config/locks.lock: until lockhub's release is tagged the
+  # first step finds no release, every other step is skipped and the job succeeds with a notice.
   firstrun:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     env:
-      LOCKHUB_VERSION: "0.5.0"
+      LOCKHUB_VERSION: "0.9.0"
     steps:
       - name: is lockhub's release there yet
         id: release
@@ -321,7 +297,7 @@ jobs:
           # The hub-only checks wait for each Lock's first hub-only release: a note until then.
           h=$(grep -c '^note: .* the hub-only check is not run' phase0.log || true)
           echo "$n phase0 checks passed, $h hub-only checks not run yet"
-          [ $((n + h)) -eq 31 ]
+          [ $((n + h)) -eq 40 ]
   images:
     runs-on: ubuntu-latest
     steps:

@@ -117,39 +117,15 @@ git_ssh() { export LEA_GIT_SSH="$1"; lea_load_config; }
   [ ! -e "$U" ]
 }
 
-@test "a missing locksql image is built from locksql's repository at LEA_LOCKSQL_REF" {
+@test "init builds, fetches and verifies no Lock: its client comes with lea's image (lea#134)" {
   export FAKE_DOCKER_RC_IMAGE_INSPECT_AT_LOCKSQL_0_16_0=1
   run lea_init </dev/null
   [ "$status" -eq 0 ]
   run calls
-  [[ "$output" == *"docker [image] [inspect] [locksql:0.16.0]"* ]]
-  [[ "$output" == *"docker [build] [-t] [locksql:0.16.0] [--build-arg] [ALLOWED_UIDS=$(id -u)] ["*"/src]"* ]]
-}
-
-@test "a present locksql image is not rebuilt" {
-  lea_init </dev/null 2>/dev/null
-  run calls
-  [[ "$output" == *"docker [image] [inspect] [locksql:0.16.0]"* ]]
+  [[ "$output" != *"locksql:"* ]]
+  [[ "$output" != *"locksql.git"* ]]
+  [[ "$output" != *"locksql/releases"* ]]
   [[ "$output" != *"docker [build]"* ]]
-}
-
-@test "a failing locksql build is only a warning" {
-  export FAKE_DOCKER_RC_IMAGE_INSPECT_AT_LOCKSQL_0_16_0=1 FAKE_DOCKER_RC_BUILD__T=1
-  run lea_init </dev/null
-  [ "$status" -eq 0 ]
-  [[ "$output" == *"warning: could not build locksql:0.16.0"* ]]
-  [[ "$output" == *"ready. Run: lea"* ]]
-}
-
-@test "init builds a release of locksql only from the commit its signature covers" {
-  export FAKE_DOCKER_RC_IMAGE_INSPECT_AT_LOCKSQL_0_16_0=1
-  run lea_init </dev/null
-  [[ "$output" == *"locksql v0.16.0: signature verified (commit $FAKE_GIT_SHA); building locksql:0.16.0"* ]]
-  run calls
-  [[ "$output" == *"git [-C] ["*"/src] [fetch] [-q] [--depth] [1] [--no-tags] [https://github.com/DavidGodefroid/locksql.git] [+refs/tags/v0.16.0:refs/tags/v0.16.0]"*"git [-C] ["*"/src] [-c] [advice.detachedHead=false] [checkout] [-q] [refs/tags/v0.16.0^{commit}]"* ]]
-  [[ "$output" != *"[--branch]"* ]]
-  [[ "$output" == *"cosign [verify-blob] [--bundle] ["*"/checksums.txt.sigstore.json] [--certificate-identity-regexp] [^https://github\\.com/DavidGodefroid/locksql/\\.github/workflows/release\\.yml@refs/tags/v0\\.16\\.0\$] [--certificate-oidc-issuer] [https://token.actions.githubusercontent.com] [--certificate-github-workflow-repository] [DavidGodefroid/locksql] [--certificate-github-workflow-sha] [$FAKE_GIT_SHA] ["*"/checksums.txt]"* ]]
-  [ "$(calls | grep -n '^cosign' | cut -d: -f1)" -lt "$(calls | grep -n '^docker \[build\]' | cut -d: -f1)" ]
 }
 
 # release_install_sh [RC]: the release's own install.sh, which logs how lea runs it and exits RC.
@@ -158,41 +134,13 @@ release_install_sh() {
   printf '#!/bin/sh\necho "install.sh LOCKSQL_VERSION=$LOCKSQL_VERSION cosign=$(command -v cosign >/dev/null && echo yes)" >>"$FAKE_LOG"\nexit %s\n' "${1:-0}" >"$FAKE_GIT_INSTALL_SH"
 }
 
-@test "init installs no locksql launcher: lox up runs the console" {
-  export FAKE_DOCKER_RC_IMAGE_INSPECT_AT_LOCKSQL_0_16_0=1
+@test "init installs no locksql launcher: lox run runs the console" {
   release_install_sh
   run lea_init </dev/null
   [[ "$output" != *"installing its launcher"* ]]
   run calls
-  [[ "$output" == *"cosign [verify-blob]"*"docker [build]"* ]]
   [[ "$output" != *"install.sh"* ]]
 }
-
-@test "init never builds a locksql whose tag moved, whose signature fails, or that is not a release" {
-  export FAKE_DOCKER_RC_IMAGE_INSPECT_AT_LOCKSQL_0_16_0=1
-  FAKE_COSIGN_RC=1 run lea_init </dev/null
-  [ "$status" -eq 0 ]
-  [[ "$output" == *"locksql: v0.16.0 at $FAKE_GIT_SHA is not what locksql's release workflow signed; nothing built"*"warning: could not build locksql:0.16.0; lea works without it"* ]]
-  rm "$FAKE_CURL_DIR/checksums.txt.sigstore.json"
-  run lea_init </dev/null
-  [[ "$output" == *"could not download https://github.com/DavidGodefroid/locksql/releases/download/v0.16.0/checksums.txt.sigstore.json; nothing built"* ]]
-  LEA_LOCKSQL_REF=main run lea__init_locksql
-  [[ "$output" == *"LEA_LOCKSQL_REF 'main' is neither a release (vX.Y.Z) nor the absolute path of a checkout: lea builds no source it cannot verify"* ]]
-  # A relative checkout is refused, even when it exists.
-  mkdir -p "$P/co"
-  (cd "$P" && LEA_LOCKSQL_REF=co lea__init_locksql) 2>&1 | grep -q "LEA_LOCKSQL_REF 'co' is neither"
-  if calls | grep -q '^docker \[build\]\|\[--branch\] \[main\]'; then false; fi
-}
-
-@test "a directory named like the release never stands in for its verified source" {
-  export FAKE_DOCKER_RC_IMAGE_INSPECT_AT_LOCKSQL_0_16_0=1
-  mkdir -p "$P/v0.16.0"
-  cd "$P"
-  FAKE_COSIGN_RC=1 run lea__init_locksql
-  [[ "$output" == *"is not what locksql's release workflow signed; nothing built"* ]]
-  if calls | grep -q '^docker \[build\]'; then false; fi
-}
-
 @test "LEA_LOCKSQL=0 skips the locksql image" {
   lea_user_config_set LEA_LOCKSQL 0; lea_load_config
   export FAKE_DOCKER_RC_IMAGE_INSPECT_AT_LOCKSQL_0_16_0=1
@@ -467,7 +415,6 @@ mkdir -p "$NEW"
 cp -R "$src/bin" "$src/libexec" "$src/config" "$NEW/"
 sed -i -e 's|^LEA_IMAGE=.*|LEA_IMAGE=ghcr.io/davidgodefroid/lea:${1#v}|' \\
   -e 's|^LEA_PROXY_IMAGE=.*|LEA_PROXY_IMAGE=ghcr.io/davidgodefroid/lea-proxy:${1#v}|' \\
-  -e 's|^LEA_LOCKSQL_IMAGE=.*|LEA_LOCKSQL_IMAGE=locksql:9.0.0|' -e 's|^LEA_LOCKSQL_REF=.*|LEA_LOCKSQL_REF=v9.0.0|' \\
   -e 's|^LEA_LOCKSQL=0\$|LEA_LOCKSQL=1|' "$NEW/config/lea.conf"
 mkdir -p "$LEA_BIN_DIR"
 ln -sfn "$NEW/bin/lea" "$LEA_BIN_DIR/lea"
@@ -526,42 +473,25 @@ EOT
   [ ! -e "$XDG_DATA_HOME/lea/host/update" ]
 }
 
-@test "release update ends with the new versioned lea and proxy images pulled and the new locksql image built" {
+@test "release update ends with the new versioned lea and proxy images pulled, and no Lock image" {
   update_root
   fake_release v9.9.9
-  export FAKE_DOCKER_RC_IMAGE_INSPECT_AT_LOCKSQL_9_0_0=1
   run lea_update
   [ "$status" -eq 0 ]
   run calls
   [[ "$output" == *"installer --version v9.9.9 --no-init"*"docker [pull] [ghcr.io/davidgodefroid/lea:9.9.9]"* ]]
   [[ "$output" == *"docker [pull] [ghcr.io/davidgodefroid/lea-proxy:9.9.9]"* ]]
-  [[ "$output" == *"docker [image] [inspect] [locksql:9.0.0]"* ]]
-  [[ "$output" == *"docker [build] [-t] [locksql:9.0.0] [--build-arg] [ALLOWED_UIDS=$(id -u)] ["*"/src]"* ]]
-  [[ "$output" != *"locksql:0.16.0"* ]]
+  [[ "$output" != *"locksql"* ]]
 }
-
-@test "release update ends with the new installation checking the dependencies, with its own pins" {
+@test "release update ends with the new installation naming its own set of Lock clients" {
   update_root
   fake_release v9.9.9
-  export FAKE_CURL_EFFECTIVE_locksql=https://github.com/DavidGodefroid/locksql/releases/tag/v9.1.0
   run lea_update --deps none
   [ "$status" -eq 0 ]
-  [[ "$output" == *"updated; running lea containers keep their image"*"locksql: v9.0.0 -> v9.1.0 (release notes: https://github.com/DavidGodefroid/locksql/releases/tag/v9.1.0)"*"locksql: not updated (--deps none)"* ]]
+  [[ "$output" == *"updated; running lea containers keep their image"*"Lock clients in lea's image: lockkit-v"* ]]
   run calls
-  [[ "$output" == *"curl [-fsSLI] [-o] [/dev/null] [-w] [%{url_effective}] [https://github.com/DavidGodefroid/locksql/releases/latest]"* ]]
-  [[ "$output" != *"locksql/releases/download"* ]]
+  [[ "$output" != *"locksql/releases"* ]]
 }
-
-@test "release update does not rebuild a present locksql image" {
-  update_root
-  fake_release v9.9.9
-  run lea_update
-  [ "$status" -eq 0 ]
-  run calls
-  [[ "$output" == *"docker [image] [inspect] [locksql:9.0.0]"* ]]
-  [[ "$output" != *"docker [build]"* ]]
-}
-
 @test "release update with LEA_LOCKSQL=0 builds no locksql image" {
   update_root
   fake_release v9.9.9
@@ -572,16 +502,6 @@ EOT
   run calls
   [[ "$output" == *"docker [pull] [ghcr.io/davidgodefroid/lea:9.9.9]"* ]]
   [[ "$output" != *locksql* ]]
-}
-
-@test "a failing locksql build is a warning, the release update still succeeds" {
-  update_root
-  fake_release v9.9.9
-  export FAKE_DOCKER_RC_IMAGE_INSPECT_AT_LOCKSQL_9_0_0=1 FAKE_DOCKER_RC_BUILD__T=1
-  run lea_update
-  [ "$status" -eq 0 ]
-  [[ "$output" == *"warning: could not build locksql:9.0.0"* ]]
-  [[ "$output" == *"updated; running lea containers keep their image"* ]]
 }
 
 @test "an installer that does not match the release's checksums.txt is never run" {
@@ -645,25 +565,15 @@ EOT
   [[ "$output" == *"lea v9.9.9 is installed but its images could not be refreshed: rerun lea update"* ]]
 }
 
-@test "update of a checkout builds a missing locksql image" {
-  update_root checkout
-  export FAKE_DOCKER_RC_IMAGE_INSPECT_AT_LOCKSQL_0_16_0=1
-  run lea_update
-  [ "$status" -eq 0 ]
-  run calls
-  [[ "$output" == *"docker [build] [-t] [locksql:0.16.0] [--build-arg] [ALLOWED_UIDS=$(id -u)] ["*"/src]"* ]]
-}
-
-@test "update of a checkout checks the dependencies with the pulled code" {
+@test "update of a checkout names the set of Lock clients of the pulled code" {
   src=$LEA_ROOT
   update_root checkout
-  cp -R "$src/libexec" "$R/"
-  export FAKE_CURL_EFFECTIVE_locksql=https://github.com/DavidGodefroid/locksql/releases/tag/v0.17.0
+  cp -R "$src/libexec" "$src/config" "$R/"
+  sed -i 's/^LOCKS_SET=.*/LOCKS_SET=lockkit-v9.9.9/' "$R/config/locks.lock"
   run lea_update
   [ "$status" -eq 0 ]
-  [[ "$output" == *"locksql: v0.16.0 -> v0.17.0"*"locksql: not updated (no terminal to ask)"* ]]
+  [[ "$output" == *"Lock clients in lea's image: lockkit-v9.9.9:"* ]]
 }
-
 @test "update of a checkout with LEA_LOCKSQL=0 builds no locksql image" {
   update_root checkout
   lea_user_config_set LEA_LOCKSQL 0
@@ -714,21 +624,20 @@ EOT
   [[ "$output" == *"make go-build failed"* ]]
 }
 
-@test "an interactive init with no locksql profile runs the profile wizard in the console image" {
+@test "an interactive init with no locksql profile runs the profile wizard of lea's image's client" {
   interactive
-  export FAKE_DOCKER_OUT_RUN___RM_AT_HELP='  profile  add [--project DIR] [--engine E ...]'
   run lea_init <<<"
 y"
   [ "$status" -eq 0 ]
   [[ "$output" == *"locksql has no database profile for $P yet"* ]]
-  [[ "$output" == *"locksql console: it runs under lox up only: no such lock yet: \`lox add locksql\`"* ]]
+  [[ "$output" == *"locksql console: it runs under lox run only: no such lock yet: \`lox add locksql\`"* ]]
   run calls
-  [[ "$output" == *"docker [run] [-it] [--rm] [--user] [$(id -u):$(id -g)] [-e] [HOME=/tmp] [-v] [$P:$P] [-w] [$P] [locksql:0.16.0] [profile] [add] [--project] [$P]"* ]]
+  [[ "$output" == *"docker [run] [-it] [--rm] [--network] [none] [--user] [$(id -u):$(id -g)] [-e] [HOME=/tmp] [-v] [$P:$P] [-w] [$P] [--entrypoint] [locksql] [$LEA_IMAGE] [profile] [add] [--project] [$P]"* ]]
+  [[ "$output" != *"locksql:"* ]]
 }
 
 @test "the profile wizard is skipped when declined, without input, or when a profile exists" {
   interactive
-  export FAKE_DOCKER_OUT_RUN___RM_AT_HELP='  profile  add [--project DIR] [--engine E ...]'
   run lea_init <<<"
 n"
   [[ "$output" == *"later: lea init again"* ]]
@@ -740,22 +649,13 @@ y" 2>/dev/null
   [[ "$output" != *"[profile] [add]"* ]]
 }
 
-@test "a locksql without the profile wizard gets the by-hand hint" {
-  interactive
-  run lea_init <<<"
-y"
-  [[ "$output" == *"has no profile wizard: add a database profile to $P/.locksql/config.toml by hand"* ]]
-  run calls
-  [[ "$output" != *"[profile] [add]"* ]]
-}
-
-@test "a Vault profile: lea says lox up passes VAULT_ADDR, and logs in to nothing" {
+@test "a Vault profile: lea says lox run passes VAULT_ADDR, and logs in to nothing" {
   interactive
   mkdir -p "$P/.locksql"
   printf '[profiles.uat]\nengine = "mariadb"\nhost = "db"\ncredentials = "vault"\nvault_path = "database/creds/uat"\n' >"$P/.locksql/config.toml"
   run lea_init </dev/null
   [ "$status" -eq 0 ]
-  [[ "$output" == *"locksql: a profile reads its login from Vault: lox up passes VAULT_ADDR to locks with vault: true (lox add locksql)"* ]]
+  [[ "$output" == *"locksql: a profile reads its login from Vault: lox run passes VAULT_ADDR to locks with vault: true (lox add locksql)"* ]]
   run calls
   [[ "$output" != *"[--entrypoint] [vault]"* ]]
   [[ "$output" != *"locksql-home"* ]]
@@ -797,7 +697,7 @@ EOF
   run lea_init --locksql </dev/null
   [ "$status" -eq 0 ]
   grep -qx "LEA_LOCKSQL='1'" "$U"
-  [[ "$output" == *"locksql: lox up runs the locksql lock(s) prod-db of .lockfamily/lockfamily.yaml; next: lea stop, then lea"* ]]
+  [[ "$output" == *"locksql: lox run runs the locksql lock(s) prod-db of .lockfamily/lockfamily.yaml; next: lea stop, then lea"* ]]
   [[ "$output" != *"no such lock yet"* ]]
   [[ "$output" != *"[y/N]"* ]]
   [[ "$output" != *"[Y/n]"* ]]
@@ -834,7 +734,7 @@ EOF
   interactive
   run lea_init --lockmq </dev/null
   [ "$status" -eq 0 ]
-  [[ "$output" == *"lockmq console: it runs under lox up only"* ]]
+  [[ "$output" == *"lockmq console: it runs under lox run only"* ]]
   [[ "$output" != *"locksql console"* ]]
   [[ "$output" != *"lockfile console"* ]]
   run calls
@@ -846,25 +746,6 @@ EOF
   run lea_init --locksql </dev/null
   [ "$status" -eq 0 ]
   [[ "$output" == *"warning: the locksql lock prod-db has no allowed_uids [$(id -u)]"* ]]
-}
-
-@test "a declared locksql lock that pins no image still gets the console image" {
-  declare_locksql
-  sed -i '/locksql@sha256/d' "$P/.lockfamily/lockfamily.yaml"
-  export FAKE_DOCKER_RC_IMAGE_INSPECT_AT_LOCKSQL_0_16_0=1
-  lea_init --locksql </dev/null 2>/dev/null
-  run calls
-  [[ "$output" == *"docker [build] [-t] [locksql:0.16.0]"* ]]
-}
-
-@test "lea update builds no locksql image for a declared lock pinning its own" {
-  declare_locksql
-  export FAKE_DOCKER_RC_IMAGE_INSPECT_AT_LOCKSQL_0_16_0=1
-  run lea__init_locksql
-  [ "$status" -eq 0 ]
-  [ -z "$output" ]
-  run calls
-  [[ "$output" != *"docker"* ]]
 }
 
 @test "lea__declared_locks finds locks by type: quotes, comments, block lists, nested keys" {
@@ -895,23 +776,6 @@ EOF
 c - -" ]
   run lea__declared_locks lockmq
   [ "$output" = "b ghcr.io/x/lockmq@sha256:bb -" ]
-}
-
-@test "a missing image is built with the vault CLI when a profile needs it" {
-  mkdir -p "$P/.locksql"
-  printf '[profiles.uat]\nengine = "postgres"\nhost = "db"\ncredentials = "vault"\nvault_path = "x/y"\n' >"$P/.locksql/config.toml"
-  export FAKE_DOCKER_RC_IMAGE_INSPECT_AT_LOCKSQL_0_16_0=1
-  lea_init </dev/null 2>/dev/null
-  run calls
-  [[ "$output" == *"docker [build] [--target] [vault] [-t] [locksql:0.16.0]"* ]]
-}
-
-@test "LEA_LOCKSQL_REF may be a local locksql checkout" {
-  export LEA_LOCKSQL_REF="$BATS_TEST_TMPDIR/locksql" FAKE_DOCKER_RC_IMAGE_INSPECT_AT_LOCKSQL_0_16_0=1
-  mkdir -p "$LEA_LOCKSQL_REF"
-  lea_init </dev/null 2>/dev/null
-  run calls
-  [[ "$output" == *"docker [build] [-t] [locksql:0.16.0] [--build-arg] [ALLOWED_UIDS=$(id -u)] [$LEA_LOCKSQL_REF]"* ]]
 }
 
 @test "init links no locksql, removes the one an older lea linked, keeps a host locksql" {

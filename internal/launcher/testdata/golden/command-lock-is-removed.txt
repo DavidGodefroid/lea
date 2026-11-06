@@ -1,0 +1,6 @@
+status 2
+-- calls
+
+-- lea
+lea: error: lea lock was removed: lea shows no lock console. Open another terminal (outside lea) and run `lox run` to approve the agents' connections and writes. (lox attach NAME reaches a lock's own console)
+-- stdout

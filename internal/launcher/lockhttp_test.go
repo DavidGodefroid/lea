@@ -33,7 +33,7 @@ func lockHostWorld(t *testing.T) string {
 }
 
 // lockHTTPWorld adds what lockhttp's install.sh leaves to lockHostWorld (its launcher, root-owned
-// in /usr/local/bin, pinning testDigest) and what lox up leaves: the lockhttp lock web of the
+// in /usr/local/bin, pinning testDigest) and what lox run leaves: the lockhttp lock web of the
 // projects directory (hubUp). The gate runs hub-attached only.
 func lockHTTPWorld(t *testing.T) (*world, string) {
 	t.Helper()
@@ -42,7 +42,7 @@ func lockHTTPWorld(t *testing.T) (*world, string) {
 	return w, root
 }
 
-// lockHTTPWorldNoUp is lockHTTPWorld without lox up in the projects directory.
+// lockHTTPWorldNoUp is lockHTTPWorld without lox run in the projects directory.
 func lockHTTPWorldNoUp(t *testing.T) (*world, string) {
 	t.Helper()
 	root := lockHostWorld(t)
@@ -81,7 +81,7 @@ func TestLockHTTPOffByDefault(t *testing.T) {
 }
 
 // The proxy keeps squid and keyproxy; the gate runs beside it, from the launcher's pinned image,
-// in the proxy's network namespace, as gate, with lox up's console socket volume and nothing
+// in the proxy's network namespace, as gate, with lox run's console socket volume and nothing
 // else of the console's.
 func TestLockHTTPProxyGetsTheGate(t *testing.T) {
 	w, _ := lockHTTPWorld(t)

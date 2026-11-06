@@ -3,8 +3,6 @@ status 0
 tmux [-V]
 docker [image] [inspect] [-f] [{{.Id}}] [lea:dev]
 docker [image] [inspect] [-f] [{{.Id}}] [lea-proxy:dev]
-lox [version]
-lox [init]
 core [agents]
 core [version]
 docker [network] [inspect] [lea-egress]
@@ -19,5 +17,5 @@ core [attach-container] [lea-$ID]
 core [deck-open] [--container] [lea-$ID] [--workdir] [$W/projects] [--no-default]
 core [new] [--container] [lea-$ID] [--workdir] [$W/projects]
 -- lea
-lea: first run: starting the Lock Family hub (lox init)
+lea: Open another terminal (outside lea) and run `lox run` to approve the agents' connections and writes.
 -- stdout

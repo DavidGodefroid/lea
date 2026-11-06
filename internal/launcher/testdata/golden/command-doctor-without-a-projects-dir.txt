@@ -16,6 +16,7 @@ docker [ps] [--filter] [label=lea.prefix=lea] [--filter] [label=lea.role=session
 docker [info] [--format] [{{.Host.Security.Rootless}} {{.Host.CgroupControllers}}]
 docker [ps] [--filter] [label=lea.prefix=lea] [--filter] [label=lea.role=session] [--format] [{{.Names}}]
 docker [ps] [--filter] [label=lea.prefix=lea] [--filter] [label=lea.role=session] [--format] [{{.Names}}]
+lox [version]
 -- lea
 -- stdout
 ok    docker reachable
@@ -35,4 +36,5 @@ ok    shedding: after 30 s at memory 95% (LEA_SHED_*)
 ok    egress allowlist: lea's default (forges, registries, model APIs; LEA_EGRESS_ALLOW extends it with 'default,<domain>')
 ok    telemetry: off (LEA_OTEL_UPSTREAM)
 warn  approval hub: LEA_HUB=1 but no facade socket to read (set LEA_HUB_SOCKET, or XDG_RUNTIME_DIR): agents are not suspended on a Lock call that waits for the hub (LEA_HUB=0 to silence this)
+ok    lox 0.9.0
 warn  kubernetes token: none (optional): lea kube refresh
