@@ -259,6 +259,9 @@ type Model struct {
 	applyWidth    func(w int) error  // resize the deck's pane and store the width (WithWidthDrive); nil: no tmux
 	windowWidth   func() int         // the tmux window's width (WithWidthDrive); nil: unknown
 	readWidth     func() (int, bool) // the tmux server's @lea_deck_width and the deck window's mark (WithWidthDrive); nil: unknown
+	knownWidth    int                // the @lea_deck_width the deck applied or last read: not a width the user dragged
+	widthSeq      int                // the latest change of the pane's width; older settles are dropped
+	widthDelay    time.Duration      // how long the width must hold still before it is read (widthSettle when 0)
 	layout        Layout             // the folders (folders.go)
 	store         LayoutStore        // where the layout persists, nil when nowhere
 	ticking       bool               // a frame tick is pending
@@ -352,10 +355,13 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		wchg := msg.Width != m.width && msg.Width > 0
 		m.width, m.height = msg.Width, msg.Height
 		if wchg {
-			// A width the tmux side chose (a border drag) is saved as LEA_DECK_WIDTH.
-			return m, m.noteWidth()
+			// A width the tmux side chose (a border drag) is saved as LEA_DECK_WIDTH, read once
+			// the width holds still.
+			return m.settleWidth()
 		}
 		return m, nil
+	case widthSettleMsg:
+		return m, m.noteWidth(msg)
 	case widthReadMsg:
 		return m.keepDraggedWidth(msg)
 	case tea.FocusMsg:

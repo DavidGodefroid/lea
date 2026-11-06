@@ -154,7 +154,8 @@ func (m Model) saveSetting(s settings.Setting, value string) (tea.Model, tea.Cmd
 	}
 	if s.Live && s.Key == deckWidthKey && m.applyWidth != nil {
 		if w, err := strconv.Atoi(s.Value); err == nil {
-			if err := m.applyWidth(tmux.ClampDeckWidth(w, m.window())); err != nil {
+			var err error
+			if m, err = m.applyDeckWidth(tmux.ClampDeckWidth(w, m.window())); err != nil {
 				m.status = "deck width: " + oneLine(err.Error())
 			}
 		}

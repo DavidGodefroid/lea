@@ -5,6 +5,7 @@ import (
 	"os/exec"
 	"strconv"
 	"strings"
+	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 
@@ -32,6 +33,15 @@ func tmuxWidthDrive(getenv func(string) string) widthDrive {
 	if bin == "" {
 		bin = "tmux"
 	}
+	// The deck's own pane (TMUX_PANE): a command without a target acts on the client's active
+	// pane, which may be the agent's.
+	// The target comes first: tmux reads no flag after an argument.
+	target := func(cmd string, args ...string) []string {
+		if p := getenv("TMUX_PANE"); p != "" {
+			return append([]string{cmd, "-t", p}, args...)
+		}
+		return append([]string{cmd}, args...)
+	}
 	run := func(args ...string) error {
 		out, err := exec.Command(bin, args...).CombinedOutput()
 		if err != nil {
@@ -41,10 +51,10 @@ func tmuxWidthDrive(getenv func(string) string) widthDrive {
 	}
 	return widthDrive{
 		apply: func(w int) error {
-			return run("set-option", "-s", tmux.DeckWidthOption, strconv.Itoa(w), ";", "resize-pane", "-x", strconv.Itoa(w))
+			return run(append([]string{"set-option", "-s", tmux.DeckWidthOption, strconv.Itoa(w), ";"}, target("resize-pane", "-x", strconv.Itoa(w))...)...)
 		},
 		window: func() int {
-			out, err := exec.Command(bin, "display-message", "-p", "#{window_width}").Output()
+			out, err := exec.Command(bin, target("display-message", "-p", "#{window_width}")...).Output()
 			if err != nil {
 				return 0
 			}
@@ -52,7 +62,7 @@ func tmuxWidthDrive(getenv func(string) string) widthDrive {
 			return n
 		},
 		read: func() (int, bool) {
-			out, err := exec.Command(bin, "display-message", "-p", "#{@lea_deck}|#{@lea_deck_width}").Output()
+			out, err := exec.Command(bin, target("display-message", "-p", "#{@lea_deck}|#{@lea_deck_width}")...).Output()
 			if err != nil {
 				return 0, false
 			}
@@ -98,37 +108,84 @@ func (m Model) savedWidth() (int, bool) {
 	return 0, false
 }
 
-// widthReadMsg is the tmux server's @lea_deck_width after a resize of the deck's pane (a border
-// drag stores it there), and whether the deck's window is the lea deck window.
+// widthSettle is how long the deck's pane width must hold still before the deck reads the width
+// the tmux side holds: a border drag resizes the pane at each step while @lea_deck_width keeps
+// the old width, and only releasing the drag stores the new one (asynchronously, run-shell -b).
+const widthSettle = 500 * time.Millisecond
+
+// widthTries bounds how many more reads a settled pane gets while the option still holds the
+// width the deck knew and differs from the pane's: the drag is still held, or its release is
+// still storing the width. 60 reads, half a second apart, are 30 seconds.
+const widthTries = 60
+
+// widthSettleMsg says the deck's pane width held still for widthSettle since resize seq.
+type widthSettleMsg struct{ seq, try int }
+
+// widthReadMsg is the tmux server's @lea_deck_width once the deck's pane width settled (a border
+// drag's release stores it there), and whether the deck's window is the lea deck window.
 type widthReadMsg struct {
 	option  int
 	deckWin bool
+	seq     int
+	try     int
 }
 
-// noteWidth reads the width the tmux side holds after the deck's pane was resized, so a width
-// chosen there (a border drag) can be saved; nil without a store and a reader.
-func (m Model) noteWidth() tea.Cmd {
+// settleWidth (re)arms the read of the tmux side's width after a change of the pane's width: the
+// read happens widthSettle after the LAST change, so a drag's intermediate widths are never read.
+// nil without a store and a reader.
+func (m Model) settleWidth() (Model, tea.Cmd) {
 	if m.settings == nil || m.readWidth == nil {
+		return m, nil
+	}
+	m.widthSeq++
+	return m, m.settleAfter(m.widthSeq, 0)
+}
+
+func (m Model) settleAfter(seq, try int) tea.Cmd {
+	d := m.widthDelay
+	if d <= 0 {
+		d = widthSettle
+	}
+	return tea.Tick(d, func(time.Time) tea.Msg { return widthSettleMsg{seq, try} })
+}
+
+// noteWidth reads the width the tmux side holds once the pane's width settled; a settle of an
+// older resize reads nothing.
+func (m Model) noteWidth(msg widthSettleMsg) tea.Cmd {
+	if msg.seq != m.widthSeq || m.readWidth == nil {
 		return nil
 	}
 	read := m.readWidth
 	return func() tea.Msg {
 		option, deckWin := read()
-		return widthReadMsg{option, deckWin}
+		return widthReadMsg{option, deckWin, msg.seq, msg.try}
 	}
 }
 
-// keepDraggedWidth saves a width the tmux side chose (a border drag stores it in the server's
-// option) as LEA_DECK_WIDTH, clamped to the bounds. Transient widths save nothing: the repaint
-// nudge and a terminal's resize before the window-resized hook leave the option unchanged. Nor
-// does a loop result: Set writes the file but does not resize the pane.
+// keepDraggedWidth saves a width the tmux side chose (a border drag's release stores it in the
+// server's option) as LEA_DECK_WIDTH. Only a width the user chose is saved: the option differs
+// from the one the deck knows (knownWidth: the width it applied itself, from the < > keys, the
+// setting or the saved width, possibly clamped to a narrow window, or the one it last read). So
+// a transient layout (the repaint nudge, a terminal's resize before the window-resized hook) and
+// a window too narrow for the saved width save nothing. While the option is still the known one
+// but the pane has another width, the drag is held or its release is still storing the width:
+// the read is tried again. Set writes the file but does not resize the pane: no loop.
 func (m Model) keepDraggedWidth(msg widthReadMsg) (tea.Model, tea.Cmd) {
-	if !msg.deckWin || msg.option <= 0 || m.settings == nil {
+	if msg.seq != m.widthSeq || !msg.deckWin || msg.option <= 0 || m.settings == nil {
 		return m, nil
 	}
-	w := tmux.ClampDeckWidth(msg.option, m.window())
+	if msg.option == m.knownWidth {
+		if msg.option != m.width && msg.try < widthTries {
+			return m, m.settleAfter(msg.seq, msg.try+1)
+		}
+		return m, nil
+	}
+	m.knownWidth = msg.option
+	// The release clamped the width to the window it was dragged in; only the fixed bounds here,
+	// never the current window's half.
+	w := tmux.ClampDeckWidth(msg.option, 0)
 	if saved, ok := m.savedWidth(); ok && saved == w {
-		return m, nil // already recorded (the deck's own < > keys and settings apply)
+		return m, nil
 	}
 	if err := m.settings.Set(deckWidthKey, strconv.Itoa(w)); err != nil {
 		m.status = oneLine(err.Error())
@@ -136,16 +193,39 @@ func (m Model) keepDraggedWidth(msg widthReadMsg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
+// applyDeckWidth applies w (already clamped) to the pane and the server's option, and remembers
+// it as the width the deck knows the option holds.
+func (m Model) applyDeckWidth(w int) (Model, error) {
+	if m.applyWidth == nil {
+		return m, nil
+	}
+	if err := m.applyWidth(w); err != nil {
+		return m, err
+	}
+	m.knownWidth = w
+	return m, nil
+}
+
 // restoreWidth applies the saved deck width (LEA_DECK_WIDTH) at start: the session may be new,
 // and the daemon lays the deck out at the default width. A width chosen by a border drag was
-// saved when the pane resized (keepDraggedWidth), so the file holds it here.
-func (m Model) restoreWidth() {
+// saved once the pane settled (keepDraggedWidth), so the file holds it here. With no saved width
+// (or none applied) the deck takes the option's width as the known one, so that a later read of
+// the same width saves nothing.
+func (m Model) restoreWidth() Model {
 	if m.settings == nil || m.applyWidth == nil {
-		return
+		return m
 	}
 	if w, ok := m.savedWidth(); ok {
-		_ = m.applyWidth(tmux.ClampDeckWidth(w, m.window()))
+		if n, err := m.applyDeckWidth(tmux.ClampDeckWidth(w, m.window())); err == nil {
+			return n
+		}
 	}
+	if m.readWidth != nil {
+		if option, deckWin := m.readWidth(); deckWin {
+			m.knownWidth = option
+		}
+	}
+	return m
 }
 
 // deckBy grows (delta > 0) or shrinks the deck by delta columns (the < and > keys), clamped to
@@ -171,11 +251,10 @@ func (m Model) deckBy(delta int) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 	}
-	if m.applyWidth != nil {
-		if err := m.applyWidth(n); err != nil {
-			m.status = "deck width: " + oneLine(err.Error())
-			return m, nil
-		}
+	m, err := m.applyDeckWidth(n)
+	if err != nil {
+		m.status = "deck width: " + oneLine(err.Error())
+		return m, nil
 	}
 	m.status = fmt.Sprintf("deck width %d", n)
 	return m, nil
