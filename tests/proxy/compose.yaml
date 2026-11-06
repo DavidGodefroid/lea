@@ -53,6 +53,7 @@ services:
       - ./internal-hosts:/etc/lea/internal-hosts:ro
       - ./endpoints:/etc/lea/endpoints:ro
       - ./llm.key:/etc/lea/keys/llm:ro
+      - ./forge:/etc/lea/forge:ro
     networks:
       pub:    { ipv4_address: 198.51.100.2 }
       priv:   { ipv4_address: 10.99.0.2 }
@@ -63,7 +64,8 @@ services:
     image: lea-proxy:dev
     dns: [ 198.51.100.53 ]
     environment: { LEA_EGRESS_ALLOW: "public.test" }
-    volumes: [ "./internal-hosts:/etc/lea/internal-hosts:ro" ]
+    # No endpoints: lea-keyproxy runs for the forge forwarder alone.
+    volumes: [ "./internal-hosts:/etc/lea/internal-hosts:ro", "./forge:/etc/lea/forge:ro" ]
     networks:
       pub:  { ipv4_address: 198.51.100.3 }
       priv: { ipv4_address: 10.99.0.3 }

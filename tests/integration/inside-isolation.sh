@@ -160,6 +160,36 @@ if [ -n "${HOST_HIST_SHA:-}" ]; then
   mustnt "host Claude history not visible"      test "$(sha_of "$HOME/.claude/history.jsonl")" = "$HOST_HIST_SHA"
 fi
 must   "only this projects dir under ~/.claude/projects" sh -c '[ "$(ls -A "$HOME/.claude/projects" | wc -l)" -eq 1 ]'
+# GitHub (#103): no token where an agent reads it (the shared, read-only entries of ~/.claude are
+# the user's own configuration), and gh and git still work: the proxy adds it.
+if [ -n "${FORGE_NEEDLE:-}" ]; then
+  ex="--exclude-dir=plugins --exclude-dir=skills --exclude-dir=hooks --exclude-dir=agents --exclude-dir=commands"
+  # shellcheck disable=SC2086
+  must   "no GitHub token readable in /lea/state or ~" sh -c '[ -z "$(grep -rlE "oauth_token|ghp_|github_pat_" '"$ex"' /lea/state "$HOME" 2>/dev/null)" ]'
+  # shellcheck disable=SC2086
+  must   "no copy of the GitHub token readable"   sh -c '[ -z "$(grep -rlF "$1" '"$ex"' /lea/state "$HOME" 2>/dev/null)" ]' sh "$FORGE_NEEDLE"
+  must   "the GitHub relay socket is nobody's"     sh -c '[ "$(stat -c %U /run/lea-forge/gh.sock)" = nobody ] && [ "$(stat -c %U /run/lea-forge)" = nobody ]'
+  must   "the GitHub relay runs as nobody"         sh -c 'p=$(pgrep -f "forge-rela[y] /run" | head -n 1) && [ "$(stat -c %u "/proc/$p")" = 65534 ]'
+  mustnt "the GitHub relay cannot be stopped"      sh -c 'kill -0 "$(pgrep -f "forge-rela[y] /run" | head -n 1)"'
+  must   "gh is pointed at the relay"             sh -c '[ "$(gh config get http_unix_socket)" = /run/lea-forge/gh.sock ]'
+  # The proxy's allowlist (#103): a call that would add access is refused before it reaches GitHub.
+  must   "gh: a call off lea's allowlist is refused" sh -c 'gh api -X PUT repos/DavidGodefroid/lea/collaborators/lea-allowlist-probe 2>&1 | grep -q "lea refuses this GitHub call"'
+  must   "gh: a GraphQL mutation off lea's allowlist is refused" sh -c 'gh api graphql -f query="mutation { transferRepository(input: {}) { clientMutationId } }" 2>&1 | grep -q "lea refuses this GitHub call"'
+  if [ "${FORGE_EXPECT:-}" = auth ]; then
+    # 60 an hour is GitHub's limit without a token.
+    must "gh api works with the token added by the proxy" sh -c 'l=$(gh api rate_limit --jq .rate.limit) && [ "$l" -gt 60 ]'
+    must "git reaches github.com through the proxy's forwarder" git ls-remote https://github.com/DavidGodefroid/lea HEAD
+    # GitHub redirects job logs to Azure blob storage: gh follows the redirect through the relay
+    # too, and the forwarder sends it there (not to github.com), without the token.
+    must "gh run view --log follows the redirect to its own host" sh -c '
+      R=DavidGodefroid/lea
+      r=$(gh run list -R "$R" -s success -L 1 --json databaseId --jq ".[0].databaseId") && [ -n "$r" ] &&
+      j=$(gh run view -R "$R" "$r" --json jobs --jq ".jobs[0].databaseId") && [ -n "$j" ] &&
+      [ "$(gh run view -R "$R" --job "$j" --log | wc -c)" -gt 0 ]'
+  else
+    must "gh api reaches GitHub with the token added by the proxy" sh -c 'gh api rate_limit 2>&1 | grep -q "Bad credentials"'
+  fi
+fi
 must   "public HTTPS works through the proxy"   curl -sf --max-time 20 -o /dev/null https://registry.npmjs.org/
 # The Claude API answers through the proxy (any HTTP status: no key is sent, 4xx is expected).
 must   "the Claude API answers through the proxy" sh -c 'c=$(curl -s --max-time 20 -o /dev/null -w "%{http_code}" https://api.anthropic.com/v1/messages); [ "${c:-000}" != 000 ]'

@@ -155,6 +155,8 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		return 0
 	case "acp-probe":
 		return runProbe(args[1:], stdout, stderr)
+	case "forge-relay":
+		return runForgeRelay(args[1:], stderr)
 	}
 	// Not reached: launcherCommand sends every word that is not a core command to the launcher.
 	fmt.Fprintf(stderr, "lea: unknown command %q\n%s\n", args[0], usage)

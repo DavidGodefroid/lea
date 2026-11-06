@@ -291,8 +291,8 @@ func readPlainMax(path string, max int64) ([]byte, bool) {
 // deliveryCheck is lea doctor's part on delivery (lea delivery --container NAME --projects DIR
 // check --state DIR), issue #92, in doctor's format: off is fine; on, each covered repository's
 // origin still matches its pin, the repositories on a forge it does not cover are named, and each
-// forge host it pushes to has credentials in lea's state (STATE/gh, STATE/glab-cli; git's store
-// STATE/git/credentials covers pushes only). It only reads, and fails only on missing credentials.
+// forge host it pushes to has credentials: GitHub's in the proxy (lea github login, #103), GitLab's
+// in lea's state (STATE/glab-cli; git's store STATE/git/credentials covers pushes only). It only reads, and fails only on missing credentials.
 func deliveryCheck(container, proj, state string, stdout io.Writer) int {
 	var r struct {
 		Grants []grants.Grant
@@ -368,6 +368,12 @@ func deliveryCheck(container, proj, state string, stdout io.Writer) int {
 			tool, cfg, login, what = "glab", filepath.Join(state, "glab-cli", "config.yml"), "glab auth login --hostname "+h, "merge requests"
 		}
 		switch {
+		case !hosts[h] && h == "github.com" && forgeTokenIn(state):
+			// The proxy's forge forwarder holds it (#103): lea github login.
+			fmt.Fprintf(stdout, "ok    delivery credentials %s (lea github login: in the proxy)\n", h)
+		case !hosts[h] && h == "github.com":
+			fmt.Fprintf(stdout, "FAIL  delivery credentials %s: none in lea's proxy: on the host, gh auth token | lea github login\n", h)
+			rc = 1
 		case yamlKey(cfg, h):
 			fmt.Fprintf(stdout, "ok    delivery credentials %s (%s)\n", h, tool)
 		case storeHas(filepath.Join(state, "git", "credentials"), h):
@@ -378,6 +384,13 @@ func deliveryCheck(container, proj, state string, stdout io.Writer) int {
 		}
 	}
 	return rc
+}
+
+// forgeTokenIn says whether lea's GitHub token is in the proxy's key directory, next to the state
+// dir state (DATA/proxy/forge/github.com).
+func forgeTokenIn(state string) bool {
+	b, ok := readPlain(filepath.Join(filepath.Dir(state), "proxy", "forge", "github.com"))
+	return ok && strings.TrimSpace(string(b)) != ""
 }
 
 // yamlKey says whether the YAML file at path has the mapping key host (gh's hosts.yml keys its

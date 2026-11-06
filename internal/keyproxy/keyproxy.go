@@ -291,26 +291,9 @@ func (f *Forwarder) ServeHTTP(rw http.ResponseWriter, r *http.Request) {
 		}
 		f.log.Printf("%s %s %s %d %s", name, safeLog(r.Method, 10), logPath, st, time.Since(start).Round(time.Millisecond))
 	}()
-	la, _ := r.Context().Value(http.LocalAddrContextKey).(net.Addr)
-	ta, isTCP := la.(*net.TCPAddr)
-	if f.refused != nil && (!isTCP || f.refused(ta.IP)) {
-		// Only the agents' internal networks reach the endpoints.
-		http.Error(w, "forbidden", http.StatusForbidden)
+	source, ok := f.admit(w, r)
+	if !ok {
 		return
-	}
-	source := ""
-	if f.gate != nil {
-		c, ok := "", false
-		if isTCP {
-			c, ok = f.gate.Source(ta.IP)
-		}
-		if !ok || c == "" {
-			// No lea container on that network (yet): the gate would not know whom to ask for.
-			f.log.Printf("unknown source address")
-			http.Error(w, "forbidden: unknown source", http.StatusForbidden)
-			return
-		}
-		source = c
 	}
 	raw, _, _ := strings.Cut(r.RequestURI, "?")
 	if r.Method != http.MethodGet && r.Method != http.MethodPost {
@@ -364,13 +347,44 @@ func (f *Forwarder) ServeHTTP(rw http.ResponseWriter, r *http.Request) {
 	if r.Body != nil {
 		r.Body = http.MaxBytesReader(w, r.Body, MaxBodyBytes)
 	}
-	ctx := context.WithValue(r.Context(), keyCtx{}, route{target: &target, key: key, source: source})
+	auth := ""
+	if key != "" {
+		auth = "Bearer " + key
+	}
+	ctx := context.WithValue(r.Context(), keyCtx{}, route{target: &target, auth: auth, source: source})
 	f.proxy.ServeHTTP(w, r.WithContext(ctx))
+}
+
+// admit answers a connection that may not use the forwarder (and says false): one on the egress
+// network, or, with a gate, one from an address no lea container claims. It returns the calling
+// container with a gate, "" without.
+func (f *Forwarder) admit(w http.ResponseWriter, r *http.Request) (string, bool) {
+	la, _ := r.Context().Value(http.LocalAddrContextKey).(net.Addr)
+	ta, isTCP := la.(*net.TCPAddr)
+	if f.refused != nil && (!isTCP || f.refused(ta.IP)) {
+		// Only the agents' internal networks reach the endpoints.
+		http.Error(w, "forbidden", http.StatusForbidden)
+		return "", false
+	}
+	if f.gate == nil {
+		return "", true
+	}
+	c, ok := "", false
+	if isTCP {
+		c, ok = f.gate.Source(ta.IP)
+	}
+	if !ok || c == "" {
+		// No lea container on that network (yet): the gate would not know whom to ask for.
+		f.log.Printf("unknown source address")
+		http.Error(w, "forbidden: unknown source", http.StatusForbidden)
+		return "", false
+	}
+	return c, true
 }
 
 type route struct {
 	target *url.URL
-	key    string
+	auth   string // the Authorization header the upstream gets, "" for none
 	source string // the calling container, with a gate
 }
 
@@ -388,8 +402,8 @@ func (f *Forwarder) rewrite(pr *httputil.ProxyRequest) {
 	}
 	out.URL = rt.target
 	out.Host = rt.target.Host
-	if rt.key != "" {
-		h.Set("Authorization", "Bearer "+rt.key)
+	if rt.auth != "" {
+		h.Set("Authorization", rt.auth)
 	}
 	if rt.source != "" {
 		// Read by the gate on a plain http upstream; an https one carries it on the CONNECT.

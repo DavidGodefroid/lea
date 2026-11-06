@@ -19,6 +19,10 @@ const Usage = `Usage:
                               each repository here, without asking (standing grants; on lists
                               new or changed pins and their digest, --yes DIGEST records
                               exactly those; off revokes them)
+  lea github login|logout|status
+                              lea's GitHub token, kept by the proxy only (agents use it through
+                              gh and git, never read it); login reads it on stdin:
+                              gh auth token | lea github login
   lea shell [-- cmd...]       open a shell, or run a command, in the same lea
   lea kube refresh            mint a read-only Kubernetes token (8 h)
   lea board --md              the board: every agent's task, as markdown

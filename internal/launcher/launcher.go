@@ -388,6 +388,8 @@ func (l *Launcher) dispatch(args []string) error {
 		return l.lockConsole(rest)
 	case "delivery":
 		return l.delivery(rest)
+	case "github":
+		return l.github(rest)
 	case "shell":
 		if len(rest) > 0 {
 			if err := l.oldForm(rest[0]); err != nil {
