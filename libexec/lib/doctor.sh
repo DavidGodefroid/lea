@@ -64,8 +64,14 @@ lea_doctor() {
     _dint=${_dinfo%% *}; _dmode=${_dinfo#* }
     if [ "$_dint" = true ]; then lea__ok "$_dnet is internal"
     else lea__fail "$_dnet is internal" "not created with --internal: lea stop --all, then restart lea"; _drc=1; fi
-    if [ "$_dmode" = isolated ]; then lea__ok "$_dnet isolated from the host"
-    else lea__warn "$_dnet isolated from the host" "gateway_mode_ipv4=${_dmode:-unset}; run make test-isolation"; fi
+    # #105: the launcher refuses such a network unless LEA_ALLOW_GATEWAY=1, so does the doctor.
+    case $_dmode in ''|'<no value>') _dmode='unset' ;; esac
+    if [ "$_dmode" = isolated ]; then lea__ok "$_dnet gateway_mode_ipv4=isolated"
+    elif [ "${LEA_ALLOW_GATEWAY:-0}" = 1 ]; then
+      lea__warn "$_dnet gateway_mode_ipv4=$_dmode" "not isolated: host services are reachable from its agents (LEA_ALLOW_GATEWAY=1)"
+    else
+      lea__fail "$_dnet gateway_mode_ipv4=$_dmode" "not isolated: host services are reachable from its agents; lea stop --all, then restart lea on Docker Engine 28.0 or later (or set LEA_ALLOW_GATEWAY=1)"; _drc=1
+    fi
   done
   if [ "$_dnets" -eq 0 ]; then lea__ok "internal networks: none (each lea creates its own at start)"; fi
 
@@ -417,7 +423,7 @@ lea__doctor_host_versions() {
       if [ -n "$_hvpmin" ] && ! lea_version_ge "$_hve" "$_hvpmin"; then
         lea__warn "Podman $_hve" "older than $_hvpmin (CVE-2026-57231): update Podman"
       else
-        lea__warn "Podman $_hve" "lea is built for Docker Engine; Podman minimum ${_hvpmin:-none} met; its networks have no gateway_mode_ipv4=isolated"
+        lea__warn "Podman $_hve" "lea is built for Docker Engine; Podman minimum ${_hvpmin:-none} met; its networks have no gateway_mode_ipv4=isolated (lea starts agents only with LEA_ALLOW_GATEWAY=1)"
       fi ;;
     *) lea__warn "Docker Engine" "version unknown (not Docker Engine?)" ;;
   esac

@@ -245,7 +245,7 @@ func leaLines(s string) string {
 // commandSetup builds one world for one side: running container and proxy by default.
 func commandSetup(t *testing.T, root string, sc commandScenario) (*world, []string, string) {
 	w := newWorld(t, root)
-	w.env["FAKE_DOCKER_OUT_NETWORK_INSPECT"] = "true"
+	w.env["FAKE_DOCKER_OUT_NETWORK_INSPECT"] = "true isolated"
 	w.env["FAKE_DOCKER_OUT_CONTAINER_INSPECT"] = "172.18.0.5"
 	w.env["FAKE_DOCKER_OUT_INSPECT__F"] = "true"
 	if r := (&Launcher{Root: w.root}).proxyRules(proxyConfine); r != "" {
@@ -555,6 +555,16 @@ func TestCommandsMatchTheGoldenFiles(t *testing.T) {
 		{name: "daemon not running and never starts", env: map[string]string{"FAKE_CORE_RC_agents": "1"}, exit: 1,
 			want: []string{"core [agents]\ncore [agents]", "the lea daemon did not start in 5 s"}, absent: []string{"docker [network]", "docker [run]", "[daemon]"},
 			goSide: daemonStarted},
+		// #105: no isolated gateway, no container, unless LEA_ALLOW_GATEWAY=1.
+		{name: "isolated gateway refused fails closed", env: stopped("FAKE_DOCKER_RC_NETWORK_INSPECT", "1", "FAKE_DOCKER_SEQ_NETWORK_CREATE", "0 1 0"), exit: 1,
+			want:   []string{"lea: error: Docker refused gateway_mode_ipv4=isolated: lea will not start an agent on a network where the host is reachable (needs Docker Engine 28.0 or later; set LEA_ALLOW_GATEWAY=1 to accept a plain internal network)"},
+			absent: []string{"docker [run]", "[--internal] [lea-internal-$ID]", "deck-open"}},
+		{name: "isolated gateway refused with LEA_ALLOW_GATEWAY", env: stopped("FAKE_DOCKER_RC_NETWORK_INSPECT", "1", "FAKE_DOCKER_SEQ_NETWORK_CREATE", "0 1 0", "LEA_ALLOW_GATEWAY", "1"),
+			want: []string{"lea: warning: Docker refused gateway_mode_ipv4=isolated; lea-internal-$ID is created without it (LEA_ALLOW_GATEWAY=1)",
+				"[--internal] [lea-internal-$ID]", started, open}},
+		{name: "existing internal network without isolated gateway fails closed", env: stopped("FAKE_DOCKER_OUT_NETWORK_INSPECT", "true nat"), exit: 1,
+			want:   []string{"lea: error: network lea-internal-$ID exists without gateway_mode_ipv4=isolated (nat)"},
+			absent: []string{"docker [run]", "deck-open"}},
 		{name: "internal network exists but is not internal", env: map[string]string{"FAKE_DOCKER_OUT_NETWORK_INSPECT": "false"}, exit: 1,
 			want: []string{"network lea-internal-$ID exists but is not an internal network"}, absent: []string{"docker [inspect] [-f] [{{.State.Running}}] [lea-proxy]"}},
 		{name: "docker run fails", env: stopped("FAKE_DOCKER_RC_RUN__D_AT_LEA_DEV", "1"), exit: 1,

@@ -976,8 +976,17 @@ so. Changes apply after `lea init` (endpoints, keys, images, locksql) or `lea st
   `apt changelog linux-image-$(uname -r) | grep -E 'CVE-2026-(74753|80521|80841)'`. `lea doctor`
   shows the kernel, Docker Engine, containerd and runc versions and fails below the kernel minimum
   of `config/host-minimums`; a distribution without a kernel minimum there gets a warning. On a
-  Podman host (`docker` is Podman), lea is not refused: `lea doctor` warns that lea is built for
-  Docker Engine, and below Podman 5.8.4 (CVE-2026-57231) the launcher warns too.
+  Podman host (`docker` is Podman), `lea doctor` warns that lea is built for Docker Engine, and
+  below Podman 5.8.4 (CVE-2026-57231) the launcher warns too.
+- Each agent container's internal network has `gateway_mode_ipv4=isolated` (Docker Engine 28.0 or
+  later): the host has no address on it, so host services listening on `0.0.0.0` (databases, dev
+  servers, a Docker API over TCP) are out of the agents' reach. When the engine cannot give it (an
+  older Docker Engine, Podman, an engine whose version lea cannot read, or a network left without
+  it by an older lea), lea refuses to start the container, for a network that already exists as for
+  a new one; it also refuses one whose bridge, as the host sees it, holds a host address, whatever
+  its option says; `LEA_ALLOW_GATEWAY=1` (in your configuration or the environment) accepts a plain
+  internal network instead, with a warning. `lea doctor` prints the gateway mode of each internal
+  network and fails on one that is not isolated (a warning under `LEA_ALLOW_GATEWAY=1`).
 - Work in lea, not on the host, inside the projects directory: an agent can write files your host
   tools would run. When the last session closes, lea reports changes to git hooks, risky git
   configuration, `.mcp.json` and `.claude/` settings.
