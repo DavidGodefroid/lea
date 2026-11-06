@@ -198,26 +198,6 @@ func (c *cliAgents) SplitShell(ctx context.Context, k string, below bool) (agent
 	c.rec("split " + k)
 	return agents.Row{}, nil
 }
-func (c *cliAgents) LockOpen(ctx context.Context, ctr, tool, profile string) (string, error) {
-	c.rec("lock-open " + ctr + " " + tool + " " + profile)
-	return "opened", nil
-}
-func (c *cliAgents) LockClose(ctx context.Context, ctr, tool, profile string) (string, error) {
-	c.rec("lock-close " + ctr + " " + tool + " " + profile)
-	return "closed", nil
-}
-func (c *cliAgents) ShowTicket(ctx context.Context, ctr, ref, note string, seq int64) error {
-	c.rec("show-ticket " + ctr + " " + ref)
-	return nil
-}
-func (c *cliAgents) LockCheckRequest(ctx context.Context, ctr, tool, profile string) error {
-	c.rec("lock-check " + ctr + " " + tool + " " + profile)
-	return nil
-}
-func (c *cliAgents) LockList(ctx context.Context, ctr string) ([]agents.LockRow, error) {
-	c.rec("lock-list " + ctr)
-	return []agents.LockRow{{ID: "locksql/prod", Shown: true}, {ID: "locksql"}}, nil
-}
 func (c *cliAgents) Ensure(ctx context.Context, ctr, w string) error {
 	c.rec("ensure " + ctr + " " + w)
 	return c.ensureErr
@@ -681,51 +661,6 @@ func TestSoundCommand(t *testing.T) {
 	for _, bad := range [][]string{{"sound", "loud"}, {"sound", "on", "off"}} {
 		if rc, _, _ := runEnv(t, env, bad...); rc != 2 {
 			t.Fatalf("%q: rc=%d", bad, rc)
-		}
-	}
-}
-
-// lea lock (its core form, the launcher naming the container) reaches the host API with what the
-// user typed, and prints the outcome.
-func TestLockSendsTheRequest(t *testing.T) {
-	ca := &cliAgents{}
-	api := startDaemonWith(t, ca)
-	env := map[string]string{"LEA_DAEMON_SOCK": api}
-	if rc, out, e := runEnv(t, env, "lock", "--container", "lea-a", "open", "locksql", "prod"); rc != 0 || out != "locksql prod: opened\n" {
-		t.Fatalf("open: rc=%d out=%q err=%q", rc, out, e)
-	}
-	if rc, out, e := runEnv(t, env, "lock", "--container", "lea-a", "close", "locksql"); rc != 0 || out != "locksql: closed\n" {
-		t.Fatalf("close: rc=%d out=%q err=%q", rc, out, e)
-	}
-	if rc, out, e := runEnv(t, env, "lock", "--container", "lea-a", "list"); rc != 0 || out != "locksql/prod\tshown\nlocksql\tparked\n" {
-		t.Fatalf("list: rc=%d out=%q err=%q", rc, out, e)
-	}
-	for _, bad := range [][]string{{"lock", "--container", "lea-a"}, {"lock", "--container", "lea-a", "open"},
-		{"lock", "--container", "lea-a", "open", "locksql", "prod", "--auto"}, {"lock", "--container", "lea-a", "list", "x"}} {
-		if rc, _, _ := runEnv(t, env, bad...); rc != 2 {
-			t.Errorf("%q: rc=%d, want usage", bad, rc)
-		}
-	}
-	want := []string{"lock-open lea-a locksql prod", "lock-close lea-a locksql ", "lock-list lea-a"}
-	if !reflect.DeepEqual(ca.calls, want) {
-		t.Fatalf("calls=%q", ca.calls)
-	}
-}
-
-// The deck's facade keys are where lox up writes them: $XDG_STATE_HOME/lockfamily/facades, or
-// ~/.local/state's; LEA_HUB_FACADE_KEYS overrides.
-func TestHubFacadeKeys(t *testing.T) {
-	for _, tc := range []struct {
-		env  map[string]string
-		want string
-	}{
-		{map[string]string{"XDG_STATE_HOME": "/s", "HOME": "/h"}, "/s/lockfamily/facades"},
-		{map[string]string{"HOME": "/h"}, "/h/.local/state/lockfamily/facades"},
-		{map[string]string{"LEA_HUB_FACADE_KEYS": "/k", "HOME": "/h"}, "/k"},
-		{map[string]string{}, ""},
-	} {
-		if got := hubFacadeKeys(func(k string) string { return tc.env[k] }); got != tc.want {
-			t.Errorf("%v: %q, want %q", tc.env, got, tc.want)
 		}
 	}
 }

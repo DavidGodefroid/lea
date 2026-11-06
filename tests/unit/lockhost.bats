@@ -54,11 +54,11 @@ launcher() {
   [ -z "$(calls)" ]
 }
 
-@test "lea lockfile: on, it reports the launcher and that the console runs under lox up only" {
+@test "lea lockfile: on, it reports the launcher and that the console runs under lox run only" {
   LEA_LOCKFILE=1
   run lea_lockhost lockfile
   [[ "$output" == *"lockfile: install its launcher"*"scripts/install.sh"* ]]
-  [[ "$output" == *"lockfile console: it runs under lox up only: no such lock yet: \`lox add lockfile\`"*"allowed_uids: [$(id -u)]"* ]]
+  [[ "$output" == *"lockfile console: it runs under lox run only: no such lock yet: \`lox add lockfile\`"*"allowed_uids: [$(id -u)]"* ]]
   [[ "$output" != *"lockfile-run"* ]]
   launcher lockfile
   run lea_lockhost lockfile
@@ -66,10 +66,10 @@ launcher() {
   if calls | grep -q '^lockfile\|sudo\|migrate-ids\|docker'; then false; fi
 }
 
-@test "lea lockmq follows the launcher's decision (LEA_TOOLS_ON): on for a lock of lox up, off when it says so" {
+@test "lea lockmq follows the launcher's decision (LEA_TOOLS_ON): on for a lock of lox run, off when it says so" {
   LEA_TOOLS_ON="locksql lockmq" run lea_lockhost lockmq
   [ "$status" -eq 0 ]
-  [[ "$output" == *"lockmq is on for lea while lox up runs a lockmq lock here"*"LEA_LOCKMQ=0 in your configuration keeps it off"* ]]
+  [[ "$output" == *"lockmq is on for lea while lox run runs a lockmq lock here"*"LEA_LOCKMQ=0 in your configuration keeps it off"* ]]
   [[ "$output" != *"no such lock yet"* ]]
   LEA_LOCKMQ=1 LEA_TOOLS_ON="" run lea_lockhost lockmq
   [[ "$output" == *"lockmq is off (LEA_LOCKMQ=0)"* ]]
@@ -116,7 +116,7 @@ launcher() {
   LEA_INIT_NONINTERACTIVE=1 run lea__init_lockhost lockmq </dev/null
   [ "$status" -eq 0 ]
   [[ "$output" == *"lockmq: install its launcher"* ]]
-  [[ "$output" == *"lockmq console: it runs under lox up only"* ]]
+  [[ "$output" == *"lockmq console: it runs under lox run only"* ]]
   if calls | grep -q 'sudo\|install'; then false; fi
 }
 
@@ -136,7 +136,7 @@ launcher() {
   launcher lockmq
   run lea__init_lockhost lockmq <<<"y"
   [[ "$output" == *"lockmq has no broker profile for $P yet"* ]]
-  [[ "$output" == *"lockmq console: it runs under lox up only"* ]]
+  [[ "$output" == *"lockmq console: it runs under lox run only"* ]]
   run calls
   [ "$output" = "docker [run] [-it] [--rm] [--network] [none] [--user] [$(id -u):$(id -g)] [-e] [HOME=/tmp] [-v] [$P:$P] [-w] [$P] [--entrypoint] [lockmq] [$LEA_IMAGE] [profile] [add] [--project] [$P]" ]
 }

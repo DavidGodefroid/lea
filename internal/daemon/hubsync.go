@@ -48,19 +48,14 @@ type HubDecided struct {
 }
 
 // HubFacade is the hub's host facade: the decisions after a cursor (0: from the start), one
-// ticket's state (pending, approved, denied, withdrawn, expired, consumed), and for the deck the
-// queue of pending tickets and the user's answer to one.
+// ticket's state (pending, approved, denied, withdrawn, expired, consumed), and the queue of
+// pending tickets. lea reads it only: lox run decides (#300).
 type HubFacade interface {
 	Decided(ctx context.Context, since int64) (items []HubDecided, cursor int64, err error)
 	TicketState(ctx context.Context, instance, ticket string) (string, error)
 	// Queue is the pending tickets, once the queue's version is past since (or wait seconds
-	// passed), and that version; Decide answers one from the deck (hubdeck.go, #158).
+	// passed), and that version (hubdeck.go, #158).
 	Queue(ctx context.Context, since uint64, wait int) ([]HubTicket, uint64, error)
-	Decide(ctx context.Context, instance, id string, v HubVerdict) error
-	// Reveal carries a deck's reveal key to the Lock and returns its signed, sealed answer;
-	// Renew asks the Lock again for an expired ticket (hubreveal.go).
-	Reveal(ctx context.Context, instance, id string, key []byte) ([]byte, error)
-	Renew(ctx context.Context, instance, id string) (HubRenewed, error)
 }
 
 // ErrNoHub is a facade socket that is not there: no hub runs (yet); nothing to read.

@@ -42,7 +42,7 @@ func LoadProviders(on map[string]bool, several map[string][]string, get func(str
 // LockServers are the enabled Locks a Codex agent gets as MCP servers (on and several:
 // Config.LockTools, in the order locksql, lockmq, lockfile), each with Codex's tool timeout
 // LEA_LOCK_TOOL_TIMEOUT seconds (1500 when unset or invalid; 60 to 86400): a Lock call waits for
-// a human. A tool lox up runs several locks of gets one server per instance its agents reach
+// a human. A tool lox run runs several locks of gets one server per instance its agents reach
 // (none when they reach none); otherwise the tool's one server.
 func LockServers(on map[string]bool, several map[string][]string, get func(string) string) []providers.Lock {
 	t := 1500

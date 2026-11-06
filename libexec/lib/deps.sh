@@ -143,5 +143,5 @@ lea__locksql_update() {
     return 1
   fi
   LEA_LOCKSQL_REF=$_lu_v LEA_LOCKSQL_IMAGE=$_lu_img
-  lea_log "locksql $_lu_v recorded (profiles kept); lox up pins the console's own image: lox add locksql NAME again moves a lock to a newer release"
+  lea_log "locksql $_lu_v recorded (profiles kept); lox run pins the console's own image: lox add locksql NAME again moves a lock to a newer release"
 }

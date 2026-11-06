@@ -279,11 +279,6 @@ func (c *Config) resolve(root string) error {
 		return fmt.Errorf("LEA_HUB must be 1 (lea follows the Lock Family approval hub) or 0, not '%s'", hub)
 	}
 	c.final["LEA_HUB"] = hub
-	loxUp := nonEmpty(c.Get("LEA_LOX_UP"), "0")
-	if loxUp != "0" && loxUp != "1" {
-		return fmt.Errorf("LEA_LOX_UP must be 1 (lea runs lox up when the Lock Family's hub is down) or 0, not '%s'", loxUp)
-	}
-	c.final["LEA_LOX_UP"] = loxUp
 	if err := c.resolveLimits(); err != nil {
 		return err
 	}
@@ -344,35 +339,6 @@ func (c *Config) resolveAgentCPUs() error {
 
 // lockProfile is a lock tool's profile name (agents.lockProfileRe).
 var lockProfile = regexp.MustCompile(`^[a-z0-9][a-z0-9_-]{0,31}$`)
-
-// maxLockAgentProfiles caps an allow-list of profiles agents may ask for.
-const maxLockAgentProfiles = 32
-
-// lockAgentProfiles parses an allow-list of lock profiles agents may ask the user to open:
-// profile names separated by spaces or commas; empty (the default) allows none.
-func lockAgentProfiles(v string) ([]string, error) {
-	ps := strings.FieldsFunc(v, func(r rune) bool { return r == ' ' || r == ',' || r == '\t' })
-	if len(ps) > maxLockAgentProfiles {
-		return nil, fmt.Errorf("at most %d profiles", maxLockAgentProfiles)
-	}
-	for _, p := range ps {
-		if !lockProfile.MatchString(p) {
-			return nil, fmt.Errorf("invalid profile name '%s' (lowercase letters, digits, _ and -, at most 32)", p)
-		}
-	}
-	return ps, nil
-}
-
-// LocksqlAgentProfiles are the locksql profiles agents may ask the user to open
-// (LEA_LOCKSQL_AGENT_PROFILES); none by default. Only the daemon reads it, when an agent asks: an
-// invalid list refuses every request (and nothing else).
-func (c *Config) LocksqlAgentProfiles() ([]string, error) {
-	ps, err := lockAgentProfiles(c.Get("LEA_LOCKSQL_AGENT_PROFILES"))
-	if err != nil {
-		return nil, fmt.Errorf("LEA_LOCKSQL_AGENT_PROFILES: %v", err)
-	}
-	return ps, nil
-}
 
 var providerName = regexp.MustCompile(`^[a-z][a-z0-9-]{0,15}$`)
 
@@ -641,7 +607,7 @@ func (c *Config) ToolsOn(proj string, logf func(string, ...any)) map[string]bool
 	return on
 }
 
-// LockTools is ToolsOn and, for each tool on that lox up runs several locks of, the instances an
+// LockTools is ToolsOn and, for each tool on that lox run runs several locks of, the instances an
 // agent container started now reaches (upTools: those lockUpSockets mounts on
 // /run/<tool>/<instance>, before docker's checks), sorted; a tool with one lock has no entry.
 // up.json is read once for both.

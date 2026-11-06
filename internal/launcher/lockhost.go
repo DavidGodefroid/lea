@@ -5,7 +5,7 @@ import (
 	"strconv"
 )
 
-// lockHostTool is a lock tool whose console runs in its own container, started by `lox up`: lea's
+// lockHostTool is a lock tool whose console runs in its own container, started by `lox run`: lea's
 // agents reach the console's socket in the lock's socket volume, and nothing else. No host
 // account, no /etc/<name>/system.toml on the host: lea's image names the console account and the
 // clients group with the ids of the tool's image (image/Containerfile).
@@ -37,10 +37,10 @@ func lockfileSafe(v string) bool {
 }
 
 // lockHostArgs are the docker run arguments that let the session's agents reach the consoles of
-// the lock tools that are on: the socket volume of the tool's lock that `lox up` runs for the
+// the lock tools that are on: the socket volume of the tool's lock that `lox run` runs for the
 // projects directory (ups, lockup.go) on /run/<name> (each of several on /run/<name>/<instance>,
 // lockUpArgs), read-only, and the tool's clients group.
-// The consoles run hub-attached only, under lox up: without such a lock the agents get no socket
+// The consoles run hub-attached only, under lox run: without such a lock the agents get no socket
 // of the tool, and lea says to add one (`lox add <tool>`).
 func (l *Launcher) lockHostArgs(ups map[string][]lockUpSocket) []string {
 	var a []string

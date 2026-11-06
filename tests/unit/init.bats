@@ -158,7 +158,7 @@ release_install_sh() {
   printf '#!/bin/sh\necho "install.sh LOCKSQL_VERSION=$LOCKSQL_VERSION cosign=$(command -v cosign >/dev/null && echo yes)" >>"$FAKE_LOG"\nexit %s\n' "${1:-0}" >"$FAKE_GIT_INSTALL_SH"
 }
 
-@test "init installs no locksql launcher: lox up runs the console" {
+@test "init installs no locksql launcher: lox run runs the console" {
   export FAKE_DOCKER_RC_IMAGE_INSPECT_AT_LOCKSQL_0_16_0=1
   release_install_sh
   run lea_init </dev/null
@@ -721,7 +721,7 @@ EOT
 y"
   [ "$status" -eq 0 ]
   [[ "$output" == *"locksql has no database profile for $P yet"* ]]
-  [[ "$output" == *"locksql console: it runs under lox up only: no such lock yet: \`lox add locksql\`"* ]]
+  [[ "$output" == *"locksql console: it runs under lox run only: no such lock yet: \`lox add locksql\`"* ]]
   run calls
   [[ "$output" == *"docker [run] [-it] [--rm] [--user] [$(id -u):$(id -g)] [-e] [HOME=/tmp] [-v] [$P:$P] [-w] [$P] [locksql:0.16.0] [profile] [add] [--project] [$P]"* ]]
 }
@@ -749,13 +749,13 @@ y"
   [[ "$output" != *"[profile] [add]"* ]]
 }
 
-@test "a Vault profile: lea says lox up passes VAULT_ADDR, and logs in to nothing" {
+@test "a Vault profile: lea says lox run passes VAULT_ADDR, and logs in to nothing" {
   interactive
   mkdir -p "$P/.locksql"
   printf '[profiles.uat]\nengine = "mariadb"\nhost = "db"\ncredentials = "vault"\nvault_path = "database/creds/uat"\n' >"$P/.locksql/config.toml"
   run lea_init </dev/null
   [ "$status" -eq 0 ]
-  [[ "$output" == *"locksql: a profile reads its login from Vault: lox up passes VAULT_ADDR to locks with vault: true (lox add locksql)"* ]]
+  [[ "$output" == *"locksql: a profile reads its login from Vault: lox run passes VAULT_ADDR to locks with vault: true (lox add locksql)"* ]]
   run calls
   [[ "$output" != *"[--entrypoint] [vault]"* ]]
   [[ "$output" != *"locksql-home"* ]]
@@ -797,7 +797,7 @@ EOF
   run lea_init --locksql </dev/null
   [ "$status" -eq 0 ]
   grep -qx "LEA_LOCKSQL='1'" "$U"
-  [[ "$output" == *"locksql: lox up runs the locksql lock(s) prod-db of .lockfamily/lockfamily.yaml; next: lea stop, then lea"* ]]
+  [[ "$output" == *"locksql: lox run runs the locksql lock(s) prod-db of .lockfamily/lockfamily.yaml; next: lea stop, then lea"* ]]
   [[ "$output" != *"no such lock yet"* ]]
   [[ "$output" != *"[y/N]"* ]]
   [[ "$output" != *"[Y/n]"* ]]
@@ -834,7 +834,7 @@ EOF
   interactive
   run lea_init --lockmq </dev/null
   [ "$status" -eq 0 ]
-  [[ "$output" == *"lockmq console: it runs under lox up only"* ]]
+  [[ "$output" == *"lockmq console: it runs under lox run only"* ]]
   [[ "$output" != *"locksql console"* ]]
   [[ "$output" != *"lockfile console"* ]]
   run calls

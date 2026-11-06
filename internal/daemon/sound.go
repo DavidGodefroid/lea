@@ -10,9 +10,9 @@ import (
 )
 
 // SoundAttention is the one sound lea plays: lea needs the developer now (#294). It rings when an
-// agent starts waiting on a permission or an approval card, when a lock console or a hub ticket
-// waits for the user, when an agent sends the user a request, and when an agent reports it is
-// blocked on a human. A turn that simply ends rings nothing.
+// agent starts waiting on a permission or an approval card, when an agent sends the user a
+// request, and when an agent reports it is blocked on a human. A turn that simply ends rings
+// nothing, nor does a Lock's request: lox run, outside lea, calls the user for those (#300).
 const SoundAttention = "attention"
 
 // soundGap is the shortest time between two sounds of one kind: agents waiting together ring

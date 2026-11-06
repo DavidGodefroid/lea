@@ -25,7 +25,7 @@ latest() { export "FAKE_CURL_EFFECTIVE_$1=https://github.com/DavidGodefroid/$1/r
   [ "$status" -eq 0 ]
   [[ "$output" == *"locksql: v0.16.0 -> v0.17.0 (release notes: https://github.com/DavidGodefroid/locksql/releases/tag/v0.17.0)"* ]]
   [[ "$output" == *"Update locksql to v0.17.0 (its signature is checked first)? [y/N]"* ]]
-  [[ "$output" == *"locksql v0.17.0 recorded (profiles kept); lox up pins the console's own image: lox add locksql NAME again moves a lock to a newer release"* ]]
+  [[ "$output" == *"locksql v0.17.0 recorded (profiles kept); lox run pins the console's own image: lox add locksql NAME again moves a lock to a newer release"* ]]
   run calls
   [[ "$output" == *"curl [-fsSLI] [-o] [/dev/null] [-w] [%{url_effective}] [https://github.com/DavidGodefroid/locksql/releases/latest]"* ]]
   [[ "$output" == *"[https://github.com/DavidGodefroid/locksql/releases/download/v0.17.0/checksums.txt]"* ]]

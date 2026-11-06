@@ -22,7 +22,7 @@ var testHubKey = base64.StdEncoding.EncodeToString([]byte("0123456789abcdef01234
 var testFacades = `{"v": 1, "facades": [{"key": "` + base64.StdEncoding.EncodeToString(bytes.Repeat([]byte{1}, 32)) +
 	`", "facade": "tty"}, {"facade": "deck", "key": "` + base64.StdEncoding.EncodeToString(bytes.Repeat([]byte{2}, 32)) + `"}]}`
 
-// testDevices is one paired phone (lockkit's ticket.DeviceSet) as lox up would embed it: "v"
+// testDevices is one paired phone (lockkit's ticket.DeviceSet) as lox run would embed it: "v"
 // before "devices", not lockkit's canonical form.
 var testDevices = func() string {
 	p, err := ecdh.P256().GenerateKey(rand.Reader)
@@ -47,8 +47,8 @@ var testDevices = func() string {
 	return string(b)
 }()
 
-// hubUp writes lox up's up.json with the hub and the lockhttp lock web (its extra fields: lock),
-// with facade keys and devices when given, and makes the fake docker answer lox up's labels of
+// hubUp writes lox run's up.json with the hub and the lockhttp lock web (its extra fields: lock),
+// with facade keys and devices when given, and makes the fake docker answer lox run's labels of
 // its volumes and network.
 func hubUp(t *testing.T, w *world, lock, facades, devices string) {
 	t.Helper()
@@ -103,7 +103,7 @@ func hubFile(t *testing.T, w *world, name string) (string, bool) {
 	return string(b), true
 }
 
-// lox up runs a lockhttp lock that pins the paired devices: lea's gate asks the hub, from lock
+// lox run runs a lockhttp lock that pins the paired devices: lea's gate asks the hub, from lock
 // up's socket volume and gate volume, with the hub's key, the facade keys and the devices in its
 // read-only /run/lockfamily, the hub's subnets refused, sealed and device-signed as hub.mobile
 // says; only the proxy joins the hub's network.
@@ -200,7 +200,7 @@ func TestLockHTTPGateDevicesOnlyForALockThatPinsThem(t *testing.T) {
 }
 
 // What up.json says of the hub is checked: anything lea cannot trust stops lea, which says why and
-// to run `lox up`: no gate, no proxy on a hub network, no hub input written.
+// to run `lox run`: no gate, no proxy on a hub network, no hub input written.
 func TestLockHTTPGateRefusesAnUntrustedHub(t *testing.T) {
 	for name, c := range map[string]struct {
 		mod  func(w *world)
@@ -209,11 +209,11 @@ func TestLockHTTPGateRefusesAnUntrustedHub(t *testing.T) {
 	}{
 		"hub network labels": {mod: func(w *world) {
 			w.env["FAKE_DOCKER_OUT_NETWORK_INSPECT_AT_"+fakeKey(upProjectOf(w)+"_lockhub")] = `{"com.docker.compose.project":"x"}|10.0.0.0/8`
-		}, want: "is not lox up's"},
+		}, want: "is not lox run's"},
 		"gate volume role": {mod: func(w *world) {
 			w.env["FAKE_DOCKER_OUT_VOLUME_INSPECT_AT_"+fakeKey(upProjectOf(w)+"_web-gate")] = `{"dev.lockfamily.role":"socket"}|`
-		}, want: "is not lox up's"},
-		"socket volume role": {mod: func(w *world) { labels(w, "web", "lockhttp", "gate-home") }, want: "is not lox up's"},
+		}, want: "is not lox run's"},
+		"socket volume role": {mod: func(w *world) { labels(w, "web", "lockhttp", "gate-home") }, want: "is not lox run's"},
 		"no subnet": {mod: func(w *world) {
 			k := "FAKE_DOCKER_OUT_NETWORK_INSPECT_AT_" + fakeKey(upProjectOf(w)+"_lockhub")
 			w.env[k] = strings.SplitN(w.env[k], "|", 2)[0] + "|"
@@ -254,7 +254,7 @@ func TestLockHTTPGateRefusesAnUntrustedHub(t *testing.T) {
 				c.mod(w)
 			}
 			err := w.launcher().ensureProxy(w.proj)
-			if err == nil || !strings.Contains(err.Error(), c.want) || !strings.Contains(err.Error(), "run `lox up`") {
+			if err == nil || !strings.Contains(err.Error(), c.want) || !strings.Contains(err.Error(), "run `lox run`") {
 				t.Fatalf("error %v", err)
 			}
 			if len(gateRuns(w)) != 0 {
@@ -282,13 +282,13 @@ func rewriteUp(t *testing.T, w *world, old, new string) {
 	}
 }
 
-// The gate runs hub-attached only: without lox up's trusted up.json naming a lockhttp lock, lea
-// stops before it changes anything (no proxy, no gate, no hub input) and says to run `lox up`.
+// The gate runs hub-attached only: without lox run's trusted up.json naming a lockhttp lock, lea
+// stops before it changes anything (no proxy, no gate, no hub input) and says to run `lox run`.
 func TestLockHTTPGateNeedsLoxUp(t *testing.T) {
 	for name, c := range map[string]struct {
 		mod  func(t *testing.T, w *world)
 		want string
-		// noLock: the refusal names no lockhttp lock of lox up; it says to add one, not to run lox up.
+		// noLock: the refusal names no lockhttp lock of lox run; it says to add one, not to run lox run.
 		noLock bool
 	}{
 		"no up.json": {nil, "no trusted", false},
@@ -309,7 +309,7 @@ func TestLockHTTPGateNeedsLoxUp(t *testing.T) {
 				c.mod(t, w)
 			}
 			err := w.launcher().ensureProxy(w.proj)
-			if err == nil || !strings.Contains(err.Error(), c.want) || !(c.noLock || strings.Contains(err.Error(), "run `lox up`")) {
+			if err == nil || !strings.Contains(err.Error(), c.want) || !(c.noLock || strings.Contains(err.Error(), "run `lox run`")) {
 				t.Fatalf("error %v", err)
 			}
 			for _, c := range w.calls() {
@@ -328,7 +328,7 @@ func TestLockHTTPGateNeedsLoxUp(t *testing.T) {
 // stamp (or with another) is replaced; one with it is kept.
 func TestLockHTTPGateFollowsTheHub(t *testing.T) {
 	image := "ghcr.io/davidgodefroid/lockhttp@" + testDigest
-	// lox up's hub: the gate with the hub's stamp is kept, on a proxy already joined.
+	// lox run's hub: the gate with the hub's stamp is kept, on a proxy already joined.
 	w, _ := lockHTTPWorld(t)
 	pr := upProjectOf(w)
 	g, err := w.launcher().lockUpGate(w.proj)
@@ -422,7 +422,7 @@ func TestLockHTTPGateFollowsThePinnedRelease(t *testing.T) {
 	}
 }
 
-// The gate asks the console of the profile lox up runs (its socket is named after it).
+// The gate asks the console of the profile lox run runs (its socket is named after it).
 func TestLockHTTPGateAsksTheConsolesProfile(t *testing.T) {
 	for prof, want := range map[string]string{"": "default", "crm.prod": "crm.prod"} {
 		w, _ := lockHTTPWorld(t)
@@ -659,7 +659,7 @@ func TestLockHTTPGateRefusedSwitchChangesNothing(t *testing.T) {
 }
 
 // A standalone gate of an earlier lea (no hub label: it asks the console of lockhttp-run) that
-// still runs when lea cannot run its gate under lox up: lea says so, precisely. It removes the gate
+// still runs when lea cannot run its gate under lox run: lea says so, precisely. It removes the gate
 // only when it is lea's own and no agent runs through it; with agents it stays, and a gate lea
 // did not label is left alone.
 func TestLockHTTPGateNeedsLoxUpTellsOfAStaleGate(t *testing.T) {
@@ -678,8 +678,8 @@ func TestLockHTTPGateNeedsLoxUpTellsOfAStaleGate(t *testing.T) {
 	w.env[at] = stale
 	w.env["FAKE_DOCKER_OUT_PS___FILTER"] = "lea-0123456789 /home/u/other"
 	err := w.launcher().ensureProxy(w.proj)
-	if err == nil || !strings.Contains(err.Error(), "run `lox up`") ||
-		!strings.Contains(err.Error(), "the standalone LockHTTP gate lea-lockhttp-gate of an earlier lea still runs: it asks the console of the volume lockhttp-run, not lox up's hub, for the agents of lea-0123456789 /home/u/other") ||
+	if err == nil || !strings.Contains(err.Error(), "run `lox run`") ||
+		!strings.Contains(err.Error(), "the standalone LockHTTP gate lea-lockhttp-gate of an earlier lea still runs: it asks the console of the volume lockhttp-run, not lox run's hub, for the agents of lea-0123456789 /home/u/other") ||
 		!strings.Contains(err.Error(), "lea stop --all") || removed(w) {
 		t.Fatalf("with agents: %v", err)
 	}
@@ -688,7 +688,7 @@ func TestLockHTTPGateNeedsLoxUpTellsOfAStaleGate(t *testing.T) {
 	w.env[at] = stale
 	w.env[signerAt] = sid + "|lea|lockhttp-signer"
 	err = w.launcher().ensureProxy(w.proj)
-	if err == nil || !strings.Contains(err.Error(), "run `lox up`") || !removed(w) || !signerRemoved(w) || byName(w) ||
+	if err == nil || !strings.Contains(err.Error(), "run `lox run`") || !removed(w) || !signerRemoved(w) || byName(w) ||
 		!strings.Contains(w.errb.String(), "removed the standalone LockHTTP gate lea-lockhttp-gate of an earlier lea") ||
 		!strings.Contains(w.errb.String(), "removed its signer lea-lockhttp-signer") {
 		t.Fatalf("without agents: %v, %s", err, w.errb.String())
@@ -726,7 +726,7 @@ func TestLockHTTPGateNeedsLoxUpTellsOfAStaleGate(t *testing.T) {
 		w, _ = lockHTTPWorldNoUp(t)
 		w.env[at] = out
 		err = w.launcher().ensureProxy(w.proj)
-		if err == nil || !strings.Contains(err.Error(), "run `lox up`") || removed(w) {
+		if err == nil || !strings.Contains(err.Error(), "run `lox run`") || removed(w) {
 			t.Errorf("%s: %v", name, err)
 		}
 		if name == "not lea's" && !strings.Contains(err.Error(), "not a gate lea started") {

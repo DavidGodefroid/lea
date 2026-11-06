@@ -208,8 +208,8 @@ lea__locksql_build() {
   return "$_lsb_rc"
 }
 
-# The locksql configuration of the projects directory: lox up reviews it and copies it into the
-# lock (lockhub's docs/lox-up.md).
+# The locksql configuration of the projects directory: lox run reviews it and copies it into the
+# lock (lockhub's docs/lox-run.md).
 lea__locksql_config() { printf '%s' "$LEA_PROJECTS_DIR/.locksql/config.toml"; }
 
 # Whether a profile of the projects directory reads its login from Vault: the console image then
@@ -251,7 +251,7 @@ lea__declared_locks() {
 }
 
 # lea__locksql_pinned: the projects directory declares locksql locks and each pins its own console
-# image: lox up runs that image, so lea builds none.
+# image: lox run runs that image, so lea builds none.
 lea__locksql_pinned() {
   _lp_l=$(lea__declared_locks locksql)
   [ -n "$_lp_l" ] && ! printf '%s\n' "$_lp_l" | awk '$2 == "-" { f = 1 } END { exit !f }'
@@ -266,10 +266,10 @@ lea__locksql_declared_hint() {
   printf '%s\n' "$1" | while read -r _ld_name _ _ld_uids; do
     case ,$_ld_uids, in
       *,"$_ld_u",*) ;;
-      *) lea_log "warning: the locksql lock $_ld_name has no allowed_uids [$_ld_u] in .lockfamily/lockfamily.yaml: its console refuses lea's agents (they run as your uid); add it, then lox up" ;;
+      *) lea_log "warning: the locksql lock $_ld_name has no allowed_uids [$_ld_u] in .lockfamily/lockfamily.yaml: its console refuses lea's agents (they run as your uid); add it, then lox run" ;;
     esac
   done
-  lea_log "locksql: lox up runs the locksql lock(s) $_ld_n of .lockfamily/lockfamily.yaml; next: lea stop, then lea, so lea's agents get the socket"
+  lea_log "locksql: lox run runs the locksql lock(s) $_ld_n of .lockfamily/lockfamily.yaml; next: lea stop, then lea, so lea's agents get the socket"
 }
 
 # The locksql console image (LEA_LOCKSQL_IMAGE), built from LEA_LOCKSQL_REF (lea__locksql_build:
@@ -334,16 +334,16 @@ lea__init_locksql_profile() {
     fi
   fi
   if lea__locksql_wants_vault; then
-    lea_log "locksql: a profile reads its login from Vault: lox up passes VAULT_ADDR to locks with vault: true (lox add locksql)"
+    lea_log "locksql: a profile reads its login from Vault: lox run passes VAULT_ADDR to locks with vault: true (lox add locksql)"
   fi
   lea__locksql_console_hint
 }
 
 # lea__locksql_console_hint: how the locksql console runs (lea never starts it): hub-attached
-# only, under lox up, as lockmq's and lockfile's (lea__lockhost_console_hint).
+# only, under lox run, as lockmq's and lockfile's (lea__lockhost_console_hint).
 lea__locksql_console_hint() {
-  lea_log "locksql console: it runs under lox up only: no such lock yet: \`lox add locksql\` (lox add fills allowed_uids: [$(id -u)] in .lockfamily/lockfamily.yaml when lea is on your PATH; lea's agents get its socket once lea restarts: lea stop, then lea)"
-  lea_log "  its own questions (policy review, credentials): lox attach NAME, or lea lock open locksql in the deck; each query of an agent: lea's deck (hub view) or lox approve"
+  lea_log "locksql console: it runs under lox run only: no such lock yet: \`lox add locksql\` (lox add fills allowed_uids: [$(id -u)] in .lockfamily/lockfamily.yaml when lea is on your PATH; lea's agents get its socket once lea restarts: lea stop, then lea)"
+  lea_log "  each query of an agent, and the console's own questions: lox run, in another terminal (outside lea)"
 }
 
 # lea__init_wants TOOL: whether this lea init configures TOOL: every tool on a bare lea init; only

@@ -460,21 +460,11 @@ func (l *Launcher) exportToolsOn() {
 	l.Cfg.Export(ToolsOnVar, strings.Join(ts, " "))
 }
 
-// lockConsole is lea lock: a lock console in this projects dir's deck, through the core (the
-// daemon opens the pane), which the launcher tells the container's name.
-func (l *Launcher) lockConsole(args []string) error {
-	if len(args) == 0 || strings.HasPrefix(args[0], "-") {
-		l.logf("error: usage: lea lock open|close TOOL [PROFILE] | lea lock list")
-		return exitError{2}
-	}
-	proj, err := l.projectsDir()
-	if err != nil {
-		return err
-	}
-	if l.coreCall(append([]string{"lock", "--container", l.Cfg.ContainerName(proj)}, args...)...) != nil {
-		return exitError{1}
-	}
-	return nil
+// lockConsole is lea lock, removed (#300): lea shows no lock console; lox run, in a terminal of
+// its own outside lea, shows what the locks ask.
+func (l *Launcher) lockConsole([]string) error {
+	l.logf("error: lea lock was removed: lea shows no lock console. " + LoxRunHint + " (lox attach NAME reaches a lock's own console)")
+	return exitError{2}
 }
 
 // doctor is lea doctor: the workstation's checks (lea-sh doctor), then, when the projects

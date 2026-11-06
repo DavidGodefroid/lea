@@ -24,19 +24,6 @@ func (f *fakeAPI) SplitShell(ctx context.Context, k string, below bool) (Agent, 
 	return f.newShell, f.err
 }
 
-func (f *fakeAPI) LockDecide(ctx context.Context, c string, id int64, open bool) (string, error) {
-	f.rec(fmt.Sprintf("lock-decide %s %d %v", c, id, open))
-	if !open {
-		return "declined", f.err
-	}
-	return "opened", f.err
-}
-
-func (f *fakeAPI) LockOpen(ctx context.Context, c, tool string) (string, error) {
-	f.rec("lock-open " + c + " " + tool)
-	return "opened", f.err
-}
-
 func shell(name string) Agent {
 	return Agent{Key: "shell:lea-a/" + name, Name: name, Kind: KindShell, State: "running", CtxPct: -1, CostUSD: -1}
 }
@@ -268,9 +255,9 @@ func TestTheDeckFollowsTheSoundSwitch(t *testing.T) {
 	}
 }
 
-// The top border counts the container's requests waiting in every Lock's console (#153): the
-// Lock's name when one Lock's wait, the total when several do; a console down when nothing
-// waits; nothing when no Lock is known or all is quiet.
+// The top border counts the container's requests waiting for lox run (#153, #300): the Lock's
+// name when one Lock's wait, the total when several do; a console down when nothing waits;
+// nothing when no Lock is known or all is quiet.
 func TestTheDeckShowsLockApprovals(t *testing.T) {
 	m := sized(loaded(t, &fakeAPI{}, "lea-a/a", ag("a", "idle", 1)), 60, 10)
 	for _, c := range []struct {
@@ -279,16 +266,16 @@ func TestTheDeckShowsLockApprovals(t *testing.T) {
 	}{
 		{nil, ""},
 		{[]LockState{{Lock: "lockhttp", Console: "up"}}, ""},
-		{[]LockState{{Lock: "lockhttp", Console: "up", Pending: 2}}, "lockhttp 2 to approve"},
+		{[]LockState{{Lock: "lockhttp", Console: "up", Pending: 2}}, "lockhttp 2 wait for lox run"},
 		{[]LockState{{Lock: "lockhttp", Console: "down"}}, "lockhttp console down"},
-		{[]LockState{{Lock: "lockfile", Console: "up"}, {Lock: "locksql", Console: "up", Pending: 1}}, "locksql 1 to approve"},
-		{[]LockState{{Lock: "lockhttp", Pending: 2}, {Lock: "lockmq", Pending: 1}, {Lock: "locksql", Pending: 3}}, "6 to approve"},
-		{[]LockState{{Lock: "lockhttp", Console: "down"}, {Lock: "locksql", Pending: 1}}, "locksql 1 to approve"},
+		{[]LockState{{Lock: "lockfile", Console: "up"}, {Lock: "locksql", Console: "up", Pending: 1}}, "locksql 1 wait for lox run"},
+		{[]LockState{{Lock: "lockhttp", Pending: 2}, {Lock: "lockmq", Pending: 1}, {Lock: "locksql", Pending: 3}}, "6 wait for lox run"},
+		{[]LockState{{Lock: "lockhttp", Console: "down"}, {Lock: "locksql", Pending: 1}}, "locksql 1 wait for lox run"},
 		{[]LockState{{Lock: "\x1b[31mevil", Pending: 9}}, ""},
 	} {
 		m, _ = step(t, m, snapshotMsg{snap: Snapshot{Version: m.version + 1, Shown: "lea-a/a", Agents: []Agent{ag("a", "idle", 1)}, Locks: c.l}})
 		top := viewLines(m)[0]
-		if c.want == "" && (strings.Contains(top, "approve") || strings.Contains(top, "console down")) || !strings.Contains(top, c.want) {
+		if c.want == "" && (strings.Contains(top, "lox run") || strings.Contains(top, "console down")) || !strings.Contains(top, c.want) {
 			t.Errorf("%+v: top %q", c.l, top)
 		}
 	}
@@ -325,19 +312,50 @@ func TestSWithoutASoundPlayer(t *testing.T) {
 	}
 }
 
-// L opens the locksql console under the agent and leaves the keyboard on the deck.
-func TestLOpensTheLocksqlConsole(t *testing.T) {
+// The deck opens no lock console and answers no hub ticket (#300): L, O, H, Y and v do nothing,
+// and call nothing.
+func TestTheDeckHasNoLockOrHubKeys(t *testing.T) {
 	api := &fakeAPI{}
 	m := loaded(t, api, "lea-a/a", ag("a", "idle", 1))
-	m, cmd := step(t, m, key("L"))
-	if cmd == nil {
-		t.Fatal("L made no call")
+	for _, k := range []string{"L", "O", "H", "Y", "v"} {
+		var cmd tea.Cmd
+		m, cmd = step(t, m, key(k))
+		if cmd != nil {
+			if msg := cmd(); msg != nil {
+				m, _ = step(t, m, msg)
+			}
+		}
 	}
-	m, _ = step(t, m, cmd())
-	if got := api.got(); len(got) != 1 || got[0] != "lock-open lea-a locksql" {
+	if got := api.got(); len(got) != 0 {
 		t.Fatalf("calls=%q", got)
 	}
-	if m.selected != "lea-a/a" || !strings.Contains(m.status, "locksql console opened") {
-		t.Fatalf("selected %q status %q", m.selected, m.status)
+	if m.selected != "lea-a/a" {
+		t.Fatalf("selected %q", m.selected)
+	}
+}
+
+// While the workspace has locks and no lox run serves them (Snapshot.LoxRun "off", #300), the
+// status line says to open another terminal and run lox run; a status the user caused comes
+// first, and once lox run serves, the line goes.
+func TestTheStatusLineSaysToRunLoxRun(t *testing.T) {
+	m := sized(loaded(t, &fakeAPI{}, "lea-a/a", ag("a", "idle", 1)), 160, 10)
+	snap := func(lox string) Snapshot {
+		return Snapshot{Version: m.version + 1, Shown: "lea-a/a", Agents: []Agent{ag("a", "idle", 1)}, LoxRun: lox}
+	}
+	status := func() string { ls := viewLines(m); return ls[len(ls)-2] }
+	m, _ = step(t, m, snapshotMsg{snap: snap("off")})
+	if got := status(); !strings.Contains(got, "no lox run: open another terminal (outside lea) and run lox run to approve the agents' connections and writes") {
+		t.Fatalf("status line %q", got)
+	}
+	m.status = "sounds on"
+	if got := status(); strings.Contains(got, "lox run") || !strings.Contains(got, "sounds on") {
+		t.Fatalf("a status of the user's: %q", got)
+	}
+	m.status = ""
+	for _, lox := range []string{"serving", ""} {
+		m, _ = step(t, m, snapshotMsg{snap: snap(lox)})
+		if got := status(); strings.Contains(got, "lox run") {
+			t.Fatalf("%q: status line %q", lox, got)
+		}
 	}
 }
