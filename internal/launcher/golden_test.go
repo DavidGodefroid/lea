@@ -301,6 +301,15 @@ func symlinkDir(t *testing.T, w *world, p string) {
 	}
 }
 
+// noDeck turns LEA_DECK=0 on in w (#135), with LEA_TOOL=tool, and the daemon's matching record.
+func noDeck(t *testing.T, w *world, tool string) {
+	t.Helper()
+	writeUserConf(t, w, "LEA_HUB=0\nLEA_DECK=0\nLEA_TOOL='"+tool+"'\n")
+	if err := os.WriteFile(w.hostDir()+"/daemon.deck", []byte("off"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
 // clipboardOn turns the bridge on in w: a host clipboard command (a fake wl-copy) and the FIFO a
 // started container would have; every loop left on that FIFO is killed when the test ends.
 func clipboardOn(t *testing.T, w *world) {
@@ -365,6 +374,26 @@ func TestCommandsMatchTheGoldenFiles(t *testing.T) {
 	scenarios := []commandScenario{
 		{name: "deck and the container started", env: stopped(), want: []string{started, "[--fresh]", open}},
 		{name: "deck and the container running", want: []string{open}, absent: []string{"docker [run]", "[--fresh]"}},
+		// LEA_DECK=0 (#135): the user's own tool in the same container, no deck-open, no tmux.
+		{name: "no deck runs the tool in the container", env: stopped(), setup: func(w *world) { noDeck(t, w, "") },
+			want:   []string{started, "[lea-session] [--claude]\n", "[lea-agent] [ls]", "docker [stop] [lea-$ID]"},
+			absent: []string{"deck-open", "attach-session", "the deck needs"}},
+		{name: "no deck passes arguments to claude", args: []string{"--resume"}, setup: func(w *world) { noDeck(t, w, "") },
+			want: []string{"[lea-session] [--claude] [--resume]"}, absent: []string{"deck-open", "claude arguments go to a new agent"}},
+		{name: "no deck runs another tool with its arguments", args: []string{"--", "--last"}, setup: func(w *world) { noDeck(t, w, "codex --model gpt-5") },
+			want: []string{"[lea-session] [--shell] [codex] [--model] [gpt-5] [--last]"}, absent: []string{"deck-open", "[--claude]"}},
+		{name: "no deck without a usable tmux", env: map[string]string{"LEA_TMUX_BIN": "$W/none"}, setup: func(w *world) {
+			noDeck(t, w, "")
+			os.WriteFile(w.hostDir()+"/daemon.tmux", []byte(w.dir+"/none"), 0o600)
+		}, want: []string{"[lea-session] [--claude]"}, absent: []string{"deck-open", "is not an executable file", "the deck needs"}},
+		{name: "no deck lea new still starts an agent", args: []string{"new", "-r", "dev"}, setup: func(w *world) { noDeck(t, w, "") },
+			want: []string{"[--no-default]", "core [new] [--container] [lea-$ID] [--workdir] [$W/projects] [-r] [dev]"}, absent: []string{"attach-session", "lea-session"}},
+		{name: "attach runs the tool like lea", args: []string{"attach"}, setup: func(w *world) { noDeck(t, w, "") },
+			want: []string{"[lea-session] [--claude]\n"}, absent: []string{"deck-open"}},
+		{name: "attach with a bad agent name", args: []string{"attach", "Bad;name"}, exit: 2,
+			want: []string{"lea: error: usage: lea attach [--print] [AGENT]"}, absent: []string{"docker"}},
+		{name: "attach print without the container", args: []string{"attach", "--print"}, env: stopped(), exit: 1,
+			want: []string{"lea: error: lea-$ID is not running: start it with lea first"}, absent: []string{"docker [exec]", "docker [run]"}},
 		{name: "deck from a subdirectory", cwd: "sub", want: []string{"[--workdir] [$W/projects/sub]\n" + open}},
 		{name: "deck from outside the projects dir starts at its root", cwd: "../home",
 			want: []string{"core [deck-open] [--container] [lea-$ID] [--workdir] [$W/projects]\n" + open}},

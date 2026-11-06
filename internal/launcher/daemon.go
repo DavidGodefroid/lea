@@ -154,6 +154,16 @@ func DaemonAdmitStamp(get func(string) string) string {
 	return strings.Join(p, " ")
 }
 
+// DaemonDeckStamp is the deck switch as the daemon records it ("on", or "off" with LEA_DECK=0:
+// the host CLI answers lea's approvals and a desktop notification says when one waits, #135): a
+// daemon started with the other value is restarted (its agents keep running).
+func DaemonDeckStamp(get func(string) string) string {
+	if get("LEA_DECK") == "0" {
+		return "off"
+	}
+	return "on"
+}
+
 func readTrim(p string) string {
 	b, _ := os.ReadFile(p)
 	return strings.TrimRight(string(b), "\n")
@@ -177,7 +187,8 @@ func (l *Launcher) ensureDaemon() error {
 			readTrim(host+"/daemon.lockhttp") == DaemonLockHTTPStamp(l.Cfg.Get) &&
 			readTrim(host+"/daemon.hub") == DaemonHubStamp(l.Cfg.Get) &&
 			readTrim(host+"/daemon.stacks") == DaemonStacksStamp(l.Cfg.Get) &&
-			readTrim(host+"/daemon.admit") == DaemonAdmitStamp(l.Cfg.Get) {
+			readTrim(host+"/daemon.admit") == DaemonAdmitStamp(l.Cfg.Get) &&
+			readTrim(host+"/daemon.deck") == DaemonDeckStamp(l.Cfg.Get) {
 			return nil
 		}
 		l.stopDaemon()

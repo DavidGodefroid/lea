@@ -275,12 +275,13 @@ func (d *Daemon) dispatchDeck(ctx context.Context, o Origin, req wire.Request) (
 }
 
 // deckAttached reports whether someone can answer an approval in the container's deck. Without
-// an agent manager (phase 0 daemons, tests) the host CLI answers, as before.
+// an agent manager (phase 0 daemons, tests) the host CLI answers, as before, and so it does
+// without the deck (LEA_DECK=0, #135): lea requests, lea approve, lea deny.
 func (d *Daemon) deckAttached(ctx context.Context, container string) bool {
 	d.mu.Lock()
-	a := d.agents
+	a, noDeck := d.agents, d.noDeck
 	d.mu.Unlock()
-	if a == nil {
+	if a == nil || noDeck {
 		return true
 	}
 	ok, err := a.Attached(ctx, container)
