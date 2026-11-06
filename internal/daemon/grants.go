@@ -379,7 +379,16 @@ func (d *Daemon) grantCheck(o Origin, me string, raw json.RawMessage) (any, erro
 		// or a user's Bash(gh pr merge:*) rule would skip the policy.
 		dec = grants.Decision{Verdict: grants.Deny, Reason: "lea: in a tower's tree a merge runs only through the merge grant of the tower's tree " +
 			"(gh pr merge N, which lea pins and checks against the production-merge policy: deploy window, CI, review, sensitive paths); " +
-			"this merge matches no grant, so it is denied: use gh pr merge N under that grant, or ask your lead or tower"}
+			"this merge (or a forge API write whose path or method lea cannot read: an expansion) matches no grant, so it is denied: " +
+			"use gh pr merge N under that grant, or ask your lead or tower"}
+	}
+	if dec.Verdict == "" && tower != "" {
+		// Nor does a forge write that rewrites a file on a branch or moves one (contents API, git
+		// refs, merge-upstream): it would rewrite the trusted .lea/production or move a production
+		// branch past the policy (#110).
+		if why := grants.BranchWrite(p.Tool, p.Input); why != "" {
+			dec = grants.Decision{Verdict: grants.Deny, Reason: "lea: " + why}
+		}
 	}
 	if dec.Verdict == "" {
 		// A push no grant rewrote runs as the agent wrote it: its bare branch must not be a tag.

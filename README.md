@@ -638,7 +638,10 @@ is never merged automatically, and the tower gets a dedicated warning to put to 
 run in the pinned `gh pr merge <N>` a merge grant allows (lea reads the PR from GitHub just before
 merging, and merges only the head it checked); in a tower's tree a merge that names no PR number,
 or a GitLab merge, is refused, and so is any merge no grant pins (`gh pr merge` without a grant,
-`gh api …/pulls/N/merge`, GraphQL `mergePullRequest`, an MCP merge tool), whatever the deck or a user rule allows.
+`gh api …/pulls/N/merge`, percent-escaped or not, an API write whose path or method holds a shell expansion, GraphQL
+`mergePullRequest`, an MCP merge tool), whatever the deck or a user rule allows. A tower's tree never writes a branch
+through the API either: the contents API (PUT, DELETE), git refs (create, update, delete), `merge-upstream` and the
+GraphQL ref mutations are denied, so the trusted `.lea/production` and the production branches move only by a merge.
 
 The tower never does the work itself, not even a `git push`: every request goes to an agent. The
 plugin enforces it with a hook: once `/lea:control-tower` runs, the session may only use lea's

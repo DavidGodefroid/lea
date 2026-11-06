@@ -227,35 +227,172 @@ var (
 	// graphQLFileRe is a gh api graphql call whose query lea cannot read (a file or stdin).
 	graphQLFileRe = regexp.MustCompile(`(?i)\bgh\b.*\bapi\b.*\bgraphql\b.*(=@|--input\b)`)
 	segmentRe     = regexp.MustCompile(`[;&|\n()]+`)
+	// apiCallRe is a call of a forge's HTTP API from the shell: gh api, glab api, curl, wget, xh.
+	apiCallRe = regexp.MustCompile(`(?i)\b(gh|glab)\b.*\bapi\b|\b(curl|wget|xh)\b`)
+	// apiMethodRe is the method an API call names: gh's -X/--method, curl's -X (also in a group of
+	// short flags, -sXPUT) and --request, wget's --method.
+	apiMethodRe = regexp.MustCompile(`(?:^|\s)-[a-zA-Z]*X\s*(\S+)|--(?:method|request)(?:=|\s+)(\S+)`)
+	// apiBodyRe is a body an API call sends, which makes it a write without a method: gh's -f/-F,
+	// --field, --raw-field and --input (gh api then POSTs), curl's -d/-F/-T and --data*, --json,
+	// --form, --upload-file, wget's --post-* and --body-*.
+	apiBodyRe = regexp.MustCompile(`(?:^|\s)(?:-[fF]|-[a-zA-Z]*[dFT])|--(?:raw-)?field\b|--input\b|--data|--json\b|--form\b|` +
+		`--upload-file\b|--post-(?:data|file)\b|--body-(?:data|file)\b`)
+	// branchWriteRe is a forge write that moves a branch or rewrites a file on one without a push
+	// or a merge: the REST contents API (PUT, DELETE a file), git refs (create, update, delete),
+	// a fork's merge-upstream, and the GraphQL mutations that do the same.
+	branchWriteRe = regexp.MustCompile(`repos/[^/\s]+/[^/\s]+/(contents(/|\b)|git/refs\b|merge-upstream\b)|` +
+		`\b(createref|updateref|updaterefs|deleteref|createcommitonbranch)\b`)
+	// branchMCPRe is an MCP tool named for such a write (create_or_update_file, push_files,
+	// delete_file, create_branch, update_ref…).
+	branchMCPRe = regexp.MustCompile(`(?i)(create|update|delete|push|put|write).*(file|ref|branch|commit)|(file|ref|branch|commit).*(create|update|delete|push|put|write)`)
 )
 
+// forgeText is cmd as the forge forwarder routes it: quotes and backslashes removed and percent
+// escapes decoded (until none is left, so a double escape is caught too). The forwarder decodes
+// each path segment (url.PathUnescape) and lower-cases it, so pull%73/7/merge is the REST merge
+// of PR 7; the regular expressions matched against this text are case-insensitive.
+func forgeText(cmd string) string {
+	s := unquote.Replace(cmd)
+	for i := 0; i < 8; i++ {
+		d := percentDecode(s)
+		if d == s {
+			break
+		}
+		s = d
+	}
+	return s
+}
+
+// percentDecode decodes every valid %XX escape of s once, leaving the rest as it is.
+func percentDecode(s string) string {
+	if !strings.Contains(s, "%") {
+		return s
+	}
+	var b strings.Builder
+	for i := 0; i < len(s); i++ {
+		if s[i] == '%' && i+2 < len(s) && isHex(s[i+1]) && isHex(s[i+2]) {
+			v, _ := strconv.ParseUint(s[i+1:i+3], 16, 8)
+			b.WriteByte(byte(v))
+			i += 2
+			continue
+		}
+		b.WriteByte(s[i])
+	}
+	return b.String()
+}
+
+func isHex(c byte) bool { return c >= '0' && c <= '9' || c >= 'a' && c <= 'f' || c >= 'A' && c <= 'F' }
+
+// apiWrite says whether text (forgeText of a command) sends a write: a method other than GET or
+// HEAD (an expanded method, $M, counts as a write), or, without a method, a body.
+func apiWrite(text string) bool {
+	ms := apiMethodRe.FindAllStringSubmatch(text, -1)
+	for _, m := range ms {
+		v := strings.ToUpper(m[1] + m[2])
+		if v != "GET" && v != "HEAD" {
+			return true
+		}
+	}
+	return len(ms) == 0 && apiBodyRe.MatchString(text)
+}
+
+// unquotedExpansion says whether raw holds a $ or a backquote outside quotes: an expansion the
+// shell splits into words, so that it can add a method, a field or a path lea does not see.
+func unquotedExpansion(raw string) bool {
+	single, double := false, false
+	for i := 0; i < len(raw); i++ {
+		switch c := raw[i]; {
+		case single:
+			single = c != '\''
+		case c == '\\':
+			i++
+		case c == '\'' && !double:
+			single = true
+		case c == '"':
+			double = !double
+		case (c == '$' || c == '`') && !double:
+			return true
+		}
+	}
+	return false
+}
+
 // MergeAttempt says whether a tool call looks like a merge of a PR or MR, in any form: gh pr
-// merge, glab mr merge, a REST or GraphQL merge (gh api, curl…), a GraphQL query from a file, or
-// an MCP tool named for a merge (lea's own tools aside). Loose on purpose: in a tower's tree a
-// merge runs only as a grant pins it (with the production-merge policy), and the daemon denies
-// every other merge this matches. Defence in depth: a shell can build any word (hardBash denies
-// the obfuscated spellings it sees), and an alias the agent set in its gh config is not seen.
+// merge, glab mr merge, a REST or GraphQL merge (gh api, curl…, percent-escaped or not), a
+// GraphQL query from a file, an API write whose path or method holds an expansion (lea cannot
+// tell it is not a merge), or an MCP tool named for a merge (lea's own tools aside). Loose on
+// purpose: in a tower's tree a merge runs only as a grant pins it (with the production-merge
+// policy), and the daemon denies every other merge this matches. Defence in depth: a shell can
+// build any word (hardBash denies the obfuscated spellings it sees), and an alias the agent set
+// in its gh config, or a script file it runs, is not seen.
 func MergeAttempt(tool string, input json.RawMessage) bool {
 	if strings.HasPrefix(tool, "mcp__") {
 		return !strings.HasPrefix(tool, "mcp__lea__") && strings.Contains(strings.ToLower(tool), "merge")
 	}
-	if tool != "Bash" {
+	raw, ok := bashCommand(tool, input)
+	if !ok {
 		return false
+	}
+	cmd := forgeText(raw)
+	if mergeAPIRe.MatchString(cmd) {
+		return true
+	}
+	segs := segmentRe.Split(cmd, -1)
+	for _, seg := range segs {
+		if mergeCLIRe.MatchString(seg) || graphQLFileRe.MatchString(seg) {
+			return true
+		}
+	}
+	// An API call with an expansion: its path may be a merge's (pulls/7/${M}). A read whose
+	// expansions are all double-quoted (one word each, no method or field hidden in them) is not.
+	if strings.ContainsAny(raw, "$`") && apiCallRe.MatchString(cmd) && (apiWrite(cmd) || unquotedExpansion(raw)) {
+		return true
+	}
+	return false
+}
+
+// BranchWrite is why a tool call is a forge write that moves a branch or rewrites a file on one
+// without a push or a merge, "" when it is not: a REST contents write (PUT or DELETE
+// repos/O/R/contents/…), a git refs create, update or delete (repos/O/R/git/refs…), a
+// merge-upstream, a GraphQL ref or commit mutation, or an MCP tool named for one. In a tower's
+// tree the daemon denies it (#110): it would rewrite the trusted .lea/production on the default
+// branch, or move a production branch to a commit no window, CI, review or sensitive check saw.
+// A gh api, curl or wget call that only reads (GET, HEAD) passes; any other program naming such
+// a path is taken for a write (lea cannot read what it sends).
+func BranchWrite(tool string, input json.RawMessage) string {
+	const why = "a forge write that rewrites a file on a branch or moves a branch (the contents API, git refs, merge-upstream) never runs " +
+		"in a tower's tree: it would skip the production-merge policy; push to your own branch and merge through the tree's merge grant"
+	if strings.HasPrefix(tool, "mcp__") {
+		if !strings.HasPrefix(tool, "mcp__lea__") && branchMCPRe.MatchString(tool) {
+			return why
+		}
+		return ""
+	}
+	raw, ok := bashCommand(tool, input)
+	if !ok {
+		return ""
+	}
+	for _, seg := range segmentRe.Split(forgeText(raw), -1) {
+		if !branchWriteRe.MatchString(strings.ToLower(seg)) {
+			continue
+		}
+		if !apiCallRe.MatchString(seg) || apiWrite(seg) || unquotedExpansion(raw) {
+			return why
+		}
+	}
+	return ""
+}
+
+// bashCommand is the command of a Bash tool call.
+func bashCommand(tool string, input json.RawMessage) (string, bool) {
+	if tool != "Bash" {
+		return "", false
 	}
 	var in struct {
 		Command string `json:"command"`
 	}
 	if json.Unmarshal(input, &in) != nil {
-		return false
+		return "", false
 	}
-	cmd := unquote.Replace(in.Command)
-	if mergeAPIRe.MatchString(cmd) {
-		return true
-	}
-	for _, seg := range segmentRe.Split(cmd, -1) {
-		if mergeCLIRe.MatchString(seg) || graphQLFileRe.MatchString(seg) {
-			return true
-		}
-	}
-	return false
+	return in.Command, true
 }

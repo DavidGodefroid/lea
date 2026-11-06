@@ -344,6 +344,12 @@ func TestMergeAttempt(t *testing.T) {
 		`gh api graphql -f query='mutation { enablePullRequestAutoMerge(input: {pullRequestId: "x"}) { clientMutationId } }'`,
 		"gh api graphql -F query=@q.graphql", "gh api graphql --input q.json",
 		"glab api -X PUT projects/1/merge_requests/3/merge",
+		// Percent escapes, as the forge forwarder decodes them (url.PathUnescape, lower-cased).
+		"gh api -XPUT repos/o/r/pull%73/7/merge", "gh api -XPUT repos/o/r/pulls/7/%6d%65rge", "gh api -XPUT repos/o/r/PULLS/7/MERGE",
+		"gh api -XPUT repos/o/r/pulls/7/%256derge", "curl -sXPUT https://api.github.com/repos/o/r/pull%53/7/merge",
+		// An expansion in the path or the method of a write, or unquoted (it may add either).
+		"gh api -XPUT repos/o/r/pulls/7/${M}", "gh api -X PUT repos/o/r/pulls/7/$(echo merge)", "gh api -X $M repos/o/r/pulls/7/x",
+		"gh api repos/o/r/pulls/7/`echo merge` -f merge_method=squash", "gh api repos/o/r/pulls/7/$M", "curl $URL -d x",
 	} {
 		if !MergeAttempt("Bash", bash(cmd)) {
 			t.Errorf("%q: not seen as a merge", cmd)
@@ -352,6 +358,9 @@ func TestMergeAttempt(t *testing.T) {
 	for _, cmd := range []string{
 		"gh pr view 7 --json mergeable,mergedAt", "gh pr list --search is:merged", "git merge origin/main", "git log --merges",
 		"gh pr checkout 7 && git merge main", "gh api repos/someone/shop/pulls/7", "gh api graphql -f query='{ viewer { login } }'",
+		// A read whose expansions are double-quoted, a write with no expansion and no merge path.
+		`gh api "repos/someone/shop/pulls/$N"`, `gh api -X GET "repos/o/r/pulls/$N/files"`, "gh api -X PATCH repos/o/r/pulls/7 -f title=x",
+		"echo $HOME && git status", "gh api repos/o/r/pulls/7%2Ffiles",
 	} {
 		if MergeAttempt("Bash", bash(cmd)) {
 			t.Errorf("%q: seen as a merge", cmd)
@@ -360,5 +369,47 @@ func TestMergeAttempt(t *testing.T) {
 	if !MergeAttempt("mcp__github__merge_pull_request", json.RawMessage(`{}`)) || MergeAttempt("mcp__lea__merge_blocked", json.RawMessage(`{}`)) ||
 		MergeAttempt("Read", json.RawMessage(`{"file_path":"merge"}`)) {
 		t.Fatal("MCP and other tools")
+	}
+}
+
+func TestBranchWrite(t *testing.T) {
+	bash := func(cmd string) json.RawMessage {
+		b, _ := json.Marshal(map[string]string{"command": cmd})
+		return b
+	}
+	for _, cmd := range []string{
+		"gh api -X PUT repos/o/r/contents/.lea/production -f branch=main -f message=x -f content=eA== -f sha=abc",
+		"gh api --method DELETE repos/o/r/contents/.lea/sensitive -f branch=main -f sha=abc",
+		"gh api -X PATCH repos/o/r/git/refs/heads/main -f sha=X -F force=true",
+		"gh api repos/o/r/git/refs -f ref=refs/heads/main -f sha=X", "gh api -X DELETE repos/o/r/git/refs/heads/release",
+		"gh api -XPUT repos/o/r/cont%65nts/.lea/production -f content=x", "gh api -X PATCH repos/O/R/GIT/REFS/heads/main -f sha=X",
+		"curl -X PUT -d @body.json https://api.github.com/repos/o/r/contents/.lea/production",
+		"curl -sSXPATCH https://api.github.com/repos/o/r/git/refs/heads/main --data '{\"sha\":\"x\"}'",
+		"gh api repos/o/r/merge-upstream -f branch=main",
+		"python3 -c 'import requests; requests.put(\"https://api.github.com/repos/o/r/contents/x\")'",
+		"gh api repos/o/r/contents/$F -X $M", "gh api repos/o/r/git/refs/heads/$B",
+		`gh api graphql -f query='mutation { updateRef(input: {refId: "x", oid: "y", force: true}) { clientMutationId } }'`,
+		`gh api graphql -f query='mutation { createCommitOnBranch(input: {}) { clientMutationId } }'`,
+	} {
+		if BranchWrite("Bash", bash(cmd)) == "" {
+			t.Errorf("%q: not seen as a branch write", cmd)
+		}
+	}
+	for _, cmd := range []string{
+		"gh api repos/o/r/contents/README.md --jq .content", "gh api -X GET repos/o/r/contents/.lea/production -f ref=main",
+		"gh api -H 'Accept: application/vnd.github.raw' repos/o/r/contents/.lea/production", "gh api repos/o/r/git/refs/heads/main",
+		"curl -sSL https://api.github.com/repos/o/r/git/refs/heads/main", `gh api "repos/o/r/contents/$F"`,
+		"git update-ref refs/heads/x HEAD", "git push origin fix/7", "gh api -X PATCH repos/o/r/pulls/7 -f title=x",
+	} {
+		if why := BranchWrite("Bash", bash(cmd)); why != "" {
+			t.Errorf("%q: seen as a branch write", cmd)
+		}
+	}
+	for tool, want := range map[string]bool{"mcp__github__create_or_update_file": true, "mcp__github__push_files": true,
+		"mcp__github__delete_file": true, "mcp__github__create_branch": true, "mcp__github__get_file_contents": false,
+		"mcp__github__list_branches": false, "mcp__lea__update_branch": false, "Read": false} {
+		if got := BranchWrite(tool, json.RawMessage(`{}`)) != ""; got != want {
+			t.Errorf("%s: %v", tool, got)
+		}
 	}
 }
