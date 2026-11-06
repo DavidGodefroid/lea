@@ -71,6 +71,9 @@ const usage = `usage: lea <command>
   sound [on|off]             show or switch lea's sounds (until the daemon restarts)
   hook claude <event>        Claude Code hook (inside lea)
   repair-transcript <id>     cut a session's transcript after its last valid line before a resume (inside lea)
+  lock-hello --uid UID [--protocol N] DIR [SOCKET...]
+                             the hello handshake of lock console sockets of DIR, served by
+                             UID, as JSON (lea doctor runs it in lea's image)
   mcp                        MCP server for agents (inside lea)
   statusline [--dump FILE]   Claude status line (inside lea)
   acp-probe -- CMD...        check an ACP agent`
@@ -106,6 +109,8 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		return runNew(args[1:], stdout, stderr)
 	case "lock":
 		return runLock(args[1:], stdout, stderr)
+	case "lock-hello":
+		return runLockHello(args[1:], stdout, stderr)
 	case "delivery":
 		return runDelivery(args[1:], stdout, stderr)
 	case "hook":

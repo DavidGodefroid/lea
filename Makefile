@@ -1,4 +1,4 @@
-.PHONY: test build test-proxy test-isolation test-ctl test-lockhost test-hubdeck test-phase0 test-update-deps test-pressure go-test go-build go-test-tmux go-get tmux-build
+.PHONY: test build test-proxy test-isolation test-ctl test-lockhost test-hubdeck test-phase0 test-pressure go-test go-build go-test-tmux go-get tmux-build
 test:
 	tests/run.sh
 build:
@@ -15,8 +15,6 @@ test-hubdeck:
 # The phase-0 exit demo with real consoles (tests/integration/phase0.sh); needs make build, build/lea, cosign.
 test-phase0:
 	tests/integration/phase0.sh
-test-update-deps:
-	tests/integration/update-deps.sh
 test-isolation:
 	tests/integration/isolation.sh
 # lea-ctl (#165): lea in its control container on the host's engine; needs make build, build/lea.
