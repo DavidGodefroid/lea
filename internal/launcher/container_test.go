@@ -519,7 +519,7 @@ func TestProxyFollowsTheGitSSHEndpoints(t *testing.T) {
 	w := newWorld(t, repoRoot(t))
 	writeUserConf(t, w, "LEA_GIT_SSH='github.com:22 gitlab.com:22'\n")
 	w.env["FAKE_DOCKER_OUT_INSPECT__F"] = "true"
-	w.env["FAKE_DOCKER_OUT_INSPECT___FORMAT"] = "github.com:22 gitlab.com:22@" + w.launcher().proxyRules()
+	w.env["FAKE_DOCKER_OUT_INSPECT___FORMAT"] = "github.com:22 gitlab.com:22@" + w.launcher().proxyRules(proxyConfine)
 	if err := w.launcher().ensureProxy(w.proj); err != nil {
 		t.Fatal(err)
 	}
@@ -674,7 +674,7 @@ func TestProxyFollowsTheEgressAllowlist(t *testing.T) {
 	w := newWorld(t, repoRoot(t))
 	writeUserConf(t, w, "LEA_EGRESS_ALLOW=github.com,proxy.golang.org\n")
 	w.env["FAKE_DOCKER_OUT_INSPECT__F"] = "true"
-	w.env["FAKE_DOCKER_OUT_INSPECT___FORMAT"] = "|github.com,proxy.golang.org@" + w.launcher().proxyRules()
+	w.env["FAKE_DOCKER_OUT_INSPECT___FORMAT"] = "|github.com,proxy.golang.org@" + w.launcher().proxyRules(proxyConfine)
 	if err := w.launcher().ensureProxy(w.proj); err != nil {
 		t.Fatal(err)
 	}
@@ -790,7 +790,7 @@ func TestResourceLimitsAreValidated(t *testing.T) {
 // squid.conf, an open egress by default) is replaced; one started from the same rules is kept.
 func TestProxyFollowsItsRules(t *testing.T) {
 	w := newWorld(t, repoRoot(t))
-	rules := w.launcher().proxyRules()
+	rules := w.launcher().proxyRules(proxyConfine)
 	if len(rules) != 12 {
 		t.Fatalf("proxyRules() = %q, want 12 hex digits", rules)
 	}
@@ -815,7 +815,7 @@ func TestProxyFollowsItsRules(t *testing.T) {
 func TestProxyRulesDigest(t *testing.T) {
 	root := t.TempDir()
 	l := &Launcher{Root: root}
-	if got := l.proxyRules(); got != "" {
+	if got := l.proxyRules(proxyConfine); got != "" {
 		t.Fatalf("no proxy/: proxyRules() = %q, want empty", got)
 	}
 	if err := os.MkdirAll(filepath.Join(root, "proxy", "errors"), 0o755); err != nil {
@@ -828,14 +828,170 @@ func TestProxyRulesDigest(t *testing.T) {
 	}
 	write("render-squid-conf.sh", "a")
 	write("errors/ERR_LEA_DOH", "b")
-	first := l.proxyRules()
+	first := l.proxyRules(proxyConfine)
 	write("errors/ERR_LEA_DOH", "c")
-	if second := l.proxyRules(); second == first || second == "" {
+	if second := l.proxyRules(proxyConfine); second == first || second == "" {
 		t.Fatalf("an error page change left the digest at %q", second)
 	}
 	write("render-squid-conf.sh", "a2")
-	if third := l.proxyRules(); third == first {
+	third := l.proxyRules(proxyConfine)
+	if third == first {
 		t.Fatal("a render-squid-conf.sh change left the digest unchanged")
+	}
+	// Another confinement replaces a running proxy too: the digest covers the arguments passed.
+	if fourth := l.proxyRules(append(append([]string(nil), proxyConfine...), "--cap-add", "CHOWN")); fourth == third {
+		t.Fatal("a proxyConfine change left the digest unchanged")
+	}
+	if fifth := l.proxyRules(proxyConfine[:len(proxyConfine)-2]); fifth == third {
+		t.Fatal("a confinement without --memory left the digest unchanged")
+	}
+	if none := l.proxyRules(nil); none == third || none == "" {
+		t.Fatalf("an unconfined proxy's digest %q", none)
+	}
+}
+
+// Rootless Podman without the memory cgroup controller (#132): podman run would refuse the
+// proxy's --memory, so the proxy starts without it, keeps --pids-limit and the rest of its
+// confinement, warns with the fix, and its lea.rules covers the arguments it got: once the
+// controller is delegated, a later lea replaces it with the limited one.
+func TestProxyDropsTheLimitOfAMissingController(t *testing.T) {
+	key := "FAKE_DOCKER_OUT_SYSTEM_INFO_AT_" + fakeKey("{{.Host.Security.Rootless}} {{.Host.CgroupControllers}}")
+	proxyRun := func(w *world) string {
+		t.Helper()
+		if err := w.launcher().ensureProxy(w.proj); err != nil {
+			t.Fatal(err)
+		}
+		for _, c := range w.calls() {
+			if strings.HasPrefix(c, "docker [run]") && strings.Contains(c, "[--name] [lea-proxy]") {
+				return c
+			}
+		}
+		return ""
+	}
+	w := newWorld(t, repoRoot(t))
+	w.env[key] = "true [pids]"
+	run := proxyRun(w)
+	if run == "" {
+		t.Fatalf("no proxy run:\n%s", strings.Join(w.calls(), "\n"))
+	}
+	if strings.Contains(run, "[--memory]") {
+		t.Errorf("the proxy gets --memory without the memory controller:\n%s", run)
+	}
+	for _, want := range []string{"[--pids-limit] [512]", "[--cap-drop] [ALL]", "[--read-only]", "[--security-opt] [no-new-privileges]"} {
+		if !strings.Contains(run, want) {
+			t.Errorf("proxy run lacks %s:\n%s", want, run)
+		}
+	}
+	e := w.errb.String()
+	if !strings.Contains(e, "--memory 1g") || !strings.Contains(e, "Delegate=cpu cpuset io memory pids") || strings.Contains(e, "--pids-limit 512") {
+		t.Errorf("warning %q", e)
+	}
+	without := w.launcher().proxyRules(proxyConfine[:len(proxyConfine)-2]) // --memory 1g is last
+	if !strings.Contains(run, "[lea.rules="+without+"]") {
+		t.Errorf("lea.rules does not cover the arguments passed (want %s):\n%s", without, run)
+	}
+	// Without the pids controller either: neither limit, the rest kept.
+	w = newWorld(t, repoRoot(t))
+	w.env[key] = "true [cpu]"
+	run = proxyRun(w)
+	if strings.Contains(run, "[--memory]") || strings.Contains(run, "[--pids-limit]") || !strings.Contains(run, "[--cap-drop] [ALL]") || !strings.Contains(run, "[--read-only]") {
+		t.Errorf("no memory nor pids controller:\n%s", run)
+	}
+	// The proxy started so is replaced once the controller is delegated, kept while it is not.
+	w = newWorld(t, repoRoot(t))
+	w.env[key] = "true [pids]"
+	w.env["FAKE_DOCKER_OUT_INSPECT__F"] = "true"
+	w.env["FAKE_DOCKER_OUT_INSPECT___FORMAT"] = "@" + without
+	if run := proxyRun(w); run != "" {
+		t.Errorf("a proxy started without --memory was replaced while the controller is still missing:\n%s", run)
+	}
+	w.env[key] = "true [cpu memory pids]"
+	if run := proxyRun(w); !strings.Contains(run, "[--memory] [1g]") {
+		t.Errorf("a proxy started without --memory was kept once the controller is delegated:\n%s", run)
+	}
+	// Docker (no {{.Host}}): the whole confinement, no warning.
+	w = newWorld(t, repoRoot(t))
+	if run := proxyRun(w); !strings.Contains(run, "[--memory] [1g]") || !strings.Contains(run, "[--pids-limit] [512]") || strings.Contains(w.errb.String(), "cgroup controller") {
+		t.Errorf("Docker: %q\n%s", w.errb.String(), run)
+	}
+}
+
+// The proxy (both the agents' networks and the egress one, the provider keys) runs confined (#102):
+// no capability but SETUID and SETGID, no-new-privileges, a read-only root with tmpfs where its
+// entrypoint and squid write, pids and memory limits; never privileged, never a capability more.
+func TestProxyRunsConfined(t *testing.T) {
+	w := newWorld(t, repoRoot(t))
+	if err := w.launcher().ensureProxy(w.proj); err != nil {
+		t.Fatal(err)
+	}
+	var run string
+	for _, c := range w.calls() {
+		if strings.HasPrefix(c, "docker [run]") && strings.Contains(c, "[--name] [lea-proxy]") {
+			run = c
+		}
+	}
+	if run == "" {
+		t.Fatalf("no proxy run:\n%s", strings.Join(w.calls(), "\n"))
+	}
+	for _, want := range []string{
+		"[--cap-drop] [ALL] [--cap-add] [SETUID] [--cap-add] [SETGID]",
+		"[--security-opt] [no-new-privileges]", "[--read-only]",
+		"[--tmpfs] [/run:rw,nosuid,nodev,noexec,size=16m]", "[--tmpfs] [/tmp:rw,nosuid,nodev,noexec,size=64m]",
+		"[--tmpfs] [/var/cache/squid:rw,nosuid,nodev,noexec,size=16m]",
+		"[--pids-limit] [512]", "[--memory] [1g]",
+	} {
+		if !strings.Contains(run, want) {
+			t.Errorf("proxy run lacks %s:\n%s", want, run)
+		}
+	}
+	if n := strings.Count(run, "[--cap-add]"); n != 2 {
+		t.Errorf("proxy run adds %d capabilities, want 2:\n%s", n, run)
+	}
+	for _, no := range []string{"[--privileged]", "[--user]", "seccomp=unconfined", "apparmor=unconfined"} {
+		if strings.Contains(run, no) {
+			t.Errorf("proxy run has %s:\n%s", no, run)
+		}
+	}
+	// The confinement comes before the image: docker would pass it to the entrypoint otherwise.
+	if i, j := strings.Index(run, "[--read-only]"), strings.Index(run, "[lea-proxy:dev]"); i < 0 || j < i {
+		t.Errorf("the confinement is not a docker option:\n%s", run)
+	}
+}
+
+// An older proxy image (no lea.confine label: its entrypoint writes into its root and starts squid
+// as root) runs as before, with a warning; one that cannot be inspected is confined.
+func TestProxyConfinementNeedsAConfinableImage(t *testing.T) {
+	proxyRun := func(w *world) string {
+		t.Helper()
+		if err := w.launcher().ensureProxy(w.proj); err != nil {
+			t.Fatal(err)
+		}
+		for _, c := range w.calls() {
+			if strings.HasPrefix(c, "docker [run]") && strings.Contains(c, "[--name] [lea-proxy]") {
+				return c
+			}
+		}
+		t.Fatalf("no proxy run:\n%s", strings.Join(w.calls(), "\n"))
+		return ""
+	}
+	w := newWorld(t, repoRoot(t))
+	w.env["FAKE_DOCKER_OUT_INSPECT___TYPE_AT_LEA_PROXY_DEV"] = ""
+	if run := proxyRun(w); strings.Contains(run, "[--cap-drop] [ALL]") || strings.Contains(run, "[--read-only]") {
+		t.Errorf("an older image runs confined:\n%s", run)
+	}
+	if !strings.Contains(w.errb.String(), "predates the proxy's confinement") {
+		t.Errorf("no warning: %q", w.errb.String())
+	}
+	if !w.hasCall(`docker [inspect] [--type] [image] [-f] [{{index .Config.Labels "lea.confine"}}] [lea-proxy:dev]`) {
+		t.Errorf("the image label is not read:\n%s", strings.Join(w.calls(), "\n"))
+	}
+	w = newWorld(t, repoRoot(t))
+	w.env["FAKE_DOCKER_RC_INSPECT___TYPE_AT_LEA_PROXY_DEV"] = "1"
+	if run := proxyRun(w); !strings.Contains(run, "[--cap-drop] [ALL]") || !strings.Contains(run, "[--read-only]") {
+		t.Errorf("an image that cannot be inspected runs unconfined:\n%s", run)
+	}
+	if strings.Contains(w.errb.String(), "predates") {
+		t.Errorf("warning for an uninspectable image: %q", w.errb.String())
 	}
 }
 
@@ -844,7 +1000,7 @@ func TestProxyRulesDigest(t *testing.T) {
 // decide alone.
 func TestProxyFollowsItsImage(t *testing.T) {
 	w := newWorld(t, repoRoot(t))
-	stamp := "@" + w.launcher().proxyRules()
+	stamp := "@" + w.launcher().proxyRules(proxyConfine)
 	w.env["FAKE_DOCKER_OUT_INSPECT__F"] = "true"
 	w.env["FAKE_DOCKER_OUT_IMAGE_INSPECT"] = "sha256:new"
 	w.env["FAKE_DOCKER_OUT_INSPECT___FORMAT"] = stamp + "!sha256:new"

@@ -336,7 +336,7 @@ func TestLockHTTPGateFollowsTheHub(t *testing.T) {
 		t.Fatalf("no hub: %v", err)
 	}
 	w.env["FAKE_DOCKER_OUT_INSPECT__F"] = "true"
-	w.env["FAKE_DOCKER_OUT_INSPECT___FORMAT"] = "@" + w.launcher().proxyRules() + "^1"
+	w.env["FAKE_DOCKER_OUT_INSPECT___FORMAT"] = "@" + w.launcher().proxyRules(proxyConfine) + "^1"
 	w.env["FAKE_DOCKER_OUT_INSPECT___TYPE_AT_LEA_PROXY"] = "lea-egress " + pr + "_lockhub "
 	for name, c := range map[string]struct {
 		label   string
@@ -480,7 +480,7 @@ func TestLockHTTPGateLeavesNoOldGateOnTheHubNetwork(t *testing.T) {
 			w, _ := lockHTTPWorld(t)
 			hubUp(t, w, "", "", "")
 			w.env["FAKE_DOCKER_OUT_INSPECT__F"] = "true"
-			w.env["FAKE_DOCKER_OUT_INSPECT___FORMAT"] = "@" + w.launcher().proxyRules() + "^1"
+			w.env["FAKE_DOCKER_OUT_INSPECT___FORMAT"] = "@" + w.launcher().proxyRules(proxyConfine) + "^1"
 			w.env["FAKE_DOCKER_OUT_INSPECT___TYPE_AT_LEA_PROXY"] = c.nets
 			w.env["FAKE_DOCKER_OUT_INSPECT___TYPE"] = "true|2026-10-28T10:00:00Z|\ntrue|2026-10-28T10:00:01Z|" + image + c.label
 			if err := w.launcher().ensureProxy(w.proj); err != nil {
@@ -564,7 +564,7 @@ func TestLockHTTPGateJoinsOnlyBehindAGateThatRefusesTheHub(t *testing.T) {
 	}
 	image := "ghcr.io/davidgodefroid/lockhttp@" + testDigest
 	w.env["FAKE_DOCKER_OUT_INSPECT__F"] = "true"
-	w.env["FAKE_DOCKER_OUT_INSPECT___FORMAT"] = "@" + w.launcher().proxyRules() + "^1"
+	w.env["FAKE_DOCKER_OUT_INSPECT___FORMAT"] = "@" + w.launcher().proxyRules(proxyConfine) + "^1"
 	w.env["FAKE_DOCKER_OUT_INSPECT___TYPE_AT_LEA_PROXY"] = "lea-egress "
 	w.env["FAKE_DOCKER_OUT_INSPECT___TYPE"] = "true|2026-10-28T10:00:00Z|\ntrue|2026-10-28T10:00:01Z|" + image + " hub:" + g.stamp()
 	if err := w.launcher().ensureProxy(w.proj); err != nil {
