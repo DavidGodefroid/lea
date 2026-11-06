@@ -632,10 +632,11 @@ func (m Model) detail(a Agent, width int) string {
 }
 
 // shortStatus is the row's label, or the agent's own task status (task_update) while it works or
-// idles, unpaused, and nothing needs the user. The text is the agent's: fit cleans it with the
+// idles, unpaused, not woken by lea (the user sees why it started), and nothing needs the user.
+// The text is the agent's: fit cleans it with the
 // whole line.
 func (m Model) shortStatus(a Agent) string {
-	if a.Status != "" && !a.Paused && (a.State == "working" || a.State == "idle") && shownState(a) != "limited" && rank(a, m.seen) >= 3 {
+	if a.Status != "" && !a.Paused && (a.State == "working" || a.State == "idle") && shownState(a) != "limited" && !a.Woken && rank(a, m.seen) >= 3 {
 		if st := strings.TrimLeft(a.Status, leaGlyphs); st != "" {
 			return st
 		}

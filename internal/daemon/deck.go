@@ -225,7 +225,13 @@ func (d *Daemon) dispatchDeck(ctx context.Context, o Origin, req wire.Request) (
 		if err := json.Unmarshal(req.Params, &p); err != nil {
 			return nil, err
 		}
-		return ok, a.SetPaused(ctx, p.Key, p.Paused)
+		if err := a.SetPaused(ctx, p.Key, p.Paused); err != nil {
+			return nil, err
+		}
+		if !p.Paused {
+			d.wake(p.Key) // a rewake watch held while it was paused looks again (wake.go)
+		}
+		return ok, nil
 	case "shell_open":
 		var p struct{ Container string }
 		if err := json.Unmarshal(req.Params, &p); err != nil {

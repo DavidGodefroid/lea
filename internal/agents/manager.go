@@ -193,6 +193,8 @@ type Row struct {
 	// LimitUntil: the agent stopped on its provider's usage limit (store.Agent.LimitUntil): lea
 	// resumes it at that time (unix seconds), or -1: it waits for the user.
 	LimitUntil int64 `json:"limit_until,omitempty"`
+	// Woken: lea woke the idle agent for a message in its inbox (store.Agent.Woken).
+	Woken bool `json:"woken,omitempty"`
 }
 
 type Snapshot struct {
@@ -377,7 +379,7 @@ func (m *Manager) snapshot(container string, v int64) (Snapshot, error) {
 func rowOf(a store.Agent) Row {
 	return Row{Key: a.Key, Name: a.Name, Label: a.Label, Profile: a.Profile, Model: a.Model, State: a.State, Workdir: a.Workdir, Updated: a.Updated,
 		Created: a.Created, Role: a.Role, Parent: a.Parent, Repo: a.Repo, Branch: a.Branch, CtxPct: -1, CostUSD: -1, Paused: a.Paused,
-		LimitUntil: a.LimitUntil}
+		LimitUntil: a.LimitUntil, Woken: a.Woken}
 }
 
 func shellRow(container, name string) Row {

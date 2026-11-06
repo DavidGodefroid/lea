@@ -86,6 +86,32 @@ jobs:
           node-version: 22
       - run: npm install -g --ignore-scripts "@openai/codex@$(sed -n 's/^ARG CODEX_VERSION=//p' image/Containerfile)"
       - run: LEA_E2E_CODEX="$(command -v codex)" go test -count=1 -run 'TestCodex(ReachesAnEndpointThroughTheForwarder|IgnoresAPlantedProjectConfig|LockCallOutlivesTheDefaultToolTimeout|PassesTheAgentIdentityToALockServer)' -v ./internal/providers/
+  # lea's seccomp profile (#100) is moby's default, vendored and pinned, with lea's reviewed changes
+  # (image/seccomp/lea.json, each with its reason): the vendored base must be moby's file at the
+  # pinned commit and image/seccomp.json what the generator builds from them. A newer moby default
+  # is only reported: moving the pin is a reviewed change.
+  seccomp:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - name: the vendored base is moby's default at the pinned commit
+        run: |
+          src=$(jq -r .base.source image/seccomp/lea.json)
+          echo "$src" | grep -Eq '^https://raw\.githubusercontent\.com/moby/profiles/[0-9a-f]{40}/seccomp/default\.json$'
+          curl -fsSL --retry 3 -o "$RUNNER_TEMP/pinned.json" "$src"
+          cmp "$RUNNER_TEMP/pinned.json" image/seccomp/moby-default.json
+          [ "$(sha256sum <image/seccomp/moby-default.json | cut -d' ' -f1)" = "$(jq -r .base.sha256 image/seccomp/lea.json)" ]
+      - name: image/seccomp.json is what image/seccomp/generate.py builds
+        run: python3 -I image/seccomp/generate.py --check
+      - name: report a newer moby default (never fails)
+        run: |
+          if curl -fsSL --retry 3 -o "$RUNNER_TEMP/main.json" https://raw.githubusercontent.com/moby/profiles/main/seccomp/default.json \
+            && ! cmp -s "$RUNNER_TEMP/main.json" image/seccomp/moby-default.json; then
+            echo "::notice title=seccomp::moby/profiles main has a newer seccomp/default.json than the pinned one: review it and move the pin in image/seccomp/lea.json"
+          fi
   # The agent-side isolation (tests/integration/isolation.sh, I2/I11): from inside a real lea, no
   # decoy, host port or sibling lea is reachable, .lockfamily is read-only (EROFS) and the hub's
   # facade socket is not visible. The two images come from the GitHub Actions cache when unchanged.
@@ -130,7 +156,12 @@ jobs:
         run: |
           make test-isolation 2>&1 | tee isolation.log
           if grep -E '^FAIL |^note: ' isolation.log; then echo "an isolation check failed or was skipped" >&2; exit 1; fi
-          for c in '.lockfamily write gets EROFS' 'host facade socket not visible' 'no facade socket in the container' 'sibling lea unreachable directly' 'host port unreachable via host IP' 'public HTTPS works through the proxy' 'nested HTTP between containers is direct' 'proxy confined: CapDrop' 'proxy confined: ReadonlyRootfs' 'proxy confined: no root process but PID 1'; do
+          for c in '.lockfamily write gets EROFS' 'host facade socket not visible' 'no facade socket in the container' 'sibling lea unreachable directly' 'host port unreachable via host IP' 'public HTTPS works through the proxy' 'nested HTTP between containers is direct' \
+                   'proxy confined: CapDrop' 'proxy confined: ReadonlyRootfs' 'proxy confined: no root process but PID 1' \
+                   'a nested image builds' 'a nested container reaches the proxy over pasta' 'unprivileged user namespace (rootless Podman needs it)' \
+                   'keyctl refused (seccomp)' 'perf_event_open refused (seccomp)' 'reboot refused (seccomp)' 'vmsplice refused (seccomp)' 'NETLINK_AUDIT socket refused (seccomp)' \
+                   'NETLINK_AUDIT socket with high protocol bits refused (seccomp)' 'AF_ALG socket with high family bits refused (seccomp)' \
+                   'sudo absent' 'no setuid or setgid file'; do
             grep -qxF "ok   $c" isolation.log || { echo "isolation: '$c' did not run" >&2; exit 1; }
           done
   # The same isolation checks with the agent container on a sandboxed runtime (#106, LEA_RUNTIME):
@@ -184,7 +215,7 @@ jobs:
         run: |
           make test-isolation 2>&1 | tee isolation.log
           if grep -E '^FAIL |^note: ' isolation.log; then echo "an isolation check failed or was skipped" >&2; exit 1; fi
-          for c in "lea-test-proxy keeps the engine's default runtime (runc)" 'a nested container runs' 'AF_ALG socket refused (seccomp)' '.lockfamily write gets EROFS' 'host facade socket not visible' 'no facade socket in the container' 'sibling lea unreachable directly' 'host port unreachable via host IP' 'public HTTPS works through the proxy' 'the Claude API answers through the proxy' 'nested HTTP between containers is direct' "lea doctor: $LEA_TEST_RUNTIME applies lea's seccomp profile"; do
+          for c in "lea-test-proxy keeps the engine's default runtime (runc)" 'a nested container runs' 'AF_ALG socket refused (seccomp)' 'NETLINK_AUDIT socket with high protocol bits refused (seccomp)' 'AF_ALG socket with high family bits refused (seccomp)' '.lockfamily write gets EROFS' 'host facade socket not visible' 'no facade socket in the container' 'sibling lea unreachable directly' 'host port unreachable via host IP' 'public HTTPS works through the proxy' 'the Claude API answers through the proxy' 'nested HTTP between containers is direct' "lea doctor: $LEA_TEST_RUNTIME applies lea's seccomp profile"; do
             grep -qxF "ok   $c" isolation.log || { echo "isolation: '$c' did not run" >&2; exit 1; }
           done
           [ "$(grep -c "^ok   lea-test-[0-9a-f]* runs on the $LEA_TEST_RUNTIME runtime\$" isolation.log)" -eq 2 ] || { echo "isolation: the agent containers are not on $LEA_TEST_RUNTIME" >&2; exit 1; }
@@ -283,7 +314,7 @@ jobs:
           grep -q -- '^--- PASS: TestClaudeResumesATruncatedTranscript ' claude-e2e.log
           n=$(grep -c -- '^--- PASS: TestClaude' claude-e2e.log)
           echo "$n Claude e2e tests passed"
-          [ "$n" -eq 8 ]
+          [ "$n" -eq 10 ]
   # The lockmq / lockfile socket wiring (tests/integration/lockhost.sh, phase 0): the lockmq
   # client of the release image/Containerfile pins (sha256-checked) reaches a console's socket
   # through its volume, as lea wires it, with no host account; outsiders and other uids refused.

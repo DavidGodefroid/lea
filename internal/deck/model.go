@@ -57,6 +57,9 @@ type Agent struct {
 	// LimitUntil: the agent stopped on its usage limit; lea resumes it then (unix seconds), or -1:
 	// it waits for the user (agents.Row).
 	LimitUntil int64 `json:"limit_until,omitempty"`
+	// Woken: lea woke the idle agent for a message in its inbox (agents.Row), until that turn
+	// ends or the user types: the user sees why it started.
+	Woken bool `json:"woken,omitempty"`
 }
 
 // shownState is the state a row shows (issue #72): green only when nothing is pending. A live
@@ -938,6 +941,8 @@ func (m Model) label(a Agent) string {
 		return "stopped"
 	case shownState(a) == "limited":
 		return m.limitLabel(a.LimitUntil)
+	case a.Woken && (a.State == "working" || a.State == "idle"):
+		return "woken by lea"
 	case a.State == "working" || a.State == "idle":
 		return shownState(a)
 	}
