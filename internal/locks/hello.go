@@ -89,7 +89,7 @@ func AskHello(dir string, names []string, uid, protocol int, timeout time.Durati
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Socket < out[j].Socket })
 	if len(out) == 0 {
-		return nil, errors.New("no console socket in " + dir + " (does its console run? lox up)")
+		return nil, errors.New("no console socket in " + dir + " (does its console run? lox run)")
 	}
 	return out, nil
 }

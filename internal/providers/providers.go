@@ -86,7 +86,7 @@ type Provider struct {
 
 // Lock is a Lock's MCP server in the lea container: its name (locksql, lockmq, lockfile), the
 // client binary that serves it (`<binary> mcp`) and how long Codex waits on one of its calls.
-// Instance is set when lox up runs several locks of the tool: the server is then
+// Instance is set when lox run runs several locks of the tool: the server is then
 // <name>-<instance>, its client run with --instance <instance>.
 type Lock struct {
 	Name       string
@@ -105,7 +105,7 @@ func (l Lock) Server() string {
 // LockNames are the Locks whose client is in the lea image, in locks.Registry's order.
 var LockNames = locks.Names()
 
-// lockInstanceRe is a lock's instance name (lox up's, lea's launcher's lockUpInstance).
+// lockInstanceRe is a lock's instance name (lox run's, lea's launcher's lockUpInstance).
 var lockInstanceRe = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,62}$`)
 
 // Registry is the built-in providers and the endpoints of the providers file.

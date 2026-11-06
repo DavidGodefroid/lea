@@ -242,10 +242,9 @@ func runDaemon(stderr io.Writer) int {
 		d.DisableHub()
 	} else if sock := hubFacadeSocket(os.Getenv); sock != "" {
 		d.SetHubFacade(daemon.SocketFacade{Path: sock})
-		// The deck's facade key and the lock keys lox up pinned: the deck's Ctrl-O (lockhub#29).
-		d.SetHubKeys(hubFacadeKeys(os.Getenv))
 		go d.RunHubSync(ctx)
-		// The deck shows the hub's pending tickets on their agents and answers them (#158).
+		// Which agent each of the hub's pending tickets waits for (#158, #261): lea answers none,
+		// lox run does (#300).
 		go d.RunHubQueue(ctx)
 	} else {
 		fmt.Fprintln(stderr, "lea daemon: LEA_HUB=1 but no hub facade socket (LEA_HUB_SOCKET, XDG_RUNTIME_DIR): no agent is suspended on a Lock call")
@@ -286,8 +285,6 @@ func runDaemon(stderr io.Writer) int {
 
 		Approvals:       approvalsMode(os.Getenv("LEA_APPROVALS")),
 		ApprovalTimeout: approvalTimeout(os.Getenv("LEA_APPROVAL_TIMEOUT")),
-		LockSpec:        lockSpec(exe),
-		Consoles:        agents.DockerConsoles{},
 
 		Providers:       reg,
 		DefaultProvider: os.Getenv("LEA_PROVIDER"),
@@ -296,8 +293,12 @@ func runDaemon(stderr io.Writer) int {
 		RequesterToken:  requesterToken,
 	})
 	d.SetAgents(m)
-	d.SweepLockRequestsLater()
-	// A lock lox up adds while lea runs: running containers that lack it are told to restart lea.
+	// Whether lox run serves the workspace's decisions (#300): the deck says to run it when not.
+	if w, ok := daemonLoxRun(exe); ok {
+		d.SetLoxRunWatch(w)
+		go d.RunLoxRunWatch(ctx)
+	}
+	// A lock lox run adds while lea runs: running containers that lack it are told to restart lea.
 	if w, ok := daemonLockWatch(exe, agents.Docker{UID: os.Getuid(), GID: os.Getgid()}); ok {
 		d.SetLockWatch(w)
 		go func() {
@@ -582,12 +583,10 @@ func runDeck(args []string, stderr io.Writer) int {
 			layout = deck.FileStore{Path: p}
 		}
 		err = deck.Run(deck.Client{Sock: identity.DaemonSock(os.Getenv)}, args[1], ascii, notice, st, off, layout)
-	case len(args) == 2 && args[0] == "--ticket":
-		err = deck.RunTicket(deck.Client{Sock: identity.DaemonSock(os.Getenv)}, args[1], ascii)
 	case len(args) >= 2 && args[0] == "--thread" && (len(args) == 2 || (len(args) == 3 && args[2] == "--compose")):
 		err = deck.RunThread(deck.Client{Sock: identity.DaemonSock(os.Getenv)}, args[1], len(args) == 3, ascii)
 	default:
-		fmt.Fprintln(stderr, "usage: lea deck --container NAME | --placeholder | --ticket NAME | --thread KEY [--compose]")
+		fmt.Fprintln(stderr, "usage: lea deck --container NAME | --placeholder | --thread KEY [--compose]")
 		return 2
 	}
 	if err != nil {
@@ -919,23 +918,6 @@ func soundFiles(getenv func(string) string) (files map[string]string, on bool) {
 
 // hubFacadeSocket is the Lock Family hub's host facade socket: LEA_HUB_SOCKET, else
 // $XDG_RUNTIME_DIR/lockhub/facade.sock; "" without either.
-// hubFacadeKeys is the directory of the host facades' keys lox up writes (deck.key, locks.json):
-// LEA_HUB_FACADE_KEYS, else $XDG_STATE_HOME/lockfamily/facades ("" when there is no home).
-func hubFacadeKeys(get func(string) string) string {
-	if p := get("LEA_HUB_FACADE_KEYS"); p != "" {
-		return p
-	}
-	st := get("XDG_STATE_HOME")
-	if st == "" {
-		h := get("HOME")
-		if h == "" {
-			return ""
-		}
-		st = filepath.Join(h, ".local", "state")
-	}
-	return filepath.Join(st, "lockfamily", "facades")
-}
-
 func hubFacadeSocket(get func(string) string) string {
 	if p := get("LEA_HUB_SOCKET"); p != "" {
 		return p

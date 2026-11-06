@@ -89,12 +89,12 @@ func (l *Launcher) ensureProxy(proj string) error {
 		if lh, gateImage, err = l.lockHTTPProxyArgs(); err != nil {
 			return err
 		}
-		// lox up's lockhttp lock for this projects directory: the gate asks its hub, and only it.
+		// lox run's lockhttp lock for this projects directory: the gate asks its hub, and only it.
 		if hub, err = l.lockUpGate(proj); err != nil {
 			return l.staleGate(err)
 		}
 		// One gate serves every projects directory of this prefix: it asks the hub of the last one
-		// started under lox up. A switch of whose hub under the agents of another directory would
+		// started under lox run. A switch of whose hub under the agents of another directory would
 		// change how their requests are approved: lea stops, before it changes anything (the
 		// proxy, the gate's inputs, its networks).
 		if err := l.gateSwitchRefused(l.lockHTTPGateName(), proj, proj); err != nil {

@@ -2,7 +2,7 @@
 # LockHTTP (LEA_LOCKHTTP=1): lea doctor's checks of lockhttp's launcher and of the gate container
 # beside the proxy (contract: lockhttp's docs/lea.md, §6). The gate runs from the image the
 # launcher pins, as gate (uid 10003 in the image), hub-attached only, with the socket volume of
-# lox up's lockhttp console (<project>_<lock>-run).
+# lox run's lockhttp console (<project>_<lock>-run).
 
 # LEA_LOCKHTTP_RELEASE: the lockhttp release lea pins, config/locks.lock's (the set lea is tested
 # with), whose gate has every flag lea may pass (hub mode v0.3.0, devices v0.4.0, facade keys
@@ -54,9 +54,9 @@ lea__lockhttp_image() {
 # lea__lockhttp_gate_mounts MOUNTS: bad, ok or none, for the gate's mounts as docker inspect
 # lists them (MOUNTS: one NAMESOURCE>DESTINATION; entry per mount; NAME is empty for a bind mount,
 # else the volume's name, and SOURCE an absolute path). Each entry on its own, never a pattern
-# across entries: lox up's volumes are the console's socket <project>_<lock>-run on /run/lockhttp
+# across entries: lox run's volumes are the console's socket <project>_<lock>-run on /run/lockhttp
 # and the gate's own <project>_<lock>-gate; a console's home (the launcher's lockhttp-home, lox
-# up's <project>_<lock>-home) or an engine's socket is bad; ok needs lox up's socket volume on
+# run's <project>_<lock>-home) or an engine's socket is bad; ok needs lox run's socket volume on
 # /run/lockhttp.
 lea__lockhttp_gate_mounts() {
   _gm_r=none
@@ -112,7 +112,7 @@ lea__doctor_lockhttp() {
       case $(lea__lockhttp_gate_mounts "$_dh_mounts") in
         bad) lea__fail "LockHTTP gate mounts" "the console's home or an engine socket: $_dh_mounts ($_dh_restart)"; _dh_rc=1 ;;
         ok) lea__ok "LockHTTP gate has the console's socket volume only" ;;
-        *) lea__fail "LockHTTP gate mounts" "no socket volume of lox up's lockhttp lock on /run/lockhttp: run \`lox up\`, then $_dh_restart"; _dh_rc=1 ;;
+        *) lea__fail "LockHTTP gate mounts" "no socket volume of lox run's lockhttp lock on /run/lockhttp: run \`lox run\`, then $_dh_restart"; _dh_rc=1 ;;
       esac
       if docker exec "$_dh_g" lockhttp gate --check --listen 127.0.0.1:3130 >/dev/null 2>&1; then lea__ok "LockHTTP gate answers"
       else lea__fail "LockHTTP gate" "does not answer: docker logs $_dh_g ($_dh_restart)"; _dh_rc=1; fi
@@ -148,7 +148,7 @@ lea__doctor_lockhttp() {
   _dh_s=$(lea_data_dir)/lockhttp/status/status.json
   case $(sed -n 's/.*"console"[[:space:]]*:[[:space:]]*"\([a-z]*\)".*/\1/p' "$_dh_s" 2>/dev/null | head -n 1) in
     up) lea__ok "lockhttp console up" ;;
-    down) lea__warn "lockhttp console" "down: agents' requests are refused (E_NO_CONSOLE): run \`lox up\` (lox attach NAME for its terminal)" ;;
+    down) lea__warn "lockhttp console" "down: agents' requests are refused (E_NO_CONSOLE): run \`lox run\` (lox attach NAME for its terminal)" ;;
     *) lea__warn "lockhttp console" "unknown (no gate status yet)" ;;
   esac
   return "$_dh_rc"

@@ -2,7 +2,7 @@
 # lea update's dependencies: the Locks' clients in lea's image come from one set of releases,
 # config/locks.lock (lea#134), which lea's CI bumps as a whole and each lea release ships as it is:
 # updating lea is updating them, together. lea installs, builds and starts no Lock: lox does (the
-# Homebrew tap, lox add, lox up), and lea doctor compares each lock lox runs with lea's client.
+# Homebrew tap, lox add, lox run), and lea doctor compares each lock lox runs with lea's client.
 
 # lea_update_deps ask|all|none: the last step of lea update, run by the installation lea update
 # just installed: it says which set of Lock clients this lea has, and what is lox's to update. It

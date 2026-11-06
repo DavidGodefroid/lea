@@ -521,7 +521,7 @@ func (l *Launcher) runArgs(proj, pip string) ([]string, error) {
 		return nil, err
 	}
 	a = append(a, "--mount", "type=bind,src="+lf+",dst="+lf+",readonly")
-	// A Lock is on when the user's configuration turns it on, or lox up runs a lock of its type
+	// A Lock is on when the user's configuration turns it on, or lox run runs a lock of its type
 	// and the user did not turn it off (Config.toolOn): a lock the user added is meant for the agents.
 	ups := l.lockUpSockets(proj, lf, func(tool string) bool {
 		if key := lockSwitch(tool); key != "" {
@@ -619,9 +619,9 @@ func (l *Launcher) busAttach(proj string) error {
 	return l.run(l.Core, "attach-container", l.Cfg.ContainerName(proj))
 }
 
-// locksqlHint says where the locksql console runs: under lox up only (lea starts none).
+// locksqlHint says where the locksql console runs: under lox run only (lea starts none).
 func (l *Launcher) locksqlHint() {
-	l.logf("locksql console: it runs under lox up only; its queries wait for your approval in lea's deck (hub view) or lox approve, its own questions in lox attach <instance>")
+	l.logf("locksql console: it runs under lox run only; its queries wait for your approval in lox run, in another terminal (outside lea)")
 }
 
 // containerStart is lea_container_start: the run arguments, the start snapshot (lea-sh
@@ -691,7 +691,7 @@ func IsTerminal(x any) bool {
 // when missing. The agents get it read-only, so none rewrites what the locks and the hub trust
 // (the hub plan's I11); a link or a file is refused, as for a Lock's profile directory.
 func lockfamilyDir(proj string) (string, error) {
-	return roDir(proj+"/.lockfamily", "lox up writes there, on the host only")
+	return roDir(proj+"/.lockfamily", "lox run writes there, on the host only")
 }
 
 // roDir makes d when missing and refuses a d that is not a directory of its own; why says who

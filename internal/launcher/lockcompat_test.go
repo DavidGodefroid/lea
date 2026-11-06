@@ -94,7 +94,7 @@ func TestDoctorLockCompatibility(t *testing.T) {
 		"ok    lox " + set.Lox,
 		"ok    lock crm (locksql): runs locksql " + sq.Version + ", the release of lea's locksql client " + sq.Version,
 		"warn  lock events (lockmq): runs lockmq v0.6.0 (its console's handshake), older than lea's lockmq client " + mq.Version +
-			" (same protocol 1): brew upgrade lox, then lox add lockmq events --version " + mq.Version + ", then lox up",
+			" (same protocol 1): brew upgrade lox, then lox add lockmq events --version " + mq.Version + ", then lox run",
 		"FAIL  lock docs (lockfile): incompatible: its console refuses the handshake of lea's lockfile client " + lf.Version +
 			", which speaks protocol 1 (the console speaks protocol 2), so every call of lea's agents is refused: lea update (a lea whose set speaks protocol 2), or lox add lockfile docs --version " + lf.Version,
 	} {
@@ -203,7 +203,7 @@ func TestDoctorFailsOnARefusedHandshake(t *testing.T) {
 	}
 }
 
-// A lock whose socket volume docker does not label as lox up's is never mounted for the probe;
+// A lock whose socket volume docker does not label as lox run's is never mounted for the probe;
 // the dev overrides, an obsolete key and an old lox are warned about.
 func TestDoctorLockCompatibilityWarnings(t *testing.T) {
 	set := shippedSet(t)

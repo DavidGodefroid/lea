@@ -288,7 +288,7 @@ func TestMismatch(t *testing.T) {
 	// A refusal naming no major still fails, with the set's fix.
 	sql := client(t, "locksql")
 	v := Check(sql, Observed{Type: "locksql", Instance: "crm", Hello: &Hello{Refused: true}})
-	if v.Status != Fail || !strings.Contains(v.Detail, "(the console speaks another protocol)") || !strings.HasSuffix(v.Detail, ": lox add locksql crm --version "+sql.Pin.Version+", then lox up") {
+	if v.Status != Fail || !strings.Contains(v.Detail, "(the console speaks another protocol)") || !strings.HasSuffix(v.Detail, ": lox add locksql crm --version "+sql.Pin.Version+", then lox run") {
 		t.Errorf("%+v", v)
 	}
 	// An older protocol: the lock is older, lox brings the newer one.

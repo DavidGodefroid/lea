@@ -176,7 +176,7 @@ func TestContainerStartSequence(t *testing.T) {
 	if _, err := os.Stat(w.hostDir() + "/scan/" + w.id() + ".start"); err != nil {
 		t.Fatalf("no start snapshot: %v", err)
 	}
-	if !strings.Contains(w.errb.String(), "locksql console: it runs under lox up only") {
+	if !strings.Contains(w.errb.String(), "locksql console: it runs under lox run only") {
 		t.Fatalf("stderr %q", w.errb.String())
 	}
 }
@@ -915,8 +915,8 @@ func TestRunArgsLockfamilyDirReadOnly(t *testing.T) {
 	}
 }
 
-// locksql's profile directory is read-only for the agents, with lox up's locksql socket: no agent
-// rewrites the profile lox up reviews (#121). Made when missing; a link or a file is refused.
+// locksql's profile directory is read-only for the agents, with lox run's locksql socket: no agent
+// rewrites the profile lox run reviews (#121). Made when missing; a link or a file is refused.
 func TestRunArgsLocksqlDirReadOnly(t *testing.T) {
 	w := newWorld(t, repoRoot(t))
 	locksqlUp(t, w)

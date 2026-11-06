@@ -58,20 +58,20 @@ setup() {
   [[ "$output" == *"ok    state ssh/known_hosts"* ]]
 }
 
-@test "locksql: lox up's lock is checked with LEA_LOCKSQL=1, never with 0, and no image of lea's" {
+@test "locksql: lox run's lock is checked with LEA_LOCKSQL=1, never with 0, and no image of lea's" {
   export FAKE_DOCKER_RC_VOLUME_INSPECT=1
   run lea_doctor
   [[ "$output" != *"locksql image"* ]]
-  [[ "$output" == *"warn  locksql lock: no socket volume of a locksql lock of lox up for $LEA_PROJECTS_DIR"*"no such lock yet: \`lox add locksql\`"* ]]
+  [[ "$output" == *"warn  locksql lock: no socket volume of a locksql lock of lox run for $LEA_PROJECTS_DIR"*"no such lock yet: \`lox add locksql\`"* ]]
   [[ "$output" != *"locksql-run"* ]]
   grep -qF "docker [volume] [ls] [--filter] [label=dev.lockfamily.role=socket] [--filter] [label=dev.lockfamily.type=locksql] [--filter] [label=dev.lockfamily.workspace=$LEA_PROJECTS_DIR] [--format] [{{.Name}}]" "$FAKE_LOG"
   export FAKE_DOCKER_OUT_VOLUME_LS=lockfamily-1a2b3c4d_crm-run
   run lea_doctor
-  [[ "$output" == *"ok    locksql lock of lox up (socket volume lockfamily-1a2b3c4d_crm-run)"* ]]
+  [[ "$output" == *"ok    locksql lock of lox run (socket volume lockfamily-1a2b3c4d_crm-run)"* ]]
   export FAKE_DOCKER_OUT_VOLUME_LS='lockfamily-1a2b3c4d_a-run
 lockfamily-1a2b3c4d_b-run'
   run lea_doctor
-  [[ "$output" == *"ok    2 locksql locks of lox up (lea's agents reach each on /run/locksql/<instance>)"* ]]
+  [[ "$output" == *"ok    2 locksql locks of lox run (lea's agents reach each on /run/locksql/<instance>)"* ]]
   LEA_LOCKSQL=0 run lea_doctor
   [[ "$output" != *locksql* ]]
 }
@@ -387,4 +387,70 @@ host_minimums() {
   run lea_doctor
   [[ "$output" == *"ok    approval hub facade $LEA_HUB_SOCKET"* ]]
   [[ "$output" != *"warn  approval hub"* ]]
+}
+
+# fake_pgrep RC: a pgrep first on PATH that exits RC (0: a lox run runs, 1: none does).
+fake_pgrep() {
+  mkdir -p "$BATS_TEST_TMPDIR/pbin"
+  printf '#!/bin/sh\nexit %s\n' "$1" >"$BATS_TEST_TMPDIR/pbin/pgrep"
+  chmod +x "$BATS_TEST_TMPDIR/pbin/pgrep"
+  PATH="$BATS_TEST_TMPDIR/pbin:$PATH"
+}
+
+# lox_journal EVENT...: lox run's session journal of the projects directory, events in order.
+lox_journal() {
+  _lj=$XDG_STATE_HOME/lockfamily/lockfamily-$(printf '%s' "$(cd "$P" && pwd -P)" | sha256sum | cut -c1-8)
+  mkdir -p "$_lj"; : >"$_lj/runs.jsonl"
+  for e in "$@"; do printf '{"at":"2026-11-06T10:00:00Z","event":"%s","user":"me"}\n' "$e" >>"$_lj/runs.jsonl"; done
+}
+
+@test "lox: lea doctor checks its version against the lox of config/locks.lock, and runs nothing else of it" {
+  run lea_doctor
+  [[ "$output" == *"ok    lox 0.9.0"* ]]
+  FAKE_LOX_VERSION=0.8.0 run lea_doctor
+  [[ "$output" == *"warn  lox: 0.8.0 is older than 0.9.0, which has lox run: brew upgrade lox"* ]]
+  FAKE_LOX_VERSION=dev run lea_doctor
+  [[ "$output" == *"ok    lox dev (its version is not checked)"* ]]
+  run calls
+  [[ "$output" == *"lox [version]"* ]]
+  [[ "$output" != *"lox [up]"* && "$output" != *"lox [init]"* && "$output" != *"lox [attach]"* && "$output" != *"lox [run]"* ]]
+}
+
+@test "lox run: lea doctor says to run it while the workspace has locks and none serves them" {
+  export XDG_STATE_HOME="$BATS_TEST_TMPDIR/state"
+  # No lock declared: nothing to say of lox run.
+  run lea_doctor
+  [[ "$output" != *"lox run:"* ]]
+  mkdir -p "$P/.lockfamily"; printf 'locks: {}\n' >"$P/.lockfamily/lockfamily.yaml"
+  fake_pgrep 1
+  run lea_doctor
+  [[ "$output" == *"warn  lox run: not serving the locks of $P: their requests wait. Open another terminal (outside lea) and run \`lox run\` to approve the agents' connections and writes."* ]]
+  # Serving: its journal ends with a start (or a mode switch) and its process runs.
+  fake_pgrep 0
+  lox_journal start
+  run lea_doctor
+  [[ "$output" == *"ok    lox run: serves the decisions of $P"* ]]
+  lox_journal start mode
+  run lea_doctor
+  [[ "$output" == *"ok    lox run: serves the decisions of $P"* ]]
+  # Stopped, or killed before its stop (no process): not serving.
+  lox_journal start stop
+  run lea_doctor
+  [[ "$output" == *"warn  lox run: not serving"* ]]
+  fake_pgrep 1
+  lox_journal start
+  run lea_doctor
+  [[ "$output" == *"warn  lox run: not serving"* ]]
+  # Without lox at all, it says how to get it.
+  mkdir -p "$BATS_TEST_TMPDIR/nolox"
+  for f in "$LEA_ROOT"/tests/fakes/*; do [ "$(basename "$f")" = lox ] || ln -s "$f" "$BATS_TEST_TMPDIR/nolox/"; done
+  PATH="$BATS_TEST_TMPDIR/pbin:$BATS_TEST_TMPDIR/nolox:/usr/local/bin:/usr/bin:/bin" run lea_doctor
+  [[ "$output" == *"warn  lox: not found: brew install davidgodefroid/tap/lox, then run \`lox run\` in another terminal (outside lea)"* ]]
+}
+
+@test "LEA_LOX_UP is obsolete: lea doctor says so" {
+  LEA_LOX_UP=1 run lea_doctor
+  [[ "$output" == *"warn  LEA_LOX_UP: obsolete and ignored: lea no longer runs lox up; remove it from your configuration"* ]]
+  run calls
+  [[ "$output" != *"lox [up]"* ]]
 }

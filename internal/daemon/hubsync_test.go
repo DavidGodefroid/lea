@@ -334,16 +334,6 @@ func (stubFacade) Queue(ctx context.Context, since uint64, wait int) ([]HubTicke
 	return nil, since, nil
 }
 
-func (stubFacade) Decide(ctx context.Context, instance, id string, v HubVerdict) error { return nil }
-
-func (stubFacade) Reveal(ctx context.Context, instance, id string, key []byte) ([]byte, error) {
-	return nil, ErrNoHub
-}
-
-func (stubFacade) Renew(ctx context.Context, instance, id string) (HubRenewed, error) {
-	return HubRenewed{}, ErrNoHub
-}
-
 // A cold-suspended agent is not told on its inbox: its wait stays undelivered, and waking it tells
 // it the decision in its resume prompt (#163).
 func TestHubDecisionWaitsForAColdSuspendedAgent(t *testing.T) {

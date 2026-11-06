@@ -6,11 +6,12 @@ setup() {
   locksql_on
 }
 
-@test "lea locksql starts no console: it says the console runs under lox up only" {
+@test "lea locksql starts no console: it says the console runs under lox run only" {
   run lea_locksql </dev/null
   [ "$status" -eq 0 ]
-  [[ "$output" == *"locksql console: it runs under lox up only: no such lock yet: \`lox add locksql\`"*"allowed_uids: [$(id -u)]"* ]]
-  [[ "$output" == *"lox attach NAME"*"lea lock open locksql"*"hub view"*"lox approve"* ]]
+  [[ "$output" == *"locksql console: it runs under lox run only: no such lock yet: \`lox add locksql\`"*"allowed_uids: [$(id -u)]"* ]]
+  [[ "$output" == *"each query of an agent, and the console's own questions: lox run, in another terminal (outside lea)"* ]]
+  [[ "$output" != *"lea lock"* && "$output" != *"hub view"* ]]
   run calls
   [[ "$output" != *"docker"* ]]
 }
@@ -20,7 +21,7 @@ setup() {
     # shellcheck disable=SC2086
     run lea_locksql $a </dev/null
     [ "$status" -ne 0 ]
-    [[ "$output" == *"usage: lea locksql (lea never starts the console: lox up does"* ]]
+    [[ "$output" == *"usage: lea locksql (lea never starts the console: lox run does"* ]]
   done
   run calls
   [[ "$output" != *"docker"* ]]
