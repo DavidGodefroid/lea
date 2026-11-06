@@ -155,12 +155,17 @@ if [ "$got" = "$default_runtime" ]; then echo "ok   lea-test-proxy keeps the eng
 else echo "FAIL lea-test-proxy runs on the $got runtime, not the engine's default $default_runtime" >&2; exit 1; fi
 # Positive control: the sibling's listener answers from inside the sibling.
 i=0
-until LEA_PROJECTS_DIR="$sibling" "$root/bin/lea" shell -- curl -s -o /dev/null --max-time 2 --noproxy '*' "http://$sibling_ip:8765/" >/dev/null 2>&1; do
+until LEA_PROJECTS_DIR="$sibling" timeout 120 "$root/bin/lea" shell -- curl -s -o /dev/null --max-time 2 --noproxy '*' "http://$sibling_ip:8765/" >/dev/null 2>&1; do
   i=$((i + 1))
-  if [ "$i" -ge 30 ]; then echo "isolation: the sibling's listener does not answer (positive control failed)" >&2; exit 1; fi
+  if [ "$i" -ge 30 ]; then
+    echo "isolation: the sibling's listener does not answer (positive control failed)" >&2
+    for l in "$projects.log" "$sibling.log"; do [ ! -f "$l" ] || { echo "--- output of lea ($l):" >&2; tail -40 "$l" >&2; }; done
+    exit 1
+  fi
   sleep 1
 done
 rc=0
-LEA_PROJECTS_DIR="$projects" "$root/bin/lea" shell -- env CANARY_IP="$canary_ip" GW_IP="$gw_ip" HOST_IP="$host_ip" \
+echo "isolation: the checks inside lea"
+LEA_PROJECTS_DIR="$projects" timeout 900 "$root/bin/lea" shell -- env CANARY_IP="$canary_ip" GW_IP="$gw_ip" HOST_IP="$host_ip" \
   SIBLING_IP="$sibling_ip" HOST_KERNEL="$(uname -r)" SECOND_KERNEL="${runtime:+1}" HOST_FACADE="$facade" HOST_CRED_SHA="$cred_sha" HOST_HIST_SHA="$hist_sha" sh "$projects/inside-isolation.sh" || rc=$?
 exit "$rc"
