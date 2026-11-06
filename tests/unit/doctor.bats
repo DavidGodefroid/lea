@@ -448,6 +448,29 @@ host_minimums() {
   [[ "$output" != *"warn  approval hub"* ]]
 }
 
+@test "managed settings: lea's hooks confirmed in the image and in each running lea container (#111)" {
+  export FAKE_DOCKER_OUT_RUN___RM="lea's hooks in /etc/claude-code/managed-settings.json, Claude Code 2.1.296"
+  export FAKE_DOCKER_OUT_PS___FILTER=lea-abc
+  export FAKE_DOCKER_OUT_EXEC__U="lea's hooks in /etc/claude-code/managed-settings.json, Claude Code 2.1.296"
+  run lea_doctor
+  [[ "$output" == *"ok    managed settings (image): lea's hooks in /etc/claude-code/managed-settings.json, Claude Code 2.1.296"* ]]
+  [[ "$output" == *"ok    lea-abc managed settings: lea's hooks in"* ]]
+  grep -q -- '\[run\] \[--rm\] \[--pull\] \[never\] \[--network\] \[none\] \[--entrypoint\] \[/usr/local/libexec/lea/managed-check\]' "$FAKE_LOG"
+  grep -q -- "\[exec\] \[-u\] \[$(id -u):$(id -g)\] \[lea-abc\] \[/usr/local/libexec/lea/managed-check\]" "$FAKE_LOG"
+}
+
+@test "managed settings: a check that fails or cannot run is a failure (fails closed, #111)" {
+  export FAKE_DOCKER_RC_RUN___RM=1 FAKE_DOCKER_OUT_RUN___RM="Claude Code 2.1.400 is not 2.1.296, the version lea verified its managed settings with"
+  run lea_doctor
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"FAIL  managed settings (image): Claude Code 2.1.400 is not 2.1.296"*"run lea update"* ]]
+  unset FAKE_DOCKER_RC_RUN___RM FAKE_DOCKER_OUT_RUN___RM
+  export FAKE_DOCKER_OUT_PS___FILTER=lea-abc FAKE_DOCKER_RC_EXEC__U=126
+  run lea_doctor
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"FAIL  lea-abc managed settings: the check did not run: restart it (lea stop, then lea) on the current image"* ]]
+}
+
 @test "doctor lists the credentials an agent can read, by path, never their value (#103)" {
   run lea_doctor
   [[ "$output" == *"ok    agent-readable credentials: none"* ]]

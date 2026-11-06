@@ -74,6 +74,34 @@ if [ "${LEA_LOCKHTTP_MITM:-0}" = 1 ]; then
   install -m 0644 /etc/lea/lockhttp-ca.pem /etc/pki/ca-trust/source/anchors/lea-lockhttp.pem
   update-ca-trust extract
 fi
+# The permission rules are the managed settings' only (allowManagedPermissionRulesOnly, #111):
+# an agent's own ~/.claude/settings.json or a project's .claude/settings*.json cannot widen them.
+# The host's own rules join lea's here, from the host's ~/.claude/settings.json as the launcher
+# read it (read-only, never the container's copy): strings only, and a default mode other than
+# bypassPermissions. Each start begins again from the image's file (a restart adds nothing twice);
+# a file jq cannot merge leaves lea's rules alone.
+m=/etc/claude-code/managed-settings.json
+mb=/usr/local/share/lea/managed-settings.json
+hp=/etc/lea/claude-permissions.json
+[ ! -f "$mb" ] || cp "$mb" "$m"
+if [ -f "$hp" ] && [ ! -L "$hp" ]; then
+  if jq --slurpfile h "$hp" '
+      def strs: if type == "array" then map(select(type == "string" and length > 0 and length <= 1024))[:1000] else [] end;
+      (if ($h[0] | type) == "object" then $h[0] else {} end) as $p
+      | .permissions.allow = ((.permissions.allow // []) + ($p.allow | strs))
+      | .permissions.ask = ((.permissions.ask // []) + ($p.ask | strs))
+      | .permissions.deny = ((.permissions.deny // []) + ($p.deny | strs))
+      | .permissions.additionalDirectories = ((.permissions.additionalDirectories // []) + ($p.additionalDirectories | strs))
+      | if ["default", "acceptEdits", "plan", "dontAsk", "auto"] | index([$p.defaultMode]) then .permissions.defaultMode = $p.defaultMode else . end
+      | .allowManagedPermissionRulesOnly = true
+      | .permissions.disableBypassPermissionsMode = "disable"' "$m" >"$m.new"; then
+    chmod 0644 "$m.new"
+    mv "$m.new" "$m"
+  else
+    rm -f "$m.new"
+    echo "lea: $hp: the host's permission rules could not be read; lea's own apply" >&2
+  fi
+fi
 if [ "${LEA_LOCKHTTP:-0}" = 1 ]; then
   # LockHTTP decides every request the agents make; claude.ai's connectors would act from
   # Anthropic's side, out of its sight: off (decision D10; WebSearch and WebFetch stay).
@@ -82,6 +110,12 @@ if [ "${LEA_LOCKHTTP:-0}" = 1 ]; then
   chmod 0644 "$m.new"
   mv "$m.new" "$m"
 fi
+# lea's managed settings (its hooks, #111) are root's: the agents' user can rewrite its own
+# ~/.claude/settings.json, never these, and no drop-in directory may add to them.
+chown -R 0:0 /etc/claude-code
+chmod 0755 /etc/claude-code
+chmod 0644 /etc/claude-code/managed-settings.json
+rm -rf /etc/claude-code/managed-settings.d
 # Each git SSH endpoint goes to its forwarder on the proxy (port 2222 + its index), by IP so that
 # nested containers (GIT_SSH_COMMAND -F /run/lea/ssh_config) reach it too.
 {

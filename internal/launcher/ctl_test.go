@@ -109,12 +109,12 @@ func TestCtlClaudeMounts(t *testing.T) {
 	if fi, err := os.Stat(w2.home + "/.claude"); err != nil || fi.Mode().Perm() != 0o700 {
 		t.Fatalf("~/.claude: %v %v", fi, err)
 	}
-	// Made on the host: the agent's transcripts dir and the plugins' data mount point (lea-ctl
-	// sees plugins read-only).
-	for _, d := range []string{c + "/projects/" + slug, c + "/plugins/data"} {
-		if !isDir(d) {
-			t.Errorf("%s not created", d)
-		}
+	// Made on the host: the agent's transcripts dir only; nothing in the host's plugins (#111).
+	if !isDir(c + "/projects/" + slug) {
+		t.Errorf("%s not created", c+"/projects/"+slug)
+	}
+	if exists(c + "/plugins/data") {
+		t.Errorf("lea-ctl made %s on the host", c+"/plugins/data")
 	}
 	// What lea-ctl sees is in a label: a change on the host restarts it.
 	label := ""

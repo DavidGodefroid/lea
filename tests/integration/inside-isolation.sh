@@ -142,17 +142,44 @@ mustnt "host ~/.ssh absent"                     test -e "$HOME/.ssh"
 mustnt "host ~/.docker absent"                  test -e "$HOME/.docker"
 mustnt "host ~/.config/glab-cli absent"         test -e "$HOME/.config/glab-cli"
 mustnt "host kubeconfig absent"                 test -e "$HOME/.kube/config"
-if [ -e "$HOME/.claude/settings.json" ]; then
-  mustnt "settings.json is read-only"           touch "$HOME/.claude/settings.json"
+# settings.json and plugins are this container's own copies of the host's (#111): writable, so
+# /permissions, /plugin install and the marketplaces' auto-update work; the host's are never
+# mounted (isolation.sh checks they are byte-identical afterwards). lea's hooks are in the
+# managed settings, root's.
+c=$HOME/.claude
+mustnt "no host bind on ~/.claude/settings.json"  grep -q " $c/settings.json " /proc/self/mountinfo
+mustnt "no host bind on ~/.claude/plugins"        grep -q " $c/plugins " /proc/self/mountinfo
+if [ -n "${HOST_SETTINGS_SHA:-}" ]; then
+  must   "settings.json is a copy of the host's" test "$(sha_of "$c/settings.json")" = "$HOST_SETTINGS_SHA"
 fi
-if [ -d "$HOME/.claude/plugins" ]; then
-  mustnt "plugins are read-only"                touch "$HOME/.claude/plugins/.lea-write-test"
-  if [ -e "$HOME/.claude/plugins/installed_plugins.json" ]; then
-    mustnt "installed_plugins.json is read-only" touch "$HOME/.claude/plugins/installed_plugins.json"
-  fi
-  # Claude Code mkdirs each plugin's CLAUDE_PLUGIN_DATA here before running its hooks (#90).
-  must   "plugins/data is writable"             sh -c 'mkdir -p "$HOME/.claude/plugins/data/lea-inline" && touch "$HOME/.claude/plugins/data/lea-inline/.lea-write-test"'
+# What /permissions does: a rule in the user settings, written by a rename next to the file.
+must   "/permissions adds a rule"                sh -c 'f=$1/settings.json; { [ -f "$f" ] || echo "{}" >"$f"; } &&
+  jq ".permissions.allow += [\"Bash(lea-isolation *)\"]" "$f" >"$f.new" && mv "$f.new" "$f" &&
+  jq -e ".permissions.allow | index(\"Bash(lea-isolation *)\")" "$f"' sh "$c"
+must   "plugins/data is writable"                sh -c 'mkdir -p "$1/plugins/data/lea-inline" && touch "$1/plugins/data/lea-inline/.lea-write-test"' sh "$c"
+if [ -n "${LEA_IT_MARKET:-}" ]; then
+  # A local marketplace (a directory of the projects dir): added, its plugin installed and
+  # enabled, the marketplace updated as the auto-update does.
+  must   "/plugin marketplace add works"         claude plugin marketplace add "$LEA_IT_MARKET"
+  must   "/plugin install works"                 claude plugin install lea-it@lea-it-market
+  must   "the installed plugin is enabled"       sh -c 'claude plugin list 2>&1 | grep -A4 "lea-it@lea-it-market" | grep -q enabled'
+  must   "the installed plugin is recorded"      jq -e '.plugins["lea-it@lea-it-market"]' "$c/plugins/installed_plugins.json"
+  must   "marketplace update works"              claude plugin marketplace update lea-it-market
 fi
+m=/etc/claude-code/managed-settings.json
+must   "managed settings carry lea's hooks"      /usr/local/libexec/lea/managed-check
+# The permission rules are the managed ones only (#111): the host's joined lea's at start, and
+# what the agents write into their copy (the /permissions check above) is not among them.
+must   "permission rules are managed only"        jq -e '.allowManagedPermissionRulesOnly == true and .permissions.disableBypassPermissionsMode == "disable"' "$m"
+if [ -n "${HOST_ALLOW_RULE:-}" ]; then
+  must "the host's permission rules are managed"  jq -e --arg r "$HOST_ALLOW_RULE" '.permissions.allow | index($r)' "$m"
+fi
+mustnt "an agent's rule is not managed"           jq -e '.permissions.allow | index("Bash(lea-isolation *)")' "$m"
+mustnt "the host's rules are not writable"        sh -c 'echo "{}" >/etc/lea/claude-permissions.json'
+must   "managed settings are root's"             test "$(stat -c %u "$m")" = 0
+mustnt "managed settings are not writable"       touch "$m"
+mustnt "managed settings cannot be replaced"     sh -c 'echo "{}" >"$1.new" && mv "$1.new" "$1"' sh "$m"
+mustnt "no managed-settings.d drop-in"           mkdir /etc/claude-code/managed-settings.d
 if [ -n "${HOST_CRED_SHA:-}" ]; then
   mustnt "host Claude credentials not visible"  test "$(sha_of "$HOME/.claude/.credentials.json")" = "$HOST_CRED_SHA"
 fi
