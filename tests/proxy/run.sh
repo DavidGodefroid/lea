@@ -117,7 +117,9 @@ fwd "forge: another port of the proxy's refused" 400 "" -- -H Host:lea-proxy:312
 # Another host (a redirect gh follows: job logs at *.blob.core.windows.net) goes to that host,
 # without the token, under the egress rules: never to github.com.
 fwd "forge: another host goes to that host"      502 "" -- -H Host:public.test -H "Authorization: token placeholder" "$fg/actions-results/x?sig=sas-not-logged"
-fwd "forge: another host follows the allowlist"  403 "" -- -H Host:x.blob.core.windows.net "http://198.51.100.3:4401/actions-results/x"
+# The egress rules apply to it: squid refuses a DoH resolver (403), here on the open proxy (the
+# other test proxies' client network is their default route, which the forwarder refuses).
+fwd "forge: another host follows the egress rules" 403 "" -- -H Host:dns.google "$fg/actions-results/x"
 fwd "forge: git at the proxy's address is github.com" 502 "" -- -H Host:198.51.100.2:4401 "$fg/o/r.git/info/refs"
 fwd "forge: '..' path refused"                   400 "" -- --path-as-is -H Host:api.github.com "$fg/repos/../user"
 # api.github.com resolves to a plain web server here: the forwarder's TLS to it fails (502).
@@ -128,7 +130,7 @@ if [ "$got" = "403" ]; then echo "ok   forge forwarder refuses the egress networ
 if dc logs proxy 2>&1 | grep -q 'forge api.github.com "GET" "/user" 502'; then echo "ok   forge: the forwarder logs host, method, path and status"
 else echo "FAIL forge: no log line of the forwarded call"; fail=1; fi
 for l in 'proxy forge public.test "GET" "/actions-results/x" 502' 'proxy forge github.com "GET" "/o/r.git/info/refs" 502' \
-         'proxy-allow forge x.blob.core.windows.net "GET" "/actions-results/x" 403'; do
+         'proxy forge dns.google "GET" "/actions-results/x" 403'; do
   if dc logs "${l%% *}" 2>&1 | grep -qF -- "${l#* }"; then echo "ok   forge: log line ${l#* }"
   else echo "FAIL forge: no log line ${l#* } in ${l%% *}:"; dc logs "${l%% *}" 2>&1 | grep 'forge ' | tail -n 20; fail=1; fi
 done
