@@ -978,8 +978,10 @@ The runtime is installed and registered with dockerd first (lea installs nothing
 then set the key (`~/.config/lea/lea.conf`) and restart lea's containers (`lea stop --all`, then
 `lea`). An unknown runtime refuses the start and names those the engine knows; a running
 container left on another runtime gets a warning; `lea doctor` shows `LEA_RUNTIME`, whether the
-engine knows it, and the runtime of each running lea container (`docker inspect -f
-'{{.HostConfig.Runtime}}' <container>` shows it too). `tests/integration/install-runtime.sh runsc`
+engine knows it, the runtime of each running lea container (`docker inspect -f
+'{{.HostConfig.Runtime}}' <container>` shows it too), and warns when the runtime would leave lea's
+seccomp profile out (a runsc registration without `--oci-seccomp`, a Kata `configuration.toml`
+without `disable_guest_seccomp = false`). `tests/integration/install-runtime.sh runsc`
 (or `kata`) does the installation the way lea's CI does (sudo, pinned releases checked against
 digests pinned in the script: gVisor's sha512 for release-20261102.0 on x86_64 and aarch64
 (`GVISOR_SHA512` required for any other release or architecture), Kata's sha256 for 4.3.1 on

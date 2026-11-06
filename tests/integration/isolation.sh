@@ -147,6 +147,13 @@ done
 got=$(docker container inspect -f '{{.HostConfig.Runtime}}' lea-test-proxy)
 if [ "$got" = "$default_runtime" ]; then echo "ok   lea-test-proxy keeps the engine's default runtime ($got)"
 else echo "FAIL lea-test-proxy runs on the $got runtime, not the engine's default $default_runtime" >&2; exit 1; fi
+# On a sandboxed runtime, lea doctor confirms it applies lea's seccomp profile (--oci-seccomp for
+# runsc, disable_guest_seccomp = false for Kata): the AF_ALG refusal checked inside depends on it.
+if [ -n "$runtime" ]; then
+  doc=$(LEA_PROJECTS_DIR="$projects" timeout 120 "$root/bin/lea" doctor 2>&1 || true)
+  if printf '%s\n' "$doc" | grep -q "^ok    $runtime seccomp: "; then echo "ok   lea doctor: $runtime applies lea's seccomp profile"
+  else echo "FAIL lea doctor does not confirm that $runtime applies lea's seccomp profile:" >&2; printf '%s\n' "$doc" | grep -E 'runtime|seccomp' >&2; exit 1; fi
+fi
 # Positive control: the sibling's listener answers from inside the sibling.
 i=0
 until LEA_PROJECTS_DIR="$sibling" timeout 30 "$root/bin/lea" shell -- curl -s -o /dev/null --max-time 2 --noproxy '*' "http://$sibling_ip:8765/" >/dev/null 2>&1; do
