@@ -149,11 +149,13 @@ if [ "$got" = "$default_runtime" ]; then echo "ok   lea-test-proxy keeps the eng
 else echo "FAIL lea-test-proxy runs on the $got runtime, not the engine's default $default_runtime" >&2; exit 1; fi
 # Positive control: the sibling's listener answers from inside the sibling.
 i=0
-until LEA_PROJECTS_DIR="$sibling" timeout 120 "$root/bin/lea" shell -- curl -s -o /dev/null --max-time 2 --noproxy '*' "http://$sibling_ip:8765/" >/dev/null 2>&1; do
+until LEA_PROJECTS_DIR="$sibling" timeout 30 "$root/bin/lea" shell -- curl -s -o /dev/null --max-time 2 --noproxy '*' "http://$sibling_ip:8765/" >/dev/null 2>&1; do
   i=$((i + 1))
-  if [ "$i" -ge 30 ]; then
+  if [ "$i" -ge 20 ]; then
     echo "isolation: the sibling's listener does not answer (positive control failed)" >&2
     for l in "$projects.log" "$sibling.log"; do [ ! -f "$l" ] || { echo "--- output of lea ($l):" >&2; tail -40 "$l" >&2; }; done
+    echo "--- docker exec in lea-test-$sid, bypassing lea shell:" >&2
+    timeout 30 docker exec "lea-test-$sid" sh -c "ps -eo pid,args | head -30; curl -s -o /dev/null -w 'HTTP %{http_code}\n' --max-time 5 --noproxy '*' http://$sibling_ip:8765/" >&2 || echo "docker exec: $?" >&2
     exit 1
   fi
   sleep 1
