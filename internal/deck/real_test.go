@@ -107,7 +107,7 @@ func startRealDeckEnv(t *testing.T, mode string, env ...string) *realDeck {
 	t.Setenv("TMUX_TMPDIR", dir)
 	t.Setenv("TERM", "xterm-256color")
 	conf := filepath.Join(dir, "tmux.conf")
-	if err := tmux.WriteConf(conf); err != nil {
+	if err := tmux.WriteConf(conf, ""); err != nil {
 		t.Fatal(err)
 	}
 	tm := func(args ...string) string {

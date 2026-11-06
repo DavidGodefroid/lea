@@ -196,11 +196,12 @@ func TestSocketPathAndItsLimit(t *testing.T) {
 func TestWriteConf(t *testing.T) {
 	dir := t.TempDir()
 	p := filepath.Join(dir, "tmux.conf")
-	if err := WriteConf(p); err != nil {
+	bin := filepath.Join(dir, "bin", "tmux") // lea's tmux, absolute: no lookup in PATH
+	if err := WriteConf(p, bin); err != nil {
 		t.Fatal(err)
 	}
 	b, err := os.ReadFile(p)
-	if err != nil || string(b) != Conf() {
+	if want, _ := ConfFor(bin); err != nil || string(b) != want {
 		t.Fatalf("content mismatch: %v", err)
 	}
 	if fi, _ := os.Stat(p); fi.Mode().Perm() != 0o600 {
@@ -233,7 +234,7 @@ func TestWriteConf(t *testing.T) {
 	}
 	link := filepath.Join(dir, "link.conf")
 	os.Symlink(filepath.Join(dir, "elsewhere"), link)
-	if err := WriteConf(link); err == nil {
+	if err := WriteConf(link, bin); err == nil {
 		t.Fatal("wrote through a symlink")
 	}
 }

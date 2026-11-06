@@ -28,7 +28,7 @@ func realServer(t *testing.T) Server {
 	t.Cleanup(func() { os.RemoveAll(dir) })
 	t.Setenv("TMUX_TMPDIR", dir)
 	conf := filepath.Join(dir, "tmux.conf")
-	if err := WriteConf(conf); err != nil {
+	if err := WriteConf(conf, ""); err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { exec.Command("tmux", "-L", "lea-test", "kill-server").Run() })
@@ -276,6 +276,100 @@ func TestRealDraggingTheBorderResizesAndStoresTheDeckWidth(t *testing.T) {
 	waitFor(t, "the width clamped to 24", func() bool { return width() == "24" && stored() == "24" })
 	drag(25, 150)
 	waitFor(t, "the width clamped to 60", func() bool { return width() == "60" && stored() == "60" })
+}
+
+// The drag's release and the window-resized hook run lea's tmux by its absolute path (#275): with
+// lea's tmux outside the server's PATH (a host without tmux, or with one too old, runs lea's own
+// static build through LEA_TMUX_BIN), releasing a drag still stores the width and a terminal
+// resize still keeps it. lea's tmux here is the test's, reached through a directory whose name
+// holds a space; the server runs with a PATH that holds no tmux.
+func TestRealConfRunsLeasTmuxWithoutTmuxInPATH(t *testing.T) {
+	sys, err := exec.LookPath("tmux")
+	if err != nil {
+		t.Skip("tmux is not installed: make go-test-tmux runs this test")
+	}
+	if _, err := exec.LookPath("script"); err != nil {
+		t.Skip("script is not installed")
+	}
+	dir, err := os.MkdirTemp("", "lp")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.RemoveAll(dir) })
+	bin := filepath.Join(dir, "lea tmux", "tmux")
+	if err := os.MkdirAll(filepath.Dir(bin), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(sys, bin); err != nil {
+		t.Fatal(err)
+	}
+	conf := filepath.Join(dir, "tmux.conf")
+	if err := WriteConf(conf, bin); err != nil {
+		t.Fatal(err)
+	}
+	empty := filepath.Join(dir, "empty")
+	if err := os.Mkdir(empty, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	// The server's environment, and so its run-shell's: no tmux in PATH.
+	env := []string{"PATH=" + empty, "TMUX_TMPDIR=" + dir, "HOME=" + dir, "TERM=xterm-256color"}
+	tm := func(args ...string) string {
+		t.Helper()
+		c := exec.Command(bin, append([]string{"-L", "lea-nopath", "-f", conf}, args...)...)
+		c.Env = env
+		out, err := c.CombinedOutput()
+		if err != nil {
+			t.Fatalf("%v: %v: %s", args, err, out)
+		}
+		return strings.TrimSpace(string(out))
+	}
+	t.Cleanup(func() {
+		c := exec.Command(bin, "-L", "lea-nopath", "kill-server")
+		c.Env = env
+		c.Run()
+	})
+	tm("new-session", "-d", "-s", "lea-p", "-n", "main", "-x", "200", "-y", "50", "/bin/sleep", "600")
+	tm("split-window", "-h", "-t", "=lea-p:main", "/bin/sleep", "600")
+	tm("set-option", "-w", "-t", "=lea-p:main", "@lea_deck", "1")
+	tm("resize-pane", "-t", "=lea-p:main.0", "-x", "34")
+	if got := tm("show-environment", "-g", "PATH"); got != "PATH="+empty {
+		t.Fatalf("the server's PATH is %q, want %q", got, "PATH="+empty)
+	}
+	in, w, err := os.Pipe() // keeps the terminal's input open
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer w.Close()
+	att := exec.Command("script", "-qfc", "stty cols 200 rows 50; exec "+Quote(bin)+" -L lea-nopath -f "+Quote(conf)+" attach-session -t =lea-p", "/dev/null")
+	att.Stdin = in
+	att.Stdout, att.Stderr = io.Discard, io.Discard
+	att.Env = append(os.Environ(), "TERM=xterm-256color", "SHELL=/bin/sh", "TMUX_TMPDIR="+dir)
+	if err := att.Start(); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { att.Process.Kill(); att.Wait() })
+	waitFor(t, "the user's terminal to attach", func() bool {
+		c := exec.Command(bin, "-L", "lea-nopath", "list-clients", "-t", "=lea-p", "-F", "#{client_control_mode}")
+		c.Env = env
+		out, err := c.Output()
+		return err == nil && strings.Contains(string(out), "0")
+	})
+	width := func() string { return tm("display-message", "-p", "-t", "=lea-p:main.0", "#{pane_width}") }
+	stored := func() string { return tm("show-options", "-s", "-v", "@lea_deck_width") }
+	// A left-button press on the border at column 35, a drag to 45, the release.
+	fmt.Fprintf(w, "\x1b[<0;35;10M")
+	time.Sleep(200 * time.Millisecond)
+	fmt.Fprintf(w, "\x1b[<32;45;10M")
+	time.Sleep(200 * time.Millisecond)
+	fmt.Fprintf(w, "\x1b[<0;45;10m")
+	waitFor(t, "the dragged width", func() bool { return width() == "44" })
+	waitFor(t, "the released width stored by lea's tmux", func() bool { return stored() == "44" })
+	// A terminal resize spreads the window over both panes; the hook, run by lea's tmux, puts the
+	// deck back to the stored width.
+	tm("resize-window", "-t", "=lea-p:main", "-x", "160", "-y", "50")
+	waitFor(t, "the deck kept at 44 after a resize", func() bool { return width() == "44" })
+	tm("resize-window", "-t", "=lea-p:main", "-x", "220", "-y", "50")
+	waitFor(t, "the deck kept at 44 after another resize", func() bool { return width() == "44" })
 }
 
 // An agent reattached at the size it already had gets no SIGWINCH and does not repaint. The

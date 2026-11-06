@@ -4,6 +4,7 @@ import (
 	_ "embed"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -84,13 +85,66 @@ func perKey(c string) string {
 	return b.String()
 }
 
-// Conf is lea's tmux configuration.
-func Conf() string { return conf }
+// confBin is the placeholder of the tmux binary the configuration's run-shell commands run.
+const confBin = "@TMUX_BIN@"
 
-// WriteConf writes Conf to path, mode 0600, through a temporary file; a symlink at path is refused.
-func WriteConf(path string) error {
+// ConfBin is the absolute path of the tmux binary bin names, as the configuration runs it: bin
+// itself when it holds a slash, else (bin, or "tmux" when empty) looked up in PATH. The
+// configuration's run-shell commands (a border drag's release, the window-resized hook) run it,
+// so that they run the tmux lea runs (LEA_TMUX_BIN: possibly lea's own static build) and not
+// whatever tmux the shell's PATH holds, or none. A path the configuration cannot quote (a quote,
+// a backslash, $, `, # or a control character) is refused.
+func ConfBin(bin string) (string, error) {
+	if bin == "" {
+		bin = "tmux"
+	}
+	if !strings.Contains(bin, "/") {
+		p, err := exec.LookPath(bin)
+		if err != nil {
+			return "", fmt.Errorf("tmux for the configuration: %w", err)
+		}
+		bin = p
+	}
+	abs, err := filepath.Abs(bin)
+	if err != nil {
+		return "", err
+	}
+	for _, r := range abs {
+		if r < 0x20 || r == 0x7f || strings.ContainsRune("'\"\\$`#", r) {
+			return "", fmt.Errorf("tmux path %q holds a character lea's tmux configuration cannot quote", abs)
+		}
+	}
+	return abs, nil
+}
+
+// ConfFor is lea's tmux configuration for the tmux binary bin (see ConfBin).
+func ConfFor(bin string) (string, error) {
+	abs, err := ConfBin(bin)
+	if err != nil {
+		return "", err
+	}
+	return strings.ReplaceAll(conf, confBin, abs), nil
+}
+
+// Conf is lea's tmux configuration for the tmux in PATH ("tmux" itself when there is none): the
+// tests' configuration. lea writes ConfFor its own tmux (WriteConf).
+func Conf() string {
+	c, err := ConfFor("")
+	if err != nil {
+		return strings.ReplaceAll(conf, confBin, "tmux")
+	}
+	return c
+}
+
+// WriteConf writes ConfFor(bin) to path, mode 0600, through a temporary file; a symlink at path
+// is refused.
+func WriteConf(path, bin string) error {
 	if fi, err := os.Lstat(path); err == nil && fi.Mode()&os.ModeSymlink != 0 {
 		return fmt.Errorf("%s is a symlink, refused", path)
+	}
+	conf, err := ConfFor(bin)
+	if err != nil {
+		return err
 	}
 	f, err := os.CreateTemp(filepath.Dir(path), ".tmux.conf.*")
 	if err != nil {
