@@ -10,9 +10,10 @@ import (
 // cells is s without its colours.
 func cells(s string) string { return sgr.ReplaceAllString(s, "") }
 
-// An agent in a folder is shifted right under its folder's row, its detail line too; a root agent
-// is not. Every row keeps the deck's width, in ASCII and at narrow widths alike: the name is
-// truncated, down to nothing at the narrowest deck.
+// An agent in a folder is shifted right under its folder's header, its detail line too, with no
+// guide glyph: the indentation alone shows the belonging (#295); a root agent is not shifted.
+// Every row keeps the deck's width, in ASCII and at narrow widths alike: the name is truncated,
+// down to nothing at the narrowest deck.
 func TestAgentInAFolderIsIndented(t *testing.T) {
 	for _, tc := range []struct {
 		name  string
@@ -31,18 +32,17 @@ func TestAgentInAFolderIsIndented(t *testing.T) {
 				if w := lipgloss.Width(l); w != inner {
 					t.Fatalf("row %d is %d cells, not %d: %q", i, w, inner, cells(l))
 				}
+				if strings.Contains(cells(l), "╎") {
+					t.Fatalf("row %d shows a guide: %q", i, cells(l))
+				}
 			}
-			guide := "╎"
-			if tc.ascii {
-				guide = ":"
-			}
-			in1, in2, root1, root2 := []rune(cells(ls[1])), []rune(cells(ls[2])), []rune(cells(ls[3])), []rune(cells(ls[4]))
-			// The folder's agent: guide, then its glyph under the folder's arrow and its name under
-			// the folder's name; its detail starts there too.
-			if string(in1[:4]) != " "+guide+"  " || in1[4] == ' ' || in1[5] != ' ' || (tc.width > 20 && !strings.HasPrefix(string(in1[6:]), "al")) {
+			in1, in2, root1, root2 := []rune(cells(ls[1])), []rune(cells(ls[2])), []rune(cells(ls[4])), []rune(cells(ls[5]))
+			// The folder's agent: a plain indent, its name under the folder's name; its detail
+			// starts there too.
+			if string(in1[:4]) != "    " || in1[4] == ' ' || in1[5] != ' ' || (tc.width > 20 && !strings.HasPrefix(string(in1[6:]), "al")) {
 				t.Fatalf("folder agent not indented: %q", string(in1))
 			}
-			if string(in2[:6]) != " "+guide+"    " || in2[6] == ' ' {
+			if string(in2[:6]) != "      " || in2[6] == ' ' {
 				t.Fatalf("folder agent's detail not indented: %q", string(in2))
 			}
 			if root1[2] == ' ' || !strings.HasPrefix(string(root1[4:]), "b") {

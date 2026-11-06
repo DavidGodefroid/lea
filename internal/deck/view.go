@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 
 	"github.com/charmbracelet/lipgloss"
@@ -407,6 +408,14 @@ func (m Model) rowLines(inner int) ([]string, []lineOwner) {
 				owners[i] = append(owners[i], lineOwner{e.key, menuOwner(j, len(items))})
 			}
 		}
+		// A calm separation between folders: one blank line above each folder past the first
+		// row, and above the first root agent after the folders, so that it does not read as
+		// the last folder's. It owns no row: a click on it selects nothing, folds nothing.
+		afterFolders := e.agent >= 0 && e.in < 0 && i > 0 && (es[i-1].agent < 0 || es[i-1].in >= 0)
+		if (e.agent < 0 && i > 0) || afterFolders {
+			rendered[i] = append([]string{strings.Repeat(" ", inner)}, rendered[i]...)
+			owners[i] = append([]lineOwner{{"", -1}}, owners[i]...)
+		}
 	}
 	// The deck's menu comes after the last row, as one more block that scrolls into view.
 	focus := m.pos(m.selected) // the block kept on screen
@@ -454,8 +463,10 @@ func (m Model) rowLines(inner int) ([]string, []lineOwner) {
 	return out, own
 }
 
-// folderRow is a folder's line, exactly inner cells: mark, the folder's dot (folderState), its
-// fold arrow, its name and how many agents it holds.
+// folderRow is a folder's header, one line of exactly inner cells, folded or not: the selection
+// mark, the fold arrow and the name in bold — arrow and name in the folder's colour when it has
+// one — then, on the right, the agent count and a compact status summary (folderSummary). An
+// unfolded folder's agents follow on their own rows; nothing of the header repeats there.
 func (m Model) folderRow(fi int, inner int) []string {
 	c := m.cs()
 	f := m.layout.Folders[fi]
@@ -470,10 +481,6 @@ func (m Model) folderRow(fi int, inner int) []string {
 	if sel {
 		mark = c.mark
 	}
-	g, gc := " ", theme.Muted
-	if st, up := m.folderState(fi); st != "" {
-		g, gc = stateMark(st, up, m.now().Unix(), m.frame, m.ascii)
-	}
 	arrow := "▾"
 	if f.Folded {
 		arrow = "▸"
@@ -481,44 +488,95 @@ func (m Model) folderRow(fi int, inner int) []string {
 	if m.ascii {
 		arrow = map[bool]string{true: ">", false: "v"}[f.Folded]
 	}
-	const countW = 4
-	nameW := inner - 6 - (1 + countW) // mark, space, glyph, space, arrow, space
-	count := fmt.Sprintf("%d", len(m.folderMembers(fi)))
-	// The folder's colour, when it has one, is its arrow's and its name's; never its dot's.
+	// The folder's colour, when it has one, is its arrow's and its name's.
 	arrowC, nameC := lipgloss.TerminalColor(theme.Accent), lipgloss.TerminalColor(theme.Text)
 	if col, ok := folderColour(f.Color); ok {
 		arrowC, nameC = col, col
 	}
+	// mark, arrow, space, name, space, summary; the summary yields its cells to the name first.
+	sum, sumW := m.folderSummary(fi, c, inner-8, bg)
+	nameW := inner - 4 - sumW
 	return []string{bg(lipgloss.NewStyle().Foreground(theme.Accent)).Render(mark) +
-		bg(plain).Render(" ") +
-		bg(lipgloss.NewStyle().Foreground(gc)).Render(g) +
-		bg(plain).Render(" ") +
 		bg(lipgloss.NewStyle().Foreground(arrowC)).Render(arrow) +
 		bg(plain).Render(" ") +
 		bg(lipgloss.NewStyle().Foreground(nameC).Bold(true)).Render(padRight(fit(f.Name, nameW, c), nameW)) +
 		bg(plain).Render(" ") +
-		bg(muted).Render(padLeft(count, countW))}
+		sum}
 }
 
-// row is two lines of exactly inner cells: mark, bar, glyph, name, profile; then the detail. An
-// agent in folder fi (-1: at the root) has the folder's guide in its second cell, in the folder's
-// colour when it has one, and is shifted folderIndent cells right: its glyph under the folder's
-// arrow, its name and its detail under the folder's name.
+// folderSummary is the compact status of folder fi's agents for its header: how many agents it
+// holds, then, per state present (worst first: needs you, working, limited, done), the state's
+// mark and how many, in the state's colour. Paused agents count in the total only. At most maxW
+// cells: the calmest states go first when narrowed, the count never does. bg is the header's
+// background.
+func (m Model) folderSummary(fi int, c charset, maxW int, bg func(lipgloss.Style) lipgloss.Style) (string, int) {
+	blocked, working, limited, done, total := 0, 0, 0, 0, 0
+	for _, a := range m.folderMembers(fi) {
+		total++
+		switch s := shownState(a); {
+		case a.Paused:
+		case s == "blocked":
+			blocked++
+		case busy(a):
+			working++
+		case s == "limited":
+			limited++
+		case s == "idle" || s == "done":
+			done++
+		} // an unknown state counts in the total only, as the folder's dot ignored it
+	}
+	pick := func(u, a string) string {
+		if c.ascii {
+			return a
+		}
+		return u
+	}
+	type part struct {
+		text string
+		st   lipgloss.Style
+	}
+	var parts []part
+	add := func(g string, st lipgloss.Style, n int) {
+		if n > 0 {
+			parts = append(parts, part{g + strconv.Itoa(n), st})
+		}
+	}
+	// Needs you is bold as well as red: it is what the header is for. In ASCII each state keeps
+	// its own glyph ("~" is limited's, as on a row), so they read apart without colour.
+	add(pick("●", "!"), lipgloss.NewStyle().Foreground(theme.Blocked).Bold(true), blocked)
+	add(pick("◐", "+"), lipgloss.NewStyle().Foreground(theme.Working), working)
+	add(pick("◷", "~"), lipgloss.NewStyle().Foreground(theme.Idle), limited)
+	add(pick("✓", "="), lipgloss.NewStyle().Foreground(theme.Done), done)
+	count := strconv.Itoa(total)
+	width := func(ps []part) int {
+		w := len(count)
+		for _, p := range ps {
+			w += 1 + lipgloss.Width(p.text)
+		}
+		return w
+	}
+	for len(parts) > 0 && width(parts) > maxW {
+		parts = parts[:len(parts)-1]
+	}
+	var b strings.Builder
+	b.WriteString(bg(muted).Render(count))
+	for _, p := range parts {
+		b.WriteString(bg(plain).Render(" "))
+		b.WriteString(bg(p.st).Render(p.text))
+	}
+	return b.String(), width(parts)
+}
+
+// row is two lines of exactly inner cells: mark, glyph, name, profile; then the detail. An
+// agent in folder fi (-1: at the root) is shifted folderIndent cells right, its name and its
+// detail under the folder's name — belonging shown by indentation alone, no guide glyph (#295).
 func (m Model) row(a Agent, inner int, fi int) []string {
 	c := m.cs()
 	sel := a.Key == m.selected
 	gap, pad := " ", "    "
-	guide := muted
 	if fi >= 0 {
-		gap = "╎"
-		if m.ascii {
-			gap = ":"
-		}
-		gap += strings.Repeat(" ", folderIndent)
+		gap = strings.Repeat(" ", folderIndent+1)
 		pad = " " + gap + "  "
-		if col, ok := folderColour(m.layout.Folders[fi].Color); ok {
-			guide = lipgloss.NewStyle().Foreground(col)
-		}
 	}
 	bg := func(s lipgloss.Style) lipgloss.Style {
 		if sel {
@@ -543,7 +601,7 @@ func (m Model) row(a Agent, inner int, fi int) []string {
 		}
 	}
 	line1 := bg(lipgloss.NewStyle().Foreground(theme.Accent)).Render(mark) +
-		bg(guide).Render(gap) +
+		bg(plain).Render(gap) +
 		bg(lipgloss.NewStyle().Foreground(gc)).Render(g) +
 		bg(plain).Render(" ") +
 		bg(lipgloss.NewStyle().Foreground(theme.Text).Bold(sel)).Render(padRight(fit(display(a), nameW, c), nameW)) +
@@ -552,7 +610,7 @@ func (m Model) row(a Agent, inner int, fi int) []string {
 		bg(plain).Render(" ") +
 		bg(muted).Render(padLeft(ctxText(a.CtxPct), ctxW))
 	detail := fit(m.detail(a, inner-in), inner-in, c)
-	line2 := bg(guide).Render(pad) + bg(muted).Render(padRight(detail, inner-in))
+	line2 := bg(plain).Render(pad) + bg(muted).Render(padRight(detail, inner-in))
 	lines := []string{line1, line2}
 	if ap := a.Approval; ap != nil {
 		warn := "⚠"
@@ -568,8 +626,8 @@ func (m Model) row(a Agent, inner int, fi int) []string {
 			keys += " [A]lways"
 		}
 		lines = append(lines,
-			bg(guide).Render(pad)+bg(alert).Render(padRight(fit(warn+" "+what, inner-in, c), inner-in)),
-			bg(guide).Render(pad)+bg(lipgloss.NewStyle().Foreground(theme.Text)).Render(padRight(fit(keys, inner-in, c), inner-in)))
+			bg(plain).Render(pad)+bg(alert).Render(padRight(fit(warn+" "+what, inner-in, c), inner-in)),
+			bg(plain).Render(pad)+bg(lipgloss.NewStyle().Foreground(theme.Text)).Render(padRight(fit(keys, inner-in, c), inner-in)))
 	}
 	return lines
 }

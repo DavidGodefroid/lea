@@ -182,48 +182,52 @@ func TestEnterFoldsAndJKSkipTheHiddenAgents(t *testing.T) {
 	}
 }
 
-// A folded folder's dot is its agents' worst state: red when one needs the user, the spinner
-// while one works, green once none works any more.
-func TestAFoldedFoldersDotAggregatesItsAgents(t *testing.T) {
+// A folded folder's header sums its agents up (#295): its count, then one mark per state
+// present — red when one needs the user, the working mark while one works, done's for the quiet
+// ones.
+func TestAFoldedFoldersHeaderSumsItsAgentsUp(t *testing.T) {
 	st := &memStore{l: Layout{Folders: []Folder{{ID: "f1", Name: "web", Folded: true, Agents: []string{"lea-a/a", "lea-a/b"}}}}}
 	for _, c := range []struct {
-		a, b, want string
+		a, b string
+		want []string
 	}{
-		{"idle", "done", "idle"},
-		{"idle", "working", "working"},
-		{"working", "blocked", "blocked"},
+		{"idle", "done", []string{"2 ✓2"}},
+		{"idle", "working", []string{"2 ◐1", "✓1"}},
+		{"working", "blocked", []string{"2 ●1", "◐1"}},
 	} {
 		m := withFolders(t, st, ag("a", c.a, 9_990), ag("b", c.b, 9_990), ag("c", "idle", 1))
-		if got, _ := m.folderState(0); got != c.want {
-			t.Errorf("%s+%s: %q, want %q", c.a, c.b, got, c.want)
+		line := viewLines(m)[1]
+		if !strings.Contains(line, "▸ web") {
+			t.Errorf("%s+%s: line %q", c.a, c.b, line)
 		}
-		g, _ := stateMark(c.want, 9_990, clock.Unix(), 0, false)
-		if line := viewLines(m)[1]; !strings.Contains(line, g+" ▸ web") {
-			t.Errorf("%s+%s: line %q lacks %q", c.a, c.b, line, g)
+		for _, w := range c.want {
+			if !strings.Contains(line, w) {
+				t.Errorf("%s+%s: line %q lacks %q", c.a, c.b, line, w)
+			}
 		}
 	}
-	// An idle agent whose subagents still run is working; a paused one does not count.
+	// An idle agent whose subagents still run works; a paused one counts in the total only.
 	sub := ag("a", "idle", 9_990)
 	sub.Subagents = 1
 	p := ag("b", "working", 9_990)
 	p.Paused = true
 	m := withFolders(t, st, sub, p)
-	if got, _ := m.folderState(0); got != "working" {
-		t.Errorf("subagents: %q", got)
+	if line := viewLines(m)[1]; !strings.Contains(line, "2 ◐1") || strings.Contains(line, "✓") {
+		t.Errorf("subagents, paused: line %q", line)
 	}
 	sub.Subagents = 0
 	m = withFolders(t, st, sub, p)
-	if got, _ := m.folderState(0); got != "idle" {
-		t.Errorf("paused: %q", got)
+	if line := viewLines(m)[1]; !strings.Contains(line, "2 ✓1") {
+		t.Errorf("paused: line %q", line)
 	}
-	// #72: a waiting agent spins the folder, one whose task names a blocker turns it red.
+	// #72: a waiting agent works, one whose task names a blocker needs the user.
 	m = withFolders(t, st, withTask(ag("a", "idle", 9_990), true, false), ag("b", "idle", 9_990))
-	if got, _ := m.folderState(0); got != "working" {
-		t.Errorf("waiting: %q", got)
+	if line := viewLines(m)[1]; !strings.Contains(line, "2 ◐1 ✓1") {
+		t.Errorf("waiting: line %q", line)
 	}
 	m = withFolders(t, st, withTask(ag("a", "working", 9_990), false, true), ag("b", "idle", 9_990))
-	if got, _ := m.folderState(0); got != "blocked" {
-		t.Errorf("blocked_on: %q", got)
+	if line := viewLines(m)[1]; !strings.Contains(line, "2 ●1 ✓1") {
+		t.Errorf("blocked_on: line %q", line)
 	}
 }
 
@@ -251,7 +255,7 @@ func TestJKReorderFoldersAndAgentsInAFolder(t *testing.T) {
 func TestTheFolderMenu(t *testing.T) {
 	st := &memStore{l: Layout{Folders: []Folder{{ID: "f1", Name: "web"}, {ID: "f2", Name: "ops"}}}}
 	m := withFolders(t, st, ag("a", "idle", 1))
-	m, _ = step(t, m, click(tea.MouseButtonRight, 2)) // ops's line
+	m, _ = step(t, m, click(tea.MouseButtonRight, 3)) // ops's line, under the blank line
 	if m.menuFor != folderKey("f2") {
 		t.Fatalf("menu %q", m.menuFor)
 	}
