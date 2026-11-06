@@ -19,6 +19,11 @@ fi
 # Hash of a file, or "absent".
 sha_of() { if [ -f "$1" ]; then sha256sum <"$1" | cut -d' ' -f1; else echo absent; fi; }
 
+# A sandboxed runtime (LEA_RUNTIME=runsc or kata, #106): the agents run on a kernel of their own
+# (gVisor's Sentry, Kata's guest), not the host's.
+if [ "${SECOND_KERNEL:-}" = 1 ] && [ -n "${HOST_KERNEL:-}" ]; then
+  must   "a kernel other than the host's ($(uname -r), host $HOST_KERNEL)" test "$(uname -r)" != "$HOST_KERNEL"
+fi
 mustnt "no host Docker socket"                 test -S /var/run/docker.sock
 mustnt "no host Docker socket (/run)"          test -S /run/docker.sock
 must   "docker is the nested Podman"            sh -c 'docker version 2>/dev/null | grep -qi podman'
@@ -91,6 +96,8 @@ if [ -n "${HOST_HIST_SHA:-}" ]; then
 fi
 must   "only this projects dir under ~/.claude/projects" sh -c '[ "$(ls -A "$HOME/.claude/projects" | wc -l)" -eq 1 ]'
 must   "public HTTPS works through the proxy"   curl -sf --max-time 20 -o /dev/null https://registry.npmjs.org/
+# The Claude API answers through the proxy (any HTTP status: no key is sent, 4xx is expected).
+must   "the Claude API answers through the proxy" sh -c 'c=$(curl -s --max-time 20 -o /dev/null -w "%{http_code}" https://api.anthropic.com/v1/messages); [ "${c:-000}" != 000 ]'
 # Plain HTTP between nested containers stays direct (containers.conf: http_proxy = false): a
 # server, and a client in its network namespace fetching it at the namespace's own address (a
 # private one, not in NO_PROXY, which the proxy would refuse). Not over a network of their own:

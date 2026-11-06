@@ -92,6 +92,7 @@ lea_doctor() {
     else lea__ok "$_dctr CPU windows: none (no agent runs, or LEA_AGENT_CPUS=0)"; fi
   done
 
+  lea__doctor_runtime || _drc=1
   lea__doctor_pressure
 
   # The domains the proxy always allows: EGRESS_ALWAYS of proxy/render-squid-conf.sh.
@@ -165,6 +166,36 @@ lea__doctor_hub() {
   else
     lea__warn "approval hub" "LEA_HUB=1 but no lockhub facade at $_dhs (lox up starts it): agents are not suspended on a Lock call that waits for the hub (LEA_HUB=0 to silence this)"
   fi
+}
+
+# lea__doctor_runtime: the agent containers' OCI runtime (#106): LEA_RUNTIME (empty: the engine's
+# default, runc), a runtime the engine must know (runsc for gVisor, kata for Kata: a second kernel
+# between the agents and the host's), and the one each running lea container was started on.
+lea__doctor_runtime() {
+  _drtd=$(docker info --format '{{.DefaultRuntime}}' 2>/dev/null | tr -cd 'A-Za-z0-9._-' || true)
+  _drta=$(docker info --format '{{range $k, $v := .Runtimes}}{{$k}} {{end}}' 2>/dev/null | tr -cd 'A-Za-z0-9._ -' || true)
+  _drtrc=0
+  case ${LEA_RUNTIME:-} in
+    '') lea__ok "agent runtime: ${_drtd:-the engine default} (LEA_RUNTIME empty; runsc or kata adds a second kernel: README)" ;;
+    [!A-Za-z0-9]* | *[!A-Za-z0-9._-]*) lea__fail "agent runtime" "LEA_RUNTIME '$LEA_RUNTIME' is not a runtime name"; return 1 ;;
+    *)
+      if [ -n "$_drta" ] && ! printf ' %s ' "$_drta" | grep -qF " $LEA_RUNTIME "; then
+        lea__fail "agent runtime $LEA_RUNTIME" "the engine has no such runtime (it knows: ${_drta% }): install it and register it with dockerd (README), or leave LEA_RUNTIME empty"; _drtrc=1
+      else
+        lea__ok "agent runtime: $LEA_RUNTIME (LEA_RUNTIME; the engine's default: ${_drtd:-unknown})"
+      fi ;;
+  esac
+  _drtw=${LEA_RUNTIME:-$_drtd}
+  for _dctr in $(docker ps --filter "label=lea.prefix=$LEA_PREFIX" --filter label=lea.role=session --format '{{.Names}}' 2>/dev/null || true); do
+    _drtc=$(docker inspect --format '{{.HostConfig.Runtime}}' "$_dctr" 2>/dev/null | tr -cd 'A-Za-z0-9._-' || true)
+    [ -n "$_drtc" ] || continue
+    if [ -n "$_drtw" ] && [ "$_drtc" != "$_drtw" ]; then
+      lea__warn "$_dctr runtime" "runs on $_drtc, not $_drtw: run 'lea stop', then lea, to restart it on $_drtw"
+    else
+      lea__ok "$_dctr runtime: $_drtc"
+    fi
+  done
+  return "$_drtrc"
 }
 
 # lea__doctor_pressure: what the daemon reads to refuse or queue new agents and pause some under

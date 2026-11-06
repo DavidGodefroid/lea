@@ -132,6 +132,68 @@ jobs:
           for c in '.lockfamily write gets EROFS' 'host facade socket not visible' 'no facade socket in the container' 'sibling lea unreachable directly' 'host port unreachable via host IP' 'public HTTPS works through the proxy' 'nested HTTP between containers is direct'; do
             grep -qxF "ok   $c" isolation.log || { echo "isolation: '$c' did not run" >&2; exit 1; }
           done
+  # The same isolation checks with the agent container on a sandboxed runtime (#106, LEA_RUNTIME):
+  # gVisor (runsc) and Kata Containers (QEMU, the runner's /dev/kvm), each installed at a pinned
+  # release by tests/integration/install-runtime.sh. docker inspect must show the runtime, the
+  # agents must see a kernel other than the host's, and every check of the runc job must run.
+  isolation-runtime:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        runtime: [runsc, kata]
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+        with:
+          go-version-file: go.mod
+      - run: go build -trimpath -o build/lea ./cmd/lea
+      - name: install and register ${{ matrix.runtime }}
+        run: tests/integration/install-runtime.sh ${{ matrix.runtime }}
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
+      - uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
+        with:
+          context: .
+          file: proxy/Containerfile
+          tags: lea-proxy:dev
+          load: true
+          cache-from: type=gha,scope=lea-proxy-dev
+      - uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
+        with:
+          context: .
+          file: image/Containerfile
+          build-args: LEA_VERSION=dev
+          tags: lea:dev
+          load: true
+          cache-from: type=gha,scope=lea-dev
+      - name: AppArmor profile (as lea init loads it)
+        run: |
+          if docker info --format '{{json .SecurityOptions}}' | grep -q 'name=apparmor'; then
+            if [ -e /etc/apparmor.d/abi/4.0 ]; then abi=4.0 userns='  userns,'; else abi=3.0 userns=''; fi
+            sed -e "s|@ABI@|$abi|" -e "s|^@USERNS@\$|$userns|" apparmor/lea.tmpl | sudo tee /etc/apparmor.d/lea >/dev/null
+            sudo apparmor_parser -r /etc/apparmor.d/lea
+          fi
+      - name: make test-isolation on ${{ matrix.runtime }}, every check run
+        shell: bash
+        env:
+          LEA_TEST_RUNTIME: ${{ matrix.runtime }}
+        run: |
+          make test-isolation 2>&1 | tee isolation.log
+          if grep -E '^FAIL |^note: ' isolation.log; then echo "an isolation check failed or was skipped" >&2; exit 1; fi
+          for c in "lea-test-proxy keeps the engine's default runtime (runc)" 'a nested container runs' 'AF_ALG socket refused (seccomp)' '.lockfamily write gets EROFS' 'host facade socket not visible' 'no facade socket in the container' 'sibling lea unreachable directly' 'host port unreachable via host IP' 'public HTTPS works through the proxy' 'the Claude API answers through the proxy' 'nested HTTP between containers is direct'; do
+            grep -qxF "ok   $c" isolation.log || { echo "isolation: '$c' did not run" >&2; exit 1; }
+          done
+          [ "$(grep -c "^ok   lea-test-[0-9a-f]* runs on the $LEA_TEST_RUNTIME runtime\$" isolation.log)" -eq 2 ] || { echo "isolation: the agent containers are not on $LEA_TEST_RUNTIME" >&2; exit 1; }
+          grep -q "^ok   a kernel other than the host's" isolation.log || { echo "isolation: the second-kernel check did not run" >&2; exit 1; }
+      - name: the runtime's logs, on failure
+        if: failure()
+        run: |
+          docker info --format '{{json .Runtimes}}' || true
+          sudo journalctl -u docker --no-pager -n 200 || true
+          sudo journalctl --no-pager -n 400 | grep -iE 'kata|runsc|gvisor' || true
   # The phase-2 exit demo, lea's side (tests/integration/hubdeck.sh): lox up with the released,
   # cosign-verified lockhub and a LockHTTP lock; the gate holds an agent's write, lea's deck
   # approves its ticket through the real facade socket, and the gate lets the write out.

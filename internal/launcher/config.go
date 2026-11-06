@@ -250,6 +250,9 @@ func (c *Config) resolve(root string) error {
 	if err := c.resolveAgentCPUs(); err != nil {
 		return err
 	}
+	if rt := c.Get("LEA_RUNTIME"); rt != "" && !runtimeName.MatchString(rt) {
+		return fmt.Errorf("LEA_RUNTIME must be empty (the engine's default runtime) or the name of a runtime Docker knows (runsc, kata...), not '%s'", rt)
+	}
 	ctl := nonEmpty(c.Get("LEA_CTL"), "0")
 	if ctl != "0" && ctl != "1" {
 		return fmt.Errorf("LEA_CTL must be 1 (lea runs in its lea-ctl control container) or 0 (on the host), not '%s'", ctl)
@@ -373,6 +376,10 @@ func (c *Config) LocksqlAgentProfiles() ([]string, error) {
 	}
 	return ps, nil
 }
+
+// runtimeName is an OCI runtime's name as dockerd's configuration gives it (runsc, kata,
+// io.containerd.kata.v2): passed as one argument to --runtime.
+var runtimeName = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$`)
 
 var providerName = regexp.MustCompile(`^[a-z][a-z0-9-]{0,15}$`)
 

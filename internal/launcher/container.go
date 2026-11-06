@@ -552,6 +552,11 @@ func (l *Launcher) runArgs(proj, pip string) ([]string, error) {
 	// lockmq and lockfile: only the socket of a console in its own container, in the tool's
 	// socket volume (lockhost.go).
 	a = append(a, l.lockHostArgs(ups)...)
+	rt, err := l.runtimeArgs()
+	if err != nil {
+		return nil, err
+	}
+	a = append(a, rt...)
 	a = append(a, l.securityArgs()...)
 	a = append(a, l.limitArgs()...)
 	for _, part := range []func() ([]string, error){

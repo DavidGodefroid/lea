@@ -2,6 +2,9 @@
 # Isolation tests: starts lea under the lea-test prefix and a decoy published on the host,
 # then checks from inside lea that neither the decoy nor the host can be reached.
 # Linux hosts. Creates and removes only lea-test-*, lea-canary* resources.
+# LEA_TEST_RUNTIME=runsc (or kata): the agent containers run on that runtime (LEA_RUNTIME, #106),
+# which must be registered with dockerd (tests/integration/install-runtime.sh); the test then also
+# checks that docker inspect shows it and that the agents see a kernel other than the host's.
 set -eu
 root=$(cd "$(dirname "$0")/../.." && pwd -P)
 
@@ -24,6 +27,9 @@ LEA_PREFIX=lea-test
 LEA_IMAGE=lea:dev
 LEA_PROXY_IMAGE=lea-proxy:dev
 CONF
+runtime=${LEA_TEST_RUNTIME:-}
+case $runtime in *[!A-Za-z0-9._-]*) echo "isolation: LEA_TEST_RUNTIME '$runtime' is not a runtime name" >&2; exit 2 ;; esac
+if [ -n "$runtime" ]; then printf 'LEA_RUNTIME=%s\n' "$runtime" >>"$work/lea.conf"; fi
 export LEA_CONFIG="$work/lea.conf"
 # lea checks that lox is installed before it starts. This test follows no real hub (the stand-in
 # facade socket below is the only hub), so a stand-in lox that reports a dev build satisfies the
@@ -137,6 +143,16 @@ fi
 sibling_ip=$(wait_for "the address of lea-test-$sid" \
   docker container inspect -f "{{with index .NetworkSettings.Networks \"lea-test-internal-$sid\"}}{{.IPAddress}}{{end}}" "lea-test-$sid")
 wait_for "lea-test-$id running" sh -c "docker container inspect -f '{{.State.Running}}' lea-test-$id | grep -x true" >/dev/null
+# The runtime both agent containers run on (#106), and the proxy's: always the engine's default.
+default_runtime=$(docker info --format '{{.DefaultRuntime}}')
+for c in "lea-test-$id" "lea-test-$sid"; do
+  got=$(docker container inspect -f '{{.HostConfig.Runtime}}' "$c")
+  if [ "$got" = "${runtime:-$default_runtime}" ]; then echo "ok   $c runs on the ${runtime:-$default_runtime} runtime"
+  else echo "FAIL $c runs on the $got runtime, not ${runtime:-$default_runtime}" >&2; exit 1; fi
+done
+got=$(docker container inspect -f '{{.HostConfig.Runtime}}' lea-test-proxy)
+if [ "$got" = "$default_runtime" ]; then echo "ok   lea-test-proxy keeps the engine's default runtime ($got)"
+else echo "FAIL lea-test-proxy runs on the $got runtime, not the engine's default $default_runtime" >&2; exit 1; fi
 # Positive control: the sibling's listener answers from inside the sibling.
 i=0
 until LEA_PROJECTS_DIR="$sibling" "$root/bin/lea" shell -- curl -s -o /dev/null --max-time 2 --noproxy '*' "http://$sibling_ip:8765/" >/dev/null 2>&1; do
@@ -146,5 +162,5 @@ until LEA_PROJECTS_DIR="$sibling" "$root/bin/lea" shell -- curl -s -o /dev/null 
 done
 rc=0
 LEA_PROJECTS_DIR="$projects" "$root/bin/lea" shell -- env CANARY_IP="$canary_ip" GW_IP="$gw_ip" HOST_IP="$host_ip" \
-  SIBLING_IP="$sibling_ip" HOST_FACADE="$facade" HOST_CRED_SHA="$cred_sha" HOST_HIST_SHA="$hist_sha" sh "$projects/inside-isolation.sh" || rc=$?
+  SIBLING_IP="$sibling_ip" HOST_KERNEL="$(uname -r)" SECOND_KERNEL="${runtime:+1}" HOST_FACADE="$facade" HOST_CRED_SHA="$cred_sha" HOST_HIST_SHA="$hist_sha" sh "$projects/inside-isolation.sh" || rc=$?
 exit "$rc"

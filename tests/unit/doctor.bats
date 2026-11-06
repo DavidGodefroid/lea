@@ -390,3 +390,40 @@ host_minimums() {
   [[ "$output" == *"ok    approval hub facade $LEA_HUB_SOCKET"* ]]
   [[ "$output" != *"warn  approval hub"* ]]
 }
+
+# fake_docker_key ARGS...: the fake docker's FAKE_DOCKER_OUT_ suffix for a call with these first
+# two arguments and this last one (tests/fakes/docker).
+fake_docker_key() {
+  printf '%s_%s_AT_%s' "$1" "$2" "$3" | tr '[:lower:]' '[:upper:]' | tr -c 'A-Z0-9_' '_'
+}
+
+@test "runtime: LEA_RUNTIME, the runtimes the engine knows and each running lea container's (#106)" {
+  export "FAKE_DOCKER_OUT_$(fake_docker_key info --format '{{.DefaultRuntime}}')=runc"
+  export "FAKE_DOCKER_OUT_$(fake_docker_key info --format '{{range $k, $v := .Runtimes}}{{$k}} {{end}}')=io.containerd.runc.v2 runc runsc "
+  run lea_doctor
+  [[ "$output" == *"ok    agent runtime: runc (LEA_RUNTIME empty; runsc or kata adds a second kernel: README)"* ]]
+  export LEA_RUNTIME=runsc
+  run lea_doctor
+  [[ "$output" == *"ok    agent runtime: runsc (LEA_RUNTIME; the engine's default: runc)"* ]]
+  [[ "$output" != *"FAIL  agent runtime"* ]]
+  export LEA_RUNTIME=kata
+  run lea_doctor
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"FAIL  agent runtime kata: the engine has no such runtime (it knows: io.containerd.runc.v2 runc runsc)"* ]]
+  export LEA_RUNTIME='run sc'
+  run lea_doctor
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"FAIL  agent runtime: LEA_RUNTIME 'run sc' is not a runtime name"* ]]
+  # A running lea container on another runtime than LEA_RUNTIME's: a warning.
+  export LEA_RUNTIME=runsc FAKE_DOCKER_OUT_PS___FILTER=lea-abc
+  export "FAKE_DOCKER_OUT_INSPECT___FORMAT_AT_LEA_ABC=runc"
+  run lea_doctor
+  [[ "$output" == *"warn  lea-abc runtime: runs on runc, not runsc: run 'lea stop', then lea, to restart it on runsc"* ]]
+  export "FAKE_DOCKER_OUT_INSPECT___FORMAT_AT_LEA_ABC=runsc"
+  run lea_doctor
+  [[ "$output" == *"ok    lea-abc runtime: runsc"* ]]
+  # LEA_RUNTIME empty: the engine's default is expected.
+  unset LEA_RUNTIME
+  run lea_doctor
+  [[ "$output" == *"warn  lea-abc runtime: runs on runsc, not runc"* ]]
+}
