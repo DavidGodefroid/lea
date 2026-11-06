@@ -63,7 +63,7 @@ func (l *Launcher) up(proj string) (*upState, error) {
 			return nil, err
 		}
 		u.fresh = "--fresh"
-	} else if l.applyLimits(u.name) && l.containerQuiet(proj) {
+	} else if l.applyLimits(u.name) && l.containerQuiet(proj) && !l.startedWithLimits(u.name) {
 		if err := l.restartForLimits(proj, sip); err != nil {
 			return nil, err
 		}

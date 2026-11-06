@@ -176,7 +176,7 @@ func TestContainerStartSequence(t *testing.T) {
 	if _, err := os.Stat(w.hostDir() + "/scan/" + w.id() + ".start"); err != nil {
 		t.Fatalf("no start snapshot: %v", err)
 	}
-	if !strings.Contains(w.errb.String(), "locksql console: it runs under lox up only") {
+	if !strings.Contains(w.errb.String(), "locksql console: it runs under lox run only") {
 		t.Fatalf("stderr %q", w.errb.String())
 	}
 }
@@ -915,8 +915,8 @@ func TestRunArgsLockfamilyDirReadOnly(t *testing.T) {
 	}
 }
 
-// locksql's profile directory is read-only for the agents, with lox up's locksql socket: no agent
-// rewrites the profile lox up reviews (#121). Made when missing; a link or a file is refused.
+// locksql's profile directory is read-only for the agents, with lox run's locksql socket: no agent
+// rewrites the profile lox run reviews (#121). Made when missing; a link or a file is refused.
 func TestRunArgsLocksqlDirReadOnly(t *testing.T) {
 	w := newWorld(t, repoRoot(t))
 	locksqlUp(t, w)
@@ -1298,6 +1298,54 @@ func TestMissingControllerDropsItsLimit(t *testing.T) {
 	}
 }
 
+// containerQuiet fails closed: a docker exec error listing the agents is not "no agents" (#132),
+// while agentsLive (lea --shell's stop decision) keeps reading it as none.
+func TestContainerQuietCountsAnAgentListErrorAsBusy(t *testing.T) {
+	w := newWorld(t, repoRoot(t))
+	w.env["FAKE_TMUX_RC"] = "1"
+	l := w.launcher()
+	if !l.containerQuiet(w.proj) {
+		t.Fatalf("no agent, no session, no deck: not quiet:\n%s", strings.Join(w.calls(), "\n"))
+	}
+	w.env["FAKE_DOCKER_RC_EXEC__U"] = "125"
+	l = w.launcher()
+	if l.containerQuiet(w.proj) {
+		t.Fatal("quiet although docker exec lea-agent ls failed")
+	}
+	if live, err := l.agentsRunning(w.proj); err == nil || live {
+		t.Fatalf("agentsRunning = %v, %v; want the exec error", live, err)
+	}
+	if l.agentsLive(w.proj) {
+		t.Fatal("agentsLive changed meaning on an exec error")
+	}
+	w.env["FAKE_DOCKER_RC_EXEC__U"] = "0"
+	w.env["FAKE_DOCKER_OUT_EXEC__U"] = "dev-1"
+	if l = w.launcher(); l.containerQuiet(w.proj) {
+		t.Fatal("quiet with an agent live")
+	}
+}
+
+// startedWithLimits reads the container's lea.limits label: only the digest of the limits the
+// configuration resolves to now counts; none (an older lea), another one or an inspect error do not.
+func TestStartedWithLimitsComparesTheLabel(t *testing.T) {
+	w := newWorld(t, repoRoot(t))
+	key := "FAKE_DOCKER_OUT_CONTAINER_INSPECT_AT_" + fakeKey(w.name())
+	want := w.launcher().resolvedLimits().digest()
+	for _, c := range []struct {
+		label, rc string
+		ok        bool
+	}{{want, "0", true}, {"", "0", false}, {"0123456789abcdef", "0", false}, {want, "1", false}} {
+		w.env[key] = c.label
+		w.env["FAKE_DOCKER_RC_CONTAINER_INSPECT_AT_"+fakeKey(w.name())] = c.rc
+		if got := w.launcher().startedWithLimits(w.name()); got != c.ok {
+			t.Errorf("label %q rc %s: %v, want %v", c.label, c.rc, got, c.ok)
+		}
+	}
+	if !w.hasCall(`docker [container] [inspect] [--format] [{{index .Config.Labels "lea.limits"}}] [` + w.name() + `]`) {
+		t.Errorf("calls:\n%s", strings.Join(w.calls(), "\n"))
+	}
+}
+
 // A running container whose limits are stale and cannot be applied in place is restarted with
 // them at once when nothing runs in it; otherwise lea warns, keeps it, and restarts it at a later
 // lea that finds it quiet (#132). Docker's and Podman's info formats both resolve the limits.
@@ -1386,6 +1434,31 @@ func TestStaleLimitsRestartAQuietContainer(t *testing.T) {
 		up(w)
 		if restarted(w) {
 			t.Fatalf("podman=%v: restarted under an open session", podman)
+		}
+
+		// The agent list cannot be read (docker exec fails): not quiet, not restarted.
+		w = mk(podman)
+		w.env["FAKE_DOCKER_RC_EXEC__U"] = "125"
+		up(w)
+		if restarted(w) || w.hasCall("docker [stop] ["+w.name()+"]") {
+			t.Fatalf("podman=%v: restarted although the agent list failed:\n%s", podman, strings.Join(w.calls(), "\n"))
+		}
+
+		// Already started with these limits (its lea.limits label is their digest), which the
+		// engine does not hold (rootless Podman on cgroup v1): no restart, at this lea or the next.
+		w = mk(podman)
+		w.env["FAKE_DOCKER_OUT_CONTAINER_INSPECT_AT_"+fakeKey(w.name())] = w.launcher().resolvedLimits().digest()
+		for i := 0; i < 2; i++ {
+			up(w)
+			if restarted(w) || w.hasCall("docker [stop] ["+w.name()+"]") {
+				t.Fatalf("podman=%v: lea %d restarted a container started with the same limits:\n%s", podman, i+1, strings.Join(w.calls(), "\n"))
+			}
+		}
+		// Another digest (the limits changed since): restarted.
+		w = mk(podman)
+		w.env["FAKE_DOCKER_OUT_CONTAINER_INSPECT_AT_"+fakeKey(w.name())] = "0123456789abcdef"
+		if up(w); !restarted(w) {
+			t.Fatalf("podman=%v: not restarted with another lea.limits digest", podman)
 		}
 
 		// A deck open in tmux (even without agents): not restarted.
