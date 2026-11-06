@@ -145,7 +145,8 @@ func TestRunningContainerOnAnotherRuntimeIsReported(t *testing.T) {
 }
 
 // Kata runs the container in a VM, where a host FIFO cannot be bound: the clipboard is left out
-// (and said), the rest of the run args stay. gVisor keeps it (--host-fifo=open).
+// (and said), and the nested Podman's storage is a tmpfs in the VM; the rest of the run args stay.
+// gVisor keeps both (--host-fifo=open).
 func TestRunArgsClipboardUnderAVMRuntime(t *testing.T) {
 	cases := []struct {
 		rt, runtimes string
@@ -171,6 +172,11 @@ func TestRunArgsClipboardUnderAVMRuntime(t *testing.T) {
 		said := strings.Contains(w.errb.String(), "the clipboard is off under "+c.rt)
 		if said == c.clipboard {
 			t.Errorf("%s: stderr %q", c.rt, w.errb.String())
+		}
+		// The nested Podman's storage: its volume, or a tmpfs in Kata's VM (no layer unpacks on virtio-fs).
+		vol, tmp := contains(args, "type=volume,src=lea-podman-"+w.id()+",dst=/lea/podman"), contains(args, "type=tmpfs,dst=/lea/podman,tmpfs-mode=0755")
+		if vol != c.clipboard || tmp == c.clipboard {
+			t.Errorf("%s: podman volume %v, tmpfs %v", c.rt, vol, tmp)
 		}
 		if !contains(args, "LEA_BUS_SOCK=/run/lea/bus/bus.sock") || args[len(args)-1] != "lea:dev" {
 			t.Errorf("%s: run args %q", c.rt, args)

@@ -492,7 +492,19 @@ func (l *Launcher) runArgs(proj, pip string) ([]string, error) {
 	if err := Mkdirs(l.Cfg.DataDir(), st+"/ssh", st+"/git", st+"/gh", st+"/glab-cli", st+"/containers", st+"/go", st+"/kube"); err != nil {
 		return nil, die("%v", err)
 	}
+	rt, vm, err := l.agentRuntime()
+	if err != nil {
+		return nil, err
+	}
 	p := l.prefix()
+	// The nested Podman's storage: a volume of its own, kept across restarts. Under Kata (#106) a
+	// volume is a virtio-fs share, where the rootless Podman cannot unpack an image layer (its
+	// chroot's pivot directory gets EACCES): a tmpfs inside the VM instead, its images pulled again
+	// at each start.
+	podmanStore := "type=volume,src=" + p + "-podman-" + id + ",dst=/lea/podman"
+	if vm {
+		podmanStore = "type=tmpfs,dst=/lea/podman,tmpfs-mode=0755"
+	}
 	a := []string{"-d", "--init", "--name", l.Cfg.ContainerName(proj), "--hostname", "lea",
 		"--network", l.Cfg.InternalNetwork(id),
 		"--label", "lea.prefix=" + p, "--label", "lea.role=session", "--label", "lea.projects=" + proj,
@@ -512,7 +524,7 @@ func (l *Launcher) runArgs(proj, pip string) ([]string, error) {
 		"--mount", "type=bind,src=" + st + "/containers,dst=/lea/state/containers",
 		"--mount", "type=bind,src=" + st + "/go,dst=/lea/state/go",
 		"--mount", "type=bind,src=" + st + "/kube,dst=" + home + "/.kube/lea,readonly",
-		"--mount", "type=volume,src=" + p + "-podman-" + id + ",dst=/lea/podman"}
+		"--mount", podmanStore}
 	// The Lock Family's directory (hub config, public keys, routing) read-only, as a Lock's profile directory
 	// (lockArgs):
 	// an agent may read it, never change what the locks and the hub trust.
@@ -538,10 +550,6 @@ func (l *Launcher) runArgs(proj, pip string) ([]string, error) {
 	}
 	a = append(a, la...)
 	l.lockCompatAtStart(proj, ups)
-	rt, vm, err := l.agentRuntime()
-	if err != nil {
-		return nil, err
-	}
 	a = append(a, rt...)
 	a = append(a, l.securityArgs()...)
 	a = append(a, l.limitArgs()...)
