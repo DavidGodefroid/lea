@@ -1,15 +1,37 @@
 # Changelog
 
-## Unreleased
+## v0.9.0 (2026-11-06)
 
-- A lock console that waits for its start question is named with that question when the console
-  records it (lockkit's question file, next to its socket): `lea: locksql NAME waits for: the
-  console asks "Vault token for https://vault.example.com:8200:" ...`, and the attach offer says to
-  type the answer to it. lea reads only that console's own file (named for its profile, owned by
-  the console's account, mode 0600, exactly one), at most 200 characters, escaped for the
-  terminal. A console that records none is said to not tell which one; lea no longer tells the
-  user to type "its profile name", which made users type the name into a Vault token prompt
-  (#291).
+Upgrading from v0.8.x:
+
+- `lox up` is gone: lea no longer starts the hub or the locks. Approvals happen in `lox run`
+  (lockhub v0.9.0), run in another terminal of its own; `lea doctor` needs lox 0.9.0
+  (`brew upgrade lox`).
+- `LEA_LOX_UP` and `LEA_SOUND_DONE` are removed: lea warns about `LEA_LOX_UP` and ignores it, and
+  no longer uses `LEA_SOUND_DONE` (a turn end rings no sound). `LEA_LOCKSQL_IMAGE` is obsolete
+  too (warned). Remove them from your configuration.
+
+Changes:
+
+- Approvals move out of lea into `lox run` (#300): lea no longer runs `lox init`, `lox up` or
+  `lox attach`, and shows no hub panel, hub ticket, lock console or lock request. When the
+  workspace has locks and no `lox run` serves them, lea's start, the deck's status line and
+  `lea doctor` say to run it, and lea starts anyway (agents' requests wait). `lea lock`, the deck's
+  `L`/`H`/`Y`/`O` keys, the agents' `lock_request` tool and `LEA_LOCKSQL_AGENT_PROFILES` are
+  gone. This supersedes #291 (merged after v0.8.1, naming the start question a waiting lock
+  console asks): lea attaches to no lock console any more.
+- lea's image ships the Lock clients as one set, `config/locks.lock` (#134): lockkit v0.13.0, with
+  locksql v0.17.0, lockmq v0.8.0, lockfile v0.8.0, lockhttp v0.8.0 and lox v0.9.0, each pinned
+  by digest or checksum and verified by its cosign signature. The set is bumped as a whole.
+  `lea doctor` checks each lock lox runs against lea's client of its type (from the image it pins,
+  or the console's hello handshake) and says what to run (`lea update`, or `brew upgrade lox` then
+  `lox add TYPE NAME --version`); a pair with different protocols fails. lea no longer builds a
+  locksql image or updates Lock releases. `LEA_<LOCK>_REF` is kept for this release as a dev
+  override that `lea doctor` warns about.
+- Sounds ring only when lea needs you (#294): a question or request to you, a permission or an
+  approval to give, an agent blocked on a human. A turn that simply ends no longer rings.
+- Codex agents pass `LEA_AGENT` and `LEA_AGENT_TOKEN` to the Locks' MCP servers, so Lock grants,
+  plans and tickets name the requesting agent (#253, #302).
 
 ## v0.8.1 (2026-11-04)
 

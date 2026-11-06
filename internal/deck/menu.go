@@ -49,9 +49,6 @@ func menuItems(a Agent, inFolder bool) []menuItem {
 			items = append(items, menuItem{"Always allow", "A", ""})
 		}
 	}
-	if a.LockAsk != nil && a.Approval == nil {
-		items = append(items, menuItem{"Open console", "O", ""}, menuItem{"Decline console", "d", ""})
-	}
 	items = append(items, menuItem{"Show", "enter", ""}, menuItem{"Send message", "m", ""}, menuItem{"Messages", "t", ""},
 		menuItem{"Rename", "e", ""}, menuItem{"Role", "r", ""})
 	if inFolder {
@@ -260,9 +257,6 @@ func (m Model) mouse(e tea.MouseMsg) (tea.Model, tea.Cmd) {
 	}
 	key, item := m.hit(e.Y)
 	right := e.Button == tea.MouseButtonRight
-	if key == hubPanel {
-		return m.panelClick(item), nil
-	}
 	if right && e.Ctrl {
 		if item >= 0 || m.index(key) < 0 || isShell(m.agents[m.index(key)]) {
 			key = ""

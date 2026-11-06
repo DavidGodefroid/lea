@@ -35,9 +35,9 @@ func (d *Daemon) SetLockHTTPStatus(ctx context.Context, s LockHTTPStatus) {
 	d.SetLockStatus(ctx, "lockhttp", LockStatus{Console: s.Console, PendingByContainer: s.PendingByContainer})
 }
 
-// SetLockStatus records lock's status and tells the decks when it changed. A container whose
-// requests of that Lock start waiting (none waited before) rings the attention sound, while a deck
-// shows it (D6). A name that is no Lock's is ignored.
+// SetLockStatus records lock's status and tells the decks when it changed. It rings nothing: a
+// Lock's requests wait for lox run, which calls the user in its own terminal, outside lea (#300).
+// A name that is no Lock's is ignored.
 func (d *Daemon) SetLockStatus(ctx context.Context, lock string, s LockStatus) {
 	if !lockName.MatchString(lock) {
 		return
@@ -51,11 +51,6 @@ func (d *Daemon) SetLockStatus(ctx context.Context, lock string, s LockStatus) {
 	d.mu.Unlock()
 	if old != nil && old.Console == s.Console && sameCounts(old.PendingByContainer, s.PendingByContainer) {
 		return
-	}
-	for c, n := range s.PendingByContainer {
-		if n > 0 && (old == nil || old.PendingByContainer[c] == 0) {
-			d.sound(ctx, c, SoundAttention)
-		}
 	}
 	d.changed()
 }

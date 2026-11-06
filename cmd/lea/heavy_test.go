@@ -16,8 +16,9 @@ import (
 	"github.com/DavidGodefroid/lea/internal/store"
 )
 
-// heavyDaemon is a daemon with slots heavy slots of workers each, and its container's bus.
-func heavyDaemon(t *testing.T, slots, workers int) string {
+// heavyDaemon is a daemon with slots heavy slots of workers each, and its container's bus (lea-a,
+// or the container named).
+func heavyDaemon(t *testing.T, slots, workers int, container ...string) string {
 	t.Helper()
 	dir, _ := os.MkdirTemp("", "lea")
 	t.Cleanup(func() { os.RemoveAll(dir) })
@@ -30,7 +31,11 @@ func heavyDaemon(t *testing.T, slots, workers int) string {
 	d.SetHeavy(slots, workers)
 	ctx, cancel := context.WithCancel(context.Background())
 	t.Cleanup(cancel)
-	bus, err := d.AttachContainer(ctx, "lea-a")
+	name := "lea-a"
+	if len(container) > 0 {
+		name = container[0]
+	}
+	bus, err := d.AttachContainer(ctx, name)
 	if err != nil {
 		t.Fatal(err)
 	}

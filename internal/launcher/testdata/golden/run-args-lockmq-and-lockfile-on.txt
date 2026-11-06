@@ -108,6 +108,8 @@ seccomp=$R/image/seccomp.json
 16384m
 --pids-limit
 16384
+--label
+lea.limits=c33f5c7309f710f8
 --mount
 type=bind,src=$R/build/lea,dst=/usr/local/bin/lea,readonly
 --mount

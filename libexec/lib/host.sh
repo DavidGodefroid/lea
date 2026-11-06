@@ -148,7 +148,7 @@ lea__link_root() {
 # lea__update_release ask|all|none: resolves the latest release under LEA_RELEASES_URL, runs that release's
 # install.sh (downloaded to <data>/lea/host/update, checked against the release's checksums.txt,
 # whose Sigstore signature is verified first) with --no-init, then hands over to the new installation (its libexec/lea-sh refresh-images) to
-# pull its versioned images and build its locksql console image, and to check its dependencies.
+# pull its versioned images (lea's image brings the Lock clients of its config/locks.lock), and to say which.
 lea__update_release() {
   _ur_v=$(curl -fsSLI -o /dev/null -w '%{url_effective}' "$LEA_RELEASES_URL/latest" | sed 's|.*/tag/||') || _ur_v=
   case $_ur_v in v*) ;; *) lea_die "could not find the latest lea release ($LEA_RELEASES_URL/latest)" ;; esac
