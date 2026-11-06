@@ -46,6 +46,15 @@ var conf = perKey(strings.NewReplacer(
 	"@DECK_CLAMP@", clampFormat(),
 ).Replace(confTemplate))
 
+const (
+	// DragOption is the server option naming the drag in progress in the history (its number,
+	// from DragCountOption): the conf's lea-drag-scroll alias sets it when a drag starts and
+	// every release clears it; the drag's edge scroll stops once it names another drag or none.
+	DragOption = "@lea_drag"
+	// DragCountOption counts the drags, so that a drag's edge scroll never acts for a newer one.
+	DragCountOption = "@lea_drag_n"
+)
+
 // clampFormat is the tmux format of the dragged border's width clamped to the deck width's
 // bounds: DeckWidthMin at least, DeckWidthMax or half the window at most. The comparisons are
 // arithmetic ones (e|<:): tmux's < and > compare strings.
