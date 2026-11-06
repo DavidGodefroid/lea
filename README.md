@@ -973,8 +973,9 @@ then set the key (`~/.config/lea/lea.conf`) and restart lea's containers (`lea s
 container left on another runtime gets a warning; `lea doctor` shows `LEA_RUNTIME`, whether the
 engine knows it, and the runtime of each running lea container (`docker inspect -f
 '{{.HostConfig.Runtime}}' <container>` shows it too). `tests/integration/install-runtime.sh runsc`
-(or `kata`) does the installation the way lea's CI does (sudo, pinned releases; it restarts
-dockerd), and `LEA_TEST_RUNTIME=runsc make test-isolation` runs the isolation checks on it.
+(or `kata`) does the installation the way lea's CI does (sudo, pinned releases checked against
+their sha256: gVisor's published digest, Kata's pinned in the script for 4.3.1 on amd64 and arm64,
+`KATA_SHA256` required for any other Kata version or architecture; it restarts dockerd), and `LEA_TEST_RUNTIME=runsc make test-isolation` runs the isolation checks on it.
 
 | | gVisor (`runsc`) | Kata (`kata`) |
 |---|---|---|

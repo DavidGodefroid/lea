@@ -3,6 +3,7 @@
 # does before `LEA_TEST_RUNTIME=<name> make test-isolation`. Linux, Docker Engine, sudo.
 #   tests/integration/install-runtime.sh runsc   gVisor (GVISOR_RELEASE, under /opt/gvisor), registered as runsc
 #   tests/integration/install-runtime.sh kata    Kata Containers (KATA_VERSION, QEMU, runtime-rs), as kata
+#     (sha256 pinned for 4.3.1 amd64/arm64; set KATA_SHA256 for any other version or architecture)
 # It rewrites /etc/docker/daemon.json (keeping its other keys) and restarts dockerd: running
 # containers stop, unless they have a restart policy. Pinned releases, checksum-checked.
 set -eu
@@ -51,10 +52,25 @@ case ${1:-} in
   kata)
     arch=$(uname -m); case $arch in x86_64) arch=amd64 ;; aarch64) arch=arm64 ;; esac
     tar=kata-static-$KATA_VERSION-$arch.tar.zst
+    # The release publishes no checksum file: the sha256 of each tarball is pinned here (checked
+    # against an independent download). KATA_SHA256 overrides it, and is required whenever
+    # KATA_VERSION or the architecture is not one pinned below. The tarball is extracted into / as
+    # root, so it is never extracted unchecked.
+    sha=${KATA_SHA256:-}
+    if [ -z "$sha" ]; then
+      case $KATA_VERSION-$arch in
+        4.3.1-amd64) sha=1463a2b86845f4d3d8e87f2f764ec59856fc0fee3520967a79ade32762be2e97 ;;
+        4.3.1-arm64) sha=2c5bf7cde334ad5307d482f45cceda496f91c9b6b96f5278c47f4f4eac1bbae6 ;;
+        *) echo "install-runtime: no pinned sha256 for $tar: set KATA_SHA256" >&2; exit 1 ;;
+      esac
+    fi
+    case $sha in
+      *[!0-9a-f]*) echo "install-runtime: KATA_SHA256 is not a lowercase hex sha256" >&2; exit 1 ;;
+    esac
+    [ ${#sha} -eq 64 ] || { echo "install-runtime: KATA_SHA256 is not a lowercase hex sha256" >&2; exit 1; }
     url=https://github.com/kata-containers/kata-containers/releases/download/$KATA_VERSION
     (cd "$work" && curl -fsSLO "$url/$tar")
-    # The release publishes no checksum file: the digest of the tarball lea's CI tested.
-    if [ -n "${KATA_SHA256:-}" ]; then echo "$KATA_SHA256  $work/$tar" | sha256sum -c -; fi
+    (cd "$work" && echo "$sha  $tar" | sha256sum -c -) || { echo "install-runtime: $tar: sha256 mismatch" >&2; exit 1; }
     command -v zstd >/dev/null || sudo apt-get install -y -q zstd >/dev/null
     sudo tar --zstd -xf "$work/$tar" -C /
     cfg=/opt/kata/share/defaults/kata-containers/runtime-rs
