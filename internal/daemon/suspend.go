@@ -62,7 +62,7 @@ func (d *Daemon) armKeepalive(key string, spent time.Duration) {
 		t.Stop()
 	}
 	var t *time.Timer
-	t = time.AfterFunc(max(d.keepalive-spent, 0), func() {
+	t = d.afterFunc(max(d.keepalive-spent, 0), func() {
 		d.mu.Lock()
 		mine := d.keepTimers[key] == t
 		if mine {
