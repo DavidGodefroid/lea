@@ -448,7 +448,8 @@ for x in "crm locksql $sq_v" "events lockmq $mq_v" "docs lockfile $lf_v"; do
   else ko "lea doctor: lock $1 ($2): $(grep -F "lock $1 ($2)" "$work/doctor.out" || echo 'no line')"; fi
 done
 # The probe lea doctor runs for a lock of another image (lea lock-hello), here on each console,
-# its socket named as lockkit names it (the projects directory's hash, the profile): locksql's and
+# its socket named as lockkit names it (the projects directory's hash, or "user" for a console
+# without a project marker, then the profile): locksql's and
 # lockmq's socket directories (2710) cannot be listed by their clients group.
 ph=$(printf '%s' "$projects" | sha256sum | cut -c1-8)
 for x in "crm locksql 10000 10001 $sq_v dev" "events lockmq 10010 10011 $mq_v p" "docs lockfile 10030 10031 $lf_v samples"; do
@@ -457,9 +458,9 @@ for x in "crm locksql 10000 10001 $sq_v dev" "events lockmq 10010 10011 $mq_v p"
   h=$(docker run --rm --pull never --network none --read-only --cap-drop ALL --security-opt no-new-privileges \
     --user "$uid:$(id -g)" --group-add "$3" --mount "type=volume,src=${p}_$1-run,dst=/run/$2,readonly" \
     --mount "type=bind,src=$root/build/lea,dst=/usr/local/bin/lea,readonly" --entrypoint /usr/local/bin/lea \
-    lea:dev lock-hello --uid "$4" "/run/$2" "$ph-$6.sock" 2>&1) || true
-  if [ "$(printf '%s' "$h" | jq -r '.[0].hello.protocol_major' 2>/dev/null)" = 1 ] &&
-    [ "$(printf '%s' "$h" | jq -r '.[0].hello.console_version' 2>/dev/null | sed 's/^v//')" = "$5" ]; then
+    lea:dev lock-hello --uid "$4" "/run/$2" "$ph-$6.sock" "user-$6.sock" 2>&1) || true
+  if [ "$(printf '%s' "$h" | jq -r '[.[] | select(.hello)][0].hello.protocol_major' 2>/dev/null)" = 1 ] &&
+    [ "$(printf '%s' "$h" | jq -r '[.[] | select(.hello)][0].hello.console_version' 2>/dev/null | sed 's/^v//')" = "$5" ]; then
     ok "lea lock-hello: the $1 console ($2) answers protocol 1, version $5"
   else ko "lea lock-hello on $1 ($2): $h"; fi
 done

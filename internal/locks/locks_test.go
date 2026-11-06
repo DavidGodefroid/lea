@@ -214,15 +214,15 @@ func TestAskHello(t *testing.T) {
 	}
 }
 
-// The socket name is lockkit's: the projects directory's hash, then the profile.
-func TestSocketName(t *testing.T) {
-	// sha256("/home/u/projects")[:8], as lockkit's config.ProjectHash.
-	if n := SocketName("/run/locksql", "/home/u/projects", "dev"); !regexp.MustCompile(`^[0-9a-f]{8}-dev\.sock$`).MatchString(n) ||
-		n != SocketName("/run/locksql", "/home/u/projects/", "dev") {
-		t.Errorf("%q", n)
+// The socket names are lockkit's: the projects directory's hash (or "user"), then the profile.
+func TestSocketNames(t *testing.T) {
+	ns := SocketNames("/run/locksql", "/home/u/projects", "dev")
+	if len(ns) != 2 || !regexp.MustCompile(`^[0-9a-f]{8}-dev\.sock$`).MatchString(ns[0]) || ns[1] != "user-dev.sock" ||
+		ns[0] != SocketNames("/run/locksql", "/home/u/projects/", "dev")[0] {
+		t.Errorf("%q", ns)
 	}
 	long := strings.Repeat("p", 64)
-	if n := SocketName("/run/locksql/"+strings.Repeat("i", 40), "/x", long); !strings.Contains(n, "-~") || len(n) != 8+2+16+5 {
+	if n := SocketNames("/run/locksql/"+strings.Repeat("i", 40), "/x", long)[0]; !strings.Contains(n, "-~") || len(n) != 8+2+16+5 {
 		t.Errorf("long: %q", n)
 	}
 }

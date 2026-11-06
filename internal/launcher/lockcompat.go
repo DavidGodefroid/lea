@@ -224,10 +224,10 @@ func (l *Launcher) lockHello(proj string, s *lockUpState, lk UpLock) (*locks.Hel
 		"--mount", lockUpMount(lockUpSocket{Volume: lk.Volume, Dst: reg.SocketDir()}),
 		"--mount", "type=bind,src=" + l.Core + ",dst=/usr/local/bin/lea,readonly",
 		"--entrypoint", "/usr/local/bin/lea", l.Cfg.Get("LEA_IMAGE"), "lock-hello", "--uid", reg.UID, reg.SocketDir()}
-	// The console's socket, named as lockkit names it (the projects directory's hash and the
-	// profile lox up says it serves): a 2710 socket directory cannot be listed.
+	// The console's socket, named as lockkit names it (the projects directory's hash, or "user",
+	// and the profile lox up says it serves): a 2710 socket directory cannot be listed.
 	if lk.Profile != "" {
-		args = append(args, locks.SocketName(reg.SocketDir(), proj, lk.Profile))
+		args = append(args, locks.SocketNames(reg.SocketDir(), proj, lk.Profile)...)
 	}
 	c := l.cmd("docker", args...)
 	var out, errb bytes.Buffer
@@ -250,7 +250,7 @@ func (l *Launcher) lockHello(proj string, s *lockUpState, lk UpLock) (*locks.Hel
 		if r.Hello != nil {
 			return r.Hello, ""
 		}
-		errs = append(errs, clipText(r.Err))
+		errs = append(errs, clipText(r.Socket+": "+r.Err))
 	}
 	return nil, strings.Join(errs, "; ")
 }

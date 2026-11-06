@@ -28,18 +28,22 @@ type HelloAt struct {
 // variable so tests can stand in for the console account.
 var peerUID = socketPeerUID
 
-// SocketName is the name of the console socket of the project root root and profile in a lock's
-// socket directory dir, as lockkit's ipc computes it: <project hash>-<profile>.sock, or, for a
-// path longer than the OS takes, <project hash>-~<hash of the profile>.sock.
-func SocketName(dir, root, profile string) string {
+// SocketNames are the names a console of profile may give its socket in a lock's socket
+// directory dir, as lockkit's ipc computes them: <key>-<profile>.sock (or, for a path longer than
+// the OS takes, <key>-~<hash of the profile>.sock), the key being the hash of the project root
+// root when the console found that project, else "user" (a console without a project marker).
+func SocketNames(dir, root, profile string) []string {
 	sum := sha256.Sum256([]byte(filepath.Clean(root)))
-	h := hex.EncodeToString(sum[:])[:8]
-	n := h + "-" + profile + ".sock"
+	return []string{socketName(dir, hex.EncodeToString(sum[:])[:8], profile), socketName(dir, "user", profile)}
+}
+
+func socketName(dir, key, profile string) string {
+	n := key + "-" + profile + ".sock"
 	if len(filepath.Join(dir, n)) <= 107 {
 		return n
 	}
 	ps := sha256.Sum256([]byte(profile))
-	return h + "-~" + hex.EncodeToString(ps[:])[:16] + ".sock"
+	return key + "-~" + hex.EncodeToString(ps[:])[:16] + ".sock"
 }
 
 var socketNameRe = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_.~-]{0,100}\.sock$`)

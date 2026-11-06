@@ -72,7 +72,7 @@ func TestDoctorLockCompatibility(t *testing.T) {
 	labels(w, "docs", "lockfile", "socket")
 	w.env["FAKE_LOX_VERSION"] = strings.TrimPrefix(set.Lox, "v")
 	// lockmq answers the handshake of an older release, lockfile of another protocol.
-	w.env["FAKE_DOCKER_OUT_RUN___RM_AT_"+fakeKey(locks.SocketName("/run/lockmq", w.proj, "p"))] = `[{"socket":"x-default.sock","hello":{"protocol_major":1,"console_version":"0.6.0","profile":"default"}}]`
+	w.env["FAKE_DOCKER_OUT_RUN___RM_AT_USER_P_SOCK"] = `[{"socket":"x-default.sock","hello":{"protocol_major":1,"console_version":"0.6.0","profile":"default"}}]`
 	w.env["FAKE_DOCKER_OUT_RUN___RM_AT__RUN_LOCKFILE"] = `[{"socket":"x-default.sock","hello":{"protocol_major":2,"console_version":"9.1.0","profile":"default"}}]`
 	l := w.launcher()
 	err := l.doctorLocks(w.proj)
@@ -107,7 +107,7 @@ func TestDoctorLockCompatibility(t *testing.T) {
 			if strings.HasPrefix(c, want) && strings.Contains(c, "[--group-add] ["+reg.GID+"]") &&
 				strings.Contains(c, "[type=volume,src="+upProjectOf(w)+"_"+name+"-run,dst=/run/"+typ+",readonly]") &&
 				strings.Contains(c, "[type=bind,src="+w.core+",dst=/usr/local/bin/lea,readonly]") &&
-				strings.HasSuffix(c, "[lea:dev] [lock-hello] [--uid] ["+reg.UID+"] [/run/"+typ+"]"+map[string]string{"lockmq": " [" + locks.SocketName("/run/lockmq", w.proj, "p") + "]"}[typ]) {
+				strings.HasSuffix(c, "[lea:dev] [lock-hello] [--uid] ["+reg.UID+"] [/run/"+typ+"]"+map[string]string{"lockmq": " [" + strings.Join(locks.SocketNames("/run/lockmq", w.proj, "p"), "] [") + "]"}[typ]) {
 				ok = true
 			}
 		}
