@@ -3,6 +3,7 @@ package launcher
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"net"
 	"os"
 	"path/filepath"
 	"sort"
@@ -32,22 +33,91 @@ const isolatedGatewayDocker = "28.0"
 // gateway_mode_ipv4=isolated (an older Docker Engine, Podman). Without it, lea fails closed (#105).
 func (l *Launcher) allowGateway() bool { return l.Cfg.Get("LEA_ALLOW_GATEWAY") == "1" }
 
-// isolatedUnavailable says why this engine cannot give an internal network an isolated gateway,
-// "" when it can or when lea cannot tell (then Docker's answer to the option decides).
+// isolatedUnavailable says why this engine cannot be trusted to give an internal network an
+// isolated gateway, "" only for a Docker Engine known to have gateway_mode_ipv4=isolated. An
+// engine or a version lea cannot tell is unavailable too: lea fails closed (#105), it never lets
+// the option string alone decide.
 func (l *Launcher) isolatedUnavailable() string {
 	engine, v := l.hostEngine()
 	switch {
 	case engine == "podman":
 		return "Podman " + v + "'s bridge has no gateway_mode_ipv4=isolated"
-	case engine == "docker" && v != "" && !versionAtLeast(v, isolatedGatewayDocker):
+	case engine != "docker" || v == "":
+		return "lea cannot tell the container engine's version (docker version names no Docker Engine)"
+	case !versionAtLeast(v, isolatedGatewayDocker):
 		return "Docker Engine " + v + " is older than " + isolatedGatewayDocker + ", the first with gateway_mode_ipv4=isolated"
 	}
 	return ""
 }
 
+// networkFormat is what ensureNetworks reads of an internal network (parseNetwork): whether it is
+// internal and its gateway_mode_ipv4, then its ID and its bridge name option after a |. An engine
+// may print an option it does not hold as <no value>, with a space: the | keeps the fields apart.
+const networkFormat = `{{.Internal}} {{index .Options "com.docker.network.bridge.gateway_mode_ipv4"}}` +
+	`|{{.Id}}|{{index .Options "com.docker.network.bridge.name"}}`
+
+// parseNetwork reads networkFormat's output: internal is "true" for an internal network, mode is
+// "" or <no value> when the option is unset.
+func parseNetwork(info string) (internal, mode, id, bridge string) {
+	head, rest, _ := strings.Cut(info, "|")
+	internal, mode, _ = strings.Cut(head, " ")
+	id, bridge, _ = strings.Cut(rest, "|")
+	return internal, strings.TrimSpace(mode), strings.TrimSpace(id), strings.TrimSpace(bridge)
+}
+
+// hostBridgeAddrs are the IPv4 addresses the host holds on the interface name; found is false
+// when the host has no such interface (the bridge lives in another network namespace: rootless
+// Docker, Docker Desktop's VM). It is Launcher.bridgeAddrs when that is nil.
+func hostBridgeAddrs(name string) (addrs []string, found bool, err error) {
+	ifc, err := net.InterfaceByName(name)
+	if err != nil {
+		return nil, false, nil
+	}
+	as, err := ifc.Addrs()
+	if err != nil {
+		return nil, true, err
+	}
+	for _, a := range as {
+		if ipn, ok := a.(*net.IPNet); ok && ipn.IP.To4() != nil {
+			addrs = append(addrs, ipn.String())
+		}
+	}
+	return addrs, true, nil
+}
+
+// hostOnBridge says how the host is reachable on the bridge of the internal network id (bridge,
+// its com.docker.network.bridge.name option, or Docker's br-<12 first digits of id>), "" when lea
+// sees the bridge without an IPv4 address or cannot see it at all. It checks the isolation itself
+// rather than trusting gateway_mode_ipv4: a bridge with a host address is refused whatever the
+// option says. A bridge whose addresses cannot be read is refused too.
+func (l *Launcher) hostOnBridge(id, bridge string) string {
+	if bridge == "" || bridge == "<no value>" {
+		if len(id) < 12 {
+			return ""
+		}
+		bridge = "br-" + id[:12]
+	}
+	get := l.bridgeAddrs
+	if get == nil {
+		get = hostBridgeAddrs
+	}
+	addrs, found, err := get(bridge)
+	switch {
+	case !found:
+		return ""
+	case err != nil:
+		return "lea cannot read the host's addresses on its bridge " + bridge + " (" + err.Error() + ")"
+	case len(addrs) > 0:
+		return "the host holds " + strings.Join(addrs, ", ") + " on its bridge " + bridge
+	}
+	return ""
+}
+
 // ensureNetworks is lea_ensure_networks: the egress network and the container's internal one. The
-// internal network must have gateway_mode_ipv4=isolated (no host address on it): when the engine
-// cannot give it, lea refuses to start the container, unless LEA_ALLOW_GATEWAY=1 (#105).
+// internal network must have gateway_mode_ipv4=isolated on an engine known to honour it, and the
+// host must hold no address on its bridge: otherwise lea refuses to start the container, unless
+// LEA_ALLOW_GATEWAY=1 (#105). The same checks hold for a network that already exists as for one
+// lea creates.
 func (l *Launcher) ensureNetworks(id string) error {
 	inet, egr := l.Cfg.InternalNetwork(id), l.prefix()+"-egress"
 	if l.quiet("docker", "network", "inspect", egr) != nil {
@@ -55,13 +125,12 @@ func (l *Launcher) ensureNetworks(id string) error {
 			return err
 		}
 	}
-	if info, err := l.output(false, "docker", "network", "inspect", "-f",
-		`{{.Internal}} {{index .Options "com.docker.network.bridge.gateway_mode_ipv4"}}`, inet); err == nil {
-		internal, mode, _ := strings.Cut(info, " ")
+	if info, err := l.output(false, "docker", "network", "inspect", "-f", networkFormat, inet); err == nil {
+		internal, mode, nid, bridge := parseNetwork(info)
 		if internal != "true" {
 			return die("network %s exists but is not an internal network; remove it (docker network rm %s) and retry", inet, inet)
 		}
-		if mode = strings.TrimSpace(mode); mode != "isolated" {
+		if mode != "isolated" {
 			if mode == "" || mode == "<no value>" {
 				mode = "unset"
 			}
@@ -69,14 +138,25 @@ func (l *Launcher) ensureNetworks(id string) error {
 				return die("network %s exists without gateway_mode_ipv4=isolated (%s): the host is reachable from it; stop its container (lea stop), remove it (docker network rm %s) and retry, or set LEA_ALLOW_GATEWAY=1 to accept it", inet, mode, inet)
 			}
 			l.logf("warning: %s has gateway_mode_ipv4=%s, not isolated: host services are reachable from the agents (LEA_ALLOW_GATEWAY=1)", inet, mode)
+			return nil
 		}
-		return nil
+		// The option alone proves nothing: an engine that predates it may hold it and ignore it.
+		if why := l.isolatedUnavailable(); why != "" {
+			if !l.allowGateway() {
+				return die("network %s has gateway_mode_ipv4=isolated but %s: lea will not start an agent on a network where the host may be reachable (needs Docker Engine %s or later; set LEA_ALLOW_GATEWAY=1 to accept it)", inet, why, isolatedGatewayDocker)
+			}
+			l.logf("warning: %s: %s may leave host services reachable from the agents (LEA_ALLOW_GATEWAY=1)", why, inet)
+			return nil
+		}
+		return l.refuseHostOnBridge(inet, nid, bridge)
 	}
 	why := l.isolatedUnavailable()
 	if why == "" {
 		if l.quiet("docker", "network", "create", "--label", "lea.prefix="+l.prefix(), "--label", "lea.id="+id, "--internal",
 			"-o", "com.docker.network.bridge.gateway_mode_ipv4=isolated", inet) == nil {
-			return nil
+			info, _ := l.output(false, "docker", "network", "inspect", "-f", networkFormat, inet)
+			_, _, nid, bridge := parseNetwork(info)
+			return l.refuseHostOnBridge(inet, nid, bridge)
 		}
 		why = "Docker refused gateway_mode_ipv4=isolated"
 	}
@@ -85,6 +165,20 @@ func (l *Launcher) ensureNetworks(id string) error {
 	}
 	l.logf("warning: %s; %s is created without it (LEA_ALLOW_GATEWAY=1): host services are reachable from the agents", why, inet)
 	return l.run("docker", "network", "create", "--label", "lea.prefix="+l.prefix(), "--label", "lea.id="+id, "--internal", inet)
+}
+
+// refuseHostOnBridge fails when the host holds an address on the bridge of inet (hostOnBridge),
+// unless LEA_ALLOW_GATEWAY=1, which only warns.
+func (l *Launcher) refuseHostOnBridge(inet, id, bridge string) error {
+	reach := l.hostOnBridge(id, bridge)
+	if reach == "" {
+		return nil
+	}
+	if !l.allowGateway() {
+		return die("network %s has gateway_mode_ipv4=isolated but %s: the host is reachable from it; stop its container (lea stop), remove it (docker network rm %s) and retry, or set LEA_ALLOW_GATEWAY=1 to accept it", inet, reach, inet)
+	}
+	l.logf("warning: %s: %s; host services are reachable from the agents (LEA_ALLOW_GATEWAY=1)", inet, reach)
+	return nil
 }
 
 // proxyConfine are the docker run arguments that confine the proxy, the one container on both the

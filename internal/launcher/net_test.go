@@ -1,6 +1,7 @@
 package launcher
 
 import (
+	"errors"
 	"strings"
 	"testing"
 )
@@ -170,5 +171,142 @@ func TestProxyAttachJoinsWithTheAlias(t *testing.T) {
 	}
 	if !w.hasCall("docker [network] [connect] [--alias] [lea-proxy] [lea-internal-abc] [lea-proxy]") {
 		t.Fatalf("calls:\n%s", strings.Join(w.calls(), "\n"))
+	}
+}
+
+// #105: gateway_mode_ipv4=isolated stored on an existing network proves nothing on an engine that
+// predates it (it may hold the option and ignore it), nor on an engine lea cannot tell: the
+// existing network is refused as a new one would be, unless LEA_ALLOW_GATEWAY=1.
+func TestExistingIsolatedNetworkOnAnEngineWithoutIsolatedGatewayIsRefused(t *testing.T) {
+	for _, c := range []struct{ engine, want string }{
+		{"Engine=27.5.1", "Docker Engine 27.5.1 is older than 28.0"},
+		{"Podman Engine=5.8.9", "Podman 5.8.9's bridge has no gateway_mode_ipv4=isolated"},
+		{"", "lea cannot tell the container engine's version"},
+		{"containerd=v2.1.4", "lea cannot tell the container engine's version"},
+		{"Engine=", "lea cannot tell the container engine's version"},
+	} {
+		w := newWorld(t, repoRoot(t))
+		w.env["FAKE_DOCKER_OUT_NETWORK_INSPECT"] = "true isolated|0123456789abcdef|<no value>"
+		w.env[engineFormat] = c.engine
+		err := w.launcher().ensureNetworks("abc")
+		if err == nil || !strings.Contains(err.Error(), "lea-internal-abc has gateway_mode_ipv4=isolated but "+c.want) ||
+			!strings.Contains(err.Error(), "LEA_ALLOW_GATEWAY=1") {
+			t.Fatalf("%q: err = %v", c.engine, err)
+		}
+		w.env["LEA_ALLOW_GATEWAY"] = "1"
+		if err := w.launcher().ensureNetworks("abc"); err != nil || w.hasCall("[network] [create] [--label] [lea.prefix=lea] [--label]") {
+			t.Fatalf("%q: opt-in: %v", c.engine, err)
+		}
+		if !strings.Contains(w.errb.String(), c.want) || !strings.Contains(w.errb.String(), "LEA_ALLOW_GATEWAY=1") {
+			t.Fatalf("%q: stderr %q", c.engine, w.errb.String())
+		}
+	}
+}
+
+// An engine lea cannot tell gets no new internal network either: lea does not let Docker's answer
+// to the option decide (an engine that ignores it accepts it).
+func TestInternalNetworkRefusesAnUnknownEngine(t *testing.T) {
+	w := newWorld(t, repoRoot(t))
+	w.env["FAKE_DOCKER_SEQ_NETWORK_INSPECT"] = "0 1"
+	w.env[engineFormat] = ""
+	err := w.launcher().ensureNetworks("abc")
+	if err == nil || !strings.Contains(err.Error(), "lea cannot tell the container engine's version") || !strings.Contains(err.Error(), "LEA_ALLOW_GATEWAY=1") {
+		t.Fatalf("err = %v", err)
+	}
+	if w.hasCall("[network] [create] [--label] [lea.prefix=lea] [--label]") {
+		t.Fatalf("a network is created:\n%s", strings.Join(w.calls(), "\n"))
+	}
+}
+
+// bridges stands for the host's interfaces: name -> its IPv4 addresses; a name absent is an
+// interface the host does not have (the bridge lives in another namespace).
+func bridges(m map[string][]string, err error) func(string) ([]string, bool, error) {
+	return func(name string) ([]string, bool, error) {
+		a, ok := m[name]
+		if ok && err != nil {
+			return nil, true, err
+		}
+		return a, ok, nil
+	}
+}
+
+// lea checks the isolation itself: a host address on the network's bridge is refused whatever
+// gateway_mode_ipv4 says, on an existing network as on one lea just created.
+func TestHostAddressOnTheBridgeIsRefused(t *testing.T) {
+	const id = "0123456789abcdef0123"
+	for _, c := range []struct {
+		name, inspect string
+		host          map[string][]string
+		err           error
+		want          string // "" accepted
+	}{
+		{"no address on br-<id>", "true isolated|" + id + "|<no value>", map[string][]string{"br-0123456789ab": nil}, nil, ""},
+		{"bridge not visible", "true isolated|" + id + "|<no value>", map[string][]string{}, nil, ""},
+		{"address on br-<id>", "true isolated|" + id + "|<no value>", map[string][]string{"br-0123456789ab": {"172.24.0.1/16"}},
+			nil, "the host holds 172.24.0.1/16 on its bridge br-0123456789ab"},
+		{"address on the named bridge", "true isolated|" + id + "|leabr0", map[string][]string{"leabr0": {"10.9.0.1/24"}, "br-0123456789ab": nil},
+			nil, "the host holds 10.9.0.1/24 on its bridge leabr0"},
+		{"unreadable addresses", "true isolated|" + id + "|<no value>", map[string][]string{"br-0123456789ab": nil},
+			errors.New("netlink: permission denied"), "lea cannot read the host's addresses on its bridge br-0123456789ab (netlink: permission denied)"},
+	} {
+		for _, created := range []bool{false, true} {
+			w := newWorld(t, repoRoot(t))
+			w.env["FAKE_DOCKER_OUT_NETWORK_INSPECT"] = c.inspect
+			if created {
+				// egress exists, the internal network is missing, then inspected once created.
+				w.env["FAKE_DOCKER_SEQ_NETWORK_INSPECT"] = "0 1 0"
+			}
+			l := w.launcher()
+			l.bridgeAddrs = bridges(c.host, c.err)
+			err := l.ensureNetworks("abc")
+			if c.want == "" {
+				if err != nil {
+					t.Fatalf("%s (created %v): %v", c.name, created, err)
+				}
+				continue
+			}
+			if err == nil || !strings.Contains(err.Error(), "lea-internal-abc has gateway_mode_ipv4=isolated but "+c.want) ||
+				!strings.Contains(err.Error(), "LEA_ALLOW_GATEWAY=1") {
+				t.Fatalf("%s (created %v): err = %v", c.name, created, err)
+			}
+			if created != w.hasCall("[--internal] [-o] [com.docker.network.bridge.gateway_mode_ipv4=isolated] [lea-internal-abc]") {
+				t.Fatalf("%s (created %v): calls:\n%s", c.name, created, strings.Join(w.calls(), "\n"))
+			}
+			w.env["LEA_ALLOW_GATEWAY"] = "1"
+			w.env["FAKE_DOCKER_SEQ_NETWORK_INSPECT"] = ""
+			l = w.launcher()
+			l.bridgeAddrs = bridges(c.host, c.err)
+			if err := l.ensureNetworks("abc"); err != nil || !strings.Contains(w.errb.String(), c.want) {
+				t.Fatalf("%s (created %v): opt-in: %v, stderr %q", c.name, created, err, w.errb.String())
+			}
+		}
+	}
+}
+
+func TestHostBridgeAddrsReadsTheHostInterfaces(t *testing.T) {
+	if _, found, err := hostBridgeAddrs("lea-no-such-bridge0"); found || err != nil {
+		t.Fatalf("a missing interface: found %v, %v", found, err)
+	}
+	addrs, found, err := hostBridgeAddrs("lo")
+	if !found {
+		t.Skip("no loopback interface named lo on this host")
+	}
+	if err != nil || !strings.Contains(strings.Join(addrs, " "), "127.0.0.1/8") {
+		t.Fatalf("lo: %v %v", addrs, err)
+	}
+}
+
+func TestParseNetwork(t *testing.T) {
+	for in, want := range map[string][4]string{
+		"true isolated|0123456789abcdef|<no value>": {"true", "isolated", "0123456789abcdef", "<no value>"},
+		"true <no value>|0123456789abcdef|br0":      {"true", "<no value>", "0123456789abcdef", "br0"},
+		"true |abc|":                                {"true", "", "abc", ""},
+		"true isolated":                             {"true", "isolated", "", ""},
+		"false":                                     {"false", "", "", ""},
+	} {
+		a, b, c, d := parseNetwork(in)
+		if got := [4]string{a, b, c, d}; got != want {
+			t.Errorf("%q: %q, want %q", in, got, want)
+		}
 	}
 }

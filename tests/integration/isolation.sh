@@ -189,6 +189,26 @@ grep -qF "FAIL  lea-test-internal-$pid gateway_mode_ipv4=unset" "$work/doctor.ou
   { cat "$work/doctor.out" >&2; echo "isolation: lea doctor does not fail on lea-test-internal-$pid" >&2; exit 1; }
 docker network rm "lea-test-internal-$pid" >/dev/null
 echo "isolation: ok    a non-isolated internal network is refused, and lea doctor fails on it"
+# #105: lea checks the isolation itself, not the option string: an internal network that has
+# gateway_mode_ipv4=isolated but whose bridge holds a host address is refused too. Adding the
+# address needs root (sudo -n): without it the check is noted (a failure in CI).
+docker network create --label lea.prefix=lea-test --label "lea.id=$pid" --internal \
+  -o com.docker.network.bridge.gateway_mode_ipv4=isolated "lea-test-internal-$pid" >/dev/null
+pbr="br-$(docker network inspect -f '{{.Id}}' "lea-test-internal-$pid" | cut -c1-12)"
+if ip -4 addr show dev "$pbr" >/dev/null 2>&1 && sudo -n ip addr add 192.0.2.1/32 dev "$pbr" 2>/dev/null; then
+  if LEA_PROJECTS_DIR="$plain" "$root/bin/lea" shell -- true </dev/null >"$work/plain.out" 2>&1; then
+    cat "$work/plain.out" >&2; echo "isolation: lea started on an isolated network whose bridge holds a host address" >&2; exit 1
+  fi
+  grep -qF "lea-test-internal-$pid has gateway_mode_ipv4=isolated but the host holds 192.0.2.1/32 on its bridge $pbr" "$work/plain.out" ||
+    { cat "$work/plain.out" >&2; echo "isolation: lea's refusal does not name the host address on the bridge" >&2; exit 1; }
+  if docker container inspect "lea-test-$pid" >/dev/null 2>&1; then
+    echo "isolation: lea created lea-test-$pid on a bridge with a host address" >&2; exit 1
+  fi
+  echo "isolation: ok    an isolated network whose bridge holds a host address is refused"
+else
+  echo "note: the bridge $pbr is not visible or sudo -n is unavailable: the host-address check did not run"
+fi
+docker network rm "lea-test-internal-$pid" >/dev/null
 rc=0
 # The proxy lea started is confined (#102): capabilities, no-new-privileges, read-only root,
 # limits, no root process but PID 1.
