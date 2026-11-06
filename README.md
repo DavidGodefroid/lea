@@ -831,6 +831,7 @@ read-only. The screen runs in the deck on the host: agents cannot open or drive 
 | `LEA_INTERNAL_HOSTS` | none | private hosts the proxy may reach (format in `config/internal-hosts`) |
 | `LEA_EGRESS_ALLOW` | empty (lea's default list) | the only web domains agents may reach, comma separated (subdomains included); `default` stands for lea's list, `*` opens the web |
 | `LEA_NESTED_NETWORKS` | empty | networks your compose files expect, created at start |
+| `LEA_RUNTIME` | empty (the engine's default, runc) | the OCI runtime of the agent containers only: `runsc` (gVisor) or `kata` (Kata Containers) puts a second kernel between the agents and the host's ([a second kernel](#a-second-kernel-gvisor-or-kata)); applies to a container started after the change (`lea stop`, then `lea`) |
 | `LEA_CPUS`, `LEA_MEMORY`, `LEA_MEMORY_SWAP`, `LEA_PIDS_LIMIT` | `75%`, `50%`, no swap, `16384` | the lea container's limits: CPUs (a share of Docker's, at least 2, a number such as `8`, or `0`), memory (a share of Docker's, a size such as `16g`, or `0`), memory plus swap (`-1`: no limit), processes and threads (`0`: no limit); the next `lea` applies them to a running container, or restarts it with them once no agent or session runs in it; rootless Podman needs `Delegate=cpu cpuset io memory pids` for `user@.service` (`lea doctor` checks it) |
 | `LEA_APPROVALS`, `LEA_APPROVAL_TIMEOUT` | `deck`, `60` | who answers permission requests |
 | `LEA_PROVIDER`, `LEA_MODEL` | `claude`, empty | the default provider and model of a new agent ([providers](#other-providers-codex-ollama-vllm)) |
@@ -947,7 +948,8 @@ so. Changes apply after `lea init` (endpoints, keys, images, locksql) or `lea st
   Docker's default) refuses `socketcall` and the kernel crypto API sockets (`AF_ALG`,
   CVE-2026-31431). 32-bit x86 (i386) programs do not run in lea: their `socketcall` hides the
   socket family from seccomp, so the profile leaves that architecture out.
-- Every lea container shares the host kernel, so the host's patch level is part of the
+- Every lea container shares the host kernel (unless `LEA_RUNTIME` puts the agents on gVisor or
+  Kata: [a second kernel](#a-second-kernel-gvisor-or-kata)), so the host's patch level is part of the
   containment. The kernel must carry the fixes for CVE-2026-74753, CVE-2026-80521 and CVE-2026-80841; on Ubuntu, check with
   `apt changelog linux-image-$(uname -r) | grep -E 'CVE-2026-(74753|80521|80841)'`. `lea doctor`
   shows the kernel, Docker Engine, containerd and runc versions and fails below the kernel minimum
@@ -959,6 +961,47 @@ so. Changes apply after `lea init` (endpoints, keys, images, locksql) or `lea st
   configuration, `.mcp.json` and `.claude/` settings.
 - Change Claude Code's configuration on the host: it is read-only in lea. After editing a single
   file (`settings.json`, a top-level `*.md`, `keybindings.json`), restart lea (`lea stop`).
+
+### A second kernel: gVisor or Kata
+
+By default the agent container runs on the engine's default runtime (runc): one kernel, shared
+with the host, so a single kernel bug reachable from the container is enough to escape, whatever
+seccomp and AppArmor refuse. `LEA_RUNTIME` puts a second kernel in the way, for the agent
+containers only (the proxy and the gates run no agent code and stay on the default runtime):
+
+- `LEA_RUNTIME=runsc`: [gVisor](https://gvisor.dev), a user-space kernel (the Sentry) that
+  answers the agents' system calls; the host kernel sees a few of its own.
+- `LEA_RUNTIME=kata`: [Kata Containers](https://katacontainers.io), a lightweight virtual machine
+  with its own guest kernel per container (needs hardware virtualisation: `/dev/kvm`).
+
+The runtime is installed and registered with dockerd first (lea installs nothing on the host);
+then set the key (`~/.config/lea/lea.conf`) and restart lea's containers (`lea stop --all`, then
+`lea`). An unknown runtime refuses the start and names those the engine knows; a running
+container left on another runtime gets a warning; `lea doctor` shows `LEA_RUNTIME`, whether the
+engine knows it, the runtime of each running lea container (`docker inspect -f
+'{{.HostConfig.Runtime}}' <container>` shows it too), and warns when the runtime would leave lea's
+seccomp profile out (a runsc registration without `--oci-seccomp`, a Kata `configuration.toml`
+without `disable_guest_seccomp = false`). `tests/integration/install-runtime.sh runsc`
+(or `kata`) does the installation the way lea's CI does (sudo, pinned releases checked against
+digests pinned in the script: gVisor's sha512 for release-20261102.0 on x86_64 and aarch64
+(`GVISOR_SHA512` required for any other release or architecture), Kata's sha256 for 4.3.1 on
+amd64 and arm64 (`KATA_SHA256` required for any other version or architecture); it restarts dockerd), and `LEA_TEST_RUNTIME=runsc make test-isolation` runs the isolation checks on it.
+
+| | gVisor (`runsc`) | Kata (`kata`) |
+|---|---|---|
+| Minimum release | release-20260803.0, the first weekly release after gVisor's 30 July 2026 change to file descriptors passed over Unix sockets (the fix tied to OpenAI's sandbox report); lea's CI runs release-20261102.0 | 3.27.0 (CVE-2026-24834, guest privilege escalation through virtio-pmem); 4.2.0 or later recommended, the first release after the two Kata changes of August 2026 that the same report cites; lea's CI runs 4.3.1 (runtime-rs, QEMU) |
+| dockerd registration | `"runsc": {"path": "/opt/gvisor/runsc", "runtimeArgs": ["--oci-seccomp", "--host-uds=open", "--host-fifo=open"]}` | `"kata": {"runtimeType": "io.containerd.kata.v2"}`, and in Kata's `configuration.toml`, `disable_guest_seccomp = false` and `"--xattr"` in `virtio_fs_extra_args` (the nested Podman's `newuidmap` needs its file capability) |
+| Nested Podman (`docker`, `docker compose` in lea) | works, but its containers share lea's network namespace (gVisor refuses the bind mount Podman keeps a network namespace with): their ports are lea's, and a port below 1024 cannot be bound | works, with its own network namespaces; its images live in a tmpfs inside the VM (rootless Podman cannot unpack a layer on virtio-fs), so they count against the container's memory and are pulled again after each restart |
+| lea's bus (messaging between agents), the Lock consoles' sockets | work (`--host-uds=open` lets the sandbox connect to host Unix sockets) | unavailable: a host Unix socket does not cross into the VM (lea says so at start; `make test-isolation` prints `info lea's bus socket is not reachable`) |
+| Clipboard (copy from an agent to the host) | works (`--host-fifo=open`) | off: a host FIFO cannot be bound into the VM (lea leaves it out and says so) |
+| seccomp, AppArmor | lea's seccomp profile is applied inside the sandbox only with `--oci-seccomp` (runsc ignores it otherwise); runsc ignores the AppArmor profile, the Sentry runs under gVisor's own seccomp filter | lea's seccomp profile is applied in the guest only with `disable_guest_seccomp = false`; the AppArmor profile is not applied in the VM |
+| Cost | syscall-heavy work (builds, `git`, package installs) is slower; little memory | a VM per container: its memory (the guest's default size) and a few seconds more at start |
+
+`--host-uds=open` and `--host-fifo=open` widen what the sandbox may open on the host (gVisor
+advises against host sockets where they are not needed): they are what lea needs (its bus socket, the Lock consoles' sockets, the clipboard FIFO), on paths lea
+mounts; leave them out and lea starts, but without messaging between agents, the Locks or the
+clipboard. Keep the host patched anyway: the second kernel narrows the shared kernel's surface,
+it does not remove it.
 
 ## FAQ
 

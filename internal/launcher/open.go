@@ -68,6 +68,8 @@ func (l *Launcher) up(proj string) (*upState, error) {
 			return nil, err
 		}
 		u.fresh = "--fresh"
+	} else {
+		l.checkRuntime(u.name)
 	}
 	_ = l.busAttach(proj)
 	held = false

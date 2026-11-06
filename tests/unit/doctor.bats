@@ -498,3 +498,121 @@ lox_journal() {
   run calls
   [[ "$output" != *"lox [up]"* ]]
 }
+
+# fake_docker_key ARGS...: the fake docker's FAKE_DOCKER_OUT_ suffix for a call with these first
+# two arguments and this last one (tests/fakes/docker).
+fake_docker_key() {
+  printf '%s_%s_AT_%s' "$1" "$2" "$3" | tr '[:lower:]' '[:upper:]' | tr -c 'A-Z0-9_' '_'
+}
+
+@test "runtime: LEA_RUNTIME, the runtimes the engine knows and each running lea container's (#106)" {
+  export "FAKE_DOCKER_OUT_$(fake_docker_key info --format '{{.DefaultRuntime}}')=runc"
+  export "FAKE_DOCKER_OUT_$(fake_docker_key info --format '{{range $k, $v := .Runtimes}}{{$k}} {{end}}')=io.containerd.runc.v2 runc runsc "
+  run lea_doctor
+  [[ "$output" == *"ok    agent runtime: runc (LEA_RUNTIME empty; runsc or kata adds a second kernel: README)"* ]]
+  export LEA_RUNTIME=runsc
+  run lea_doctor
+  [[ "$output" == *"ok    agent runtime: runsc (LEA_RUNTIME; the engine's default: runc)"* ]]
+  [[ "$output" != *"FAIL  agent runtime"* ]]
+  export LEA_RUNTIME=kata
+  run lea_doctor
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"FAIL  agent runtime kata: the engine has no such runtime (it knows: io.containerd.runc.v2 runc runsc)"* ]]
+  export LEA_RUNTIME='run sc'
+  run lea_doctor
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"FAIL  agent runtime: LEA_RUNTIME 'run sc' is not a runtime name"* ]]
+  # A running lea container on another runtime than LEA_RUNTIME's: a warning.
+  export LEA_RUNTIME=runsc FAKE_DOCKER_OUT_PS___FILTER=lea-abc
+  export "FAKE_DOCKER_OUT_INSPECT___FORMAT_AT_LEA_ABC=runc"
+  run lea_doctor
+  [[ "$output" == *"warn  lea-abc runtime: runs on runc, not runsc: run 'lea stop', then lea, to restart it on runsc"* ]]
+  export "FAKE_DOCKER_OUT_INSPECT___FORMAT_AT_LEA_ABC=runsc"
+  run lea_doctor
+  [[ "$output" == *"ok    lea-abc runtime: runsc"* ]]
+  # LEA_RUNTIME empty: the engine's default is expected.
+  unset LEA_RUNTIME
+  run lea_doctor
+  [[ "$output" == *"warn  lea-abc runtime: runs on runsc, not runc"* ]]
+}
+
+@test "runtime seccomp: warns when runsc's registration lacks --oci-seccomp (#106)" {
+  export "FAKE_DOCKER_OUT_$(fake_docker_key info --format '{{range $k, $v := .Runtimes}}{{$k}} {{end}}')=runc runsc gvisor "
+  k=$(fake_docker_key info --format '{{json (index .Runtimes "runsc")}}')
+  export LEA_RUNTIME=runsc
+  export "FAKE_DOCKER_OUT_$k={\"path\":\"/opt/gvisor/runsc\",\"runtimeArgs\":[\"--host-uds=open\",\"--host-fifo=open\"]}"
+  run lea_doctor
+  [[ "$output" == *"warn  runsc seccomp: its dockerd registration has no --oci-seccomp: runsc ignores lea's seccomp profile"* ]]
+  # A status string that merely mentions the flag (escaped, in the runtime's features) is not it.
+  export "FAKE_DOCKER_OUT_$k={\"path\":\"/opt/gvisor/runsc\",\"status\":{\"f\":\"{\\\"a\\\":[\\\"--oci-seccomp\\\"]}\"}}"
+  run lea_doctor
+  [[ "$output" == *"warn  runsc seccomp: its dockerd registration has no --oci-seccomp"* ]]
+  export "FAKE_DOCKER_OUT_$k={\"path\":\"/opt/gvisor/runsc\",\"runtimeArgs\":[\"--oci-seccomp\",\"--host-uds=open\"]}"
+  run lea_doctor
+  [[ "$output" == *"ok    runsc seccomp: lea's profile applied in the sandbox (--oci-seccomp)"* ]]
+  [[ "$output" != *"warn  runsc seccomp"* ]]
+  # A runtime of another name whose path is runsc is gVisor too.
+  export LEA_RUNTIME=gvisor
+  export "FAKE_DOCKER_OUT_$(fake_docker_key info --format '{{json (index .Runtimes "gvisor")}}')={\"path\":\"/usr/bin/runsc\"}"
+  run lea_doctor
+  [[ "$output" == *"warn  gvisor seccomp: its dockerd registration has no --oci-seccomp"* ]]
+}
+
+@test "runtime seccomp: warns when Kata's configuration lacks disable_guest_seccomp = false (#106)" {
+  export "FAKE_DOCKER_OUT_$(fake_docker_key info --format '{{range $k, $v := .Runtimes}}{{$k}} {{end}}')=runc kata "
+  k=$(fake_docker_key info --format '{{json (index .Runtimes "kata")}}')
+  export LEA_RUNTIME=kata "FAKE_DOCKER_OUT_$k={\"runtimeType\":\"io.containerd.kata.v2\"}"
+  c="$BATS_TEST_TMPDIR/configuration.toml"
+  export LEA_KATA_CONFIGS="$BATS_TEST_TMPDIR/absent.toml $c"
+  # No configuration found: a warning, never an ok.
+  run lea_doctor
+  [[ "$output" == *"warn  kata seccomp: no Kata configuration.toml found"* ]]
+  # Kata's default (commented out, or true): not applied.
+  printf '[runtime]\n#disable_guest_seccomp = false\n' >"$c"
+  run lea_doctor
+  [[ "$output" == *"warn  kata seccomp: $c does not set disable_guest_seccomp = false (Kata's default is true)"* ]]
+  printf '[runtime]\ndisable_guest_seccomp=true\n' >"$c"
+  run lea_doctor
+  [[ "$output" == *"warn  kata seccomp: $c does not set disable_guest_seccomp = false"* ]]
+  printf '[runtime]\n  disable_guest_seccomp = false # lea\n' >"$c"
+  run lea_doctor
+  [[ "$output" == *"ok    kata seccomp: lea's profile applied in the guest (disable_guest_seccomp = false in $c)"* ]]
+  [[ "$output" != *"warn  kata seccomp"* ]]
+  # Docker Engine reports a shim runtime as {} (no runtimeType): its name tells Kata.
+  export "FAKE_DOCKER_OUT_$k={}"
+  run lea_doctor
+  [[ "$output" == *"ok    kata seccomp: lea's profile applied in the guest (disable_guest_seccomp = false in $c)"* ]]
+  export "FAKE_DOCKER_OUT_$k={\"runtimeType\":\"io.containerd.kata.v2\"}"
+  # The first file that exists wins (/etc over the defaults): a default without the setting is not read.
+  e="$BATS_TEST_TMPDIR/etc.toml"; printf 'disable_guest_seccomp = false\n' >"$e"
+  printf 'disable_guest_seccomp = true\n' >"$c"
+  export LEA_KATA_CONFIGS="$e $c"
+  run lea_doctor
+  [[ "$output" == *"ok    kata seccomp: lea's profile applied in the guest (disable_guest_seccomp = false in $e)"* ]]
+  [[ "$output" != *"warn  kata seccomp"* ]]
+  # An unknown shim flavour: the file each flavour would read is checked.
+  export LEA_KATA_CONFIGS="$e|$BATS_TEST_TMPDIR/absent.toml $c"
+  run lea_doctor
+  [[ "$output" == *"ok    kata seccomp: lea's profile applied in the guest (disable_guest_seccomp = false in $e)"* ]]
+  [[ "$output" == *"warn  kata seccomp: $c does not set disable_guest_seccomp = false"* ]]
+  # A ConfigPath in the registration's options is the file Kata reads.
+  o="$BATS_TEST_TMPDIR/other.toml"; printf 'disable_guest_seccomp = true\n' >"$o"
+  export "FAKE_DOCKER_OUT_$k={\"runtimeType\":\"io.containerd.kata.v2\",\"options\":{\"ConfigPath\":\"$o\"}}"
+  run lea_doctor
+  [[ "$output" == *"warn  kata seccomp: $o does not set disable_guest_seccomp = false"* ]]
+  [[ "$output" != *"$e"* ]]
+  export "FAKE_DOCKER_OUT_$k={\"runtimeType\":\"io.containerd.kata.v2\",\"options\":{\"ConfigPath\":\"$BATS_TEST_TMPDIR/gone.toml\"}}"
+  run lea_doctor
+  [[ "$output" == *"warn  kata seccomp: $BATS_TEST_TMPDIR/gone.toml does not exist (ConfigPath of its registration)"* ]]
+}
+
+@test "runtime seccomp: says nothing for runc or an unreadable registration (Podman) (#106)" {
+  export "FAKE_DOCKER_OUT_$(fake_docker_key info --format '{{.DefaultRuntime}}')=runc"
+  export "FAKE_DOCKER_OUT_$(fake_docker_key info --format '{{json (index .Runtimes "runc")}}')={\"path\":\"runc\"}"
+  run lea_doctor
+  [[ "$output" != *"runc seccomp"* ]]
+  export LEA_RUNTIME=kata
+  export "FAKE_DOCKER_OUT_$(fake_docker_key info --format '{{range $k, $v := .Runtimes}}{{$k}} {{end}}')=runc kata "
+  run lea_doctor
+  [[ "$output" != *"kata seccomp"* ]]
+}

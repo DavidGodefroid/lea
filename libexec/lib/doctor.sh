@@ -122,6 +122,7 @@ EOF
     else lea__ok "$_dctr CPU windows: none (no agent runs, or LEA_AGENT_CPUS=0)"; fi
   done
 
+  lea__doctor_runtime || _drc=1
   lea__doctor_pressure
 
   # The domains the proxy always allows: EGRESS_ALWAYS of proxy/render-squid-conf.sh.
@@ -236,6 +237,97 @@ lea__doctor_lox() {
   if [ -n "$_dxs" ]; then lea__ok "lox run: serves the decisions of $LEA_PROJECTS_DIR"
   else lea__warn "lox run" "not serving the locks of $LEA_PROJECTS_DIR: their requests wait. Open another terminal (outside lea) and run \`lox run\` to approve the agents' connections and writes."
   fi
+}
+
+# lea__doctor_runtime: the agent containers' OCI runtime (#106): LEA_RUNTIME (empty: the engine's
+# default, runc), a runtime the engine must know (runsc for gVisor, kata for Kata: a second kernel
+# between the agents and the host's), and the one each running lea container was started on.
+lea__doctor_runtime() {
+  _drtd=$(docker info --format '{{.DefaultRuntime}}' 2>/dev/null | tr -cd 'A-Za-z0-9._-' || true)
+  _drta=$(docker info --format '{{range $k, $v := .Runtimes}}{{$k}} {{end}}' 2>/dev/null | tr -cd 'A-Za-z0-9._ -' || true)
+  _drtrc=0
+  case ${LEA_RUNTIME:-} in
+    '') lea__ok "agent runtime: ${_drtd:-the engine default} (LEA_RUNTIME empty; runsc or kata adds a second kernel: README)" ;;
+    [!A-Za-z0-9]* | *[!A-Za-z0-9._-]*) lea__fail "agent runtime" "LEA_RUNTIME '$LEA_RUNTIME' is not a runtime name"; return 1 ;;
+    *)
+      if [ -n "$_drta" ] && ! printf ' %s ' "$_drta" | grep -qF " $LEA_RUNTIME "; then
+        lea__fail "agent runtime $LEA_RUNTIME" "the engine has no such runtime (it knows: ${_drta% }): install it and register it with dockerd (README), or leave LEA_RUNTIME empty"; _drtrc=1
+      else
+        lea__ok "agent runtime: $LEA_RUNTIME (LEA_RUNTIME; the engine's default: ${_drtd:-unknown})"
+      fi ;;
+  esac
+  _drtw=${LEA_RUNTIME:-$_drtd}
+  [ "$_drtrc" != 0 ] || [ -z "$_drtw" ] || lea__doctor_runtime_seccomp "$_drtw"
+  for _dctr in $(docker ps --filter "label=lea.prefix=$LEA_PREFIX" --filter label=lea.role=session --format '{{.Names}}' 2>/dev/null || true); do
+    _drtc=$(docker inspect --format '{{.HostConfig.Runtime}}' "$_dctr" 2>/dev/null | tr -cd 'A-Za-z0-9._-' || true)
+    [ -n "$_drtc" ] || continue
+    if [ -n "$_drtw" ] && [ "$_drtc" != "$_drtw" ]; then
+      lea__warn "$_dctr runtime" "runs on $_drtc, not $_drtw: run 'lea stop', then lea, to restart it on $_drtw"
+    else
+      lea__ok "$_dctr runtime: $_drtc"
+    fi
+  done
+  return "$_drtrc"
+}
+
+# lea__doctor_runtime_seccomp NAME: whether runtime NAME applies lea's seccomp profile (#106). gVisor
+# applies it inside the sandbox only with --oci-seccomp in its dockerd registration, Kata in the
+# guest only with disable_guest_seccomp = false in its configuration.toml (its default is true):
+# without them the agents run without lea's profile (AF_ALG, socketcall), silently.
+lea__doctor_runtime_seccomp() {
+  _drsj=$(docker info --format "{{json (index .Runtimes \"$1\")}}" 2>/dev/null | tr -d '\n' || true)
+  # Not readable (Podman): nothing said. A shim runtime (runtimeType, Kata's) reads {}: dockerd
+  # leaves its type and options out of docker info, so its name tells Kata.
+  case $_drsj in '' | null) return 0 ;; esac
+  _drsp=$(printf '%s' "$_drsj" | sed -n 's/.*"path":"\([^"]*\)".*/\1/p')
+  _drst=$(printf '%s' "$_drsj" | sed -n 's/.*"runtimeType":"\([^"]*\)".*/\1/p')
+  if [ "$1" = runsc ] || [ "${_drsp##*/}" = runsc ]; then
+    if printf '%s' "$_drsj" | grep -qE '"--?oci-seccomp(=true)?"'; then
+      lea__ok "$1 seccomp: lea's profile applied in the sandbox (--oci-seccomp)"
+    else
+      lea__warn "$1 seccomp" "its dockerd registration has no --oci-seccomp: runsc ignores lea's seccomp profile, so the agents run without it; add \"--oci-seccomp\" to its runtimeArgs (README, a second kernel), restart dockerd, then lea stop and lea"
+    fi
+    return 0
+  fi
+  case $1:$_drst in *kata*:* | *:*kata*) ;; *) return 0 ;; esac
+  # The file Kata reads: the registration's ConfigPath, else the first that exists of its shim's
+  # flavour (runtime-rs, or the Go runtime), /etc before the defaults.
+  _drsl=$(printf '%s' "$_drsj" | sed -n 's/.*"ConfigPath":"\([^"]*\)".*/\1/p')
+  if [ -z "$_drsl" ]; then
+    case $_drst in /*) _drsb=$_drst ;; *) _drsb=$(command -v containerd-shim-kata-v2 2>/dev/null || true) ;; esac
+    _drsb=$(readlink -f "$_drsb" 2>/dev/null || printf '%s' "$_drsb")
+    _drsr="/etc/kata-containers/runtime-rs/configuration.toml /usr/share/defaults/kata-containers/runtime-rs/configuration.toml /opt/kata/share/defaults/kata-containers/runtime-rs/configuration.toml"
+    _drsg="/etc/kata-containers/configuration.toml /usr/share/defaults/kata-containers/configuration.toml /opt/kata/share/defaults/kata-containers/configuration.toml"
+    case $_drsb in */runtime-rs/*) _drss=$_drsr ;; '') _drss="$_drsr|$_drsg" ;; *) _drss=$_drsg ;; esac
+    _drss=${LEA_KATA_CONFIGS:-$_drss}
+    _drsl=
+    _drsifs=$IFS; IFS='|'
+    for _drsgrp in $_drss; do
+      IFS=$_drsifs
+      for _drsf in $_drsgrp; do
+        if [ -e "$_drsf" ]; then _drsl="${_drsl:+$_drsl }$_drsf"; break; fi
+      done
+    done
+    IFS=$_drsifs
+    [ -n "$_drsl" ] || { lea__warn "$1 seccomp" "no Kata configuration.toml found ($(printf '%s' "$_drss" | tr '|' ' ')): check that Kata's sets disable_guest_seccomp = false, or lea's seccomp profile is not applied in the guest"; return 0; }
+  fi
+  _drsn=0
+  for _drsf in $_drsl; do
+    [ -e "$_drsf" ] || continue
+    _drsn=$((_drsn + 1))
+    if [ ! -r "$_drsf" ]; then
+      lea__warn "$1 seccomp" "cannot read $_drsf: check it sets disable_guest_seccomp = false, or Kata does not apply lea's seccomp profile in the guest"
+      continue
+    fi
+    _drsv=$(sed -n 's/^[[:space:]]*disable_guest_seccomp[[:space:]]*=[[:space:]]*\([a-z]*\).*/\1/p' "$_drsf" | tail -n 1)
+    if [ "$_drsv" = false ]; then
+      lea__ok "$1 seccomp: lea's profile applied in the guest (disable_guest_seccomp = false in $_drsf)"
+    else
+      lea__warn "$1 seccomp" "$_drsf does not set disable_guest_seccomp = false (Kata's default is true): Kata does not apply lea's seccomp profile in the guest, so the agents run without it; set it (README, a second kernel), then lea stop and lea"
+    fi
+  done
+  [ "$_drsn" != 0 ] || lea__warn "$1 seccomp" "$_drsl does not exist (ConfigPath of its registration): Kata cannot read it"
+  return 0
 }
 
 # lea__doctor_cpus/_mib/_pids: an inspected limit (NanoCpus, bytes, pids; 0 for none), read.
