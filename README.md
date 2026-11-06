@@ -831,7 +831,7 @@ read-only. The screen runs in the deck on the host: agents cannot open or drive 
 | `LEA_INTERNAL_HOSTS` | none | private hosts the proxy may reach (format in `config/internal-hosts`) |
 | `LEA_EGRESS_ALLOW` | empty (lea's default list) | the only web domains agents may reach, comma separated (subdomains included); `default` stands for lea's list, `*` opens the web |
 | `LEA_NESTED_NETWORKS` | empty | networks your compose files expect, created at start |
-| `LEA_CPUS`, `LEA_MEMORY`, `LEA_MEMORY_SWAP`, `LEA_PIDS_LIMIT` | `75%`, `50%`, no swap, `16384` | the lea container's limits: CPUs (a share of Docker's, at least 2, a number such as `8`, or `0`), memory (a share of Docker's, a size such as `16g`, or `0`), memory plus swap (`-1`: no limit), processes and threads (`0`: no limit); the next `lea` applies them to a running container |
+| `LEA_CPUS`, `LEA_MEMORY`, `LEA_MEMORY_SWAP`, `LEA_PIDS_LIMIT` | `75%`, `50%`, no swap, `16384` | the lea container's limits: CPUs (a share of Docker's, at least 2, a number such as `8`, or `0`), memory (a share of Docker's, a size such as `16g`, or `0`), memory plus swap (`-1`: no limit), processes and threads (`0`: no limit); the next `lea` applies them to a running container, or restarts it with them once no agent or session runs in it; rootless Podman needs `Delegate=cpu cpuset io memory pids` for `user@.service` (`lea doctor` checks it) |
 | `LEA_APPROVALS`, `LEA_APPROVAL_TIMEOUT` | `deck`, `60` | who answers permission requests |
 | `LEA_PROVIDER`, `LEA_MODEL` | `claude`, empty | the default provider and model of a new agent ([providers](#other-providers-codex-ollama-vllm)) |
 | `LEA_PROVIDERS` | `~/.config/lea/providers` | your OpenAI-compatible endpoints and their key files |
@@ -1014,6 +1014,7 @@ make test             # shellcheck + shell unit tests, in a container
 make build            # the lea:dev and lea-proxy:dev images
 make test-proxy       # proxy rules against fake DNS and decoys
 make test-isolation   # isolation checks (needs make build and, on Linux, lea init)
+make test-pressure    # host resources on the real engine (ENGINE=podman for rootless Podman)
 ```
 
 A tag `vX.Y.Z` publishes a release: the archives for Linux and macOS (amd64, arm64), their

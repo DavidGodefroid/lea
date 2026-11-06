@@ -326,17 +326,61 @@ host_minimums() {
 
 @test "limits: a running lea container without CPU or memory limits is a warning (#132)" {
   export FAKE_DOCKER_OUT_PS___FILTER=lea-abc
-  export FAKE_DOCKER_OUT_INSPECT___FORMAT='0 0'
+  export FAKE_DOCKER_OUT_INSPECT___FORMAT='0 0 0 0'
   run lea_doctor
   [[ "$output" == *"warn  lea-abc limits: no CPU and memory limit: run lea in its projects directory to apply LEA_CPUS and LEA_MEMORY"* ]]
-  export FAKE_DOCKER_OUT_INSPECT___FORMAT='16500000000 0'
+  export FAKE_DOCKER_OUT_INSPECT___FORMAT='16500000000 0 0 <nil>'
   run lea_doctor
   [[ "$output" == *"warn  lea-abc limits: no memory limit"* ]]
-  export FAKE_DOCKER_OUT_INSPECT___FORMAT='16500000000 17179869184'
+  export FAKE_DOCKER_OUT_INSPECT___FORMAT='16500000000 17179869184 17179869184 16384 c33f5c7309f710f8'
   run lea_doctor
   [[ "$output" == *"ok    lea-abc limits: 16.5 CPUs, 16384 MiB"* ]]
   LEA_CPUS=0 FAKE_DOCKER_OUT_INSPECT___FORMAT='0 17179869184' run lea_doctor
-  [[ "$output" == *"ok    lea-abc limits: no limit on CPUs, 16384 MiB"* ]]
+  [[ "$output" == *"ok    lea-abc limits: no CPU limit, 16384 MiB"* ]]
+}
+
+@test "limits: a running lea container whose limits differ from the configured ones is stale (#132)" {
+  export FAKE_DOCKER_OUT_PS___FILTER=lea-abc
+  # What the Go launcher hands over: 12 CPUs, 16 GiB (swap the same), 16384 pids.
+  export LEA_LIMITS_WANT='12000000000 17179869184 17179869184 16384' LEA_LIMITS_DIGEST=c33f5c7309f710f8
+  # Started by a lea older than the limits (no lea.limits label): every limit is stale.
+  export FAKE_DOCKER_OUT_INSPECT___FORMAT='0 0 0 0'
+  run lea_doctor
+  [[ "$output" == *"warn  lea-abc limits: stale (digest none: started by an older lea, configured c33f5c7309f710f8): no CPU limit (configured 12 CPUs), no memory limit (configured 16384 MiB), pids no limit (configured 16384); run lea in its projects directory: it applies them, or restarts the container once no agent or session runs in it"* ]]
+  # Started with other limits (LEA_CPUS changed since): only the CPUs are stale.
+  export FAKE_DOCKER_OUT_INSPECT___FORMAT='8000000000 17179869184 17179869184 16384 0123456789abcdef'
+  run lea_doctor
+  [[ "$output" == *"warn  lea-abc limits: stale (digest 0123456789abcdef, configured c33f5c7309f710f8): 8 CPUs (configured 12 CPUs);"* ]]
+  [[ "$output" != *"configured 16384 MiB"* ]]
+  # The right label, but someone changed the limits by hand.
+  export FAKE_DOCKER_OUT_INSPECT___FORMAT='12000000000 8589934592 8589934592 16384 c33f5c7309f710f8'
+  run lea_doctor
+  [[ "$output" == *"warn  lea-abc limits: stale (changed since it started (docker update)): 8192 MiB (configured 16384 MiB);"* ]]
+  # Matching limits: ok. A limit turned off (0) is never stale.
+  export FAKE_DOCKER_OUT_INSPECT___FORMAT='12000000000 17179869184 17179869184 16384 c33f5c7309f710f8'
+  run lea_doctor
+  [[ "$output" == *"ok    lea-abc limits: 12 CPUs, 16384 MiB"* ]]
+  LEA_LIMITS_WANT='0 17179869184 17179869184 16384' FAKE_DOCKER_OUT_INSPECT___FORMAT='12000000000 17179869184 17179869184 16384' run lea_doctor
+  [[ "$output" == *"ok    lea-abc limits: 12 CPUs, 16384 MiB"* ]]
+}
+
+@test "cgroup delegation: rootless Podman without the cpu controller is a warning (#132)" {
+  key=$(printf '%s' 'INFO_--FORMAT_AT_{{.Host.Security.Rootless}} {{.Host.CgroupControllers}}' | tr '[:lower:]' '[:upper:]' | tr -c 'A-Z0-9_' '_')
+  export "FAKE_DOCKER_OUT_$key=true [memory pids]"
+  run lea_doctor
+  [[ "$output" == *"warn  cgroup delegation: rootless Podman does not get the cpu controller, so lea's container runs without that limit: sudo systemctl edit user@.service, add [Service] Delegate=cpu cpuset io memory pids, log in again, then lea stop and lea"* ]]
+  export "FAKE_DOCKER_OUT_$key=true [pids]"
+  run lea_doctor
+  [[ "$output" == *"does not get the cpu, memory controller"* ]]
+  export "FAKE_DOCKER_OUT_$key=true [cpuset cpu io memory pids]"
+  run lea_doctor
+  [[ "$output" == *"ok    cgroup delegation: cpu, memory and pids (rootless Podman)"* ]]
+  # Docker, rootful Podman, or a Podman that does not tell: nothing.
+  for v in 'false [cpu]' 'true []' ''; do
+    export "FAKE_DOCKER_OUT_$key=$v"
+    run lea_doctor
+    [[ "$output" != *"cgroup delegation"* ]]
+  done
 }
 
 @test "the agents' CPU windows of each running lea container are listed (#132)" {

@@ -1,5 +1,8 @@
 status 1
 -- calls
+docker [system] [info] [--format] [{{.NCPU}}]
+docker [system] [info] [--format] [{{.MemTotal}}]
+docker [system] [info] [--format] [{{.Host.Security.Rootless}} {{.Host.CgroupControllers}}]
 docker [info]
 docker [info] [--format] [{{json .SecurityOptions}}]
 docker [version] [--format] [{{range .Server.Components}}{{.Name}}={{.Version}}{{"\n"}}{{end}}]
@@ -10,6 +13,7 @@ tmux [-V]
 docker [inspect] [-f] [{{.State.Running}}] [lea-proxy]
 docker [network] [ls] [--filter] [label=lea.prefix=lea] [--format] [{{.Name}}]
 docker [ps] [--filter] [label=lea.prefix=lea] [--filter] [label=lea.role=session] [--format] [{{.Names}}]
+docker [info] [--format] [{{.Host.Security.Rootless}} {{.Host.CgroupControllers}}]
 docker [ps] [--filter] [label=lea.prefix=lea] [--filter] [label=lea.role=session] [--format] [{{.Names}}]
 docker [ps] [--filter] [label=lea.prefix=lea] [--filter] [label=lea.role=session] [--format] [{{.Names}}]
 lox [version]
