@@ -165,6 +165,7 @@ jobs:
                    'the GitHub token moved to the proxy' 'the GitHub token left the agents'"'"' state' 'no GitHub token readable in /lea/state or ~' \
                    'no copy of the GitHub token readable' 'the GitHub relay runs as nobody' 'gh api works with the token added by the proxy' \
                    "git reaches github.com through the proxy's forwarder" 'gh run view --log follows the redirect to its own host' \
+                   "gh: a call off lea's allowlist is refused" "gh: a GraphQL mutation off lea's allowlist is refused" \
                    'proxy confined: CapDrop' 'proxy confined: ReadonlyRootfs' 'proxy confined: no root process but PID 1' \
                    'a nested image builds' 'a nested container reaches the proxy over pasta' 'unprivileged user namespace (rootless Podman needs it)' \
                    'keyctl refused (seccomp)' 'perf_event_open refused (seccomp)' 'reboot refused (seccomp)' 'vmsplice refused (seccomp)' 'NETLINK_AUDIT socket refused (seccomp)' \

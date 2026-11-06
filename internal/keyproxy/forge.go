@@ -14,6 +14,7 @@ package keyproxy
 import (
 	"context"
 	"encoding/base64"
+	"encoding/json"
 	"net"
 	"net/http"
 	"net/url"
@@ -105,43 +106,26 @@ func localIP(ip net.IP) bool {
 var forgeMethods = map[string]bool{http.MethodGet: true, http.MethodHead: true, http.MethodPost: true,
 	http.MethodPut: true, http.MethodPatch: true, http.MethodDelete: true}
 
-// minting reports whether a call on the API would hand a credential, or a copy of what the token
-// reaches, to someone outside lea: an SSH, GPG or signing key on the account, a deploy key, a
-// webhook, an OAuth authorization. Reads are fine. Best effort: the token still acts as its owner
-// on everything else it may (GraphQL included).
-func minting(method string, segs []string) bool {
-	if method == http.MethodGet || method == http.MethodHead {
-		return false
-	}
-	at := func(i int, s string) bool { return len(segs) > i && segs[i] == s }
-	switch {
-	case at(0, "user") && (at(1, "keys") || at(1, "gpg_keys") || at(1, "ssh_signing_keys")):
-		return true
-	case at(0, "authorizations"), at(0, "applications"):
-		return true
-	case at(0, "repos") && len(segs) > 3 && (segs[3] == "keys" || segs[3] == "hooks"):
-		return true
-	case at(0, "orgs") && at(2, "hooks"):
-		return true
-	}
-	return false
-}
-
-// forgePath checks an origin-form path: printable ASCII without a backslash, valid escapes, and no
-// "." or ".." segment, even escaped. It returns the path's segments, decoded and lower-cased.
+// forgePath checks an origin-form path and canonicalises it: printable ASCII without a backslash
+// or a ";", valid escapes, no empty segment (the root "/" aside), no "." or ".." segment, and no
+// escaped slash or backslash. It returns the path's segments, decoded and lower-cased: the route
+// forgeRoute matches is the one GitHub serves.
 func forgePath(p string) ([]string, bool) {
 	if !strings.HasPrefix(p, "/") {
 		return nil, false
 	}
+	if p == "/" {
+		return []string{""}, true
+	}
 	for i := 0; i < len(p); i++ {
-		if c := p[i]; c <= ' ' || c >= 0x7f || c == '\\' {
+		if c := p[i]; c <= ' ' || c >= 0x7f || c == '\\' || c == ';' {
 			return nil, false
 		}
 	}
 	var segs []string
 	for _, s := range strings.Split(p[1:], "/") {
 		d, err := url.PathUnescape(s)
-		if err != nil || d == "." || d == ".." || strings.ContainsAny(d, "/\\") {
+		if err != nil || d == "" || d == "." || d == ".." || strings.ContainsAny(d, "/\\;") {
 			return nil, false
 		}
 		segs = append(segs, strings.ToLower(d))
@@ -208,10 +192,11 @@ func (g *forge) ServeHTTP(rw http.ResponseWriter, r *http.Request) {
 		http.Error(w, "request body too large", http.StatusRequestEntityTooLarge)
 		return
 	}
-	if h == "api.github.com" && minting(r.Method, segs) {
-		http.Error(w, "lea refuses this GitHub call: it would give a key, a deploy key or a webhook to someone outside lea "+
-			"(the token stays in lea's proxy). Make it yourself, on the host.", http.StatusForbidden)
-		return
+	if tokenHosts[h] {
+		if why := forgeRoute(h, r, segs); why != "" {
+			refuseForge(w, why)
+			return
+		}
 	}
 	auth := ""
 	if tokenHosts[h] {
@@ -240,6 +225,18 @@ func (g *forge) ServeHTTP(rw http.ResponseWriter, r *http.Request) {
 	}
 	ctx := context.WithValue(r.Context(), keyCtx{}, route{target: &target, auth: auth, source: source})
 	g.f.proxy.ServeHTTP(w, r.WithContext(ctx))
+}
+
+// refuseForge answers 403 with GitHub's error shape, which gh prints: the call is not on lea's
+// allowlist of the GitHub calls its gh and git workflows make.
+func refuseForge(w http.ResponseWriter, why string) {
+	msg := "lea refuses this GitHub call (" + why + "): the token in lea's proxy reaches only the calls of lea's gh and git " +
+		"workflows. Make it yourself, on the host."
+	b, _ := json.Marshal(map[string]string{"message": msg, "documentation_url": "https://github.com/DavidGodefroid/lea#git-and-forges"})
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+	w.WriteHeader(http.StatusForbidden)
+	_, _ = w.Write(append(b, '\n'))
 }
 
 // mustUnescape is p unescaped; forgePath checked that it unescapes.

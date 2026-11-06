@@ -172,6 +172,9 @@ if [ -n "${FORGE_NEEDLE:-}" ]; then
   must   "the GitHub relay runs as nobody"         sh -c 'p=$(pgrep -f "forge-rela[y] /run" | head -n 1) && [ "$(stat -c %u "/proc/$p")" = 65534 ]'
   mustnt "the GitHub relay cannot be stopped"      sh -c 'kill -0 "$(pgrep -f "forge-rela[y] /run" | head -n 1)"'
   must   "gh is pointed at the relay"             sh -c '[ "$(gh config get http_unix_socket)" = /run/lea-forge/gh.sock ]'
+  # The proxy's allowlist (#103): a call that would add access is refused before it reaches GitHub.
+  must   "gh: a call off lea's allowlist is refused" sh -c 'gh api -X PUT repos/DavidGodefroid/lea/collaborators/lea-allowlist-probe 2>&1 | grep -q "lea refuses this GitHub call"'
+  must   "gh: a GraphQL mutation off lea's allowlist is refused" sh -c 'gh api graphql -f query="mutation { transferRepository(input: {}) { clientMutationId } }" 2>&1 | grep -q "lea refuses this GitHub call"'
   if [ "${FORGE_EXPECT:-}" = auth ]; then
     # 60 an hour is GitHub's limit without a token.
     must "gh api works with the token added by the proxy" sh -c 'l=$(gh api rate_limit --jq .rate.limit) && [ "$l" -gt 60 ]'

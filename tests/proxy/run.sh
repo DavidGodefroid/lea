@@ -112,6 +112,25 @@ if [ "$got" = "403" ]; then echo "ok   forwarder refuses the egress network (403
 fg=http://198.51.100.2:4401
 fwd "forge: an SSH key on the account refused"  403 "" -- -X POST -H Host:api.github.com "$fg/user/keys"
 fwd "forge: a webhook refused"                   403 "" -- -X POST -H Host:api.github.com "$fg/repos/o/r/hooks"
+# An allowlist, not a denylist: the ID aliases, empty segments, access grants, Actions secrets and
+# runners, and GraphQL mutations off the list are refused before they leave the proxy.
+fwd "forge: an ID alias refused"                 403 "" -- -X POST -H Host:api.github.com "$fg/repositories/1/keys"
+fwd "forge: an org ID alias refused"             403 "" -- -X POST -H Host:api.github.com "$fg/organizations/1/hooks"
+fwd "forge: an empty segment refused"            400 "" -- --path-as-is -X POST -H Host:api.github.com "$fg//repos/o/r/keys"
+fwd "forge: a collaborator refused"              403 "" -- -X PUT -H Host:api.github.com "$fg/repos/o/r/collaborators/evil"
+fwd "forge: a transfer refused"                  403 "" -- -X POST -H Host:api.github.com "$fg/repos/o/r/transfer"
+fwd "forge: a repository's settings refused"     403 "" -- -X PATCH -H Host:api.github.com "$fg/repos/o/r"
+fwd "forge: an org membership refused"           403 "" -- -X PUT -H Host:api.github.com "$fg/orgs/o/memberships/evil"
+fwd "forge: an Actions secret refused"           403 "" -- -X PUT -H Host:api.github.com "$fg/repos/o/r/actions/secrets/X"
+fwd "forge: a runner token refused"              403 "" -- -X POST -H Host:api.github.com "$fg/repos/o/r/actions/runners/registration-token"
+fwd "forge: a GraphQL mutation off the list refused" 403 "" -- -X POST -H Host:api.github.com -H Content-Type:application/json \
+  --data '{"query":"mutation { a: transferRepository(input: {}) { clientMutationId } }"}' "$fg/graphql"
+fwd "forge: github.com's web refused"            403 "" -- -X POST -H Host:lea-proxy:4401 "$fg/login/oauth/access_token"
+# What lea's gh and git make goes out (502: api.github.com is a plain web server here).
+fwd "forge: an issue comment goes out"           502 "" -- -X POST -H Host:api.github.com "$fg/repos/o/r/issues/1/comments"
+# shellcheck disable=SC2016 # GraphQL variables, not shell ones
+fwd "forge: a GraphQL mutation of gh pr goes out" 502 "" -- -X POST -H Host:api.github.com -H Content-Type:application/json \
+  --data '{"query":"mutation($i: CreatePullRequestInput!) { createPullRequest(input: $i) { pullRequest { url } } }","variables":{"i":{}}}' "$fg/graphql"
 fwd "forge: TRACE refused"                       405 "" -- -X TRACE -H Host:api.github.com "$fg/user"
 fwd "forge: another port of the proxy's refused" 400 "" -- -H Host:lea-proxy:3128 "$fg/x"
 # Another host (a redirect gh follows: job logs at *.blob.core.windows.net) goes to that host,

@@ -309,9 +309,19 @@ lea needs no forge account, and works with any of them.
   that domain is not in lea's default allowlist: `gh run view --log` and `gh run download` need
   `LEA_EGRESS_ALLOW="default,blob.core.windows.net"`). Only `lea-proxy:4401` (git) means
   `github.com`. An agent can use the token for what it allows, never read
-  it; the forwarder also refuses the calls that would hand access to someone outside lea (an SSH,
-  GPG or signing key on the account, a deploy key, a webhook, an OAuth authorization: make those
-  on the host). A GitHub token in the agents' state (`/lea/state/gh/hosts.yml`, or a
+  it, and only for the calls lea's `gh` and `git` workflows make: the forwarder keeps an
+  allowlist and refuses (403) everything else. On `api.github.com`: reads of the user, users,
+  `repos/{owner}/{repo}/…`, `orgs/{org}/…`, search and rate limit; writes under
+  `repos/{owner}/{repo}/` on issues, pull requests, labels, milestones, contents, git data
+  (refs, blobs, trees, commits, tags), releases, check runs, statuses, and of Actions a run's
+  rerun, cancel or deletion and a workflow's dispatch; GraphQL queries, and only the mutations of
+  `gh issue`, `gh pr` and `gh project` (issues, pull requests and their reviews, comments,
+  labels, assignees, project items). On `uploads.github.com`, a release asset; on `github.com`,
+  git's protocol (and Git LFS, archives, release downloads). So no collaborator, invitation,
+  transfer, repository or organisation setting, membership, key, webhook, Actions secret,
+  variable or runner token, nor the ID aliases (`/repositories/{id}`, `/organizations/{id}`)
+  of any route; a path with an empty, `.` or `..` segment, an escaped slash or a `;` is refused
+  too. Make those on the host. A GitHub token in the agents' state (`/lea/state/gh/hosts.yml`, or a
   `github.com` line of git's store) is removed at each `lea`. Any agent can write that state, so
   such a token never replaces the proxy's: it is discarded with a warning (`lea github login`
   changes lea's token). Only the first `lea` of this version, when the proxy has no token yet,
