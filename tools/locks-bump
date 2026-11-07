@@ -35,6 +35,9 @@ check() {
     [ "$(get "LOCKS_${T}_PROTOCOL")" -ge 1 ] 2>/dev/null || die "$f: LOCKS_${T}_PROTOCOL"
     [ "$(get "LOCKS_${T}_IDENTITY")" = "$(identity "$t" "$v")" ] || die "$f: LOCKS_${T}_IDENTITY"
     printf '%s\n' "$(get "LOCKS_${T}_IMAGE")" | grep -Eqx "ghcr\.io/davidgodefroid/$t@sha256:[0-9a-f]{64}" || die "$f: LOCKS_${T}_IMAGE"
+    # Its variant images (LOCKS_<LOCK>_IMAGE_VAULT ...): its own repository, by digest.
+    bad=$(sed -n "s/^LOCKS_${T}_IMAGE_[A-Z0-9]*=//p" "$f" | grep -Evx "ghcr\.io/davidgodefroid/$t@sha256:[0-9a-f]{64}" || true)
+    [ -z "$bad" ] || die "$f: LOCKS_${T}_IMAGE_*: $bad"
     [ "$t" = lockhttp ] && continue
     for a in AMD64 ARM64; do
       printf '%s\n' "$(get "LOCKS_${T}_SHA256_$a")" | grep -Eqx '[0-9a-f]{64}' || die "$f: LOCKS_${T}_SHA256_$a"
