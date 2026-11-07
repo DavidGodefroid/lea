@@ -62,6 +62,55 @@ func TestLockHostWired(t *testing.T) {
 	}
 }
 
+// locklog (lea#324), as lockmq and lockfile: lox run's socket volume of the lock on /run/locklog,
+// read-only, the locklog-clients group (10050) and LEA_LOCKLOG=1 for the entrypoint; with two
+// locks, each on /run/locklog/<instance> and LEA_LOCKLOG_INSTANCES names them.
+func TestLockLogWired(t *testing.T) {
+	w := newWorld(t, repoRoot(t))
+	writeUserConf(t, w, "LEA_LOCKLOG=1\n")
+	writeUp(t, w, lockUp("logs", "locklog"))
+	labels(w, "logs", "locklog", "socket")
+	args := lockArgs(t, w)
+	for _, m := range []string{"LEA_LOCKLOG=1", "10050", "type=volume,src=" + upProjectOf(w) + "_logs-run,dst=/run/locklog,readonly"} {
+		if !contains(args, m) {
+			t.Errorf("missing %q in %v", m, args)
+		}
+	}
+	for _, a := range args {
+		if strings.Contains(a, "/etc/locklog") || strings.Contains(a, "/home/locklog") || strings.Contains(a, "locklog-home") ||
+			strings.HasPrefix(a, "LEA_LOCKLOG_INSTANCES=") {
+			t.Errorf("host or console files, or instances, reach the container: %s", a)
+		}
+	}
+	if strings.Contains(w.errb.String(), "warning") {
+		t.Errorf("warnings: %s", w.errb.String())
+	}
+
+	w = newWorld(t, repoRoot(t))
+	writeUserConf(t, w, "LEA_LOCKLOG=1\n")
+	writeUp(t, w, lockUp("app", "locklog")+","+lockUp("infra", "locklog"))
+	labels(w, "app", "locklog", "socket")
+	labels(w, "infra", "locklog", "socket")
+	args = lockArgs(t, w)
+	for _, m := range []string{"LEA_LOCKLOG_INSTANCES=app infra",
+		"type=volume,src=" + upProjectOf(w) + "_app-run,dst=/run/locklog/app,readonly",
+		"type=volume,src=" + upProjectOf(w) + "_infra-run,dst=/run/locklog/infra,readonly"} {
+		if !contains(args, m) {
+			t.Errorf("missing %q in %v", m, args)
+		}
+	}
+	// Off: no trace of it, though lox run runs a locklog lock.
+	w = newWorld(t, repoRoot(t))
+	writeUserConf(t, w, "LEA_LOCKLOG=0\n")
+	writeUp(t, w, lockUp("logs", "locklog"))
+	labels(w, "logs", "locklog", "socket")
+	for _, a := range lockArgs(t, w) {
+		if strings.Contains(a, "locklog") || a == "10050" {
+			t.Errorf("LEA_LOCKLOG=0: %s in the run args", a)
+		}
+	}
+}
+
 // The consoles run hub-attached only, under lox run: a tool that is on, and has no lock of lox run
 // for the projects directory, gets no socket (never the fixed <tool>-run volume of a console of
 // its own launcher), and lea says to add one (`lox add <tool>`).
@@ -102,6 +151,8 @@ func TestLockHostConfig(t *testing.T) {
 		"LEA_LOCKMQ_REF=latest\n":   "LEA_LOCKMQ_REF must be a lockmq release",
 		"LEA_LOCKFILE_REF=main\n":   "LEA_LOCKFILE_REF must be a lockfile release",
 		"LEA_LOCKFILE_REF=v0.1.0\n": "sandbox",
+		"LEA_LOCKLOG=yes\n":         "LEA_LOCKLOG must be 1",
+		"LEA_LOCKLOG_REF=main\n":    "LEA_LOCKLOG_REF must be a locklog release",
 	} {
 		w := newWorld(t, repoRoot(t))
 		writeUserConf(t, w, conf)

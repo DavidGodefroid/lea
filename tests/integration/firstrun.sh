@@ -16,7 +16,7 @@
 # label, any compose project of its temporary projects directory, which lea must not make).
 set -eu
 root=$(cd "$(dirname "$0")/../.." && pwd -P)
-LOCKHUB_VERSION=${LOCKHUB_VERSION:-0.9.0}
+LOCKHUB_VERSION=${LOCKHUB_VERSION:-0.10.0}
 LEA_RELEASE=${LEA_RELEASE:-0.4.0}
 LEA_IMAGE=${LEA_IMAGE:-ghcr.io/davidgodefroid/lea:$LEA_RELEASE}
 LEA_PROXY_IMAGE=${LEA_PROXY_IMAGE:-ghcr.io/davidgodefroid/lea-proxy:$LEA_RELEASE}

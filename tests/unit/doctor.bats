@@ -518,9 +518,9 @@ lox_journal() {
 
 @test "lox: lea doctor checks its version against the lox of config/locks.lock, and runs nothing else of it" {
   run lea_doctor
-  [[ "$output" == *"ok    lox 0.9.0"* ]]
+  [[ "$output" == *"ok    lox 0.10.0"* ]]
   FAKE_LOX_VERSION=0.8.0 run lea_doctor
-  [[ "$output" == *"warn  lox: 0.8.0 is older than 0.9.0, which has lox run: brew upgrade lox"* ]]
+  [[ "$output" == *"warn  lox: 0.8.0 is older than 0.10.0, which has lox run: brew upgrade lox"* ]]
   FAKE_LOX_VERSION=dev run lea_doctor
   [[ "$output" == *"ok    lox dev (its version is not checked)"* ]]
   run calls

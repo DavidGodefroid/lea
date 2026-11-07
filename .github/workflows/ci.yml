@@ -288,13 +288,13 @@ jobs:
   # PATH behind a recorder; `lea shell -- true` pulls both release images (cosign-verified) and
   # runs no lox command (#300); with locks declared, a second run pulls nothing, still runs no lox
   # command, and says to run `lox run` in another terminal, as lea doctor does. The lox release is
-  # 0.9.0 (lox run), LOCKS_LOX_VERSION of config/locks.lock: until lockhub's release is tagged the
+  # 0.10.0 (lox run), LOCKS_LOX_VERSION of config/locks.lock: until lockhub's release is tagged the
   # first step finds no release, every other step is skipped and the job succeeds with a notice.
   firstrun:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     env:
-      LOCKHUB_VERSION: "0.9.0"
+      LOCKHUB_VERSION: "0.10.0"
     steps:
       - name: is lockhub's release there yet
         id: release
@@ -456,6 +456,60 @@ jobs:
           h=$(grep -c '^note: .* the hub-only check is not run' phase0.log || true)
           echo "$n phase0 checks passed, $h hub-only checks not run yet"
           [ $((n + h)) -eq 40 ]
+  # lea#324, the locklog end to end (tests/integration/locklog.sh): an agent in a real lea (lea:dev,
+  # LEA_LOCKLOG=1) runs locklog_count, free and masked, then a locklog_unmask that waits on the hub
+  # and is approved at lox approve, on a locklog console of the release config/locks.lock pins
+  # (cosign-verified) that lockhub's released lox run runs. The lea images come from the GitHub
+  # Actions cache phase0 fills when unchanged.
+  locklog:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+        with:
+          go-version-file: go.mod
+      - run: go build -trimpath -o build/lea ./cmd/lea
+      - uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+        with:
+          cosign-release: v3.1.3
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
+      - uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
+        with:
+          context: .
+          file: proxy/Containerfile
+          tags: lea-proxy:dev
+          load: true
+          cache-from: type=gha,scope=lea-proxy-dev
+      - uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
+        with:
+          context: .
+          file: image/Containerfile
+          build-args: LEA_VERSION=dev
+          tags: lea:dev
+          load: true
+          cache-from: type=gha,scope=lea-dev
+      - name: AppArmor profile (as lea init loads it)
+        run: |
+          if docker info --format '{{json .SecurityOptions}}' | grep -q 'name=apparmor'; then
+            if [ -e /etc/apparmor.d/abi/4.0 ]; then abi=4.0 userns='  userns,'; else abi=3.0 userns=''; fi
+            sed -e "s|@ABI@|$abi|" -e "s|^@USERNS@\$|$userns|" apparmor/lea.tmpl | sudo tee /etc/apparmor.d/lea >/dev/null
+            sudo apparmor_parser -r /etc/apparmor.d/lea
+          fi
+      - name: make test-locklog, every check run, the masked count and the approved unmask
+        shell: bash
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          make test-locklog 2>&1 | tee locklog.log
+          if grep '^FAIL' locklog.log; then exit 1; fi
+          grep -qx "ok    lea's agent: locklog_count counts the 3 records, masked, with no ticket" locklog.log
+          grep -q "^ok    lea's agent: the approved locklog_unmask gives the one clear value" locklog.log
+          n=$(grep -c '^ok ' locklog.log)
+          echo "$n locklog checks passed"
+          [ "$n" -eq 20 ]
   images:
     runs-on: ubuntu-latest
     steps:

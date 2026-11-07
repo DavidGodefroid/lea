@@ -13,6 +13,6 @@ lea: updating this release install to lea v9.9.9 with its installer (https://git
 lea: building lea image from $R (several minutes the first time)
 lea: building proxy image from $R (several minutes the first time)
 lea: updated; running lea containers keep their image until they stop (lea stop --all)
-lea: Lock clients in lea's image: lockkit-v0.13.0: locksql v0.17.0, lockmq v0.8.0, lockfile v0.8.0, lockhttp v0.8.0, lox v0.9.0 (config/locks.lock, one set: lea update moves them together)
+lea: Lock clients in lea's image: lockkit-v0.13.1: locksql v0.17.0, lockmq v0.8.0, lockfile v0.8.0, locklog v0.2.1, lockhttp v0.8.0, lox v0.10.0 (config/locks.lock, one set: lea update moves them together)
 lea: the locks themselves are lox's: brew upgrade lox, then lox add TYPE NAME --version vX.Y.Z (lea doctor says which)
 -- stdout
