@@ -1,5 +1,15 @@
 # Changelog
 
+## v0.11.0 (2026-11-07)
+
+Changes:
+
+- locklog (#324, #330): `LEA_LOCKLOG=1` (or a locklog lock under `lox run`) lets lea's agents read
+  logs through a locklog console. Records are masked, and an unmask is approved at `lox run`. Its
+  client is in lea's image (`config/locks.lock`, now the lockkit v0.13.1 set with locklog v0.2.1
+  and lox v0.10.0), Codex agents get it as an MCP server, and `lea locklog`, `lea init --locklog`
+  and `lea doctor` know it.
+
 ## v0.10.0 (2026-11-06)
 
 Upgrading from v0.9.x:
