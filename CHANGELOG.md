@@ -1,5 +1,20 @@
 # Changelog
 
+## v0.13.0 (2026-11-07)
+
+Changes:
+
+- Grant requests (#342, #344): a lead turns the user's approval given in its chat into a lea grant
+  its children honour. The new `grants_request` tool (leads only, checked like `lea grant add`)
+  queues a request and records nothing; the user decides on the host with `lea requests`,
+  `lea approve gN [gM...] [--expires 30d]`, `lea deny gN [reason]` or `lea grant
+  requests|approve|deny`. An approved grant covers the lead and its children only. The lead is
+  told on approval, denial and expiry (a day without an answer). A merge no grant covers now tells
+  the agent to ask its lead for one. The control tower may call `grants_list` and `grants_request`.
+- `release-tag` grant action (#342, #344): `git push origin refs/tags/vX.Y.Z`, one new semver tag
+  on a commit of the remote's default branch, pushed by lea's pinned command without force. Every
+  other tag push stays a hard deny; `lea delivery on` never records it.
+
 ## v0.12.0 (2026-11-07)
 
 Changes:
