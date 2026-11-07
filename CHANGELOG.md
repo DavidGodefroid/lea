@@ -1,5 +1,15 @@
 # Changelog
 
+## v0.12.0 (2026-11-07)
+
+Changes:
+
+- lea's agents start in the permission mode a local Claude Code starts in (#333, #336): the managed
+  settings no longer pin `defaultMode` to `default` (manual), so Claude Code's own default applies
+  (auto on the accounts that have it). A valid `permissions.defaultMode` in the host's
+  `~/.claude/settings.json` is still the agents'; bypass stays disabled. An agent that writes a
+  `defaultMode` into its own settings can change its own mode, never to bypass.
+
 ## v0.11.0 (2026-11-07)
 
 Changes:
