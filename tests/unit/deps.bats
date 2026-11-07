@@ -4,7 +4,7 @@ setup() {
   P="$BATS_TEST_TMPDIR/projects"; mkdir -p "$P"
   export LEA_PROJECTS_DIR="$P"
   export LEA_CONFIG="$BATS_TEST_TMPDIR/user.conf"
-  LEA_LOCKSQL=1 LEA_LOCKMQ=1 LEA_LOCKFILE=1
+  LEA_LOCKSQL=1 LEA_LOCKMQ=1 LEA_LOCKFILE=1 LEA_LOCKLOG=1
 }
 
 # lea#134: the Locks' clients come with lea's image, as one set (config/locks.lock): lea update
@@ -14,7 +14,7 @@ setup() {
     : >"$FAKE_LOG"
     run lea_update_deps "$m"
     [ "$status" -eq 0 ]
-    [[ "$output" == *"Lock clients in lea's image: lockkit-v"*": locksql v"*", lockmq v"*", lockfile v"*", lockhttp v"*", lox v"*" (config/locks.lock, one set: lea update moves them together)"* ]]
+    [[ "$output" == *"Lock clients in lea's image: lockkit-v"*": locksql v"*", lockmq v"*", lockfile v"*", locklog v"*", lockhttp v"*", lox v"*" (config/locks.lock, one set: lea update moves them together)"* ]]
     [[ "$output" == *"the locks themselves are lox's: brew upgrade lox, then lox add TYPE NAME --version vX.Y.Z"* ]]
     [ -z "$(calls)" ]
   done
@@ -31,7 +31,7 @@ setup() {
 @test "the per-Lock refs are no longer pinned by lea: empty by default, a dev override when set" {
   : >"$LEA_CONFIG"
   lea_load_config
-  [ -z "$LEA_LOCKSQL_REF" ] && [ -z "$LEA_LOCKMQ_REF" ] && [ -z "$LEA_LOCKFILE_REF" ]
+  [ -z "$LEA_LOCKSQL_REF" ] && [ -z "$LEA_LOCKMQ_REF" ] && [ -z "$LEA_LOCKFILE_REF" ] && [ -z "$LEA_LOCKLOG_REF" ]
   ! grep -q '^LEA_LOCK[A-Z]*_REF=\|^LEA_LOCKSQL_IMAGE=' "$LEA_ROOT/config/lea.conf"
   # A recorded release is kept as it is (no pin raises it any more), a locksql checkout too.
   printf "LEA_LOCKSQL_REF='v0.7.0'\nLEA_LOCKMQ_REF='v1.0.0'\n" >"$LEA_CONFIG"
@@ -49,7 +49,7 @@ setup() {
 
 @test "the set lea reads is config/locks.lock's" {
   [ "$(lea__lockset LOCKS_SET)" = "$(sed -n 's/^LOCKS_SET=//p' "$LEA_ROOT/config/locks.lock")" ]
-  for t in locksql lockmq lockfile lockhttp; do lea__semver "$(lea__lock_version "$t")" >/dev/null; done
+  for t in locksql lockmq lockfile locklog lockhttp; do lea__semver "$(lea__lock_version "$t")" >/dev/null; done
   [ -z "$(lea__lockset LOCKS_NOPE)" ]
 }
 

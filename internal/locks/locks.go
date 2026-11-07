@@ -17,7 +17,7 @@ import (
 
 // Lock is a Lock whose client is in lea's image: how lea wires its agents to the lock lox runs.
 type Lock struct {
-	// Name is the Lock's type (locksql, lockmq, lockfile), the client's binary in lea's image
+	// Name is the Lock's type (locksql, lockmq, lockfile, locklog), the client's binary in lea's image
 	// (/usr/local/bin/<Name>) and its socket directory there (/run/<Name>).
 	Name string
 	// Switch is the configuration key that turns lea's wiring of it on or off (LEA_LOCKSQL ...).
@@ -58,6 +58,7 @@ var Registry = []Lock{
 	{Name: "locksql", Switch: "LEA_LOCKSQL", GID: "10000", UID: "10001", What: "SQL databases", ProfileDir: ".locksql", Hub: true},
 	{Name: "lockmq", Switch: "LEA_LOCKMQ", GID: "10010", UID: "10011", What: "RabbitMQ brokers", Hub: true},
 	{Name: "lockfile", Switch: "LEA_LOCKFILE", GID: "10030", UID: "10031", What: "files on S3, SFTP or a local directory", Hub: true},
+	{Name: "locklog", Switch: "LEA_LOCKLOG", GID: "10050", UID: "10051", What: "logs (files, journald, containers, Loki, Elasticsearch)", Hub: true},
 }
 
 // Get is the Lock of type name.
@@ -140,9 +141,9 @@ var (
 	digestRe   = regexp.MustCompile(`^sha256:[0-9a-f]{64}$`)
 	sumRe      = regexp.MustCompile(`^[0-9a-f]{64}$`)
 	keyRe      = regexp.MustCompile(`^LOCKS_[A-Z0-9_]+$`)
-	pinKeyRe   = regexp.MustCompile(`^LOCKS_(LOCKSQL|LOCKMQ|LOCKFILE|LOCKHTTP)_(VERSION|PROTOCOL|IMAGE|IMAGE_[A-Z0-9]+|IDENTITY|SHA256_AMD64|SHA256_ARM64)$`)
+	pinKeyRe   = regexp.MustCompile(`^LOCKS_(LOCKSQL|LOCKMQ|LOCKFILE|LOCKLOG|LOCKHTTP)_(VERSION|PROTOCOL|IMAGE|IMAGE_[A-Z0-9]+|IDENTITY|SHA256_AMD64|SHA256_ARM64)$`)
 	setNameRe  = regexp.MustCompile(`^lockkit-v[0-9]+\.[0-9]+\.[0-9]+$`)
-	pinnedLock = []string{"locksql", "lockmq", "lockfile", "lockhttp"}
+	pinnedLock = []string{"locksql", "lockmq", "lockfile", "locklog", "lockhttp"}
 )
 
 // LoadSet reads the set from the file at path.
@@ -252,7 +253,7 @@ func ParseSet(r io.Reader) (*Set, error) {
 	return s, nil
 }
 
-// Summary is the set in one line: "lockkit-v0.13.0: locksql v0.17.0, lockmq v0.8.0, …".
+// Summary is the set in one line: "lockkit-v0.13.1: locksql v0.17.0, lockmq v0.8.0, …".
 func (s *Set) Summary() string {
 	var b []string
 	for _, name := range pinnedLock {

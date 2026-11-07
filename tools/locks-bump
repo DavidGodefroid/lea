@@ -1,6 +1,6 @@
 #!/bin/sh
 # tools/locks-bump --lockkit vX.Y.Z --lox vX.Y.Z --locksql vX.Y.Z --lockmq vX.Y.Z --lockfile vX.Y.Z
-#   --lockhttp vX.Y.Z [--out FILE]
+#   --locklog vX.Y.Z --lockhttp vX.Y.Z [--out FILE]
 # Rewrites config/locks.lock (or FILE) whole, as one set (lea#134): for each Lock, the release's
 # checksums.txt once cosign proves its release workflow signed it at that very tag, the sha256 of
 # its client archives (linux amd64 and arm64) read from it, and its release image (and variants)
@@ -29,12 +29,15 @@ check() {
   printf '%s\n' "$(get LOCKS_SET)" | grep -Eqx 'lockkit-v[0-9]+\.[0-9]+\.[0-9]+' || die "$f: LOCKS_SET"
   v=$(get LOCKS_LOX_VERSION)
   if ! semver "$v" || [ "$(get LOCKS_LOX_IDENTITY)" != "$(identity lockhub "$v")" ]; then die "$f: lox"; fi
-  for t in locksql lockmq lockfile lockhttp; do
+  for t in locksql lockmq lockfile locklog lockhttp; do
     T=$(up "$t") v=$(get "LOCKS_${T}_VERSION")
     semver "$v" || die "$f: LOCKS_${T}_VERSION"
     [ "$(get "LOCKS_${T}_PROTOCOL")" -ge 1 ] 2>/dev/null || die "$f: LOCKS_${T}_PROTOCOL"
     [ "$(get "LOCKS_${T}_IDENTITY")" = "$(identity "$t" "$v")" ] || die "$f: LOCKS_${T}_IDENTITY"
     printf '%s\n' "$(get "LOCKS_${T}_IMAGE")" | grep -Eqx "ghcr\.io/davidgodefroid/$t@sha256:[0-9a-f]{64}" || die "$f: LOCKS_${T}_IMAGE"
+    # Its variant images (LOCKS_<LOCK>_IMAGE_VAULT ...): its own repository, by digest.
+    bad=$(sed -n "s/^LOCKS_${T}_IMAGE_[A-Z0-9]*=//p" "$f" | grep -Evx "ghcr\.io/davidgodefroid/$t@sha256:[0-9a-f]{64}" || true)
+    [ -z "$bad" ] || die "$f: LOCKS_${T}_IMAGE_*: $bad"
     [ "$t" = lockhttp ] && continue
     for a in AMD64 ARM64; do
       printf '%s\n' "$(get "LOCKS_${T}_SHA256_$a")" | grep -Eqx '[0-9a-f]{64}' || die "$f: LOCKS_${T}_SHA256_$a"
@@ -45,17 +48,17 @@ check() {
 
 if [ "${1:-}" = --check ]; then check "${2:-$out}"; exit 0; fi
 
-kit='' lox='' sql='' mq='' lf='' lh=''
+kit='' lox='' sql='' mq='' lf='' ll='' lh=''
 while [ $# -gt 0 ]; do
   [ $# -ge 2 ] || die "$1 needs a value"
   case $1 in
     --lockkit) kit=$2 ;; --lox) lox=$2 ;; --locksql) sql=$2 ;; --lockmq) mq=$2 ;; --lockfile) lf=$2 ;;
-    --lockhttp) lh=$2 ;; --out) out=$2 ;;
+    --locklog) ll=$2 ;; --lockhttp) lh=$2 ;; --out) out=$2 ;;
     *) die "unknown option $1" ;;
   esac
   shift 2
 done
-for v in "$kit" "$lox" "$sql" "$mq" "$lf" "$lh"; do semver "$v" || die "every release is vX.Y.Z (got '$v')"; done
+for v in "$kit" "$lox" "$sql" "$mq" "$lf" "$ll" "$lh"; do semver "$v" || die "every release is vX.Y.Z (got '$v')"; done
 for c in cosign curl jq; do command -v "$c" >/dev/null 2>&1 || die "$c is missing"; done
 w=$(mktemp -d)
 trap 'rm -rf "$w"' EXIT
@@ -102,14 +105,15 @@ proto=$(curl -fsSL "https://raw.githubusercontent.com/DavidGodefroid/lockkit/ref
   echo "LOCKS_SET=lockkit-$kit"
   echo "LOCKS_LOX_VERSION=$lox"
   echo "LOCKS_LOX_IDENTITY=$(identity lockhub "$lox")"
-  for p in "locksql $sql" "lockmq $mq" "lockfile $lf" "lockhttp $lh"; do
+  for p in "locksql $sql" "lockmq $mq" "lockfile $lf" "locklog $ll" "lockhttp $lh"; do
     # shellcheck disable=SC2086 # two words
     set -- $p
     T=$(up "$1")
     echo "LOCKS_${T}_VERSION=$2"
     echo "LOCKS_${T}_PROTOCOL=$proto"
     echo "LOCKS_${T}_IMAGE=$(image "$1" "$2")"
-    if [ "$1" = locksql ]; then echo "LOCKS_${T}_IMAGE_VAULT=$(image "$1" "$2" vault)"; fi
+    # The vault variant (<version>-vault: the console with the vault CLI) of the Locks that ship one.
+    case $1 in locksql | locklog) echo "LOCKS_${T}_IMAGE_VAULT=$(image "$1" "$2" vault)" ;; esac
     echo "LOCKS_${T}_IDENTITY=$(identity "$1" "$2")"
     if [ "$1" != lockhttp ]; then
       checksums "$1" "$2"
@@ -120,4 +124,4 @@ proto=$(curl -fsSL "https://raw.githubusercontent.com/DavidGodefroid/lockkit/ref
 } >"$w/locks.lock"
 check "$w/locks.lock" >/dev/null
 cp "$w/locks.lock" "$out.tmp" && mv "$out.tmp" "$out"
-echo "locks-bump: $out: lockkit-$kit (locksql $sql, lockmq $mq, lockfile $lf, lockhttp $lh, lox $lox), every pin verified"
+echo "locks-bump: $out: lockkit-$kit (locksql $sql, lockmq $mq, lockfile $lf, locklog $ll, lockhttp $lh, lox $lox), every pin verified"

@@ -368,7 +368,7 @@ func TestLockUpSocketServedByAnotherComposeRun(t *testing.T) {
 // A tool is on when the trusted up.json names a lock of its type and the user config does not set
 // the key; an explicit LEA_<TOOL>=0 keeps it off.
 func TestToolOnWhenUpJSONNamesIt(t *testing.T) {
-	for _, c := range []struct{ tool, key, gid string }{{"locksql", "LEA_LOCKSQL", "10000"}, {"lockmq", "LEA_LOCKMQ", "10010"}, {"lockfile", "LEA_LOCKFILE", "10030"}} {
+	for _, c := range []struct{ tool, key, gid string }{{"locksql", "LEA_LOCKSQL", "10000"}, {"lockmq", "LEA_LOCKMQ", "10010"}, {"lockfile", "LEA_LOCKFILE", "10030"}, {"locklog", "LEA_LOCKLOG", "10050"}} {
 		w := newWorld(t, repoRoot(t))
 		writeUp(t, w, lockUp("x", c.tool))
 		labels(w, "x", c.tool, "socket")

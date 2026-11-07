@@ -405,6 +405,7 @@ func TestLockServers(t *testing.T) {
 		{mq, "", "lockmq=1500"},
 		{sql, "59", "locksql=1500"},
 		{sql, "x", "locksql=1500"},
+		{map[string]bool{"locklog": true, "locksql": true}, "", "locksql=1500,locklog=1500"},
 	} {
 		var got []string
 		for _, l := range LockServers(c.on, nil, func(string) string { return c.timeout }) {
@@ -446,6 +447,18 @@ func TestToolsOnUpJSONReachesCodexAndStamp(t *testing.T) {
 	off, names := stamp(w)
 	if len(names) != 0 || off != bare {
 		t.Errorf("LEA_LOCKSQL=0: servers %v, stamp %q vs %q", names, off, bare)
+	}
+	// A locklog lock of lox run: Codex gets the locklog MCP server (lea#324); LEA_LOCKLOG=0 keeps
+	// it out.
+	w = newWorld(t, repoRoot(t))
+	writeUp(t, w, lockUp("logs", "locklog"))
+	logs, names := stamp(w)
+	if strings.Join(names, ",") != "locklog" || logs == bare {
+		t.Errorf("up.json locklog lock: servers %v, stamp %q vs %q", names, logs, bare)
+	}
+	writeUserConf(t, w, "LEA_LOCKLOG=0\n")
+	if off, names = stamp(w); len(names) != 0 || off != bare {
+		t.Errorf("LEA_LOCKLOG=0: servers %v, stamp %q vs %q", names, off, bare)
 	}
 }
 

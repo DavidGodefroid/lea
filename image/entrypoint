@@ -9,9 +9,10 @@ for ep in ${LEA_GIT_SSH:-}; do
 done
 [ "$LEA_UID" -ne 0 ] || { echo "lea: refusing to run the session as root" >&2; exit 1; }
 [ "$LEA_GID" -ne 0 ] || { echo "lea: refusing to run the session with group root" >&2; exit 1; }
-# The ids of the locks' accounts and clients groups in the image (locksql, lockmq, lockfile): a
-# session with one of them would be that console account, or in that group without asking.
-for id in 10000 10001 10010 10011 10030 10031; do
+# The ids of the locks' accounts and clients groups in the image (locksql, lockmq, lockfile,
+# locklog): a session with one of them would be that console account, or in that group without
+# asking.
+for id in 10000 10001 10010 10011 10030 10031 10050 10051; do
   if [ "$LEA_UID" -eq "$id" ] || [ "$LEA_GID" -eq "$id" ]; then
     echo "lea: refusing to run the session as uid $LEA_UID / gid $LEA_GID: a lock console's id in lea's image" >&2; exit 1
   fi
@@ -30,6 +31,7 @@ user=$(getent passwd "$LEA_UID" | cut -d: -f1)
 if [ "${LEA_LOCKSQL:-0}" = 1 ]; then usermod -aG locksql-clients "$user"; fi
 if [ "${LEA_LOCKMQ:-0}" = 1 ]; then usermod -aG lockmq-clients "$user"; fi
 if [ "${LEA_LOCKFILE:-0}" = 1 ]; then usermod -aG lockfile-clients "$user"; fi
+if [ "${LEA_LOCKLOG:-0}" = 1 ]; then usermod -aG locklog-clients "$user"; fi
 grep -q "^$user:" /etc/subuid || echo "$user:200000:65536" >>/etc/subuid
 grep -q "^$user:" /etc/subgid || echo "$user:200000:65536" >>/etc/subgid
 

@@ -1,4 +1,4 @@
-.PHONY: test build test-proxy test-isolation test-ctl test-lockhost test-phase0 test-pressure go-test go-build go-test-tmux go-get tmux-build
+.PHONY: test build test-proxy test-isolation test-ctl test-lockhost test-phase0 test-locklog test-pressure go-test go-build go-test-tmux go-get tmux-build
 test:
 	tests/run.sh
 build:
@@ -12,6 +12,10 @@ test-lockhost:
 # The phase-0 exit demo with real consoles (tests/integration/phase0.sh); needs make build, build/lea, cosign.
 test-phase0:
 	tests/integration/phase0.sh
+# lea#324: a lea agent's masked locklog_count and approved locklog_unmask under lox run
+# (tests/integration/locklog.sh); needs make build, build/lea, cosign, sudo.
+test-locklog:
+	tests/integration/locklog.sh
 test-isolation:
 	tests/integration/isolation.sh
 # lea-ctl (#165): lea in its control container on the host's engine; needs make build, build/lea.

@@ -16,7 +16,7 @@ lea__lock_version() {
 
 # lea__lockset_summary: the set in one line, for lea update and lea init.
 lea__lockset_summary() {
-  printf '%s: locksql %s, lockmq %s, lockfile %s, lockhttp %s, lox %s' "$(lea__lockset LOCKS_SET)" \
+  printf '%s: locksql %s, lockmq %s, lockfile %s, locklog %s, lockhttp %s, lox %s' "$(lea__lockset LOCKS_SET)" \
     "$(lea__lock_version locksql)" "$(lea__lock_version lockmq)" "$(lea__lock_version lockfile)" \
-    "$(lea__lock_version lockhttp)" "$(lea__lockset LOCKS_LOX_VERSION)"
+    "$(lea__lock_version locklog)" "$(lea__lock_version lockhttp)" "$(lea__lockset LOCKS_LOX_VERSION)"
 }

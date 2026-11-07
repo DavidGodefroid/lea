@@ -44,8 +44,8 @@ func TestShippedSetIsComplete(t *testing.T) {
 }
 
 func TestRegistryWiring(t *testing.T) {
-	want := map[string][2]string{"locksql": {"LEA_LOCKSQL", "10000"}, "lockmq": {"LEA_LOCKMQ", "10010"}, "lockfile": {"LEA_LOCKFILE", "10030"}}
-	if strings.Join(Names(), " ") != "locksql lockmq lockfile" {
+	want := map[string][2]string{"locksql": {"LEA_LOCKSQL", "10000"}, "lockmq": {"LEA_LOCKMQ", "10010"}, "lockfile": {"LEA_LOCKFILE", "10030"}, "locklog": {"LEA_LOCKLOG", "10050"}}
+	if strings.Join(Names(), " ") != "locksql lockmq lockfile locklog" {
 		t.Fatalf("order %v", Names())
 	}
 	for n, w := range want {

@@ -8,7 +8,7 @@ import (
 	"github.com/DavidGodefroid/lea/internal/agents"
 )
 
-// Lock approvals (#153): each Lock (locksql, lockmq, lockfile, lockhttp) whose approvals lea
+// Lock approvals (#153): each Lock (locksql, lockmq, lockfile, locklog, lockhttp) whose approvals lea
 // learns of has a status: its console's state and its requests waiting for the user, per lea
 // container. LockHTTP's comes from the gate's status file; the hub's facade feeds the others. The
 // deck counts them all.

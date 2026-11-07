@@ -91,7 +91,7 @@ func proxy(parent context.Context, sock, agent, method string, timeout time.Dura
 // MCP server from lea (a Codex agent gets one per instance): it calls the clients itself.
 func LockGuidance(get func(string) string) string {
 	var out []string
-	for _, t := range []struct{ tool, env string }{{"locksql", "LEA_LOCKSQL_INSTANCES"}, {"lockmq", "LEA_LOCKMQ_INSTANCES"}, {"lockfile", "LEA_LOCKFILE_INSTANCES"}} {
+	for _, t := range []struct{ tool, env string }{{"locksql", "LEA_LOCKSQL_INSTANCES"}, {"lockmq", "LEA_LOCKMQ_INSTANCES"}, {"lockfile", "LEA_LOCKFILE_INSTANCES"}, {"locklog", "LEA_LOCKLOG_INSTANCES"}} {
 		if names := strings.Fields(get(t.env)); len(names) > 1 {
 			out = append(out, "several "+t.tool+" locks: "+strings.Join(names, " ")+"; pass --instance NAME")
 		}

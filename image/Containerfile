@@ -42,7 +42,7 @@ RUN case "$TARGETARCH" in \
  && grep " ${asset}\$" checksums.txt | sha256sum -c - \
  && tar -xzf "$asset" -C /usr/local/bin rtk \
  && rm -f "$asset" checksums.txt
-# The Locks' clients (locksql, lockmq, lockfile) of consoles in their own containers (the socket
+# The Locks' clients (locksql, lockmq, lockfile, locklog) of consoles in their own containers (the socket
 # volume of each lock lox runs, on /run/<lock>, read-only), from one set of releases:
 # config/locks.lock (lea#134), which lea's CI bumps as a whole. Each archive is pinned by its
 # sha256 in its release's checksums.txt, whose Sigstore signature by the Lock's release workflow at
@@ -50,7 +50,7 @@ RUN case "$TARGETARCH" in \
 # Each client reads its root-owned system.toml for the socket dir and refuses a socket not served
 # by the uid of its console account; the accounts and clients groups have the ids of the Locks'
 # own images (locksql 10001 and locksql-clients 10000, lockmq 10011 and lockmq-clients 10010,
-# lockfile 10031 and lockfile-clients 10030), and /run/<lock> the console image's owner and mode,
+# lockfile 10031 and lockfile-clients 10030, locklog 10051 and locklog-clients 10050), and /run/<lock> the console image's owner and mode,
 # so an empty volume first mounted here is initialised as the console expects.
 COPY config/locks.lock /usr/local/share/lea/locks.lock
 RUN case "$TARGETARCH" in \
@@ -59,7 +59,7 @@ RUN case "$TARGETARCH" in \
       *) echo "unsupported architecture: $TARGETARCH" >&2; exit 1 ;; \
     esac \
  && cd /tmp \
- && for t in locksql lockmq lockfile; do \
+ && for t in locksql lockmq lockfile locklog; do \
       T=$(echo "$t" | tr a-z A-Z) \
       && v=$(sed -n "s/^LOCKS_${T}_VERSION=v\([0-9][0-9.]*\)\$/\1/p" /usr/local/share/lea/locks.lock) \
       && sum=$(sed -n "s/^LOCKS_${T}_SHA256_${A}=\([0-9a-f]\{64\}\)\$/\1/p" /usr/local/share/lea/locks.lock) \
@@ -74,13 +74,15 @@ RUN case "$TARGETARCH" in \
  && useradd -r -u 10001 -U -M -s /sbin/nologin locksql \
  && groupadd -g 10010 lockmq-clients && useradd -r -u 10011 -U -M -s /sbin/nologin lockmq \
  && groupadd -g 10030 lockfile-clients && useradd -r -u 10031 -U -M -s /sbin/nologin lockfile \
- && for t in locksql lockmq lockfile; do \
+ && groupadd -g 10050 locklog-clients && useradd -r -u 10051 -U -M -s /sbin/nologin locklog \
+ && for t in locksql lockmq lockfile locklog; do \
       install -d -m 0755 -o root -g root /etc/$t \
       && printf '%s\n' "service_user = \"$t\"" "client_group = \"$t-clients\"" "socket_dir   = \"/run/$t\"" 'x11          = "refuse"' > /etc/$t/system.toml \
       && chmod 0644 /etc/$t/system.toml; \
     done \
  && install -d -m 2710 -o 10011 -g 10010 /run/lockmq \
- && install -d -m 2750 -o 10031 -g 10030 /run/lockfile
+ && install -d -m 2750 -o 10031 -g 10030 /run/lockfile \
+ && install -d -m 2750 -o 10051 -g 10050 /run/locklog
 RUN groupadd -g 10000 locksql-clients \
  && install -d -m 2710 -o 10001 -g 10000 /run/locksql \
  && install -d -m 0755 /lea /lea/podman /usr/local/share/lea /usr/local/libexec/lea /etc/claude-code

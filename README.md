@@ -79,7 +79,7 @@ flowchart LR
 ```
 
 **Contents:** [Quick start](#quick-start) · [The deck](#the-deck) · [Git and forges](#git-and-forges) ·
-[Databases](#databases-with-locksql) · [Queues and files](#queues-and-files-with-lockmq-and-lockfile) · [Web requests](#web-requests-with-lockhttp) · [Teams of agents](#teams-of-agents) · [Commands](#commands) ·
+[Databases](#databases-with-locksql) · [Queues and files](#queues-and-files-with-lockmq-and-lockfile) · [Logs](#logs-with-locklog) · [Web requests](#web-requests-with-lockhttp) · [Teams of agents](#teams-of-agents) · [Commands](#commands) ·
 [Configure](#configure) · [Safety](#how-lea-keeps-your-machine-safe) · [FAQ](#faq) ·
 [Troubleshooting](#troubleshooting) · [Development](#development)
 
@@ -90,7 +90,7 @@ brew trust davidgodefroid/tap                # Homebrew asks you to trust a thir
 brew install davidgodefroid/tap/lockfamily   # the Lock Family: lea, lox and the Locks' launchers
 cd ~/projects                                 # lea's projects directory, not a project inside it
 lea                                           # the first run sets everything up
-lox add locksql                               # when your agents need a database (lockmq, lockfile, lockhttp likewise)
+lox add locksql                               # when your agents need a database (lockmq, lockfile, locklog, lockhttp likewise)
 ```
 
 `brew install davidgodefroid/tap/lea` installs lea alone. The journey is **brew, `lea`,
@@ -122,7 +122,7 @@ does not serve. `LEA_LOX_UP` is obsolete: lea warns when it is set, and ignores 
 [`lox add`](https://github.com/DavidGodefroid/lockhub/blob/main/docs/lox-add.md) is how a Lock
 gets set up for lea's agents, run in lea's projects directory (lea reads `.lockfamily/up.json`
 only there; a plain `claude` on the host uses the nearest one from the project up). A tool
-(locksql, lockmq, lockfile) is on for lea once `lox run` runs a lock of its type there: you
+(locksql, lockmq, lockfile, locklog) is on for lea once `lox run` runs a lock of its type there: you
 need not turn it on, and `LEA_<TOOL>=0` in `~/.config/lea/lea.conf` keeps it off. A lock added
 while lea runs reaches the agents once lea restarts (`lea stop`, then `lea`): restarting an
 agent or the deck does not give a running container a new mount. Without Homebrew,
@@ -314,7 +314,7 @@ for its agents' terminals).
   `osascript` on macOS) instead of the deck's sound. `lea requests` lists the permissions (`pN`)
   and spawn requests (`sN`); `lea approve pN [always]`, `lea deny pN`, `lea approve sN` and
   `lea deny sN [reason]` answer them. Unanswered after `LEA_APPROVAL_TIMEOUT` seconds, the
-  agent asks in its own terminal. Lock requests (locksql, lockmq, lockfile, lockhttp) are not
+  agent asks in its own terminal. Lock requests (locksql, lockmq, lockfile, locklog, lockhttp) are not
   lea's: `lox run` decides them, deck or not.
 - **No notifications with `LEA_CTL=1`.** lea-ctl runs lea's daemon in a container, which has
   neither `notify-send` nor `osascript`: without the deck nothing shows when something waits for
@@ -473,6 +473,23 @@ that is on without a lock of `lox run` in the projects directory gets no socket,
 that says "no such lock yet: `lox add <tool>`": there is no fixed `<tool>-run` volume of a console started by the
 tool's own launcher any more. `lea lockmq` / `lea lockfile` tell you whether the tool is on and how
 its console runs. Restart lea (`lea stop`, then `lea`) after adding a lock or turning one on.
+
+## Logs, with locklog
+
+[locklog](https://github.com/DavidGodefroid/locklog) lets the agents read the logs (files,
+journald, containers, Loki, Elasticsearch) without the people in them: its console masks every
+record it gives an agent (e-mail addresses, IPs, tokens become pseudonyms), counts, patterns and
+searches are free, and the clear value of a span (`locklog_unmask`) waits for your approval at
+`lox run`. It is wired exactly as lockmq and lockfile: **off** by default, and on for lea as soon
+as `lox run` runs a locklog lock for your projects directory (`lox add locklog`, which finds this
+host's logs and writes the profile, `.locklog/config.toml`, that `lox run` reviews with its mount
+plan); `LEA_LOCKLOG=0` keeps it off, `lea init --locklog` / `--no-locklog` record the choice.
+lea's containers get only the socket volume of `lox run`'s lock on `/run/locklog` (each of
+several on `/run/locklog/<instance>`, `LEA_LOCKLOG_INSTANCES` naming them), read-only, and the
+clients group `locklog-clients` (10050; the console account is 10051, as in locklog's image): no
+log, no key, no audit reaches them. The client is lea's image's (`config/locks.lock`); Codex
+agents get it as the `locklog` MCP server; `lea locklog` tells you whether it is on, and
+`lea doctor` compares it with the lock `lox run` runs.
 
 ## Web requests, with LockHTTP
 
@@ -913,7 +930,7 @@ its patch releases install themselves). Running containers keep their image unti
 `LEA_AUTOUPDATE=0` in `~/.config/lea/lea.conf` turns it off; the log is
 `~/.local/share/lea/host/update.log`.
 
-The Locks' clients in lea's image (locksql, lockmq, lockfile) come from one set of releases,
+The Locks' clients in lea's image (locksql, lockmq, lockfile, locklog) come from one set of releases,
 `config/locks.lock`: for each Lock, the client's release, the protocol its handshake speaks, the
 release's image by digest and the identity that signed it. lea's CI bumps the set as a whole
 (`tools/locks-bump` checks every signature with cosign), and a lea release ships it as it is: `lea
@@ -927,7 +944,7 @@ protocols differ fails (every call of the agents would be refused). The handshak
 protocol of lea's client (`lea lock-hello --protocol N`): a console of another protocol refuses it
 ("protocol mismatch", naming its own), and `lea doctor` fails that lock with the fix. `lea` warns at the start about
 a lock that `lockfamily.yaml` pins to an image of another release. `LEA_LOCKSQL_REF`,
-`LEA_LOCKMQ_REF` and `LEA_LOCKFILE_REF` remain for this release as a dev override of a client's
+`LEA_LOCKMQ_REF`, `LEA_LOCKFILE_REF` and `LEA_LOCKLOG_REF` remain for this release as a dev override of a client's
 version (`lea doctor` warns while one is set); `LEA_LOCKSQL_IMAGE` is obsolete.
 
 After an update only the current and the previous versions stay in
@@ -959,8 +976,8 @@ read-only. The screen runs in the deck on the host: agents cannot open or drive 
 | `LEA_GIT_SSH` | empty | git SSH endpoints (`host:port …`) |
 | `LEA_GIT_KNOWN_HOSTS` | `~/.config/lea/git_known_hosts` | their pinned host keys |
 | `LEA_LOCKSQL` | `0`, on when `lox run` runs a locksql lock | `1`: wire lea for the locksql console of `lox run` (`lea init --locksql`) |
-| `LEA_LOCKMQ`, `LEA_LOCKFILE` | `0`, asked by `lea init`; on when `lox run` runs a lock of the type and the key is unset (`=0` keeps it off) | let the agents reach a lockmq / lockfile console on this host |
-| `LEA_LOCKSQL_REF`, `LEA_LOCKMQ_REF`, `LEA_LOCKFILE_REF` | empty: the set of `config/locks.lock` | a dev override of a client's release (lockfile v0.1.1 or later), for this release only; `lea doctor` warns while one is set |
+| `LEA_LOCKMQ`, `LEA_LOCKFILE`, `LEA_LOCKLOG` | `0`, asked by `lea init`; on when `lox run` runs a lock of the type and the key is unset (`=0` keeps it off) | let the agents reach a lockmq / lockfile / locklog console on this host |
+| `LEA_LOCKSQL_REF`, `LEA_LOCKMQ_REF`, `LEA_LOCKFILE_REF`, `LEA_LOCKLOG_REF` | empty: the set of `config/locks.lock` | a dev override of a client's release (lockfile v0.1.1 or later), for this release only; `lea doctor` warns while one is set |
 | `LEA_LOCKHTTP` | `0` | send the agents' web requests through a LockHTTP gate (refuses `LEA_GIT_SSH` and `LEA_OTEL_UPSTREAM`) |
 | `LEA_HUB` | `1` | follow the Lock Family approval hub (lockhub's facade socket: `LEA_HUB_SOCKET`, else `$XDG_RUNTIME_DIR/lockhub/facade.sock`): an agent whose Lock call waits for a decision there is suspended until it comes, and `lox run`, outside lea, decides them (lea shows and answers no ticket); while no hub answers, no agent is suspended, the deck says `lockhub unreachable` and `lea doctor` warns. `0`: lea reads no hub and resumes the agents it suspended. **Upgrading from v0.2**: the default was `0`; put `LEA_HUB=0` in `~/.config/lea/lea.conf` to keep that, then restart lea |
 | `LEA_HUB_KEEPALIVE` | `300` | seconds (`0` to `3600`) an agent suspended on a hub ticket keeps its process before lea stops it alone, keeping its session for the decision or a message to resume it; read only with `LEA_HUB=1` (changing it while the hub is off restarts nothing) |
@@ -1031,14 +1048,14 @@ so. Changes apply after `lea init` (endpoints, keys, images, locksql) or `lea st
 - The container sees the projects directory, a read-only allow-list of `~/.claude`
   (`keybindings.json`, `hooks`, `skills`, `agents`, `commands`, `output-styles`, the top-level
   `*.md` files), its own writable copies of `settings.json` and `plugins` (never written back:
-  [Plugins and permissions in lea](#plugins-and-permissions-in-lea)) and, with locksql, lockmq or lockfile, the socket
+  [Plugins and permissions in lea](#plugins-and-permissions-in-lea)) and, with locksql, lockmq, lockfile or locklog, the socket
   volume of their `lox run` lock. Nothing else.
 - `.lockfamily` in the projects directory (the Lock Family hub's config, the locks' public keys,
   the routing) is read-only in the container: lea makes it, owned by you on the host, when it is
   missing, and refuses to start when it is a symbolic link or a file.
 - With the Lock Family's `lox run` in the projects directory, its locks are the consoles lea's
-  agents reach (locksql, lockmq, lockfile and LockHTTP run under `lox run` only): for each tool that is on (`LEA_LOCKSQL`, `LEA_LOCKMQ`,
-  `LEA_LOCKFILE`), lea mounts the socket volume `lox run` names in `.lockfamily/up.json` (lockhub's
+  agents reach (locksql, lockmq, lockfile, locklog and LockHTTP run under `lox run` only): for each tool that is on (`LEA_LOCKSQL`, `LEA_LOCKMQ`,
+  `LEA_LOCKFILE`, `LEA_LOCKLOG`), lea mounts the socket volume `lox run` names in `.lockfamily/up.json` (lockhub's
   `docs/lock-up.md`) on `/run/<tool>`, read-only, once docker confirms it is that lock's socket
   volume for this projects directory (compose project, `dev.lockfamily.role=socket`, instance and
   workspace labels): never a lock's home or the hub's network. lea ignores an `up.json` that is a
