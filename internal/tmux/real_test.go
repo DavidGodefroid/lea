@@ -484,7 +484,7 @@ func TestRealConfLocksTheLayoutAndIsIdempotent(t *testing.T) {
 	if out, err := tm("new-session", "-d", "-s", "lea-l", "-n", "deck", "sleep", "600"); err != nil {
 		t.Fatalf("new-session: %v: %s", err, out)
 	}
-	if got, want := keyNames(t, tm, "root"), []string{"C-MouseDown3Pane", "C-Space", "C-v", "MouseDown1Pane", "MouseDown3Pane", "MouseDrag1Border", "MouseDrag1Pane", "MouseDragEnd1Border", "MouseDragEnd1Pane", "WheelDownPane", "WheelUpPane"}; !slices.Equal(got, want) {
+	if got, want := keyNames(t, tm, "root"), []string{"C-MouseDown3Pane", "C-Space", "C-v", "MouseDown1Border", "MouseDown1Pane", "MouseDown3Pane", "MouseDrag1Border", "MouseDrag1Pane", "MouseDragEnd1Border", "MouseDragEnd1Pane", "WheelDownPane", "WheelUpPane"}; !slices.Equal(got, want) {
 		t.Fatalf("root table %q, want %q", got, want)
 	}
 	for _, k := range []string{"MouseDown3Status", "M-MouseDown3Pane", "DoubleClick1Pane", "TripleClick1Pane"} {
@@ -1334,6 +1334,115 @@ func TestRealDragInAMouseProgramReachesIt(t *testing.T) {
 	}
 	if v := tm("show-options", "-s", "-v", "-q", DragOption); v != "" {
 		t.Errorf("%s = %q: an edge scroll started for a program's drag", DragOption, v)
+	}
+}
+
+// deckWidths returns the deck's pane width and the stored @lea_deck_width of dragWindow's window,
+// and sets the stored width apart from the pane's (40, the pane 34): a release that stored or
+// snapped the width would show.
+func deckWidths(t *testing.T, tm func(args ...string) string) func() string {
+	t.Helper()
+	tm("set-option", "-s", DeckWidthOption, "40")
+	return func() string {
+		return tm("display-message", "-p", "-t", "=lea-g:main.0", "#{pane_width}") + " " + tm("show-options", "-s", "-v", DeckWidthOption)
+	}
+}
+
+// A drag that starts in the deck and crosses the border leaves the deck's width and the stored
+// width alone (#341), released in the deck or on the border: tmux names a drag's first motion by
+// the press's cell, every later one by the cell under the pointer, and a drag forwarded to the
+// deck (send-keys -M) never takes the drag over. A press on the border then still resizes, and
+// its release stores the width.
+func TestRealDragFromTheDeckOverTheBorderDoesNotResize(t *testing.T) {
+	tm, w, _ := dragWindow(t, false)
+	widths := deckWidths(t, tm)
+	// The deck spans columns 1 to 34, the border is column 35.
+	mouse(w, 0, 20, 20, false)
+	mouse(w, 32, 25, 20, false)
+	mouse(w, 32, 35, 20, false)
+	mouse(w, 32, 28, 20, false)
+	mouse(w, 0, 28, 20, true)
+	time.Sleep(300 * time.Millisecond)
+	if got := widths(); got != "34 40" {
+		t.Errorf("deck width and stored width %q after a deck drag over the border, want 34 40", got)
+	}
+	mouse(w, 0, 20, 20, false)
+	mouse(w, 32, 25, 20, false)
+	mouse(w, 32, 35, 22, false)
+	mouse(w, 0, 35, 22, true)
+	time.Sleep(300 * time.Millisecond)
+	if got := widths(); got != "34 40" {
+		t.Errorf("deck width and stored width %q after a deck drag released on the border, want 34 40", got)
+	}
+	if v := tm("show-options", "-s", "-v", "-q", BorderPressOption); v != "" {
+		t.Errorf("%s = %q after the release", BorderPressOption, v)
+	}
+	mouse(w, 0, 35, 20, false)
+	mouse(w, 32, 50, 20, false)
+	mouse(w, 0, 50, 20, true)
+	waitFor(t, "the border drag to resize and store the width", func() bool { return widths() == "49 49" })
+	if v := tm("show-options", "-s", "-v", "-q", BorderPressOption); v != "" {
+		t.Errorf("%s = %q after the border drag's release", BorderPressOption, v)
+	}
+}
+
+// A program that asked for the mouse keeps its drag when it crosses the border into the deck and
+// back: it gets the press, the motions inside its pane and the release, and the deck's width and
+// the stored width stay (#341).
+func TestRealDragInAMouseProgramOverTheBorderDoesNotResize(t *testing.T) {
+	tm, w, agent := dragWindow(t, false)
+	widths := deckWidths(t, tm)
+	got := filepath.Join(os.Getenv("TMUX_TMPDIR"), "mouse")
+	tm("respawn-pane", "-k", "-t", agent, "sh", "-c", `printf '\033[?1002h\033[?1006h'; stty raw -echo; exec cat > "$0"`, got)
+	waitFor(t, "the program to ask for the mouse", func() bool {
+		return tm("display-message", "-p", "-t", agent, "#{mouse_any_flag}") == "1"
+	})
+	// The agent's pane starts at column 36: column 40 is its fifth.
+	mouse(w, 0, 40, 20, false)
+	mouse(w, 32, 42, 20, false)
+	mouse(w, 32, 35, 20, false)
+	mouse(w, 32, 30, 20, false)
+	mouse(w, 32, 45, 20, false)
+	mouse(w, 0, 45, 20, true)
+	var b []byte
+	waitFor(t, "the release to reach the program", func() bool {
+		b, _ = os.ReadFile(got)
+		return strings.Contains(string(b), "\x1b[<0;10;19m")
+	})
+	for _, want := range []string{"\x1b[<0;5;19M", "\x1b[<32;7;19M", "\x1b[<32;10;19M"} {
+		if !strings.Contains(string(b), want) {
+			t.Errorf("the program got %q, want %q in it", b, want)
+		}
+	}
+	if got := widths(); got != "34 40" {
+		t.Errorf("deck width and stored width %q after a program's drag over the border, want 34 40", got)
+	}
+}
+
+// A text selection in the agent's pane that passes over the border and the deck, released back
+// in the pane, still selects and copies, and never resizes the deck (#341): copy mode takes the
+// drag over from its first motion.
+func TestRealSelectionOverTheBorderCopiesAndDoesNotResize(t *testing.T) {
+	tm, w, agent := dragWindow(t, false)
+	widths := deckWidths(t, tm)
+	tm("set-buffer", "-b", "lea-test-none", "none")
+	mouse(w, 0, 40, 20, false)
+	mouse(w, 32, 45, 22, false)
+	waitFor(t, "the drag to start the selection", func() bool {
+		return tm("display-message", "-p", "-t", agent, "#{pane_in_mode} #{selection_present}") == "1 1"
+	})
+	mouse(w, 32, 35, 25, false)
+	mouse(w, 32, 30, 26, false)
+	mouse(w, 32, 60, 30, false)
+	mouse(w, 0, 60, 30, true)
+	waitFor(t, "the release to copy and leave the history", func() bool {
+		return tm("display-message", "-p", "-t", agent, "#{pane_in_mode}") == "0"
+	})
+	if n := len(strings.Fields(tm("show-buffer"))); n < 10 {
+		t.Errorf("the copy holds %d lines, want 10 at least (rows 20 to 30)", n)
+	}
+	if got := widths(); got != "34 40" {
+		t.Errorf("deck width and stored width %q after a selection over the border, want 34 40", got)
 	}
 }
 
