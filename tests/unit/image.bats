@@ -263,12 +263,14 @@ seccomp_copy() { mkdir -p "$BATS_TEST_TMPDIR/i/seccomp"; cp "$I"/seccomp/* "$BAT
 
 # An agent can rewrite its own ~/.claude/settings.json (#111) and a project's .claude/settings*.json:
 # the permission rules are the managed settings' only, bypass mode is off, the default mode is
-# lea's, and the --settings file (server-managed hosts) disables bypass too.
-@test "managed settings: permission rules managed only, bypass disabled, default mode pinned" {
+# Claude Code's own, as on the host (#333: lea sets none), and the --settings file (server-managed
+# hosts) disables bypass too.
+@test "managed settings: permission rules managed only, bypass disabled, no default mode of lea's" {
   m="$I/managed-settings.json" s="$I/claude-settings.json"
   [ "$(jq -r .allowManagedPermissionRulesOnly "$m")" = true ]
   [ "$(jq -r .permissions.disableBypassPermissionsMode "$m")" = disable ]
-  [ "$(jq -r .permissions.defaultMode "$m")" = default ]
+  [ "$(jq -r .permissions.defaultMode "$m")" = null ]
+  [ "$(jq -r .permissions.defaultMode "$s")" = null ]
   [ "$(jq -r .permissions.disableBypassPermissionsMode "$s")" = disable ]
 }
 
@@ -604,7 +606,7 @@ merge_permissions() {
   [ "$(jq -c .permissions.ask "$M")" = '["Bash(git push *)"]' ]
   [ "$(jq -c .permissions.deny "$M")" = '["Read(./.env)"]' ]
   [ "$(jq -c .permissions.additionalDirectories "$M")" = '["/srv"]' ]
-  [ "$(jq -r .permissions.defaultMode "$M")" = default ]
+  [ "$(jq -r .permissions.defaultMode "$M")" = null ]
   [ "$(jq -r .permissions.disableBypassPermissionsMode "$M")" = disable ]
   [ "$(jq -r .allowManagedPermissionRulesOnly "$M")" = true ]
   jq -e --slurpfile f "$I/managed-settings.json" '.hooks == $f[0].hooks and .env == $f[0].env' "$M" >/dev/null
@@ -621,6 +623,27 @@ merge_permissions() {
   [ "$status" -eq 0 ]
   [[ "$output" == *"could not be read; lea's own apply"* ]]
   [ "$(jq -cS . "$M")" = "$(jq -cS . "$I/managed-settings.json")" ]
+}
+
+# The agents start in the mode a local Claude Code starts in (#333): Claude Code's own default
+# (auto on the accounts that have it) when the host's settings.json sets no default mode, or one
+# lea does not accept; a mode lea accepts is the host's.
+@test "the managed settings set no default mode unless the host sets a valid one (#333)" {
+  merge_permissions
+  [ "$status" -eq 0 ]
+  [ "$(jq -r .permissions.defaultMode "$M")" = null ]
+  for h in '{}' '{"allow":["Bash(ls)"]}' '{"defaultMode":"bypassPermissions"}' '{"defaultMode":"yolo"}' \
+    '{"defaultMode":7}' '{"defaultMode":""}' '[]'; do
+    printf '%s\n' "$h" >"$r/etc/lea/claude-permissions.json"
+    merge_permissions
+    [ "$status" -eq 0 ]
+    [ "$(jq -r .permissions.defaultMode "$M")" = null ] || { echo "$h: $(jq -r .permissions.defaultMode "$M")"; false; }
+  done
+  for mode in default acceptEdits plan dontAsk auto; do
+    printf '{"defaultMode":"%s"}\n' "$mode" >"$r/etc/lea/claude-permissions.json"
+    merge_permissions
+    [ "$(jq -r .permissions.defaultMode "$M")" = "$mode" ]
+  done
 }
 
 @test "the entrypoint keeps the managed settings root's, with no drop-in directory (#111)" {

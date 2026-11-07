@@ -283,3 +283,61 @@ func TestClaudeManagedHooksIgnoreATamperedEnv(t *testing.T) {
 		}
 	}
 }
+
+// A freshly spawned agent starts in the permission mode a local Claude Code starts in (#333):
+// lea's managed settings set no default mode, so Claude Code's own default (auto on the accounts
+// that have it) applies, as on the host, never a mode lea pins. Its prompt's hook reports the mode
+// the session runs in; the control run is the same Claude Code without the managed settings. A
+// default mode the agent writes into its own settings is not one lea set either: the managed
+// settings still disable bypass.
+func TestClaudeManagedSettingsKeepClaudeCodesDefaultMode(t *testing.T) {
+	e := newClaudeE2E(t)
+	e.setLimited(false)
+	mode := func(what string, from int) string {
+		var m string
+		e.until(what, 45, func(a store.Agent) bool {
+			ps, _ := e.st.EventPayloads(a.Key, "UserPromptSubmit")
+			if len(ps) <= from {
+				return false
+			}
+			var p struct {
+				PermissionMode string `json:"permission_mode"`
+			}
+			if json.Unmarshal([]byte(ps[from]), &p) != nil || p.PermissionMode == "" {
+				t.Fatalf("%s: no permission_mode in the hook's payload: %.2000s", what, ps[from])
+			}
+			m = p.PermissionMode
+			return true
+		})
+		return m
+	}
+
+	kill := e.run("say hi")
+	own := mode("the control run's prompt", 0)
+	kill()
+
+	e.writeManaged()
+	kill = e.run("say hi")
+	if m := mode("the agent's prompt", 1); m != own {
+		t.Fatalf("a fresh agent starts in %q mode, Claude Code's own default is %q\n%s", m, own, e.out.String())
+	}
+	kill()
+
+	// A host mode lea accepts (the entrypoint merges it into the managed settings) is the agent's.
+	want := "plan"
+	if own == "plan" {
+		want = "acceptEdits"
+	}
+	raw, _ := os.ReadFile(managedSettingsPath)
+	var m map[string]any
+	json.Unmarshal(raw, &m)
+	m["permissions"].(map[string]any)["defaultMode"] = want
+	b, _ := json.Marshal(m)
+	if err := os.WriteFile(managedSettingsPath, b, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	e.run("say hi")
+	if got := mode("the host-mode agent's prompt", 2); got != want {
+		t.Fatalf("with the host's %s, the agent starts in %q mode", want, got)
+	}
+}
