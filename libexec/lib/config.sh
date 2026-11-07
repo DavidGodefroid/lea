@@ -56,6 +56,8 @@ lea_load_config() {
   case $LEA_LOCKMQ in 0|1) ;; *) lea_die "LEA_LOCKMQ must be 1 (lea's agents reach a lockmq lock lox runs) or 0, not '$LEA_LOCKMQ'" ;; esac
   LEA_LOCKFILE=${LEA_LOCKFILE:-0}
   case $LEA_LOCKFILE in 0|1) ;; *) lea_die "LEA_LOCKFILE must be 1 (lea's agents reach a lockfile lock lox runs) or 0, not '$LEA_LOCKFILE'" ;; esac
+  LEA_LOCKLOG=${LEA_LOCKLOG:-0}
+  case $LEA_LOCKLOG in 0|1) ;; *) lea_die "LEA_LOCKLOG must be 1 (lea's agents reach a locklog lock lox runs) or 0, not '$LEA_LOCKLOG'" ;; esac
   LEA_LOCKHTTP=${LEA_LOCKHTTP:-0}
   case $LEA_LOCKHTTP in 0|1) ;; *) lea_die "LEA_LOCKHTTP must be 1 (agents' web egress through a LockHTTP gate) or 0, not '$LEA_LOCKHTTP'" ;; esac
   if [ "$LEA_LOCKHTTP" = 1 ] && [ -n "$LEA_GIT_SSH" ]; then
@@ -70,10 +72,12 @@ lea_load_config() {
   # LEA_<LOCK>_REF: a dev override of config/locks.lock's release of a client (lea doctor warns),
   # for this release only; empty (the default): the set's.
   LEA_LOCKSQL_REF=${LEA_LOCKSQL_REF:-} LEA_LOCKMQ_REF=${LEA_LOCKMQ_REF:-} LEA_LOCKFILE_REF=${LEA_LOCKFILE_REF:-}
+  LEA_LOCKLOG_REF=${LEA_LOCKLOG_REF:-}
   case $LEA_LOCKSQL_REF in ''|/*) ;; *) lea__semver "$LEA_LOCKSQL_REF" >/dev/null || lea_die "LEA_LOCKSQL_REF must be a locksql release (vX.Y.Z), not '$LEA_LOCKSQL_REF'" ;; esac
   [ -z "$LEA_LOCKMQ_REF" ] || lea__semver "$LEA_LOCKMQ_REF" >/dev/null || lea_die "LEA_LOCKMQ_REF must be a lockmq release (vX.Y.Z), not '$LEA_LOCKMQ_REF'"
   [ -z "$LEA_LOCKFILE_REF" ] || lea__semver "$LEA_LOCKFILE_REF" >/dev/null || lea_die "LEA_LOCKFILE_REF must be a lockfile release (vX.Y.Z), not '$LEA_LOCKFILE_REF'"
   [ -z "$LEA_LOCKFILE_REF" ] || lea__lockfile_safe "$LEA_LOCKFILE_REF" || lea_die "LEA_LOCKFILE_REF $LEA_LOCKFILE_REF is refused: lockfile v0.1.0 lets a plugin escape its sandbox (v0.1.1 or later)"
+  [ -z "$LEA_LOCKLOG_REF" ] || lea__semver "$LEA_LOCKLOG_REF" >/dev/null || lea_die "LEA_LOCKLOG_REF must be a locklog release (vX.Y.Z), not '$LEA_LOCKLOG_REF'"
   LEA_ALLOW_GATEWAY=${LEA_ALLOW_GATEWAY:-0}
   case $LEA_ALLOW_GATEWAY in 0|1) ;; *) lea_die "LEA_ALLOW_GATEWAY must be 0 (lea refuses an internal network the host is reachable from) or 1, not '$LEA_ALLOW_GATEWAY'" ;; esac
   LEA_AUTOUPDATE=${LEA_AUTOUPDATE:-1}
@@ -84,7 +88,7 @@ lea_load_config() {
   fi
   unset LEA_GITLAB_SSH LEA_GITLAB_KNOWN_HOSTS LEA_REGISTRY
   export LEA_PREFIX LEA_IMAGE LEA_PROXY_IMAGE LEA_CTL LEA_CTL_IMAGE LEA_GIT_SSH LEA_GIT_KNOWN_HOSTS LEA_LOCKSQL LEA_LOCKSQL_REF \
-    LEA_LOCKMQ LEA_LOCKFILE LEA_LOCKMQ_REF LEA_LOCKFILE_REF LEA_LOCKHTTP LEA_LOCKHTTP_MITM \
+    LEA_LOCKMQ LEA_LOCKFILE LEA_LOCKMQ_REF LEA_LOCKFILE_REF LEA_LOCKLOG LEA_LOCKLOG_REF LEA_LOCKHTTP LEA_LOCKHTTP_MITM \
     LEA_OTEL_UPSTREAM LEA_NESTED_NETWORKS LEA_K8S_NAMESPACE LEA_INTERNAL_HOSTS LEA_EGRESS_ALLOW LEA_PROJECTS_DIR \
     LEA_APPROVALS LEA_APPROVAL_TIMEOUT LEA_SOUND LEA_SOUND_ATTENTION LEA_DECK LEA_TOOL
 }

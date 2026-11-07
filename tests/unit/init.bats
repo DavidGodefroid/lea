@@ -733,12 +733,12 @@ EOF
   if grep -q '^LEA_LOCKFILE=' "$U"; then false; fi
 }
 
-@test "a bare lea init still asks about lockmq and lockfile, a declared locksql lock or not" {
+@test "a bare lea init still asks about lockmq, lockfile and locklog, a declared locksql lock or not" {
   interactive
   declare_locksql
   run lea_init </dev/null
   [ "$status" -eq 0 ]
-  [[ "$output" == *"through a lockmq console"*"[y/N]"*"through a lockfile console"*"[y/N]"* ]]
+  [[ "$output" == *"through a lockmq console"*"[y/N]"*"through a lockfile console"*"[y/N]"*"through a locklog console"*"[y/N]"* ]]
   [[ "$output" == *"next: lea stop, then lea"* ]]
 }
 
@@ -749,6 +749,7 @@ EOF
   [[ "$output" == *"lockmq console: it runs under lox run only"* ]]
   [[ "$output" != *"locksql console"* ]]
   [[ "$output" != *"lockfile console"* ]]
+  [[ "$output" != *"locklog console"* ]]
   run calls
   [[ "$output" != *"locksql"* ]]
 }

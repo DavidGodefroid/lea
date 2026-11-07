@@ -84,7 +84,7 @@ type Provider struct {
 	Locks []Lock
 }
 
-// Lock is a Lock's MCP server in the lea container: its name (locksql, lockmq, lockfile), the
+// Lock is a Lock's MCP server in the lea container: its name (locksql, lockmq, lockfile, locklog), the
 // client binary that serves it (`<binary> mcp`) and how long Codex waits on one of its calls.
 // Instance is set when lox run runs several locks of the tool: the server is then
 // <name>-<instance>, its client run with --instance <instance>.

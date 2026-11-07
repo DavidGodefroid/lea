@@ -10,7 +10,7 @@
 lea_update_deps() {
   case ${1:-ask} in ask|all|none) ;; *) lea_die "usage: lea update [--deps ask|all|none]" ;; esac
   lea_log "Lock clients in lea's image: $(lea__lockset_summary) (config/locks.lock, one set: lea update moves them together)"
-  for _ud_d in locksql lockmq lockfile; do
+  for _ud_d in locksql lockmq lockfile locklog; do
     _ud_r=$(eval "printf '%s' \"\${$(lea__tool_var "$_ud_d")_REF:-}\"")
     if [ -n "$_ud_r" ]; then
       lea_log "warning: $(lea__tool_var "$_ud_d")_REF=$_ud_r overrides the set's $_ud_d $(lea__lock_version "$_ud_d") (a dev override, for this release only): remove it from $(lea_user_config_path)"

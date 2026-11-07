@@ -301,7 +301,7 @@ seccomp_copy() { mkdir -p "$BATS_TEST_TMPDIR/i/seccomp"; cp "$I"/seccomp/* "$BAT
 @test "Containerfile installs the Locks' clients of consoles in other containers, from the set" {
   c="$I/Containerfile"
   grep -q 'useradd -r -u 10001 -U -M -s /sbin/nologin locksql' "$c"
-  grep -q 'for t in locksql lockmq lockfile; do' "$c"
+  grep -q 'for t in locksql lockmq lockfile locklog; do' "$c"
   grep -q '"socket_dir   = \\"/run/$t\\""' "$c"
   grep -q 'a="${t}_${v}_linux_${TARGETARCH}.tar.gz"' "$c"
   # Each archive pinned by the set's sha256, for each architecture.
@@ -310,13 +310,17 @@ seccomp_copy() { mkdir -p "$BATS_TEST_TMPDIR/i/seccomp"; cp "$I"/seccomp/* "$BAT
   grep -q 'amd64) A=AMD64 ;;' "$c"
   grep -q 'arm64) A=ARM64 ;;' "$c"
   grep -q 'install -d -m 2710 -o 10001 -g 10000 /run/locksql' "$c"
+  # locklog's account and clients group, with the ids of locklog's image (10051, 10050), and its
+  # socket directory as that image makes it (2750).
+  grep -q 'groupadd -g 10050 locklog-clients && useradd -r -u 10051 -U -M -s /sbin/nologin locklog' "$c"
+  grep -q 'install -d -m 2750 -o 10051 -g 10050 /run/locklog' "$c"
   ! grep -q 'LOCKSQL_REF\|COPY --from=locksql' "$c"
 }
 
 @test "the set's version and sha256 lines are the ones the Containerfile reads" {
   # The sed patterns of the Containerfile, run on the set: every client has its version and both
   # architectures' sha256.
-  for t in LOCKSQL LOCKMQ LOCKFILE; do
+  for t in LOCKSQL LOCKMQ LOCKFILE LOCKLOG; do
     v=$(sed -n "s/^LOCKS_${t}_VERSION=v\([0-9][0-9.]*\)\$/\1/p" "$LEA_ROOT/config/locks.lock")
     [ -n "$v" ]
     for A in AMD64 ARM64; do
