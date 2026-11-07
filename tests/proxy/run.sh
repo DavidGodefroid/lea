@@ -82,6 +82,7 @@ else echo "FAIL allowlist: no ERR_LEA_EGRESS log line:"; dc logs proxy-allow 2>&
 # The container, its start and squid's pid, which must be alive (a restarted squid gets another).
 proxy_state() {
   id=$(dc ps -q proxy-allow)
+  # shellcheck disable=SC2016 # expanded in the proxy
   printf '%s %s %s' "$id" "$(docker inspect -f '{{.State.StartedAt}}' "$id")" \
     "$(dc exec -T proxy-allow sh -c 'p=$(cat /run/lea-proxy/squid.pid) && [ -d "/proc/$p" ] && echo "$p"')"
 }
