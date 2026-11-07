@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -52,6 +53,25 @@ func (e *claudeE2E) writeManagedEnv(env map[string]string) {
 	if !e.managed {
 		e.managed = true
 		e.t.Cleanup(func() { os.Remove(managedSettingsPath) })
+	}
+}
+
+// setManagedMode sets the managed settings' default permission mode, as the entrypoint merges a
+// host's valid one (#333).
+func (e *claudeE2E) setManagedMode(mode string) {
+	e.t.Helper()
+	raw, err := os.ReadFile(managedSettingsPath)
+	if err != nil {
+		e.t.Fatal(err)
+	}
+	var m map[string]any
+	if err := json.Unmarshal(raw, &m); err != nil {
+		e.t.Fatal(err)
+	}
+	m["permissions"].(map[string]any)["defaultMode"] = mode
+	b, _ := json.Marshal(m)
+	if err := os.WriteFile(managedSettingsPath, b, 0o644); err != nil {
+		e.t.Fatal(err)
 	}
 }
 
@@ -222,8 +242,11 @@ func TestClaudeManagedPermissionsIgnoreAWidenedSettings(t *testing.T) {
 		t.Fatalf("control: asked %d times, want 0", len(ps))
 	}
 
-	// With lea's managed settings: the widening is ignored, the call asks and waits.
+	// With lea's managed settings: the widening is ignored, the call asks and waits. The mode is
+	// manual, as a host that sets it (Claude Code's own default may be auto, whose classifier
+	// answers before any prompt).
 	e.writeManaged()
+	e.setManagedMode("default")
 	e.run("touch it")
 	e.until("the permission request", 60, func(a store.Agent) bool {
 		ps, _ := e.st.EventPayloads(a.Key, "PermissionRequest")
@@ -286,58 +309,57 @@ func TestClaudeManagedHooksIgnoreATamperedEnv(t *testing.T) {
 
 // A freshly spawned agent starts in the permission mode a local Claude Code starts in (#333):
 // lea's managed settings set no default mode, so Claude Code's own default (auto on the accounts
-// that have it) applies, as on the host, never a mode lea pins. Its prompt's hook reports the mode
-// the session runs in; the control run is the same Claude Code without the managed settings. A
-// default mode the agent writes into its own settings is not one lea set either: the managed
-// settings still disable bypass.
+// that have it) applies, as on the host, never a mode lea pins. The session's transcript records
+// the mode it runs in; the control run is the same Claude Code without the managed settings. A
+// host mode lea accepts, which the entrypoint merges into the managed settings, is the agent's.
 func TestClaudeManagedSettingsKeepClaudeCodesDefaultMode(t *testing.T) {
 	e := newClaudeE2E(t)
 	e.setLimited(false)
-	mode := func(what string, from int) string {
+	mode := func(what string, n int) string {
 		var m string
 		e.until(what, 45, func(a store.Agent) bool {
 			ps, _ := e.st.EventPayloads(a.Key, "UserPromptSubmit")
-			if len(ps) <= from {
+			if len(ps) < n {
 				return false
 			}
 			var p struct {
-				PermissionMode string `json:"permission_mode"`
+				SessionID string `json:"session_id"`
 			}
-			if json.Unmarshal([]byte(ps[from]), &p) != nil || p.PermissionMode == "" {
-				t.Fatalf("%s: no permission_mode in the hook's payload: %.2000s", what, ps[from])
+			if json.Unmarshal([]byte(ps[n-1]), &p) != nil || p.SessionID == "" {
+				return false
 			}
-			m = p.PermissionMode
-			return true
+			ts, _ := filepath.Glob(filepath.Join(e.cfgDir(), "projects", "*", p.SessionID+".jsonl"))
+			for _, f := range ts {
+				b, _ := os.ReadFile(f)
+				if r := regexp.MustCompile(`"permissionMode":"([A-Za-z]+)"`).FindSubmatch(b); r != nil {
+					m = string(r[1])
+					return true
+				}
+			}
+			return false
 		})
 		return m
 	}
 
 	kill := e.run("say hi")
-	own := mode("the control run's prompt", 0)
+	own := mode("the control run's mode", 1)
 	kill()
+	t.Logf("Claude Code's own default mode: %s", own)
 
 	e.writeManaged()
 	kill = e.run("say hi")
-	if m := mode("the agent's prompt", 1); m != own {
+	if m := mode("the agent's mode", 2); m != own {
 		t.Fatalf("a fresh agent starts in %q mode, Claude Code's own default is %q\n%s", m, own, e.out.String())
 	}
 	kill()
 
-	// A host mode lea accepts (the entrypoint merges it into the managed settings) is the agent's.
 	want := "plan"
 	if own == "plan" {
 		want = "acceptEdits"
 	}
-	raw, _ := os.ReadFile(managedSettingsPath)
-	var m map[string]any
-	json.Unmarshal(raw, &m)
-	m["permissions"].(map[string]any)["defaultMode"] = want
-	b, _ := json.Marshal(m)
-	if err := os.WriteFile(managedSettingsPath, b, 0o644); err != nil {
-		t.Fatal(err)
-	}
+	e.setManagedMode(want)
 	e.run("say hi")
-	if got := mode("the host-mode agent's prompt", 2); got != want {
+	if got := mode("the host-mode agent's mode", 3); got != want {
 		t.Fatalf("with the host's %s, the agent starts in %q mode", want, got)
 	}
 }

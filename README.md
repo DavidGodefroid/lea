@@ -677,8 +677,11 @@ they come from your host's `settings.json` only (below).
   every running container, and that Claude Code is the version lea's CI verified them with.
 - **Permission rules come from your host only.** The managed settings make their own rules the
   only ones Claude Code honours (`allowManagedPermissionRulesOnly`), disable bypass mode
-  (`disableBypassPermissionsMode`) and set the default mode: an agent that writes `allow` rules
-  into its copy, into a project's `.claude/settings*.json` or a `defaultMode` there gains nothing.
+  (`disableBypassPermissionsMode`): an agent that writes `allow` rules into its copy or into a
+  project's `.claude/settings*.json` gains nothing. lea sets no default mode of its own (#333):
+  the agents start in the mode Claude Code starts in on your host (its own default, auto on the
+  accounts that have it), or in yours when your `settings.json` sets one. A `defaultMode` an agent
+  writes into its copy can change its own mode, never to bypass.
   At each start the container's root adds your host's own `permissions` (`allow`, `ask`, `deny`,
   `additionalDirectories`, and `defaultMode` unless it is `bypassPermissions`) to lea's, read
   from your host's `~/.claude/settings.json` by lea on the host and mounted read-only, never from
