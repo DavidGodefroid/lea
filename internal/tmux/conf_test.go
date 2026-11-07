@@ -24,8 +24,8 @@ func TestConfReadsTheDeckWidthFromTheOption(t *testing.T) {
 		t.Errorf("a fixed width is baked into a resize-pane: %q", m)
 	}
 	for _, want := range []string{
-		"bind-key -n MouseDrag1Border if-shell -F '#{@lea_deck}' 'resize-pane -M'",
-		"bind-key -n MouseDragEnd1Border set -su " + DragOption + " \\; if-shell -F '#{@lea_deck}' 'run-shell",
+		"bind-key -n MouseDrag1Border if-shell -F '#{&&:#{@lea_deck},#{" + BorderPressOption + "}}' 'resize-pane -M'",
+		"bind-key -n MouseDragEnd1Border set -su " + DragOption + " \\; if-shell -F '#{&&:#{@lea_deck},#{" + BorderPressOption + "}}' 'run-shell",
 		"set -s @lea_deck_width " + strconv.Itoa(DeckWidth),
 	} {
 		if !strings.Contains(c, want) {
@@ -39,6 +39,38 @@ func TestConfReadsTheDeckWidthFromTheOption(t *testing.T) {
 	}
 	if n := strings.Count(c, "#{e|<:"); n != 6 {
 		t.Errorf("%d arithmetic comparisons, want 6 (the bounds, twice)", n)
+	}
+}
+
+// Only a press on the deck window's border arms the border drag (#341): MouseDown1Border sets
+// BorderPressOption, the drag and its release resize and store the width only while it is set,
+// and a press in a pane and both root releases clear it, so a drag that starts in a pane and
+// crosses the border never resizes the deck.
+func TestConfArmsTheBorderDragOnlyOnAPressOnTheBorder(t *testing.T) {
+	lines := map[string]string{}
+	for _, l := range strings.Split(Conf(), "\n") {
+		if f := strings.Fields(l); len(f) > 3 && f[0] == "bind-key" && f[1] == "-n" {
+			lines[f[2]] = l
+		}
+	}
+	armed := "#{&&:#{@lea_deck},#{" + BorderPressOption + "}}"
+	clear := "set -su " + BorderPressOption
+	for key, want := range map[string]string{
+		"MouseDown1Border":    "bind-key -n MouseDown1Border if-shell -F '#{@lea_deck}' 'set -s " + BorderPressOption + " 1'",
+		"MouseDrag1Border":    "bind-key -n MouseDrag1Border if-shell -F '" + armed + "' 'resize-pane -M'",
+		"MouseDown1Pane":      "bind-key -n MouseDown1Pane " + clear + " \\; ",
+		"MouseDragEnd1Pane":   clear + " \\; send-keys -M",
+		"MouseDragEnd1Border": "if-shell -F '" + armed + "' 'run-shell",
+	} {
+		if !strings.Contains(lines[key], want) {
+			t.Errorf("%s = %q, want %q in it", key, lines[key], want)
+		}
+	}
+	if l := lines["MouseDragEnd1Border"]; !strings.HasSuffix(l, "\\; "+clear) {
+		t.Errorf("the border release does not disarm the border drag: %q", l)
+	}
+	if l := lines["MouseDrag1Border"]; strings.Contains(l, "send-keys") {
+		t.Errorf("a drag passing over the border is forwarded: %q", l)
 	}
 }
 

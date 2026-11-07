@@ -53,6 +53,10 @@ const (
 	DragOption = "@lea_drag"
 	// DragCountOption counts the drags, so that a drag's edge scroll never acts for a newer one.
 	DragCountOption = "@lea_drag_n"
+	// BorderPressOption is the server option set while the left button went down on a border of
+	// the deck window: only such a press arms the border drag's resize and its release's stored
+	// width (#341). A press in a pane and every root release clear it.
+	BorderPressOption = "@lea_border_press"
 )
 
 // clampFormat is the tmux format of the dragged border's width clamped to the deck width's
