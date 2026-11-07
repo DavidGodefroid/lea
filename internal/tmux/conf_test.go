@@ -59,7 +59,7 @@ func TestConfArmsTheBorderDragOnlyOnAPressOnTheBorder(t *testing.T) {
 		"MouseDown1Border":    "bind-key -n MouseDown1Border if-shell -F '#{@lea_deck}' 'set -s " + BorderPressOption + " 1'",
 		"MouseDrag1Border":    "bind-key -n MouseDrag1Border if-shell -F '" + armed + "' 'resize-pane -M'",
 		"MouseDown1Pane":      "bind-key -n MouseDown1Pane " + clear + " \\; ",
-		"MouseDragEnd1Pane":   clear + " \\; send-keys -M",
+		"MouseDragEnd1Pane":   "bind-key -n MouseDragEnd1Pane set -su " + DragOption + " \\; " + clear + " \\; ",
 		"MouseDragEnd1Border": "if-shell -F '" + armed + "' 'run-shell",
 	} {
 		if !strings.Contains(lines[key], want) {
@@ -69,8 +69,9 @@ func TestConfArmsTheBorderDragOnlyOnAPressOnTheBorder(t *testing.T) {
 	if l := lines["MouseDragEnd1Border"]; !strings.HasSuffix(l, "\\; "+clear) {
 		t.Errorf("the border release does not disarm the border drag: %q", l)
 	}
-	if l := lines["MouseDrag1Border"]; strings.Contains(l, "send-keys") {
-		t.Errorf("a drag passing over the border is forwarded: %q", l)
+	// A drag passing over the border unarmed does nothing: the binding is the resize alone.
+	if l, want := lines["MouseDrag1Border"], "bind-key -n MouseDrag1Border if-shell -F '"+armed+"' 'resize-pane -M'"; l != want {
+		t.Errorf("MouseDrag1Border = %q, want %q", l, want)
 	}
 }
 
