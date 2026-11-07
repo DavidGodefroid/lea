@@ -43,6 +43,13 @@ owner() { stat -c %u:%g "$1"; }
 # Root without CAP_DAC_OVERRIDE may not read a private file of lea's user: the rules are rendered
 # as the owner of internal-hosts.
 hosts_owner=$(owner /etc/lea/internal-hosts)
+# The egress allowlist squid.conf reads (none under LockHTTP or with LEA_EGRESS_ALLOW='*'), and the
+# value it comes from: lea egress allow|deny replaces both live (egress-apply.sh).
+if [ "$lockhttp" != 1 ] && [ "${LEA_EGRESS_ALLOW:-}" != '*' ]; then
+  /usr/local/bin/render-squid-conf.sh --egress >"$conf/egress-allow"
+  printf '%s\n' "${LEA_EGRESS_ALLOW:-}" >"$conf/egress-allow.src"
+  chmod 0644 "$conf/egress-allow" "$conf/egress-allow.src"
+fi
 su-exec "$hosts_owner" /usr/local/bin/render-squid-conf.sh /etc/lea/internal-hosts >"$conf/squid.conf"
 su-exec "$hosts_owner" /usr/local/bin/render-squid-conf.sh --peek /etc/lea/internal-hosts >"$conf/peek.conf"
 chmod 0644 "$conf/squid.conf" "$conf/peek.conf"
@@ -84,7 +91,9 @@ fi
 forge=0
 if [ -d /etc/lea/forge ]; then forge=1; fi
 if [ ! -s /etc/lea/endpoints ] && [ "$forge" = 0 ]; then
-  # squid becomes PID 1: no root process is left in the container.
+  # squid becomes PID 1: no root process is left in the container. Its pid is the one
+  # egress-apply.sh signals.
+  echo "$$" >"$conf/squid.pid"
   exec su-exec squid:squid squid -N -f "$conf/squid.conf"
 fi
 # lea-keyproxy runs as the owner of the endpoints file lea wrote: lea's user, who owns the key
@@ -116,6 +125,7 @@ done
 # forwarder's requests fail (closed).
 su-exec squid:squid squid -N -f "$conf/squid.conf" &
 squid_pid=$!
+echo "$squid_pid" >"$conf/squid.pid"
 wait_port 3128 "squid"
 via=http://127.0.0.1:3128
 if [ "$lockhttp" = 1 ]; then via=http://127.0.0.1:3130; fi

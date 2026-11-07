@@ -1,1 +1,2 @@
-<html><body><p>lea-proxy: %H refused: a public IP address is not reachable by its address, only by a domain name. To reach a host of your network by its address, list it in LEA_INTERNAL_HOSTS.</p></body></html>
+lea-proxy refused %H: a public IP address is reachable by its domain name only (lea egress allow cannot allow an address).
+<html><body><p>lea-proxy refused %H: a public IP address is not reachable by its address, only by a domain name. To reach a host of your network by its address, list it in LEA_INTERNAL_HOSTS.</p></body></html>

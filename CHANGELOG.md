@@ -1,5 +1,23 @@
 # Changelog
 
+## Unreleased
+
+Changes:
+
+- `lea egress allow|deny|list|denied` (#345): the user allows a domain from the host, live. The
+  proxy's allowlist moves into a file on its tmpfs; `lea egress allow DOMAIN` checks the domain as
+  `LEA_EGRESS_ALLOW` is checked (no URL, IP literal, wildcard or DNS-over-HTTPS resolver; at most
+  64 entries), writes it back to `lea.conf` (`default` kept, private, no symbolic link followed)
+  and reconfigures squid in the running proxy: no proxy, container or agent restart. `deny` takes a
+  domain back, `list` shows the list, `denied` the hosts the proxy refused lately (the access log
+  now carries squid's error name). An edited `LEA_EGRESS_ALLOW` is applied the same way at the next
+  `lea` instead of recreating the proxy. The command is host-only (refused inside lea, kept on the
+  host with `LEA_CTL=1`); no MCP tool or grant reaches it.
+- Refusal pages start with one plain line naming the host, why, and, for the allowlist, the exact
+  `lea egress allow` command; an agent's first prompt says how to recognise an egress refusal behind
+  `CONNECT tunnel failed, response 403` and to hand the user that command instead of working
+  around the proxy.
+
 ## v0.13.0 (2026-11-07)
 
 Changes:

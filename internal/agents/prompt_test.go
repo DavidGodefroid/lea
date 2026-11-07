@@ -63,3 +63,18 @@ func TestFirstPromptNamesTheLabelAndTheRule(t *testing.T) {
 		t.Fatalf("unlabelled prompt %q", p)
 	}
 }
+
+// An agent recognises an egress refusal and tells the user the host command, never allowing a
+// domain itself (#345).
+func TestFirstPromptExplainsEgressRefusals(t *testing.T) {
+	p := firstPrompt(store.Agent{Name: "dev-1", Role: "dev"}, "", "", true)
+	for _, want := range []string{"CONNECT tunnel failed, response 403", "X-Squid-Error: ERR_LEA_EGRESS",
+		"run on the host: lea egress allow HOST (applies live, no restart)", "you cannot allow it yourself", "Do not retry, switch mirrors or work around the proxy"} {
+		if !strings.Contains(p, want) {
+			t.Fatalf("missing %q in %q", want, p)
+		}
+	}
+	if strings.ContainsAny(p, "$`") {
+		t.Fatalf("the prompt holds a shell expansion: %q", p)
+	}
+}

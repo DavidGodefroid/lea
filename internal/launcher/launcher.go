@@ -429,6 +429,8 @@ func (l *Launcher) dispatch(args []string) error {
 			return l.configTool(rest[1:])
 		}
 		return l.config(rest)
+	case "egress":
+		return l.egress(rest)
 	case "attach":
 		return l.attach(rest)
 	case "ctl":
