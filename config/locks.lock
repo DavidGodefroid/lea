@@ -9,9 +9,9 @@
 # Locks workflow (.github/workflows/locks.yml) opens the pull request. A release ships this file
 # as it is, so a lea's clients never mix sets. lea doctor compares each with the lock lox runs.
 # A key is LOCKS_<LOCK>_<FIELD>, one per line, KEY=VALUE without quotes.
-LOCKS_SET=lockkit-v0.13.0
-LOCKS_LOX_VERSION=v0.9.0
-LOCKS_LOX_IDENTITY=https://github.com/DavidGodefroid/lockhub/.github/workflows/release.yml@refs/tags/v0.9.0
+LOCKS_SET=lockkit-v0.13.1
+LOCKS_LOX_VERSION=v0.10.0
+LOCKS_LOX_IDENTITY=https://github.com/DavidGodefroid/lockhub/.github/workflows/release.yml@refs/tags/v0.10.0
 LOCKS_LOCKSQL_VERSION=v0.17.0
 LOCKS_LOCKSQL_PROTOCOL=1
 LOCKS_LOCKSQL_IMAGE=ghcr.io/davidgodefroid/locksql@sha256:4725a2a4ae22cef214904798fcbbc0b4d36832839d6cf027d921d0c6c571b785
@@ -31,6 +31,13 @@ LOCKS_LOCKFILE_IMAGE=ghcr.io/davidgodefroid/lockfile@sha256:1cda92af7746bbf76b16
 LOCKS_LOCKFILE_IDENTITY=https://github.com/DavidGodefroid/lockfile/.github/workflows/release.yml@refs/tags/v0.8.0
 LOCKS_LOCKFILE_SHA256_AMD64=9f90886d3663a56a903330c1de0fb4289553504d6cf025b92d117a4050190f64
 LOCKS_LOCKFILE_SHA256_ARM64=1e799bec88d60fcbad72f6132392f557d50f5988bafee821864f57da1511ff81
+LOCKS_LOCKLOG_VERSION=v0.2.1
+LOCKS_LOCKLOG_PROTOCOL=1
+LOCKS_LOCKLOG_IMAGE=ghcr.io/davidgodefroid/locklog@sha256:e7388fce3a032638a2388ff061df96922560c42a107848fc4e72afe38dbb6752
+LOCKS_LOCKLOG_IMAGE_VAULT=ghcr.io/davidgodefroid/locklog@sha256:8869068a2ffe240ac402cfeef3636a91945f5c889a9748e10f4d8958c9380185
+LOCKS_LOCKLOG_IDENTITY=https://github.com/DavidGodefroid/locklog/.github/workflows/release.yml@refs/tags/v0.2.1
+LOCKS_LOCKLOG_SHA256_AMD64=8d5f921ea93e64e76e63966c5ea7ebf8a1fa11ff0ce4ad9f9e20cb92bb2c2faf
+LOCKS_LOCKLOG_SHA256_ARM64=7af680bcbfc77c3b474086a6888c9c3ad7a8e342528c4cf60c5d51ccf97d6795
 LOCKS_LOCKHTTP_VERSION=v0.8.0
 LOCKS_LOCKHTTP_PROTOCOL=1
 LOCKS_LOCKHTTP_IMAGE=ghcr.io/davidgodefroid/lockhttp@sha256:e1b0cbe3dd51b119c9aa04e02725749cda67f054d808c265fbc310ed3aed9708
