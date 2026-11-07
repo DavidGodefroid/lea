@@ -20,7 +20,6 @@
       "Bash(staticcheck *)",
       "Bash(govulncheck *)"
     ],
-    "defaultMode": "default",
     "disableBypassPermissionsMode": "disable"
   },
   "hooks": {
