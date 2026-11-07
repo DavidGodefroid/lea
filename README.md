@@ -1104,12 +1104,24 @@ so. Changes apply after `lea init` (endpoints, keys, images, locksql) or `lea st
   (their packages), `openai.com`, `chatgpt.com` (Codex), and always `anthropic.com`, `claude.ai`,
   `claude.com` (the model API and its login). Each domain covers its subdomains. Anything else
   (documentation sites fetched by an agent, another forge, a Fedora mirror outside
-  `fedoraproject.org`) is refused with a page naming `LEA_EGRESS_ALLOW`.
-- To add domains, set `LEA_EGRESS_ALLOW="default,corp.example,docs.example.org"` (`default` keeps
-  lea's list); without `default`, only the domains you list (and the model API) are reachable. To
-  open the web to any domain, as lea did before, set `LEA_EGRESS_ALLOW='*'` (`lea doctor` warns).
-  Internal hosts are not affected. The proxy reads it at start: `lea stop --all`, then `lea`.
-  `lea doctor` shows the active list.
+  `fedoraproject.org`) is refused. The refusal's first line names the host and the command that
+  allows it (`lea-proxy refused deb.debian.org: not in the egress allowlist. To allow it, run on
+  the host: lea egress allow deb.debian.org (applies live, no restart).`). HTTPS clients hide that
+  page behind `CONNECT tunnel failed, response 403`: lea's agents are told to recognise it and to
+  hand you that command, never to work around the proxy.
+- To allow a domain, run on the host `lea egress allow deb.debian.org` (several at once if you
+  like): the running proxy takes it at once, without restarting the proxy, the containers or the
+  agents, and the domain is kept in `LEA_EGRESS_ALLOW` in `~/.config/lea/lea.conf` (`default`
+  kept). `lea egress deny DOMAIN` takes back a domain added so; `lea egress list` shows the list
+  and where each entry comes from; `lea egress denied [--since 24h]` lists the hosts the proxy
+  refused lately, with the containers that asked and the command for each. The command runs on
+  the host only: no agent, MCP tool, grant or file in an agent's reach can change the list.
+- You can also edit `LEA_EGRESS_ALLOW="default,corp.example,docs.example.org"` yourself (`default`
+  keeps lea's list); without `default`, only the domains you list (and the model API) are
+  reachable. The next `lea` applies an edited list to the running proxy live, the same way. To
+  open the web to any domain, as lea did before, set `LEA_EGRESS_ALLOW='*'` (`lea doctor` warns):
+  a change to or from `*` restarts the proxy. Internal hosts are not affected. `lea doctor` shows
+  the active list.
 - Whatever `LEA_EGRESS_ALLOW` says, the proxy refuses public DNS-over-HTTPS resolvers
   (`dns.google`, `cloudflare-dns.com`, `quad9.net`, `nextdns.io`, any `doh.*` name …), which would
   reopen the DNS channel the internal network closes, and public IP literals (`https://1.1.1.1/`,

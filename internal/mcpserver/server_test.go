@@ -220,6 +220,12 @@ func TestSpawnToolsAreListedAndRefusedToAgentsLeaDidNotStart(t *testing.T) {
 			t.Errorf("missing tool %s", n)
 		}
 	}
+	// The egress allowlist is the user's call on the host (#345): no tool reaches it.
+	for _, tl := range tools.Tools {
+		if s := strings.ToLower(tl.Name + " " + tl.Description); strings.Contains(s, "egress") || strings.Contains(s, "allowlist") {
+			t.Errorf("tool %s touches the egress allowlist: %s", tl.Name, tl.Description)
+		}
+	}
 	r, err := dev.CallTool(ctx, &mcp.CallToolParams{Name: "agents_spawn", Arguments: map[string]any{"brief": "x"}})
 	if err != nil || !r.IsError || !strings.Contains(text(r), "only running agents lea started") {
 		t.Fatalf("spawn by an unknown agent: err=%v result=%s", err, text(r))

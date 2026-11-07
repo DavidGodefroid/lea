@@ -1,5 +1,6 @@
 #!/bin/sh
 # Renders squid.conf on stdout from an internal-hosts file. Usage: render-squid-conf.sh [--peek] INTERNAL_HOSTS
+# render-squid-conf.sh --egress: the egress allowlist file instead (EGRESS_FILE, one .domain per line).
 #
 # LEA_EGRESS_ALLOW (domain names separated by commas or blanks; empty: EGRESS_DEFAULT; the word
 # "default" stands for EGRESS_DEFAULT; "*" alone: any domain) restricts the web destinations on 80
@@ -8,6 +9,9 @@
 # value, public DNS-over-HTTPS resolvers (DOH_NAMES, any doh.* name) and public IP literals are
 # refused: a tunnel to them would reopen the DNS channel the internal network closes, or bypass
 # the allowlist.
+#
+# squid.conf reads the allowlist from EGRESS_FILE, which the entrypoint writes at start: lea egress
+# allow|deny rewrites it on the host's behalf (egress-apply.sh) and reconfigures squid, live (#345).
 #
 # LEA_LOCKHTTP=1: a LockHTTP gate on :3130 decides the web destinations and is the only client of
 # squid, which then listens on 127.0.0.1 only and drops its allowlist (the floor above stays).
@@ -21,7 +25,7 @@
 set -eu
 peek=
 if [ "${1:-}" = --peek ]; then peek=1; shift; fi
-hosts_file=$1
+EGRESS_FILE=/run/lea-proxy/egress-allow
 
 # Keep in step with libexec/lib/doctor.sh.
 EGRESS_ALWAYS="anthropic.com claude.ai claude.com"
@@ -70,6 +74,17 @@ egress_domains() {
   done
   printf '%s\n' "$kept"
 }
+
+if [ "${1:-}" = --egress ]; then
+  set -f
+  if [ "${LEA_EGRESS_ALLOW:-}" = '*' ]; then
+    echo "render-squid-conf: LEA_EGRESS_ALLOW='*': no allowlist to write" >&2; exit 1
+  fi
+  egress=$(egress_domains) || exit 1
+  for d in $egress; do printf '.%s\n' "$d"; done
+  exit 0
+fi
+hosts_file=$1
 
 acls=$(mktemp)
 trap 'rm -f "$acls"' EXIT
@@ -149,7 +164,7 @@ shutdown_lifetime 1 seconds
 connect_timeout 10 seconds
 pid_filename none
 error_directory /etc/squid/lea-errors
-logformat lea %ts.%03tu %>a %rm %ru %>Hs %<a
+logformat lea %ts.%03tu %>a %rm %ru %>Hs %<a %err_code
 access_log stdio:/dev/stdout lea
 cache_log stdio:/dev/stderr
 forwarded_for delete
@@ -170,9 +185,7 @@ fi
 # The allowlist is checked on the requested name, before private_dst resolves it: an unlisted name
 # is refused without a DNS lookup.
 if [ -n "$egress" ]; then
-  printf 'acl egress_allow dstdomain -n'
-  for d in $egress; do printf ' .%s' "$d"; done
-  printf '\n'
+  printf 'acl egress_allow dstdomain -n "%s"\n' "$EGRESS_FILE"
   cat <<'CONF'
 deny_info ERR_LEA_EGRESS egress_allow
 http_access deny !egress_allow

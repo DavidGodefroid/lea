@@ -139,9 +139,10 @@ func (l *Launcher) ctlClaudeLabel() string {
 }
 
 // ctlHostOnly are the commands that stay on the host with LEA_CTL=1: they install, configure or
-// update lea itself (lea-ctl mounts the install and the configuration read-only).
+// update lea itself (lea-ctl mounts the install and the configuration read-only), and lea egress
+// (the user's own call on the host, #345).
 var ctlHostOnly = map[string]bool{"-h": true, "--help": true, "help": true, "init": true, "config": true,
-	"update": true, "rollback": true, "doctor": true, "ctl": true}
+	"update": true, "rollback": true, "doctor": true, "ctl": true, "egress": true}
 
 // ctl is lea ctl up|down|attach: lea-ctl by hand (debugging).
 func (l *Launcher) ctl(args []string) error {

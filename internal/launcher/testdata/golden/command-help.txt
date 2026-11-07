@@ -29,6 +29,10 @@ Usage:
                               lea's GitHub token, kept by the proxy only (agents use it through
                               gh and git, never read it); login reads it on stdin:
                               gh auth token | lea github login
+  lea egress allow DOMAIN...|deny DOMAIN...|list|denied [--since 24h]
+                              the agents' egress allowlist (LEA_EGRESS_ALLOW): allow or deny a
+                              domain live, without a restart, kept in lea.conf; list it; denied:
+                              the hosts the proxy refused lately (on the host only: your call)
   lea shell [-- cmd...]       open a shell, or run a command, in the same lea
   lea kube refresh            mint a read-only Kubernetes token (8 h)
   lea board --md              the board: every agent's task, as markdown

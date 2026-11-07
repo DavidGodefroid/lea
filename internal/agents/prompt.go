@@ -51,6 +51,12 @@ func firstPrompt(a store.Agent, repo, worktree string, brief bool) string {
 	// Heavy jobs (#132): the container's slots hold the host's CPUs.
 	b.WriteString(" Run test suites, static analysis, builds and browsers through lea heavy -- <command>: it waits for a free slot" +
 		" and caps the command's CPUs and workers.")
+	// Egress refusals (#345): clients hide the proxy's page behind a CONNECT 403, and only the user
+	// may allow a domain, on the host.
+	b.WriteString(" When a download fails with CONNECT tunnel failed, response 403 or 403 Forbidden through lea-proxy (the HTTPS_PROXY of your environment)," +
+		" lea-proxy refused the host: curl -sI https://HOST/ shows X-Squid-Error: ERR_LEA_EGRESS when it is not in the egress allowlist." +
+		" Do not retry, switch mirrors or work around the proxy: tell the user in one line, as \"lea-proxy refused HOST: not in the egress allowlist." +
+		" To allow it, run on the host: lea egress allow HOST (applies live, no restart).\", and wait; you cannot allow it yourself.")
 	// The deck shows an agent's label, the user may rename it at any time (#84).
 	b.WriteString(" When you mention an agent in text the user reads (task_update, results your lead relays), use its label from agents_list" +
 		" when it has one, looked up fresh since the user may rename it; address tools by name, never by label.")

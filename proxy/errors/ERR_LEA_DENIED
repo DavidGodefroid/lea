@@ -1,1 +1,2 @@
-<html><body><p>lea-proxy: %H refused: only ports 80 and 443, plus internal-hosts entries, are allowed.</p></body></html>
+lea-proxy refused %H: only ports 80 and 443, plus internal-hosts entries, are allowed (lea egress allow does not open other ports).
+<html><body><p>lea-proxy refused %H: only ports 80 and 443, plus internal-hosts entries, are allowed. To reach another port of a host of your network, the user lists it in LEA_INTERNAL_HOSTS on the host.</p></body></html>

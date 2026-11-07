@@ -1,1 +1,2 @@
-<html><body><p>lea-proxy: %H refused: private address not on internal-hosts.</p></body></html>
+lea-proxy refused %H: it resolves to a private address not on internal-hosts (lea egress allow cannot allow it; LEA_INTERNAL_HOSTS can).
+<html><body><p>lea-proxy refused %H: private address not on internal-hosts. To reach a host of your network, the user lists it in LEA_INTERNAL_HOSTS on the host.</p></body></html>
