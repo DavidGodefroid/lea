@@ -187,6 +187,9 @@ if [ -n "${HOST_HIST_SHA:-}" ]; then
   mustnt "host Claude history not visible"      test "$(sha_of "$HOME/.claude/history.jsonl")" = "$HOST_HIST_SHA"
 fi
 must   "only this projects dir under ~/.claude/projects" sh -c '[ "$(ls -A "$HOME/.claude/projects" | wc -l)" -eq 1 ]'
+# lea's gh config of pinned calls is root's, read-only to the agent: gh must find it in its current
+# format, or it migrates it and fails writing it back (every granted gh call failed so).
+must   "lea's pinned gh config loads read-only"  sh -c '[ ! -w /usr/local/share/lea/forge-gh/config.yml ] && [ "$(GH_CONFIG_DIR=/usr/local/share/lea/forge-gh gh config get http_unix_socket)" = /run/lea-forge/gh.sock ]'
 # GitHub (#103): no token where an agent reads it (the shared, read-only entries of ~/.claude are
 # the user's own configuration), and gh and git still work: the proxy adds it.
 if [ -n "${FORGE_NEEDLE:-}" ]; then

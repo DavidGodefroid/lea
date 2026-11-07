@@ -1,5 +1,8 @@
 # gh's config of lea's pinned gh calls (grants, issue #103): every request goes to the relay of the
 # lea container, which carries it to the proxy's forge forwarder, the only holder of the token.
+# version "1": gh's current config format. gh migrates an older one and writes it back first, which
+# fails in this read-only dir (root's) and failed every granted gh call.
+version: "1"
 http_unix_socket: /run/lea-forge/gh.sock
 prompt: disabled
 pager: cat
