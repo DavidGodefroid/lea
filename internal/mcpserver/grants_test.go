@@ -45,7 +45,8 @@ func TestNoToolWritesGrants(t *testing.T) {
 		names = append(names, tl.Name)
 	}
 	sort.Strings(names)
-	want := "agents_list agents_request_spawn agents_spawn agents_stop ask board_read grants_list lease_acquire lease_release msg_inbox msg_reply msg_send msg_wait providers_list task_update"
+	// grants_request only queues a request the user decides on the host (#342).
+	want := "agents_list agents_request_spawn agents_spawn agents_stop ask board_read grants_list grants_request lease_acquire lease_release msg_inbox msg_reply msg_send msg_wait providers_list task_update"
 	if got := strings.Join(names, " "); got != want {
 		t.Fatalf("agent tools changed:\n got %s\nwant %s", got, want)
 	}
@@ -62,5 +63,13 @@ func TestNoToolWritesGrants(t *testing.T) {
 	r, err := dev.CallTool(ctx, &mcp.CallToolParams{Name: "grants_list", Arguments: map[string]any{}})
 	if err != nil || r.IsError || !strings.Contains(text(r), `"action":"merge"`) || strings.Contains(text(r), "close-issue") {
 		t.Fatalf("grants_list: %v %s", err, text(r))
+	}
+	// grants_request records no grant, and is a lead's only.
+	r, err = dev.CallTool(ctx, &mcp.CallToolParams{Name: "grants_request", Arguments: map[string]any{"action": "merge", "repo": "lea", "github": "o/lea"}})
+	if err != nil || !r.IsError {
+		t.Fatalf("grants_request from a non-lead: %v %s", err, text(r))
+	}
+	if gs, err := st.ActiveGrants("lea-a", now); err != nil || len(gs) != 1 {
+		t.Fatalf("grants after grants_request: %v %+v", err, gs)
 	}
 }

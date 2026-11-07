@@ -22,10 +22,13 @@ const (
 	DeleteOwnBranch = "delete-own-branch"
 	CommitIdentity  = "commit-identity"
 	PRCreate        = "pr-create"
+	// ReleaseTag pushes one new semver tag on a commit of the default branch (#342). It is never
+	// one of DeliveryActions: the user grants it on its own.
+	ReleaseTag = "release-tag"
 )
 
 // Actions lists every action a grant may name, in display order.
-var Actions = []string{Merge, StopFinished, CloseIssue, DeleteOwnBranch, CommitIdentity, PRCreate}
+var Actions = []string{Merge, StopFinished, CloseIssue, DeleteOwnBranch, CommitIdentity, PRCreate, ReleaseTag}
 
 // DeliveryActions are the standing grants lea delivery on records for each repository: push the
 // agent's own branch, open its PR, merge it, delete the branch (issue #92).
@@ -286,6 +289,16 @@ func Decide(tool string, input json.RawMessage, c Caller, gs []Grant, now int64,
 
 func decide(tool string, input json.RawMessage, c Caller, gs []Grant, now int64, finished bool) Decision {
 	hard, req, ok := Classify(tool, input, c)
+	if hard == pushOther {
+		// A release tag push is a push to another ref: a hard deny unless a release-tag grant
+		// covers it, and then it runs only as lea pins it (#342).
+		if r, rok := releaseTagRequest(tool, input, c); rok {
+			if _, held := Match(r, c, gs, now); !held {
+				return Decision{Verdict: Deny, Reason: "lea hard deny: " + hard + ". " + releaseTagHint}
+			}
+			hard, req, ok = "", r, true
+		}
+	}
 	if hard != "" {
 		return Decision{Verdict: Deny, Reason: "lea hard deny: " + hard}
 	}
@@ -407,10 +420,12 @@ func Command(req Request, c Caller, g Grant) string {
 		if !c.OwnWorktree || c.Worktree == "" {
 			return ""
 		}
-		switch req.Args[0] {
-		case "commit":
+		switch {
+		case req.Action == ReleaseTag:
+			script = tagScript(req.Args[2], c.Worktree, g.GitHub, c.Proxy)
+		case req.Args[0] == "commit":
 			script = commitScript(req.Args[1:], c.Worktree, c.Proxy)
-		case "push":
+		case req.Args[0] == "push":
 			script = pushScript(req.Args, c.Worktree, g.GitHub, c.Proxy)
 		}
 	}
@@ -579,35 +594,106 @@ func pushScript(args []string, wt, gh, proxy string) string {
 	if pa == nil {
 		return ""
 	}
+	s, bare, url, check := barePush(wt, gh, proxy)
+	if s == "" {
+		return ""
+	}
 	git := shellWords(gitIn(wt, proxy))
+	ref := pa[1]
+	if pa[2] == "delete" {
+		return s + check + bare + " push " + shellWords([]string{url, "--delete", ref})
+	}
+	return s + "sha=$(" + git + " rev-parse --verify " + shellWords([]string{ref + "^{commit}"}) + ") || exit 1\n" +
+		check + bare + " push " + shellWords([]string{url}) + ` "$sha"` + shellWords([]string{":" + ref})
+}
+
+// barePush is what every pinned push starts with: the script lines that create the bare
+// repository it runs from ($tmp, the worktree's objects borrowed), the git command in it (bare),
+// the URL it pushes to, and the line that checks the bare repository's own config again (check,
+// run right before the push). s is "" when gh cannot be pushed to.
+func barePush(wt, gh, proxy string) (s, bare, url, check string) {
+	url = pinURL(gh) + ".git"
+	if pinURL(gh) == "" {
+		return "", "", "", ""
+	}
 	bp := pins(proxy)
 	if _, _, gitlab := gitlabPin(gh); !gitlab {
 		// GitHub: to the forge forwarder, directly (no proxy), over plain HTTP on the internal
 		// network; it adds the token and goes to github.com over HTTPS (#103).
 		u := forgePushURL(proxy, gh)
 		if u == "" {
-			return ""
+			return "", "", "", ""
 		}
-		pa[0] = u
+		url = u
 		base := u[:len(u)-len(strings.TrimPrefix(gh, "github.com/")+".git")]
 		bp = append(bp, "-c", "protocol.http.allow=always", "-c", "http."+base+".proxy=")
 	}
-	bare := shellWords([]string{gitPath, "--git-dir"}) + ` "$tmp" ` + shellWords(bp)
-	s := configGuard(wt) +
+	git := shellWords(gitIn(wt, proxy))
+	bare = shellWords([]string{gitPath, "--git-dir"}) + ` "$tmp" ` + shellWords(bp)
+	s = configGuard(wt) +
 		"common=$(" + git + " rev-parse --path-format=absolute --git-common-dir) || exit 1\n" +
 		"tmp=$(" + shellWords([]string{mktempPath, "-d"}) + ") || exit 1\n" +
 		"trap " + shellWords([]string{rmPath + ` -rf "$tmp"`}) + " EXIT\n" +
 		shellWords([]string{gitPath, "init", "-q", "--bare", "--template="}) + ` "$tmp" || exit 1` + "\n" +
 		`echo "$common/objects" > "$tmp/objects/info/alternates" || exit 1` + "\n"
-	url, ref := pa[0], pa[1]
-	// The bare repository's own config, checked again right before the push.
-	check := shellWords([]string{gitPath, "--git-dir"}) + ` "$tmp" ` + shellWords([]string{"config", "--local", "--get-regexp", riskyConfig}) +
+	check = shellWords([]string{gitPath, "--git-dir"}) + ` "$tmp" ` + shellWords([]string{"config", "--local", "--get-regexp", riskyConfig}) +
 		" >/dev/null 2>&1; s=$?; if [ \"$s\" -ne 1 ]; then " + refuse("the push repository config changed") + "; fi\n"
-	if pa[2] == "delete" {
-		return s + check + bare + " push " + shellWords([]string{url, "--delete", ref})
+	return s, bare, url, check
+}
+
+// tagScript pushes the worktree's tag refs/tags/<tag> (a release-tag grant, #342) from a bare
+// repository lea creates for the call, to the grant's repository: only when the commit it points
+// at is on the remote's default branch (fetched from the remote at that moment: its HEAD), and
+// without force, so the remote refuses a tag that already exists. An annotated tag goes as its
+// tag object.
+func tagScript(tag, wt, gh, proxy string) string {
+	if !semverTag.MatchString(tag) || wt == "" || !strings.HasPrefix(wt, "/") {
+		return ""
 	}
-	return s + "sha=$(" + git + " rev-parse --verify " + shellWords([]string{ref + "^{commit}"}) + ") || exit 1\n" +
-		check + bare + " push " + shellWords([]string{url}) + ` "$sha"` + shellWords([]string{":" + ref})
+	s, bare, url, check := barePush(wt, gh, proxy)
+	if s == "" {
+		return ""
+	}
+	git := shellWords(gitIn(wt, proxy))
+	ref := "refs/tags/" + tag
+	return s +
+		"obj=$(" + git + " rev-parse --verify " + shellWords([]string{ref}) + ") || exit 1\n" +
+		"sha=$(" + git + " rev-parse --verify " + shellWords([]string{ref + "^{commit}"}) + ") || exit 1\n" +
+		check + bare + " fetch -q --no-tags " + shellWords([]string{url, "HEAD"}) + " || exit 1\n" +
+		bare + ` merge-base --is-ancestor "$sha" FETCH_HEAD || { ` + refuse("the tag's commit is not on the default branch of "+gh) + "; }\n" +
+		check + bare + " push " + shellWords([]string{url}) + ` "$obj"` + shellWords([]string{":" + ref})
+}
+
+// semverTag is the tag a release-tag grant pushes: v MAJOR.MINOR.PATCH, an optional pre-release
+// (-rc.1), no build metadata.
+var semverTag = regexp.MustCompile(`^v(0|[1-9][0-9]{0,8})\.(0|[1-9][0-9]{0,8})\.(0|[1-9][0-9]{0,8})(-[0-9A-Za-z]+(\.[0-9A-Za-z]+)*)?$`)
+
+// releaseTagHint follows the hard deny of a tag push no grant covers.
+const releaseTagHint = "A release-tag grant covers exactly: git push origin refs/tags/vX.Y.Z (one new semver tag on a commit of the default branch), " +
+	"run plainly from the root of your own worktree. No grant covers it for you: a lead files grants_request (action release-tag, repo, github), " +
+	"the user approves it on the host (lea approve g<N>), then run it again"
+
+// releaseTagRequest recognises "git push origin refs/tags/vX.Y.Z", one plain command at the root
+// of the caller's own worktree: the one form a release-tag grant covers.
+func releaseTagRequest(tool string, input json.RawMessage, c Caller) (Request, bool) {
+	if tool != "Bash" || !c.OwnWorktree {
+		return Request{}, false
+	}
+	var in struct {
+		Command string `json:"command"`
+	}
+	if json.Unmarshal(input, &in) != nil {
+		return Request{}, false
+	}
+	w, ok := Words(in.Command)
+	if !ok || len(w) != 4 || w[0] != "git" || w[1] != "push" || w[2] != "origin" {
+		return Request{}, false
+	}
+	tag, ok := strings.CutPrefix(w[3], "refs/tags/")
+	if !ok || !semverTag.MatchString(tag) {
+		return Request{}, false
+	}
+	return Request{Action: ReleaseTag, Target: "tag " + tag, Prog: "git", Args: []string{"push", "origin", tag}}, true
 }
 
 // riskyConfig matches the repository config keys a pinned git refuses to run with (names as git

@@ -34,42 +34,62 @@ var (
 	grantGitHub = regexp.MustCompile(`^(github\.com/)?([A-Za-z0-9][A-Za-z0-9-]{0,38})/([A-Za-z0-9._-]{1,100})$`)
 )
 
-// grantAdd records a grant: the host's only.
-func (d *Daemon) grantAdd(raw json.RawMessage) (any, error) {
-	var p struct {
-		Container, Action, Repo, Branch, Agent, GitHub string
-		TTLS                                           int64 `json:"ttl_s"`
-	}
-	if err := json.Unmarshal(raw, &p); err != nil {
-		return nil, err
-	}
+// grantParams is a grant as the host (grant_add) or a lead's request (grants_request) names it.
+type grantParams struct {
+	Container, Action, Repo, Branch, Agent, GitHub string
+	TTLS                                           int64 `json:"ttl_s"`
+}
+
+// checkGrant validates p as grant_add records it (the agent aside), normalises its GitHub
+// repository and returns its life.
+func checkGrant(p *grantParams) (time.Duration, error) {
 	if !grants.ValidAction(p.Action) {
-		return nil, fmt.Errorf("unknown action %q (actions: %s)", p.Action, strings.Join(grants.Actions, ", "))
+		return 0, fmt.Errorf("unknown action %q (actions: %s)", p.Action, strings.Join(grants.Actions, ", "))
 	}
 	if !containerName.MatchString(p.Container) {
-		return nil, errors.New("container: name the lea the grant applies to")
+		return 0, errors.New("container: name the lea the grant applies to")
 	}
 	if p.Repo != "" && !grantRepo.MatchString(p.Repo) {
-		return nil, errors.New("repo: a directory name under the projects directory")
+		return 0, errors.New("repo: a directory name under the projects directory")
 	}
 	if p.Branch != "" && !grantBranch.MatchString(p.Branch) {
-		return nil, errors.New("branch: a branch name or glob (* matches anything)")
+		return 0, errors.New("branch: a branch name or glob (* matches anything)")
 	}
 	if p.Branch != "" && !strings.Contains(p.Branch, "*") && grants.Protected(p.Branch) {
-		return nil, errors.New("branch: no grant covers the default branch")
+		return 0, errors.New("branch: no grant covers the default branch")
 	}
 	if p.Repo == "" && grants.NeedsGitHub(p.Action) {
-		return nil, fmt.Errorf("repo: a %s grant names the repository it covers, the one --github is", p.Action)
+		return 0, fmt.Errorf("repo: a %s grant names the repository it covers, the one --github is", p.Action)
 	}
 	switch {
 	case p.GitHub == "" && grants.NeedsGitHub(p.Action):
-		return nil, fmt.Errorf("github: a %s grant names the GitHub repository its gh and git calls are pinned to (OWNER/NAME)", p.Action)
+		return 0, fmt.Errorf("github: a %s grant names the GitHub repository its gh and git calls are pinned to (OWNER/NAME)", p.Action)
 	case p.GitHub != "":
 		gh, err := githubRepo(p.GitHub)
 		if err != nil {
-			return nil, err
+			return 0, err
 		}
 		p.GitHub = gh
+	}
+	ttl := DefaultGrantTTL
+	if p.TTLS != 0 {
+		ttl = time.Duration(p.TTLS) * time.Second
+	}
+	if ttl < time.Minute || ttl > MaxGrantTTL {
+		return 0, fmt.Errorf("expiry must be between 1m and %s", MaxGrantTTL)
+	}
+	return ttl, nil
+}
+
+// grantAdd records a grant: the host's only.
+func (d *Daemon) grantAdd(raw json.RawMessage) (any, error) {
+	var p grantParams
+	if err := json.Unmarshal(raw, &p); err != nil {
+		return nil, err
+	}
+	ttl, err := checkGrant(&p)
+	if err != nil {
+		return nil, err
 	}
 	if p.Agent != "" {
 		key, err := d.resolveSpawned(p.Agent, p.Container)
@@ -78,18 +98,16 @@ func (d *Daemon) grantAdd(raw json.RawMessage) (any, error) {
 		}
 		p.Agent = key
 	}
-	ttl := DefaultGrantTTL
-	if p.TTLS != 0 {
-		ttl = time.Duration(p.TTLS) * time.Second
-	}
-	if ttl < time.Minute || ttl > MaxGrantTTL {
-		return nil, fmt.Errorf("expiry must be between 1m and %s", MaxGrantTTL)
-	}
+	return d.recordGrant(p, ttl)
+}
+
+// recordGrant records a checked grant, its agent a key.
+func (d *Daemon) recordGrant(p grantParams, ttl time.Duration) (grants.Grant, error) {
 	now := d.now()
 	g, err := d.st.AddGrant(grants.Grant{Container: p.Container, Action: p.Action, Repo: p.Repo, Branch: p.Branch,
 		Agent: p.Agent, GitHub: p.GitHub, Created: now, Expires: now + int64(ttl/time.Second)})
 	if err != nil {
-		return nil, err
+		return grants.Grant{}, err
 	}
 	d.changed()
 	return g, nil

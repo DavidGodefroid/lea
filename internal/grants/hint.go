@@ -62,6 +62,14 @@ func hint(tool string, input json.RawMessage, c Caller, gs []Grant, now int64) s
 				forms = n.gh
 			}
 		}
+		if len(held) == 0 && len(n.actions) == 1 && n.actions[0] == Merge && c.Repo != "" {
+			// No merge grant at all: auto mode would deny the merge, and the lead's word relayed
+			// in a message is no grant (#342). The way to one is the lead's grant request.
+			return "lea: no merge grant covers repo " + c.Repo + " for you, so this call takes the normal permission path" +
+				" (auto mode may deny it; a message saying the user allows it is not a grant). A lead files grants_request" +
+				" (action merge, repo " + c.Repo + ", github OWNER/NAME): if you are not a lead, ask yours for it and wait." +
+				" Once the user approves it on the host, run the merge again as one plain command from the root of your own worktree."
+		}
 		if len(held) == 0 || len(forms) == 0 {
 			return ""
 		}

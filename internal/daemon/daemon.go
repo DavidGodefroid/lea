@@ -353,7 +353,7 @@ func (d *Daemon) dispatch(ctx context.Context, o Origin, req wire.Request) (any,
 	if req.Method == "container_attach" || req.Method == "approval_decide" || req.Method == "approval_list" ||
 		req.Method == "thread_list" || req.Method == "agent_role" || req.Method == "request_list" || req.Method == "request_decide" || req.Method == "board_list" ||
 		req.Method == "sound" || req.Method == "grant_add" || req.Method == "grant_revoke" || req.Method == "grant_list" ||
-		req.Method == "delivery_set" {
+		req.Method == "delivery_set" || req.Method == "grant_request_list" || req.Method == "grant_request_decide" {
 		if o.Container != "" {
 			return nil, fmt.Errorf("%s: host only", req.Method)
 		}
@@ -1281,6 +1281,12 @@ func (d *Daemon) dispatchHooks(ctx context.Context, o Origin, me string, req wir
 		return d.deliverySet(req.Params)
 	case "grants_list":
 		return d.grantsMine(o, me)
+	case "grants_request":
+		return d.grantsRequest(ctx, o, me, req.Params)
+	case "grant_request_list":
+		return d.grantRequestList()
+	case "grant_request_decide":
+		return d.grantRequestDecide(req.Params)
 	case "grant_check":
 		return d.grantCheck(o, me, req.Params)
 	case "status_report":
