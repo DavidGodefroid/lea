@@ -403,6 +403,83 @@ func TestForgeGHConfigPointsAtTheRelay(t *testing.T) {
 	}
 }
 
+// TestPinnedMergeWithTheImagesReadOnlyGHConfig: the image's forge-gh dir is root's, read-only to
+// the agent. gh migrates a config without version "1" and writes it back first, and the write
+// failed every granted merge ("failed to write config after migration"). The real gh runs lea's
+// pinned merge with the image's config, read-only, its socket swapped for a fake GitHub: the PR
+// is merged and the config is left as it was.
+func TestPinnedMergeWithTheImagesReadOnlyGHConfig(t *testing.T) {
+	needTools(t)
+	if _, err := os.Stat(ghPath); err != nil {
+		t.Skipf("%s: %v", ghPath, err)
+	}
+	image, err := os.ReadFile("../../image/forge-gh/config.yml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir := t.TempDir()
+	sock := filepath.Join(dir, "gh.sock")
+	l, err := net.Listen("unix", sock)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var mu sync.Mutex
+	var calls []string
+	srv := &http.Server{Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		mu.Lock()
+		calls = append(calls, r.Method+" "+r.URL.Path+" "+string(body))
+		mu.Unlock()
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.Method == http.MethodDelete:
+			w.WriteHeader(http.StatusNoContent)
+		case strings.Contains(string(body), "mutation"):
+			io.WriteString(w, `{"data":{"mergePullRequest":{"clientMutationId":""}}}`)
+		// gh's feature detection: no optional field.
+		case strings.Contains(string(body), "PullRequest_fields2"):
+			io.WriteString(w, `{"data":{"WorkflowRun":{"fields":[]}}}`)
+		case strings.Contains(string(body), "PullRequest_fields"):
+			io.WriteString(w, `{"data":{"PullRequest":{"fields":[]},"StatusCheckRollupContextConnection":{"fields":[]}}}`)
+		default:
+			io.WriteString(w, `{"data":{"repository":{"pullRequest":{"id":"PR_42","number":42,"state":"OPEN","title":"t",`+
+				`"headRefName":"feat/73-x","baseRefName":"main","headRefOid":"abc","isCrossRepository":false,`+
+				`"headRepositoryOwner":{"login":"o"},"headRepository":{"name":"lea"},"mergeStateStatus":"CLEAN",`+
+				`"isInMergeQueue":false,"isMergeQueueEnabled":false,"reviewDecision":"","autoMergeRequest":null}}}}`)
+		}
+	})}
+	go srv.Serve(l)
+	t.Cleanup(func() { srv.Close() })
+	cfg := filepath.Join(dir, "forge-gh")
+	want := strings.Replace(string(image), "/run/lea-forge/gh.sock", sock, 1)
+	os.Mkdir(cfg, 0o755)
+	os.WriteFile(filepath.Join(cfg, "config.yml"), []byte(want), 0o444)
+	os.Chmod(cfg, 0o555)
+	t.Cleanup(func() { os.Chmod(cfg, 0o755) })
+	c := dev
+	c.Env = map[string]string{"HOME": dir}
+	d := Decide("Bash", bash("gh pr merge 42 --squash --delete-branch"), c, []Grant{all(Merge)}, now, false)
+	if d.Verdict != Allow || !strings.Contains(d.Command, forgeGHConfig) {
+		t.Fatalf("merge: %+v", d)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+	// The temp dir needs no quoting: it takes the place of lea's path inside the quoted script.
+	cmd := strings.ReplaceAll(d.Command, forgeGHConfig, cfg)
+	out, err := exec.CommandContext(ctx, shPath, "-c", cmd).CombinedOutput()
+	if err != nil || strings.Contains(string(out), "migration") {
+		t.Fatalf("pinned merge: %v, out %s, calls %q", err, out, calls)
+	}
+	if got, _ := os.ReadFile(filepath.Join(cfg, "config.yml")); string(got) != want {
+		t.Fatalf("gh rewrote lea's config:\n%s", got)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if j := strings.Join(calls, "\n"); !strings.Contains(j, "mergePullRequest") || !strings.Contains(j, "SQUASH") {
+		t.Fatalf("no squash merge reached the fake GitHub: %s", j)
+	}
+}
+
 // fakeProxy records the CONNECT targets it is asked for and refuses them all.
 func fakeProxy(t *testing.T) (url string, hits func() []string) {
 	t.Helper()
