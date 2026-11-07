@@ -27,7 +27,7 @@ tool() {
 @test "in tower mode only the team's tools pass" {
   prompt "/lea:control-tower"
   for t in mcp__lea__agents_spawn mcp__lea__agents_list mcp__lea__msg_send mcp__lea__msg_reply mcp__lea__msg_inbox \
-           mcp__lea__board_read mcp__lea__task_update AskUserQuestion ToolSearch; do
+           mcp__lea__board_read mcp__lea__task_update mcp__lea__grants_list mcp__lea__grants_request AskUserQuestion ToolSearch; do
     [ "$(tool "$t")" = allow ]
   done
   for t in Edit Write Read Grep Glob Agent WebFetch NotebookEdit mcp__lea__lease_acquire mcp__github__create_pull_request; do

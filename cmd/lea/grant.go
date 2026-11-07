@@ -15,7 +15,9 @@ const grantUsage = `usage: lea grant add <action> --container NAME [--repo R] [-
        (merge and close-issue need --github: every gh call they allow is pinned to it)
        lea grant ls [--all]
        lea grant revoke <id>
-actions: ` + "merge, stop-finished, close-issue, delete-own-branch, commit-identity, pr-create"
+       lea grant requests | lea grant approve <id>... [--expires 30d] | lea grant deny <id> [reason...]
+       (a lead's grant requests, g<id>: approving one records the grant for the lead and its children)
+actions: ` + "merge, stop-finished, close-issue, delete-own-branch, commit-identity, pr-create, release-tag"
 
 // runGrant is lea grant: the user's only channel to record, list and revoke grants (issue #73).
 // It talks to the host API, which no container can reach.
@@ -26,6 +28,23 @@ func runGrant(args []string, stdout, stderr io.Writer) int {
 		return bad()
 	}
 	switch args[1] {
+	case "requests":
+		if len(args) != 2 {
+			return bad()
+		}
+		n, err := grantRequestLines(stdout)
+		if err != nil {
+			return fail(err)
+		}
+		if n == 0 {
+			fmt.Fprintln(stdout, "no grant request waits for you")
+		}
+		return 0
+	case "approve", "deny":
+		if len(args) < 3 {
+			return bad()
+		}
+		return decideGrantRequests(args[1], args[2:], stdout, stderr)
 	case "add":
 		if len(args) < 3 || !grants.ValidAction(args[2]) {
 			return bad()

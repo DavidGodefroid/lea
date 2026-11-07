@@ -597,7 +597,7 @@ func TestRequestCommands(t *testing.T) {
 	if rc != 0 || !strings.Contains(out, "started claude-1 for request") || len(ca.reqs) != 1 || ca.reqs[0].Role != "reviewer" {
 		t.Fatalf("rc=%d out=%q err=%q reqs=%+v", rc, out, e, ca.reqs)
 	}
-	if rc, out, _ := runEnv(t, env, "requests"); rc != 0 || !strings.Contains(out, "nothing waits for you: no permission or spawn request") {
+	if rc, out, _ := runEnv(t, env, "requests"); rc != 0 || !strings.Contains(out, "nothing waits for you: no permission, spawn or grant request") {
 		t.Fatalf("rc=%d out=%q", rc, out)
 	}
 }

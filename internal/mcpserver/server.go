@@ -179,12 +179,26 @@ func New(sock, agent, version, instructions string) *mcp.Server {
 		func(ctx context.Context, _ *mcp.CallToolRequest, in empty) (*mcp.CallToolResult, any, error) {
 			return proxy(ctx, sock, agent, "grants_list", short, in), nil, nil
 		})
+	// It only queues a request (#342): the grant exists once the user approves it on the host.
+	mcp.AddTool(s, &mcp.Tool{Name: "grants_request", Description: "Leads only: ask the user for a grant covering you and your children, e.g. when the user tells you in chat that your team may merge (action merge) or push release tags (action release-tag) on a repository. It records no grant: the user approves it on the host (lea approve g<N>), and you get a message when it is decided. Checked like lea grant add: action, repo (a directory under the projects directory), github OWNER/NAME, optional branch glob and ttl_s (default 8h, at most 30 days)."},
+		func(ctx context.Context, _ *mcp.CallToolRequest, in grantRequestIn) (*mcp.CallToolResult, any, error) {
+			return proxy(ctx, sock, agent, "grants_request", short, in), nil, nil
+		})
 	return s
 }
 
 type leaseIn struct {
 	Glob string `json:"glob" jsonschema:"the files you are about to edit, relative to the repository, path.Match syntax (src/*.go)"`
 	TTL  int64  `json:"ttl" jsonschema:"seconds, 1 to 3600"`
+}
+
+type grantRequestIn struct {
+	Action string `json:"action" jsonschema:"merge, release-tag, pr-create, commit-identity, delete-own-branch or close-issue"`
+	Repo   string `json:"repo" jsonschema:"the repository: a directory directly under the projects directory"`
+	GitHub string `json:"github" jsonschema:"the GitHub repository its calls are pinned to: OWNER/NAME"`
+	Branch string `json:"branch,omitempty" jsonschema:"a glob on the caller's branch (* matches anything); default any branch but the default one"`
+	TTLS   int64  `json:"ttl_s,omitempty" jsonschema:"the grant's life in seconds, 60 to 2592000 (default 8 hours)"`
+	Reason string `json:"reason,omitempty" jsonschema:"why, as the user said it, at most 2 KiB"`
 }
 
 type releaseIn struct {

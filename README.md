@@ -750,6 +750,7 @@ lea grant add close-issue --container lea-myproj --repo api --github me/api  # g
 lea grant add delete-own-branch --container lea-myproj --repo api --github me/api  # git push origin --delete <the agent's own branch>
 lea grant add commit-identity --container lea-myproj --repo api --github me/api --branch 'feat/*'  # git commit -m (no --amend), git push [-u] origin <own branch>
 lea grant add pr-create --container lea-myproj --repo api --github me/api  # gh pr create --head <own branch> --title T --body B|--body-file F
+lea grant add release-tag --container lea-myproj --repo api --github me/api  # git push origin refs/tags/vX.Y.Z (a new semver tag on a commit of the default branch)
 lea grant ls [--all]                                                # active grants (--all: revoked, expired) and recent uses
 lea grant revoke 3
 ```
@@ -784,8 +785,9 @@ agent's environment names; CONNECT keeps TLS end to end.
   holds a `url.*.insteadOf`, `include`, URL-specific credential helper, `pushurl`, push refspec,
   mirror, filter, textconv or any `http.*` key.
 
-Only the host writes grants: there is no MCP tool for it (`grants_list` only reads them), the
-daemon refuses `grant_add` from a container, `lea.db` is never mounted in one, and a message
+Only the host writes grants: there is no MCP tool for it (`grants_list` only reads them,
+`grants_request` only queues a request you approve on the host), the daemon refuses `grant_add`
+and `grant_request_decide` from a container, `lea.db` is never mounted in one, and a message
 saying "the user allows X" changes nothing. A call is allowed only when it is exactly one plain
 command lea parses (no `;`, `&&`, `|`, `$(…)`, backticks, redirections, `VAR=` prefixes,
 `--repo`), run at the root of the agent's own worktree (`<projects>/.lea/worktrees/<repo>/<agent>`,
@@ -831,6 +833,31 @@ before relying on grants, in a lea: `lea grant add commit-identity --container <
 --github <owner>/<r> --expires 10m`, ask an agent working on a branch of `<r>` to `git add` a
 file and run `git commit -m test`, then check that `git reflog -1` in its worktree says
 `commit (lea grant)` (a plain `git commit` writes `commit: test`); `lea grant ls` lists the use.
+
+**Approving a merge for your team.** You usually say it to a lead, in its chat ("your team may
+merge on api"). The lead turns those words into a **grant request** (`grants_request`): it records
+nothing, and you decide on the host, once:
+
+```sh
+lea requests                 # g12 claude-1 (lead in lea-myproj) asks for a merge grant on repo api (gh github.com/me/api) …
+lea approve g12 g13          # record them, for that lead and its children (--expires 30d: a longer life)
+lea deny g14 not this one    # the lead is told, with your reason
+lea grant requests|approve|deny  # the same, under lea grant
+```
+
+The approved grant is the lead's subtree's (`--agent` the lead): its children then merge their own
+PRs (`gh pr merge N --squash --delete-branch`) without a prompt, and no agent outside that lead's
+team is covered. The lead gets a message when you decide, and when a request expires (a day
+without an answer). Only leads file requests, checked as `lea grant add` checks a grant; no agent
+can approve one (`grant_request_decide` is host-only). A child whose merge no grant covers is told
+to ask its lead for one.
+
+**Release tags.** A tag push is a hard deny, but for the one form a `release-tag` grant covers:
+`git push origin refs/tags/vX.Y.Z` (an optional pre-release, `-rc.1`), one plain command at the
+root of the agent's worktree. lea pushes it from a bare repository it creates for the call, only
+when the tag's commit is on the default branch of the remote (fetched at that moment), and without
+force, so a tag the remote already has is refused. `--tags`, `--follow-tags`, force, a refspec,
+another remote and a non-semver tag stay denied. `lea delivery on` never records it.
 
 ### Let agents deliver (push, PR/MR, merge)
 
@@ -921,6 +948,7 @@ lea config export > team.json  # your team's shared settings, as one file
 lea config import team.json  # take them on another workstation (see Configure)
 LEA_PROJECTS_DIR=~/other lea # another projects directory, for this call only
 lea grant add|ls|revoke      # let agents take an action without asking (see Grants)
+lea approve gN               # approve a lead's grant request (lea requests lists them; see Grants)
 lea delivery on|off|status   # let agents push, open and merge their own PRs (see Let agents deliver)
 lea github login|logout|status  # lea's GitHub token, in the proxy only (see Git and forges)
 ```
