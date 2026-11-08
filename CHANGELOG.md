@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+- In the deck, a folder header's summary sets each state mark apart from its count (`6 ◐ 6`, not
+  `6 ◐6`) (#355): the marks are East Asian Ambiguous width, and a terminal that draws them wide
+  drew the half-moon over the digit.
+
 ## v0.14.1 (2026-11-08)
 
 Changes:

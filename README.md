@@ -256,7 +256,7 @@ profile and state in the bottom border.
   writes to you with `msg_send`, and you answer with `m`.
 - **Folders.** Folders come first, in your order, then the agents in no folder. A folder's
   header sums up its agents, folded or not: how many it holds, then how many need you (red,
-  bold), work, wait on their usage limit and are done (`2 ●1 ✓1`; `!`, `+`, `~` and `=` in
+  bold), work, wait on their usage limit and are done (`2 ● 1 ✓ 1`; `!`, `+`, `~` and `=` in
   ASCII). Its agents are indented under it, and a blank line sets each folder apart. A folder's
   colour (`c`) tints its arrow and its name, never its agents or its summary. An agent a lead starts joins the lead's folder, also when it starts
   while no deck is attached; once you move it, it stays where you put it. The layout is yours:
