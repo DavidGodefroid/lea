@@ -1,6 +1,7 @@
 package daemon
 
 import (
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -16,9 +17,16 @@ import (
 func TestClaudeResumedTowerKeepsItsGuard(t *testing.T) {
 	e := newClaudeE2E(t)
 	e.setLimited(false)
-	const plugin = "../../image/claude-plugin"
+	// Absolute: claude runs in its working directory (e.wd).
+	plugin, err := filepath.Abs("../../image/claude-plugin")
+	if err != nil {
+		t.Fatal(err)
+	}
 	kill := e.run("--plugin-dir", plugin, "/lea:control-tower")
-	a := e.until("the tower's first turn", 45, func(a store.Agent) bool { return a.State == "idle" && len(a.SessionID) == 36 })
+	a := e.until("the tower's first turn", 45, func(a store.Agent) bool {
+		ps, _ := e.st.EventPayloads(a.Key, "Stop")
+		return a.State == "idle" && len(a.SessionID) == 36 && len(ps) > 0
+	})
 	if on, err := e.st.Tower(a.Key); err != nil || !on {
 		t.Fatalf("/lea:control-tower did not turn tower mode on: on=%v err=%v\n%s", on, err, e.out.String())
 	}
