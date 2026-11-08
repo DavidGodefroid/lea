@@ -209,6 +209,7 @@ closing the deck, or the terminal, does not stop it: the next `lea` reattaches.
 | `s` | open a shell in the container (`exit` or `x` closes it) |
 | `-` / `\|` | split: a shell below the selected agent, or at its right, in its directory |
 | `S` | sounds on or off (the top border says `muted` while they are off) |
+| `T` | pick the deck's theme: the arrows preview each one live, `enter` keeps it (saved as `LEA_THEME`), `esc` puts the old one back |
 | `p`, then `y` | pause the selected agent (any other key cancels); `p` alone resumes a paused one where it stopped (its conversation stays), and `enter` on it resumes it before focusing it |
 | `,` | settings (also in a row's right-click menu) |
 | `x`, then `y` | stop the selected agent |
@@ -224,8 +225,8 @@ closing the deck, or the terminal, does not stop it: the next `lea` reattaches.
 The mouse works too: click a row to select it, scroll to move, right-click a row for its menu
 (Split horizontally / Split vertically open a shell beside the agent, as Terminator does; the
 shell shows with its agent and steps aside while another agent is shown). A right-click anywhere
-else in the column opens the deck's own menu: new agent, new shell, new folder, sounds, keys,
-detach; a click on a folder folds or unfolds it; ctrl + right-click makes a folder, holding the
+else in the column opens the deck's own menu: new agent, new shell, new folder, sounds, theme,
+keys, detach; a click on a folder folds or unfolds it; ctrl + right-click makes a folder, holding the
 agent under the pointer. The
 pointer over a row shows its whole name (cut in the row when long) with the agent's name, role,
 profile and state in the bottom border.
@@ -1009,8 +1010,8 @@ projects directory cannot be `/`, your home directory or one of its parents, nor
 The deck's `,` opens a settings screen over the same file: the keys that matter, grouped, each
 with its value, where it comes from (default, your file, the environment) and a one-line help.
 `enter` or `space` flips a toggle, takes the next choice or opens a field (enter saves, esc
-cancels); a value is checked before it is written. Sounds apply at once; the screen says when the
-others apply (after `lea stop --all`, or at the next `lea`). A key the environment sets
+cancels); a value is checked before it is written. Sounds, the theme and the deck width apply at once; the screen says
+when the others apply (after `lea stop --all`, or at the next `lea`). A key the environment sets
 (`LEA_PROJECTS_DIR`, `LEA_APPROVALS`, `LEA_APPROVAL_TIMEOUT`) wins over the files, so it is shown
 read-only. The screen runs in the deck on the host: agents cannot open or drive it.
 
@@ -1044,6 +1045,7 @@ read-only. The screen runs in the deck on the host: agents cannot open or drive 
 | `LEA_SOUND_ATTENTION` | freedesktop sound | the file of the sound lea plays when it needs you (`0`: off) |
 | `LEA_OTEL_UPSTREAM` | empty | send Claude Code usage telemetry to this OTLP collector |
 | `LEA_ASCII` | off | ASCII marks in the deck (`1`) |
+| `LEA_THEME` | `catppuccin` (`mono` when `NO_COLOR` is set) | the deck's colours: `catppuccin`, `gruvbox`, `nord`, `tokyo-night`, `solarized`, `high-contrast` or `mono` (no colour: bold, faint and reverse video); `T` in the deck picks one with a live preview, and the tmux pane borders follow it. An unknown name gives `catppuccin` |
 
 ### Share a configuration with your team
 
