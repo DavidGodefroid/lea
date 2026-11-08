@@ -2,6 +2,7 @@ package grants
 
 import (
 	"regexp"
+	"strconv"
 	"strings"
 )
 
@@ -440,7 +441,15 @@ func glabMRMerge(args []string, c Caller) (Request, bool) {
 	return Request{Action: Merge, Target: target}, true
 }
 
-var bodyFileRe = regexp.MustCompile(`^[A-Za-z0-9_][A-Za-z0-9._/-]{0,255}$`)
+// A body or notes file: bodyFileMax characters at most, from bodyFileChars, the first from
+// bodyFileFirst. The refusal hint shows the same rule (#384).
+const (
+	bodyFileFirst = "A-Za-z0-9_"
+	bodyFileChars = "A-Za-z0-9._/-"
+	bodyFileMax   = 256
+)
+
+var bodyFileRe = regexp.MustCompile("^[" + bodyFileFirst + "][" + bodyFileChars + "]{0," + strconv.Itoa(bodyFileMax-1) + "}$")
 
 // bodyFile says whether p is a relative path that stays inside the directory it is read from:
 // no leading - or /, no .. or . segment, not .git.

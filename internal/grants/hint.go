@@ -3,6 +3,8 @@ package grants
 import (
 	"encoding/json"
 	"regexp"
+	"slices"
+	"strconv"
 	"strings"
 )
 
@@ -98,6 +100,14 @@ func hint(tool string, input json.RawMessage, c Caller, gs []Grant, now int64) s
 		}
 		b.WriteString(". Run it as one plain command (no &&, ;, pipes, $(…), VAR= prefix or --flag=value) from the root of your own git worktree," +
 			" without -R or --repo: lea pins the repository.")
+		if f, ok := badBodyFile(n.actions[0], in.Command); ok {
+			if r := []rune(f); len(r) > 80 {
+				f = string(r[:79]) + "…"
+			}
+			b.WriteString(" The file " + f + " is refused: a body or notes file must be a relative path inside your worktree" +
+				" of at most " + strconv.Itoa(bodyFileMax) + " characters from " + bodyFileChars + ", not starting with ., - or /," +
+				" with no empty, . or .. segment, outside .git; for example pr-body.md.")
+		}
 		if held[0] == ReleaseCreate {
 			g, _ := heldGrant(ReleaseCreate, c, gs, now)
 			tags := "any semver tag (vX.Y.Z) already pushed"
@@ -113,6 +123,64 @@ func hint(tool string, input json.RawMessage, c Caller, gs []Grant, now int64) s
 		return b.String()
 	}
 	return ""
+}
+
+// badBodyFile is the first body file (gh pr create --body-file, -F) or notes file (gh release
+// create --notes-file, -F) of cmd that bodyFile refuses (#384), and whether there is one. The
+// words are read after the subcommand, skipping the values of its other flags, so a title that
+// reads -F is never taken for the flag (#387).
+func badBodyFile(action, cmd string) (string, bool) {
+	var sub []string
+	var valued map[string]bool
+	flag := ""
+	switch action {
+	case PRCreate:
+		sub, flag = []string{"gh", "pr", "create"}, "--body-file"
+		valued = map[string]bool{"--head": true, "-H": true, "--base": true, "-B": true, "--title": true, "-t": true, "--body": true, "-b": true}
+	case ReleaseCreate:
+		sub, flag = []string{"gh", "release", "create"}, "--notes-file"
+		valued = map[string]bool{"--title": true, "-t": true}
+	default:
+		return "", false
+	}
+	w, ok := Words(cmd)
+	if !ok {
+		w = strings.Fields(unquote.Replace(cmd))
+	}
+	start := -1
+	for i := 0; i+len(sub) <= len(w); i++ {
+		if slices.Equal(w[i:i+len(sub)], sub) {
+			start = i + len(sub)
+			break
+		}
+	}
+	if start < 0 {
+		return "", false
+	}
+	for i := start; i < len(w); i++ {
+		a, v := w[i], ""
+		switch {
+		case a == "&&" || a == "||" || a == ";" || a == "|":
+			return "", false
+		case valued[a]:
+			i++
+			continue
+		case a == flag || a == "-F":
+			if i+1 >= len(w) {
+				return "", false
+			}
+			i++
+			v = w[i]
+		case strings.HasPrefix(a, flag+"="):
+			v = strings.TrimPrefix(a, flag+"=")
+		default:
+			continue
+		}
+		if !bodyFile(v) {
+			return v, true
+		}
+	}
+	return "", false
 }
 
 // allowHint is the hint for a near call no grant of the caller covers: the lea allow command the
