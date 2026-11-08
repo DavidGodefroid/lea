@@ -97,6 +97,15 @@ func (m Model) body(inner int) []string {
 			}
 		}
 		body = m.settingsLines(inner, room)
+	case m.allowOpen:
+		room := 0
+		if m.height > 2 {
+			room = m.height - 2
+			if m.statusLine(inner) != "" {
+				room--
+			}
+		}
+		body = m.allowedLines(inner, room)
 	case m.help:
 		for _, l := range helpLines {
 			body = append(body, padRight(" "+fit(l, inner-1, c), inner))
@@ -104,7 +113,7 @@ func (m Model) body(inner int) []string {
 	case len(m.agents) == 0:
 		body = append(body, padRight(" "+muted.Render(fit("No agents yet: press n.", inner-1, c)), inner))
 	}
-	if !m.help && !m.setOpen {
+	if !m.help && !m.setOpen && !m.allowOpen {
 		body = append(body, m.rows(inner)...)
 	}
 	if m.height > 2 {
@@ -143,7 +152,7 @@ var helpLines = []string{
 	"x           stop or remove",
 	"< >         deck width",
 	"S T         sounds, theme",
-	",           settings",
+	", g         settings, allowed",
 	"ctrl+space  deck or terminal",
 	"q ?         detach, these keys",
 }
@@ -340,10 +349,16 @@ func (m Model) bottom(w int) string {
 			hint += fmt.Sprintf(" %s A always", c.dot)
 		}
 	}
+	if m.allowOpen {
+		hint = fmt.Sprintf("x revoke %s esc close", c.dot)
+	}
 	if m.confirm != "" {
 		hint = fmt.Sprintf("y stop %s esc cancel", c.dot)
 		if isFolderKey(m.confirm) {
 			hint = fmt.Sprintf("y delete %s esc cancel", c.dot)
+		}
+		if isAllowKey(m.confirm) {
+			hint = fmt.Sprintf("y revoke %s esc cancel", c.dot)
 		}
 	}
 	if m.roleFor != "" {

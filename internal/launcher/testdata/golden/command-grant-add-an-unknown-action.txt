@@ -1,0 +1,6 @@
+status 2
+-- calls
+
+-- lea
+lea: error: usage: lea grant add <action> [--repo R] [--github OWNER/NAME] [--branch GLOB] [--agent NAME] [--tag GLOB] [--expires D] | lea grant ls (now: lea allow)
+-- stdout
