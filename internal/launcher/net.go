@@ -236,7 +236,7 @@ func (l *Launcher) proxyRules(confine []string) string {
 	dir := filepath.Join(l.Root, "proxy")
 	files, _ := filepath.Glob(filepath.Join(dir, "errors", "*"))
 	files = append(files, filepath.Join(dir, "render-squid-conf.sh"), filepath.Join(dir, "sni-matches.sh"),
-		filepath.Join(dir, "entrypoint.sh"))
+		filepath.Join(dir, "entrypoint.sh"), filepath.Join(dir, "egress-apply.sh"))
 	sort.Strings(files)
 	h, n := sha256.New(), 0
 	for _, f := range files {
@@ -295,18 +295,21 @@ func (l *Launcher) ensureProxy(proj string) error {
 				`{{with index .Config.Labels "lea.providers"}}#{{.}}{{end}}{{with index .Config.Labels "lea.rules"}}@{{.}}{{end}}`+
 				`{{with index .Config.Labels "lea.lockhttp"}}^{{.}}{{end}}!{{.Image}}`, name)
 		got, image, _ := strings.Cut(got, "!")
-		want := l.Cfg.GitSSH()
-		if allow != "" {
-			want += "|" + allow
-		}
-		if fw.stamp != "" {
-			want += "#" + fw.stamp
-		}
-		if rules != "" {
-			want += "@" + rules
-		}
-		if lh != nil {
-			want += "^" + l.lockHTTPStamp()
+		wantFor := func(allow string) string {
+			want := l.Cfg.GitSSH()
+			if allow != "" {
+				want += "|" + allow
+			}
+			if fw.stamp != "" {
+				want += "#" + fw.stamp
+			}
+			if rules != "" {
+				want += "@" + rules
+			}
+			if lh != nil {
+				want += "^" + l.lockHTTPStamp()
+			}
+			return want
 		}
 		// An image that cannot be inspected (not pulled yet) leaves the labels to decide.
 		current, err := l.output(false, "docker", "image", "inspect", "-f", "{{.Id}}", l.Cfg.Get("LEA_PROXY_IMAGE"))
@@ -314,10 +317,16 @@ func (l *Launcher) ensureProxy(proj string) error {
 			current = image
 		}
 		// Docker writes the IDs sha256:<hex>, Podman <hex>.
-		if got == want && strings.TrimPrefix(image, "sha256:") == strings.TrimPrefix(current, "sha256:") {
+		sameImage := strings.TrimPrefix(image, "sha256:") == strings.TrimPrefix(current, "sha256:")
+		if got == wantFor(allow) && sameImage {
 			if lh != nil {
 				return l.ensureLockHTTPGate(false, gateImage, hub, proj)
 			}
+			return nil
+		}
+		// Only the allowlist differs (lea egress allow, or lea.conf edited, #345): the running proxy
+		// takes the new list live, and its agents keep their connections.
+		if lh == nil && sameImage && l.proxyEgressLive(name, allow, got, wantFor) {
 			return nil
 		}
 		if lh == nil && strings.Contains(got, "^1") {

@@ -69,6 +69,48 @@ check "allowlist: private still refused"            "403/000" -- -p http://rebin
 page=$(dc exec -T client curl -s --max-time 15 -x http://198.51.100.3:3128 http://other.test/ || true)
 case $page in *LEA_EGRESS_ALLOW*) echo "ok   allowlist: the refusal page names LEA_EGRESS_ALLOW" ;;
   *) echo "FAIL allowlist: refusal page: $page"; fail=1 ;; esac
+# A refused plain HTTP request carries the live command in its body's first line (apt and wget log it).
+first=$(printf '%s\n' "$page" | head -n1)
+if [ "$first" = "lea-proxy refused other.test: not in the egress allowlist. To allow it, run on the host: lea egress allow other.test (applies live, no restart)." ]; then
+  echo "ok   allowlist: the refusal's first line names lea egress allow"
+else echo "FAIL allowlist: refusal first line: $first"; fail=1; fi
+# lea egress denied reads the refusal's error name from the access log.
+if dc logs proxy-allow 2>&1 | grep -Eq 'CONNECT other\.test:443 403 [^ ]+ ERR_LEA_EGRESS$'; then echo "ok   allowlist: the access log names ERR_LEA_EGRESS"
+else echo "FAIL allowlist: no ERR_LEA_EGRESS log line:"; dc logs proxy-allow 2>&1 | grep other.test | tail -n 3; fail=1; fi
+# lea egress allow|deny (#345): the host's live change, as lea runs it (docker exec as root,
+# egress-apply.sh): no proxy restart (same container, same squid), the floor unchanged.
+# The container, its start and squid's pid, which must be alive (a restarted squid gets another).
+proxy_state() {
+  id=$(dc ps -q proxy-allow)
+  # shellcheck disable=SC2016 # expanded in the proxy
+  printf '%s %s %s' "$id" "$(docker inspect -f '{{.State.StartedAt}}' "$id")" \
+    "$(dc exec -T proxy-allow sh -c 'p=$(cat /run/lea-proxy/squid.pid) && [ -d "/proc/$p" ] && echo "$p"')"
+}
+before=$(proxy_state)
+apply() { dc exec -T -u 0 -e "LEA_EGRESS_ALLOW=$1" proxy-allow /usr/local/bin/egress-apply.sh; }
+if apply public.test,other.test,dns.google; then echo "ok   live allow: egress-apply.sh applied"; else echo "FAIL live allow: egress-apply.sh failed"; fail=1; fi
+sleep 1
+check "live allow: the domain is allowed"             "200/200" -- -p http://other.test:443/
+check "live allow: over HTTP too"                     "000/200" -- http://other.test/
+check "live allow: the listed domain still allowed"   "200/200" -- -p http://public.test:443/
+check "live allow: a DoH resolver stays refused"      "403/000" -- -p http://dns.google:443/
+check "live allow: a public literal stays refused"    "403/000" -- -p http://198.51.100.80:443/
+check "live allow: private stays refused"             "403/000" -- -p http://rebind.test:443/
+after=$(proxy_state)
+if [ "$before" = "$after" ] && [ -n "${before#* }" ]; then echo "ok   live allow: same proxy container and squid ($after)"
+else echo "FAIL live allow: the proxy restarted: '$before' then '$after'"; fail=1; fi
+if dc exec -T proxy-allow cat /run/lea-proxy/egress-allow.src | grep -qx 'public.test,other.test,dns.google'; then echo "ok   live allow: the proxy records the value it applies"
+else echo "FAIL live allow: egress-allow.src"; fail=1; fi
+if apply 10.0.0.1 2>/dev/null; then echo "FAIL live allow: an IP literal was accepted"; fail=1; else echo "ok   live allow: an invalid list is refused"; fi
+check "live allow: a refused change keeps the list"   "200/200" -- -p http://other.test:443/
+if apply public.test; then echo "ok   live deny: egress-apply.sh applied"; else echo "FAIL live deny: egress-apply.sh failed"; fail=1; fi
+sleep 1
+check "live deny: the domain is refused again"        "403/000" -- -p http://other.test:443/
+check "live deny: the listed domain still allowed"    "200/200" -- -p http://public.test:443/
+if [ "$(proxy_state)" = "$before" ]; then echo "ok   live deny: same proxy container and squid"; else echo "FAIL live deny: the proxy restarted"; fail=1; fi
+if dc exec -T -u 0 -e LEA_EGRESS_ALLOW=other.test proxy /usr/local/bin/egress-apply.sh 2>/dev/null; then
+  echo "FAIL live allow on LEA_EGRESS_ALLOW='*': accepted"; fail=1
+else echo "ok   live allow: refused by a proxy without an allowlist ('*')"; fi
 got=$(dc exec -T client curl -s --max-time 10 --noproxy '*' http://198.51.100.2:2222/ || true)
 if [ "$got" = "ok" ]; then echo "ok   SSH forwarder 2222 reaches gitlab.com:22"; else echo "FAIL SSH forwarder 2222: got '$got'"; fail=1; fi
 # The second LEA_GIT_SSH endpoint gets the next port.

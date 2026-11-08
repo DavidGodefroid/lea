@@ -117,12 +117,32 @@ ERR" ]
 
 DEFAULT_ACL="acl egress_allow dstdomain -n .github.com .githubusercontent.com .ghcr.io .gitlab.com .golang.org .registry.npmjs.org .registry.yarnpkg.com .pypi.org .pythonhosted.org .docker.io .docker.com .quay.io .fedoraproject.org .alpinelinux.org .openai.com .chatgpt.com .anthropic.com .claude.ai .claude.com"
 
+# egress_acl: the allowlist render-squid-conf.sh --egress writes for $LEA_EGRESS_ALLOW, as one
+# dstdomain line (squid.conf reads it from that file, #345).
+egress_acl() {
+  run sh "$R" --egress
+  [ "$status" -eq 0 ]
+  # shellcheck disable=SC2086 # one line
+  printf 'acl egress_allow dstdomain -n %s\n' "$(echo $output)"
+}
+
 @test "no LEA_EGRESS_ALLOW: lea's default allowlist (forges, registries, the model APIs)" {
   hosts
   LEA_EGRESS_ALLOW= run sh "$R" "$BATS_TEST_TMPDIR/hosts"
   [ "$status" -eq 0 ]
-  [ "$(printf '%s\n' "$output" | grep '^acl egress_allow ')" = "$DEFAULT_ACL" ]
+  [ "$(printf '%s\n' "$output" | grep '^acl egress_allow ')" = 'acl egress_allow dstdomain -n "/run/lea-proxy/egress-allow"' ]
   [[ "$output" == *"http_access deny !egress_allow"* ]]
+  [ "$(LEA_EGRESS_ALLOW= egress_acl)" = "$DEFAULT_ACL" ]
+}
+
+@test "--egress: one .domain per line, the file squid.conf reads" {
+  LEA_EGRESS_ALLOW=github.com run sh "$R" --egress
+  [ "$status" -eq 0 ]
+  [ "$output" = "$(printf '.github.com\n.anthropic.com\n.claude.ai\n.claude.com')" ]
+  LEA_EGRESS_ALLOW='*' run sh "$R" --egress
+  [ "$status" -ne 0 ]
+  LEA_EGRESS_ALLOW='10.0.0.1' run sh "$R" --egress
+  [ "$status" -ne 0 ]
 }
 
 @test "LEA_EGRESS_ALLOW='*': any web domain, no allowlist" {
@@ -134,9 +154,7 @@ DEFAULT_ACL="acl egress_allow dstdomain -n .github.com .githubusercontent.com .g
 
 @test "LEA_EGRESS_ALLOW: 'default' stands for lea's default list" {
   hosts
-  LEA_EGRESS_ALLOW='default,corp.example' run sh "$R" "$BATS_TEST_TMPDIR/hosts"
-  [ "$status" -eq 0 ]
-  [ "$(printf '%s\n' "$output" | grep '^acl egress_allow ')" = "${DEFAULT_ACL/ .anthropic.com/ .corp.example .anthropic.com}" ]
+  [ "$(LEA_EGRESS_ALLOW='default,corp.example' egress_acl)" = "${DEFAULT_ACL/ .anthropic.com/ .corp.example .anthropic.com}" ]
 }
 
 @test "LEA_EGRESS_ALLOW: '*' with domain names is refused" {
@@ -200,7 +218,7 @@ DEFAULT_ACL="acl egress_allow dstdomain -n .github.com .githubusercontent.com .g
   hosts "a.example 443"
   LEA_EGRESS_ALLOW=github.com,registry.npmjs.org run sh "$R" "$BATS_TEST_TMPDIR/hosts"
   [ "$status" -eq 0 ]
-  [ "$(printf '%s\n' "$output" | grep '^acl egress_allow ')" = "acl egress_allow dstdomain -n .github.com .registry.npmjs.org .anthropic.com .claude.ai .claude.com" ]
+  [[ "$output" == *'acl egress_allow dstdomain -n "/run/lea-proxy/egress-allow"'* ]]
   [[ "$output" == *"deny_info ERR_LEA_EGRESS egress_allow"* ]]
   internal=$(printf '%s\n' "$output" | grep -n 'http_access allow ih_1_dst' | cut -d: -f1)
   private=$(printf '%s\n' "$output" | grep -n 'http_access deny private_dst' | cut -d: -f1)
@@ -209,13 +227,12 @@ DEFAULT_ACL="acl egress_allow dstdomain -n .github.com .githubusercontent.com .g
   [ "$internal" -lt "$egress" ]
   [ "$egress" -lt "$private" ]
   [ "$private" -lt "$web" ]
+  [ "$(LEA_EGRESS_ALLOW=github.com,registry.npmjs.org egress_acl)" = "acl egress_allow dstdomain -n .github.com .registry.npmjs.org .anthropic.com .claude.ai .claude.com" ]
 }
 
 @test "LEA_EGRESS_ALLOW: a domain covered by another one is listed once (squid refuses overlaps)" {
   hosts
-  LEA_EGRESS_ALLOW='api.github.com, github.com api.anthropic.com GitHub.com' run sh "$R" "$BATS_TEST_TMPDIR/hosts"
-  [ "$status" -eq 0 ]
-  [ "$(printf '%s\n' "$output" | grep '^acl egress_allow ')" = "acl egress_allow dstdomain -n .github.com .anthropic.com .claude.ai .claude.com" ]
+  [ "$(LEA_EGRESS_ALLOW='api.github.com, github.com api.anthropic.com GitHub.com' egress_acl)" = "acl egress_allow dstdomain -n .github.com .anthropic.com .claude.ai .claude.com" ]
 }
 
 @test "LEA_EGRESS_ALLOW: a malformed entry is refused" {
@@ -230,6 +247,25 @@ DEFAULT_ACL="acl egress_allow dstdomain -n .github.com .githubusercontent.com .g
 @test "the egress refusal page says how to extend LEA_EGRESS_ALLOW" {
   grep -q 'LEA_EGRESS_ALLOW' "$LEA_ROOT/proxy/errors/ERR_LEA_EGRESS"
   grep -q '%H' "$LEA_ROOT/proxy/errors/ERR_LEA_EGRESS"
+}
+
+# Clients log a body's first line at most (apt, wget): it is plain text and names the live command.
+@test "each refusal page starts with one plain line naming the host and why" {
+  [ "$(head -n1 "$LEA_ROOT/proxy/errors/ERR_LEA_EGRESS")" = 'lea-proxy refused %H: not in the egress allowlist. To allow it, run on the host: lea egress allow %H (applies live, no restart).' ]
+  for p in ERR_LEA_EGRESS ERR_LEA_DENIED ERR_LEA_DOH ERR_LEA_LITERAL ERR_LEA_PRIVATE; do
+    first=$(head -n1 "$LEA_ROOT/proxy/errors/$p")
+    [[ "$first" == "lea-proxy refused %H: "* ]]
+    [[ "$first" != *"<"* ]]
+  done
+  for p in ERR_LEA_DOH ERR_LEA_LITERAL ERR_LEA_PRIVATE ERR_LEA_DENIED; do
+    head -n1 "$LEA_ROOT/proxy/errors/$p" | grep -q -e 'cannot allow' -e 'does not open'
+  done
+}
+
+@test "the access log names squid's error, which lea egress denied reads" {
+  hosts
+  run sh "$R" "$BATS_TEST_TMPDIR/hosts"
+  printf '%s\n' "$output" | grep -qxF 'logformat lea %ts.%03tu %>a %rm %ru %>Hs %<a %err_code'
 }
 
 @test "the DoH and IP-literal refusal pages name the refused host and say why" {
