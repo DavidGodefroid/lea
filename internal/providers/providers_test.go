@@ -305,7 +305,7 @@ func TestArgvCodex(t *testing.T) {
 		"-c", `mcp_servers.lea.env.LEA_AGENT="dev-1"`, "-c", `notify=["/usr/local/bin/lea","hook","codex","notify"]`}
 	for _, tool := range []string{"agents_list", "agents_request_spawn", "ask", "board_read", "grants_list", "grants_request",
 		"lease_acquire", "lease_release", "lock_hint", "msg_inbox", "msg_reply", "msg_send", "msg_wait",
-		"providers_list", "task_update"} {
+		"providers_list", "task_update", "user_ask"} {
 		want = append(want, "-c", `mcp_servers.lea.tools.`+tool+`.approval_mode="approve"`)
 	}
 	want = append(want, "-c", `projects."/home/u/projects".trust_level="untrusted"`,

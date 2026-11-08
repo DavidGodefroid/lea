@@ -253,6 +253,12 @@ func (d *Daemon) grantCheck(o Origin, me string, raw json.RawMessage) (any, erro
 	if err := json.Unmarshal(raw, &p); err != nil {
 		return nil, err
 	}
+	if p.Tool == askQuestionTool && o.Container != "" {
+		// One question at a time to the user (#95).
+		if why := d.askGuard(me); why != "" {
+			return map[string]any{"verdict": grants.Deny, "reason": "lea: " + why}, nil
+		}
+	}
 	c, err := d.grantCaller(o, me, p.Cwd)
 	if err != nil {
 		return nil, err
