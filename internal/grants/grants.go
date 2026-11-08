@@ -25,10 +25,13 @@ const (
 	// ReleaseTag pushes one new semver tag on a commit of the default branch (#342). It is never
 	// one of DeliveryActions: the user grants it on its own.
 	ReleaseTag = "release-tag"
+	// ReleaseCreate publishes the GitHub release of one semver tag already on the remote (#353):
+	// gh release create <tag> --verify-tag. Never one of DeliveryActions either.
+	ReleaseCreate = "release-create"
 )
 
 // Actions lists every action a grant may name, in display order.
-var Actions = []string{Merge, StopFinished, CloseIssue, DeleteOwnBranch, CommitIdentity, PRCreate, ReleaseTag}
+var Actions = []string{Merge, StopFinished, CloseIssue, DeleteOwnBranch, CommitIdentity, PRCreate, ReleaseTag, ReleaseCreate}
 
 // DeliveryActions are the standing grants lea delivery on records for each repository: push the
 // agent's own branch, open its PR, merge it, delete the branch (issue #92).
@@ -61,8 +64,18 @@ type Grant struct {
 	// GitHub is the forge repository the grant's calls are pinned to (its pin, ValidPin):
 	// github.com/OWNER/NAME, which gh acts on (-R), or, for a delivery grant on GitLab,
 	// gitlab:HOST/GROUP/.../NAME, which glab acts on (-R https://HOST/…). git pushes go to it.
-	GitHub                    string
+	GitHub string
+	// Tag is a glob on the tag a release-create grant publishes ("" any semver tag, ValidTagGlob).
+	Tag                       string
 	Created, Expires, Revoked int64
+}
+
+var tagGlob = regexp.MustCompile(`^v[0-9A-Za-z.*-]{1,63}$`)
+
+// ValidTagGlob says whether p is a tag glob a release-create grant may name: v, then the
+// characters of a semver tag and *, no "..".
+func ValidTagGlob(p string) bool {
+	return tagGlob.MatchString(p) && !strings.Contains(p, "..")
 }
 
 // NeedsGitHub says whether a grant of action names its GitHub repository: every action but
@@ -185,6 +198,8 @@ type Request struct {
 	// allowed call runs exactly that, rewritten by Command.
 	Prog string
 	Args []string
+	// Tag is the tag a release-create call publishes, matched against the grant's Tag glob.
+	Tag string
 }
 
 // Verdicts of Decide.
@@ -264,6 +279,9 @@ func Match(req Request, c Caller, gs []Grant, now int64) (Grant, bool) {
 			continue
 		}
 		if g.Agent != "" && !contains(c.Lineage, g.Agent) {
+			continue
+		}
+		if req.Action == ReleaseCreate && req.Prog != "hint" && (!semverTag.MatchString(req.Tag) || !Glob(g.Tag, req.Tag)) {
 			continue
 		}
 		// --repo binds the worktree to --github: a grant without it pins nothing to the caller's
@@ -398,7 +416,7 @@ func Command(req Request, c Caller, g Grant) string {
 			return ""
 		}
 		script = shellWords(append(append([]string{ghPath}, req.Args...), "-R", g.GitHub))
-		if req.Action == PRCreate {
+		if req.Action == PRCreate || req.Action == ReleaseCreate {
 			script = prCreateScript(req.Args, c.Worktree, g.GitHub)
 		}
 		if req.Action == Merge && len(req.Args) > 2 {
@@ -491,15 +509,16 @@ func prHeadCheck(n, branch, gh string) string {
 		refuse("PR "+n+" is not the agent's own branch "+branch) + "; fi\n"
 }
 
-// prCreateScript is gh pr create with the validated args, pinned to gh. A --body-file (a path
-// relative to the worktree, ghPRCreate) is opened once, on fd 3; the file actually opened must
-// resolve (realpath of /proc/self/fd/3) to a plain file of the worktree wt, outside .git; gh reads
-// that open file on its stdin (--body-file -): swapping the path for a symlink to lea's state or
+// prCreateScript is gh pr create or gh release create with the validated args, pinned to gh. A
+// --body-file or --notes-file (a path relative to the worktree, ghPRCreate, ghReleaseCreate) is
+// opened once, on fd 3; the file actually opened must resolve (realpath of /proc/self/fd/3) to a
+// plain file of the worktree wt, outside .git; gh reads that open file on its stdin
+// (--body-file -, --notes-file -): swapping the path for a symlink to lea's state or
 // a credential after the check changes nothing.
 func prCreateScript(args []string, wt, gh string) string {
 	file := -1
 	for i, a := range args {
-		if (a == "--body-file" || a == "-F") && i+1 < len(args) {
+		if (a == "--body-file" || a == "--notes-file" || a == "-F") && i+1 < len(args) {
 			file = i + 1
 		}
 	}

@@ -1,5 +1,17 @@
 # Changelog
 
+## Unreleased
+
+Changes:
+
+- `release-create` grant action (#353): `gh release create <tag> --verify-tag [--title T]
+  [--notes-file F | --generate-notes] [--prerelease] [--latest]`, one plain command at the root of
+  the agent's worktree, pinned like every allowed gh call, for a pushed semver tag matching the
+  grant's `--tag` glob (`lea grant add release-create ... --tag 'v0.15.*'`, or `grants_request`
+  with `tag`). `--draft`, `--target`, assets and the other `gh release` subcommands stay
+  uncovered; `lea delivery on` never records it. A call the grant does not cover tells the agent
+  the form, the glob and `grants_request`.
+
 ## v0.14.1 (2026-11-08)
 
 Changes:
