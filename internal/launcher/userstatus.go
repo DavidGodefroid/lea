@@ -12,6 +12,10 @@ import (
 // maxStatusFiles bounds how many files of a status line command lea mounts.
 const maxStatusFiles = 4
 
+// claudeState are Claude Code's own state directories under ~/.claude: never a status line script.
+var claudeState = []string{"projects", "shell-snapshots", "file-history", "todos", "statsig", "session-env",
+	"ide", "local", "debug", "sessions", "telemetry", "cache", "backups"}
+
 // statusLineFiles are the files below ~/.claude (c) that the user's status line command in the
 // Claude settings file at settings names (#374), relative to c: `lea statusline` runs that command
 // inside the container, so its script is mounted read-only. Only real files are named, never a
@@ -38,7 +42,7 @@ func statusLineFiles(c, settings string) (files, skipped []string) {
 		parts := strings.Split(rel, "/")
 		hidden := slices.ContainsFunc(parts, func(p string) bool { return strings.HasPrefix(p, ".") })
 		top := parts[0]
-		owned := slices.Contains(claudeShared, top) || slices.Contains(claudeLayered, top) || top == "projects" ||
+		owned := slices.Contains(claudeShared, top) || slices.Contains(claudeLayered, top) || slices.Contains(claudeState, top) ||
 			len(parts) == 1 && strings.HasSuffix(top, ".md")
 		if hidden || owned || slices.Contains(files, rel) {
 			continue
@@ -70,10 +74,12 @@ func isScript(p string) bool {
 	return fi.Mode().Perm()&0o111 != 0 || slices.Contains(scriptExts, filepath.Ext(p))
 }
 
-// statusLineMounts mounts read-only the files of the user's status line command named by the
-// container's copy of the settings (priv/settings.json), their mount points made in priv.
+// statusLineMounts mounts read-only the files of the user's status line command, their mount
+// points made in priv. What is mounted is decided from the host's settings only, never from the
+// container's copy: an agent that rewrites its copy must not get another host file at the next
+// start.
 func (l *Launcher) statusLineMounts(src, priv, sbase string) ([]string, error) {
-	files, skipped := statusLineFiles(src, priv+"/settings.json")
+	files, skipped := statusLineFiles(src, src+"/settings.json")
 	for _, p := range skipped {
 		l.logf("skipped %s for your status line: a symbolic link is on its path (lea mounts only real entries of ~/.claude)", p)
 	}

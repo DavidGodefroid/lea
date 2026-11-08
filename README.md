@@ -714,9 +714,11 @@ its output instead (#374):
   outside `~/.claude` is mounted: such a command fails and lea's own line shows.
 - When the command exits non-zero, prints nothing or takes more than 1.5 s (it is killed, with
   what it started), lea prints its own line. The context report is sent whatever it does.
-- The command is read from the container's copy of your settings, at every refresh; a script it
-  names is mounted when lea starts: after adding one, restart lea (`lea stop`, then `lea`). Remove
-  the `statusLine` entry to get lea's line back.
+- The command is read from the container's copy of your settings, at every refresh; the script
+  is mounted when lea starts, as your host's `settings.json` names it (never as an agent's copy
+  does, so an agent cannot get another host file mounted), and never one of Claude Code's own state
+  directories (`projects`, `shell-snapshots`, `todos`...). After adding one, restart lea (`lea
+  stop`, then `lea`). Remove the `statusLine` entry to get lea's line back.
 
 ### Control tower
 

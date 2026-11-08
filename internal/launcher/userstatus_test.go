@@ -60,6 +60,24 @@ func TestClaudeMountsUserStatusLine(t *testing.T) {
 		}
 	}
 
+	// An agent that rewrites its copy of the settings gets no other host file at the next start:
+	// the mounts follow the host's settings only.
+	w, st, c, priv = setup(`"~/.claude/statusline.sh"`)
+	if _, err := w.launcher().claudeMounts(w.home, w.proj, st); err != nil {
+		t.Fatal(err)
+	}
+	os.MkdirAll(c+"/shell-snapshots", 0o755)
+	os.WriteFile(c+"/shell-snapshots/snap.sh", []byte("x"), 0o755)
+	os.WriteFile(priv+"/settings.json", []byte(`{"statusLine":{"command":"~/.claude/scripts/sl.py"}}`), 0o600)
+	m, _ = w.launcher().claudeMounts(w.home, w.proj, st)
+	if all := strings.Join(m, "\n"); strings.Contains(all, "sl.py") || !contains(m, ro(c, "statusline.sh")) {
+		t.Errorf("copy widened the mounts: %q", m)
+	}
+	os.WriteFile(c+"/settings.json", []byte(`{"statusLine":{"command":"~/.claude/shell-snapshots/snap.sh"}}`), 0o600)
+	if got, _ := statusLineFiles(c, c+"/settings.json"); got != nil {
+		t.Errorf("Claude's state mounted: %q", got)
+	}
+
 	// A symlinked script is skipped with a warning.
 	w, st, c, _ = setup(`"~/.claude/linked.sh"`)
 	os.Symlink(c+"/statusline.sh", c+"/linked.sh")
