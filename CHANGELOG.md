@@ -2,12 +2,20 @@
 
 ## Unreleased
 
+Changes:
+
 - The agents show your own Claude Code status line (#374): when your `~/.claude/settings.json`
   has a `statusLine` command, `lea statusline` still reports the agent's context and usage to the
   daemon, then runs your command with the same JSON (1.5 s at most, killed past it) and prints its
   output; lea's own line comes back when it fails, prints nothing or times out. A script below
   `~/.claude` the command names is mounted read-only into the containers (and lea-ctl).
-
+- `release-create` grant action (#353): `gh release create <tag> --verify-tag [--title T]
+  [--notes-file F | --generate-notes] [--prerelease] [--latest]`, one plain command at the root of
+  the agent's worktree, pinned like every allowed gh call, for a pushed semver tag matching the
+  grant's `--tag` glob (`lea grant add release-create ... --tag 'v0.15.*'`, or `grants_request`
+  with `tag`). `--draft`, `--target`, assets and the other `gh release` subcommands stay
+  uncovered; `lea delivery on` never records it. A call the grant does not cover tells the agent
+  the form, the glob and `grants_request`.
 - In the deck, a folder header's summary sets each state mark apart from its count (`6 ◐ 6`, not
   `6 ◐6`) (#355): the marks are East Asian Ambiguous width, and a terminal that draws them wide
   drew the half-moon over the digit.

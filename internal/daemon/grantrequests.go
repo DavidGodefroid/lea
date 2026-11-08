@@ -58,7 +58,7 @@ func (d *Daemon) grantsRequest(ctx context.Context, o Origin, me string, raw jso
 	}
 	d.sweepGrantRequests()
 	r, err := d.st.AddGrantRequest(store.GrantRequest{Container: o.Container, Requester: me, Action: p.Action, Repo: p.Repo,
-		Branch: p.Branch, GitHub: p.GitHub, TTLS: int64(ttl / time.Second), Reason: p.Reason}, maxPendingGrantRequests, d.now())
+		Branch: p.Branch, GitHub: p.GitHub, Tag: p.Tag, TTLS: int64(ttl / time.Second), Reason: p.Reason}, maxPendingGrantRequests, d.now())
 	if errors.Is(err, store.ErrExists) {
 		return map[string]any{"request": fmt.Sprintf("g%d", r.ID), "state": "pending",
 			"note": "the same request already waits for the user"}, nil
@@ -79,6 +79,9 @@ func describeRequest(r store.GrantRequest) string {
 	s := r.Action + " on repo " + r.Repo + " (" + r.GitHub + ")"
 	if r.Branch != "" && r.Branch != "*" {
 		s += " branch " + r.Branch
+	}
+	if r.Tag != "" {
+		s += " tag " + r.Tag
 	}
 	return s + " for " + shortName(r.Requester) + " and its children, " + (time.Duration(r.TTLS) * time.Second).String()
 }
@@ -104,6 +107,7 @@ type grantRequestView struct {
 	Repo      string `json:"repo"`
 	Branch    string `json:"branch"`
 	GitHub    string `json:"github"`
+	Tag       string `json:"tag,omitempty"`
 	TTLS      int64  `json:"ttl_s"`
 	Reason    string `json:"reason"`
 	At        int64  `json:"at"`
@@ -118,7 +122,7 @@ func (d *Daemon) grantRequestList() ([]grantRequestView, error) {
 	}
 	out := []grantRequestView{}
 	for _, r := range rs {
-		out = append(out, grantRequestView{r.ID, r.Container, shortName(r.Requester), r.Action, r.Repo, r.Branch, r.GitHub, r.TTLS, r.Reason, r.At})
+		out = append(out, grantRequestView{r.ID, r.Container, shortName(r.Requester), r.Action, r.Repo, r.Branch, r.GitHub, r.Tag, r.TTLS, r.Reason, r.At})
 	}
 	return out, nil
 }
@@ -146,7 +150,7 @@ func (d *Daemon) grantRequestDecide(raw json.RawMessage) (any, error) {
 	}
 	switch p.Verdict {
 	case "approve":
-		gp := grantParams{Container: r.Container, Action: r.Action, Repo: r.Repo, Branch: r.Branch, GitHub: r.GitHub, TTLS: r.TTLS}
+		gp := grantParams{Container: r.Container, Action: r.Action, Repo: r.Repo, Branch: r.Branch, GitHub: r.GitHub, Tag: r.Tag, TTLS: r.TTLS}
 		if p.TTLS != 0 {
 			gp.TTLS = p.TTLS
 		}
