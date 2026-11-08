@@ -773,6 +773,67 @@ func TestRealDragEndFlashesCopied(t *testing.T) {
 	}
 }
 
+// The "Copied" popup a drag's release opens closes on its own after about 0.6 s: the binding,
+// replayed on a key in copy mode, draws it, and tmux redraws the pane under it once its command
+// exits.
+func TestRealDragEndCopiedClosesSoon(t *testing.T) {
+	s := realServer(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	c, err := s.Open(ctx, "lea-f", []string{"sleep", "600"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c.Close()
+	log := filepath.Join(os.Getenv("TMUX_TMPDIR"), "terminal")
+	client := attachTerminal(t, ctx, s, c, "lea-f", log)
+	var bind string
+	for _, l := range strings.Split(Conf(), "\n") {
+		if f := strings.Fields(l); len(f) > 3 && f[0] == "bind-key" && f[2] == "copy-mode" && f[3] == "MouseDragEnd1Pane" {
+			bind = strings.Replace(l, "MouseDragEnd1Pane", "F12", 1)
+		}
+	}
+	if bind == "" {
+		t.Fatal("copy-mode has no MouseDragEnd1Pane binding")
+	}
+	conf := filepath.Join(os.Getenv("TMUX_TMPDIR"), "f12.conf")
+	if err := os.WriteFile(conf, []byte(bind+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	tm := func(args ...string) {
+		t.Helper()
+		if out, err := exec.Command("tmux", append([]string{"-L", "lea-test"}, args...)...).CombinedOutput(); err != nil {
+			t.Fatalf("%s: %v: %s", args[0], err, out)
+		}
+	}
+	tm("source-file", conf)
+	tm("copy-mode", "-t", "lea-f")
+	tm("send-keys", "-X", "-t", "lea-f", "begin-selection")
+	waitFor(t, "the terminal to settle", func() bool {
+		a, _ := os.ReadFile(log)
+		time.Sleep(200 * time.Millisecond)
+		b, _ := os.ReadFile(log)
+		return len(a) == len(b)
+	})
+	b, _ := os.ReadFile(log)
+	from := len(b)
+	tm("send-keys", "-K", "-c", client, "F12")
+	var at int
+	waitFor(t, "Copied on the terminal", func() bool {
+		b, _ := os.ReadFile(log)
+		at = strings.Index(string(b[from:]), "Copied")
+		return at >= 0
+	})
+	shown, end := time.Now(), from+at+len("Copied")
+	waitFor(t, "the popup to close", func() bool {
+		b, _ := os.ReadFile(log)
+		return strings.Contains(string(b[end:]), "\x1b[1;3Hqqq") // the pane's top border, redrawn
+	})
+	if d := time.Since(shown); d < 300*time.Millisecond || d > time.Second {
+		t.Errorf("Copied showed %v, want about 0.6 s", d)
+	}
+}
+
 // A hyperlink (OSC 8) longer than the pane is wide reaches the user's terminal whole, on every
 // row it wraps over: the terminal then opens the full link wherever it is clicked.
 func TestRealLongHyperlinkReachesTheTerminalWhole(t *testing.T) {
@@ -1242,7 +1303,7 @@ func TestRealDragHeldAtAnEdgeScrollsTheHistory(t *testing.T) {
 		t.Errorf("the copy holds %d lines, want %d at least", n, down+30)
 	}
 
-	// Two seconds at the top row, the pointer still, once the "Copied" popup (1.5 s), which takes
+	// Two seconds at the top row, the pointer still, once the "Copied" popup (0.6 s), which takes
 	// the mouse while it shows, is gone.
 	time.Sleep(2 * time.Second)
 	into()

@@ -52,6 +52,14 @@ var keyName = regexp.MustCompile(`^[A-Za-z0-9_]{1,40}$`)
 // the line names ("+lock orders: restart lea"). When dump is set the raw JSON is also written
 // there (mode 0600). Nothing here may fail Claude: bad input prints "lea" and reports nothing.
 func Run(stdin io.Reader, stdout io.Writer, dump string, post func(Report) []string) error {
+	return RunWith(stdin, stdout, dump, post, User{})
+}
+
+// RunWith is Run chained with the user's own status line (#374): when u names a command it runs
+// with the same JSON on stdin while lea reports to the daemon, and its output is printed instead
+// of lea's line. A command that fails, prints nothing or outlasts u.Timeout (it is killed) leaves
+// lea's line. The report is sent whatever the command does.
+func RunWith(stdin io.Reader, stdout io.Writer, dump string, post func(Report) []string, u User) error {
 	in, err := io.ReadAll(io.LimitReader(stdin, 1<<20))
 	if err != nil {
 		fmt.Fprintln(stdout, "lea")
@@ -67,6 +75,7 @@ func Run(stdin io.Reader, stdout io.Writer, dump string, post func(Report) []str
 		fmt.Fprintln(stdout, "lea")
 		return dumpErr
 	}
+	user := u.start(in)
 	r := parse(doc)
 	ws := windows(doc)
 	r.Limits = limits(ws)
@@ -75,6 +84,9 @@ func Run(stdin io.Reader, stdout io.Writer, dump string, post func(Report) []str
 		added = post(r)
 	}
 	ln := line(doc, r, ws, os.Getenv("NO_COLOR") == "", time.Now())
+	if out := user(); out != "" {
+		ln = out
+	}
 	for _, n := range added {
 		if lockInstance.MatchString(n) {
 			ln += " · +lock " + n + ": restart lea"
