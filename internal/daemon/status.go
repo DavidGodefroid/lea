@@ -102,10 +102,16 @@ func (d *Daemon) statusReport(ctx context.Context, o Origin, me string, raw json
 	return d.statusAnswer(ctx, o.Container), nil
 }
 
-// statusAnswer is status_report's answer for an agent of container.
+// statusAnswer is status_report's answer for an agent of container: the locks it does not mount
+// (locks_added) and, when the workspace has locks and no lox run serves them, lox_run "off" (#343).
 func (d *Daemon) statusAnswer(ctx context.Context, container string) any {
-	if added := d.locksAdded(ctx, container); len(added) > 0 {
-		return map[string][]string{"locks_added": added}
+	var ans struct {
+		LocksAdded []string `json:"locks_added,omitempty"`
+		LoxRun     string   `json:"lox_run,omitempty"`
 	}
-	return struct{}{}
+	ans.LocksAdded = d.locksAdded(ctx, container)
+	if d.loxRunState() == "off" {
+		ans.LoxRun = "off"
+	}
+	return ans
 }

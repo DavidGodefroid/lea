@@ -275,7 +275,7 @@ lea__doctor_hub() {
 # obsolete.
 lea__doctor_lox() {
   if [ -n "${LEA_LOX_UP:-}" ]; then
-    lea__warn "LEA_LOX_UP" "obsolete and ignored: lea no longer runs lox up; remove it from your configuration"
+    lea__warn "LEA_LOX_UP" "obsolete and ignored: remove it from your configuration"
   fi
   _dxl=
   if [ -n "${LEA_PROJECTS_DIR:-}" ] && { [ -f "$LEA_PROJECTS_DIR/.lockfamily/lockfamily.yaml" ] || [ -f "$LEA_PROJECTS_DIR/.lockfamily/up.json" ]; }; then

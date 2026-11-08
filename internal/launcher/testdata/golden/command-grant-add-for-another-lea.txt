@@ -1,0 +1,6 @@
+status 2
+-- calls
+
+-- lea
+lea: error: --container lea-other is not this projects directory's lea (lea-$ID): run lea allow from that lea's projects directory, or set LEA_PROJECTS_DIR
+-- stdout

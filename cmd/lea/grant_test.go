@@ -61,16 +61,18 @@ func TestGrantsReachTheWholeSubtree(t *testing.T) {
 	dev := reg("dev", "dev", lead.Key, "feat/a")
 	reg("sub", "reviewer", lead.Key, "feat/a-1")
 	reg("other", "dev", "", "feat/b")
-	host := map[string]string{"LEA_DAEMON_SOCK": api}
+	f := allowFixture{t, t.TempDir(), map[string]string{"LEA_DAEMON_SOCK": api}}
+	f.origin("fixture", "https://github.com/o/fixture.git")
 	merge := cmd("gh pr merge feat/a-1 --squash --delete-branch")
 	admin := cmd("gh pr merge 7 --squash --admin")
 
 	if d := preToolUseAs(t, bus, "sub", "Bash", merge); d != "" {
 		t.Fatalf("before any grant: %q", d)
 	}
-	rc, out, e := runEnv(t, host, "grant", "add", "merge", "--container", "lea-a", "--repo", "fixture", "--github", "o/fixture", "--agent", "lead", "--expires", "2h")
-	if rc != 0 || !strings.Contains(out, "merge in lea-a repo fixture gh github.com/o/fixture for lea-a/lead and its children") {
-		t.Fatalf("grant add rc=%d out=%q err=%q", rc, out, e)
+	add := []string{"merge", "--repo", "fixture", "--agent", "lead", "--for", "2h"}
+	rc, out, e := f.allow(append(add, "--yes", f.digest(add...))...)
+	if rc != 0 || !strings.Contains(out, "lea-a/lead and its children may merge PRs on fixture (github.com/o/fixture)") {
+		t.Fatalf("allow merge rc=%d out=%q err=%q", rc, out, e)
 	}
 	id := regexp.MustCompile(`#(\d+)`).FindStringSubmatch(out)[1]
 	if d := preToolUseAs(t, bus, "sub", "Bash", merge); d != "allow" {
@@ -82,12 +84,12 @@ func TestGrantsReachTheWholeSubtree(t *testing.T) {
 	if d := preToolUseAs(t, bus, "sub", "Bash", admin); d != "deny" {
 		t.Fatalf("--admin with a grant: %q", d)
 	}
-	rc, out, _ = runEnv(t, host, "grant", "ls")
-	if rc != 0 || !strings.Contains(out, "#"+id+"  active") || !strings.Contains(out, "lea-a/sub merge: github.com/o/fixture pr of feat/a-1") {
-		t.Fatalf("grant ls rc=%d out=%q", rc, out)
+	rc, out, _ = f.allow()
+	if rc != 0 || !strings.Contains(out, "#"+id+"  merge") || !strings.Contains(out, "lea-a/sub merge: github.com/o/fixture pr of feat/a-1") {
+		t.Fatalf("allow rc=%d out=%q", rc, out)
 	}
-	if rc, out, _ := runEnv(t, host, "grant", "revoke", id); rc != 0 || !strings.Contains(out, "revoked") {
-		t.Fatalf("revoke rc=%d out=%q", rc, out)
+	if rc, out, _ := f.allow("off", id); rc != 0 || !strings.Contains(out, "revoked") {
+		t.Fatalf("off rc=%d out=%q", rc, out)
 	}
 	if d := preToolUseAs(t, bus, "sub", "Bash", merge); d != "" {
 		t.Fatalf("after revoke: %q", d)
@@ -95,13 +97,13 @@ func TestGrantsReachTheWholeSubtree(t *testing.T) {
 	if d := preToolUseAs(t, bus, "sub", "Bash", admin); d != "deny" {
 		t.Fatalf("--admin after revoke: %q", d)
 	}
-	if rc, out, _ := runEnv(t, host, "grant", "ls", "--all"); rc != 0 || !strings.Contains(out, "#"+id+"  revoked") {
-		t.Fatalf("grant ls --all rc=%d out=%q", rc, out)
+	if rc, out, _ := f.allow(); rc != 0 || strings.Contains(out, "#"+id+" ") {
+		t.Fatalf("allow after off rc=%d out=%q", rc, out)
 	}
 
 	// delete-own-branch: the caller's own branch only while no other live agent shares it.
-	if rc, _, e := runEnv(t, host, "grant", "add", "delete-own-branch", "--container", "lea-a", "--repo", "fixture", "--github", "o/fixture"); rc != 0 {
-		t.Fatalf("grant delete-own-branch: %s", e)
+	if rc, _, e := f.allow("delete-branch", "--repo", "fixture"); rc != 0 {
+		t.Fatalf("allow delete-branch: %s", e)
 	}
 	del := cmd("git push origin --delete feat/a-1")
 	if d := preToolUseAs(t, bus, "sub", "Bash", del); d != "allow" {
@@ -113,8 +115,8 @@ func TestGrantsReachTheWholeSubtree(t *testing.T) {
 	}
 
 	// stop-finished: the lead stops its idle child, not a working one, not another's child.
-	if rc, _, e := runEnv(t, host, "grant", "add", "stop-finished", "--container", "lea-a"); rc != 0 {
-		t.Fatalf("grant stop-finished: %s", e)
+	if rc, _, e := f.allow("stop-finished"); rc != 0 {
+		t.Fatalf("allow stop-finished: %s", e)
 	}
 	stop := map[string]string{"name": "dev"}
 	if d := preToolUseAs(t, bus, "lead", "mcp__lea__agents_stop", stop); d != "" {
@@ -134,18 +136,12 @@ func TestGrantsReachTheWholeSubtree(t *testing.T) {
 func TestGrantCommandUsage(t *testing.T) {
 	api, _ := startDaemon(t)
 	host := map[string]string{"LEA_DAEMON_SOCK": api}
-	for _, args := range [][]string{{"grant"}, {"grant", "add", "rm-rf", "--container", "lea-a"}, {"grant", "add", "merge"},
-		{"grant", "add", "merge", "--container"}, {"grant", "add", "merge", "--container", "lea-a", "--expires", "soon"},
-		{"grant", "revoke", "x"}, {"grant", "ls", "--bogus"}} {
+	for _, args := range [][]string{{"grant"}, {"grant", "revoke", "x"}, {"grant", "revoke"}, {"grant", "bogus"}} {
 		if rc, _, _ := runEnv(t, host, args...); rc != 2 {
 			t.Errorf("%v: rc=%d", args, rc)
 		}
 	}
-	for _, args := range [][]string{{"grant", "add", "merge", "--container", "lea-a", "--github", "o/r", "--branch", "main"},
-		{"grant", "add", "merge", "--container", "lea-a"}, {"grant", "add", "merge", "--container", "lea-a", "--github", "o/r"}, {"grant", "add", "close-issue", "--container", "lea-a", "--github", "o/../x"},
-		{"grant", "add", "merge", "--container", "lea-a", "--expires", "1000h"}, {"grant", "revoke", "99"}} {
-		if rc, _, _ := runEnv(t, host, args...); rc != 1 {
-			t.Errorf("%v: rc=%d", args, rc)
-		}
+	if rc, _, _ := runEnv(t, host, "grant", "revoke", "99"); rc != 1 {
+		t.Error("revoke 99")
 	}
 }

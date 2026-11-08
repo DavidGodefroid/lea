@@ -152,6 +152,9 @@ func (m Model) saveSetting(s settings.Setting, value string) (tea.Model, tea.Cmd
 			return soundMsg{st, err}
 		}
 	}
+	if s.Live && s.Key == themeKey {
+		m.setTheme(s.Value)
+	}
 	if s.Live && s.Key == deckWidthKey && m.applyWidth != nil {
 		if w, err := strconv.Atoi(s.Value); err == nil {
 			var err error
@@ -206,7 +209,7 @@ func (m Model) settingsLines(inner, room int) []string {
 		}
 		selTop = len(lines)
 		row = c.mark + " " + row[2:]
-		lines = append(lines, lipgloss.NewStyle().Foreground(theme.Accent).Background(theme.Sel).Bold(true).Render(row))
+		lines = append(lines, selected(lipgloss.NewStyle().Foreground(theme.Accent)).Bold(true).Render(row))
 		for _, l := range wrapWords(safe(s.Help, c), inner-5, 3) {
 			lines = append(lines, padRight("    "+muted.Render(l), inner))
 		}

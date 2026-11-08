@@ -1,5 +1,5 @@
 // Package grants decides, deterministically, whether a tool call an agent is about to make is
-// covered by a grant the user recorded on the host (lea grant add), or is one of the hard denies
+// covered by a grant the user recorded on the host (lea allow), or is one of the hard denies
 // no grant can cover. It never sees who granted what beyond the rows it is given: the daemon
 // stores grants and only the host API writes them (issue #73).
 //
@@ -33,11 +33,8 @@ const (
 // Actions lists every action a grant may name, in display order.
 var Actions = []string{Merge, StopFinished, CloseIssue, DeleteOwnBranch, CommitIdentity, PRCreate, ReleaseTag, ReleaseCreate}
 
-// DeliveryActions are the standing grants lea delivery on records for each repository: push the
-// agent's own branch, open its PR, merge it, delete the branch (issue #92).
-var DeliveryActions = []string{CommitIdentity, PRCreate, Merge, DeleteOwnBranch}
-
-// Standing is the expiry of a delivery grant: it holds until lea delivery off revokes it.
+// Standing is the expiry of a grant that holds until revoked (lea allow without --for): the hook's
+// Active check needs no other case. A set says it holds until revoked (Set.UntilRevoked).
 const Standing int64 = 1 << 62
 
 // ValidAction says whether a is one of Actions.
@@ -58,13 +55,15 @@ const StopTool = "mcp__lea__agents_stop"
 // the agent whose subtree it covers ("" every agent of the lea). Expires and Revoked are unix
 // seconds, Revoked 0 while active.
 type Grant struct {
-	ID                              int64
+	ID int64
+	// SetID is the set the grant belongs to (lea allow, #319): the unit the user sees and revokes.
+	SetID                           int64
 	Container, Action, Repo, Branch string
 	Agent                           string
-	// GitHub is the forge repository the grant's calls are pinned to (its pin, ValidPin):
-	// github.com/OWNER/NAME, which gh acts on (-R), or, for a delivery grant on GitLab,
-	// gitlab:HOST/GROUP/.../NAME, which glab acts on (-R https://HOST/…). git pushes go to it.
-	GitHub string
+	// Pin is the forge repository the grant's calls are pinned to (ValidPin; the github column):
+	// github.com/OWNER/NAME, which gh acts on (-R), or gitlab:HOST/GROUP/.../NAME, which glab
+	// acts on (-R https://HOST/…). git pushes go to it.
+	Pin string
 	// Tag is a glob on the tag a release-create grant publishes ("" any semver tag, ValidTagGlob).
 	Tag                       string
 	Created, Expires, Revoked int64
@@ -132,9 +131,6 @@ func pinURL(pin string) string {
 	return ""
 }
 
-// IsStanding says whether g is a delivery grant (lea delivery on), with no expiry.
-func (g Grant) IsStanding() bool { return g.Expires == Standing }
-
 // Active says whether g still applies at now.
 func (g Grant) Active(now int64) bool {
 	return g.Revoked == 0 && g.Expires > now
@@ -200,6 +196,9 @@ type Request struct {
 	Args []string
 	// Tag is the tag a release-create call publishes, matched against the grant's Tag glob.
 	Tag string
+	// File is the index in Args of a pr-create body file or release-create notes file, as the
+	// parser took it (0: none); prCreateScript swaps that argument, never rescans Args.
+	File int
 }
 
 // Verdicts of Decide.
@@ -286,7 +285,7 @@ func Match(req Request, c Caller, gs []Grant, now int64) (Grant, bool) {
 		}
 		// --repo binds the worktree to --github: a grant without it pins nothing to the caller's
 		// repository.
-		if req.Prog != "" && (g.GitHub == "" || g.Repo == "") {
+		if req.Prog != "" && (g.Pin == "" || g.Repo == "") {
 			continue
 		}
 		return g, true
@@ -331,7 +330,7 @@ func decide(tool string, input json.RawMessage, c Caller, gs []Grant, now int64,
 		Reason: fmt.Sprintf("lea grant #%d (%s) recorded by the user", g.ID, g.Action)}
 	switch req.Prog {
 	case "gh", "glab":
-		d.Request.Target = g.GitHub + " " + req.Target
+		d.Request.Target = g.Pin + " " + req.Target
 		d.Command = Command(req, c, g)
 	case "git":
 		d.Request.Target = c.Repo + " " + req.Target
@@ -392,10 +391,10 @@ var gitPins = []string{"core.hooksPath=/dev/null", "core.fsmonitor=false", "core
 //
 // Every word lea builds is single-quoted. "" when the call cannot be pinned.
 func Command(req Request, c Caller, g Grant) string {
-	if !ValidPin(g.GitHub) || !validProxy.MatchString(c.Proxy) {
+	if !ValidPin(g.Pin) || !validProxy.MatchString(c.Proxy) {
 		return ""
 	}
-	_, _, gitlab := gitlabPin(g.GitHub)
+	_, _, gitlab := gitlabPin(g.Pin)
 	// GIT_CONFIG_GLOBAL=/dev/null: ~/.gitconfig is the agent's to write (url.insteadOf,
 	// include.path, helpers); /etc/gitconfig is the image's.
 	// GIT_CONFIG_NOSYSTEM: lea's credential store comes in as a pin (gitPins), not from it.
@@ -415,21 +414,21 @@ func Command(req Request, c Caller, g Grant) string {
 		if gitlab {
 			return ""
 		}
-		script = shellWords(append(append([]string{ghPath}, req.Args...), "-R", g.GitHub))
+		script = shellWords(append(append([]string{ghPath}, req.Args...), "-R", g.Pin))
 		if req.Action == PRCreate || req.Action == ReleaseCreate {
-			script = prCreateScript(req.Args, c.Worktree, g.GitHub)
+			script = prCreateScript(req.Args, req.File, c.Worktree, g.Pin)
 		}
 		if req.Action == Merge && len(req.Args) > 2 {
 			if c.Branch == "" || !BranchName(c.Branch) || Protected(c.Branch) {
 				return ""
 			}
-			script = prHeadCheck(req.Args[2], c.Branch, g.GitHub) + script
+			script = prHeadCheck(req.Args[2], c.Branch, g.Pin) + script
 		}
 		if script != "" {
 			script = ghIsolated() + script
 		}
 	case "glab":
-		host, path, ok := gitlabPin(g.GitHub)
+		host, path, ok := gitlabPin(g.Pin)
 		if !ok {
 			return ""
 		}
@@ -440,11 +439,11 @@ func Command(req Request, c Caller, g Grant) string {
 		}
 		switch {
 		case req.Action == ReleaseTag:
-			script = tagScript(req.Args[2], c.Worktree, g.GitHub, c.Proxy)
+			script = tagScript(req.Args[2], c.Worktree, g.Pin, c.Proxy)
 		case req.Args[0] == "commit":
 			script = commitScript(req.Args[1:], c.Worktree, c.Proxy)
 		case req.Args[0] == "push":
-			script = pushScript(req.Args, c.Worktree, g.GitHub, c.Proxy)
+			script = pushScript(req.Args, c.Worktree, g.Pin, c.Proxy)
 		}
 	}
 	if script == "" {
@@ -514,15 +513,10 @@ func prHeadCheck(n, branch, gh string) string {
 // opened once, on fd 3; the file actually opened must resolve (realpath of /proc/self/fd/3) to a
 // plain file of the worktree wt, outside .git; gh reads that open file on its stdin
 // (--body-file -, --notes-file -): swapping the path for a symlink to lea's state or
-// a credential after the check changes nothing.
-func prCreateScript(args []string, wt, gh string) string {
-	file := -1
-	for i, a := range args {
-		if (a == "--body-file" || a == "--notes-file" || a == "-F") && i+1 < len(args) {
-			file = i + 1
-		}
-	}
-	if file < 0 {
+// a credential after the check changes nothing. file is the file's index in args, as the parser
+// took it (Request.File, 0: none): a title that reads -F is never taken for the flag (#382).
+func prCreateScript(args []string, file int, wt, gh string) string {
+	if file <= 0 || file >= len(args) {
 		return shellWords(append(append([]string{ghPath}, args...), "-R", gh))
 	}
 	if wt == "" || !strings.HasPrefix(wt, "/") {

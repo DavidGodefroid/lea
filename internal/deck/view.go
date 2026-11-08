@@ -97,6 +97,15 @@ func (m Model) body(inner int) []string {
 			}
 		}
 		body = m.settingsLines(inner, room)
+	case m.allowOpen:
+		room := 0
+		if m.height > 2 {
+			room = m.height - 2
+			if m.statusLine(inner) != "" {
+				room--
+			}
+		}
+		body = m.allowedLines(inner, room)
 	case m.help:
 		for _, l := range helpLines {
 			body = append(body, padRight(" "+fit(l, inner-1, c), inner))
@@ -104,7 +113,7 @@ func (m Model) body(inner int) []string {
 	case len(m.agents) == 0:
 		body = append(body, padRight(" "+muted.Render(fit("No agents yet: press n.", inner-1, c)), inner))
 	}
-	if !m.help && !m.setOpen {
+	if !m.help && !m.setOpen && !m.allowOpen {
 		body = append(body, m.rows(inner)...)
 	}
 	if m.height > 2 {
@@ -142,8 +151,8 @@ var helpLines = []string{
 	"a d A       allow deny always",
 	"x           stop or remove",
 	"< >         deck width",
-	"S           sounds",
-	",           settings",
+	"S T         sounds, theme",
+	", g         settings, allowed",
 	"ctrl+space  deck or terminal",
 	"q ?         detach, these keys",
 }
@@ -199,6 +208,9 @@ func (m Model) folderHint() string {
 // frameStyle is the style of the deck's frame: the accent while the deck has the keyboard, so the
 // focused pane is plain to see.
 func (m Model) frameStyle() lipgloss.Style {
+	if m.focused && current.mono { // no accent: the focused frame is bold
+		return lipgloss.NewStyle().Bold(true)
+	}
 	if m.focused {
 		return lipgloss.NewStyle().Foreground(theme.Accent)
 	}
@@ -337,10 +349,16 @@ func (m Model) bottom(w int) string {
 			hint += fmt.Sprintf(" %s A always", c.dot)
 		}
 	}
+	if m.allowOpen {
+		hint = fmt.Sprintf("x revoke %s esc close", c.dot)
+	}
 	if m.confirm != "" {
 		hint = fmt.Sprintf("y stop %s esc cancel", c.dot)
 		if isFolderKey(m.confirm) {
 			hint = fmt.Sprintf("y delete %s esc cancel", c.dot)
+		}
+		if isAllowKey(m.confirm) {
+			hint = fmt.Sprintf("y revoke %s esc cancel", c.dot)
 		}
 	}
 	if m.roleFor != "" {
@@ -422,7 +440,7 @@ func (m Model) rowLines(inner int) ([]string, []lineOwner) {
 	if m.menuFor == deckMenu {
 		var r []string
 		var o []lineOwner
-		items := deckMenuItems(m.sound)
+		items := m.openItems() // its own actions, or the theme picker (T)
 		for j, l := range m.menuLines(items, inner) {
 			r, o = append(r, l), append(o, lineOwner{deckMenu, menuOwner(j, len(items))})
 		}
@@ -473,7 +491,7 @@ func (m Model) folderRow(fi int, inner int) []string {
 	sel := folderKey(f.ID) == m.selected
 	bg := func(s lipgloss.Style) lipgloss.Style {
 		if sel {
-			return s.Background(theme.Sel)
+			return selected(s)
 		}
 		return s
 	}
@@ -582,7 +600,7 @@ func (m Model) row(a Agent, inner int, fi int) []string {
 	}
 	bg := func(s lipgloss.Style) lipgloss.Style {
 		if sel {
-			return s.Background(theme.Sel)
+			return selected(s)
 		}
 		return s
 	}

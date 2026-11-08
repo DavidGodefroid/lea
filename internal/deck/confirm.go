@@ -3,6 +3,7 @@ package deck
 import (
 	"context"
 	"fmt"
+	"strconv"
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -44,6 +45,9 @@ func (m Model) answer(yes bool) (tea.Model, tea.Cmd) {
 	if isFolderKey(key) {
 		return m.deleteFolder(key), nil
 	}
+	if isAllowKey(key) {
+		return m, m.revokeAllowed(allowKeyID(key))
+	}
 	return m, m.call(func(ctx context.Context) error { return api.Stop(ctx, key) })
 }
 
@@ -81,6 +85,10 @@ func (m Model) modal(inner, n int) (top int, lines []string, yes, no [2]int) {
 		title, question, what = "Delete folder", "Delete folder %s?", [2]string{"Its agents go back to the", "list, none is stopped."}
 		name = m.layout.Folders[fi].Name
 	}
+	if isAllowKey(m.confirm) {
+		title, question, what = "Revoke allowance", "Revoke allowance %s?", [2]string{"Its agents ask again for", "what it allowed."}
+		name = "#" + strconv.FormatInt(allowKeyID(m.confirm), 10)
+	}
 	w := inner - 4 // a margin and a border on each side
 	text := lipgloss.NewStyle().Foreground(theme.Text)
 	line := func(s string, st lipgloss.Style) string {
@@ -104,7 +112,7 @@ func (m Model) modal(inner, n int) (top int, lines []string, yes, no [2]int) {
 	button := func(label string, on bool) string {
 		st := muted
 		if on {
-			st = lipgloss.NewStyle().Foreground(theme.Accent).Background(theme.Sel).Bold(true)
+			st = selected(lipgloss.NewStyle().Foreground(theme.Accent)).Bold(true)
 		}
 		return st.Render(mark(on) + label)
 	}
