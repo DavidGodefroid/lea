@@ -893,6 +893,36 @@ var hookState = map[string]string{
 
 const maxStopBlocks = 3
 
+// foreignSession says a hook comes from a Claude session that is not the agent's own (#350):
+// a nested Claude that inherits LEA_AGENT (claude -p from a shell, a delegated CLI) runs lea's
+// hooks under the agent's identity, and its SessionEnd would mark the live agent done, its Stop
+// take the agent's messages, its first prompt name it. A hook belongs to the agent when either
+// session id is unknown or they match. A SessionStart that clears or resumes the session, or
+// one of an agent whose session ended (done), moves the agent to the new session. lea forgets
+// the recorded session when it starts an agent afresh (restartWith).
+func (d *Daemon) foreignSession(me, session, event, source string) bool {
+	if session == "" {
+		return false
+	}
+	a, err := d.st.AgentByKey(me)
+	if err != nil || a.SessionID == "" || a.SessionID == session {
+		return false
+	}
+	if event == "SessionStart" && (source == "clear" || source == "resume" || a.State == "done") {
+		return false
+	}
+	return true
+}
+
+// sessionParam is the session_id a hook sends with a request, "" when none.
+func sessionParam(params json.RawMessage) string {
+	var p struct {
+		SessionID string `json:"session_id"`
+	}
+	_ = json.Unmarshal(params, &p)
+	return p.SessionID
+}
+
 // pruneForgotten drops the hook bookkeeping and the rate windows of agents whose row is gone.
 func (d *Daemon) pruneForgotten() {
 	d.rates.prune(func(k string) bool {
@@ -965,6 +995,14 @@ func (d *Daemon) dispatchHooks(ctx context.Context, o Origin, me string, req wir
 		}
 		if err := d.st.AddEvent(me, "hook", p.Event, string(p.Payload), d.now()); err != nil {
 			return nil, err
+		}
+		var src struct {
+			Source string `json:"source"`
+		}
+		_ = json.Unmarshal(p.Payload, &src)
+		if d.foreignSession(me, p.SessionID, p.Event, src.Source) {
+			// Another Claude under the agent's identity (#350): it neither ends nor moves the agent.
+			return struct{}{}, nil
 		}
 		d.trackSubagents(me, p.Event, p.Payload)
 		if p.Event == "SessionEnd" {
@@ -1079,8 +1117,15 @@ func (d *Daemon) dispatchHooks(ctx context.Context, o Origin, me string, req wir
 		}
 		return struct{}{}, nil
 	case "name_hint":
+		if d.foreignSession(me, sessionParam(req.Params), "", "") {
+			return struct{}{}, nil
+		}
 		return d.dispatchNameHint(o, me, req)
 	case "stop_check":
+		if d.foreignSession(me, sessionParam(req.Params), "", "") {
+			// The agent's messages are its own session's: another Claude's stop never takes them.
+			return stopVerdict{}, nil
+		}
 		// One check at a time per agent: the round count is read, then written.
 		defer d.lockKey("stop:" + me)()
 		d.mu.Lock()
@@ -1110,6 +1155,9 @@ func (d *Daemon) dispatchHooks(ctx context.Context, o Origin, me string, req wir
 		parts = append(parts, "Answer with the msg_reply tool when a reply is expected.")
 		return stopVerdict{Block: true, Reason: strings.Join(parts, "\n\n"), from: ms}, nil
 	case "context_unread":
+		if d.foreignSession(me, sessionParam(req.Params), "", "") {
+			return map[string]any{"count": 0, "text": ""}, nil
+		}
 		return d.unreadNotice(me)
 	case "approval_request":
 		var p struct {

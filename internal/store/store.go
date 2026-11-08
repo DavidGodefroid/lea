@@ -262,6 +262,13 @@ func (s *Store) setState(key, state, sessionID string, now int64, and string) (b
 	return n > 0, err
 }
 
+// ClearSession forgets the agent's recorded Claude session: lea starts it afresh, and the next
+// session's hooks are its own (#350).
+func (s *Store) ClearSession(key string) error {
+	_, err := s.db.Exec(`UPDATE agents SET session_id='' WHERE key=?`, key)
+	return err
+}
+
 // SetHookState records the state an agent's own hooks (or a hook's answer) report, as SetState
 // does, unless lea stop has marked the agent stopped: its container is ending, and a late hook
 // of it (the turn's Stop or StopFailure, a tool, its SessionEnd) must not make it live or done
@@ -346,6 +353,9 @@ type NewAgent struct {
 	Container, Name, Profile, Workdir string
 	Role, Parent, Repo, Branch        string
 	Model                             string
+	// Live says the caller found a process of this name still running in the container (#350):
+	// its row is never reused, even when it says done.
+	Live bool
 }
 
 // Caps bound a spawn: at most MaxChildren running children of the parent (0: no bound). An ended
@@ -354,8 +364,8 @@ type Caps struct{ MaxChildren int }
 
 // Register records an agent lea spawns, checking the caps in the same transaction: two spawns at
 // the cap never both pass. A row of the same name whose agent ended (state done) is reused from
-// scratch (its children are detached: a new agent never inherits them); any other existing row is
-// ErrExists.
+// scratch (its children are detached: a new agent never inherits them), unless n.Live says its
+// process still runs; any other existing row is ErrExists.
 func (s *Store) Register(n NewAgent, c Caps, now int64) (Agent, error) {
 	if n.Role == "" {
 		return Agent{}, errors.New("register: an agent needs a role")
@@ -372,7 +382,7 @@ func (s *Store) Register(n NewAgent, c Caps, now int64) (Agent, error) {
 	case errors.Is(err, sql.ErrNoRows):
 	case err != nil:
 		return Agent{}, err
-	case state == "done":
+	case state == "done" && !n.Live:
 		reuse = true
 	default:
 		return Agent{}, fmt.Errorf("agent %s: %w", n.Name, ErrExists)

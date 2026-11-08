@@ -26,6 +26,76 @@ func TestHookEventSetsState(t *testing.T) {
 	}
 }
 
+// A nested Claude under the agent's identity (claude -p in a shell) runs lea's hooks with its own
+// session (#350): its SessionEnd does not end the agent, its Stop does not take the agent's
+// messages, its prompt does not name it. The agent's own session still ends it.
+func TestHooksOfAForeignSessionLeaveTheAgent(t *testing.T) {
+	e := start(t)
+	hook := func(event, session string, payload map[string]any) {
+		t.Helper()
+		if err := call(t, e.bus, "dev", "hook_event", map[string]any{"event": event, "session_id": session, "payload": payload}, nil); err != nil {
+			t.Fatal(err)
+		}
+	}
+	state := func() string {
+		t.Helper()
+		var as []agentView
+		call(t, e.api, "", "agents_list", nil, &as)
+		if len(as) != 1 {
+			t.Fatalf("agents=%v", as)
+		}
+		return as[0].State
+	}
+	hook("SessionStart", "own", map[string]any{"source": "startup"})
+	hook("UserPromptSubmit", "own", map[string]any{})
+	// The nested Claude starts, works and ends while the agent works.
+	hook("SessionStart", "nested", map[string]any{"source": "startup"})
+	hook("UserPromptSubmit", "nested", map[string]any{})
+	hook("Stop", "nested", map[string]any{})
+	if st := state(); st != "working" {
+		t.Fatalf("state=%s after a nested Stop", st)
+	}
+	call(t, e.api, "", "msg_send", map[string]any{"to": "dev", "body": "ping", "kind": "note"}, nil)
+	var r struct {
+		Block  bool
+		Reason string
+	}
+	if err := call(t, e.bus, "dev", "stop_check", map[string]any{"session_id": "nested"}, &r); err != nil || r.Block {
+		t.Fatalf("a nested stop took the agent's messages: %+v %v", r, err)
+	}
+	var u struct{ Count int }
+	if call(t, e.bus, "dev", "context_unread", map[string]any{"session_id": "nested"}, &u); u.Count != 0 {
+		t.Fatalf("a nested prompt was told of the agent's messages: %+v", u)
+	}
+	hook("SessionEnd", "nested", map[string]any{})
+	if st := state(); st != "working" {
+		t.Fatalf("state=%s: a nested SessionEnd ended the agent", st)
+	}
+	if a, err := e.d.st.AgentByKey("lea-a/dev"); err != nil || a.SessionID != "own" {
+		t.Fatalf("recorded session %q (%v)", a.SessionID, err)
+	}
+	// The agent's own stop still gets its messages; its own SessionEnd ends it.
+	if err := call(t, e.bus, "dev", "stop_check", map[string]any{"session_id": "own"}, &r); err != nil || !r.Block {
+		t.Fatalf("own stop not blocked: %+v %v", r, err)
+	}
+	hook("SessionEnd", "own", map[string]any{})
+	if st := state(); st != "done" {
+		t.Fatalf("state=%s after its own SessionEnd", st)
+	}
+}
+
+// A cleared session is still the agent's: it moves to the new session id.
+func TestSessionStartClearMovesTheAgentToItsNewSession(t *testing.T) {
+	e := start(t)
+	call(t, e.bus, "dev", "hook_event", map[string]any{"event": "SessionStart", "session_id": "s1", "payload": map[string]any{"source": "startup"}}, nil)
+	call(t, e.bus, "dev", "hook_event", map[string]any{"event": "SessionStart", "session_id": "s2", "payload": map[string]any{"source": "clear"}}, nil)
+	call(t, e.bus, "dev", "hook_event", map[string]any{"event": "UserPromptSubmit", "session_id": "s2", "payload": map[string]any{}}, nil)
+	a, err := e.d.st.AgentByKey("lea-a/dev")
+	if err != nil || a.SessionID != "s2" || a.State != "working" {
+		t.Fatalf("agent %+v (%v)", a, err)
+	}
+}
+
 func TestStopCheckBlocksThenCaps(t *testing.T) {
 	e := start(t)
 	call(t, e.bus, "dev", "agents_list", nil, nil)

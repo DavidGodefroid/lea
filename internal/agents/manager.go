@@ -277,10 +277,14 @@ type Manager struct {
 	backoff map[string]*backoff
 	// tearing holds, per agent key, the teardown of its stack in flight (closed when it is over;
 	// under tmu). A new agent of that name waits for it.
-	tmu      sync.Mutex
-	tearing  map[string]chan struct{}
-	clock    func() time.Time
-	schedule func(time.Duration, func())
+	tmu     sync.Mutex
+	tearing map[string]chan struct{}
+	// missed holds, per agent key, when reconcile first found the agent not live (under mu): it
+	// is done only when it is still not live doneGrace later (#350; 0: at the first miss).
+	missed    map[string]time.Time
+	doneGrace time.Duration
+	clock     func() time.Time
+	schedule  func(time.Duration, func())
 	// later runs the steps of a redraw (redrawAfterReattach).
 	later func(time.Duration, func())
 }
@@ -297,7 +301,7 @@ func NewManager(cfg Config) *Manager {
 	}
 	m := &Manager{cfg: cfg, conns: map[string]Session{}, shown: map[string]string{}, fresh: map[string]bool{},
 		shells: map[string][]string{}, recheck: map[string]bool{},
-		backoff: map[string]*backoff{}, tearing: map[string]chan struct{}{}, clock: time.Now,
+		backoff: map[string]*backoff{}, tearing: map[string]chan struct{}{}, missed: map[string]time.Time{}, doneGrace: doneGrace, clock: time.Now,
 		schedule: func(d time.Duration, f func()) { time.AfterFunc(d, f) },
 		later:    func(d time.Duration, f func()) { time.AfterFunc(d, f) }}
 	m.feed.v = 1 // a first watch (since 0) returns at once
@@ -1000,6 +1004,9 @@ func (m *Manager) reconcile(ctx context.Context, container string, s Session) er
 	for _, a := range as {
 		known[a.Name] = true
 		p, has := byAgent(ps, a.Name)
+		if isLive[a.Name] {
+			delete(m.missed, a.Key)
+		}
 		switch {
 		case isLive[a.Name] && !has:
 			if _, err := m.newPane(ctx, s, container, a, nil, true); err != nil {
@@ -1017,6 +1024,20 @@ func (m *Manager) reconcile(ctx context.Context, container string, s Session) er
 		case !isLive[a.Name] && (!has || p.Dead) && a.State != "done" && a.State != stateStopped && !store.Suspended(a.State):
 			// A stopped agent is not done: its container is gone, and the next one starts it again.
 			// A suspended one waits for a decision or a message, which resumes it (SoftStop).
+			// One miss is not enough (#350): a live agent that a single listing missed would turn
+			// done and its name be given to the next spawn. It is done when it is still not live
+			// doneGrace after the first miss; a reconcile then looks again.
+			now := m.clock()
+			first, ok := m.missed[a.Key]
+			if !ok && m.doneGrace > 0 {
+				m.missed[a.Key] = now
+				m.schedule(m.doneGrace, func() { m.refresh(container, s) })
+				continue
+			}
+			if ok && now.Sub(first) < m.doneGrace {
+				continue
+			}
+			delete(m.missed, a.Key)
 			if err := m.cfg.Store.SetState(a.Key, "done", "", m.cfg.Now()); err != nil {
 				return err
 			}
@@ -1146,6 +1167,9 @@ func shellNum(name string) int {
 	n, _ := strconv.Atoi(strings.TrimPrefix(name, "sh-"))
 	return n
 }
+
+// doneGrace is how long an agent reconcile found not live must stay so before it is done.
+const doneGrace = 3 * time.Second
 
 const (
 	// redrawDelay leaves a respawned `docker exec … abduco -a` time to attach.
@@ -1637,17 +1661,22 @@ func (m *Manager) show(ctx context.Context, s Session, container string, ps []pa
 	return nil
 }
 
-// freeName is the lowest free <prefix>-N.
-func (m *Manager) freeName(container, prefix string) (string, error) {
+// freeName is the lowest free <prefix>-N: a name no row holds, whatever its state, and no running
+// process (live) answers to (#350). A done row's name is not reused: a row can say done while its
+// agent still runs (a missed liveness check, a foreign hook), and a spawn under its name would
+// hand that live agent the new brief, repo and branch. A name comes free again once its row is
+// removed (the deck's x, lea stop --forget, a new container).
+func (m *Manager) freeName(container, prefix string, live []string) (string, error) {
 	as, err := m.cfg.Store.SpawnedAgents(container)
 	if err != nil {
 		return "", err
 	}
 	taken := map[string]bool{}
 	for _, a := range as {
-		if a.State != "done" {
-			taken[a.Name] = true
-		}
+		taken[a.Name] = true
+	}
+	for _, n := range live {
+		taken[n] = true
 	}
 	for i := 1; ; i++ {
 		if n := fmt.Sprintf("%s-%d", prefix, i); !taken[n] {
@@ -1756,12 +1785,17 @@ func (m *Manager) New(ctx context.Context, r NewRequest) (Row, error) {
 	if err := checkWorkdir(r.Workdir); err != nil {
 		return Row{}, err
 	}
+	// The agents whose process runs: none of them is given to this spawn, whatever its row says.
+	live, err := m.cfg.Containers.Live(ctx, r.Container)
+	if err != nil {
+		return Row{}, err
+	}
 	if r.Name == "" {
 		prefix := r.NamePrefix
 		if prefix == "" {
 			prefix = r.Profile
 		}
-		if r.Name, err = m.freeName(r.Container, prefix); err != nil {
+		if r.Name, err = m.freeName(r.Container, prefix, live); err != nil {
 			return Row{}, err
 		}
 	}
@@ -1770,7 +1804,7 @@ func (m *Manager) New(ctx context.Context, r NewRequest) (Row, error) {
 		caps.MaxChildren = roles.MaxChildren
 	}
 	a, err := m.cfg.Store.Register(store.NewAgent{Container: r.Container, Name: r.Name, Profile: r.Profile, Model: r.Model, Workdir: r.Workdir,
-		Role: r.Role, Parent: r.Parent, Repo: r.Repo, Branch: r.Branch}, caps, m.cfg.Now())
+		Role: r.Role, Parent: r.Parent, Repo: r.Repo, Branch: r.Branch, Live: slices.Contains(live, r.Name)}, caps, m.cfg.Now())
 	if err != nil {
 		return Row{}, err
 	}
@@ -2204,6 +2238,12 @@ func (m *Manager) restartWith(ctx context.Context, s Session, container string, 
 	}
 	if err := m.cfg.Store.SetState(a.Key, "unknown", "", m.cfg.Now()); err != nil {
 		return err
+	}
+	if session == "" {
+		// Started afresh: its new session is its own, not a foreign one (#350).
+		if err := m.cfg.Store.ClearSession(a.Key); err != nil {
+			return err
+		}
 	}
 	_, err = m.newPane(ctx, s, container, a, args, false)
 	return err
