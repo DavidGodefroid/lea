@@ -672,6 +672,10 @@ func barePush(wt, gh, proxy string) (s, bare, url, check string) {
 		"common=$(" + git + " rev-parse --path-format=absolute --git-common-dir) || exit 1\n" +
 		`repo="$gd/` + pushRepo + `"` + "\n" +
 		shellWords([]string{mkdirPath, "-p"}) + ` "$repo" || exit 1` + "\n" +
+		// Left there before the call: a link would send the writes below elsewhere, commondir or
+		// gitdir make git read another repository.
+		`if [ -L "$repo" ] || [ -L "$repo/config" ] || [ -L "$repo/objects" ] || [ -L "$repo/objects/info" ] || [ -L "$repo/objects/info/alternates" ] || ` +
+		`[ -e "$repo/commondir" ] || [ -e "$repo/gitdir" ]; then ` + refuse("the push repository was changed") + "; fi\n" +
 		// A fresh config, before git init reads it: nothing a previous call left in it applies.
 		`echo '[core]' > "$repo/config" || exit 1` + "\n" +
 		shellWords([]string{gitPath, "init", "-q", "--bare", "--template="}) + ` "$repo" || exit 1` + "\n" +

@@ -126,4 +126,17 @@ func TestPushFromAWorktreeTrackingMain(t *testing.T) {
 	if out := sh(wt, "git status -sb"); !strings.Contains(out, "...origin/feat/x") || strings.Contains(out, "ahead") {
 		t.Fatalf("status after the push: %s", out)
 	}
+	// What an agent leaves in the reused push repository makes the next push refuse, not follow it.
+	gd := sh(wt, "git rev-parse --absolute-git-dir")
+	d := Decide("Bash", bash("git push -u origin feat/x"), c, []Grant{g}, now, false)
+	for _, plant := range []string{"echo " + filepath.Join(repo, ".git") + " > " + filepath.Join(gd, pushRepo, "commondir"),
+		"mv " + filepath.Join(gd, pushRepo) + " " + gd + "/elsewhere && ln -s elsewhere " + filepath.Join(gd, pushRepo)} {
+		sh(wt, plant)
+		x := exec.Command("/bin/sh", "-c", d.Command)
+		x.Dir = wt
+		if out, err := x.CombinedOutput(); err == nil || !strings.Contains(string(out), "the push repository was changed") {
+			t.Fatalf("%s: push ran: %v %s", plant, err, out)
+		}
+		sh(wt, "rm -f "+filepath.Join(gd, pushRepo, "commondir"))
+	}
 }
