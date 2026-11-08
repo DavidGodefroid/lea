@@ -76,7 +76,7 @@ func TestGrantRequestReleaseCreate(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if g := g.(grants.Grant); g.Action != grants.ReleaseCreate || g.Tag != "v0.15.*" || g.Agent != lead.Key || g.GitHub != "github.com/o/fixture" {
+	if g := g.(grants.Grant); g.Action != grants.ReleaseCreate || g.Tag != "v0.15.*" || g.Agent != lead.Key || g.Pin != "github.com/o/fixture" {
 		t.Fatalf("grant %+v", g)
 	}
 	gs, _ := e.d.st.ActiveGrants("lea-a", e.clock.Load())

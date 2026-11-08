@@ -1,0 +1,6 @@
+status 0
+-- calls
+core [allow] [--container] [lea-$ID] [--projects] [$W/projects] [merge] [--repo] [api] [--check-pin] [o/api] [--for] [2h]
+-- lea
+lea: note: lea grant add is now lea allow merge --repo api --for 2h (lea grant goes away in the next minor release)
+-- stdout
