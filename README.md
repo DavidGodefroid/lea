@@ -99,7 +99,10 @@ lox add locksql                               # when your agents need a database
 On a first run lea initialises itself: it checks that Docker answers, pulls and verifies the
 images, installs its AppArmor profile on Linux hosts that use it (it needs `sudo` once: when
 `sudo` would prompt, lea stops with "the AppArmor profile 'lea' needs sudo once: run lea init,
-then lea"), records the projects directory, then opens the deck. The projects directory is `LEA_PROJECTS_DIR`
+then lea"), records the projects directory, then opens the deck. Before all that, on a
+terminal and while `LEA_DECK` is not set, it asks once whether you want the deck or your own
+tool in the lea container (see [Without the deck](#without-the-deck)): it records the answer
+and the command that switches it, and opens that tool instead of the deck on a no. The projects directory is `LEA_PROJECTS_DIR`
 when you preset it (in the environment or in `~/.config/lea/lea.conf`: a preset value wins over
 the working directory); when it is unset, it is the directory you ran `lea` from. If that
 directory cannot be one (`/`, your home directory or a parent of it, or one that overlaps
@@ -136,8 +139,9 @@ lea
 The installer checks the requirements, downloads the release for your platform and verifies its
 checksum and the release's signature (see [Verify a release](#verify-a-release)), links
 `~/.local/bin/lea`, then runs `lea init`, which asks for your projects directory and pulls the
-images. In the first agent, run `/login` once (Claude Code's own login, kept per
-projects directory). Press `n` for another agent.
+images. The first agent is a Control Tower (see [Control tower](#control-tower)); in it, run
+`/login` once (Claude Code's own login, kept per projects directory). Press `n` for another
+agent, `N` for another Control Tower.
 
 ### Requirements
 
@@ -202,6 +206,8 @@ closing the deck, or the terminal, does not stop it: the next `lea` reattaches.
 | `ctrl+space` | back to the column (and forth) |
 | `space` | the next agent that needs you (a permission, a message for you) |
 | `n` | start a new agent |
+| `N` | start a new Control Tower: a lead on Claude, labelled `Control Tower`, running `/lea:control-tower` |
+| `P`, then a digit | start a new agent on another provider (any other key cancels) |
 | `e` | rename the selected agent (enter saves, esc cancels, empty clears) |
 | `m` / `t` | send the selected agent a message / read its messages (see below) |
 | `a` / `d` / `A` | allow / deny / always allow the selected agent's permission request |
@@ -225,8 +231,8 @@ closing the deck, or the terminal, does not stop it: the next `lea` reattaches.
 The mouse works too: click a row to select it, scroll to move, right-click a row for its menu
 (Split horizontally / Split vertically open a shell beside the agent, as Terminator does; the
 shell shows with its agent and steps aside while another agent is shown). A right-click anywhere
-else in the column opens the deck's own menu: new agent, new shell, new folder, sounds, theme,
-keys, detach; a click on a folder folds or unfolds it; ctrl + right-click makes a folder, holding the
+else in the column opens the deck's own menu: new agent, new Control Tower, new agent on another
+provider, new shell, new folder, sounds, theme, keys, detach; a click on a folder folds or unfolds it; ctrl + right-click makes a folder, holding the
 agent under the pointer. The
 pointer over a row shows its whole name (cut in the row when long) with the agent's name, role,
 profile and state in the bottom border.
@@ -298,11 +304,13 @@ profile and state in the bottom border.
 ## Without the deck
 
 The deck is optional. `lea config deck off` (or `sh install.sh --no-deck [--tool CMD]`, or
-answering no in `lea init`) makes `lea` run your own tool inside the lea container instead:
+answering no to the deck question of the first run or of `lea init`) makes `lea` run your own tool inside the lea container instead:
 Claude Code by default, or any command (`lea config tool codex`, `lea config tool aider --model
 x`; a command and its arguments, never run through a shell). Arguments after `lea` go to it
 (`lea --resume`). `lea config deck on` brings the deck back. Either switch applies at the next
-`lea`, with the same container: nothing is rebuilt and running agents are not touched.
+`lea`, with the same container: nothing is rebuilt and running agents are not touched. An install
+made before the deck was optional (no `LEA_DECK` in its user config) is asked once, at its next
+`lea` on a terminal, and the answer is recorded.
 
 What stays the same: the container and its confinement (proxy and egress allowlist, seccomp,
 AppArmor, no host secrets), grants, lea's daemon and MCP server, and the Locks' sockets. The
@@ -579,7 +587,8 @@ certificate, never the key, goes to the gate, to lea-keyproxy and into the agent
 
 ## Teams of agents
 
-Every agent has a role: `lead`, `dev` (the default) or `reviewer`. The first agent is a lead.
+Every agent has a role: `lead`, `dev` (the default) or `reviewer`. The first agent is a lead: a
+Control Tower (see below).
 Only you change a role (`r` in the deck, `lea role <agent> <role>`, `lea new -r reviewer`).
 Agents get lea's tools through MCP:
 
@@ -701,7 +710,30 @@ they come from your host's `settings.json` only (below).
   `additionalDirectories`, and `defaultMode` unless it is `bypassPermissions`) to lea's, read
   from your host's `~/.claude/settings.json` by lea on the host and mounted read-only, never from
   the copy. So a rule you add with `/permissions` inside lea, or the deck's "always", is not kept:
-  add it to your host's `settings.json`, then restart lea (`lea stop`, then `lea`).
+  add it with `lea config claude` (below) or to your host's `settings.json`, then restart lea
+  (`lea stop --all`, then `lea`).
+- **Your base settings for lea: `lea config claude`** (#334). Without editing a file, and without
+  touching your own Claude Code outside lea:
+
+  ```sh
+  lea config claude                           # every effective setting, with its source
+  lea config claude defaultMode auto          # default, acceptEdits, plan, dontAsk or auto
+  lea config claude defaultMode --unset       # back to your settings.json's, else Claude Code's
+  lea config claude allow add 'Bash(make *)'  # allow, ask, deny, additionalDirectories
+  lea config claude allow remove 'Bash(go *)' # lea's built-in rules and your host's can go too
+  lea config claude env MY_TOOL_HOME /opt/tool
+  lea config claude model opus                # also language, outputStyle, alwaysThinkingEnabled
+  ```
+
+  They are kept in `claude.json` next to your `lea.conf` (never in `~/.claude/settings.json`),
+  outrank your host's `permissions`, which outrank lea's image, and apply to the containers
+  started from then on (`lea stop --all`, then `lea`). `lea doctor` lists them; `lea config
+  export` never carries them (`--include-personal` neither). lea keeps what keeps it working and
+  its guards effective, and refuses it with the reason: its hooks, `allowManagedPermissionRulesOnly`,
+  `disableBypassPermissionsMode` (so no `bypassPermissions`: `dontAsk` or `auto` drop the prompts
+  and keep the guards), the status line and its own variables (`LEA_*`, `OTEL_*`, `SSH_AUTH_SOCK`,
+  `GH_CONFIG_DIR`, `GLAB_CONFIG_DIR`, the proxy's, telemetry and update switches). The command
+  runs on the host only, and the agents' guard denies editing lea's configuration.
 - **The guard fails closed.** lea's PreToolUse hook denies a call it cannot check: lea missing, a
   crash or a timeout (`onFailure: "block"`), a bus that does not answer, a Claude Code without a
   lea agent identity (`LEA_AGENT`: run Claude in lea as an agent, from the deck or
@@ -751,6 +783,22 @@ Needs you: palette for dark-mode
 ```
 
 Ask it for the `board`, the `detail` of an agent, or to `stop` one, in your own words.
+
+It asks you one question at a time, whatever the number of agents with a question for you: its
+`user_ask` tool opens a question when none is open and queues the others (an incident first,
+then what blocks an agent, then the rest, in order); the agents keep working meanwhile. Your next
+prompt, or your answer to its `AskUserQuestion`, answers the open question, and the tower relays the answer to the agent it came from, then
+asks the next one. While you have a question, lea denies the tower a second `AskUserQuestion`. A
+question left unanswered `LEA_QUESTION_REMIND` minutes (120) is asked once more, prefixed with
+`reminder:`. The deck shows the tower as `❓ 1 · 3 queued`; `lea questions` lists the questions,
+`lea questions drop ID` drops a queued one.
+
+When `lea` opens the deck on a container with no agent running (the very first launch, or every
+agent ended), the agent it starts is a Control Tower: a lead on Claude, labelled
+`Control Tower`, whose first prompt runs `/lea:control-tower` (`lea deck-open --no-default`
+starts nothing). In the deck, `N` starts another one (`Control Tower 2`…). A Control Tower
+always runs on the `claude` provider, whatever the default one, since the skill and its hook ship
+in the Claude plugin. Only you start one: agents cannot.
 
 The tower never does the work itself, not even a `git push`: every request goes to an agent. The
 plugin enforces it with a hook: once `/lea:control-tower` runs, the session may only use lea's
@@ -1005,7 +1053,9 @@ lea                          # the deck, for $LEA_PROJECTS_DIR (unset: the worki
                              # (LEA_DECK=0: your own tool in the lea container, see Without the deck)
 lea attach [--print] [AGENT] # the tool in the lea container, or an agent's terminal (--print: the command)
 lea requests                 # what waits for you; lea approve ID [always], lea deny ID [reason]
+lea questions [drop ID]      # the control towers' questions to you: the open one, then the queue
 lea config deck on|off       # the deck, or your own tool (lea config tool CMD...), from the next lea
+lea config claude [KEY ...]  # Claude's base settings for your agents (defaultMode, allow, deny, env...)
 lea new [name] [-- args]     # one more agent (its CLI's arguments after --; -p provider, -m model)
 lea shell [-- cmd...]        # a shell, or one command, in the same lea
 lea stop [--all] [--forget] # stop this lea (--all: every lea); the next lea resumes its agents
@@ -1092,6 +1142,7 @@ read-only. The screen runs in the deck on the host: agents cannot open or drive 
 | `LEA_PROVIDERS` | `~/.config/lea/providers` | your OpenAI-compatible endpoints and their key files |
 | `LEA_AUTO_RESUME`, `LEA_RESUME_DELAY` | on, `60` | resume agents stopped on a usage limit, so many seconds after its reset (`0`: off) |
 | `LEA_STACK_IDLE` | `10` | minutes an agent stays idle before lea stops (not removes) the containers it started in the nested Podman (`0`: never); `lea board` lists what it freed |
+| `LEA_QUESTION_REMIND` | `120` | minutes a control tower's question waits for your answer before the tower asks it again, once, prefixed with `reminder:` (`0`: never) |
 | `LEA_AGENT_CPUS` | `4` | each agent's CPU window, the least shared CPUs: the agent, its tools and its nested containers run there, so `nproc`, PHPStan, Go… see that many CPUs (`0`: no window) |
 | `LEA_HEAVY_SLOTS`, `LEA_HEAVY_WORKERS` | `0` (¾ of the CPUs ÷ workers), `4` | heavy jobs (`lea heavy -- <command>`): how many run at once per container, and the CPUs and workers each gets |
 | `LEA_ADMIT_CPU_PSI`, `LEA_ADMIT_MEM_PCT`, `LEA_ADMIT_MEM_PSI`, `LEA_ADMIT_IO_PSI`, `LEA_ADMIT_LOAD` | `40`, `85`, `10`, `40`, `2` | [host pressure](#host-pressure) above which new agents wait: PSI in percent, memory in percent of the lea container's limit (the host's from 90 %), the host's load per CPU (`0`: that one off) |
@@ -1253,6 +1304,13 @@ so. Changes apply after `lea init` (endpoints, keys, images, locksql) or `lea st
   its option says; `LEA_ALLOW_GATEWAY=1` (in your configuration or the environment) accepts a plain
   internal network instead, with a warning. `lea doctor` prints the gateway mode of each internal
   network and fails on one that is not isolated (a warning under `LEA_ALLOW_GATEWAY=1`).
+- The agents resolve no external name: lea starts each agent container with `--dns 192.0.2.1`
+  (TEST-NET-1, never routed; not a loopback address, which Docker may query from the host's
+  namespace), out of reach of its internal network, so Docker's embedded resolver answers the names of the containers on its
+  network (`lea-proxy`) and forwards nothing to the host's resolver, which would otherwise carry a
+  query name past the proxy. lea-proxy resolves the names the agents reach; nested containers use
+  the same resolver. `lea doctor` fails on a running container that resolves `example.com`, and warns
+  about one an older lea started without this resolver.
 - Work in lea, not on the host, inside the projects directory: an agent can write files your host
   tools would run. When the last session closes, lea reports changes to git hooks, risky git
   configuration, `.mcp.json` and `.claude/` settings.

@@ -647,6 +647,38 @@ merge_permissions() {
   done
 }
 
+# lea config claude (#334): its removals take the image's rules out too, an entry is there once,
+# and its env and preferences join the managed settings without replacing a key the image sets.
+@test "the entrypoint applies lea config claude's settings, never over lea's own keys (#334)" {
+  merge_permissions
+  printf '%s\n' '{"allow":["Bash(make *)","Bash(ls)","Bash(go *)"],"deny":["Read(./.env)","Read(./.env)"],
+    "remove":{"allow":["Bash(go *)","Bash(staticcheck *)"],"deny":7},"defaultMode":"auto",
+    "env":{"MY_TOOL_HOME":"/opt/tool","LEA_BUS_SOCK":"/tmp/elsewhere","N":3},
+    "settings":{"model":"opus","alwaysThinkingEnabled":true,"hooks":{},"permissions":{},"disableAllHooks":true,
+      "allowManagedHooksOnly":true,"statusLine":"x","allowManagedPermissionRulesOnly":false,"x":{"y":1}}}' \
+    >"$r/etc/lea/claude-permissions.json"
+  merge_permissions
+  [ "$status" -eq 0 ]
+  [ "$(jq -c .permissions.allow "$M")" = '["Bash(go-cross *)","Bash(govulncheck *)","Bash(make *)","Bash(ls)"]' ]
+  [ "$(jq -c .permissions.deny "$M")" = '["Read(./.env)"]' ]
+  [ "$(jq -r .permissions.defaultMode "$M")" = auto ]
+  [ "$(jq -r .env.MY_TOOL_HOME "$M")" = /opt/tool ]
+  [ "$(jq -r '.env.N // "unset"' "$M")" = unset ]
+  [ "$(jq -r .model "$M")" = opus ]
+  [ "$(jq -r .alwaysThinkingEnabled "$M")" = true ]
+  for k in disableAllHooks allowManagedHooksOnly statusLine x; do
+    [ "$(jq -r --arg k "$k" '.[$k] // "unset"' "$M")" = unset ] || { echo "$k: $(jq -c --arg k "$k" '.[$k]' "$M")"; false; }
+  done
+  [ "$(jq -r .allowManagedPermissionRulesOnly "$M")" = true ]
+  [ "$(jq -r .permissions.disableBypassPermissionsMode "$M")" = disable ]
+  jq -e --slurpfile f "$I/managed-settings.json" '.hooks == $f[0].hooks and (.env | del(.MY_TOOL_HOME)) == $f[0].env' "$M" >/dev/null
+  # The result still passes lea doctor's check of the managed settings.
+  mkdir -p "$BATS_TEST_TMPDIR/mc/etc/claude-code"
+  cp "$M" "$BATS_TEST_TMPDIR/mc/etc/claude-code/managed-settings.json"
+  managed_check
+  [ "$status" -eq 0 ] || { echo "$output"; false; }
+}
+
 @test "the entrypoint keeps the managed settings root's, with no drop-in directory (#111)" {
   grep -q '^chown -R 0:0 /etc/claude-code$' "$I/entrypoint"
   grep -q '^chmod 0644 /etc/claude-code/managed-settings.json$' "$I/entrypoint"

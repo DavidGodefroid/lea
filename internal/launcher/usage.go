@@ -43,6 +43,8 @@ const Usage = `Usage:
   lea agents                  list agents (lea msg <agent> <text>, lea inbox, lea approvals, lea requests)
   lea requests                what waits for you: permissions and spawn requests of lea's agents
                               (lea approve ID [always], lea deny ID [reason]); Lock requests: lox run
+  lea questions [drop ID]     the control towers' questions to you: the open one, then the queue
+                              (one at a time); drop removes a queued one
   lea stop [--all] [--forget]
                               stop lea; its agents resume at the next lea (--forget drops them)
   lea config export [--output FILE] [--include-personal]
@@ -52,6 +54,10 @@ const Usage = `Usage:
   lea config deck on|off      the deck, or your own tool in the lea container (from the next lea)
   lea config tool CMD [ARG...]
                               the tool lea runs in the lea container without the deck (claude)
+  lea config claude [KEY VALUE|KEY --unset|LIST add|remove ENTRY]
+                              Claude's base settings for your agents (defaultMode, allow, ask,
+                              deny, additionalDirectories, env, model...), each with its source;
+                              kept in lea's configuration, from the next lea container
   lea update [--deps ask|all|none]
                               the latest lea, then each newer locksql release (lockmq,
                               lockfile, locklog: their launchers update themselves)

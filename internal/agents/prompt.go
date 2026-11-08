@@ -34,7 +34,8 @@ func firstPrompt(a store.Agent, repo, worktree string, brief bool, covered []str
 		if repo != "" {
 			fmt.Fprintf(&b, " of the repository %s", repo)
 		}
-		b.WriteString(" (create it with git worktree add if it does not exist), never in the shared checkout.")
+		// --no-track (#381): a branch made from origin/main would track main.
+		fmt.Fprintf(&b, " (create it with git worktree add --no-track -b %s %s <base> if it does not exist), never in the shared checkout.", a.Branch, worktree)
 		// Grants (#271, #319): the forms lea runs without asking, for what covers the agent when it
 		// starts; otherwise the lea allow command the user runs. grants_list stays the live truth.
 		b.WriteString(deliveryForms(a, covered))

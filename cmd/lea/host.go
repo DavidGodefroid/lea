@@ -218,6 +218,9 @@ func runDaemon(stderr io.Writer) int {
 		return 1
 	}
 	d.SetStackIdle(launcher.StackIdleSetting(os.Getenv))
+	// A control tower's question the user leaves unanswered is reminded once (#95).
+	d.SetQuestionRemind(launcher.QuestionRemindSetting(os.Getenv))
+	go d.RunQuestionReminders(ctx)
 	d.SetHeavy(launcher.HeavySettings(os.Getenv))
 	// Same pattern for the admission thresholds (#132, P2): the daemon samples the host and each
 	// lea container, and refuses or queues new agents under pressure.
@@ -819,8 +822,9 @@ func runDeckOpen(args []string, stderr io.Writer) int {
 			return 0
 		}
 	}
+	// The default agent is a Control Tower (#339): a lead on Claude running the control-tower skill.
 	if err := hostCallT("agent_new", map[string]any{"container": container, "workdir": workdir,
-		"profile": "claude", "role": "lead", "focus": true}, nil, agentTimeout); err != nil {
+		"tower": true, "focus": true}, nil, agentTimeout); err != nil {
 		return fail(err)
 	}
 	return 0

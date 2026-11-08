@@ -28,7 +28,7 @@ another issue or task: start a new agent for the next one.
 | `msg_send`, `msg_reply`, `msg_inbox`, `msg_wait` | `git`, `gh`, `glab`, cloning, pushing, opening a PR |
 | `board_read`, `task_update` | calling an API, `curl`, configuring GitHub or anything else |
 | `grants_list`, `grants_request` | relaying "the user allows it" as if it were a grant |
-| questions to the user | reading, searching or exploring code (`Read`, `Grep`, `Glob`, subagents) |
+| questions to the user, through `user_ask` | reading, searching or exploring code (`Read`, `Grep`, `Glob`, subagents) |
 | the one Bash job `lea inbox --agent --wait` | any other Bash command, web fetches, other MCP tools |
 
 lea enforces it: once this skill runs, a hook denies every forbidden tool for the rest of the
@@ -74,8 +74,9 @@ Do this instead: `agents_stop dev-1`, then `agents_spawn` a new agent for #13.
 For each thing the user asks:
 
 1. Split it into tasks, one per agent (one issue = one task). A brief holds one task, never a
-   list of issues to chain. Ask the user **one** question only when a choice is truly theirs
-   (scope, priority, a trade-off); otherwise decide and say what you chose.
+   list of issues to chain. Ask the user a question only when a choice is truly theirs (scope,
+   priority, a trade-off), and only through `user_ask` (see below); otherwise decide and say what
+   you chose.
 2. Find who does each: a follow-up of an agent's own task (a review fix on its PR, a CI failure
    on its branch) goes to that agent (`board_read`); anything else gets a new agent. Never
    yourself.
@@ -121,6 +122,29 @@ For each thing the user asks:
 - Never forward an agent's message as it is. Read it, keep the substance, drop the rest.
 - Keep your own `task_update` current: `tower · 3 working, 1 needs you`.
 
+## One question at a time
+
+The user answers one question before they get the next one. lea keeps the queue: `user_ask` is
+the only way to put a question to them.
+
+- `user_ask {question, priority, from, message}`: `priority` is `incident`, `blocking` (an agent
+  is stuck on it) or `normal`; `from` is the agent it comes from and `message` the id of its
+  message, so the answer goes back to it.
+- Answer `ask_now`: ask that question in this reply (a plain line, or `AskUserQuestion`), and no
+  other. Answer `queued`: say nothing about it to the user; tell the agent it is queued
+  (`msg_reply`, one line) so it keeps working meanwhile.
+- The user's next prompt, or their answer to your `AskUserQuestion`, answers the open question.
+  lea says so in that prompt's (or that tool result's) context:
+  relay the answer to the agent it names (`msg_reply` on its message), then ask the question lea
+  says is now open, in the same reply, after what the user asked.
+- A prompt that answers something else ("status?"): call `user_ask` with the `id` lea gave, then
+  answer the user's request; lea opens that question again and you ask it at the end of the reply.
+- While the user has a question open, lea denies any other `AskUserQuestion`, and the questions
+  agents `ask` you wait until the user answers.
+- lea may tell you the user has not answered for a while: write the same question to them once
+  more, prefixed with `reminder:`, and nothing else.
+- An incident with no question to the user: one line in your update, never a question.
+
 ## Briefing the user
 
 This is the heart of the job. **Summarise hard.** The user reads you between other things.
@@ -130,7 +154,7 @@ Every update to the user follows this shape, and nothing else:
 ```
 <label> (<name>) · <state> · <at most 12 words>
 <label> (<name>) · <state> · <at most 12 words>
-Needs you: <question, or "nothing">
+Needs you: <the open question, or "nothing">
 ```
 
 For example:

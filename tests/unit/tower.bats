@@ -27,7 +27,7 @@ tool() {
 @test "in tower mode only the team's tools pass" {
   prompt "/lea:control-tower"
   for t in mcp__lea__agents_spawn mcp__lea__agents_list mcp__lea__msg_send mcp__lea__msg_reply mcp__lea__msg_inbox \
-           mcp__lea__board_read mcp__lea__task_update mcp__lea__grants_list mcp__lea__grants_request AskUserQuestion ToolSearch; do
+           mcp__lea__board_read mcp__lea__task_update mcp__lea__grants_list mcp__lea__grants_request mcp__lea__user_ask AskUserQuestion ToolSearch; do
     [ "$(tool "$t")" = allow ]
   done
   for t in Edit Write Read Grep Glob Agent WebFetch NotebookEdit mcp__lea__lease_acquire mcp__github__create_pull_request; do
@@ -114,4 +114,11 @@ tool() {
     [ "$(tool Edit)" = allow ]
   done
   [ ! -e "$P/skills/tower-control" ]
+}
+
+@test "the skill asks the user one question at a time, through user_ask (#95)" {
+  k="$P/skills/control-tower/SKILL.md"
+  grep -q '^## One question at a time$' "$k"
+  grep -q 'user_ask {question, priority, from, message}' "$k"
+  grep -q 'prefixed with `reminder:`' "$k"
 }

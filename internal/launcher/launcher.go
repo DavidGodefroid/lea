@@ -432,6 +432,9 @@ func (l *Launcher) dispatch(args []string) error {
 		if len(rest) > 0 && rest[0] == "tool" {
 			return l.configTool(rest[1:])
 		}
+		if len(rest) > 0 && rest[0] == "claude" {
+			return l.configClaude(rest[1:])
+		}
 		return l.config(rest)
 	case "egress":
 		return l.egress(rest)
@@ -444,6 +447,11 @@ func (l *Launcher) dispatch(args []string) error {
 			if err := l.oldForm(args[0]); err != nil {
 				return err
 			}
+		}
+		// No LEA_DECK configured yet (#335): asked first, on a terminal, as the answer decides
+		// what follows (the deck's checks, or the tool's arguments).
+		if err := l.deckQuestion(); err != nil {
+			return err
 		}
 		// LEA_DECK=0 (#135): the user's own tool in the same container, without the deck or tmux.
 		noDeck := l.Cfg.NoDeck()
@@ -529,6 +537,10 @@ func (l *Launcher) doctor() error {
 	// Lea's Lock clients against the locks lox runs (lea#134).
 	if lerr := l.doctorLocks(proj); lerr != nil && err == nil {
 		err = lerr
+	}
+	// The user's own base settings for Claude (#334).
+	if cerr := l.claudeDoctor(); cerr != nil && err == nil {
+		err = cerr
 	}
 	if l.coreCall("allow", "--container", l.Cfg.ContainerName(proj), "--projects", proj, "check", "--state", l.Cfg.StateDir()) != nil && err == nil {
 		return exitError{1}

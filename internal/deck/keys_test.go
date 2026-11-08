@@ -188,7 +188,7 @@ func TestQuestionMarkShowsTheKeysAndAnyKeyClosesThem(t *testing.T) {
 	}
 	ls := viewLines(m)
 	all := strings.Join(ls, "\n")
-	for _, want := range []string{"enter", "show", "n", "new agent", "s", "new shell", "e", "rename", "x", "stop", "?", "any key closes"} {
+	for _, want := range []string{"enter", "show", "n", "new agent", "N", "new Control Tower", "P", "new, other provider", "s - |", "new shell", "e", "rename", "x", "stop", "?", "any key closes"} {
 		if !strings.Contains(all, want) {
 			t.Fatalf("key list lacks %q:\n%s", want, all)
 		}

@@ -63,6 +63,19 @@ ok() { echo "ok   $1"; }
 ko() { echo "FAIL $1"; rc=1; }
 cid() { docker container inspect -f '{{.Id}}' "$name" 2>/dev/null || true; }
 
+# 0. A configuration without LEA_DECK (an install made before the deck was optional, #335), on a
+# pty: lea asks the deck question once; n, then Enter (the default command) runs Claude Code in
+# lea-<id> without the deck, and the answer is recorded so the next lea asks nothing.
+printf 'n\n\n' | script -qec "timeout 600 $lea --version" /dev/null >"$work/ask.log" 2>&1 || true
+if grep -q 'Use the lea deck' "$work/ask.log" && grep -q '(Claude Code)' "$work/ask.log" && ! tmux -L lea has-session -t "=$name" 2>/dev/null; then
+  ok "no LEA_DECK: lea asks the deck question, n runs Claude Code without the deck"
+else ko "the deck question on a pty:"; tail -20 "$work/ask.log"; fi
+if grep -qx "LEA_DECK='0'" "$LEA_CONFIG" && grep -qx "LEA_TOOL='claude'" "$LEA_CONFIG"; then ok "the answer is recorded (LEA_DECK=0, LEA_TOOL=claude)"
+else ko "the answer is not recorded: $(cat "$LEA_CONFIG")"; fi
+printf '' | script -qec "timeout 600 $lea --version" /dev/null >"$work/ask2.log" 2>&1 || true
+if ! grep -q 'Use the lea deck' "$work/ask2.log" && grep -q '(Claude Code)' "$work/ask2.log"; then ok "the next lea asks nothing"
+else ko "the deck question came again:"; tail -20 "$work/ask2.log"; fi
+
 # 1. A fresh install's choice (lea init --no-deck --tool claude records the same two keys).
 "$lea" config deck off
 "$lea" config tool claude
