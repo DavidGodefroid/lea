@@ -55,11 +55,11 @@ lea__guard_overlap() {
   fi
 }
 
-# lea_update [--background | --deps ask|all|none]: a git checkout pulls and rebuilds; a release
-# install (no .git) is replaced by the latest release, installed with that release's own
-# installer. Then the updated lea checks its dependencies (lea_update_deps: ask, the default, asks
-# for each newer release; all takes them all, none none). --background is lea_update_background,
-# which never touches a dependency.
+# lea_update [--background | --deps ask|all|none]: a git checkout pulls and rebuilds; a Homebrew
+# install is upgraded by brew (lea__update_brew); any other release install (no .git) is replaced
+# by the latest release, installed with that release's own installer. Then the updated lea checks
+# its dependencies (lea_update_deps: ask, the default, asks for each newer release; all takes them
+# all, none none). --background is lea_update_background, which never touches a dependency.
 lea_update() {
   _up_deps=ask
   case ${1:-} in
@@ -68,7 +68,7 @@ lea_update() {
   esac
   case $_up_deps in ask|all|none) ;; *) lea_die "usage: lea update [--deps ask|all|none]" ;; esac
   if [ ! -e "$LEA_ROOT/.git" ]; then
-    lea__update_release "$_up_deps"
+    if lea__brew_install; then lea__update_brew "$_up_deps"; else lea__update_release "$_up_deps"; fi
     return 0
   fi
   git -C "$LEA_ROOT" pull --ff-only
@@ -143,6 +143,46 @@ lea__link_root() {
     case $_lr_l in /*) _lr=$_lr_l ;; *) _lr=$(dirname "$_lr")/$_lr_l ;; esac
   done
   (cd "$(dirname "$_lr")/.." && pwd -P)
+}
+
+# lea__brew_install: this lea is a Homebrew install, LEA_ROOT (physical) being
+# <cellar>/Cellar/lea/<version>/libexec, where the tap's formula puts it (libexec.install).
+lea__brew_install() {
+  _bi=${LEA_ROOT%/libexec}
+  [ "$_bi" != "$LEA_ROOT" ] && [ -n "${_bi##*/}" ] || return 1
+  case ${_bi%/*} in */Cellar/lea) return 0 ;; esac
+  return 1
+}
+
+# lea__update_brew ask|all|none: Homebrew owns this installation, so lea's installer never runs
+# (it would leave a second lea in ~/.local/share/lea-install, linked at ~/.local/bin/lea): brew
+# update, then brew upgrade davidgodefroid/tap/lea, failing with brew's status. The installation
+# brew links then (<prefix>/opt/lea/libexec, the new version or this one) pulls its images
+# (refresh-images) and checks the dependencies. Older versions are brew cleanup's to remove.
+lea__update_brew() {
+  command -v brew >/dev/null 2>&1 ||
+    lea_die "lea is managed by Homebrew but brew is not on PATH ($LEA_ROOT): put brew on PATH and rerun lea update, or run brew upgrade davidgodefroid/tap/lea"
+  lea_log "this lea is a Homebrew install ($LEA_ROOT): updating it with brew upgrade davidgodefroid/tap/lea"
+  _bu_rc=0
+  brew update >&2 || _bu_rc=$?
+  if [ "$_bu_rc" -ne 0 ]; then
+    lea_log "error: brew update failed (status $_bu_rc): lea is not updated"
+    exit "$_bu_rc"
+  fi
+  # brew update has just run: no second one inside brew upgrade.
+  HOMEBREW_NO_AUTO_UPDATE=1 brew upgrade davidgodefroid/tap/lea >&2 || _bu_rc=$?
+  if [ "$_bu_rc" -ne 0 ]; then
+    lea_log "error: brew upgrade davidgodefroid/tap/lea failed (status $_bu_rc): lea is not updated"
+    exit "$_bu_rc"
+  fi
+  _bu_opt=$(brew --prefix)/opt/lea/libexec
+  [ -x "$_bu_opt/libexec/lea-sh" ] || lea_die "brew upgraded lea but $_bu_opt has no libexec/lea-sh: run brew reinstall davidgodefroid/tap/lea"
+  _bu_new=$(lea_abspath "$_bu_opt")
+  "$_bu_new/libexec/lea-sh" refresh-images ||
+    lea_die "lea is upgraded by Homebrew ($_bu_new) but its images could not be refreshed: rerun lea update"
+  lea_log "updated; running lea containers keep their image until they stop (lea stop --all)"
+  # The new installation checks the dependencies, with its own pins and floors.
+  "$_bu_new/libexec/lea-sh" update-deps "${1:-ask}" || lea_log "warning: the dependencies were not checked (rerun lea update)"
 }
 
 # lea__update_release ask|all|none: resolves the latest release under LEA_RELEASES_URL, runs that release's
@@ -263,6 +303,13 @@ lea__update_background() {
   if [ "$1" -eq 0 ] && [ "$5" -ne "$2" ]; then
     lea__notice "$_ub_v available"
     lea_log "background update: lea $_ub_v is a new minor version of lea 0.x: run lea update"
+    return 0
+  fi
+  # Homebrew owns a Homebrew install (its formula turns this update off; a user configuration may
+  # turn it back on): installing beside it would leave a second lea.
+  if lea__brew_install; then
+    lea__notice "$_ub_v available"
+    lea_log "background update: lea $_ub_v is available: this lea is a Homebrew install, run lea update (brew upgrade)"
     return 0
   fi
   _ub_bin=${LEA_BIN_DIR:-$HOME/.local/bin}
