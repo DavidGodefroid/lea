@@ -145,7 +145,7 @@ EOF
     else lea__ok "$_dctr CPU windows: none (no agent runs, or LEA_AGENT_CPUS=0)"; fi
   done
 
-  lea__doctor_dns
+  lea__doctor_dns || _drc=1
 
   lea__doctor_managed || _drc=1
 
@@ -190,19 +190,22 @@ EOF
 # managed-check in the image, then in each running lea container (one started from an older
 # image lacks them until it restarts). Fails closed: a FAIL for anything it cannot confirm.
 # lea__doctor_dns: each running lea container resolves no external name (#98). lea starts it with
-# --dns 127.0.0.1, where nothing listens: Docker's embedded resolver answers the names of its
-# network's containers only. A query that resolves outside would carry data past lea-proxy.
+# --dns 192.0.2.1, which its internal network has no route to: Docker's embedded resolver answers
+# the names of its network's containers only. A query that resolves outside would carry data past
+# lea-proxy: a failure.
 lea__doctor_dns() {
+  _ddrc=0
   for _dctr in $(docker ps --filter "label=lea.prefix=$LEA_PREFIX" --filter label=lea.role=session --format '{{.Names}}' 2>/dev/null || true); do
     _ddns=$(docker container inspect -f '{{json .HostConfig.Dns}}' "$_dctr" 2>/dev/null || true)
     if _ddr=$(docker exec -w / "$_dctr" timeout 10 getent hosts example.com 2>/dev/null) && [ -n "$_ddr" ]; then
-      lea__warn "$_dctr DNS" "resolves example.com ($(printf '%s' "$_ddr" | awk 'NR == 1 { print $1 }')): DNS reaches outside lea-proxy; run lea stop, then lea"
-    elif [ "$_ddns" != '["127.0.0.1"]' ]; then
+      lea__fail "$_dctr DNS" "resolves example.com ($(printf '%s' "$_ddr" | awk 'NR == 1 { print $1 }')): DNS reaches outside lea-proxy; run lea stop, then lea"; _ddrc=1
+    elif [ "$_ddns" != '["192.0.2.1"]' ]; then
       lea__warn "$_dctr DNS" "no pinned resolver (started by an older lea): its queries may reach the host's resolver; run lea stop, then lea"
     else
-      lea__ok "$_dctr DNS: resolves no external name (resolver 127.0.0.1)"
+      lea__ok "$_dctr DNS: resolves no external name (resolver 192.0.2.1)"
     fi
   done
+  return "$_ddrc"
 }
 
 lea__doctor_managed() {

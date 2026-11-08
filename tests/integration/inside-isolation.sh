@@ -225,7 +225,7 @@ must   "public HTTPS works through the proxy"   curl -sf --max-time 20 -o /dev/n
 must   "the Claude API answers through the proxy" sh -c 'c=$(curl -s --max-time 20 -o /dev/null -w "%{http_code}" https://api.anthropic.com/v1/messages); [ "${c:-000}" != 000 ]'
 # DNS (#98): the agent resolves no external name, whatever the resolver; the proxy does. lea-proxy
 # (a container on lea's network) still resolves: Docker's embedded resolver answers it, and
-# forwards nothing else (lea starts the container with --dns 127.0.0.1, where nothing listens).
+# forwards nothing else (lea starts the container with --dns 192.0.2.1, which it has no route to).
 # dns_answers SERVER udp|tcp NAME QTYPE: any DNS answer from SERVER:53 within 4 s.
 # shellcheck disable=SC2317,SC2329 # run by must
 dns_answers() {

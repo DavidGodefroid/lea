@@ -1,9 +1,13 @@
 # A decoy DNS server for tests/integration/isolation.sh (#98): answers every query on port 53, UDP
 # and TCP (an A record of 192.0.2.53 for type A, an empty answer otherwise), and prints
 # "query <name> <type>" for each one, so the test can tell whether a query from inside lea reached it.
+# The address to listen on is the first argument (default 0.0.0.0).
 import socket
 import struct
+import sys
 import threading
+
+ADDR = sys.argv[1] if len(sys.argv) > 1 else "0.0.0.0"
 
 
 def question(q):
@@ -43,10 +47,10 @@ def serve_tcp(s):
 
 
 u = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-u.bind(("0.0.0.0", 53))
+u.bind((ADDR, 53))
 t = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
 t.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-t.bind(("0.0.0.0", 53))
+t.bind((ADDR, 53))
 t.listen(16)
 threading.Thread(target=serve_tcp, args=(t,), daemon=True).start()
 print("decoy-dns ready", flush=True)

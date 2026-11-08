@@ -5,11 +5,11 @@
 Changes:
 
 - The agent containers no longer rely on Docker's default resolver (#98): lea starts them with
-  `--dns 127.0.0.1`, so a lookup of an external name, from an agent or a nested container, is
+  `--dns 192.0.2.1` (TEST-NET-1, never routed, out of reach of the internal network), so a lookup of an external name, from an agent or a nested container, is
   never forwarded to the host's resolver (lea-proxy, which resolves names for the agents, is still
-  answered). `lea doctor` warns about a running container that resolves an external name or was
-  started without it (`lea stop`, then `lea`). `make test-isolation` checks that no lookup, direct
-  query to a public resolver or long TXT name reaches a decoy DNS server.
+  answered). `lea doctor` fails on a running container that resolves an external name, and warns
+  about one started without it (`lea stop`, then `lea`). `make test-isolation` checks that no lookup, direct
+  query to a public resolver or long TXT name reaches a decoy DNS server, on the decoy network or on the host's 127.0.0.1:53.
 - The agents show your own Claude Code status line (#374): when your `~/.claude/settings.json`
   has a `statusLine` command, `lea statusline` still reports the agent's context and usage to the
   daemon, then runs your command with the same JSON (1.5 s at most, killed past it) and prints its
