@@ -128,6 +128,10 @@ func (l *Launcher) ctlClaudeEntries() []string {
 			es = append(es, e.Name())
 		}
 	}
+	// The user's status line script (#374), named by the host's settings: the containers' copies
+	// start from them.
+	files, _ := statusLineFiles(c, c+"/settings.json")
+	es = append(es, files...)
 	sort.Strings(es)
 	return es
 }

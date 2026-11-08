@@ -554,6 +554,14 @@ func TestClaudeNestedSessionDoesNotEndTheAgent(t *testing.T) {
 	e.run("say hi")
 	a := e.until("the agent idle", 45, func(a store.Agent) bool { return a.State == "idle" && a.SessionID != "" })
 	own := a.SessionID
+	// The agent's own Rewake job, started by its Stop, would wake it for the note below and its
+	// turn would move it to working (#362): with its wakes used up for the window, lea holds that
+	// wake (rewakeHold), and only the nested session's hooks can move it.
+	e.d.mu.Lock()
+	for now := time.Now().Unix(); len(e.d.rewoken[a.Key]) < rewakeBurst; {
+		e.d.rewoken[a.Key] = append(e.d.rewoken[a.Key], now)
+	}
+	e.d.mu.Unlock()
 	if _, err := e.st.Send(store.Message{From: "user", To: a.Key, Kind: "note", Body: "for the agent", At: time.Now().Unix()}); err != nil {
 		t.Fatal(err)
 	}
