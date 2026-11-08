@@ -119,34 +119,43 @@ func CheckLabel(label string) (string, error) {
 	return label, nil
 }
 
-// reservedLabels are the names, normalised (normLabel), that only the user or lea gives: the
-// user, lea and its parts, and every control tower ("controltower" is a prefix, see
+// reservedLabels are the names, as labelSkeleton gives them, that only the user or lea gives:
+// the user, lea and its parts, and every control tower ("controltower" is a prefix, see
 // ReservedLabel). An agent bearing one would read as the user, lea or a tower in every message
 // and in the deck.
-var reservedLabels = map[string]bool{
-	"user": true, "theuser": true, "human": true, "you": true,
-	"lea": true, "leaproxy": true, "leadaemon": true, "system": true, "host": true,
-	"tower": true,
+var reservedLabels = map[string]bool{}
+
+const reservedPrefix = "controltower"
+
+func init() {
+	for _, l := range []string{"user", "the user", "human", "you", "lea", "lea-proxy", "lea daemon", "system", "host", "tower"} {
+		reservedLabels[labelSkeleton(l)] = true
+	}
 }
 
-// normLabel is label in lowercase with every character but an ASCII letter or digit dropped.
-func normLabel(label string) string {
+// skeletonFold folds the ASCII characters that read alike to one: C0ntrol T0wer, 1ea, Iea and
+// us3r are Control Tower, lea and user.
+var skeletonFold = strings.NewReplacer("0", "o", "1", "l", "i", "l", "3", "e", "5", "s", "rn", "m", "vv", "w")
+
+// labelSkeleton is label in lowercase with every character but an ASCII letter or digit dropped,
+// then its look-alike characters folded (skeletonFold).
+func labelSkeleton(label string) string {
 	var b strings.Builder
 	for _, r := range strings.ToLower(label) {
 		if r >= 'a' && r <= 'z' || r >= '0' && r <= '9' {
 			b.WriteRune(r)
 		}
 	}
-	return b.String()
+	return skeletonFold.Replace(b.String())
 }
 
 // ReservedLabel reports whether label is one only the user or lea gives (#356): "user", "lea",
 // "the user", a control tower's ("Control Tower", "ControlTower 2", "control_towers"…), whatever
-// its case, spacing and punctuation. It is meant for labels CheckAgentLabel already found plain
+// its case, spacing, punctuation or look-alike ASCII (C0ntrol T0wer, 1ea). It is meant for labels CheckAgentLabel already found plain
 // ASCII: a look-alike letter is refused there, not here.
 func ReservedLabel(label string) bool {
-	l := normLabel(label)
-	return reservedLabels[l] || strings.HasPrefix(l, "controltower")
+	l := labelSkeleton(label)
+	return reservedLabels[l] || strings.HasPrefix(l, labelSkeleton(reservedPrefix))
 }
 
 // agentLabelRune reports whether r may be in a label an agent chose: an ASCII letter or digit, a

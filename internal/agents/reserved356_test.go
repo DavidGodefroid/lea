@@ -35,7 +35,8 @@ func TestReservedLabel(t *testing.T) {
 func TestCheckAgentLabelRefusesLookAlikes(t *testing.T) {
 	for _, l := range []string{"ControlTower", "Control-Tower", "Control_Tower", "Control.Tower", "Control Tower2",
 		"Control Towers", "control tower of lea", "user.", "Lea.", "the user", "The_User", "human", "Tower",
-		"system", "lea-proxy", "lea daemon", "host"} {
+		"system", "lea-proxy", "lea daemon", "host",
+		"C0ntrol T0wer", "Contro1 Tower", "CONTROI TOWER", "1ea", "Iea", "us3r", "U5ER", "Contr0l-Towers"} {
 		if _, err := CheckAgentLabel(l); err == nil || !strings.Contains(err.Error(), "reserved") {
 			t.Errorf("CheckAgentLabel(%q): err=%v", l, err)
 		}
