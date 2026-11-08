@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" width="128" height="128" role="img" aria-label="lea logo">
+<title>lea</title>
+<desc>A sealed container drawn in the family style: three agents inside, one waiting for you.</desc>
+<style>.i{stroke:#1d1b17}.f{fill:#1d1b17}.p{fill:#fffcf5}.d{stroke:#575146}@media (prefers-color-scheme:dark){.i{stroke:#ede6d6}.f{fill:#ede6d6}.p{fill:#25221b}.d{stroke:#b2a994}}</style>
+<rect class="p i" x="14" y="14" width="100" height="100" rx="14" stroke-width="6"/><g fill="none" stroke-width="6" stroke-linecap="round"><path class="i" d="M56 44 H92"/><path class="i" d="M56 64 H84"/><path class="d" d="M56 84 H88"/></g><circle class="f" cx="38" cy="44" r="6"/><circle class="f" cx="38" cy="64" r="6"/><circle class="i" cx="38" cy="84" r="5" fill="none" stroke-width="3"/>
+</svg>

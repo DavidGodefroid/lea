@@ -11,3 +11,23 @@ jobs:
       - run: git clone --depth 1 --branch v1.11.1 https://github.com/bats-core/bats-core.git /opt/bats && /opt/bats/install.sh /usr/local
       - uses: actions/checkout@v4
       - run: tests/check.sh
+  site:
+    # leadeck.dev: the site's unit test, then every page in headless Chrome (light and dark, 1440
+    # and 390 px); the screenshots are kept as the run's artifact.
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22
+      - run: python3 -m unittest discover -s tests/site -p 'test_*.py' -v
+      - run: node tests/site/e2e.mjs
+        env:
+          SITE_E2E: required
+          SCREENSHOTS: site-screenshots
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: always()
+        with:
+          name: site-screenshots
+          path: site-screenshots

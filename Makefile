@@ -1,4 +1,4 @@
-.PHONY: test build test-proxy test-isolation test-ctl test-lockhost test-phase0 test-locklog test-pressure go-test go-build go-test-tmux go-get tmux-build
+.PHONY: test build test-proxy test-isolation test-ctl test-lockhost test-phase0 test-locklog test-pressure go-test go-build go-test-tmux go-get tmux-build test-site
 test:
 	tests/run.sh
 build:
@@ -7,6 +7,10 @@ build:
 	docker build -t lea-ctl:dev -f image/ctl/Containerfile image/ctl
 test-proxy:
 	tests/proxy/run.sh
+# leadeck.dev (site/): the unit test, then headless Chrome (skipped without one, unless SITE_E2E=required).
+test-site:
+	python3 -m unittest discover -s tests/site -p 'test_*.py'
+	node tests/site/e2e.mjs
 test-lockhost:
 	tests/integration/lockhost.sh
 # The phase-0 exit demo with real consoles (tests/integration/phase0.sh); needs make build, build/lea, cosign.
