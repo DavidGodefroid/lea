@@ -26,10 +26,10 @@ func TestHoverShowsTheFullName(t *testing.T) {
 	if m.hoverFor != "lea-a/dev-7" || cmd == nil {
 		t.Fatalf("hover %q", m.hoverFor)
 	}
-	if b := bottomLine(m); !strings.Contains(b, "refactor-billing-export · ") || len([]rune(b)) != 34 {
+	if b := bottomLine(m); !strings.Contains(b, "refactor-billing-export (dev") || len([]rune(b)) != 34 {
 		t.Fatalf("bottom %q", b)
 	}
-	if got := hoverText(long); got != "refactor-billing-export · dev-7 · lead · claude · working" {
+	if got := hoverText(long); got != "refactor-billing-export (dev-7) · lead · claude · working" {
 		t.Fatalf("hover text %q", got)
 	}
 	// The state is the one the mark shows (#72).

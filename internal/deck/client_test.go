@@ -59,6 +59,10 @@ func (r *recAgents) SetLabel(ctx context.Context, k, label string) error {
 	r.calls = append(r.calls, "label "+k+" "+label)
 	return nil
 }
+func (r *recAgents) AutoLabel(ctx context.Context, k, label string) (string, error) {
+	r.calls = append(r.calls, "autolabel "+k+" "+label)
+	return label, nil
+}
 func (r *recAgents) SetPaused(ctx context.Context, k string, paused bool) error {
 	r.calls = append(r.calls, fmt.Sprintf("paused %s %v", k, paused))
 	return nil

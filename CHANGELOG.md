@@ -15,6 +15,16 @@ Changes:
   context framed as untrusted data, as `msg_inbox` frames an agent's message, with its control,
   bidi and zero-width characters replaced (#95): an agent's words in a queued question could
   pass for lea's instructions.
+- One handle per agent, `label (name)` (#356, #368): the deck row, the tower, `lea board` and
+  `lea agents` name an agent by its label then its name. A lead gives a spawn a `label`
+  (`agents_spawn`, `agents_request_spawn`); without one, an agent started with a brief is named
+  after its brief, not after lea's first prompt. Labels are unique among the running agents of a
+  container, whatever their case: an automatic label that clashes gets ` 2`, ` 3`…, and the user's
+  rename to a running agent's label is refused. An agent's label, or the namer's from an agent's
+  brief or prompt, is plain ASCII (letters, digits, spaces, `- _ . #`) and never reads as `user`,
+  `the user`, `lea`, `tower` (alone or numbered: `Tower 2`, `user #1`) or holds `Control
+  Tower`, `Tower Control` or `Ctrl Tower` (`The Control Tower`, `CT`), whatever its case,
+  punctuation or look-alike digits (`C0ntrol 7ower`): those are the user's and lea's.
 - `lea config claude` (#334): your base settings for Claude Code in lea, without editing a file or
   rebuilding the image: `defaultMode`, entries to add to or remove from `allow`, `ask`, `deny` and
   `additionalDirectories` (lea's built-in rules included), `env`, `model`, `language`,

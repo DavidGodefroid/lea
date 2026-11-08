@@ -95,7 +95,10 @@ func TestNameHintIsForAgentsAndBounded(t *testing.T) {
 func TestAutoName(t *testing.T) {
 	for in, want := range map[string]string{
 		"add dark mode":                             "add dark mode",
-		"`Name:` refactor\x1b[2J auth":              "Name:` refactor[2J auth",
+		"`Name:` refactor\x1b[2J auth":              "Name refactor 2J auth",
+		"\"réparer l'auth\".":                       "reparer l auth",
+		"ｆｕｌｌ ℂI fix!":                              "full CI fix",
+		"lea#350 spawn-reuse_v1.2":                  "lea#350 spawn-reuse_v1.2",
 		"a very long name that goes past the limit": "a very long name that",
 		strings.Repeat("x", 30):                     strings.Repeat("x", 24),
 	} {

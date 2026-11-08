@@ -54,15 +54,36 @@ func TestViewRows(t *testing.T) {
 	}
 }
 
-// The user's label replaces the name in the row; the name stays the agent's identity elsewhere.
-func TestViewRowShowsTheLabelInsteadOfTheName(t *testing.T) {
-	m := sized(loaded(t, &fakeAPI{}, "lea-a/claude-1", labelled("claude-1", "auth work"), ag("claude-2", "idle", 1)), 34, 10)
+// A labelled row shows the label, then the name dimmed (#356): one handle the user and the
+// tower share. The name is the agent's identity and the address the tools take.
+func TestViewRowShowsTheLabelThenTheName(t *testing.T) {
+	m := sized(loaded(t, &fakeAPI{}, "lea-a/claude-1", labelled("claude-1", "auth"), ag("claude-2", "idle", 1)), 34, 10)
 	ls := viewLines(m)
-	if !strings.HasPrefix(ls[1], "│› ○ auth work ") || strings.Contains(ls[1], "claude-1") {
+	if !strings.HasPrefix(ls[1], "│› ○ auth  claude-1 ") {
 		t.Fatalf("row %q", ls[1])
 	}
 	if !strings.HasPrefix(ls[3], "│  ○ claude-2 ") {
 		t.Fatalf("row %q", ls[3])
+	}
+}
+
+// On a narrow column the label is cut first: the name always stays whole (#356).
+func TestViewRowCutsTheLabelNeverTheName(t *testing.T) {
+	m := sized(loaded(t, &fakeAPI{}, "lea-a/dev-4", labelled("dev-4", "fix spawn live agent")), 34, 10)
+	ls := viewLines(m)
+	if !strings.HasPrefix(ls[1], "│› ○ fix spaw…  dev-4 ") {
+		t.Fatalf("row %q", ls[1])
+	}
+	// Too narrow for any label: the name alone.
+	m = sized(loaded(t, &fakeAPI{}, "lea-a/reviewer-12", labelled("reviewer-12", "fix spawn live agent")), 30, 10)
+	ls = viewLines(m)
+	if !strings.Contains(ls[1], "reviewer-12") || strings.Contains(ls[1], "fix") {
+		t.Fatalf("row %q", ls[1])
+	}
+	// A label that is the name is not shown twice.
+	m = sized(loaded(t, &fakeAPI{}, "lea-a/dev-4", labelled("dev-4", "dev-4")), 34, 10)
+	if ls = viewLines(m); strings.Count(ls[1], "dev-4") != 1 {
+		t.Fatalf("row %q", ls[1])
 	}
 }
 

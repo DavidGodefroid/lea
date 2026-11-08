@@ -118,3 +118,97 @@ func CheckLabel(label string) (string, error) {
 	}
 	return label, nil
 }
+
+// reservedLabels are the names, as labelSkeleton gives them, that only the user or lea gives:
+// the user, lea and its parts, and a tower. An agent bearing one, alone or numbered ("Tower 2",
+// "user #1"), would read as the user, lea or a tower in every message and in the deck.
+var reservedLabels = map[string]bool{}
+
+// reservedParts are the skeletons no agent's label may hold anywhere: every control tower ("The
+// Control Tower", "2 Control Tower", "Tower Control", "Ctrl Tower").
+var reservedParts = []string{"controltower", "towercontrol", "ctrltower"}
+
+func init() {
+	for _, l := range []string{"user", "the user", "human", "you", "lea", "lea-proxy", "lea daemon", "system", "host", "tower", "ct"} {
+		reservedLabels[labelSkeleton(l)] = true
+	}
+	for i, p := range reservedParts {
+		reservedParts[i] = labelSkeleton(p)
+	}
+}
+
+// skeletonFold folds the ASCII characters that read alike to one: C0ntrol 7ower, 1ea, Iea, le4 and
+// us3r are Control Tower, lea and user.
+var skeletonFold = strings.NewReplacer("0", "o", "1", "l", "i", "l", "3", "e", "4", "a", "5", "s", "7", "t", "8", "b",
+	"rn", "m", "vv", "w")
+
+// labelPlain is label in lowercase with every character but an ASCII letter or digit dropped.
+func labelPlain(label string) string {
+	var b strings.Builder
+	for _, r := range strings.ToLower(label) {
+		if r >= 'a' && r <= 'z' || r >= '0' && r <= '9' {
+			b.WriteRune(r)
+		}
+	}
+	return b.String()
+}
+
+// labelSkeleton is labelPlain with its look-alike characters folded (skeletonFold).
+func labelSkeleton(label string) string {
+	return skeletonFold.Replace(labelPlain(label))
+}
+
+// ReservedLabel reports whether label is one only the user or lea gives (#356): "user", "lea",
+// "the user", "Tower", alone or followed by a number ("user 2", "Tower #1", "lea 2"), "CT", or one
+// holding a control tower ("Control Tower", "The Control Tower", "Tower Control", "Ctrl Tower"),
+// whatever its case, spacing, punctuation or look-alike ASCII (C0ntrol 7ower, 1ea). "users-api",
+// "leaflet", "towerdefense" and the namer's "lea#350 spawn reuse" are not; a bare "lea#350" is
+// (it reads as lea numbered). It is meant for labels CheckAgentLabel already found plain ASCII: a
+// look-alike letter is refused there, not here.
+func ReservedLabel(label string) bool {
+	plain := labelPlain(label)
+	skel := skeletonFold.Replace(plain)
+	for _, p := range reservedParts {
+		if strings.Contains(skel, p) {
+			return true
+		}
+	}
+	// The reserved word, then only digits: every split of the trailing digits, since a digit may
+	// be a look-alike letter of the word (le4 2).
+	for k := len(plain); k > 0; k-- {
+		if reservedLabels[skeletonFold.Replace(plain[:k])] {
+			return true
+		}
+		if c := plain[k-1]; c < '0' || c > '9' {
+			break
+		}
+	}
+	return false
+}
+
+// agentLabelRune reports whether r may be in a label an agent chose: an ASCII letter or digit, a
+// space, '-', '_', '.' or the '#' of repo#number. Nothing else, so no look-alike of a reserved
+// name (Cyrillic, full-width, accented) gets past ReservedLabel.
+func agentLabelRune(r rune) bool {
+	return r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9' ||
+		r == ' ' || r == '-' || r == '_' || r == '.' || r == '#'
+}
+
+// CheckAgentLabel is CheckLabel for a label an agent chose, or the namer from an agent's brief or
+// prompt: only agentLabelRune characters, and never a reserved label. The user's own labels
+// (CheckLabel) keep any printable character and may be reserved ones.
+func CheckAgentLabel(label string) (string, error) {
+	l, err := CheckLabel(label)
+	if err != nil {
+		return "", err
+	}
+	for _, r := range l {
+		if !agentLabelRune(r) {
+			return "", fmt.Errorf("the label %q has %q: an agent's label has only ASCII letters, digits, spaces and - _ . #", l, r)
+		}
+	}
+	if ReservedLabel(l) {
+		return "", fmt.Errorf("the label %q is reserved to the user and lea: pick another", l)
+	}
+	return l, nil
+}
