@@ -248,7 +248,7 @@ func TestRealHoverShowsTheFullName(t *testing.T) {
 	}
 	d.tm("select-pane", "-t", "e2e:0.1") // the pointer, not the keyboard
 	d.mouse(35, 5, 'M')                  // c's first line
-	d.waitFor("the whole label in the bottom border", func(s string) bool { return strings.Contains(s, e2eLabel+" ·") })
+	d.waitFor("the whole label in the bottom border", func(s string) bool { return strings.Contains(s, e2eLabel+" (c)") })
 	d.mouse(35, 12, 'M') // below the rows
 	d.waitFor("the key hints back", func(s string) bool { return strings.Contains(s, "? keys") })
 }
