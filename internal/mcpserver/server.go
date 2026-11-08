@@ -184,7 +184,16 @@ func New(sock, agent, version, instructions string) *mcp.Server {
 		func(ctx context.Context, _ *mcp.CallToolRequest, in grantRequestIn) (*mcp.CallToolResult, any, error) {
 			return proxy(ctx, sock, agent, "grants_request", short, in), nil, nil
 		})
+	// #343: what lea knows of a lock without a socket, never a guess.
+	mcp.AddTool(s, &mcp.Tool{Name: "lock_hint", Description: "When a Lock's client (locksql, lockmq, lockfile, locklog) finds no console (no socket, no answer): what the user must do, from what lea knows of the lock (whether lox run runs, whether it runs the lock, whether your container mounts it). Report the hint to the user as is, in blocked_on and to your lead; never tell them to run lox up or lox approve, or to restart or recreate a lock."},
+		func(ctx context.Context, _ *mcp.CallToolRequest, in lockHintIn) (*mcp.CallToolResult, any, error) {
+			return proxy(ctx, sock, agent, "lock_hint", short, in), nil, nil
+		})
 	return s
+}
+
+type lockHintIn struct {
+	Lock string `json:"lock,omitempty" jsonschema:"the lock's instance name (its --instance, or the one its client names); omit for every lock"`
 }
 
 type leaseIn struct {

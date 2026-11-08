@@ -256,7 +256,7 @@ func TestEnsureHubWarnsObsoleteLoxUp(t *testing.T) {
 	if err := w.launcher().ensureHub(w.proj); err != nil {
 		t.Fatal(err)
 	}
-	if got := w.errb.String(); !strings.Contains(got, "warning: LEA_LOX_UP=1 is obsolete and ignored: lea no longer runs lox up") {
+	if got := w.errb.String(); !strings.Contains(got, "warning: LEA_LOX_UP=1 is obsolete and ignored: remove it from your configuration") {
 		t.Fatalf("stderr = %q", got)
 	}
 	if w.hasCall("lox") {

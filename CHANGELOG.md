@@ -24,6 +24,14 @@ Changes:
 - In the deck, a folder header's summary sets each state mark apart from its count (`6 ◐ 6`, not
   `6 ◐6`) (#355): the marks are East Asian Ambiguous width, and a terminal that draws them wide
   drew the half-moon over the digit.
+- Agents point the user to `lox run`, never `lox up` or `lox approve` (#343): a new `lock_hint`
+  tool (read-only, agents only) tells an agent whose Lock client finds no console what the user
+  must do, from lea's state of the lock rather than a guess: "lock NAME waits for you: answer in
+  lox run (or lox attach NAME)" while `lox run` runs it, "start lox run in the projects directory"
+  when none serves, "restart lea" for a lock added while lea runs; never a command that restarts
+  or recreates a lock. The first prompt sends agents to it, and the agents' status line says
+  "no lox run: start it in the projects directory" while none serves. The `LEA_LOX_UP` warning
+  and LockHTTP's refusal page no longer mention `lox up` or `lox approve`.
 - The "Copied" notice a mouse selection's release shows closes after 0.6 s instead of 1.5 s
   (#373).
 - A granted `gh pr create` or `gh release create` whose `--title` reads like the file flag (`-F`,
