@@ -31,9 +31,18 @@ export async function launch() {
   const portFile = join(profile, 'DevToolsActivePort');
   for (let i = 0; i < 100 && !existsSync(portFile); i++) await sleep(100);
   const [port, path] = readFileSync(portFile, 'utf8').split('\n');
+  const exited = new Promise((ok) => proc.once('exit', ok));
   return {
     ws: `ws://127.0.0.1:${port}${path}`,
-    close: () => { proc.kill(); rmSync(profile, { recursive: true, force: true }); },
+    // Chrome still writes its profile for a moment after the kill: removing it before Chrome
+    // exits failed with ENOTEMPTY, and the throw skipped the rest of the clean-up (the HTTP
+    // server stayed open and the run never ended). Wait for the exit (5 s at most), then remove
+    // it with retries; a profile left in the temporary directory fails nothing.
+    close: async () => {
+      proc.kill();
+      await Promise.race([exited, sleep(5000)]);
+      try { rmSync(profile, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 }); } catch {}
+    },
   };
 }
 

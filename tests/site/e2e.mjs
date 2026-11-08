@@ -157,9 +157,11 @@ async function main() {
       }
     }
   } finally {
-    browser.close();
-    chrome.close();
+    // The server first: left open, it keeps the run alive whatever fails below.
     server.close();
+    server.closeAllConnections();
+    browser.close();
+    await chrome.close();
     rmSync(tmp, { recursive: true, force: true });
   }
   console.log();
