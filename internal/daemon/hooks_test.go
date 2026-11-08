@@ -84,6 +84,48 @@ func TestHooksOfAForeignSessionLeaveTheAgent(t *testing.T) {
 	}
 }
 
+// A nested session's hooks leave an idle agent as it is (#362): idle on its own session, its
+// turn still over for its rewake watch, its message unread, its name not taken from the prompt.
+func TestHooksOfAForeignSessionLeaveAnIdleAgent(t *testing.T) {
+	e := start(t)
+	hook := func(event, session string, payload map[string]any) {
+		t.Helper()
+		if err := call(t, e.bus, "dev", "hook_event", map[string]any{"event": event, "session_id": session, "payload": payload}, nil); err != nil {
+			t.Fatal(err)
+		}
+	}
+	hook("SessionStart", "own", map[string]any{"source": "startup"})
+	hook("UserPromptSubmit", "own", map[string]any{})
+	hook("Stop", "own", map[string]any{})
+	call(t, e.api, "", "msg_send", map[string]any{"to": "dev", "body": "for the agent", "kind": "note"}, nil)
+	hook("SessionStart", "nested", map[string]any{"source": "startup"})
+	call(t, e.bus, "dev", "name_hint", map[string]any{"session_id": "nested", "prompt": "a delegated task"}, nil)
+	var u struct{ Count int }
+	if call(t, e.bus, "dev", "context_unread", map[string]any{"session_id": "nested"}, &u); u.Count != 0 {
+		t.Fatalf("a nested prompt was told of the agent's messages: %+v", u)
+	}
+	hook("UserPromptSubmit", "nested", map[string]any{"prompt": "a delegated task"})
+	var r struct{ Block bool }
+	if err := call(t, e.bus, "dev", "stop_check", map[string]any{"session_id": "nested"}, &r); err != nil || r.Block {
+		t.Fatalf("a nested stop took the agent's messages: %+v %v", r, err)
+	}
+	hook("Stop", "nested", map[string]any{})
+	hook("SessionEnd", "nested", map[string]any{"reason": "other"})
+	a, err := e.d.st.AgentByKey("lea-a/dev")
+	if err != nil || a.State != "idle" || a.SessionID != "own" || a.Label != "" {
+		t.Fatalf("the nested session moved the agent: %+v (%v)", a, err)
+	}
+	if n, _ := e.d.st.UnreadCount("lea-a/dev"); n != 1 {
+		t.Fatalf("unread=%d after the nested session", n)
+	}
+	e.d.mu.Lock()
+	stopped, named := e.d.stopped["lea-a/dev"], e.d.named["lea-a/dev"]
+	e.d.mu.Unlock()
+	if !stopped || named {
+		t.Fatalf("stopped=%v named=%v: the nested session reached the agent's bookkeeping", stopped, named)
+	}
+}
+
 // A cleared session is still the agent's: it moves to the new session id.
 func TestSessionStartClearMovesTheAgentToItsNewSession(t *testing.T) {
 	e := start(t)
