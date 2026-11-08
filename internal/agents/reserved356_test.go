@@ -14,7 +14,7 @@ func TestReservedLabel(t *testing.T) {
 			t.Errorf("%q is not reserved", l)
 		}
 	}
-	for _, l := range []string{"", "users", "lea#350 spawn reuse", "leap", "control", "tower control", "my control tower", "user 2"} {
+	for _, l := range []string{"", "users", "lea#350 spawn reuse", "leap", "control", "tower control", "my control tower", "user 2", "towers"} {
 		if ReservedLabel(l) {
 			t.Errorf("%q is reserved", l)
 		}
@@ -27,6 +27,36 @@ func TestReservedLabel(t *testing.T) {
 	}
 	if _, err := CheckAgentLabel("bad\x07"); err == nil {
 		t.Fatal("CheckAgentLabel took a control character")
+	}
+}
+
+// An agent's label is plain ASCII, so no look-alike, punctuation or spelling of a reserved name
+// gets past ReservedLabel (#356 review).
+func TestCheckAgentLabelRefusesLookAlikes(t *testing.T) {
+	for _, l := range []string{"ControlTower", "Control-Tower", "Control_Tower", "Control.Tower", "Control Tower2",
+		"Control Towers", "control tower of lea", "user.", "Lea.", "the user", "The_User", "human", "Tower",
+		"system", "lea-proxy", "lea daemon", "host"} {
+		if _, err := CheckAgentLabel(l); err == nil || !strings.Contains(err.Error(), "reserved") {
+			t.Errorf("CheckAgentLabel(%q): err=%v", l, err)
+		}
+	}
+	for _, l := range []string{"Control Tower!", "user:", "\u0421\u043entrol Tower", "\uff23\uff4f\uff4e\uff54\uff52\uff4f\uff4c Tower",
+		"\u2102ontrol Tower", "Co\u0301ntrol Tower", "re\u0301parer bug", "caf\u00e9", "a/b", "a@b", "a'b"} {
+		if _, err := CheckAgentLabel(l); err == nil {
+			t.Errorf("CheckAgentLabel(%q) took a character outside [A-Za-z0-9 _.#-]", l)
+		}
+	}
+	for _, l := range []string{"auth work", "auth work 2", "lea#350 spawn reuse", "fix_ci-v1.2", "users", "leap",
+		"control", "tower control", "my control tower", "user 2", "humane", "towers"} {
+		if got, err := CheckAgentLabel(l); err != nil || got != l {
+			t.Errorf("CheckAgentLabel(%q) = %q, %v", l, got, err)
+		}
+	}
+	// The user's own labels keep the full CheckLabel rules.
+	for _, l := range []string{"Control Tower 2", "caf\u00e9", "the user"} {
+		if got, err := CheckLabel(l); err != nil || got != l {
+			t.Errorf("CheckLabel(%q) = %q, %v", l, got, err)
+		}
 	}
 }
 

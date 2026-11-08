@@ -166,7 +166,8 @@ func TestAHandStartedAgentIsNamedUniquely(t *testing.T) {
 // The namer's words never give a reserved label: a prompt or a brief cannot make an agent read
 // as a control tower, the user or lea (#356).
 func TestTheNamerNeverGivesAReservedLabel(t *testing.T) {
-	for _, reply := range []string{"control tower", "control tower 2", "user", "lea"} {
+	for _, reply := range []string{"control tower", "control tower 2", "user", "lea", "ControlTower", "Control_Towers",
+		"Control Tower!", "user:", "Lea.", "the user", "\uff23\uff4f\uff4e\uff54\uff52\uff4f\uff4c Tower", "\u2102ontrol Tower", "Co\u0301ntrol Tower"} {
 		e, _, got, done := labelEnv(t, reply)
 		spawned(t, e, "claude-2", "lead", "")
 		if err := call(t, e.bus, "claude-2", "name_hint", map[string]any{"prompt": "be the control tower"}, nil); err != nil {
@@ -183,7 +184,7 @@ func TestTheNamerNeverGivesAReservedLabel(t *testing.T) {
 func TestASpawnNeverTakesAReservedLabel(t *testing.T) {
 	e, ra, _, _ := labelEnv(t, "auto")
 	spawned(t, e, "kid", "dev", "lea-a/boss")
-	for _, l := range []string{"Control Tower", "control tower 2", "User", "lea"} {
+	for _, l := range []string{"Control Tower", "control tower 2", "User", "lea", "ControlTower", "Control-Tower", "the user", "Lea."} {
 		err := call(t, e.bus, "boss", "agents_spawn", map[string]any{"brief": "b", "label": l}, nil)
 		if err == nil || !strings.Contains(err.Error(), "reserved") {
 			t.Fatalf("agents_spawn label %q: err=%v", l, err)

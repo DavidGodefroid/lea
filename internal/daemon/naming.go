@@ -12,6 +12,8 @@ import (
 	"unicode"
 	"unicode/utf8"
 
+	"golang.org/x/text/unicode/norm"
+
 	"github.com/DavidGodefroid/lea/internal/agents"
 	"github.com/DavidGodefroid/lea/internal/store"
 	"github.com/DavidGodefroid/lea/internal/wire"
@@ -132,7 +134,7 @@ func (d *Daemon) nameFrom(me, prompt string) {
 	}()
 }
 
-// autoName is the namer's first line, without quotes, end punctuation or control characters,
+// autoName is the namer's first line in agents.CheckAgentLabel characters, without end punctuation,
 // its spaces collapsed, cut to agents.MaxLabel characters at a word boundary when it can be.
 func autoName(s string) string {
 	for _, l := range strings.Split(s, "\n") {
@@ -141,14 +143,19 @@ func autoName(s string) string {
 			break
 		}
 	}
+	// Only what agents.CheckAgentLabel takes (#356): compatibility forms and accents fold to
+	// ASCII (réparer → reparer, ｆｕｌｌ → full), any other character becomes a space.
 	s = strings.Map(func(r rune) rune {
-		if unicode.IsControl(r) || !unicode.IsPrint(r) {
+		switch {
+		case unicode.Is(unicode.Mn, r):
 			return -1
+		case r == '-' || r == '_' || r == '.' || r == '#' || r < unicode.MaxASCII && (unicode.IsLetter(r) || unicode.IsDigit(r)):
+			return r
 		}
-		return r
-	}, s)
+		return ' '
+	}, norm.NFKD.String(s))
 	s = strings.Join(strings.Fields(s), " ")
-	s = strings.Trim(s, "\"'`«»“”‘’.,;:!*# ")
+	s = strings.Trim(s, ".# ")
 	if utf8.RuneCountInString(s) <= agents.MaxLabel {
 		return s
 	}

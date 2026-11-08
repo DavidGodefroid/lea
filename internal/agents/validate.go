@@ -119,20 +119,59 @@ func CheckLabel(label string) (string, error) {
 	return label, nil
 }
 
+// reservedLabels are the names, normalised (normLabel), that only the user or lea gives: the
+// user, lea and its parts, and every control tower ("controltower" is a prefix, see
+// ReservedLabel). An agent bearing one would read as the user, lea or a tower in every message
+// and in the deck.
+var reservedLabels = map[string]bool{
+	"user": true, "theuser": true, "human": true, "you": true,
+	"lea": true, "leaproxy": true, "leadaemon": true, "system": true, "host": true,
+	"tower": true,
+}
+
+// normLabel is label in lowercase with every character but an ASCII letter or digit dropped.
+func normLabel(label string) string {
+	var b strings.Builder
+	for _, r := range strings.ToLower(label) {
+		if r >= 'a' && r <= 'z' || r >= '0' && r <= '9' {
+			b.WriteRune(r)
+		}
+	}
+	return b.String()
+}
+
 // ReservedLabel reports whether label is one only the user or lea gives (#356): "user", "lea",
-// or a control tower's ("Control Tower", "Control Tower 2"…), whatever its case and spacing. An
-// agent bearing one would read as the user, lea or a tower in every message and in the deck.
+// "the user", a control tower's ("Control Tower", "ControlTower 2", "control_towers"…), whatever
+// its case, spacing and punctuation. It is meant for labels CheckAgentLabel already found plain
+// ASCII: a look-alike letter is refused there, not here.
 func ReservedLabel(label string) bool {
-	l := strings.ToLower(strings.Join(strings.Fields(label), " "))
-	return l == "user" || l == "lea" || l == "control tower" || strings.HasPrefix(l, "control tower ")
+	l := normLabel(label)
+	return reservedLabels[l] || strings.HasPrefix(l, "controltower")
+}
+
+// agentLabelRune reports whether r may be in a label an agent chose: an ASCII letter or digit, a
+// space, '-', '_', '.' or the '#' of repo#number. Nothing else, so no look-alike of a reserved
+// name (Cyrillic, full-width, accented) gets past ReservedLabel.
+func agentLabelRune(r rune) bool {
+	return r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9' ||
+		r == ' ' || r == '-' || r == '_' || r == '.' || r == '#'
 }
 
 // CheckAgentLabel is CheckLabel for a label an agent chose, or the namer from an agent's brief or
-// prompt: a reserved one is refused.
+// prompt: only agentLabelRune characters, and never a reserved label. The user's own labels
+// (CheckLabel) keep any printable character and may be reserved ones.
 func CheckAgentLabel(label string) (string, error) {
 	l, err := CheckLabel(label)
-	if err == nil && ReservedLabel(l) {
+	if err != nil {
+		return "", err
+	}
+	for _, r := range l {
+		if !agentLabelRune(r) {
+			return "", fmt.Errorf("the label %q has %q: an agent's label has only ASCII letters, digits, spaces and - _ . #", l, r)
+		}
+	}
+	if ReservedLabel(l) {
 		return "", fmt.Errorf("the label %q is reserved to the user and lea: pick another", l)
 	}
-	return l, err
+	return l, nil
 }
