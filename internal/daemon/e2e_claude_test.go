@@ -543,37 +543,44 @@ func TestClaudePendingLockCallSuspendsTheAgent(t *testing.T) {
 	}
 }
 
-// A nested Claude under the agent's identity (#350): the live agent runs claude -p, which
-// inherits LEA_AGENT and runs lea's hooks with a session of its own. Its SessionStart, Stop and
-// SessionEnd leave the agent as it was: still idle, on its own session, not done (a done row's
-// name could be given to the next spawn, which would hand this live agent its brief).
+// A nested Claude under the agent's identity (#350): a Claude the live agent starts from its
+// shell inherits LEA_AGENT and runs lea's hooks (this build's lea hook claude) with a session of
+// its own. Its SessionStart, prompt, Stop and SessionEnd leave the real agent as it was: idle on
+// its own session, not done (a done row's name could go to the next spawn, which would hand
+// this live agent its brief), its messages kept for its own turn.
 func TestClaudeNestedSessionDoesNotEndTheAgent(t *testing.T) {
 	e := newClaudeE2E(t)
 	e.setLimited(false)
 	e.run("say hi")
 	a := e.until("the agent idle", 45, func(a store.Agent) bool { return a.State == "idle" && a.SessionID != "" })
 	own := a.SessionID
-	ends, _ := e.st.EventPayloads("lea-a/dev", "SessionEnd")
-	// In a pseudo-terminal too, as from the agent's own shell; it ends once it has answered.
-	var out strings.Builder
-	nested := exec.Command("python3", "-I", "-c", claudePty, "60", e.claude, "--settings", e.sf, "-p", "say hi")
-	nested.Dir, nested.Env = e.wd, e.env
-	nested.Stdout, nested.Stderr = &out, &out
-	if err := nested.Run(); err != nil {
-		t.Fatalf("nested claude -p: %v\n%s", err, out.String())
+	if _, err := e.st.Send(store.Message{From: "user", To: a.Key, Kind: "note", Body: "for the agent", At: time.Now().Unix()}); err != nil {
+		t.Fatal(err)
 	}
-	var ps []string
-	for end := time.Now().Add(20 * time.Second); len(ps) <= len(ends); time.Sleep(200 * time.Millisecond) {
-		if time.Now().After(end) {
-			t.Fatalf("no SessionEnd of the nested claude -p:\n%s", out.String())
+	const nested = "0b6f5a1e-4c1d-4f7a-9d2e-350350350350"
+	for _, ev := range []struct{ name, input string }{
+		{"SessionStart", `{"hook_event_name":"SessionStart","session_id":"` + nested + `","source":"startup"}`},
+		{"UserPromptSubmit", `{"hook_event_name":"UserPromptSubmit","session_id":"` + nested + `","prompt":"a delegated task"}`},
+		{"Stop", `{"hook_event_name":"Stop","session_id":"` + nested + `"}`},
+		{"SessionEnd", `{"hook_event_name":"SessionEnd","session_id":"` + nested + `","reason":"other"}`},
+	} {
+		cmd := exec.Command(e.lea, "hook", "claude", ev.name)
+		cmd.Dir, cmd.Env, cmd.Stdin = e.wd, e.env, strings.NewReader(ev.input)
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			t.Fatalf("lea hook claude %s: %v\n%s", ev.name, err, out)
 		}
-		ps, _ = e.st.EventPayloads("lea-a/dev", "SessionEnd")
+		if strings.Contains(string(out), "for the agent") || strings.Contains(string(out), "unread") {
+			t.Fatalf("the nested %s was given the agent's messages: %s", ev.name, out)
+		}
 	}
-	if strings.Contains(ps[len(ps)-1], own) {
-		t.Fatalf("the SessionEnd came from the agent's own session: %s", ps[len(ps)-1])
+	if ps, _ := e.st.EventPayloads(a.Key, "SessionEnd"); len(ps) == 0 || !strings.Contains(ps[len(ps)-1], nested) {
+		t.Fatalf("the nested SessionEnd did not reach lea: %q", ps)
 	}
-	time.Sleep(500 * time.Millisecond)
-	if a, _ := e.st.AgentByKey("lea-a/dev"); a.State != "idle" || a.SessionID != own {
-		t.Fatalf("the nested session moved the agent: %+v (own session %s)", a, own)
+	if b, _ := e.st.AgentByKey(a.Key); b.State != "idle" || b.SessionID != own || b.Label != a.Label {
+		t.Fatalf("the nested session moved the agent: %+v (own session %s)", b, own)
+	}
+	if n, _ := e.st.UnreadCount(a.Key); n != 1 {
+		t.Fatalf("unread=%d: the nested Stop took the agent's message", n)
 	}
 }
