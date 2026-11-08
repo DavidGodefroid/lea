@@ -10,6 +10,7 @@ import (
 	"io"
 	"regexp"
 	"strconv"
+	"strings"
 	"time"
 	"unicode/utf8"
 
@@ -52,6 +53,9 @@ func (c caller) call(ctx context.Context, method string, params, result any) err
 // truncate cuts s to at most n bytes without splitting a UTF-8 sequence.
 // maxNamePrompt is the part of the first prompt sent for naming: daemon.MaxNamePrompt.
 const maxNamePrompt = 2000
+
+// leaPrompt says lea typed prompt: an agent's first prompt (agents.firstPrompt).
+func leaPrompt(prompt string) bool { return strings.HasPrefix(prompt, "You are the lea agent ") }
 
 func truncate(s string, n int) string {
 	if len(s) <= n {
@@ -160,7 +164,16 @@ func Claude(ctx context.Context, event string, stdin io.Reader, stdout io.Writer
 			Count int    `json:"count"`
 			Text  string `json:"text"`
 		}
-		if c.call(bctx, "context_unread", map[string]any{"session_id": p.SessionID}, &r) == nil && r.Count > 0 {
+		params := map[string]any{"session_id": p.SessionID}
+		if event == "UserPromptSubmit" {
+			// The prompt answers the tower's open question (#95), unless lea typed it.
+			params["prompt"] = true
+			params["lea"] = leaPrompt(p.Prompt)
+		} else if p.ToolName == "AskUserQuestion" && p.AgentID == "" {
+			// The user's answer to the tower's own AskUserQuestion answers its open question too.
+			params["asked"] = true
+		}
+		if c.call(bctx, "context_unread", params, &r) == nil && r.Text != "" {
 			json.NewEncoder(stdout).Encode(map[string]any{"hookSpecificOutput": map[string]any{
 				"hookEventName": event, "additionalContext": r.Text}})
 		}

@@ -218,6 +218,9 @@ func runDaemon(stderr io.Writer) int {
 		return 1
 	}
 	d.SetStackIdle(launcher.StackIdleSetting(os.Getenv))
+	// A control tower's question the user leaves unanswered is reminded once (#95).
+	d.SetQuestionRemind(launcher.QuestionRemindSetting(os.Getenv))
+	go d.RunQuestionReminders(ctx)
 	d.SetHeavy(launcher.HeavySettings(os.Getenv))
 	// Same pattern for the admission thresholds (#132, P2): the daemon samples the host and each
 	// lea container, and refuses or queues new agents under pressure.

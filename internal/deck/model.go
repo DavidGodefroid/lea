@@ -60,6 +60,10 @@ type Agent struct {
 	// Woken: lea woke the idle agent for a message in its inbox (agents.Row), until that turn
 	// ends or the user types: the user sees why it started.
 	Woken bool `json:"woken,omitempty"`
+	// QuestionsOpen (0 or 1) and QuestionsQueued: a control tower's questions to the user
+	// (agents.Row, #95). An open one needs the user.
+	QuestionsOpen   int `json:"questions_open,omitempty"`
+	QuestionsQueued int `json:"questions_queued,omitempty"`
 }
 
 // shownState is the state a row shows (issue #72): green only when nothing is pending. A live
@@ -922,7 +926,7 @@ func rank(a Agent, seen map[string]int64) int {
 		return 0
 	case a.State == "done" && seen[a.Key] != a.Updated:
 		return 1
-	case a.ForUser > 0:
+	case a.ForUser > 0 || a.QuestionsOpen > 0:
 		return 2
 	case busy(a):
 		return 3
@@ -961,6 +965,8 @@ func (m Model) label(a Agent) string {
 		return "blocked"
 	case r == 1:
 		return "done, unseen"
+	case r == 2 && a.QuestionsOpen > 0:
+		return m.questionLabel(a)
 	case r == 2:
 		return "message for you"
 	case a.State == "done":
@@ -975,6 +981,20 @@ func (m Model) label(a Agent) string {
 		return shownState(a)
 	}
 	return "unknown"
+}
+
+// questionLabel is the label of a tower whose question the user has: "❓ 1 · 3 queued" (#95).
+func (m Model) questionLabel(a Agent) string {
+	c := m.cs()
+	mark := "❓"
+	if c.ascii {
+		mark = "?"
+	}
+	s := fmt.Sprintf("%s %d", mark, a.QuestionsOpen)
+	if a.QuestionsQueued > 0 {
+		s += fmt.Sprintf(" %s %d queued", c.dot, a.QuestionsQueued)
+	}
+	return s
 }
 
 // limitLabel is a limited agent's label: when lea resumes it ("limit, resumes 15:02", the day

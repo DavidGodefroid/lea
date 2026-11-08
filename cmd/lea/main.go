@@ -96,6 +96,8 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		return runHost(args, stdout, stderr)
 	case "grant":
 		return runGrant(args, stdout, stderr)
+	case "questions":
+		return runQuestions(args[1:], stdout, stderr)
 	case "heavy":
 		return runHeavy(args[1:], stdin, stdout, stderr)
 	case "deck":
