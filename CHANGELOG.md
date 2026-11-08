@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- Removed: rtk is no longer installed in the agent image (#359).
+
 ## v0.14.0 (2026-11-08)
 
 Changes:

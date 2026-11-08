@@ -217,7 +217,8 @@ seccomp_copy() { mkdir -p "$BATS_TEST_TMPDIR/i/seccomp"; cp "$I"/seccomp/* "$BAT
   c="$I/Containerfile"
   grep -q '^FROM quay.io/podman/stable:v5.8.7-immutable$' "$c"
   grep -q '^ARG CLAUDE_CODE_VERSION=2.1.296$' "$c"
-  grep -q '^ARG RTK_VERSION=0.36.0$' "$c"
+  # rtk is no longer installed (#359).
+  if grep -qiw rtk "$c"; then false; fi
   # The Locks' clients: no version here, config/locks.lock's set (lea#134).
   grep -q '^COPY config/locks.lock /usr/local/share/lea/locks.lock$' "$c"
   ! grep -Eq '(V|MQ|LF)=[0-9]+\.[0-9]+' "$c"
