@@ -1,0 +1,6 @@
+status 0
+-- calls
+core [allow] [--container] [lea-$ID] [--projects] [$W/projects]
+-- lea
+lea: note: lea grant ls is now lea allow (lea grant goes away in the next minor release)
+-- stdout

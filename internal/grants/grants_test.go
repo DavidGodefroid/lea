@@ -15,7 +15,7 @@ var dev = Caller{Key: "lea-a/dev-2", Container: "lea-a", Repo: "lea", Branch: "f
 func all(action string) Grant {
 	g := Grant{ID: 7, Container: "lea-a", Action: action, Repo: "lea", Branch: "feat/*", Created: now - 10, Expires: now + 3600}
 	if NeedsGitHub(action) {
-		g.GitHub = "github.com/o/lea"
+		g.Pin = "github.com/o/lea"
 	}
 	return g
 }
@@ -542,7 +542,7 @@ func TestPinnedCommand(t *testing.T) {
 	prot := dev
 	prot.Branch = "main"
 	if d := Decide("Bash", bash("gh pr merge 42 --squash --delete-branch"), prot, []Grant{{ID: 1, Container: "lea-a", Action: Merge, Repo: "lea",
-		GitHub: "github.com/o/lea", Expires: now + 10}}, now, false); d.Verdict != "" {
+		Pin: "github.com/o/lea", Expires: now + 10}}, now, false); d.Verdict != "" {
 		t.Fatalf("protected branch: %+v", d)
 	}
 	d = Decide("Bash", bash(`git commit -m "it's done"`), dev, gs, now, false)
@@ -559,7 +559,7 @@ func TestPinnedCommand(t *testing.T) {
 	}
 	// A merge grant without a GitHub repository allows no gh call.
 	g := all(Merge)
-	g.GitHub = ""
+	g.Pin = ""
 	if d := Decide("Bash", bash("gh pr merge 42 --squash"), dev, []Grant{g}, now, false); d.Verdict != "" {
 		t.Fatalf("unpinned merge: %+v", d)
 	}
@@ -770,11 +770,11 @@ func TestPRCreate(t *testing.T) {
 	}
 }
 
-// TestStanding: delivery's standing grants never expire and show as such.
+// TestStanding: a grant that holds until revoked never expires.
 func TestStanding(t *testing.T) {
 	g := all(PRCreate)
 	g.Expires = Standing
-	if !g.Active(now) || !g.IsStanding() || all(PRCreate).IsStanding() {
+	if !g.Active(now) || (Set{Expires: Standing}).UntilRevoked() != true || (Set{Expires: now + 1}).UntilRevoked() {
 		t.Fatal("standing")
 	}
 	for _, a := range DeliveryActions {
@@ -790,7 +790,7 @@ func TestStanding(t *testing.T) {
 func TestGitLab(t *testing.T) {
 	gl := func(action string) Grant {
 		g := all(action)
-		g.GitHub = "gitlab:gitlab.example.com/grp/sub/app"
+		g.Pin = "gitlab:gitlab.example.com/grp/sub/app"
 		return g
 	}
 	gs := []Grant{gl(PRCreate), gl(Merge), gl(CommitIdentity), gl(DeleteOwnBranch)}
@@ -873,7 +873,7 @@ func TestHint(t *testing.T) {
 	gh := []Grant{all(Merge), all(PRCreate), all(CommitIdentity)}
 	gl := func(action string) Grant {
 		g := all(action)
-		g.GitHub = "gitlab:gitlab.example.com/grp/app"
+		g.Pin = "gitlab:gitlab.example.com/grp/app"
 		return g
 	}
 	away := dev
@@ -892,7 +892,15 @@ func TestHint(t *testing.T) {
 		{"merge allowed", "gh pr merge 42 --squash --delete-branch", dev, gh, []string{""}},
 		{"merge admin", "gh pr merge 42 --admin", dev, gh, []string{""}},
 		// No merge grant: the hint names the way to one, a lead's grant request (#342).
-		{"merge no grant", "gh pr merge 42 --squash", dev, nil, []string{"no merge grant covers repo lea", "grants_request", "ask yours"}},
+		{"merge no grant", "gh pr merge 42 --squash", dev, nil, []string{"no merge grant covers repo lea", "grants_request", "ask yours",
+			"lea allow merge --repo lea"}},
+		// Nothing held: the hint names the lea allow command the user runs (#319), from the
+		// caller's row only.
+		{"push no grant", "git push -u origin feat/73-x", dev, nil, []string{"no push allowance covers repo lea", "lea allow push --repo lea."}},
+		{"delete no grant", "git push origin --delete feat/73-x", dev, nil, []string{"lea allow delete-branch --repo lea."}},
+		{"pr no grant", "gh pr create --fill", dev, []Grant{all(Merge)}, []string{"lea allow pr --repo lea."}},
+		{"glab mr no grant", "glab mr create --fill", dev, nil, []string{"lea allow pr --repo lea."}},
+		{"push no grant odd repo", "git push origin x", Caller{Key: dev.Key, Container: "lea-a", Repo: "-rf", Branch: "x"}, nil, []string{""}},
 		{"merge other grant", "gh pr merge 42 --auto", dev, []Grant{all(CloseIssue)}, []string{"grants_request"}},
 		{"merge other repo's grant", "gh pr merge 42 --auto", Caller{Key: dev.Key, Container: "lea-a", Repo: "other", Branch: "feat/73-x",
 			OwnWorktree: true}, gh, []string{"covers repo other", "grants_request"}},

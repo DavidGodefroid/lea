@@ -68,8 +68,8 @@ func TestPreToolUseGrantAllowsRevokeAndHardDeny(t *testing.T) {
 	if d, _ := hookDecision(t, runHook(bus, "PreToolUse", merge, nil)); d != "" {
 		t.Fatalf("no grant: %q", d)
 	}
-	var g struct{ ID int64 }
-	if err := call(api, "", "grant_add", map[string]any{"container": "lea-a", "action": "merge", "repo": "fixture", "github": "o/fixture"}, &g); err != nil {
+	var g struct{ Set struct{ ID int64 } }
+	if err := call(api, "", "allow_set", allowMerge, &g); err != nil {
 		t.Fatal(err)
 	}
 	out := runHook(bus, "PreToolUse", merge, nil)
@@ -99,14 +99,14 @@ func TestPreToolUseGrantAllowsRevokeAndHardDeny(t *testing.T) {
 	if d, _ := hookDecision(t, runHook(bus, "PreToolUse", preToolUse("gh pr merge 42 --squash && rm -rf ~"), nil)); d != "" {
 		t.Fatalf("chained: %q", d)
 	}
-	if err := call(api, "", "grant_revoke", map[string]any{"id": g.ID}, nil); err != nil {
+	if err := call(api, "", "allow_off", map[string]any{"container": "lea-a", "set": g.Set.ID}, nil); err != nil {
 		t.Fatal(err)
 	}
 	if d, _ := hookDecision(t, runHook(bus, "PreToolUse", merge, nil)); d != "" {
 		t.Fatalf("revoked: %q", d)
 	}
 	// Outside its own worktree the call is not covered.
-	if err := call(api, "", "grant_add", map[string]any{"container": "lea-a", "action": "merge", "repo": "fixture", "github": "o/fixture"}, &g); err != nil {
+	if err := call(api, "", "allow_set", allowMerge, &g); err != nil {
 		t.Fatal(err)
 	}
 	away := strings.Replace(merge, devCwd, "/p/fixture", 1)
@@ -134,18 +134,17 @@ func TestPreToolUseGrantAllowsRevokeAndHardDeny(t *testing.T) {
 
 func TestAgentsCannotWriteGrants(t *testing.T) {
 	api, bus := start(t)
-	for _, m := range []string{"grant_add", "grant_revoke", "grant_list", "delivery_set"} {
+	for _, m := range []string{"allow_set", "allow_off", "allow_list", "grant_revoke", "grant_add", "grant_list", "delivery_set"} {
 		err := call(bus, "dev", m, map[string]any{"container": "lea-a", "action": "merge", "id": 1}, nil)
-		if err == nil || !strings.Contains(err.Error(), "host only") {
+		if err == nil || (!strings.Contains(err.Error(), "host only") && !strings.Contains(err.Error(), "unknown method")) {
 			t.Fatalf("%s from an agent: %v", m, err)
 		}
 	}
-	if err := call(bus, "dev", "delivery_set", map[string]any{"container": "lea-a", "on": true,
-		"repos": []map[string]string{{"repo": "fixture", "github": "o/fixture"}}}, nil); err == nil || !strings.Contains(err.Error(), "host only") {
-		t.Fatalf("delivery_set from an agent: %v", err)
+	if err := call(bus, "dev", "allow_set", allowMerge, nil); err == nil || !strings.Contains(err.Error(), "host only") {
+		t.Fatalf("allow_set from an agent: %v", err)
 	}
-	var gs struct{ Grants []json.RawMessage }
-	if err := call(api, "", "grant_list", nil, &gs); err != nil || len(gs.Grants) != 0 {
+	var gs struct{ Sets []json.RawMessage }
+	if err := call(api, "", "allow_list", map[string]any{"container": "lea-a"}, &gs); err != nil || len(gs.Sets) != 0 {
 		t.Fatalf("grants after agent attempts: %v %v", gs, err)
 	}
 	// A message claiming a grant changes nothing.
@@ -167,7 +166,7 @@ func TestAgentsCannotWriteGrants(t *testing.T) {
 func TestPreToolUseHint(t *testing.T) {
 	api, bus, db := startDB(t)
 	registerDev(t, db)
-	if err := call(api, "", "grant_add", map[string]any{"container": "lea-a", "action": "merge", "repo": "fixture", "github": "o/fixture"}, nil); err != nil {
+	if err := call(api, "", "allow_set", allowMerge, nil); err != nil {
 		t.Fatal(err)
 	}
 	out := runHook(bus, "PreToolUse", preToolUse("gh pr merge 42 --squash -R o/fixture"), nil)
@@ -189,7 +188,7 @@ func TestPreToolUseHint(t *testing.T) {
 	}
 	// An absolute body file: the agent learns the relative path rule, and the form it names is
 	// allowed on the next attempt (#384).
-	if err := call(api, "", "grant_add", map[string]any{"container": "lea-a", "action": "pr-create", "repo": "fixture", "github": "o/fixture"}, nil); err != nil {
+	if err := call(api, "", "allow_set", map[string]any{"container": "lea-a", "capabilities": []string{"pr"}, "repos": []map[string]string{{"repo": "fixture", "pin": "o/fixture"}}}, nil); err != nil {
 		t.Fatal(err)
 	}
 	out = runHook(bus, "PreToolUse", preToolUse("gh pr create --head feat/x --title T --body-file /tmp/claude-1000/s/pr.md"), nil)
@@ -241,29 +240,47 @@ func TestPreToolUseFailsClosed(t *testing.T) {
 	}
 }
 
-// TestDelivery: lea delivery on records standing grants for every repository it names, so the
-// agent pushes its branch, opens its PR and merges it with no prompt; hard denies hold; off
-// revokes them all, and on again replaces them.
-func TestDelivery(t *testing.T) {
-	api, bus, db := startDB(t)
-	registerDev(t, db)
-	var r struct {
-		Grants []struct {
+// allowMerge is lea allow merge --repo fixture, as the CLI sends it.
+var allowMerge = map[string]any{"container": "lea-a", "capabilities": []string{"merge"}, "repos": []map[string]string{{"repo": "fixture", "pin": "o/fixture"}}}
+
+type allowed struct {
+	Set struct {
+		ID      int64
+		Expires int64
+		Grants  []struct {
 			ID      int64
 			Action  string
 			Repo    string
-			GitHub  string
+			Pin     string
 			Expires int64
+			Revoked int64
 		}
 	}
-	on := map[string]any{"container": "lea-a", "on": true, "repos": []map[string]string{{"repo": "fixture", "github": "o/fixture"},
-		{"repo": "other", "github": "github.com/o/other"}, {"repo": "gl", "github": "gitlab:gitlab.example.com/g/sub/gl"}}}
-	if err := call(api, "", "delivery_set", on, &r); err != nil {
+	Unchanged bool
+}
+
+// TestDelivery: lea allow deliver records a set of grants that hold until revoked, for every
+// repository it names, so the agent pushes its branch, opens its PR and merges it with no
+// prompt; hard denies hold; recorded again, the set keeps its unchanged rows (#319); lea allow
+// off deliver revokes it and leaves the lea's other sets alone.
+func TestDelivery(t *testing.T) {
+	api, bus, db := startDB(t)
+	registerDev(t, db)
+	var r allowed
+	on := map[string]any{"container": "lea-a", "capabilities": []string{"deliver"}, "all": true, "repos": []map[string]string{{"repo": "fixture", "pin": "o/fixture"},
+		{"repo": "other", "pin": "github.com/o/other"}, {"repo": "gl", "pin": "gitlab:gitlab.example.com/g/sub/gl"}}}
+	if err := call(api, "", "allow_set", on, &r); err != nil {
 		t.Fatal(err)
 	}
-	if len(r.Grants) != 12 || r.Grants[8].GitHub != "gitlab:gitlab.example.com/g/sub/gl" || r.Grants[0].Expires != 1<<62 || r.Grants[0].GitHub != "github.com/o/fixture" {
-		t.Fatalf("delivery on: %+v", r)
+	pins := map[string]string{}
+	for _, g := range r.Set.Grants {
+		pins[g.Repo] = g.Pin
 	}
+	if len(r.Set.Grants) != 12 || pins["gl"] != "gitlab:gitlab.example.com/g/sub/gl" || r.Set.Expires != 1<<62 || r.Set.Grants[0].Expires != 1<<62 ||
+		pins["fixture"] != "github.com/o/fixture" || r.Unchanged {
+		t.Fatalf("allow deliver: %+v", r)
+	}
+	first := r.Set
 	for _, cmd := range []string{"git push -u origin feat/x", "gh pr create --head feat/x --base main --title t --body b",
 		"gh pr merge 42 --squash", "gh pr merge feat/x --squash --delete-branch"} {
 		if d, reason := hookDecision(t, runHook(bus, "PreToolUse", preToolUse(cmd), nil)); d != "allow" {
@@ -277,35 +294,111 @@ func TestDelivery(t *testing.T) {
 		}
 	}
 	// Bad input changes nothing.
-	for _, bad := range []map[string]any{{"container": "lea-a", "on": true, "repos": []map[string]string{{"repo": "../x", "github": "o/x"}}},
-		{"container": "lea-a", "on": true, "repos": []map[string]string{{"repo": "x", "github": "gitlab.com/o/x"}}},
-		{"container": "lea-a", "on": true, "repos": []map[string]string{{"repo": "x", "github": "gitlab:gitlab.com/x"}}},
-		{"container": "lea-a", "on": true, "repos": []map[string]string{{"repo": "x", "github": "gitlab:evil host/o/x"}}},
-		{"container": "", "on": true}} {
-		if err := call(api, "", "delivery_set", bad, nil); err == nil {
+	for _, bad := range []map[string]any{{"container": "lea-a", "capabilities": []string{"deliver"}, "repos": []map[string]string{{"repo": "../x", "pin": "o/x"}}},
+		{"container": "lea-a", "capabilities": []string{"deliver"}, "repos": []map[string]string{{"repo": "x", "pin": "gitlab.com/o/x"}}},
+		{"container": "lea-a", "capabilities": []string{"deliver"}, "repos": []map[string]string{{"repo": "x", "pin": "gitlab:gitlab.com/x"}}},
+		{"container": "lea-a", "capabilities": []string{"deliver"}, "repos": []map[string]string{{"repo": "x", "pin": "gitlab:evil host/o/x"}}},
+		{"container": "lea-a", "capabilities": []string{"deliver"}},
+		{"container": "lea-a", "capabilities": []string{"rm-rf"}, "repos": []map[string]string{{"repo": "x", "pin": "o/x"}}},
+		{"container": "lea-a", "capabilities": []string{"stop-finished"}, "repos": []map[string]string{{"repo": "x", "pin": "o/x"}}},
+		{"container": "lea-a", "capabilities": []string{"merge"}, "branch": "main", "repos": []map[string]string{{"repo": "x", "pin": "o/x"}}},
+		{"container": "lea-a", "capabilities": []string{"merge"}, "ttl_s": 30, "repos": []map[string]string{{"repo": "x", "pin": "o/x"}}},
+		{"container": "lea-a", "capabilities": []string{"merge"}, "ttl_s": 31 * 24 * 3600, "repos": []map[string]string{{"repo": "x", "pin": "o/x"}}},
+		{"container": "lea-a", "capabilities": []string{"merge"}, "agent": "nobody", "repos": []map[string]string{{"repo": "x", "pin": "o/x"}}},
+		{"container": "", "capabilities": []string{"deliver"}}} {
+		if err := call(api, "", "allow_set", bad, nil); err == nil {
 			t.Fatalf("accepted %v", bad)
 		}
 	}
-	// On again replaces the standing grants: other is gone.
-	on["repos"] = []map[string]string{{"repo": "fixture", "github": "o/fixture"}}
-	if err := call(api, "", "delivery_set", on, &r); err != nil || len(r.Grants) != 4 {
+	list := func() []struct {
+		ID     int64
+		Grants []struct{ ID, Revoked int64 }
+	} {
+		t.Helper()
+		var l struct {
+			Sets []struct {
+				ID     int64
+				Grants []struct{ ID, Revoked int64 }
+			}
+		}
+		if err := call(api, "", "allow_list", map[string]any{"container": "lea-a"}, &l); err != nil {
+			t.Fatal(err)
+		}
+		return l.Sets
+	}
+	// The same call again changes nothing: ids are stable.
+	if err := call(api, "", "allow_set", on, &r); err != nil || !r.Unchanged || r.Set.ID != first.ID {
+		t.Fatalf("again: %+v %v", r, err)
+	}
+	// Recorded again over every repository, fixture alone: the same set, its fixture rows kept,
+	// other's and gl's revoked.
+	on["repos"] = []map[string]string{{"repo": "fixture", "pin": "o/fixture"}}
+	if err := call(api, "", "allow_set", on, &r); err != nil || r.Unchanged || r.Set.ID != first.ID {
 		t.Fatalf("on again: %+v %v", r, err)
 	}
-	var l struct{ Grants []struct{ Repo string } }
-	if err := call(api, "", "grant_list", nil, &l); err != nil || len(l.Grants) != 4 {
-		t.Fatalf("active after on again: %+v %v", l, err)
+	kept := 0
+	for _, g := range r.Set.Grants {
+		if g.Revoked == 0 {
+			kept++
+			if g.Repo != "fixture" || g.ID != first.Grants[indexOf(first, g.ID)].ID {
+				t.Fatalf("kept row: %+v", g)
+			}
+		}
 	}
-	// A user grant of the same lea survives off.
-	if err := call(api, "", "grant_add", map[string]any{"container": "lea-a", "action": "stop-finished"}, nil); err != nil {
+	if kept != 4 {
+		t.Fatalf("on again: %d rows active: %+v", kept, r)
+	}
+	// A changed pin replaces only that repository's rows.
+	on["repos"] = []map[string]string{{"repo": "fixture", "pin": "o/fork"}}
+	if err := call(api, "", "allow_set", on, &r); err != nil || r.Set.ID != first.ID {
+		t.Fatalf("new pin: %+v %v", r, err)
+	}
+	if d, _ := hookDecision(t, runHook(bus, "PreToolUse", merge42, nil)); d != "allow" {
+		t.Fatalf("merge after the new pin: %q", d)
+	}
+	// Another set of the same lea survives off deliver.
+	if err := call(api, "", "allow_set", map[string]any{"container": "lea-a", "capabilities": []string{"stop-finished"}}, nil); err != nil {
 		t.Fatal(err)
 	}
-	if err := call(api, "", "delivery_set", map[string]any{"container": "lea-a", "on": false}, &r); err != nil {
+	if len(list()) != 2 {
+		t.Fatalf("two sets: %+v", list())
+	}
+	if err := call(api, "", "allow_off", map[string]any{"container": "lea-a", "capability": "deliver"}, nil); err != nil {
 		t.Fatal(err)
 	}
-	if err := call(api, "", "grant_list", nil, &l); err != nil || len(l.Grants) != 1 {
-		t.Fatalf("after off: %+v %v", l, err)
+	if l := list(); len(l) != 1 || l[0].ID == first.ID {
+		t.Fatalf("after off deliver: %+v", l)
 	}
-	if d, _ := hookDecision(t, runHook(bus, "PreToolUse", preToolUse("gh pr merge 42 --squash"), nil)); d != "" {
+	if d, _ := hookDecision(t, runHook(bus, "PreToolUse", merge42, nil)); d != "" {
 		t.Fatalf("merge after off: %q", d)
 	}
+	// Another lea's set is not this lea's to revoke.
+	if err := call(api, "", "allow_off", map[string]any{"container": "lea-b", "set": list()[0].ID}, nil); err == nil {
+		t.Fatal("revoked another lea's set")
+	}
+	if err := call(api, "", "allow_off", map[string]any{"container": "lea-a"}, nil); err != nil || len(list()) != 0 {
+		t.Fatalf("off everything: %v %+v", err, list())
+	}
+}
+
+var merge42 = preToolUse("gh pr merge 42 --squash")
+
+func indexOf(s struct {
+	ID      int64
+	Expires int64
+	Grants  []struct {
+		ID      int64
+		Action  string
+		Repo    string
+		Pin     string
+		Expires int64
+		Revoked int64
+	}
+}, id int64) int {
+	for i, g := range s.Grants {
+		if g.ID == id {
+			return i
+		}
+	}
+	return 0
 }
