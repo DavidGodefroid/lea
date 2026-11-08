@@ -25,8 +25,8 @@ import (
 // An agent in no folder is at the root, after the folders, in launch order.
 
 // Layout is what the deck persists of its folders. Saved is when the deck last wrote it (unix
-// seconds, 0 for a layout written before #241). Known lists the agents with a lead the layout
-// has already seen, each with the second it was created in, oldest first (#296): an agent with a
+// seconds, 0 for a layout written before #241). Known lists the agents the layout has already
+// seen (with a lead or not, since #340), each with the second it was created in, oldest first (#296): an agent with a
 // lead that is not in it, or was created later than its entry (a done agent's key respawned), is
 // new to the layout, and joins its lead's folder (fileSpawned). Format is layoutKnown once Known is the
 // record; a layout written before #296 (0) only has Saved, and an agent started later than
@@ -492,11 +492,16 @@ func (m Model) setColour(key, name string) Model {
 // fileSpawned puts each agent with a lead (Parent) that is new to the layout (not in Known, or
 // created later than its Known entry: a done agent's key store.Register gave a new agent) and
 // in no folder into the folder of its lead, at its end. It runs on every snapshot, and
-// records every agent with a lead it lists in Known, filed or not, so it files an agent once:
-// an agent the user moves out is never moved back, even after a deck restart (the move saves
-// Known). An agent started while no deck was attached is new too, and is filed on the next
-// attach. Known is a record per agent, not a save time: an agent created in the same second as
-// a save (another child filed, a fold, a move) is still new (#296).
+// records every agent it lists in Known, filed or not, so it files an agent once: an agent the
+// user moves out is never moved back, even after a deck restart (the move saves Known). An
+// agent started while no deck was attached is new too, and is filed on the next attach. Known
+// is a record per agent, not a save time: an agent created in the same second as a save
+// (another child filed, a fold, a move) is still new (#296).
+//
+// A renewed key (in Known, created later) first leaves the folder its previous agent was in,
+// lead or not: the new agent follows its own lead, or stays at the root without one, never the
+// folder of the agent that had its name before (#340). Agent names are per container, so the
+// previous agent may have had another lead.
 //
 // A layout written before #296 (Format 0) first takes as known the agents it lists that started
 // no later than its last save, all of them for a layout that never recorded one (written before
@@ -506,7 +511,7 @@ func (m *Model) fileSpawned() {
 		m.layout = cloneLayout(m.layout)
 		m.layout.Format = layoutKnown
 		for _, a := range m.agents {
-			if !isShell(a) && a.Parent != "" && (m.layout.Saved == 0 || a.Created <= m.layout.Saved) {
+			if !isShell(a) && (m.layout.Saved == 0 || a.Created <= m.layout.Saved) {
 				m.layout.Known = append(m.layout.Known, Seen{Key: a.Key, Created: a.Created})
 			}
 		}
@@ -516,22 +521,22 @@ func (m *Model) fileSpawned() {
 		known[k.Key] = k.Created
 	}
 	var fresh []Agent
+	renewed := map[string]bool{}
 	for _, a := range m.agents {
-		if isShell(a) || a.Parent == "" || !agentKey.MatchString(a.Key) || a.Created < 0 {
+		if isShell(a) || !agentKey.MatchString(a.Key) || a.Created < 0 {
 			continue
 		}
-		if c, ok := known[a.Key]; !ok || a.Created > c {
-			fresh = append(fresh, a)
+		c, ok := known[a.Key]
+		if ok && a.Created <= c {
+			continue
 		}
+		fresh = append(fresh, a)
+		renewed[a.Key] = ok
 	}
 	if len(fresh) == 0 {
 		return
 	}
 	m.layout = cloneLayout(m.layout)
-	renewed := map[string]bool{}
-	for _, a := range fresh {
-		renewed[a.Key] = true
-	}
 	kept := m.layout.Known[:0]
 	for _, k := range m.layout.Known {
 		if !renewed[k.Key] {
@@ -539,22 +544,25 @@ func (m *Model) fileSpawned() {
 		}
 	}
 	m.layout.Known = kept
-	filed := false
+	changed := false
 	for _, a := range fresh {
 		m.layout.Known = append(m.layout.Known, Seen{Key: a.Key, Created: a.Created})
-		if m.folderOf(a.Key) >= 0 {
+		if renewed[a.Key] && m.folderOf(a.Key) >= 0 {
+			m.layout, changed = withAgentIn(m.layout, a.Key, -1), true
+		}
+		if a.Parent == "" || m.folderOf(a.Key) >= 0 {
 			continue
 		}
 		fi := m.folderOf(a.Parent)
 		if fi < 0 || len(m.layout.Folders[fi].Agents) >= maxFolderAgents {
 			continue
 		}
-		m.layout, filed = withAgentIn(m.layout, a.Key, fi), true
+		m.layout, changed = withAgentIn(m.layout, a.Key, fi), true
 	}
 	if n := len(m.layout.Known) - maxKnown; n > 0 {
 		m.layout.Known = append([]Seen(nil), m.layout.Known[n:]...)
 	}
-	if filed {
+	if changed {
 		m.save()
 	}
 }

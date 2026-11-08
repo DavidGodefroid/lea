@@ -177,13 +177,14 @@ func TestKnownIsPrunedBoundedAndChecked(t *testing.T) {
 		Folders: []Folder{{ID: "f1", Name: "web", Agents: []string{"lea-a/lead"}}}}}
 	m, lead := towerDeck(t, st)
 	m, _ = step(t, m, snapshotMsg{snap: Snapshot{Version: 8, Agents: []Agent{lead, spawned("kid", "lea-a/lead", 9_500)}}})
-	if len(st.l.Known) != 1 || st.l.Known[0] != (Seen{Key: "lea-a/kid", Created: 9_500}) {
+	if len(st.l.Known) != 2 || st.l.Known[0] != (Seen{Key: "lea-a/lead", Created: 100}) ||
+		st.l.Known[1] != (Seen{Key: "lea-a/kid", Created: 9_500}) {
 		t.Fatalf("known %v", st.l.Known)
 	}
 	// A child with a key reused from a gone agent's is new again.
 	m, _ = step(t, m, snapshotMsg{snap: Snapshot{Version: 9, Agents: []Agent{lead}}})
 	m = m.toggleFold(folderKey("f1"))
-	if len(st.l.Known) != 0 {
+	if len(st.l.Known) != 1 || st.l.Known[0].Key != "lea-a/lead" {
 		t.Fatalf("known after the kid went %v", st.l.Known)
 	}
 
@@ -262,7 +263,7 @@ func TestARespawnedDoneKeyFollowsItsNewLead(t *testing.T) {
 			t.Fatalf("%s: order %q", name, got)
 		}
 		l, err := st.Load()
-		if err != nil || len(l.Known) != 1 || l.Known[0] != (Seen{Key: "lea-a/kid", Created: 10_500}) {
+		if err != nil || len(l.Known) != 3 || l.Known[2] != (Seen{Key: "lea-a/kid", Created: 10_500}) {
 			t.Fatalf("%s: saved known %+v %v", name, l.Known, err)
 		}
 		// Moved out again, the respawn stays out, after a restart too.
