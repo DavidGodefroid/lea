@@ -38,6 +38,9 @@ Changes:
   `--body-file`, `--notes-file`) hands gh the body or notes file the parser approved (#382): the
   pinned command took the file's index from a second scan of the args, which took the title's
   value for the flag and swapped the wrong argument for `-`.
+- A lead's child spawned without `repo` starts where its lead works (#364): the lead's repository,
+  or without one the lead's own directory, not the directory `lea` was last launched from. An
+  explicit `repo` still wins; `agents_spawn` with `for` keeps the request's repo and branch.
 
 ## v0.14.1 (2026-11-08)
 

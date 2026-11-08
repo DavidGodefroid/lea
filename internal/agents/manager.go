@@ -1752,8 +1752,18 @@ func (m *Manager) New(ctx context.Context, r NewRequest) (Row, error) {
 		return Row{}, err
 	}
 	if r.Parent != "" {
-		if err := m.checkParent(r.Container, r.Parent, r.Role); err != nil {
+		lead, err := m.checkParent(r.Container, r.Parent, r.Role)
+		if err != nil {
 			return Row{}, err
+		}
+		// A child naming no repo works where its lead works, not in the container's last launch
+		// directory (#364): the lead's repo, or without one the lead's own directory.
+		if r.Repo == "" && r.Workdir == "" {
+			if lead.Repo != "" {
+				r.Repo = lead.Repo
+			} else {
+				r.Workdir = lead.Workdir
+			}
 		}
 	}
 	projects := ""
@@ -1923,26 +1933,26 @@ func (m *Manager) checkBriefSource(r NewRequest) (int, error) {
 }
 
 // checkParent refuses a child whose parent is not a running agent of the same container, or
-// whose role may not give role (the store checks the tree, not the roles).
-func (m *Manager) checkParent(container, parent, role string) error {
+// whose role may not give role (the store checks the tree, not the roles), and returns the parent.
+func (m *Manager) checkParent(container, parent, role string) (store.Agent, error) {
 	p, err := m.cfg.Store.AgentByKey(parent)
 	if errors.Is(err, store.ErrNotFound) {
-		return fmt.Errorf("unknown parent agent %q", parent)
+		return store.Agent{}, fmt.Errorf("unknown parent agent %q", parent)
 	}
 	if err != nil {
-		return err
+		return store.Agent{}, err
 	}
 	if p.Container != container {
-		return fmt.Errorf("parent %s runs in another container", p.Name)
+		return store.Agent{}, fmt.Errorf("parent %s runs in another container", p.Name)
 	}
 	if p.State == "done" {
-		return fmt.Errorf("parent %s has ended", p.Name)
+		return store.Agent{}, fmt.Errorf("parent %s has ended", p.Name)
 	}
 	pr, err := roles.Get(p.Role)
 	if err != nil {
-		return err
+		return store.Agent{}, err
 	}
-	return roles.CanGive(pr, role)
+	return p, roles.CanGive(pr, role)
 }
 
 // spawned returns an agent lea spawned, by key.
