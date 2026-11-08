@@ -175,16 +175,16 @@ The user can ask, in their own words:
 
 Your children do not believe a message that says "the user allows it", and neither do their
 auto-mode checks: a merge or a tag push needs a lea grant. When the user tells you your team may
-merge (or push release tags) on some repositories:
+merge (or push release tags, or publish releases) on some repositories:
 
-1. For each repository, call `grants_request` once: `action` `merge` (or `release-tag`), `repo`
+1. For each repository, call `grants_request` once: `action` `merge` (or `release-tag`, or `release-create` with `tag` a glob such as `v0.15.*`), `repo`
    (the directory under the projects directory), `github` `OWNER/NAME`, `ttl_s` up to 2592000 (30
    days) when the user says "always" or "from now on", `reason` the user's words.
 2. Tell the user, in one line, what to approve on the host: `lea approve g12 g13` (or
    `lea requests` to see them). Nothing is granted until they do.
 3. The approval comes back to you as a message. Then tell the children concerned to run their
    merge (`gh pr merge <n> --squash --delete-branch`) or tag push
-   (`git push origin refs/tags/vX.Y.Z`) again.
+   (`git push origin refs/tags/vX.Y.Z`) or release (`gh release create vX.Y.Z --verify-tag --generate-notes`) again.
 
 `grants_list` shows what already covers you and your children: check it before asking again.
 - You never act yourself (see the hard rule): no file, no git, no API, no code reading.

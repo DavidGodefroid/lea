@@ -37,7 +37,9 @@ var (
 // grantParams is a grant as the host (grant_add) or a lead's request (grants_request) names it.
 type grantParams struct {
 	Container, Action, Repo, Branch, Agent, GitHub string
-	TTLS                                           int64 `json:"ttl_s"`
+	// Tag is a release-create grant's tag glob (#353), "" any semver tag.
+	Tag  string
+	TTLS int64 `json:"ttl_s"`
 }
 
 // checkGrant validates p as grant_add records it (the agent aside), normalises its GitHub
@@ -57,6 +59,12 @@ func checkGrant(p *grantParams) (time.Duration, error) {
 	}
 	if p.Branch != "" && !strings.Contains(p.Branch, "*") && grants.Protected(p.Branch) {
 		return 0, errors.New("branch: no grant covers the default branch")
+	}
+	if p.Tag != "" && p.Action != grants.ReleaseCreate {
+		return 0, fmt.Errorf("tag: only a %s grant names a tag glob", grants.ReleaseCreate)
+	}
+	if p.Tag != "" && !grants.ValidTagGlob(p.Tag) {
+		return 0, errors.New("tag: a glob on a semver tag, starting with v (v0.15.*)")
 	}
 	if p.Repo == "" && grants.NeedsGitHub(p.Action) {
 		return 0, fmt.Errorf("repo: a %s grant names the repository it covers, the one --github is", p.Action)
@@ -105,7 +113,7 @@ func (d *Daemon) grantAdd(raw json.RawMessage) (any, error) {
 func (d *Daemon) recordGrant(p grantParams, ttl time.Duration) (grants.Grant, error) {
 	now := d.now()
 	g, err := d.st.AddGrant(grants.Grant{Container: p.Container, Action: p.Action, Repo: p.Repo, Branch: p.Branch,
-		Agent: p.Agent, GitHub: p.GitHub, Created: now, Expires: now + int64(ttl/time.Second)})
+		Agent: p.Agent, GitHub: p.GitHub, Tag: p.Tag, Created: now, Expires: now + int64(ttl/time.Second)})
 	if err != nil {
 		return grants.Grant{}, err
 	}

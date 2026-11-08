@@ -256,7 +256,7 @@ profile and state in the bottom border.
   writes to you with `msg_send`, and you answer with `m`.
 - **Folders.** Folders come first, in your order, then the agents in no folder. A folder's
   header sums up its agents, folded or not: how many it holds, then how many need you (red,
-  bold), work, wait on their usage limit and are done (`2 ●1 ✓1`; `!`, `+`, `~` and `=` in
+  bold), work, wait on their usage limit and are done (`2 ● 1 ✓ 1`; `!`, `+`, `~` and `=` in
   ASCII). Its agents are indented under it, and a blank line sets each folder apart. A folder's
   colour (`c`) tints its arrow and its name, never its agents or its summary. An agent a lead starts joins the lead's folder, also when it starts
   while no deck is attached; once you move it, it stays where you put it. The layout is yours:
@@ -706,6 +706,26 @@ permission. The agents of one container share one user, so they are one trust do
 that names another agent of its container in `LEA_AGENT` is still guarded by the same hard denies
 and the container's grants.
 
+### Your own status line
+
+lea draws the agents' status line itself (`lea statusline`: model, context and 5-hour/7-day
+usage), since it reports each agent's context use to the deck and feeds limit auto-resume. When
+your `~/.claude/settings.json` has a `statusLine` command, lea runs it after its report and shows
+its output instead (#374):
+
+- Your command gets the same JSON on stdin as on your host, and runs **inside the container**, in
+  the agent's directory: no host-only tool or path. A script below `~/.claude` that the command
+  names (`~/.claude/statusline.sh`, `bash ~/.claude/bin/line.py`...) is mounted read-only, when it
+  is a real file (no symbolic link on its path) and executable or named as a script. Nothing
+  outside `~/.claude` is mounted: such a command fails and lea's own line shows.
+- When the command exits non-zero, prints nothing or takes more than 1.5 s (it is killed, with
+  what it started), lea prints its own line. The context report is sent whatever it does.
+- The command is read from the container's copy of your settings, at every refresh; the script
+  is mounted when lea starts, as your host's `settings.json` names it (never as an agent's copy
+  does, so an agent cannot get another host file mounted), and never one of Claude Code's own state
+  directories (`projects`, `shell-snapshots`, `todos`...). After adding one, restart lea (`lea
+  stop`, then `lea`). Remove the `statusLine` entry to get lea's line back.
+
 ### Control tower
 
 lea brings its own Claude Code plugin, `lea`, loaded in every agent (from the image, for the
@@ -757,6 +777,7 @@ lea grant add delete-own-branch --container lea-myproj --repo api --github me/ap
 lea grant add commit-identity --container lea-myproj --repo api --github me/api --branch 'feat/*'  # git commit -m (no --amend), git push [-u] origin <own branch>
 lea grant add pr-create --container lea-myproj --repo api --github me/api  # gh pr create --head <own branch> --title T --body B|--body-file F
 lea grant add release-tag --container lea-myproj --repo api --github me/api  # git push origin refs/tags/vX.Y.Z (a new semver tag on a commit of the default branch)
+lea grant add release-create --container lea-myproj --repo api --github me/api --tag 'v0.15.*'  # gh release create v0.15.N --verify-tag [--notes-file F|--generate-notes]
 lea grant ls [--all]                                                # active grants (--all: revoked, expired) and recent uses
 lea grant revoke 3
 ```
@@ -864,6 +885,18 @@ root of the agent's worktree. lea pushes it from a bare repository it creates fo
 when the tag's commit is on the default branch of the remote (fetched at that moment), and without
 force, so a tag the remote already has is refused. `--tags`, `--follow-tags`, force, a refspec,
 another remote and a non-semver tag stay denied. `lea delivery on` never records it.
+
+**Release publication.** A repository with no workflow that publishes a release on tag push needs
+`gh release create` after the tag push; a `release-create` grant covers exactly
+`gh release create <tag> --verify-tag [--title T] [--notes-file F | --generate-notes] [--prerelease] [--latest]`,
+one plain command at the root of the agent's worktree, for a semver tag that `--tag GLOB` matches
+(none given: any semver tag). `--verify-tag` is required, so gh never creates the tag (that stays
+`release-tag`'s job). lea runs it pinned like every allowed gh call (`env -i`, `-R` the grant's
+`--github`, lea's gh config, through lea's proxy); a notes file follows the rule of
+`gh pr create --body-file`. `--draft`, `--target`, `--notes`, assets, `--latest=false` (use the
+plain flags) and every other `gh release` subcommand (`edit`, `delete`, `upload`, `delete-asset`)
+stay uncovered; a lead asks for the grant with `grants_request` (action `release-create`, `tag`
+the glob). `lea delivery on` never records it.
 
 ### Let agents deliver (push, PR/MR, merge)
 

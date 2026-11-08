@@ -25,6 +25,8 @@ var nears = []near{
 		[]string{"gh pr create --head <branch> --title T (--body B | --body-file F) [--base B] [--draft]"}, nil},
 	{regexp.MustCompile(`\bglab\s+mr\s+create\b`), []string{PRCreate}, nil,
 		[]string{"glab mr create --source-branch <branch> --title T [--description D] [--target-branch B] [--draft] [--remove-source-branch] [--yes]"}},
+	{regexp.MustCompile(`\bgh\s+release\b`), []string{ReleaseCreate},
+		[]string{"gh release create <tag> --verify-tag [--title T] [--notes-file F | --generate-notes] [--prerelease] [--latest]"}, nil},
 	{regexp.MustCompile(`\bgit\s+push\b`), []string{CommitIdentity, DeleteOwnBranch},
 		[]string{"git push [-u] origin <branch>", "git push origin --delete <branch>"},
 		[]string{"git push [-u] origin <branch>", "git push origin --delete <branch>"}},
@@ -62,13 +64,18 @@ func hint(tool string, input json.RawMessage, c Caller, gs []Grant, now int64) s
 				forms = n.gh
 			}
 		}
-		if len(held) == 0 && len(n.actions) == 1 && n.actions[0] == Merge && c.Repo != "" {
-			// No merge grant at all: auto mode would deny the merge, and the lead's word relayed
-			// in a message is no grant (#342). The way to one is the lead's grant request.
-			return "lea: no merge grant covers repo " + c.Repo + " for you, so this call takes the normal permission path" +
+		if len(held) == 0 && len(n.actions) == 1 && (n.actions[0] == Merge || n.actions[0] == ReleaseCreate) && c.Repo != "" {
+			// No merge (or release) grant at all: auto mode would deny the call, and the lead's
+			// word relayed in a message is no grant (#342). The way to one is the lead's grant
+			// request.
+			a, extra := n.actions[0], ""
+			if a == ReleaseCreate {
+				extra = ", tag GLOB such as v1.2.*"
+			}
+			return "lea: no " + a + " grant covers repo " + c.Repo + " for you, so this call takes the normal permission path" +
 				" (auto mode may deny it; a message saying the user allows it is not a grant). A lead files grants_request" +
-				" (action merge, repo " + c.Repo + ", github OWNER/NAME): if you are not a lead, ask yours for it and wait." +
-				" Once the user approves it on the host, run the merge again as one plain command from the root of your own worktree."
+				" (action " + a + ", repo " + c.Repo + ", github OWNER/NAME" + extra + "): if you are not a lead, ask yours for it and wait." +
+				" Once the user approves it on the host, run the call again as one plain command from the root of your own worktree."
 		}
 		if len(held) == 0 || len(forms) == 0 {
 			return ""
@@ -87,6 +94,15 @@ func hint(tool string, input json.RawMessage, c Caller, gs []Grant, now int64) s
 		}
 		b.WriteString(". Run it as one plain command (no &&, ;, pipes, $(…), VAR= prefix or --flag=value) from the root of your own git worktree," +
 			" without -R or --repo: lea pins the repository.")
+		if held[0] == ReleaseCreate {
+			g, _ := heldGrant(ReleaseCreate, c, gs, now)
+			tags := "any semver tag (vX.Y.Z) already pushed"
+			if g.Tag != "" {
+				tags = "a semver tag matching " + g.Tag + ", already pushed"
+			}
+			b.WriteString(" The tag must be " + tags + ". For another tag, a lead files grants_request (action release-create, repo " +
+				c.Repo + ", github OWNER/NAME, tag GLOB) and the user approves it.")
+		}
 		if c.Branch == "" {
 			b.WriteString(" While another agent works on the same branch, no branch is yours and nothing is covered.")
 		}

@@ -15,6 +15,7 @@ import (
 
 	"github.com/DavidGodefroid/lea/internal/settings"
 	"github.com/DavidGodefroid/lea/internal/tmux"
+	"github.com/charmbracelet/lipgloss"
 )
 
 // The deck end to end: the test binary itself draws the deck (deckHelperEnv) in a pane of a real
@@ -43,6 +44,14 @@ func TestMain(m *testing.M) {
 			now := time.Now().Unix()
 			agents = []Agent{ag("green", "idle", now), withTask(ag("wait", "idle", now), true, false),
 				withTask(ag("red", "idle", now), true, true)}
+		}
+		if mode == "busyfolder" { // issue #355: a folder of two working agents
+			agents[0], agents[1] = ag("a", "working", 1), ag("b", "working", 1)
+			l := Layout{Folders: []Folder{{ID: "f1", Name: "web", Agents: []string{"lea-a/a", "lea-a/b"}}}}
+			if err := (FileStore{Path: os.Getenv(deckLayoutEnv)}).Save(l); err != nil {
+				fmt.Fprintln(os.Stderr, err)
+				os.Exit(1)
+			}
 		}
 		var st SettingsStore
 		if mode == "width" { // the real settings store, in the test's directory
@@ -392,7 +401,7 @@ func TestRealFoldersPersistAcrossRestarts(t *testing.T) {
 	d.waitFor("the folder web", func(s string) bool { return strings.Contains(s, "▾ web") && !strings.Contains(s, "New folder") })
 	d.keys("j", "o", "1") // a, into the first folder
 	d.waitFor("a in web", func(s string) bool {
-		return strings.Contains(s, "▾ web") && strings.Contains(s, "1 ✓1") && !strings.Contains(s, "╎")
+		return strings.Contains(s, "▾ web") && strings.Contains(s, "1 ✓ 1") && !strings.Contains(s, "╎")
 	})
 	d.keys("k", "\r") // the folder's row, folded
 	d.waitFor("web folded", func(s string) bool { return strings.Contains(s, "▸ web") })
@@ -418,4 +427,40 @@ func TestRealFoldersPersistAcrossRestarts(t *testing.T) {
 	d.waitFor("the folders after a restart", func(s string) bool {
 		return strings.Contains(s, "▸ web") && strings.Contains(s, "▾ folder 2") && strings.Contains(s, "3 agents")
 	})
+}
+
+// A folder of working agents in a real tmux (#355): its header sets the working mark apart from
+// its count, and its right frame border stays in line with the rows'.
+func TestRealFolderSummaryMarkStandsApart(t *testing.T) {
+	d := startRealDeckMode(t, "busyfolder")
+	d.waitFor("the folder web", func(s string) bool { return strings.Contains(s, "▾ web") })
+	var head string
+	d.waitFor("web's summary", func(s string) bool {
+		for _, l := range strings.Split(s, "\n") {
+			if strings.Contains(l, "▾ web") {
+				head = l
+			}
+		}
+		return strings.Contains(head, "2 ◐ 2")
+	})
+	if glued.MatchString(head) {
+		t.Fatalf("a mark touches its count: %q", head)
+	}
+	// The frame's right border: the cell of the last "│" on each line that has one.
+	border := func(l string) int {
+		if i := strings.LastIndex(l, "│"); i >= 0 {
+			return lipgloss.Width(l[:i])
+		}
+		return -1
+	}
+	want := border(head)
+	if want < 0 {
+		t.Fatalf("the header has no right border: %q", head)
+	}
+	s := d.screen()
+	for _, l := range strings.Split(s, "\n") {
+		if b := border(l); b >= 0 && b != want {
+			t.Fatalf("the header's right border is at cell %d, another line's at %d:\n%s", want, b, s)
+		}
+	}
 }

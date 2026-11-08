@@ -10,7 +10,26 @@ Changes:
   after its brief, not after lea's first prompt. Labels are unique among the running agents of a
   container, whatever their case: an automatic label that clashes gets ` 2`, ` 3`…, and the user's
   rename to a running agent's label is refused. An agent's label, or the namer's from an agent's
-  brief or prompt, is never `user`, `lea` or `Control Tower…`: those are the user's and lea's.
+  brief or prompt, is plain ASCII (letters, digits, spaces, `- _ . #`) and never reads as `user`,
+  `the user`, `lea` or `Control Tower…`, whatever its case or punctuation: those are the user's
+  and lea's.
+- The agents show your own Claude Code status line (#374): when your `~/.claude/settings.json`
+  has a `statusLine` command, `lea statusline` still reports the agent's context and usage to the
+  daemon, then runs your command with the same JSON (1.5 s at most, killed past it) and prints its
+  output; lea's own line comes back when it fails, prints nothing or times out. A script below
+  `~/.claude` the command names is mounted read-only into the containers (and lea-ctl).
+- `release-create` grant action (#353): `gh release create <tag> --verify-tag [--title T]
+  [--notes-file F | --generate-notes] [--prerelease] [--latest]`, one plain command at the root of
+  the agent's worktree, pinned like every allowed gh call, for a pushed semver tag matching the
+  grant's `--tag` glob (`lea grant add release-create ... --tag 'v0.15.*'`, or `grants_request`
+  with `tag`). `--draft`, `--target`, assets and the other `gh release` subcommands stay
+  uncovered; `lea delivery on` never records it. A call the grant does not cover tells the agent
+  the form, the glob and `grants_request`.
+- In the deck, a folder header's summary sets each state mark apart from its count (`6 ◐ 6`, not
+  `6 ◐6`) (#355): the marks are East Asian Ambiguous width, and a terminal that draws them wide
+  drew the half-moon over the digit.
+- The "Copied" notice a mouse selection's release shows closes after 0.6 s instead of 1.5 s
+  (#373).
 
 ## v0.14.1 (2026-11-08)
 
