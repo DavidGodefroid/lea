@@ -428,6 +428,9 @@ func (l *Launcher) dispatch(args []string) error {
 		if len(rest) > 0 && rest[0] == "tool" {
 			return l.configTool(rest[1:])
 		}
+		if len(rest) > 0 && rest[0] == "claude" {
+			return l.configClaude(rest[1:])
+		}
 		return l.config(rest)
 	case "egress":
 		return l.egress(rest)
@@ -525,6 +528,10 @@ func (l *Launcher) doctor() error {
 	// Lea's Lock clients against the locks lox runs (lea#134).
 	if lerr := l.doctorLocks(proj); lerr != nil && err == nil {
 		err = lerr
+	}
+	// The user's own base settings for Claude (#334).
+	if cerr := l.claudeDoctor(); cerr != nil && err == nil {
+		err = cerr
 	}
 	if l.coreCall("delivery", "--container", l.Cfg.ContainerName(proj), "--projects", proj, "check", "--state", l.Cfg.StateDir()) != nil && err == nil {
 		return exitError{1}

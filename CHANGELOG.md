@@ -4,6 +4,15 @@
 
 Changes:
 
+- `lea config claude` (#334): your base settings for Claude Code in lea, without editing a file or
+  rebuilding the image: `defaultMode`, entries to add to or remove from `allow`, `ask`, `deny` and
+  `additionalDirectories` (lea's built-in rules included), `env`, `model`, `language`,
+  `outputStyle`, `alwaysThinkingEnabled`; `lea config claude` alone shows every effective setting
+  with its source. Kept in `claude.json` next to `lea.conf`, never in `~/.claude/settings.json`;
+  they outrank the host's `permissions` and apply to the containers started from then on. lea's
+  hooks, `allowManagedPermissionRulesOnly`, `disableBypassPermissionsMode`, the status line and
+  lea's own variables are refused with the reason. Host only; `lea doctor` lists the overrides,
+  `lea config export` never carries them.
 - `release-create` grant action (#353): `gh release create <tag> --verify-tag [--title T]
   [--notes-file F | --generate-notes] [--prerelease] [--latest]`, one plain command at the root of
   the agent's worktree, pinned like every allowed gh call, for a pushed semver tag matching the

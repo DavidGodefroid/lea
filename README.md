@@ -686,7 +686,30 @@ they come from your host's `settings.json` only (below).
   `additionalDirectories`, and `defaultMode` unless it is `bypassPermissions`) to lea's, read
   from your host's `~/.claude/settings.json` by lea on the host and mounted read-only, never from
   the copy. So a rule you add with `/permissions` inside lea, or the deck's "always", is not kept:
-  add it to your host's `settings.json`, then restart lea (`lea stop`, then `lea`).
+  add it with `lea config claude` (below) or to your host's `settings.json`, then restart lea
+  (`lea stop --all`, then `lea`).
+- **Your base settings for lea: `lea config claude`** (#334). Without editing a file, and without
+  touching your own Claude Code outside lea:
+
+  ```sh
+  lea config claude                           # every effective setting, with its source
+  lea config claude defaultMode auto          # default, acceptEdits, plan, dontAsk or auto
+  lea config claude defaultMode --unset       # back to your settings.json's, else Claude Code's
+  lea config claude allow add 'Bash(make *)'  # allow, ask, deny, additionalDirectories
+  lea config claude allow remove 'Bash(go *)' # lea's built-in rules and your host's can go too
+  lea config claude env MY_TOOL_HOME /opt/tool
+  lea config claude model opus                # also language, outputStyle, alwaysThinkingEnabled
+  ```
+
+  They are kept in `claude.json` next to your `lea.conf` (never in `~/.claude/settings.json`),
+  outrank your host's `permissions`, which outrank lea's image, and apply to the containers
+  started from then on (`lea stop --all`, then `lea`). `lea doctor` lists them; `lea config
+  export` never carries them (`--include-personal` neither). lea keeps what keeps it working and
+  its guards effective, and refuses it with the reason: its hooks, `allowManagedPermissionRulesOnly`,
+  `disableBypassPermissionsMode` (so no `bypassPermissions`: `dontAsk` or `auto` drop the prompts
+  and keep the guards), the status line and its own variables (`LEA_*`, `OTEL_*`, `SSH_AUTH_SOCK`,
+  `GH_CONFIG_DIR`, `GLAB_CONFIG_DIR`, the proxy's, telemetry and update switches). The command
+  runs on the host only, and the agents' guard denies editing lea's configuration.
 - **The guard fails closed.** lea's PreToolUse hook denies a call it cannot check: lea missing, a
   crash or a timeout (`onFailure: "block"`), a bus that does not answer, a Claude Code without a
   lea agent identity (`LEA_AGENT`: run Claude in lea as an agent, from the deck or
@@ -949,6 +972,7 @@ lea                          # the deck, for $LEA_PROJECTS_DIR (unset: the worki
 lea attach [--print] [AGENT] # the tool in the lea container, or an agent's terminal (--print: the command)
 lea requests                 # what waits for you; lea approve ID [always], lea deny ID [reason]
 lea config deck on|off       # the deck, or your own tool (lea config tool CMD...), from the next lea
+lea config claude [KEY ...]  # Claude's base settings for your agents (defaultMode, allow, deny, env...)
 lea new [name] [-- args]     # one more agent (its CLI's arguments after --; -p provider, -m model)
 lea shell [-- cmd...]        # a shell, or one command, in the same lea
 lea stop [--all] [--forget] # stop this lea (--all: every lea); the next lea resumes its agents

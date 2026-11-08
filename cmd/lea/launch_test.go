@@ -53,7 +53,9 @@ func TestLauncherRefusesInsideLea(t *testing.T) {
 		t.Fatalf("stop --all inside lea: %d", got)
 	}
 	// An agent cannot allow a domain itself (#345): lea egress is the launcher's, on the host.
-	for _, a := range [][]string{{"egress", "allow", "deb.debian.org"}, {"egress", "deny", "github.com"}, {"egress", "list"}} {
+	// Nor change the user's base settings for Claude (#334): lea config claude is the launcher's too.
+	for _, a := range [][]string{{"egress", "allow", "deb.debian.org"}, {"egress", "deny", "github.com"}, {"egress", "list"},
+		{"config", "claude", "defaultMode", "auto"}, {"config", "claude", "allow", "add", "Bash(*)"}, {"config", "claude"}} {
 		errb.Reset()
 		if got := run(a, strings.NewReader(""), &out, &errb); got != 2 || !strings.Contains(errb.String(), "the launcher runs on the host") {
 			t.Fatalf("%v inside lea: %d %q", a, got, errb.String())
