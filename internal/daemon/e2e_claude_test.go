@@ -3,6 +3,7 @@ package daemon
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -554,9 +555,13 @@ func TestClaudeNestedSessionDoesNotEndTheAgent(t *testing.T) {
 	a := e.until("the agent idle", 45, func(a store.Agent) bool { return a.State == "idle" && a.SessionID != "" })
 	own := a.SessionID
 	ends, _ := e.st.EventPayloads("lea-a/dev", "SessionEnd")
-	nested := exec.Command(e.claude, "--settings", e.sf, "-p", "say hi")
+	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
+	defer cancel()
+	nested := exec.CommandContext(ctx, e.claude, "--settings", e.sf, "-p", "say hi")
 	nested.Dir, nested.Env = e.wd, e.env
-	if out, err := nested.CombinedOutput(); err != nil {
+	// A child Claude leaves behind may hold its output open: the wait ends with Claude itself.
+	nested.WaitDelay = 5 * time.Second
+	if out, err := nested.CombinedOutput(); err != nil && !errors.Is(err, exec.ErrWaitDelay) {
 		t.Fatalf("nested claude -p: %v\n%s", err, out)
 	}
 	e.until("the nested SessionEnd", 20, func(store.Agent) bool {
