@@ -118,7 +118,7 @@ func (c *Config) DeckUnset() bool {
 // still set is obsolete: lea says so and ignores it.
 func (l *Launcher) ensureHub(proj string) error {
 	if v := l.Cfg.Get("LEA_LOX_UP"); v != "" {
-		l.logf("warning: LEA_LOX_UP=%s is obsolete and ignored: lea no longer runs lox up; remove it from your configuration (lox run, in another terminal, starts the hub and the locks)", v)
+		l.logf("warning: LEA_LOX_UP=%s is obsolete and ignored: remove it from your configuration (lox run, in another terminal, starts the hub and the locks)", v)
 	}
 	if !l.Cfg.HasLocks(proj) {
 		return nil
