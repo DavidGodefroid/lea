@@ -4,6 +4,9 @@
 
 Changes:
 
+- A `gh pr create --body-file` or `gh release create --notes-file` refused for its file now says
+  why (#384): the hint names the file and the rule (a relative path inside the worktree, not
+  starting with `.` or `/`, outside `.git`) with an example, `pr-body.md`.
 - The agents show your own Claude Code status line (#374): when your `~/.claude/settings.json`
   has a `statusLine` command, `lea statusline` still reports the agent's context and usage to the
   daemon, then runs your command with the same JSON (1.5 s at most, killed past it) and prints its

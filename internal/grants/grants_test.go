@@ -932,6 +932,54 @@ func TestHint(t *testing.T) {
 	}
 }
 
+// TestBodyFileHint: a pr-create or release-create call refused for its body or notes file
+// learns the relative-path-in-worktree rule and an example (#384).
+func TestBodyFileHint(t *testing.T) {
+	want := []string{"relative path inside your worktree", "not starting with . or /", "outside .git", "pr-body.md"}
+	pr, rel := []Grant{all(PRCreate)}, []Grant{releaseGrant("v0.15.*")}
+	for _, tc := range []struct {
+		cmd string
+		gs  []Grant
+	}{
+		{"gh pr create --head feat/73-x --title T --body-file /tmp/x.md", pr},
+		{"gh pr create --head feat/73-x --title T --body-file ./x.md", pr},
+		{"gh pr create --head feat/73-x --title T --body-file .x.md", pr},
+		{"gh pr create --head feat/73-x --title T -F a/../x.md", pr},
+		{"gh pr create --head feat/73-x --title T --body-file .git/x.md", pr},
+		{"gh release create v0.15.0 --verify-tag --notes-file /tmp/x.md", rel},
+		{"gh release create v0.15.0 --verify-tag --notes-file ./x.md", rel},
+		{"gh release create v0.15.0 --verify-tag -F .x.md", rel},
+	} {
+		d := Decide("Bash", bash(tc.cmd), dev, tc.gs, now, false)
+		if d.Verdict != "" || len(d.Hint) > 1000 {
+			t.Fatalf("%q: verdict %q, want none; hint of %d bytes (the hook keeps 1000)", tc.cmd, d.Verdict, len(d.Hint))
+		}
+		for _, w := range want {
+			if !strings.Contains(d.Hint, w) {
+				t.Fatalf("%q: hint lacks %q:\n%s", tc.cmd, w, d.Hint)
+			}
+		}
+	}
+	// The relative form the hint names is allowed.
+	for _, tc := range []struct {
+		cmd string
+		gs  []Grant
+	}{
+		{"gh pr create --head feat/73-x --title T --body-file pr-body.md", pr},
+		{"gh release create v0.15.0 --verify-tag --notes-file pr-body.md", rel},
+	} {
+		if d := Decide("Bash", bash(tc.cmd), dev, tc.gs, now, false); d.Verdict != Allow {
+			t.Fatalf("%q: verdict %q (%s)", tc.cmd, d.Verdict, d.Reason)
+		}
+	}
+	// A call refused for another reason, or with a good body file, does not get the rule.
+	for _, cmd := range []string{"gh pr create --fill", "gh pr create --head feat/73-x --title T --body-file pr-body.md --web"} {
+		if d := Decide("Bash", bash(cmd), dev, pr, now, false); d.Hint == "" || strings.Contains(d.Hint, "pr-body.md") {
+			t.Fatalf("%q: hint:\n%s", cmd, d.Hint)
+		}
+	}
+}
+
 // TestBashBrackets: glob components read with bash's bracket rules (#273), translated for
 // path.Match, and fail closed on what lea does not translate.
 func TestBashBrackets(t *testing.T) {

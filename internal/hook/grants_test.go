@@ -187,6 +187,19 @@ func TestPreToolUseHint(t *testing.T) {
 	if d, _ := hookDecision(t, out); d != "allow" || strings.Contains(out, "additionalContext") {
 		t.Fatalf("covered: %q", out)
 	}
+	// An absolute body file: the agent learns the relative path rule, and the form it names is
+	// allowed on the next attempt (#384).
+	if err := call(api, "", "grant_add", map[string]any{"container": "lea-a", "action": "pr-create", "repo": "fixture", "github": "o/fixture"}, nil); err != nil {
+		t.Fatal(err)
+	}
+	out = runHook(bus, "PreToolUse", preToolUse("gh pr create --head feat/x --title T --body-file /tmp/claude-1000/s/pr.md"), nil)
+	if err := json.Unmarshal([]byte(out), &r); err != nil || r.H.Decision != "" ||
+		!strings.Contains(r.H.Context, "relative path inside your worktree") || !strings.Contains(r.H.Context, "pr-body.md") {
+		t.Fatalf("absolute body file: %q %v", out, err)
+	}
+	if d, _ := hookDecision(t, runHook(bus, "PreToolUse", preToolUse("gh pr create --head feat/x --title T --body-file pr-body.md"), nil)); d != "allow" {
+		t.Fatalf("relative body file: %q", d)
+	}
 }
 
 // lea's guard fails closed (#111): a PreToolUse it cannot check (no bus, no identity, an identity

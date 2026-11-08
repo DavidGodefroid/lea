@@ -94,6 +94,10 @@ func hint(tool string, input json.RawMessage, c Caller, gs []Grant, now int64) s
 		}
 		b.WriteString(". Run it as one plain command (no &&, ;, pipes, $(…), VAR= prefix or --flag=value) from the root of your own git worktree," +
 			" without -R or --repo: lea pins the repository.")
+		if f, ok := badBodyFile(n.actions[0], cmd); ok {
+			b.WriteString(" The file " + f + " is refused: a body or notes file must be a relative path inside your worktree," +
+				" not starting with . or /, with no . or .. segment, outside .git; for example pr-body.md.")
+		}
 		if held[0] == ReleaseCreate {
 			g, _ := heldGrant(ReleaseCreate, c, gs, now)
 			tags := "any semver tag (vX.Y.Z) already pushed"
@@ -109,6 +113,34 @@ func hint(tool string, input json.RawMessage, c Caller, gs []Grant, now int64) s
 		return b.String()
 	}
 	return ""
+}
+
+// badBodyFile is the first body file (gh pr create --body-file, -F) or notes file (gh release
+// create --notes-file, -F) of cmd that bodyFile refuses (#384), and whether there is one.
+func badBodyFile(action, cmd string) (string, bool) {
+	flag := ""
+	switch action {
+	case PRCreate:
+		flag = "--body-file"
+	case ReleaseCreate:
+		flag = "--notes-file"
+	default:
+		return "", false
+	}
+	w := strings.Fields(cmd)
+	for i, a := range w {
+		v, ok := "", false
+		switch {
+		case (a == flag || a == "-F") && i+1 < len(w):
+			v, ok = w[i+1], true
+		case strings.HasPrefix(a, flag+"="):
+			v, ok = strings.TrimPrefix(a, flag+"="), true
+		}
+		if ok && !bodyFile(v) {
+			return v, true
+		}
+	}
+	return "", false
 }
 
 // heldGrant is the first active grant of action that would cover a call of c, the forge call's
