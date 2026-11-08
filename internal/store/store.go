@@ -161,6 +161,8 @@ type Agent struct {
 	// Woken: lea woke the idle agent for a message in its inbox (#297), until that turn ends or
 	// the user types. Display only.
 	Woken bool
+	// HoldSince is when the user paused the agent's inbox (hold.go, #95), 0 when not paused.
+	HoldSince int64
 }
 
 // agentColumns are the agents columns added after phase 0; migrate adds the missing ones to a
@@ -187,6 +189,7 @@ var agentColumns = [][2]string{
 	{"limit_tries", "INTEGER NOT NULL DEFAULT 0"},
 	{"incarnation", "TEXT NOT NULL DEFAULT ''"},
 	{"woken", "INTEGER NOT NULL DEFAULT 0"},
+	{"hold_since", "INTEGER NOT NULL DEFAULT 0"},
 }
 
 // requestColumns are the spawn_requests columns added after it was created.
@@ -280,12 +283,13 @@ func (s *Store) SetState(key, state, sessionID string, now int64) error {
 const setStateSQL = `UPDATE agents SET state=?,
 		session_id=CASE WHEN ?='' THEN session_id ELSE ? END, updated=?,
 		paused=CASE WHEN ? IN ('done','stopped','unknown','suspended_cold') THEN 0 ELSE paused END,
+		hold_since=CASE WHEN ? IN ('done','stopped') THEN 0 ELSE hold_since END,
 		limit_until=CASE WHEN ?='done' THEN 0
 			WHEN ? IN ('stopped','unknown') AND paused=1 AND limit_until>0 THEN -1 ELSE limit_until END,
 		limit_tries=CASE WHEN ?='done' THEN 0 ELSE limit_tries END WHERE key=?`
 
 func (s *Store) setState(key, state, sessionID string, now int64, and string) (bool, error) {
-	res, err := s.db.Exec(setStateSQL+and, state, sessionID, sessionID, now, state, state, state, state, key)
+	res, err := s.db.Exec(setStateSQL+and, state, sessionID, sessionID, now, state, state, state, state, state, key)
 	if err != nil {
 		return false, err
 	}
@@ -310,13 +314,13 @@ func (s *Store) SetHookState(key, state, sessionID string, now int64) (bool, err
 	return s.setState(key, state, sessionID, now, ` AND state<>'stopped'`)
 }
 
-const agentCols = `key, container, name, session_id, state, updated, profile, workdir, created, role, parent, repo, branch, task_id, label, args, prompt, paused, model, limit_until, limit_tries, incarnation, woken`
+const agentCols = `key, container, name, session_id, state, updated, profile, workdir, created, role, parent, repo, branch, task_id, label, args, prompt, paused, model, limit_until, limit_tries, incarnation, woken, hold_since`
 
 func scanAgent(sc interface{ Scan(...any) error }) (Agent, error) {
 	var a Agent
 	var args string
 	err := sc.Scan(&a.Key, &a.Container, &a.Name, &a.SessionID, &a.State, &a.Updated, &a.Profile, &a.Workdir, &a.Created,
-		&a.Role, &a.Parent, &a.Repo, &a.Branch, &a.TaskID, &a.Label, &args, &a.Prompt, &a.Paused, &a.Model, &a.LimitUntil, &a.LimitTries, &a.Incarnation, &a.Woken)
+		&a.Role, &a.Parent, &a.Repo, &a.Branch, &a.TaskID, &a.Label, &args, &a.Prompt, &a.Paused, &a.Model, &a.LimitUntil, &a.LimitTries, &a.Incarnation, &a.Woken, &a.HoldSince)
 	if err == nil && args != "" {
 		err = json.Unmarshal([]byte(args), &a.Args)
 	}
@@ -459,7 +463,7 @@ func (s *Store) Register(n NewAgent, c Caps, now int64) (Agent, error) {
 			return Agent{}, err
 		}
 		_, err = tx.Exec(`UPDATE agents SET profile=?, workdir=?, created=?, updated=?, state='unknown', session_id='',
-			ctx_pct=-1, cost_usd=-1, role=?, parent=?, repo=?, branch=?, task_id=0, label='', args='', prompt='', paused=0, subagents=0, limit_until=0, limit_tries=0, woken=0, model=?, incarnation=? WHERE key=?`,
+			ctx_pct=-1, cost_usd=-1, role=?, parent=?, repo=?, branch=?, task_id=0, label='', args='', prompt='', paused=0, subagents=0, limit_until=0, limit_tries=0, woken=0, hold_since=0, model=?, incarnation=? WHERE key=?`,
 			n.Profile, n.Workdir, now, now, n.Role, n.Parent, n.Repo, n.Branch, n.Model, inc, key)
 	} else {
 		_, err = tx.Exec(`INSERT INTO agents(key, container, name, profile, workdir, created, updated, role, parent, repo, branch, model, incarnation)
@@ -935,20 +939,14 @@ func (s *Store) Get(id int64) (Message, error) {
 }
 
 func (s *Store) Unread(to string, limit int) ([]Message, error) {
-	return s.UnreadHolding(to, limit, false)
+	return s.UnreadHolding(to, limit, Hold{})
 }
 
-// heldAsks leaves out the questions agents ask (ask, kind question) that answer nothing.
-const heldAsks = ` AND NOT (kind='question' AND reply_to=0)`
-
-// UnreadHolding is Unread; holdAsks leaves the questions agents ask unread and out (#95).
-func (s *Store) UnreadHolding(to string, limit int, holdAsks bool) ([]Message, error) {
-	cond := ""
-	if holdAsks {
-		cond = heldAsks
-	}
+// UnreadHolding is Unread, less the messages h holds: they stay unread (#95).
+func (s *Store) UnreadHolding(to string, limit int, h Hold) ([]Message, error) {
+	cond, args := h.cond()
 	rows, err := s.db.Query(`SELECT `+msgCols+` FROM messages WHERE recipient=? AND read_at=0`+cond+`
-		ORDER BY id LIMIT ?`, to, limit)
+		ORDER BY id LIMIT ?`, append(append([]any{to}, args...), limit)...)
 	if err != nil {
 		return nil, err
 	}
@@ -994,16 +992,13 @@ func (s *Store) eachID(ids []int64, q string, lead ...any) error {
 }
 
 // UnreadCount counts the unread messages of one recipient.
-func (s *Store) UnreadCount(to string) (int, error) { return s.UnreadCountHolding(to, false) }
+func (s *Store) UnreadCount(to string) (int, error) { return s.UnreadCountHolding(to, Hold{}) }
 
-// UnreadCountHolding is UnreadCount; holdAsks leaves out the questions agents ask (#95).
-func (s *Store) UnreadCountHolding(to string, holdAsks bool) (int, error) {
-	cond := ""
-	if holdAsks {
-		cond = heldAsks
-	}
+// UnreadCountHolding is UnreadCount, less the messages h holds (#95).
+func (s *Store) UnreadCountHolding(to string, h Hold) (int, error) {
+	cond, args := h.cond()
 	var n int
-	err := s.db.QueryRow(`SELECT COUNT(*) FROM messages WHERE recipient=? AND read_at=0`+cond, to).Scan(&n)
+	err := s.db.QueryRow(`SELECT COUNT(*) FROM messages WHERE recipient=? AND read_at=0`+cond, append([]any{to}, args...)...).Scan(&n)
 	return n, err
 }
 

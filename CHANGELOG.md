@@ -4,6 +4,17 @@
 
 Changes:
 
+- Pause the tower's inbox while you answer it (#95): `H` in the deck (or Hold messages in a
+  row's menu) or `lea hold [--off] [AGENT]` holds the messages agents send it; your notes and
+  the replies to what it sends during the pause still arrive, an agent's `ask` to it fails at
+  once, and the row shows `⏸ N`. On release (yours, or lea's after `LEA_HOLD_MAX` minutes, 30;
+  0: never) the tower gets them all and briefs you once. Only the user pauses or releases an
+  inbox. `Q` in the deck (Questions… in the tower's menu) lists its questions to you and drops a
+  queued one; the tower's status line shows `❓ 1 · 3 queued` and `⏸ messages paused (N)`.
+- Security: the text of the tower's next question, and of a question's reminder, reaches its
+  context framed as untrusted data, as `msg_inbox` frames an agent's message, with its control,
+  bidi and zero-width characters replaced (#95): an agent's words in a queued question could
+  pass for lea's instructions.
 - One handle per agent, `label (name)` (#356, #368): the deck row, the tower, `lea board` and
   `lea agents` name an agent by its label then its name. A lead gives a spawn a `label`
   (`agents_spawn`, `agents_request_spawn`); without one, an agent started with a brief is named

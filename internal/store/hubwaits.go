@@ -167,7 +167,7 @@ func (s *Store) DecideHubWaits(ticket, instance, decision, reason string, now in
 // EndSuspended ends an agent that is still suspended_cold (done), and reports whether it was:
 // one that woke or ended meanwhile is left as it is.
 func (s *Store) EndSuspended(key string, now int64) (bool, error) {
-	r, err := s.db.Exec(`UPDATE agents SET state='done', updated=?, paused=0, limit_until=0, limit_tries=0
+	r, err := s.db.Exec(`UPDATE agents SET state='done', updated=?, paused=0, hold_since=0, limit_until=0, limit_tries=0
 		WHERE key=? AND state=?`, now, key, StateSuspendedCold)
 	if err != nil {
 		return false, err

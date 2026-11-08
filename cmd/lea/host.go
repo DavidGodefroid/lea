@@ -221,6 +221,9 @@ func runDaemon(stderr io.Writer) int {
 	// A control tower's question the user leaves unanswered is reminded once (#95).
 	d.SetQuestionRemind(launcher.QuestionRemindSetting(os.Getenv))
 	go d.RunQuestionReminders(ctx)
+	// The user's pause of an inbox (the deck's H, lea hold) ends on its own after a while.
+	d.SetHoldMax(launcher.HoldMaxSetting(os.Getenv))
+	go d.RunHoldExpiry(ctx)
 	d.SetHeavy(launcher.HeavySettings(os.Getenv))
 	// Same pattern for the admission thresholds (#132, P2): the daemon samples the host and each
 	// lea container, and refuses or queues new agents under pressure.

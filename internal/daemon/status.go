@@ -88,7 +88,7 @@ func (d *Daemon) statusReport(ctx context.Context, o Origin, me string, raw json
 		d.mu.Unlock()
 		if !same {
 			if prev, err := d.st.EventPayloads(me, "paths"); err == nil && len(prev) >= maxPathEvents {
-				return d.statusAnswer(ctx, o.Container), nil
+				return d.statusAnswer(ctx, o.Container, me), nil
 			}
 			b, err := json.Marshal(map[string]any{"paths": p.Paths})
 			if err != nil {
@@ -99,19 +99,31 @@ func (d *Daemon) statusReport(ctx context.Context, o Origin, me string, raw json
 			}
 		}
 	}
-	return d.statusAnswer(ctx, o.Container), nil
+	return d.statusAnswer(ctx, o.Container, me), nil
 }
 
-// statusAnswer is status_report's answer for an agent of container: the locks it does not mount
-// (locks_added) and, when the workspace has locks and no lox run serves them, lox_run "off" (#343).
-func (d *Daemon) statusAnswer(ctx context.Context, container string) any {
+// statusAnswer is status_report's answer for agent me of container: the locks it does not mount
+// (locks_added), lox_run "off" when the workspace has locks and no lox run serves them (#343),
+// its questions to the user and the pause of its inbox (#95).
+func (d *Daemon) statusAnswer(ctx context.Context, container, me string) any {
 	var ans struct {
-		LocksAdded []string `json:"locks_added,omitempty"`
-		LoxRun     string   `json:"lox_run,omitempty"`
+		LocksAdded      []string `json:"locks_added,omitempty"`
+		LoxRun          string   `json:"lox_run,omitempty"`
+		QuestionsOpen   int      `json:"questions_open,omitempty"`
+		QuestionsQueued int      `json:"questions_queued,omitempty"`
+		Held            bool     `json:"held,omitempty"`
+		HeldCount       int      `json:"held_count,omitempty"`
 	}
 	ans.LocksAdded = d.locksAdded(ctx, container)
 	if d.loxRunState() == "off" {
 		ans.LoxRun = "off"
+	}
+	if open, queued, err := d.st.QuestionCounts(); err == nil {
+		ans.QuestionsOpen, ans.QuestionsQueued = open[me], queued[me]
+	}
+	if a, err := d.st.AgentByKey(me); err == nil && a.HoldSince > 0 {
+		ans.Held = true
+		ans.HeldCount, _ = d.st.HeldCount(me, a.HoldSince)
 	}
 	return ans
 }

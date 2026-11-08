@@ -188,6 +188,8 @@ type Daemon struct {
 	// the tower (0: never), and the agents whose next prompt lea typed (it answers no question).
 	questionRemind time.Duration
 	leaPrompts     map[string]int64 // until when (unix seconds) the next prompt is lea's
+	// holdMax is how long the user's pause of an inbox lasts before lea releases it (hold.go).
+	holdMax time.Duration
 }
 
 func New(st *store.Store, runDir string, now func() int64) *Daemon {
@@ -198,7 +200,7 @@ func New(st *store.Store, runDir string, now func() int64) *Daemon {
 	return &Daemon{subs: map[string]*subagents{}, subTTL: subagentTTL, afterFunc: time.AfterFunc, st: st, lim: bus.Default, now: now, runDir: runDir,
 		attached: map[string]string{}, notify: map[string]chan struct{}{},
 		verdicts: map[int64]chan string{}, asks: map[string]pendingAsk{}, blocks: map[string]int{}, stopped: map[string]bool{}, rewakes: map[string]int{}, rewoken: map[string][]int64{}, woken: map[string]bool{}, keyMu: map[string]*sync.Mutex{}, statusPaths: map[string]string{}, named: map[string]bool{}, rang: map[string]time.Time{}, notified: map[string]time.Time{},
-		resumeDelay: DefaultResumeDelay, questionRemind: DefaultQuestionRemind, leaPrompts: map[string]int64{}, windows: map[string][]limitWindow{}, limitJobs: map[string]string{},
+		resumeDelay: DefaultResumeDelay, questionRemind: DefaultQuestionRemind, holdMax: DefaultHoldMax, leaPrompts: map[string]int64{}, windows: map[string][]limitWindow{}, limitJobs: map[string]string{},
 		stackIdle: DefaultStackIdle, parkTimers: map[string]*time.Timer{}, parked: map[string]string{},
 		keepalive: DefaultKeepalive, keepTimers: map[string]*time.Timer{}, resumeFails: map[string]resumeFail{}, resuming: map[string]bool{},
 		heavy: map[string]*heavyPool{}, heavySlots: DefaultHeavySlots(runtime.NumCPU(), DefaultHeavyWorkers), heavyWorkers: DefaultHeavyWorkers}
@@ -358,7 +360,7 @@ func (d *Daemon) dispatch(ctx context.Context, o Origin, req wire.Request) (any,
 		req.Method == "thread_list" || req.Method == "agent_role" || req.Method == "request_list" || req.Method == "request_decide" || req.Method == "board_list" ||
 		req.Method == "sound" || req.Method == "allow_set" || req.Method == "allow_off" || req.Method == "allow_list" ||
 		req.Method == "grant_revoke" || req.Method == "grant_request_list" || req.Method == "grant_request_decide" ||
-		req.Method == "question_list" || req.Method == "question_drop" {
+		req.Method == "question_list" || req.Method == "question_drop" || req.Method == "agent_hold" {
 		if o.Container != "" {
 			return nil, fmt.Errorf("%s: host only", req.Method)
 		}
@@ -470,6 +472,8 @@ func (d *Daemon) dispatch(ctx context.Context, o Origin, req wire.Request) (any,
 		return d.questionList()
 	case "question_drop":
 		return d.questionDrop(req.Params)
+	case "agent_hold":
+		return d.agentHold(req.Params)
 	case "container_attach":
 		var p struct{ Name string }
 		if err := json.Unmarshal(req.Params, &p); err != nil {
@@ -705,7 +709,7 @@ func (d *Daemon) restore(res any) {
 // always at least one), and marks exactly those read; the rest stay unread for the next call.
 func (d *Daemon) take(me string) (batch, error) {
 	defer d.lockKey("take:" + me)()
-	ms, err := d.st.UnreadHolding(me, inboxBatch, d.holdsAsks(me))
+	ms, err := d.st.UnreadHolding(me, inboxBatch, d.inboxHold(me))
 	if err != nil {
 		return batch{}, err
 	}
@@ -740,7 +744,17 @@ func (d *Daemon) stoppedNow(me string) bool {
 	return d.stopped[me]
 }
 
-func (d *Daemon) inbox(me string) (batch, error) { return d.take(me) }
+// inbox is msg_inbox: take's batch, and the note of a paused inbox that holds messages (hold.go).
+func (d *Daemon) inbox(me string) (batch, error) {
+	b, err := d.take(me)
+	if err != nil {
+		return b, err
+	}
+	if v, ok := d.holdNote(me); ok {
+		b.items = append(b.items, v)
+	}
+	return b, nil
+}
 
 func (d *Daemon) waitChan(me string) chan struct{} {
 	d.mu.Lock()
@@ -790,7 +804,7 @@ func (d *Daemon) wait(ctx context.Context, me string, timeoutS int) (batch, erro
 // the senders: no body content enters the context outside the untrusted wrapping that msg_inbox
 // applies.
 func (d *Daemon) unreadNotice(me string) (map[string]any, error) {
-	hold := d.holdsAsks(me)
+	hold := d.inboxHold(me)
 	n, err := d.st.UnreadCountHolding(me, hold)
 	if err != nil || n == 0 {
 		return map[string]any{"count": 0, "text": ""}, err

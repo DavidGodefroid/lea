@@ -146,8 +146,8 @@ var helpLines = []string{
 	"e c         rename, colour",
 	"f o u       new folder, in, out",
 	"J K h l     reorder, fold",
-	"r           its role",
-	"p           pause (y), resume",
+	"r Q         its role, questions",
+	"p H         pause (y), hold",
 	"a d A       allow deny always",
 	"x           stop or remove",
 	"< >         deck width",
@@ -685,6 +685,9 @@ func (m Model) detail(a Agent, width int) string {
 		if a.Model != "" { // the provider is on the first line
 			before = append(before, a.Model)
 		}
+		if a.Held {
+			before = append([]string{m.heldMark(a)}, before...)
+		}
 		if path {
 			dir := a.Workdir
 			if a.Repo != "" { // an agent in a repo runs in the projects directory
@@ -740,7 +743,7 @@ func (m Model) shortStatus(a Agent) string {
 
 // leaGlyphs are the marks lea draws itself (state, warning, unread, child): a status that starts
 // with one would pass for a label of lea's, so the agent's text loses them at its start.
-const leaGlyphs = " \t◆●◐○⚠✉❓↳⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"
+const leaGlyphs = " \t◆●◐○⚠✉❓⏸↳⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"
 
 // ctxText is a context percentage ("42%"), empty when unknown.
 func ctxText(p int) string {

@@ -52,6 +52,12 @@ var keyName = regexp.MustCompile(`^[A-Za-z0-9_]{1,40}$`)
 type Answer struct {
 	LocksAdded []string `json:"locks_added"`
 	LoxRun     string   `json:"lox_run"`
+	// QuestionsOpen (0 or 1) and QuestionsQueued count a control tower's questions to the user
+	// (#95); Held says the user paused its inbox, which holds HeldCount messages.
+	QuestionsOpen   int  `json:"questions_open"`
+	QuestionsQueued int  `json:"questions_queued"`
+	Held            bool `json:"held"`
+	HeldCount       int  `json:"held_count"`
 }
 
 // loxRunOff is what the line says while no lox run serves the workspace's locks.
@@ -99,6 +105,7 @@ func RunWith(stdin io.Reader, stdout io.Writer, dump string, post func(Report) A
 	if out := user(); out != "" {
 		ln = out
 	}
+	ln += ans.towerParts()
 	if ans.LoxRun == "off" {
 		ln += loxRunOff
 	}
@@ -109,6 +116,22 @@ func RunWith(stdin io.Reader, stdout io.Writer, dump string, post func(Report) A
 	}
 	fmt.Fprintln(stdout, ln)
 	return dumpErr
+}
+
+// towerParts is what the line says of a tower's questions and of its paused inbox (#95):
+// " · ❓ 1 · 3 queued · ⏸ messages paused (2)", "" when neither.
+func (a Answer) towerParts() string {
+	s := ""
+	if a.QuestionsOpen > 0 || a.QuestionsQueued > 0 {
+		s += fmt.Sprintf(" · ❓ %d", a.QuestionsOpen)
+		if a.QuestionsQueued > 0 {
+			s += fmt.Sprintf(" · %d queued", a.QuestionsQueued)
+		}
+	}
+	if a.Held {
+		s += fmt.Sprintf(" · ⏸ messages paused (%d)", a.HeldCount)
+	}
+	return s
 }
 
 // lockInstance is a lock's instance name, as lox run names it (internal/launcher's lockUpInstance).

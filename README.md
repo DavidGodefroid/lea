@@ -791,7 +791,15 @@ prompt, or your answer to its `AskUserQuestion`, answers the open question, and 
 asks the next one. While you have a question, lea denies the tower a second `AskUserQuestion`. A
 question left unanswered `LEA_QUESTION_REMIND` minutes (120) is asked once more, prefixed with
 `reminder:`. The deck shows the tower as `❓ 1 · 3 queued`; `lea questions` lists the questions,
-`lea questions drop ID` drops a queued one.
+`lea questions drop ID` drops a queued one; in the deck, `Q` (or the tower's right-click menu,
+Questions…) lists them and drops a queued one. The tower's status line shows the same count.
+
+To answer in peace, pause the tower's inbox: `H` in the deck (or Hold messages in its menu), or
+`lea hold` (`lea hold --off` releases it). The messages its agents send it wait, and the row
+shows `⏸ N`; your own notes and the replies to what the tower sends during the pause still
+arrive, and an agent's `ask` to it fails at once (the agent sends instead and keeps working).
+On release the tower gets them all and briefs you once. lea releases a pause on its own after
+`LEA_HOLD_MAX` minutes (30; 0: never). Only you can pause or release an inbox, never an agent.
 
 When `lea` opens the deck on a container with no agent running (the very first launch, or every
 agent ended), the agent it starts is a Control Tower: a lead on Claude, labelled
@@ -1054,6 +1062,7 @@ lea                          # the deck, for $LEA_PROJECTS_DIR (unset: the worki
 lea attach [--print] [AGENT] # the tool in the lea container, or an agent's terminal (--print: the command)
 lea requests                 # what waits for you; lea approve ID [always], lea deny ID [reason]
 lea questions [drop ID]      # the control towers' questions to you: the open one, then the queue
+lea hold [--off] [AGENT]     # hold the messages agents send the tower while you answer it; --off releases them
 lea config deck on|off       # the deck, or your own tool (lea config tool CMD...), from the next lea
 lea config claude [KEY ...]  # Claude's base settings for your agents (defaultMode, allow, deny, env...)
 lea new [name] [-- args]     # one more agent (its CLI's arguments after --; -p provider, -m model)
@@ -1143,6 +1152,7 @@ read-only. The screen runs in the deck on the host: agents cannot open or drive 
 | `LEA_AUTO_RESUME`, `LEA_RESUME_DELAY` | on, `60` | resume agents stopped on a usage limit, so many seconds after its reset (`0`: off) |
 | `LEA_STACK_IDLE` | `10` | minutes an agent stays idle before lea stops (not removes) the containers it started in the nested Podman (`0`: never); `lea board` lists what it freed |
 | `LEA_QUESTION_REMIND` | `120` | minutes a control tower's question waits for your answer before the tower asks it again, once, prefixed with `reminder:` (`0`: never) |
+| `LEA_HOLD_MAX` | `30` | minutes a pause of an inbox (the deck's `H`, `lea hold`) lasts before lea releases it (`0`: never) |
 | `LEA_AGENT_CPUS` | `4` | each agent's CPU window, the least shared CPUs: the agent, its tools and its nested containers run there, so `nproc`, PHPStan, Go… see that many CPUs (`0`: no window) |
 | `LEA_HEAVY_SLOTS`, `LEA_HEAVY_WORKERS` | `0` (¾ of the CPUs ÷ workers), `4` | heavy jobs (`lea heavy -- <command>`): how many run at once per container, and the CPUs and workers each gets |
 | `LEA_ADMIT_CPU_PSI`, `LEA_ADMIT_MEM_PCT`, `LEA_ADMIT_MEM_PSI`, `LEA_ADMIT_IO_PSI`, `LEA_ADMIT_LOAD` | `40`, `85`, `10`, `40`, `2` | [host pressure](#host-pressure) above which new agents wait: PSI in percent, memory in percent of the lea container's limit (the host's from 90 %), the host's load per CPU (`0`: that one off) |
