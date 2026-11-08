@@ -58,21 +58,21 @@ type Folder struct {
 	Agents []string `json:"agents,omitempty"`
 }
 
-// folderColours are the colours a folder can take, by name: Catppuccin accents (agentColors),
-// without the reds and greens a state dot uses.
+// folderColours are the colours a folder can take, by name: accents of the current theme
+// (agentColors), without the reds and greens a state dot uses. Every theme has all 8 (#337): a
+// saved folder keeps a colour after a theme switch.
 var folderColours = []struct {
 	name   string
-	colour lipgloss.AdaptiveColor
+	accent int // the colour's index in agentColors
 }{
-	{"pink", agentColors[2]}, {"mauve", agentColors[3]}, {"peach", agentColors[6]}, {"yellow", agentColors[7]},
-	{"teal", agentColors[9]}, {"sky", agentColors[10]}, {"blue", agentColors[12]}, {"lavender", agentColors[13]},
+	{"pink", 2}, {"mauve", 3}, {"peach", 6}, {"yellow", 7}, {"teal", 9}, {"sky", 10}, {"blue", 12}, {"lavender", 13},
 }
 
 // folderColour is the colour of name; ok is false for "" and for a name the deck does not know.
 func folderColour(name string) (lipgloss.AdaptiveColor, bool) {
 	for _, c := range folderColours {
 		if c.name == name {
-			return c.colour, true
+			return agentColors[c.accent], true
 		}
 	}
 	return lipgloss.AdaptiveColor{}, false
@@ -418,7 +418,7 @@ func (m Model) newFolder(key string) (Model, bool) {
 	fk := folderKey(id)
 	m.selected, m.editFor, m.draft = fk, fk, []rune(m.layout.Folders[len(m.layout.Folders)-1].Name)
 	m.editTitle = "New folder"
-	m.menuFor, m.menuPicker = "", false
+	m.closeMenu()
 	return m, true
 }
 

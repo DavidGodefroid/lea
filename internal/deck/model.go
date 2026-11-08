@@ -259,7 +259,9 @@ type Model struct {
 	setDraft      []rune             // the field's text
 	hoverFor      string             // key of the row under the pointer, "" when none
 	hoverSeq      int                // the latest pointer move; older fades are dropped
-	menuPicker    bool               // the open menu picks the folder of agent menuFor (o), or the colour of folder menuFor (c)
+	menuPicker    bool               // the open menu picks the folder of agent menuFor (o), the colour of folder menuFor (c), or the deck's theme (T)
+	themeWas      string             // the theme before the theme picker opened, "" while it is closed
+	applyFrame    func(Theme) error  // colour the tmux pane borders and inactive background (WithThemeDrive); nil: no tmux
 	applyWidth    func(w int) error  // resize the deck's pane and store the width (WithWidthDrive); nil: no tmux
 	windowWidth   func() int         // the tmux window's width (WithWidthDrive); nil: unknown
 	readWidth     func() (int, bool) // the tmux server's @lea_deck_width and the deck window's mark (WithWidthDrive); nil: unknown
@@ -751,6 +753,9 @@ func (m Model) key(k string) (tea.Model, tea.Cmd) {
 		return m.deckBy(-2)
 	case ">":
 		return m.deckBy(2)
+	case "T":
+		m.openThemePicker()
+		return m, nil
 	case "?":
 		m.help = true
 		return m, nil
