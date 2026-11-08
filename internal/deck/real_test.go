@@ -15,6 +15,7 @@ import (
 
 	"github.com/DavidGodefroid/lea/internal/settings"
 	"github.com/DavidGodefroid/lea/internal/tmux"
+	"github.com/charmbracelet/lipgloss"
 )
 
 // The deck end to end: the test binary itself draws the deck (deckHelperEnv) in a pane of a real
@@ -39,16 +40,32 @@ func TestMain(m *testing.M) {
 		c := ag("c", "idle", 1)
 		c.Label = e2eLabel
 		agents := []Agent{ag("a", "idle", 1), ag("b", "idle", 1), c}
-		if mode == "colours" { // issue #72: done, waiting and blocked, all just idle
+		if mode == "colours" || mode == "theme" { // issue #72: done, waiting and blocked, all just idle
 			now := time.Now().Unix()
 			agents = []Agent{ag("green", "idle", now), withTask(ag("wait", "idle", now), true, false),
 				withTask(ag("red", "idle", now), true, true)}
 		}
+		if mode == "busyfolder" { // issue #355: a folder of two working agents
+			agents[0], agents[1] = ag("a", "working", 1), ag("b", "working", 1)
+			l := Layout{Folders: []Folder{{ID: "f1", Name: "web", Agents: []string{"lea-a/a", "lea-a/b"}}}}
+			if err := (FileStore{Path: os.Getenv(deckLayoutEnv)}).Save(l); err != nil {
+				fmt.Fprintln(os.Stderr, err)
+				os.Exit(1)
+			}
+		}
 		var st SettingsStore
-		if mode == "width" { // the real settings store, in the test's directory
+		if mode == "width" || mode == "theme" { // the real settings store, in the test's directory
 			dir := os.Getenv(deckSettingsEnv)
 			env := map[string]string{"HOME": dir, "XDG_CONFIG_HOME": dir + "/config"}
 			st = settings.Store{Root: dir + "/root", Cwd: dir, Getenv: func(k string) string { return env[k] }}
+		}
+		if mode == "theme" { // the theme of the user's file, as lea deck reads it (cmd/lea)
+			ss, _ := st.List()
+			for _, s := range ss {
+				if s.Key == themeKey {
+					StartTheme(s.Value, s.Source != settings.SourceDefault, false)
+				}
+			}
 		}
 		if err := Run(e2eAPI{&fakeAPI{snap: Snapshot{Version: 1, Shown: agents[0].Key,
 			Agents: agents}}}, "lea-a", false, nil, st, "e2e", FileStore{Path: os.Getenv(deckLayoutEnv)}); err != nil {
@@ -248,7 +265,7 @@ func TestRealHoverShowsTheFullName(t *testing.T) {
 	}
 	d.tm("select-pane", "-t", "e2e:0.1") // the pointer, not the keyboard
 	d.mouse(35, 5, 'M')                  // c's first line
-	d.waitFor("the whole label in the bottom border", func(s string) bool { return strings.Contains(s, e2eLabel+" ·") })
+	d.waitFor("the whole label in the bottom border", func(s string) bool { return strings.Contains(s, e2eLabel+" (c)") })
 	d.mouse(35, 12, 'M') // below the rows
 	d.waitFor("the key hints back", func(s string) bool { return strings.Contains(s, "? keys") })
 }
@@ -392,7 +409,7 @@ func TestRealFoldersPersistAcrossRestarts(t *testing.T) {
 	d.waitFor("the folder web", func(s string) bool { return strings.Contains(s, "▾ web") && !strings.Contains(s, "New folder") })
 	d.keys("j", "o", "1") // a, into the first folder
 	d.waitFor("a in web", func(s string) bool {
-		return strings.Contains(s, "▾ web") && strings.Contains(s, "1 ✓1") && !strings.Contains(s, "╎")
+		return strings.Contains(s, "▾ web") && strings.Contains(s, "1 ✓ 1") && !strings.Contains(s, "╎")
 	})
 	d.keys("k", "\r") // the folder's row, folded
 	d.waitFor("web folded", func(s string) bool { return strings.Contains(s, "▸ web") })
@@ -418,4 +435,101 @@ func TestRealFoldersPersistAcrossRestarts(t *testing.T) {
 	d.waitFor("the folders after a restart", func(s string) bool {
 		return strings.Contains(s, "▸ web") && strings.Contains(s, "▾ folder 2") && strings.Contains(s, "3 agents")
 	})
+}
+
+// A folder of working agents in a real tmux (#355): its header sets the working mark apart from
+// its count, and its right frame border stays in line with the rows'.
+func TestRealFolderSummaryMarkStandsApart(t *testing.T) {
+	d := startRealDeckMode(t, "busyfolder")
+	d.waitFor("the folder web", func(s string) bool { return strings.Contains(s, "▾ web") })
+	var head string
+	d.waitFor("web's summary", func(s string) bool {
+		for _, l := range strings.Split(s, "\n") {
+			if strings.Contains(l, "▾ web") {
+				head = l
+			}
+		}
+		return strings.Contains(head, "2 ◐ 2")
+	})
+	if glued.MatchString(head) {
+		t.Fatalf("a mark touches its count: %q", head)
+	}
+	// The frame's right border: the cell of the last "│" on each line that has one.
+	border := func(l string) int {
+		if i := strings.LastIndex(l, "│"); i >= 0 {
+			return lipgloss.Width(l[:i])
+		}
+		return -1
+	}
+	want := border(head)
+	if want < 0 {
+		t.Fatalf("the header has no right border: %q", head)
+	}
+	s := d.screen()
+	for _, l := range strings.Split(s, "\n") {
+		if b := border(l); b >= 0 && b != want {
+			t.Fatalf("the header's right border is at cell %d, another line's at %d:\n%s", want, b, s)
+		}
+	}
+}
+
+// The theme picker (#337) in a real tmux: the deck starts in the user file's theme, T and j
+// preview the next one, enter keeps it; the state marks and the tmux pane borders change colour,
+// LEA_THEME is saved, and a deck started again draws in it.
+func TestRealThemePickerRepaintsAndPersists(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(dir, "root", "config"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "root", "config", "lea.conf"), nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	user := filepath.Join(dir, "config", "lea", "lea.conf")
+	if err := os.MkdirAll(filepath.Dir(user), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(user, []byte(themeKey+"=nord\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	d := startRealDeckEnv(t, "theme", deckSettingsEnv+"="+dir)
+	red := func() string { // the blocked row's state glyph with the SGR that colours it
+		for _, l := range strings.Split(d.tm("capture-pane", "-p", "-e", "-t", d.pane), "\n") {
+			if i := strings.Index(l, "●"); i >= 0 && strings.Contains(l, "red ") {
+				if j := strings.LastIndex(l[:i], "\x1b["); j >= 0 {
+					return l[j:i]
+				}
+			}
+		}
+		return ""
+	}
+	saved := func() string {
+		b, _ := os.ReadFile(user)
+		for _, l := range strings.Split(string(b), "\n") {
+			if v, ok := strings.CutPrefix(l, themeKey+"="); ok {
+				return strings.Trim(v, `"'`)
+			}
+		}
+		return ""
+	}
+	borders := func() string { return d.tm("show-options", "-g", "-v", "pane-border-style") }
+	var nord string
+	waitUntil(t, "the blocked mark in nord", func() bool { nord = red(); return nord != "" })
+	waitUntil(t, "nord's tmux borders", func() bool { return strings.Contains(borders(), "#4c566a") || strings.Contains(borders(), "#a3abb9") },
+		func() string { return borders() })
+	d.tm("select-pane", "-t", d.pane) // the deck has the keyboard
+	d.typed("T")
+	d.waitFor("the theme picker", func(s string) bool { return strings.Contains(s, "tokyo-night") })
+	d.typed("j") // nord is third: the next one is tokyo-night
+	waitUntil(t, "the preview repaints the mark", func() bool { return red() != "" && red() != nord })
+	d.typed("\r")
+	d.waitFor("the picker closed", func(s string) bool { return !strings.Contains(s, "solarized") })
+	if saved() != "tokyo-night" {
+		t.Fatalf("LEA_THEME is %q, want tokyo-night", saved())
+	}
+	tokyo := red()
+	if b := borders(); !strings.Contains(b, "#3b4261") && !strings.Contains(b, "#a1a6c5") {
+		t.Fatalf("tmux borders %q, not tokyo-night's", b)
+	}
+	d.tm(append([]string{"respawn-pane", "-k", "-t", d.pane}, d.cmd...)...)
+	waitUntil(t, "the restarted deck in tokyo-night", func() bool { return red() == tokyo }, func() string { return red() })
 }

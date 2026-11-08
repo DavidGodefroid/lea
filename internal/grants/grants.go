@@ -1,5 +1,5 @@
 // Package grants decides, deterministically, whether a tool call an agent is about to make is
-// covered by a grant the user recorded on the host (lea grant add), or is one of the hard denies
+// covered by a grant the user recorded on the host (lea allow), or is one of the hard denies
 // no grant can cover. It never sees who granted what beyond the rows it is given: the daemon
 // stores grants and only the host API writes them (issue #73).
 //
@@ -25,16 +25,16 @@ const (
 	// ReleaseTag pushes one new semver tag on a commit of the default branch (#342). It is never
 	// one of DeliveryActions: the user grants it on its own.
 	ReleaseTag = "release-tag"
+	// ReleaseCreate publishes the GitHub release of one semver tag already on the remote (#353):
+	// gh release create <tag> --verify-tag. Never one of DeliveryActions either.
+	ReleaseCreate = "release-create"
 )
 
 // Actions lists every action a grant may name, in display order.
-var Actions = []string{Merge, StopFinished, CloseIssue, DeleteOwnBranch, CommitIdentity, PRCreate, ReleaseTag}
+var Actions = []string{Merge, StopFinished, CloseIssue, DeleteOwnBranch, CommitIdentity, PRCreate, ReleaseTag, ReleaseCreate}
 
-// DeliveryActions are the standing grants lea delivery on records for each repository: push the
-// agent's own branch, open its PR, merge it, delete the branch (issue #92).
-var DeliveryActions = []string{CommitIdentity, PRCreate, Merge, DeleteOwnBranch}
-
-// Standing is the expiry of a delivery grant: it holds until lea delivery off revokes it.
+// Standing is the expiry of a grant that holds until revoked (lea allow without --for): the hook's
+// Active check needs no other case. A set says it holds until revoked (Set.UntilRevoked).
 const Standing int64 = 1 << 62
 
 // ValidAction says whether a is one of Actions.
@@ -55,14 +55,26 @@ const StopTool = "mcp__lea__agents_stop"
 // the agent whose subtree it covers ("" every agent of the lea). Expires and Revoked are unix
 // seconds, Revoked 0 while active.
 type Grant struct {
-	ID                              int64
+	ID int64
+	// SetID is the set the grant belongs to (lea allow, #319): the unit the user sees and revokes.
+	SetID                           int64
 	Container, Action, Repo, Branch string
 	Agent                           string
-	// GitHub is the forge repository the grant's calls are pinned to (its pin, ValidPin):
-	// github.com/OWNER/NAME, which gh acts on (-R), or, for a delivery grant on GitLab,
-	// gitlab:HOST/GROUP/.../NAME, which glab acts on (-R https://HOST/…). git pushes go to it.
-	GitHub                    string
+	// Pin is the forge repository the grant's calls are pinned to (ValidPin; the github column):
+	// github.com/OWNER/NAME, which gh acts on (-R), or gitlab:HOST/GROUP/.../NAME, which glab
+	// acts on (-R https://HOST/…). git pushes go to it.
+	Pin string
+	// Tag is a glob on the tag a release-create grant publishes ("" any semver tag, ValidTagGlob).
+	Tag                       string
 	Created, Expires, Revoked int64
+}
+
+var tagGlob = regexp.MustCompile(`^v[0-9A-Za-z.*-]{1,63}$`)
+
+// ValidTagGlob says whether p is a tag glob a release-create grant may name: v, then the
+// characters of a semver tag and *, no "..".
+func ValidTagGlob(p string) bool {
+	return tagGlob.MatchString(p) && !strings.Contains(p, "..")
 }
 
 // NeedsGitHub says whether a grant of action names its GitHub repository: every action but
@@ -118,9 +130,6 @@ func pinURL(pin string) string {
 	}
 	return ""
 }
-
-// IsStanding says whether g is a delivery grant (lea delivery on), with no expiry.
-func (g Grant) IsStanding() bool { return g.Expires == Standing }
 
 // Active says whether g still applies at now.
 func (g Grant) Active(now int64) bool {
@@ -185,6 +194,11 @@ type Request struct {
 	// allowed call runs exactly that, rewritten by Command.
 	Prog string
 	Args []string
+	// Tag is the tag a release-create call publishes, matched against the grant's Tag glob.
+	Tag string
+	// File is the index in Args of a pr-create body file or release-create notes file, as the
+	// parser took it (0: none); prCreateScript swaps that argument, never rescans Args.
+	File int
 }
 
 // Verdicts of Decide.
@@ -266,9 +280,12 @@ func Match(req Request, c Caller, gs []Grant, now int64) (Grant, bool) {
 		if g.Agent != "" && !contains(c.Lineage, g.Agent) {
 			continue
 		}
+		if req.Action == ReleaseCreate && req.Prog != "hint" && (!semverTag.MatchString(req.Tag) || !Glob(g.Tag, req.Tag)) {
+			continue
+		}
 		// --repo binds the worktree to --github: a grant without it pins nothing to the caller's
 		// repository.
-		if req.Prog != "" && (g.GitHub == "" || g.Repo == "") {
+		if req.Prog != "" && (g.Pin == "" || g.Repo == "") {
 			continue
 		}
 		return g, true
@@ -313,7 +330,7 @@ func decide(tool string, input json.RawMessage, c Caller, gs []Grant, now int64,
 		Reason: fmt.Sprintf("lea grant #%d (%s) recorded by the user", g.ID, g.Action)}
 	switch req.Prog {
 	case "gh", "glab":
-		d.Request.Target = g.GitHub + " " + req.Target
+		d.Request.Target = g.Pin + " " + req.Target
 		d.Command = Command(req, c, g)
 	case "git":
 		d.Request.Target = c.Repo + " " + req.Target
@@ -365,19 +382,20 @@ var gitPins = []string{"core.hooksPath=/dev/null", "core.fsmonitor=false", "core
 //     token (gitlabScript);
 //   - git commit: plumbing in the caller's worktree (write-tree, commit-tree, update-ref): no
 //     hook, filter, index refresh or signing runs, whatever the repository's config says;
-//   - git push: from a bare repository lea creates for the call (mktemp -d: random name, mode
-//     0700), with the worktree's objects borrowed (alternates), to the grant's URL and the full
-//     ref: the worktree repository's config (url, pushurl, http, credential, push refspecs) is
-//     not read, and the bare repository's is checked just before the push. Not against a hostile
-//     agent: it runs as the same user and could rewrite that config between the check and the
-//     push.
+//   - git push: from a bare repository of lea's in the worktree's git directory (pushRepo, its
+//     config written anew for the call), with the worktree's objects borrowed (alternates), to
+//     the grant's URL and the full ref: the worktree repository's config (url, pushurl, http,
+//     credential, push refspecs) is not read, and the bare repository's is checked just before
+//     the push. Once pushed, origin/<branch> is recorded and, with -u, made the upstream. Not
+//     against a hostile agent: it runs as the same user and could rewrite that config between
+//     the check and the push.
 //
 // Every word lea builds is single-quoted. "" when the call cannot be pinned.
 func Command(req Request, c Caller, g Grant) string {
-	if !ValidPin(g.GitHub) || !validProxy.MatchString(c.Proxy) {
+	if !ValidPin(g.Pin) || !validProxy.MatchString(c.Proxy) {
 		return ""
 	}
-	_, _, gitlab := gitlabPin(g.GitHub)
+	_, _, gitlab := gitlabPin(g.Pin)
 	// GIT_CONFIG_GLOBAL=/dev/null: ~/.gitconfig is the agent's to write (url.insteadOf,
 	// include.path, helpers); /etc/gitconfig is the image's.
 	// GIT_CONFIG_NOSYSTEM: lea's credential store comes in as a pin (gitPins), not from it.
@@ -397,21 +415,21 @@ func Command(req Request, c Caller, g Grant) string {
 		if gitlab {
 			return ""
 		}
-		script = shellWords(append(append([]string{ghPath}, req.Args...), "-R", g.GitHub))
-		if req.Action == PRCreate {
-			script = prCreateScript(req.Args, c.Worktree, g.GitHub)
+		script = shellWords(append(append([]string{ghPath}, req.Args...), "-R", g.Pin))
+		if req.Action == PRCreate || req.Action == ReleaseCreate {
+			script = prCreateScript(req.Args, req.File, c.Worktree, g.Pin)
 		}
 		if req.Action == Merge && len(req.Args) > 2 {
 			if c.Branch == "" || !BranchName(c.Branch) || Protected(c.Branch) {
 				return ""
 			}
-			script = prHeadCheck(req.Args[2], c.Branch, g.GitHub) + script
+			script = prHeadCheck(req.Args[2], c.Branch, g.Pin) + script
 		}
 		if script != "" {
 			script = ghIsolated() + script
 		}
 	case "glab":
-		host, path, ok := gitlabPin(g.GitHub)
+		host, path, ok := gitlabPin(g.Pin)
 		if !ok {
 			return ""
 		}
@@ -422,11 +440,11 @@ func Command(req Request, c Caller, g Grant) string {
 		}
 		switch {
 		case req.Action == ReleaseTag:
-			script = tagScript(req.Args[2], c.Worktree, g.GitHub, c.Proxy)
+			script = tagScript(req.Args[2], c.Worktree, g.Pin, c.Proxy)
 		case req.Args[0] == "commit":
 			script = commitScript(req.Args[1:], c.Worktree, c.Proxy)
 		case req.Args[0] == "push":
-			script = pushScript(req.Args, c.Worktree, g.GitHub, c.Proxy)
+			script = pushScript(req.Args, c.Worktree, g.Pin, c.Proxy)
 		}
 	}
 	if script == "" {
@@ -491,19 +509,15 @@ func prHeadCheck(n, branch, gh string) string {
 		refuse("PR "+n+" is not the agent's own branch "+branch) + "; fi\n"
 }
 
-// prCreateScript is gh pr create with the validated args, pinned to gh. A --body-file (a path
-// relative to the worktree, ghPRCreate) is opened once, on fd 3; the file actually opened must
-// resolve (realpath of /proc/self/fd/3) to a plain file of the worktree wt, outside .git; gh reads
-// that open file on its stdin (--body-file -): swapping the path for a symlink to lea's state or
-// a credential after the check changes nothing.
-func prCreateScript(args []string, wt, gh string) string {
-	file := -1
-	for i, a := range args {
-		if (a == "--body-file" || a == "-F") && i+1 < len(args) {
-			file = i + 1
-		}
-	}
-	if file < 0 {
+// prCreateScript is gh pr create or gh release create with the validated args, pinned to gh. A
+// --body-file or --notes-file (a path relative to the worktree, ghPRCreate, ghReleaseCreate) is
+// opened once, on fd 3; the file actually opened must resolve (realpath of /proc/self/fd/3) to a
+// plain file of the worktree wt, outside .git; gh reads that open file on its stdin
+// (--body-file -, --notes-file -): swapping the path for a symlink to lea's state or
+// a credential after the check changes nothing. file is the file's index in args, as the parser
+// took it (Request.File, 0: none): a title that reads -F is never taken for the flag (#382).
+func prCreateScript(args []string, file int, wt, gh string) string {
+	if file <= 0 || file >= len(args) {
 		return shellWords(append(append([]string{ghPath}, args...), "-R", gh))
 	}
 	if wt == "" || !strings.HasPrefix(wt, "/") {
@@ -603,14 +617,31 @@ func pushScript(args []string, wt, gh, proxy string) string {
 	if pa[2] == "delete" {
 		return s + check + bare + " push " + shellWords([]string{url, "--delete", ref})
 	}
-	return s + "sha=$(" + git + " rev-parse --verify " + shellWords([]string{ref + "^{commit}"}) + ") || exit 1\n" +
-		check + bare + " push " + shellWords([]string{url}) + ` "$sha"` + shellWords([]string{":" + ref})
+	// Once pushed, the worktree records origin/<branch> as git would (the bare repository's push
+	// does not), and -u makes it the branch's upstream: a branch created from origin/main no
+	// longer tracks main (#381).
+	b := strings.TrimPrefix(ref, "refs/heads/")
+	s += "sha=$(" + git + " rev-parse --verify " + shellWords([]string{ref + "^{commit}"}) + ") || exit 1\n" +
+		check + bare + " push " + shellWords([]string{url}) + ` "$sha"` + shellWords([]string{":" + ref}) + " || exit 1\n" +
+		git + " update-ref " + shellWords([]string{"refs/remotes/origin/" + b}) + ` "$sha" || exit 1`
+	if pa[2] == "upstream" {
+		s += "\n" + git + " config " + shellWords([]string{"branch." + b + ".remote", "origin"}) + " || exit 1\n" +
+			git + " config " + shellWords([]string{"branch." + b + ".merge", ref}) + " || exit 1\n" +
+			"echo " + shellWords([]string{"branch '" + b + "' set up to track 'origin/" + b + "'."})
+	}
+	return s
 }
 
-// barePush is what every pinned push starts with: the script lines that create the bare
-// repository it runs from ($tmp, the worktree's objects borrowed), the git command in it (bare),
-// the URL it pushes to, and the line that checks the bare repository's own config again (check,
-// run right before the push). s is "" when gh cannot be pushed to.
+// pushRepo is the bare repository every pinned push runs from, in the worktree's own git
+// directory: a fixed path, reused, so the script deletes nothing (Claude Code refuses a shell -c
+// script that runs rm, even one a hook allowed: #381). Its config is written anew before each
+// push and checked again right before it.
+const pushRepo = "lea-push"
+
+// barePush is what every pinned push starts with: the script lines that prepare the bare
+// repository it runs from ($repo, pushRepo, the worktree's objects borrowed), the git command in
+// it (bare), the URL it pushes to, and the line that checks the bare repository's own config
+// again (check, run right before the push). s is "" when gh cannot be pushed to.
 func barePush(wt, gh, proxy string) (s, bare, url, check string) {
 	url = pinURL(gh) + ".git"
 	if pinURL(gh) == "" {
@@ -629,14 +660,21 @@ func barePush(wt, gh, proxy string) (s, bare, url, check string) {
 		bp = append(bp, "-c", "protocol.http.allow=always", "-c", "http."+base+".proxy=")
 	}
 	git := shellWords(gitIn(wt, proxy))
-	bare = shellWords([]string{gitPath, "--git-dir"}) + ` "$tmp" ` + shellWords(bp)
+	bare = shellWords([]string{gitPath, "--git-dir"}) + ` "$repo" ` + shellWords(bp)
 	s = configGuard(wt) +
+		"gd=$(" + git + " rev-parse --absolute-git-dir) || exit 1\n" +
 		"common=$(" + git + " rev-parse --path-format=absolute --git-common-dir) || exit 1\n" +
-		"tmp=$(" + shellWords([]string{mktempPath, "-d"}) + ") || exit 1\n" +
-		"trap " + shellWords([]string{rmPath + ` -rf "$tmp"`}) + " EXIT\n" +
-		shellWords([]string{gitPath, "init", "-q", "--bare", "--template="}) + ` "$tmp" || exit 1` + "\n" +
-		`echo "$common/objects" > "$tmp/objects/info/alternates" || exit 1` + "\n"
-	check = shellWords([]string{gitPath, "--git-dir"}) + ` "$tmp" ` + shellWords([]string{"config", "--local", "--get-regexp", riskyConfig}) +
+		`repo="$gd/` + pushRepo + `"` + "\n" +
+		shellWords([]string{mkdirPath, "-p"}) + ` "$repo" || exit 1` + "\n" +
+		// Left there before the call: a link would send the writes below elsewhere, commondir or
+		// gitdir make git read another repository.
+		`if [ -L "$repo" ] || [ -L "$repo/config" ] || [ -L "$repo/objects" ] || [ -L "$repo/objects/info" ] || [ -L "$repo/objects/info/alternates" ] || ` +
+		`[ -e "$repo/commondir" ] || [ -e "$repo/gitdir" ]; then ` + refuse("the push repository was changed") + "; fi\n" +
+		// A fresh config, before git init reads it: nothing a previous call left in it applies.
+		`echo '[core]' > "$repo/config" || exit 1` + "\n" +
+		shellWords([]string{gitPath, "init", "-q", "--bare", "--template="}) + ` "$repo" || exit 1` + "\n" +
+		`echo "$common/objects" > "$repo/objects/info/alternates" || exit 1` + "\n"
+	check = shellWords([]string{gitPath, "--git-dir"}) + ` "$repo" ` + shellWords([]string{"config", "--local", "--get-regexp", riskyConfig}) +
 		" >/dev/null 2>&1; s=$?; if [ \"$s\" -ne 1 ]; then " + refuse("the push repository config changed") + "; fi\n"
 	return s, bare, url, check
 }
@@ -703,9 +741,8 @@ const riskyConfig = `^(url\..*\.(insteadof|pushinsteadof)|include\.path|includei
 	`core\.attributesfile|core\.hookspath|core\.fsmonitor|core\.sshcommand|extensions\.worktreeconfig|http\..+)$`
 
 // pushArgs reads a validated "push [-u|--set-upstream] [--delete|-d] origin <branch>": it returns
-// the grant's repository URL, the full ref and "delete" or "push", or nil when args are not that
-// shape. Where it goes never depends on the remote's config. -u is accepted and does nothing: the
-// bare repository a push runs from has no upstream to record.
+// the grant's repository URL, the full ref and "delete", "upstream" (-u) or "push", or nil when
+// args are not that shape. Where it goes never depends on the remote's config.
 func pushArgs(args []string, gh string) []string {
 	upstream, del := false, false
 	var pos []string
@@ -723,8 +760,11 @@ func pushArgs(args []string, gh string) []string {
 		return nil
 	}
 	mode := "push"
-	if del {
+	switch {
+	case del:
 		mode = "delete"
+	case upstream:
+		mode = "upstream"
 	}
 	return []string{pinURL(gh) + ".git", "refs/heads/" + pos[1], mode}
 }

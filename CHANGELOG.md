@@ -1,5 +1,139 @@
 # Changelog
 
+## v0.15.0 (2026-11-08)
+
+Changes:
+
+- Pause the tower's inbox while you answer it (#95): `H` in the deck (or Hold messages in a
+  row's menu) or `lea hold [--off] [AGENT]` holds the messages agents send it; your notes and
+  the replies to what it sends during the pause still arrive, an agent's `ask` to it fails at
+  once, and the row shows `⏸ N`. On release (yours, or lea's after `LEA_HOLD_MAX` minutes, 30;
+  0: never) the tower gets them all and briefs you once. Only the user pauses or releases an
+  inbox. `Q` in the deck (Questions… in the tower's menu) lists its questions to you and drops a
+  queued one; the tower's status line shows `❓ 1 · 3 queued` and `⏸ messages paused (N)`.
+- Security: the text of the tower's next question, and of a question's reminder, reaches its
+  context framed as untrusted data, as `msg_inbox` frames an agent's message, with its control,
+  bidi and zero-width characters replaced (#95): an agent's words in a queued question could
+  pass for lea's instructions.
+- One handle per agent, `label (name)` (#356, #368): the deck row, the tower, `lea board` and
+  `lea agents` name an agent by its label then its name. A lead gives a spawn a `label`
+  (`agents_spawn`, `agents_request_spawn`); without one, an agent started with a brief is named
+  after its brief, not after lea's first prompt. Labels are unique among the running agents of a
+  container, whatever their case: an automatic label that clashes gets ` 2`, ` 3`…, and the user's
+  rename to a running agent's label is refused. An agent's label, or the namer's from an agent's
+  brief or prompt, is plain ASCII (letters, digits, spaces, `- _ . #`) and never reads as `user`,
+  `the user`, `lea`, `tower` (alone or numbered: `Tower 2`, `user #1`) or holds `Control
+  Tower`, `Tower Control` or `Ctrl Tower` (`The Control Tower`, `CT`), whatever its case,
+  punctuation or look-alike digits (`C0ntrol 7ower`): those are the user's and lea's.
+- `lea config claude` (#334): your base settings for Claude Code in lea, without editing a file or
+  rebuilding the image: `defaultMode`, entries to add to or remove from `allow`, `ask`, `deny` and
+  `additionalDirectories` (lea's built-in rules included), `env`, `model`, `language`,
+  `outputStyle`, `alwaysThinkingEnabled`; `lea config claude` alone shows every effective setting
+  with its source. Kept in `claude.json` next to `lea.conf`, never in `~/.claude/settings.json`;
+  they outrank the host's `permissions` and apply to the containers started from then on. lea's
+  hooks, `allowManagedPermissionRulesOnly`, `disableBypassPermissionsMode`, the status line and
+  lea's own variables are refused with the reason. Host only; `lea doctor` lists the overrides,
+  `lea config export` never carries them.
+- The deck's first agent is a Control Tower (#339): `lea deck-open` with no agent running starts a
+  lead on Claude labelled `Control Tower`, whose first prompt runs `/lea:control-tower`; `N` starts
+  another (`Control Tower 2`…), and the provider picker moves from `N` to `P`. Host only.
+- The agent containers no longer rely on Docker's default resolver (#98): lea starts them with
+  `--dns 192.0.2.1` (TEST-NET-1, never routed, out of reach of the internal network), so a lookup of an external name, from an agent or a nested container, is
+  never forwarded to the host's resolver (lea-proxy, which resolves names for the agents, is still
+  answered). `lea doctor` fails on a running container that resolves an external name, and warns
+  about one started without it (`lea stop`, then `lea`). `make test-isolation` checks that no lookup, direct
+  query to a public resolver or long TXT name reaches a decoy DNS server, on the decoy network or on the host's 127.0.0.1:53.
+- The control tower asks you one question at a time (#95): its new `user_ask` tool (leads only)
+  opens a question when none is open and queues it otherwise, by priority (`incident`,
+  `blocking`, `normal`) then in order; the queue is kept in lea.db. Your next prompt, or your
+  answer to the tower's `AskUserQuestion`, answers the open question: lea tells the tower which
+  agent the answer goes back to and gives it the next question. While you have a question, lea denies the tower any other
+  `AskUserQuestion` and holds the questions agents `ask` it until you answer. One left unanswered `LEA_QUESTION_REMIND`
+  minutes (120; 0: never) is asked again once, prefixed with `reminder:`. The deck shows the
+  tower as `❓ 1 · 3 queued`; `lea questions` lists the questions and `lea questions drop ID`
+  drops a queued one.
+- A `gh pr create --body-file` or `gh release create --notes-file` refused for its file now says
+  why (#384): the hint names the file (cut past 80 characters) and the rule the matcher applies
+  (a relative path inside the worktree of at most 256 characters from `A-Za-z0-9._/-`, not
+  starting with `.`, `-` or `/`, with no empty, `.` or `..` segment, outside `.git`) with an
+  example, `pr-body.md`.
+- Deck colour themes (#337): `LEA_THEME` picks `catppuccin` (the default), `gruvbox`, `nord`,
+  `tokyo-night`, `solarized`, `high-contrast` or `mono`; `T` in the deck (or its right-click menu)
+  opens a picker that previews each theme live (`enter` keeps and saves it, `esc` restores), the
+  settings screen's Theme row applies at once, and the tmux pane borders follow. `NO_COLOR` gives
+  `mono` while `LEA_THEME` is not set; an unknown name gives `catppuccin` with a warning.
+- The agents show your own Claude Code status line (#374): when your `~/.claude/settings.json`
+  has a `statusLine` command, `lea statusline` still reports the agent's context and usage to the
+  daemon, then runs your command with the same JSON (1.5 s at most, killed past it) and prints its
+  output; lea's own line comes back when it fails, prints nothing or times out. A script below
+  `~/.claude` the command names is mounted read-only into the containers (and lea-ctl).
+- `release-create` grant action (#353): `gh release create <tag> --verify-tag [--title T]
+  [--notes-file F | --generate-notes] [--prerelease] [--latest]`, one plain command at the root of
+  the agent's worktree, pinned like every allowed gh call, for a pushed semver tag matching the
+  grant's `--tag` glob (`lea allow release --repo R --tag 'v0.15.*'`, or `grants_request`
+  with `tag`). `--draft`, `--target`, assets and the other `gh release` subcommands stay
+  uncovered; `deliver` never includes it. A call the grant does not cover tells the agent
+  the form, the glob and `grants_request`.
+- In the deck, a folder header's summary sets each state mark apart from its count (`6 ◐ 6`, not
+  `6 ◐6`) (#355): the marks are East Asian Ambiguous width, and a terminal that draws them wide
+  drew the half-moon over the digit.
+- A granted `git push -u origin <branch>` from a worktree branch created from `origin/main` goes
+  through at the first try (#381): the pinned push no longer runs `rm` in its `sh -c` script
+  (Claude Code refused it, hook allow or not), it runs from a bare repository reused in the
+  worktree's git directory; once pushed, it records `origin/<branch>` and `-u` makes it the
+  branch's upstream (it did nothing, so the branch kept tracking `main`). The agent prompt says to
+  create the worktree with `git worktree add --no-track`.
+- The first run and upgrades ask the deck question (#335): the first `lea` on a terminal (the
+  Homebrew journey, `lea init --first-run`) asks "Use the lea deck ...? [Y/n]" and, on no, the
+  command to start in the lea container, before it opens anything. An install whose user config
+  has no `LEA_DECK` (made before v0.10.0) gets the same question once, at its next `lea` on a
+  terminal. The answer is recorded (the end of input records the deck) with the command that
+  switches it; no terminal, or `LEA_DECK` already set (environment or user config): no question,
+  the deck as before.
+- `lea allow` (#319): one allowance model and one command for what `lea grant` and `lea delivery`
+  did. `lea allow deliver` (push, pr, merge, delete-branch), `lea allow merge issues --repo api`,
+  `lea allow push --branch 'feat/*' --agent dev-1 --for 2h`, `lea allow stop-finished`: one call
+  records one set of grants, shown as one line by `lea allow` (capabilities, repositories and pins,
+  time left, last use) and revoked as one unit by `lea allow off N` (or a capability, `deliver`, or
+  everything of the lea). `lea allow log` lists this lea's uses. The container is always the
+  projects directory's lea, and every forge capability is pinned to each repository's `origin`
+  (GitHub or GitLab, `--gitlab HOST` remembered), with the pin confirmation `lea delivery on` had:
+  on a terminal, `record these? [y/N]`; off one, `--yes DIGEST`. Recorded again, an allowance that
+  holds until revoked keeps the ids of its unchanged rows.
+- **Lifetime**: an allowance holds until revoked unless `--for DURATION` (1m to 30 days) says
+  otherwise, hand grants included (they used to expire after 8 h).
+- The deck has an Allowed screen (`g`): the lea's allowances, with `x` to revoke one after the
+  usual confirmation.
+- An agent's first prompt lists the forms lea runs without asking only for what covers it when it
+  starts; otherwise it says `lea allow deliver --repo <repo>` lets it push and open PRs without
+  asking. A merge, PR or push no allowance covers gets a hint naming `lea allow <capability> --repo
+  <repo>`.
+- `lea doctor` reports `allowances` (the pin and credential checks of delivery).
+- Deprecated: `lea delivery on|off|status` and `lea grant add|ls` are aliases of `lea allow` for this
+  minor release, with a notice; they go in the next one. `lea grant add --github X` is refused when
+  X is not the repository's origin. The daemon methods `grant_add`, `grant_list` and `delivery_set`
+  are replaced by `allow_set`, `allow_list` and `allow_off` (host only).
+- `lea.db` gains `grant_sets` and `grants.set_id`: on open, a lea's standing grants become one
+  `deliver` allowance and every other active grant an allowance of one; ids do not change, and an
+  older lea still reads the table.
+- Agents point the user to `lox run`, never `lox up` or `lox approve` (#343): a new `lock_hint`
+  tool (read-only, agents only) tells an agent whose Lock client finds no console what the user
+  must do, from lea's state of the lock rather than a guess: "lock NAME waits for you: answer in
+  lox run (or lox attach NAME)" while `lox run` runs it, "start lox run in the projects directory"
+  when none serves, "restart lea" for a lock added while lea runs; never a command that restarts
+  or recreates a lock. The first prompt sends agents to it, and the agents' status line says
+  "no lox run: start it in the projects directory" while none serves. The `LEA_LOX_UP` warning
+  and LockHTTP's refusal page no longer mention `lox up` or `lox approve`.
+- The "Copied" notice a mouse selection's release shows closes after 0.6 s instead of 1.5 s
+  (#373).
+- A granted `gh pr create` or `gh release create` whose `--title` reads like the file flag (`-F`,
+  `--body-file`, `--notes-file`) hands gh the body or notes file the parser approved (#382): the
+  pinned command took the file's index from a second scan of the args, which took the title's
+  value for the flag and swapped the wrong argument for `-`.
+- A lead's child spawned without `repo` starts where its lead works (#364): the lead's repository,
+  or without one the lead's own directory, not the directory `lea` was last launched from. An
+  explicit `repo` still wins; `agents_spawn` with `for` keeps the request's repo and branch.
+
 ## v0.14.1 (2026-11-08)
 
 Changes:
@@ -86,6 +220,9 @@ Upgrading from v0.9.x:
   cannot read it. A token found in an agent's state is adopted once, when the proxy has none, and
   is otherwise discarded; `lea github login` sets it.
 - The agent image has no `sudo` and no setuid/setgid file any more (#100, #305).
+- The deck is optional now (#323): `lea config deck off` runs your own tool (Claude Code by
+  default, `lea config tool CMD`) in the lea container instead, `lea config deck on` brings it
+  back. Since #335, an install without `LEA_DECK` is asked once at its next `lea` on a terminal.
 
 Changes:
 

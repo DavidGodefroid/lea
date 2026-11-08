@@ -191,9 +191,9 @@ func TestAFoldedFoldersHeaderSumsItsAgentsUp(t *testing.T) {
 		a, b string
 		want []string
 	}{
-		{"idle", "done", []string{"2 ✓2"}},
-		{"idle", "working", []string{"2 ◐1", "✓1"}},
-		{"working", "blocked", []string{"2 ●1", "◐1"}},
+		{"idle", "done", []string{"2 ✓ 2"}},
+		{"idle", "working", []string{"2 ◐ 1", "✓ 1"}},
+		{"working", "blocked", []string{"2 ● 1", "◐ 1"}},
 	} {
 		m := withFolders(t, st, ag("a", c.a, 9_990), ag("b", c.b, 9_990), ag("c", "idle", 1))
 		line := viewLines(m)[1]
@@ -212,21 +212,21 @@ func TestAFoldedFoldersHeaderSumsItsAgentsUp(t *testing.T) {
 	p := ag("b", "working", 9_990)
 	p.Paused = true
 	m := withFolders(t, st, sub, p)
-	if line := viewLines(m)[1]; !strings.Contains(line, "2 ◐1") || strings.Contains(line, "✓") {
+	if line := viewLines(m)[1]; !strings.Contains(line, "2 ◐ 1") || strings.Contains(line, "✓") {
 		t.Errorf("subagents, paused: line %q", line)
 	}
 	sub.Subagents = 0
 	m = withFolders(t, st, sub, p)
-	if line := viewLines(m)[1]; !strings.Contains(line, "2 ✓1") {
+	if line := viewLines(m)[1]; !strings.Contains(line, "2 ✓ 1") {
 		t.Errorf("paused: line %q", line)
 	}
 	// #72: a waiting agent works, one whose task names a blocker needs the user.
 	m = withFolders(t, st, withTask(ag("a", "idle", 9_990), true, false), ag("b", "idle", 9_990))
-	if line := viewLines(m)[1]; !strings.Contains(line, "2 ◐1 ✓1") {
+	if line := viewLines(m)[1]; !strings.Contains(line, "2 ◐ 1 ✓ 1") {
 		t.Errorf("waiting: line %q", line)
 	}
 	m = withFolders(t, st, withTask(ag("a", "working", 9_990), false, true), ag("b", "idle", 9_990))
-	if line := viewLines(m)[1]; !strings.Contains(line, "2 ●1 ✓1") {
+	if line := viewLines(m)[1]; !strings.Contains(line, "2 ● 1 ✓ 1") {
 		t.Errorf("blocked_on: line %q", line)
 	}
 }

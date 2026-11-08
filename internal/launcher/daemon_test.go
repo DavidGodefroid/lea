@@ -527,3 +527,35 @@ func TestHubSettings(t *testing.T) {
 		}
 	}
 }
+
+// LEA_QUESTION_REMIND: minutes before lea reminds a tower of an unanswered question (#95).
+func TestQuestionRemindSetting(t *testing.T) {
+	for v, want := range map[string]time.Duration{"": 2 * time.Hour, "0": 0, "30": 30 * time.Minute, "10080": 7 * 24 * time.Hour,
+		"10081": 2 * time.Hour, "-1": 2 * time.Hour, "two": 2 * time.Hour} {
+		get := func(k string) string {
+			if k == "LEA_QUESTION_REMIND" {
+				return v
+			}
+			return ""
+		}
+		if got := QuestionRemindSetting(get); got != want {
+			t.Errorf("LEA_QUESTION_REMIND=%q: %v, want %v", v, got, want)
+		}
+	}
+}
+
+// LEA_HOLD_MAX: minutes before lea releases the user's pause of an inbox (#95).
+func TestHoldMaxSetting(t *testing.T) {
+	for v, want := range map[string]time.Duration{"": 30 * time.Minute, "0": 0, "5": 5 * time.Minute, "1440": 24 * time.Hour,
+		"1441": 30 * time.Minute, "-1": 30 * time.Minute, "x": 30 * time.Minute} {
+		get := func(k string) string {
+			if k == "LEA_HOLD_MAX" {
+				return v
+			}
+			return ""
+		}
+		if got := HoldMaxSetting(get); got != want {
+			t.Errorf("LEA_HOLD_MAX=%q: %v, want %v", v, got, want)
+		}
+	}
+}

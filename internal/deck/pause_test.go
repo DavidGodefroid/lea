@@ -167,7 +167,7 @@ func TestAPausedAgentShowsPaused(t *testing.T) {
 	if !strings.Contains(s, "paused") || !strings.Contains(s, "‖") {
 		t.Fatalf("view:\n%s", s)
 	}
-	if !strings.Contains(strings.Join(helpLines, "\n"), "pause (y), resume") {
+	if !strings.Contains(strings.Join(helpLines, "\n"), "pause (y)") {
 		t.Fatal("the key list lacks p")
 	}
 }

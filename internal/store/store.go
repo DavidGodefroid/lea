@@ -11,6 +11,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/DavidGodefroid/lea/internal/roles"
 	_ "modernc.org/sqlite"
@@ -72,13 +73,18 @@ CREATE INDEX IF NOT EXISTS lock_requests_container ON lock_requests(container, t
 CREATE TABLE IF NOT EXISTS grants(
   id INTEGER PRIMARY KEY AUTOINCREMENT, container TEXT NOT NULL, action TEXT NOT NULL,
   repo TEXT NOT NULL DEFAULT '', branch TEXT NOT NULL DEFAULT '', agent TEXT NOT NULL DEFAULT '',
-  github TEXT NOT NULL DEFAULT '', created INTEGER NOT NULL, expires INTEGER NOT NULL, revoked INTEGER NOT NULL DEFAULT 0);
+  github TEXT NOT NULL DEFAULT '', created INTEGER NOT NULL, expires INTEGER NOT NULL, revoked INTEGER NOT NULL DEFAULT 0,
+  tag TEXT NOT NULL DEFAULT '');
 CREATE INDEX IF NOT EXISTS grants_container ON grants(container, revoked, expires);
+CREATE TABLE IF NOT EXISTS grant_sets(
+  id INTEGER PRIMARY KEY AUTOINCREMENT, container TEXT NOT NULL, capabilities TEXT NOT NULL,
+  created INTEGER NOT NULL, expires INTEGER NOT NULL, revoked INTEGER NOT NULL DEFAULT 0);
+CREATE INDEX IF NOT EXISTS grant_sets_container ON grant_sets(container, revoked, expires);
 CREATE TABLE IF NOT EXISTS grant_requests(
   id INTEGER PRIMARY KEY AUTOINCREMENT, container TEXT NOT NULL, requester TEXT NOT NULL, action TEXT NOT NULL,
   repo TEXT NOT NULL, branch TEXT NOT NULL DEFAULT '', github TEXT NOT NULL, ttl_s INTEGER NOT NULL,
   reason TEXT NOT NULL DEFAULT '', state TEXT NOT NULL DEFAULT 'pending', grant_id INTEGER NOT NULL DEFAULT 0,
-  at INTEGER NOT NULL, decided INTEGER NOT NULL DEFAULT 0);
+  at INTEGER NOT NULL, decided INTEGER NOT NULL DEFAULT 0, tag TEXT NOT NULL DEFAULT '');
 CREATE INDEX IF NOT EXISTS grant_requests_state ON grant_requests(state, requester);
 CREATE TABLE IF NOT EXISTS grant_uses(
   id INTEGER PRIMARY KEY AUTOINCREMENT, grant_id INTEGER NOT NULL, agent TEXT NOT NULL,
@@ -93,6 +99,13 @@ CREATE INDEX IF NOT EXISTS hub_waits_ticket ON hub_waits(ticket);
 CREATE TABLE IF NOT EXISTS hub_abandoned(
   instance TEXT NOT NULL, ticket TEXT NOT NULL, at INTEGER NOT NULL, PRIMARY KEY(instance, ticket));
 CREATE TABLE IF NOT EXISTS kv(key TEXT PRIMARY KEY, value TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS user_questions(
+  id INTEGER PRIMARY KEY AUTOINCREMENT, agent TEXT NOT NULL, from_agent TEXT NOT NULL DEFAULT '',
+  message INTEGER NOT NULL DEFAULT 0, body TEXT NOT NULL, priority TEXT NOT NULL, rank INTEGER NOT NULL,
+  seq INTEGER NOT NULL, state TEXT NOT NULL, shown INTEGER NOT NULL DEFAULT 0,
+  reminded INTEGER NOT NULL DEFAULT 0, created INTEGER NOT NULL, asked_at INTEGER NOT NULL DEFAULT 0,
+  answered_at INTEGER NOT NULL DEFAULT 0);
+CREATE INDEX IF NOT EXISTS user_questions_agent ON user_questions(agent, state);
 `
 
 type Store struct{ db *sql.DB }
@@ -148,6 +161,8 @@ type Agent struct {
 	// Woken: lea woke the idle agent for a message in its inbox (#297), until that turn ends or
 	// the user types. Display only.
 	Woken bool
+	// HoldSince is when the user paused the agent's inbox (hold.go, #95), 0 when not paused.
+	HoldSince int64
 }
 
 // agentColumns are the agents columns added after phase 0; migrate adds the missing ones to a
@@ -174,16 +189,23 @@ var agentColumns = [][2]string{
 	{"limit_tries", "INTEGER NOT NULL DEFAULT 0"},
 	{"incarnation", "TEXT NOT NULL DEFAULT ''"},
 	{"woken", "INTEGER NOT NULL DEFAULT 0"},
+	{"hold_since", "INTEGER NOT NULL DEFAULT 0"},
 }
 
 // requestColumns are the spawn_requests columns added after it was created.
 var requestColumns = [][2]string{
 	{"model", "TEXT NOT NULL DEFAULT ''"},
+	{"label", "TEXT NOT NULL DEFAULT ''"},
 }
 
 // approvalColumns are the approvals columns added after phase 0.
 var approvalColumns = [][2]string{
 	{"always", "INTEGER NOT NULL DEFAULT 0"},
+}
+
+// tagColumns: the release-create tag glob (#353), on grants and grant_requests.
+var tagColumns = [][2]string{
+	{"tag", "TEXT NOT NULL DEFAULT ''"},
 }
 
 func migrate(db *sql.DB) error {
@@ -196,7 +218,19 @@ func migrate(db *sql.DB) error {
 	if err := addColumns(db, "approvals", approvalColumns); err != nil {
 		return err
 	}
-	return addColumns(db, "hub_waits", hubWaitColumns)
+	if err := addColumns(db, "grants", tagColumns); err != nil {
+		return err
+	}
+	if err := addColumns(db, "grant_requests", tagColumns); err != nil {
+		return err
+	}
+	if err := addColumns(db, "hub_waits", hubWaitColumns); err != nil {
+		return err
+	}
+	if err := addColumns(db, "grants", grantColumns); err != nil {
+		return err
+	}
+	return migrateGrantSets(db, time.Now().Unix())
 }
 
 // addColumns adds the columns table lacks. table is one of this file's constants, never input.
@@ -249,12 +283,13 @@ func (s *Store) SetState(key, state, sessionID string, now int64) error {
 const setStateSQL = `UPDATE agents SET state=?,
 		session_id=CASE WHEN ?='' THEN session_id ELSE ? END, updated=?,
 		paused=CASE WHEN ? IN ('done','stopped','unknown','suspended_cold') THEN 0 ELSE paused END,
+		hold_since=CASE WHEN ? IN ('done','stopped') THEN 0 ELSE hold_since END,
 		limit_until=CASE WHEN ?='done' THEN 0
 			WHEN ? IN ('stopped','unknown') AND paused=1 AND limit_until>0 THEN -1 ELSE limit_until END,
 		limit_tries=CASE WHEN ?='done' THEN 0 ELSE limit_tries END WHERE key=?`
 
 func (s *Store) setState(key, state, sessionID string, now int64, and string) (bool, error) {
-	res, err := s.db.Exec(setStateSQL+and, state, sessionID, sessionID, now, state, state, state, state, key)
+	res, err := s.db.Exec(setStateSQL+and, state, sessionID, sessionID, now, state, state, state, state, state, key)
 	if err != nil {
 		return false, err
 	}
@@ -279,13 +314,13 @@ func (s *Store) SetHookState(key, state, sessionID string, now int64) (bool, err
 	return s.setState(key, state, sessionID, now, ` AND state<>'stopped'`)
 }
 
-const agentCols = `key, container, name, session_id, state, updated, profile, workdir, created, role, parent, repo, branch, task_id, label, args, prompt, paused, model, limit_until, limit_tries, incarnation, woken`
+const agentCols = `key, container, name, session_id, state, updated, profile, workdir, created, role, parent, repo, branch, task_id, label, args, prompt, paused, model, limit_until, limit_tries, incarnation, woken, hold_since`
 
 func scanAgent(sc interface{ Scan(...any) error }) (Agent, error) {
 	var a Agent
 	var args string
 	err := sc.Scan(&a.Key, &a.Container, &a.Name, &a.SessionID, &a.State, &a.Updated, &a.Profile, &a.Workdir, &a.Created,
-		&a.Role, &a.Parent, &a.Repo, &a.Branch, &a.TaskID, &a.Label, &args, &a.Prompt, &a.Paused, &a.Model, &a.LimitUntil, &a.LimitTries, &a.Incarnation, &a.Woken)
+		&a.Role, &a.Parent, &a.Repo, &a.Branch, &a.TaskID, &a.Label, &args, &a.Prompt, &a.Paused, &a.Model, &a.LimitUntil, &a.LimitTries, &a.Incarnation, &a.Woken, &a.HoldSince)
 	if err == nil && args != "" {
 		err = json.Unmarshal([]byte(args), &a.Args)
 	}
@@ -428,7 +463,7 @@ func (s *Store) Register(n NewAgent, c Caps, now int64) (Agent, error) {
 			return Agent{}, err
 		}
 		_, err = tx.Exec(`UPDATE agents SET profile=?, workdir=?, created=?, updated=?, state='unknown', session_id='',
-			ctx_pct=-1, cost_usd=-1, role=?, parent=?, repo=?, branch=?, task_id=0, label='', args='', prompt='', paused=0, subagents=0, limit_until=0, limit_tries=0, woken=0, model=?, incarnation=? WHERE key=?`,
+			ctx_pct=-1, cost_usd=-1, role=?, parent=?, repo=?, branch=?, task_id=0, label='', args='', prompt='', paused=0, subagents=0, limit_until=0, limit_tries=0, woken=0, hold_since=0, model=?, incarnation=? WHERE key=?`,
 			n.Profile, n.Workdir, now, now, n.Role, n.Parent, n.Repo, n.Branch, n.Model, inc, key)
 	} else {
 		_, err = tx.Exec(`INSERT INTO agents(key, container, name, profile, workdir, created, updated, role, parent, repo, branch, model, incarnation)
@@ -510,6 +545,104 @@ func (s *Store) SetLabel(key, label string) error {
 		return ErrNotFound
 	}
 	return nil
+}
+
+// liveLabels are the names and labels, in pairs, of the labelled live (not done) agents of key's
+// container but key's own.
+func liveLabels(q interface {
+	Query(string, ...any) (*sql.Rows, error)
+}, key string) ([]string, error) {
+	rows, err := q.Query(`SELECT name, label FROM agents WHERE container=(SELECT container FROM agents WHERE key=?)
+		AND key<>? AND state<>'done' AND label<>''`, key, key)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []string
+	for rows.Next() {
+		var name, label string
+		if err := rows.Scan(&name, &label); err != nil {
+			return nil, err
+		}
+		out = append(out, name, label)
+	}
+	return out, rows.Err()
+}
+
+// SetLabelFree sets the label of an agent lea spawned unless another live agent of its
+// container holds it, whatever its case (#356), in one transaction: it returns that agent's name,
+// "" once the label is set. The caller checks the text (agents.CheckLabel).
+func (s *Store) SetLabelFree(key, label string) (string, error) {
+	tx, err := s.db.Begin()
+	if err != nil {
+		return "", err
+	}
+	defer tx.Rollback()
+	ls, err := liveLabels(tx, key)
+	if err != nil {
+		return "", err
+	}
+	for i := 0; i < len(ls); i += 2 {
+		if strings.EqualFold(ls[i+1], label) {
+			return ls[i], nil
+		}
+	}
+	res, err := tx.Exec(`UPDATE agents SET label=? WHERE key=? AND profile<>''`, label, key)
+	if err != nil {
+		return "", err
+	}
+	if n, err := res.RowsAffected(); err != nil {
+		return "", err
+	} else if n == 0 {
+		return "", ErrNotFound
+	}
+	return "", tx.Commit()
+}
+
+// SetLabelUnique sets the label of an agent lea spawned, unique among the live agents of its
+// container (#356): on a clash, whatever the case, it gets " 2", " 3"…, the label cut so that it
+// stays within maxRunes characters. With onlyIfEmpty, a label already set (the user's) stays.
+// It returns the agent's label. The caller checks the text (agents.CheckLabel).
+func (s *Store) SetLabelUnique(key, label string, maxRunes int, onlyIfEmpty bool) (string, error) {
+	tx, err := s.db.Begin()
+	if err != nil {
+		return "", err
+	}
+	defer tx.Rollback()
+	var cur string
+	if err := tx.QueryRow(`SELECT label FROM agents WHERE key=? AND profile<>''`, key).Scan(&cur); errors.Is(err, sql.ErrNoRows) {
+		return "", ErrNotFound
+	} else if err != nil {
+		return "", err
+	}
+	if onlyIfEmpty && cur != "" {
+		return cur, nil
+	}
+	ls, err := liveLabels(tx, key)
+	if err != nil {
+		return "", err
+	}
+	taken := func(l string) bool {
+		for i := 1; i < len(ls); i += 2 {
+			if strings.EqualFold(ls[i], l) {
+				return true
+			}
+		}
+		return false
+	}
+	l := label
+	for n := 2; taken(l); n++ {
+		suffix := fmt.Sprintf(" %d", n)
+		base := []rune(label)
+		if keep := maxRunes - len(suffix); len(base) > keep {
+			base = base[:max(keep, 0)]
+		}
+		l = strings.TrimRight(string(base), " ") + suffix
+	}
+	if _, err := tx.Exec(`UPDATE agents SET label=? WHERE key=?`, l, key); err != nil {
+		return "", err
+	}
+	return l, tx.Commit()
 }
 
 // SetPaused records that the user froze an agent lea spawned (the deck's p), or let it continue.
@@ -626,6 +759,10 @@ func (s *Store) ForgetAgent(key string) error {
 		return err
 	}
 	if _, err := tx.Exec(`DELETE FROM hub_waits WHERE agent_key=?`, key); err != nil {
+		return err
+	}
+	// Its questions to the user go with it: nobody would relay their answers.
+	if _, err := tx.Exec(`DELETE FROM user_questions WHERE agent=?`, key); err != nil {
 		return err
 	}
 	if _, err := tx.Exec(`DELETE FROM agents WHERE key=?`, key); err != nil {
@@ -802,8 +939,14 @@ func (s *Store) Get(id int64) (Message, error) {
 }
 
 func (s *Store) Unread(to string, limit int) ([]Message, error) {
-	rows, err := s.db.Query(`SELECT `+msgCols+` FROM messages WHERE recipient=? AND read_at=0
-		ORDER BY id LIMIT ?`, to, limit)
+	return s.UnreadHolding(to, limit, Hold{})
+}
+
+// UnreadHolding is Unread, less the messages h holds: they stay unread (#95).
+func (s *Store) UnreadHolding(to string, limit int, h Hold) ([]Message, error) {
+	cond, args := h.cond()
+	rows, err := s.db.Query(`SELECT `+msgCols+` FROM messages WHERE recipient=? AND read_at=0`+cond+`
+		ORDER BY id LIMIT ?`, append(append([]any{to}, args...), limit)...)
 	if err != nil {
 		return nil, err
 	}
@@ -849,9 +992,13 @@ func (s *Store) eachID(ids []int64, q string, lead ...any) error {
 }
 
 // UnreadCount counts the unread messages of one recipient.
-func (s *Store) UnreadCount(to string) (int, error) {
+func (s *Store) UnreadCount(to string) (int, error) { return s.UnreadCountHolding(to, Hold{}) }
+
+// UnreadCountHolding is UnreadCount, less the messages h holds (#95).
+func (s *Store) UnreadCountHolding(to string, h Hold) (int, error) {
+	cond, args := h.cond()
 	var n int
-	err := s.db.QueryRow(`SELECT COUNT(*) FROM messages WHERE recipient=? AND read_at=0`, to).Scan(&n)
+	err := s.db.QueryRow(`SELECT COUNT(*) FROM messages WHERE recipient=? AND read_at=0`+cond, append([]any{to}, args...)...).Scan(&n)
 	return n, err
 }
 

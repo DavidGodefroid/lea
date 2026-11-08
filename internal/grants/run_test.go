@@ -64,7 +64,7 @@ func pinnedCaller(root, wt string) (Caller, Grant) {
 	c := dev
 	c.Worktree, c.Env = wt, map[string]string{"HOME": root}
 	g := all(CommitIdentity)
-	g.GitHub = "github.com/someone/lea"
+	g.Pin = "github.com/someone/lea"
 	return c, g
 }
 

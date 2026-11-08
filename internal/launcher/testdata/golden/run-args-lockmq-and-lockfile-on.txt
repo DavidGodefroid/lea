@@ -6,6 +6,8 @@ lea-$ID
 lea
 --network
 lea-internal-$ID
+--dns
+192.0.2.1
 --label
 lea.prefix=lea
 --label

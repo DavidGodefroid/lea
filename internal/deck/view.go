@@ -97,6 +97,15 @@ func (m Model) body(inner int) []string {
 			}
 		}
 		body = m.settingsLines(inner, room)
+	case m.allowOpen:
+		room := 0
+		if m.height > 2 {
+			room = m.height - 2
+			if m.statusLine(inner) != "" {
+				room--
+			}
+		}
+		body = m.allowedLines(inner, room)
 	case m.help:
 		for _, l := range helpLines {
 			body = append(body, padRight(" "+fit(l, inner-1, c), inner))
@@ -104,7 +113,7 @@ func (m Model) body(inner int) []string {
 	case len(m.agents) == 0:
 		body = append(body, padRight(" "+muted.Render(fit("No agents yet: press n.", inner-1, c)), inner))
 	}
-	if !m.help && !m.setOpen {
+	if !m.help && !m.setOpen && !m.allowOpen {
 		body = append(body, m.rows(inner)...)
 	}
 	if m.height > 2 {
@@ -129,21 +138,21 @@ var helpLines = []string{
 	"enter       show / fold folder",
 	"space       next needing you",
 	"n           new agent",
-	"N           new, other provider",
-	"s           new shell",
-	"- |         split with a shell",
+	"N           new Control Tower",
+	"P           new, other provider",
+	"s - |       new shell, split",
 	"m           note to its inbox",
 	"t           its messages",
 	"e c         rename, colour",
 	"f o u       new folder, in, out",
 	"J K h l     reorder, fold",
-	"r           its role",
-	"p           pause (y), resume",
+	"r Q         its role, questions",
+	"p H         pause (y), hold",
 	"a d A       allow deny always",
 	"x           stop or remove",
 	"< >         deck width",
-	"S           sounds",
-	",           settings",
+	"S T         sounds, theme",
+	", g         settings, allowed",
 	"ctrl+space  deck or terminal",
 	"q ?         detach, these keys",
 }
@@ -199,6 +208,9 @@ func (m Model) folderHint() string {
 // frameStyle is the style of the deck's frame: the accent while the deck has the keyboard, so the
 // focused pane is plain to see.
 func (m Model) frameStyle() lipgloss.Style {
+	if m.focused && current.mono { // no accent: the focused frame is bold
+		return lipgloss.NewStyle().Bold(true)
+	}
 	if m.focused {
 		return lipgloss.NewStyle().Foreground(theme.Accent)
 	}
@@ -337,10 +349,16 @@ func (m Model) bottom(w int) string {
 			hint += fmt.Sprintf(" %s A always", c.dot)
 		}
 	}
+	if m.allowOpen {
+		hint = fmt.Sprintf("x revoke %s esc close", c.dot)
+	}
 	if m.confirm != "" {
 		hint = fmt.Sprintf("y stop %s esc cancel", c.dot)
 		if isFolderKey(m.confirm) {
 			hint = fmt.Sprintf("y delete %s esc cancel", c.dot)
+		}
+		if isAllowKey(m.confirm) {
+			hint = fmt.Sprintf("y revoke %s esc cancel", c.dot)
 		}
 	}
 	if m.roleFor != "" {
@@ -422,7 +440,7 @@ func (m Model) rowLines(inner int) ([]string, []lineOwner) {
 	if m.menuFor == deckMenu {
 		var r []string
 		var o []lineOwner
-		items := deckMenuItems(m.sound)
+		items := m.openItems() // its own actions, or the theme picker (T)
 		for j, l := range m.menuLines(items, inner) {
 			r, o = append(r, l), append(o, lineOwner{deckMenu, menuOwner(j, len(items))})
 		}
@@ -473,7 +491,7 @@ func (m Model) folderRow(fi int, inner int) []string {
 	sel := folderKey(f.ID) == m.selected
 	bg := func(s lipgloss.Style) lipgloss.Style {
 		if sel {
-			return s.Background(theme.Sel)
+			return selected(s)
 		}
 		return s
 	}
@@ -538,7 +556,9 @@ func (m Model) folderSummary(fi int, c charset, maxW int, bg func(lipgloss.Style
 	var parts []part
 	add := func(g string, st lipgloss.Style, n int) {
 		if n > 0 {
-			parts = append(parts, part{g + strconv.Itoa(n), st})
+			// A space between mark and count: the marks are East Asian Ambiguous width, and a
+			// terminal that draws them wide spills them onto a digit glued to them (#355).
+			parts = append(parts, part{g + " " + strconv.Itoa(n), st})
 		}
 	}
 	// Needs you is bold as well as red: it is what the header is for. In ASCII each state keeps
@@ -580,7 +600,7 @@ func (m Model) row(a Agent, inner int, fi int) []string {
 	}
 	bg := func(s lipgloss.Style) lipgloss.Style {
 		if sel {
-			return s.Background(theme.Sel)
+			return selected(s)
 		}
 		return s
 	}
@@ -604,7 +624,7 @@ func (m Model) row(a Agent, inner int, fi int) []string {
 		bg(plain).Render(gap) +
 		bg(lipgloss.NewStyle().Foreground(gc)).Render(g) +
 		bg(plain).Render(" ") +
-		bg(lipgloss.NewStyle().Foreground(theme.Text).Bold(sel)).Render(padRight(fit(display(a), nameW, c), nameW)) +
+		m.nameCell(a, nameW, bg, sel) +
 		bg(plain).Render(" ") +
 		bg(muted).Render(padLeft(fit(a.Profile, profW, c), profW)) +
 		bg(plain).Render(" ") +
@@ -632,6 +652,22 @@ func (m Model) row(a Agent, inner int, fi int) []string {
 	return lines
 }
 
+// nameCell is a row's name, exactly w cells: the agent's name, or its label then the name
+// dimmed (#356), the handle the user and the tower share. When they do not both fit, the label is
+// cut first: the name, what the tools take, stays whole as long as it fits alone.
+func (m Model) nameCell(a Agent, w int, bg func(lipgloss.Style) lipgloss.Style, sel bool) string {
+	c := m.cs()
+	text := lipgloss.NewStyle().Foreground(theme.Text).Bold(sel)
+	const gap = "  "
+	name := safe(a.Name, c)
+	room := w - lipgloss.Width(name) - len(gap) // what the label may take
+	if a.Label == "" || a.Label == a.Name || room < 2 {
+		return bg(text).Render(padRight(fit(a.Name, w, c), w))
+	}
+	label := fit(a.Label, room, c)
+	return bg(text).Render(label) + bg(plain).Render(gap) + bg(muted).Render(padRight(name, w-lipgloss.Width(label)-len(gap)))
+}
+
 // detail is the second line of a row, for width cells (0: unbounded): the role (dev, the default,
 // is not shown), the model (when one was asked for), the directory, the branch, the short status and the age. When it does not fit,
 // the directory and the branch go first so the status and the age stay.
@@ -648,6 +684,9 @@ func (m Model) detail(a Agent, width int) string {
 		}
 		if a.Model != "" { // the provider is on the first line
 			before = append(before, a.Model)
+		}
+		if a.Held {
+			before = append([]string{m.heldMark(a)}, before...)
 		}
 		if path {
 			dir := a.Workdir
@@ -704,7 +743,7 @@ func (m Model) shortStatus(a Agent) string {
 
 // leaGlyphs are the marks lea draws itself (state, warning, unread, child): a status that starts
 // with one would pass for a label of lea's, so the agent's text loses them at its start.
-const leaGlyphs = " \t◆●◐○⚠✉↳⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"
+const leaGlyphs = " \t◆●◐○⚠✉❓⏸↳⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"
 
 // ctxText is a context percentage ("42%"), empty when unknown.
 func ctxText(p int) string {

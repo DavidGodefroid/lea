@@ -49,6 +49,7 @@ type spawnIn struct {
 	Repo    string `json:"repo,omitempty" jsonschema:"a directory directly under the projects directory: the agent starts there"`
 	Branch  string `json:"branch,omitempty" jsonschema:"the git branch the agent works on, in its own worktree"`
 	Brief   string `json:"brief" jsonschema:"what the new agent must do, at most 32 KiB; it is its first message"`
+	Label   string `json:"label,omitempty" jsonschema:"the name the user sees in the deck, at most 24 characters: <repo>#<issue> and 2-3 words when there is an issue (lea#350 spawn reuse), else 3-4 words of the task; never user, lea or Control Tower; default: named after the brief"`
 	For     string `json:"for,omitempty" jsonschema:"answers a spawn request: #<request id>, or the requester's name (its oldest pending request)"`
 	Queue   bool   `json:"queue,omitempty" jsonschema:"when the host is under pressure, queue the spawn and start it once the pressure falls (you get a message) instead of refusing it"`
 }
@@ -61,6 +62,7 @@ type requestIn struct {
 	Branch  string `json:"branch,omitempty" jsonschema:"the git branch the new agent works on"`
 	Brief   string `json:"brief" jsonschema:"what the new agent must do, at most 32 KiB"`
 	Reason  string `json:"reason" jsonschema:"why you need it, at most 2 KiB"`
+	Label   string `json:"label,omitempty" jsonschema:"the name the user sees in the deck, at most 24 characters: <repo>#<issue> and 2-3 words when there is an issue (lea#350 spawn reuse), else 3-4 words of the task; never user, lea or Control Tower; default: named after the brief"`
 }
 
 type stopIn struct {
@@ -180,11 +182,33 @@ func New(sock, agent, version, instructions string) *mcp.Server {
 			return proxy(ctx, sock, agent, "grants_list", short, in), nil, nil
 		})
 	// It only queues a request (#342): the grant exists once the user approves it on the host.
-	mcp.AddTool(s, &mcp.Tool{Name: "grants_request", Description: "Leads only: ask the user for a grant covering you and your children, e.g. when the user tells you in chat that your team may merge (action merge) or push release tags (action release-tag) on a repository. It records no grant: the user approves it on the host (lea approve g<N>), and you get a message when it is decided. Checked like lea grant add: action, repo (a directory under the projects directory), github OWNER/NAME, optional branch glob and ttl_s (default 8h, at most 30 days)."},
+	mcp.AddTool(s, &mcp.Tool{Name: "grants_request", Description: "Leads only: ask the user for a grant covering you and your children, e.g. when the user tells you in chat that your team may merge (action merge) push release tags (action release-tag) or publish the GitHub release of a pushed tag (action release-create, with a tag glob) on a repository. It records no grant: the user approves it on the host (lea approve g<N>), and you get a message when it is decided. Checked like lea grant add: action, repo (a directory under the projects directory), github OWNER/NAME, optional branch glob, tag glob (release-create) and ttl_s (default 8h, at most 30 days)."},
 		func(ctx context.Context, _ *mcp.CallToolRequest, in grantRequestIn) (*mcp.CallToolResult, any, error) {
 			return proxy(ctx, sock, agent, "grants_request", short, in), nil, nil
 		})
+	// #343: what lea knows of a lock without a socket, never a guess.
+	mcp.AddTool(s, &mcp.Tool{Name: "lock_hint", Description: "When a Lock's client (locksql, lockmq, lockfile, locklog) finds no console (no socket, no answer): what the user must do, from what lea knows of the lock (whether lox run runs, whether it runs the lock, whether your container mounts it). Report the hint to the user as is, in blocked_on and to your lead; never tell them to run lox up or lox approve, or to restart or recreate a lock."},
+		func(ctx context.Context, _ *mcp.CallToolRequest, in lockHintIn) (*mcp.CallToolResult, any, error) {
+			return proxy(ctx, sock, agent, "lock_hint", short, in), nil, nil
+		})
+	// One question at a time to the user (#95): the daemon keeps the tower's queue.
+	mcp.AddTool(s, &mcp.Tool{Name: "user_ask", Description: "Control tower (leads only): the one way to put a question to the user. lea keeps at most one question open: with none open the answer is ask_now, and you ask it to the user in this reply; otherwise the question is queued and you do not mention it. The user's next prompt, or their answer to your AskUserQuestion, answers the open one, and lea then gives you the next queued question in that context. id instead of question asks an answered question again (the prompt answered something else)."},
+		func(ctx context.Context, _ *mcp.CallToolRequest, in userAskIn) (*mcp.CallToolResult, any, error) {
+			return proxy(ctx, sock, agent, "user_ask", short, in), nil, nil
+		})
 	return s
+}
+
+type userAskIn struct {
+	Question string `json:"question,omitempty" jsonschema:"the question, short and clear, at most 4 KiB"`
+	Priority string `json:"priority,omitempty" jsonschema:"incident, blocking (an agent is stuck on it) or normal (default); the queue goes by priority, then in order"`
+	From     string `json:"from,omitempty" jsonschema:"the agent the question comes from, so the answer goes back to it"`
+	Message  int64  `json:"message,omitempty" jsonschema:"the id of that agent's message to answer with msg_reply"`
+	ID       int64  `json:"id,omitempty" jsonschema:"ask the answered question #id again, instead of a new one"`
+}
+
+type lockHintIn struct {
+	Lock string `json:"lock,omitempty" jsonschema:"the lock's instance name (its --instance, or the one its client names); omit for every lock"`
 }
 
 type leaseIn struct {
@@ -193,10 +217,11 @@ type leaseIn struct {
 }
 
 type grantRequestIn struct {
-	Action string `json:"action" jsonschema:"merge, release-tag, pr-create, commit-identity, delete-own-branch or close-issue"`
+	Action string `json:"action" jsonschema:"merge, release-tag, release-create, pr-create, commit-identity, delete-own-branch or close-issue"`
 	Repo   string `json:"repo" jsonschema:"the repository: a directory directly under the projects directory"`
 	GitHub string `json:"github" jsonschema:"the GitHub repository its calls are pinned to: OWNER/NAME"`
 	Branch string `json:"branch,omitempty" jsonschema:"a glob on the caller's branch (* matches anything); default any branch but the default one"`
+	Tag    string `json:"tag,omitempty" jsonschema:"release-create only: a glob on the semver tag (v0.15.*); default any semver tag"`
 	TTLS   int64  `json:"ttl_s,omitempty" jsonschema:"the grant's life in seconds, 60 to 2592000 (default 8 hours)"`
 	Reason string `json:"reason,omitempty" jsonschema:"why, as the user said it, at most 2 KiB"`
 }

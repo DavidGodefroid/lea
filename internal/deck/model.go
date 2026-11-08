@@ -60,6 +60,14 @@ type Agent struct {
 	// Woken: lea woke the idle agent for a message in its inbox (agents.Row), until that turn
 	// ends or the user types: the user sees why it started.
 	Woken bool `json:"woken,omitempty"`
+	// QuestionsOpen (0 or 1) and QuestionsQueued: a control tower's questions to the user
+	// (agents.Row, #95). An open one needs the user.
+	QuestionsOpen   int `json:"questions_open,omitempty"`
+	QuestionsQueued int `json:"questions_queued,omitempty"`
+	// Held: the user paused the agent's inbox (the deck's H, agents.Row, #95); HeldCount
+	// messages wait in it.
+	Held      bool `json:"held,omitempty"`
+	HeldCount int  `json:"held_count,omitempty"`
 }
 
 // shownState is the state a row shows (issue #72): green only when nothing is pending. A live
@@ -139,6 +147,7 @@ type API interface {
 	// New starts an agent on provider ("" for the user's default one); Providers lists the
 	// providers it may name.
 	New(ctx context.Context, container, provider string) (Agent, error)
+	NewTower(ctx context.Context, container string) (Agent, error)
 	Providers(ctx context.Context) ([]string, error)
 	Show(ctx context.Context, key string, focus bool) error
 	Stop(ctx context.Context, key string) error
@@ -156,6 +165,11 @@ type API interface {
 	SplitShell(ctx context.Context, key string, below bool) (Agent, error)
 	// SetSound switches the daemon's sounds and answers the new state.
 	SetSound(ctx context.Context, on bool) (string, error)
+	// SetHeld pauses an agent's inbox (the deck's H) or releases it.
+	SetHeld(ctx context.Context, key string, held bool) error
+	// Questions lists the control towers' questions to the user; DropQuestion drops a queued one.
+	Questions(ctx context.Context) ([]Question, error)
+	DropQuestion(ctx context.Context, id int64) error
 }
 
 // isShell reports whether a row is a shell.
@@ -174,10 +188,11 @@ func (m Model) setPaused(key string, pause bool) tea.Cmd {
 // pausedHint is the status while a paused agent is in the slot: its pane reads no key.
 func pausedHint(a Agent) string { return display(a) + " is paused: p resumes it" }
 
-// display is the name a row shows: the label when the user gave one.
+// display is how the deck's texts name an agent: its handle "label (name)" when it has a label
+// (#356), the same string the tower writes, else its name.
 func display(a Agent) string {
-	if a.Label != "" {
-		return a.Label
+	if a.Label != "" && a.Label != a.Name {
+		return a.Label + " (" + a.Name + ")"
 	}
 	return a.Name
 }
@@ -249,6 +264,7 @@ type Model struct {
 	focused       bool          // the deck's pane has the keyboard (focus events)
 	menuFor       string        // key whose menu (right click) is open
 	menuSel       int           // the menu's highlighted item
+	questions     []Question    // the questions of agent menuFor, while its questions menu (Q) is open
 	settings      SettingsStore // the settings screen's store (WithSettings), nil when none
 	settingsOff   string        // why there is none
 	setOpen       bool          // the settings screen (,) is shown
@@ -256,9 +272,14 @@ type Model struct {
 	setSel        int                // its selected setting
 	setEditing    bool               // the selected text setting's field is open
 	setDraft      []rune             // the field's text
+	allowOpen     bool               // the Allowed screen (g) is shown (allowed.go)
+	allowList     []Allowance        // its rows
+	allowSel      int                // its selected row
 	hoverFor      string             // key of the row under the pointer, "" when none
 	hoverSeq      int                // the latest pointer move; older fades are dropped
-	menuPicker    bool               // the open menu picks the folder of agent menuFor (o), or the colour of folder menuFor (c)
+	menuPicker    bool               // the open menu picks the folder of agent menuFor (o), the colour of folder menuFor (c), or the deck's theme (T)
+	themeWas      string             // the theme before the theme picker opened, "" while it is closed
+	applyFrame    func(Theme) error  // colour the tmux pane borders and inactive background (WithThemeDrive); nil: no tmux
 	applyWidth    func(w int) error  // resize the deck's pane and store the width (WithWidthDrive); nil: no tmux
 	windowWidth   func() int         // the tmux window's width (WithWidthDrive); nil: unknown
 	readWidth     func() (int, bool) // the tmux server's @lea_deck_width and the deck window's mark (WithWidthDrive); nil: unknown
@@ -394,7 +415,13 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, tea.Batch(m.watch(), tea.Tick(showDelay, func(time.Time) tea.Msg { return showMsg{seq} }), anim)
 		}
 		anim = m.animate()
+		if m.allowOpen {
+			// The version moves when an allowance does: read the screen's rows again.
+			return m, tea.Batch(m.watch(), anim, m.readAllowed())
+		}
 		return m, tea.Batch(m.watch(), anim)
+	case allowedMsg:
+		return m.takeAllowed(msg), nil
 	case frameMsg:
 		m.ticking = false
 		m.frame++
@@ -414,6 +441,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.status = pausedHint(*a)
 		}
 		return m, m.call(func(ctx context.Context) error { return api.Show(ctx, key, false) })
+	case questionsMsg:
+		return m.questionsLoaded(msg)
 	case providersMsg:
 		if msg.err != nil {
 			m.status = oneLine(msg.err.Error())
@@ -452,6 +481,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		if m.setOpen {
 			return m.settingsKey(msg)
+		}
+		if m.allowOpen && m.confirm == "" {
+			return m.allowedKey(msg.String())
 		}
 		if m.editFor != "" {
 			return m.editKey(msg)
@@ -561,7 +593,7 @@ func (m *Model) apply(s Snapshot) bool {
 		m.pauseFor, m.status = "", ""
 	}
 	if m.menuFor != "" && m.menuFor != deckMenu && !m.exists(m.menuFor) {
-		m.menuFor, m.menuPicker = "", false
+		m.menuFor, m.menuPicker, m.questions = "", false, nil
 	}
 	if m.editFor != "" && !m.exists(m.editFor) {
 		m.editFor, m.draft = "", nil
@@ -697,6 +729,14 @@ func (m Model) key(k string) (tea.Model, tea.Cmd) {
 			return newMsg{a, err}
 		}
 	case "N":
+		m.status = "starting a new Control Tower…"
+		return m, func() tea.Msg {
+			ctx, cancel := context.WithTimeout(context.Background(), callTimeout)
+			defer cancel()
+			a, err := api.NewTower(ctx, c)
+			return newMsg{a, err}
+		}
+	case "P":
 		m.status = "providers…"
 		return m, func() tea.Msg {
 			ctx, cancel := context.WithTimeout(context.Background(), callTimeout)
@@ -742,11 +782,16 @@ func (m Model) key(k string) (tea.Model, tea.Cmd) {
 		return m.deckBy(-2)
 	case ">":
 		return m.deckBy(2)
+	case "T":
+		m.openThemePicker()
+		return m, nil
 	case "?":
 		m.help = true
 		return m, nil
 	case ",":
 		return m.openSettings()
+	case "g":
+		return m.openAllowed()
 	case "e":
 		if a := m.selectedAgent(); a != nil && !isShell(*a) {
 			m.editFor, m.draft, m.editTitle, m.status = a.Key, []rune(a.Label), "Rename agent", ""
@@ -786,6 +831,10 @@ func (m Model) key(k string) (tea.Model, tea.Cmd) {
 		}
 		m.status = "resumed " + display(*a)
 		return m, m.setPaused(key, false)
+	case "H":
+		return m.holdKey()
+	case "Q":
+		return m.questionsKey()
 	case "r":
 		if a := m.selectedAgent(); a != nil && !isShell(*a) {
 			m.roleFor = a.Key
@@ -894,7 +943,7 @@ func rank(a Agent, seen map[string]int64) int {
 		return 0
 	case a.State == "done" && seen[a.Key] != a.Updated:
 		return 1
-	case a.ForUser > 0:
+	case a.ForUser > 0 || a.QuestionsOpen > 0:
 		return 2
 	case busy(a):
 		return 3
@@ -933,6 +982,8 @@ func (m Model) label(a Agent) string {
 		return "blocked"
 	case r == 1:
 		return "done, unseen"
+	case r == 2 && a.QuestionsOpen > 0:
+		return m.questionLabel(a)
 	case r == 2:
 		return "message for you"
 	case a.State == "done":
@@ -947,6 +998,20 @@ func (m Model) label(a Agent) string {
 		return shownState(a)
 	}
 	return "unknown"
+}
+
+// questionLabel is the label of a tower whose question the user has: "❓ 1 · 3 queued" (#95).
+func (m Model) questionLabel(a Agent) string {
+	c := m.cs()
+	mark := "❓"
+	if c.ascii {
+		mark = "?"
+	}
+	s := fmt.Sprintf("%s %d", mark, a.QuestionsOpen)
+	if a.QuestionsQueued > 0 {
+		s += fmt.Sprintf(" %s %d queued", c.dot, a.QuestionsQueued)
+	}
+	return s
 }
 
 // limitLabel is a limited agent's label: when lea resumes it ("limit, resumes 15:02", the day
@@ -988,7 +1053,7 @@ type providersMsg struct {
 	err   error
 }
 
-// providersPrompt is the status line while N waits for a provider's digit.
+// providersPrompt is the status line while P waits for a provider's digit.
 func providersPrompt(names []string) string {
 	var b strings.Builder
 	b.WriteString("new agent on:")

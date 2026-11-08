@@ -34,6 +34,7 @@ type requestParams struct {
 	Branch  string `json:"branch"`
 	Brief   string `json:"brief"`
 	Reason  string `json:"reason"`
+	Label   string `json:"label"`
 }
 
 func canSpawn(role string) bool {
@@ -80,6 +81,9 @@ func (d *Daemon) requestSpawn(o Origin, me string, raw json.RawMessage) (any, er
 	if err := checkBrief(p.Brief, true); err != nil {
 		return nil, err
 	}
+	if _, err := agents.CheckAgentLabel(p.Label); err != nil {
+		return nil, fmt.Errorf("agents_request_spawn: %w", err)
+	}
 	if len(p.Reason) > maxReason {
 		return nil, fmt.Errorf("reason is %d bytes, limit %d", len(p.Reason), maxReason)
 	}
@@ -91,7 +95,7 @@ func (d *Daemon) requestSpawn(o Origin, me string, raw json.RawMessage) (any, er
 	}
 	lead := d.routeRequest(caller)
 	r := store.SpawnRequest{Container: o.Container, Requester: me, Lead: lead, Role: p.Role, Profile: p.Profile, Model: p.Model,
-		Repo: p.Repo, Branch: p.Branch, Brief: p.Brief, Reason: p.Reason}
+		Repo: p.Repo, Branch: p.Branch, Brief: p.Brief, Reason: p.Reason, Label: p.Label}
 	added, err := d.st.AddSpawnRequest(r, func(id int64) string { return requestBody(id, r, caller.Name) },
 		maxPendingRequests, requestTTL, d.now())
 	if err != nil {
@@ -149,6 +153,9 @@ func requestBody(id int64, r store.SpawnRequest, requester string) string {
 	}
 	if r.Branch != "" {
 		fmt.Fprintf(&b, ", branch %s", r.Branch)
+	}
+	if r.Label != "" {
+		fmt.Fprintf(&b, ", label %q", r.Label)
 	}
 	b.WriteString(").\n")
 	if r.Reason != "" {
@@ -308,8 +315,8 @@ func (d *Daemon) requestDecide(ctx context.Context, raw json.RawMessage) (any, e
 		}
 		// The brief stays the requester's words: wrapped as untrusted content from that agent,
 		// whatever the user saw of it when accepting.
-		row, err := a.New(ctx, agents.NewRequest{Container: r.Container, Profile: r.Profile, Model: r.Model, Role: r.Role, Repo: r.Repo,
-			Branch: r.Branch, Brief: r.Brief, BriefFrom: r.Requester, BriefReplyTo: r.Message})
+		row, err := d.newAgent(ctx, a, agents.NewRequest{Container: r.Container, Profile: r.Profile, Model: r.Model, Role: r.Role, Repo: r.Repo,
+			Branch: r.Branch, Brief: r.Brief, BriefFrom: r.Requester, BriefReplyTo: r.Message, Label: r.Label})
 		if err != nil {
 			d.reopenRequest(r.ID)
 			return nil, err

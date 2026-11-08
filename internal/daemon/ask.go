@@ -232,5 +232,8 @@ func unreachable(a store.Agent) error {
 	if a.Paused {
 		return fmt.Errorf("ask: %s is paused", a.Key)
 	}
+	if a.HoldSince > 0 {
+		return fmt.Errorf("ask: %s holds its messages (the user paused its inbox): send yours with msg_send, it arrives when the user releases it", a.Key)
+	}
 	return nil
 }

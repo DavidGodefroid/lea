@@ -2,6 +2,7 @@ package grants
 
 import (
 	"regexp"
+	"strconv"
 	"strings"
 )
 
@@ -171,6 +172,8 @@ func bashRequest(w []string, c Caller) (Request, bool) {
 		r, ok = ghMerge(w[3:], c)
 	case len(w) >= 3 && w[0] == "gh" && w[1] == "pr" && w[2] == "create":
 		r, ok = ghPRCreate(w[3:], c)
+	case len(w) >= 3 && w[0] == "gh" && w[1] == "release" && w[2] == "create":
+		r, ok = ghReleaseCreate(w[3:])
 	case len(w) >= 3 && w[0] == "glab" && w[1] == "mr" && w[2] == "create":
 		r, ok = glabMRCreate(w[3:], c)
 	case len(w) >= 3 && w[0] == "glab" && w[1] == "mr" && w[2] == "merge":
@@ -184,6 +187,9 @@ func bashRequest(w []string, c Caller) (Request, bool) {
 	}
 	if !ok {
 		return Request{}, false
+	}
+	if r.File > 0 {
+		r.File += 2 // the parsers take w[3:], Args is w[1:]
 	}
 	r.Prog, r.Args = w[0], w[1:]
 	return r, true
@@ -266,7 +272,7 @@ func flagArgs(args []string, want bool, valued, bare map[string]bool) (string, b
 // a relative path inside the worktree, outside .git (Command checks where it resolves).
 func ghPRCreate(args []string, c Caller) (Request, bool) {
 	seen := map[string]bool{}
-	head := ""
+	head, file := "", 0
 	for i := 0; i < len(args); i++ {
 		a := args[i]
 		switch a {
@@ -291,7 +297,7 @@ func ghPRCreate(args []string, c Caller) (Request, bool) {
 			case "--body", "-b":
 				a = "--body"
 			default:
-				a = "--body-file"
+				a, file = "--body-file", i
 				if !bodyFile(v) {
 					return Request{}, false
 				}
@@ -308,7 +314,50 @@ func ghPRCreate(args []string, c Caller) (Request, bool) {
 		!BranchName(head) || Protected(head) {
 		return Request{}, false
 	}
-	return Request{Action: PRCreate, Target: "pr create " + head}, true
+	return Request{Action: PRCreate, Target: "pr create " + head, File: file}, true
+}
+
+// ghReleaseCreate: gh release create <tag> --verify-tag [--title T] [--notes-file F |
+// --generate-notes] [--prerelease] [--latest] (#353). The tag is semver and must already be on
+// the remote (--verify-tag: gh never creates it); no --repo (lea pins it), --draft, --target,
+// --notes, assets or discussion. The notes file is a relative path inside the worktree, as
+// gh pr create's body file (Command checks where it resolves).
+func ghReleaseCreate(args []string) (Request, bool) {
+	seen := map[string]bool{}
+	tag, file := "", 0
+	for i := 0; i < len(args); i++ {
+		a := args[i]
+		switch a {
+		case "--verify-tag", "--generate-notes", "--latest":
+		case "--prerelease", "-p":
+			a = "--prerelease"
+		case "--title", "-t", "--notes-file", "-F":
+			if i+1 >= len(args) {
+				return Request{}, false
+			}
+			v := args[i+1]
+			i++
+			if a == "--title" || a == "-t" {
+				a = "--title"
+			} else if a, file = "--notes-file", i; !bodyFile(v) {
+				return Request{}, false
+			}
+		default:
+			if tag != "" || !semverTag.MatchString(a) {
+				return Request{}, false
+			}
+			tag = a
+			continue
+		}
+		if seen[a] {
+			return Request{}, false
+		}
+		seen[a] = true
+	}
+	if tag == "" || !seen["--verify-tag"] || (seen["--notes-file"] && seen["--generate-notes"]) {
+		return Request{}, false
+	}
+	return Request{Action: ReleaseCreate, Target: "release " + tag, Tag: tag, File: file}, true
 }
 
 // glabMRCreate: glab mr create --source-branch <own branch> --title T [--description D]
@@ -392,7 +441,15 @@ func glabMRMerge(args []string, c Caller) (Request, bool) {
 	return Request{Action: Merge, Target: target}, true
 }
 
-var bodyFileRe = regexp.MustCompile(`^[A-Za-z0-9_][A-Za-z0-9._/-]{0,255}$`)
+// A body or notes file: bodyFileMax characters at most, from bodyFileChars, the first from
+// bodyFileFirst. The refusal hint shows the same rule (#384).
+const (
+	bodyFileFirst = "A-Za-z0-9_"
+	bodyFileChars = "A-Za-z0-9._/-"
+	bodyFileMax   = 256
+)
+
+var bodyFileRe = regexp.MustCompile("^[" + bodyFileFirst + "][" + bodyFileChars + "]{0," + strconv.Itoa(bodyFileMax-1) + "}$")
 
 // bodyFile says whether p is a relative path that stays inside the directory it is read from:
 // no leading - or /, no .. or . segment, not .git.

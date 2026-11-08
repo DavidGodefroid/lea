@@ -555,6 +555,9 @@ func (l *Launcher) claudeMounts(home, proj, st string) ([]string, error) {
 	if err := l.claudeLayer(src, priv, sbase); err != nil {
 		return nil, err
 	}
+	if err := add(l.statusLineMounts(src, priv, sbase)); err != nil {
+		return nil, err
+	}
 	if err := add(l.hostPermissionsFile(src, priv, sbase)); err != nil {
 		return nil, err
 	}
@@ -598,6 +601,11 @@ func (l *Launcher) codexMounts(home, proj, st string) ([]string, error) {
 	}
 	return []string{"--mount", "type=bind,src=" + priv + ",dst=" + home + "/.codex"}, nil
 }
+
+// dnsNowhere is the agent container's upstream resolver (#98): TEST-NET-1 (RFC 5737), never routed,
+// and out of reach of the internal network, which has no route out. Not a loopback address: Docker
+// may query a loopback resolver from the host's namespace, where one may listen (dnsmasq, unbound).
+const dnsNowhere = "192.0.2.1"
 
 // runArgs is lea_run_args: the docker run arguments, image last. The state directories and mount
 // points are a user-facing contract (lea init creates them in shell).
@@ -650,6 +658,10 @@ func (l *Launcher) runArgs(proj, pip string) ([]string, error) {
 	}
 	a := []string{"-d", "--init", "--name", l.Cfg.ContainerName(proj), "--hostname", "lea",
 		"--network", l.Cfg.InternalNetwork(id),
+		// No DNS out (#98): the embedded resolver answers the names of the network's containers
+		// (lea-proxy) and forwards the rest to an address it has no route to, not to the host's
+		// resolver. The agent needs none: the proxy resolves the names it reaches.
+		"--dns", dnsNowhere,
 		"--label", "lea.prefix=" + p, "--label", "lea.role=session", "--label", "lea.projects=" + proj,
 		"-e", "LEA_UID=" + uid, "-e", "LEA_GID=" + gid, "-e", "LEA_USER=" + l.containerUser(), "-e", "HOME=" + home,
 		"-e", "LEA_PROJECTS=" + proj, "-e", "LEA_PROXY_IP=" + pip, "-e", "LEA_NESTED_NETWORKS=" + l.Cfg.Get("LEA_NESTED_NETWORKS"),
