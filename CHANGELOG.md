@@ -4,6 +4,11 @@
 
 Changes:
 
+- Deck colour themes (#337): `LEA_THEME` picks `catppuccin` (the default), `gruvbox`, `nord`,
+  `tokyo-night`, `solarized`, `high-contrast` or `mono`; `T` in the deck (or its right-click menu)
+  opens a picker that previews each theme live (`enter` keeps and saves it, `esc` restores), the
+  settings screen's Theme row applies at once, and the tmux pane borders follow. `NO_COLOR` gives
+  `mono` while `LEA_THEME` is not set; an unknown name gives `catppuccin` with a warning.
 - `release-create` grant action (#353): `gh release create <tag> --verify-tag [--title T]
   [--notes-file F | --generate-notes] [--prerelease] [--latest]`, one plain command at the root of
   the agent's worktree, pinned like every allowed gh call, for a pushed semver tag matching the
