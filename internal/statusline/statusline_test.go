@@ -21,7 +21,7 @@ func run(t *testing.T, in string) (string, []Report) {
 	t.Setenv("NO_COLOR", "1")
 	var out bytes.Buffer
 	var got []Report
-	if err := Run(strings.NewReader(in), &out, "", func(r Report) []string { got = append(got, r); return nil }); err != nil {
+	if err := Run(strings.NewReader(in), &out, "", func(r Report) Answer { got = append(got, r); return Answer{} }); err != nil {
 		t.Fatal(err)
 	}
 	return strings.TrimSpace(out.String()), got
@@ -156,14 +156,14 @@ func TestPostReachesTheDaemon(t *testing.T) {
 	}
 	pctx, pcancel := context.WithTimeout(ctx, 2*time.Second)
 	defer pcancel()
-	if added, err := Post(pctx, bus, "dev", Report{CtxPct: 7, CostUSD: 0.5, Paths: []string{"cost.total_cost_usd"}}); err != nil || len(added) != 0 {
-		t.Fatalf("added %q, err %v", added, err)
+	if ans, err := Post(pctx, bus, "dev", Report{CtxPct: 7, CostUSD: 0.5, Paths: []string{"cost.total_cost_usd"}}); err != nil || len(ans.LocksAdded) != 0 || ans.LoxRun != "" {
+		t.Fatalf("answer %+v, err %v", ans, err)
 	}
 	if u, _ := st.Usages("lea-a"); u["lea-a/dev"] != (store.Usage{CtxPct: 7, CostUSD: 0.5}) {
 		t.Fatalf("usages=%+v", u)
 	}
-	if added, err := Post(pctx, bus, "", Report{}); err != nil || added != nil {
-		t.Fatalf("no identity must be a silent no-op: added %q, err %v", added, err)
+	if ans, err := Post(pctx, bus, "", Report{}); err != nil || ans.LocksAdded != nil || ans.LoxRun != "" {
+		t.Fatalf("no identity must be a silent no-op: answer %+v, err %v", ans, err)
 	}
 }
 
@@ -291,11 +291,24 @@ func TestRunReportsRateLimitWindows(t *testing.T) {
 func TestStatusLineSaysRestartLea(t *testing.T) {
 	t.Setenv("NO_COLOR", "1")
 	var out bytes.Buffer
-	post := func(Report) []string { return []string{"orders", "Bad\x1b[2J"} }
+	post := func(Report) Answer { return Answer{LocksAdded: []string{"orders", "Bad\x1b[2J"}} }
 	if err := Run(strings.NewReader(`{"model":{"display_name":"Opus"}}`), &out, "", post); err != nil {
 		t.Fatal(err)
 	}
 	if got := strings.TrimSpace(out.String()); got != "Opus · +lock orders: restart lea" {
+		t.Fatalf("out=%q", got)
+	}
+}
+
+// No lox run serves the workspace's locks: the line says to start it (#343), never lox up.
+func TestStatusLineSaysStartLoxRun(t *testing.T) {
+	t.Setenv("NO_COLOR", "1")
+	var out bytes.Buffer
+	post := func(Report) Answer { return Answer{LoxRun: "off"} }
+	if err := Run(strings.NewReader(`{"model":{"display_name":"Opus"}}`), &out, "", post); err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.TrimSpace(out.String()); got != "Opus · no lox run: start it in the projects directory" {
 		t.Fatalf("out=%q", got)
 	}
 }
