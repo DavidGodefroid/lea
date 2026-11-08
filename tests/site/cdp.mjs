@@ -58,10 +58,19 @@ export class Browser {
     return b;
   }
 
-  send(method, params = {}, sessionId) {
+  // Every call fails after `timeout` ms, naming its method: a call Chrome never answers (an
+  // evaluated promise that never settles) must fail the test, not hang the CI job.
+  send(method, params = {}, sessionId, timeout = 30000) {
     const id = this.next++;
     this.sock.send(JSON.stringify({ id, method, params, sessionId }));
-    return new Promise((ok, fail) => this.pending.set(id, { ok, fail }));
+    return new Promise((ok, fail) => {
+      const t = setTimeout(() => {
+        this.pending.delete(id);
+        const what = params.expression ? ' ' + params.expression.replace(/\s+/g, ' ').slice(0, 80) : '';
+        fail(new Error(`timeout after ${timeout} ms: ${method}${what}`));
+      }, timeout);
+      this.pending.set(id, { ok: (v) => { clearTimeout(t); ok(v); }, fail: (e) => { clearTimeout(t); fail(e); } });
+    });
   }
 
   on(fn) { this.listeners.push(fn); return () => { this.listeners = this.listeners.filter((l) => l !== fn); }; }

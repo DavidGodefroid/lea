@@ -168,10 +168,18 @@ async function main() {
   return 0;
 }
 
+const fatal = (e) => {
+  console.log(`FAIL ${e.stack || e}`);
+  if (process.env.GITHUB_ACTIONS) console.log(`::error title=site e2e::${String(e.stack || e).replace(/\r?\n/g, ' ')}`);
+};
+
+// The whole run takes well under a minute; past 5 something hangs that no call timeout caught.
+const watchdog = setTimeout(() => { fatal(new Error('the e2e run took more than 5 minutes')); process.exit(1); }, 5 * 60 * 1000);
+watchdog.unref();
+
 try {
   process.exitCode = await main();
 } catch (e) {
-  console.log(`FAIL ${e.stack || e}`);
-  if (process.env.GITHUB_ACTIONS) console.log(`::error title=site e2e::${String(e.stack || e).replace(/\r?\n/g, ' ')}`);
+  fatal(e);
   process.exitCode = 1;
 }

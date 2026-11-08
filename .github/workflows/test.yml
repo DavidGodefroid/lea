@@ -15,6 +15,7 @@ jobs:
     # leadeck.dev: the site's unit test, then every page in headless Chrome (light and dark, 1440
     # and 390 px); the screenshots are kept as the run's artifact.
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
