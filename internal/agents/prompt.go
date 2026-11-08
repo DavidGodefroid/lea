@@ -31,7 +31,8 @@ func firstPrompt(a store.Agent, repo, worktree string, brief bool) string {
 		if repo != "" {
 			fmt.Fprintf(&b, " of the repository %s", repo)
 		}
-		b.WriteString(" (create it with git worktree add if it does not exist), never in the shared checkout.")
+		// --no-track (#381): a branch made from origin/main would track main.
+		fmt.Fprintf(&b, " (create it with git worktree add --no-track -b %s %s <base> if it does not exist), never in the shared checkout.", a.Branch, worktree)
 		// Grants (#271): the forms a delivery or user grant runs without asking.
 		fmt.Fprintf(&b, " When the user has granted delivery, lea runs these forms without asking, each as one plain command from your worktree's root,"+
 			" without -R: git push -u origin %s, gh pr create --head %s --title T --body-file F, gh pr merge <number> --squash --delete-branch"+

@@ -14,6 +14,12 @@ Changes:
 - In the deck, a folder header's summary sets each state mark apart from its count (`6 ◐ 6`, not
   `6 ◐6`) (#355): the marks are East Asian Ambiguous width, and a terminal that draws them wide
   drew the half-moon over the digit.
+- A granted `git push -u origin <branch>` from a worktree branch created from `origin/main` goes
+  through at the first try (#381): the pinned push no longer runs `rm` in its `sh -c` script
+  (Claude Code refused it, hook allow or not), it runs from a bare repository reused in the
+  worktree's git directory; once pushed, it records `origin/<branch>` and `-u` makes it the
+  branch's upstream (it did nothing, so the branch kept tracking `main`). The agent prompt says to
+  create the worktree with `git worktree add --no-track`.
 
 ## v0.14.1 (2026-11-08)
 

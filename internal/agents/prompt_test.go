@@ -48,6 +48,15 @@ func TestFirstPromptNamesTheGrantForms(t *testing.T) {
 	}
 }
 
+// An agent creates its worktree branch with no upstream (#381): a branch made from origin/main
+// would otherwise track main.
+func TestFirstPromptCreatesTheWorktreeWithNoTrack(t *testing.T) {
+	p := firstPrompt(store.Agent{Name: "dev-1", Role: "dev", Branch: "fix/9"}, "/p/lea", "/p/.lea/worktrees/lea/dev-1", true)
+	if !strings.Contains(p, "git worktree add --no-track -b fix/9 /p/.lea/worktrees/lea/dev-1 <base>") {
+		t.Fatalf("no --no-track worktree form in %q", p)
+	}
+}
+
 // An agent knows its own label and the rule for names (#84): labels in text the user reads,
 // names in tool calls.
 func TestFirstPromptNamesTheLabelAndTheRule(t *testing.T) {
