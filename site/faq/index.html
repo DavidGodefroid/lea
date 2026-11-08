@@ -1,0 +1,148 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>lea FAQ</title>
+  <meta name="description" content="Short answers about lea: which agents it runs, how it differs from a devcontainer, approvals, Windows, cost.">
+  <meta name="color-scheme" content="light dark">
+  <meta name="theme-color" content="#f4efe4" media="(prefers-color-scheme: light)">
+  <meta name="theme-color" content="#16140f" media="(prefers-color-scheme: dark)">
+  <link rel="canonical" href="https://leadeck.dev/faq/">
+  <meta property="og:type" content="website">
+  <meta property="og:site_name" content="lea">
+  <meta property="og:title" content="lea FAQ">
+  <meta property="og:description" content="Short answers about lea: which agents it runs, how it differs from a devcontainer, approvals, Windows, cost.">
+  <meta property="og:url" content="https://leadeck.dev/faq/">
+  <meta property="og:image" content="https://leadeck.dev/assets/og.png">
+  <meta property="og:image:type" content="image/png">
+  <meta property="og:image:width" content="1200">
+  <meta property="og:image:height" content="630">
+  <meta property="og:image:alt" content="lea: many agents, none of your machine.">
+  <meta property="og:locale" content="en_US">
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="lea FAQ">
+  <meta name="twitter:description" content="Short answers about lea: which agents it runs, how it differs from a devcontainer, approvals, Windows, cost.">
+  <meta name="twitter:image" content="https://leadeck.dev/assets/og.png">
+  <meta name="twitter:image:alt" content="lea: many agents, none of your machine.">
+  <link rel="icon" href="../assets/logo.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="../assets/apple-touch-icon.png">
+  <link rel="preload" href="../assets/fonts/zilla-slab-700.woff2" as="font" type="font/woff2" crossorigin>
+  <link rel="preload" href="../assets/fonts/source-serif-4-400.woff2" as="font" type="font/woff2" crossorigin>
+  <link rel="stylesheet" href="../assets/tokens.css">
+  <link rel="stylesheet" href="../assets/lock-site.css">
+  <script src="../assets/anchors.js" defer></script>
+  <script src="../assets/copy.js" defer></script>
+</head>
+<body>
+  <a class="skip-link" href="#main">Skip to content</a>
+  <header class="site-header">
+    <div class="wrap">
+      <a class="brand" href="../"><img src="../assets/logo.svg" alt="" width="32" height="32"><span class="wordmark">lea</span></a>
+      <nav class="site-nav" aria-label="Main">
+        <ul>
+          <li><a href="../">Home</a></li>
+          <li><a href="../install/">Install</a></li>
+          <li><a href="../how-it-works/">How it works</a></li>
+          <li><a href="../security/">Security</a></li>
+          <li><a href="../faq/" aria-current="page">FAQ</a></li>
+          <li><a href="https://github.com/DavidGodefroid/lea">GitHub</a></li>
+        </ul>
+      </nav>
+    </div>
+  </header>
+  <main id="main" tabindex="-1">
+    <div class="wrap">
+
+<p class="eyebrow">FAQ</p>
+<h1>Frequently asked questions</h1>
+<p class="lead prose">Short answers, each drawn from the README. For anything not covered here, see the <a href="https://github.com/DavidGodefroid/lea/blob/main/README.md">README</a>.</p>
+<div class="faq prose">
+<section aria-labelledby="replace">
+  <h2 id="replace">Is lea a replacement for Claude Code?</h2>
+  <p>No. lea runs the real agent CLI, Claude Code by default, with your own settings, skills and plugins. It gives it a safe place to run and a deck to run several at once.</p>
+</section>
+<section aria-labelledby="agents">
+  <h2 id="agents">Which agents does it run?</h2>
+  <p>Claude Code, Codex, and through Codex any OpenAI-compatible endpoint that serves the Responses API (Ollama, vLLM). Without the deck, <code>lea config tool</code> runs the command of your choice in the container. <a href="../how-it-works/#providers">Providers</a>.</p>
+</section>
+<section aria-labelledby="skip-permissions">
+  <h2 id="skip-permissions">Why not just skip permissions on my host?</h2>
+  <p>On your host, an agent that skips its permission prompts gets everything your user can reach: keys, tokens, your network. In lea it can go just as fast, but what it can reach is fixed by the container and the proxy.</p>
+</section>
+<section aria-labelledby="devcontainer">
+  <h2 id="devcontainer">How is it different from a devcontainer?</h2>
+  <p>A devcontainer isolates a toolchain; lea isolates the agent. It adds an egress proxy that refuses private networks, keeps your credentials out, nests its own container engine, audits risky changes on exit, and gives you a deck for many agents.</p>
+</section>
+<section aria-labelledby="code">
+  <h2 id="code">Does my code leave my machine?</h2>
+  <p>Only the way your agent already sends it: to its model API. lea has no server and no account, and sends no telemetry of its own. Usage metrics go nowhere unless you set <code>LEA_OTEL_UPSTREAM</code> to your own collector.</p>
+</section>
+<section aria-labelledby="approvals">
+  <h2 id="approvals">Where do I approve a database query?</h2>
+  <p>In <code>lox run</code>, in a terminal of your own outside lea. Requests to the Locks (locksql, lockmq, lockfile, locklog, lockhttp) are decided by the Lock Family&#8217;s hub, never by lea. The deck answers only the agents&#8217; own permission requests. <a href="../install/#locks">Add the Locks</a>.</p>
+</section>
+<section aria-labelledby="lox">
+  <h2 id="lox">Does lea need lox?</h2>
+  <p>Not to run agents. You need <code>lox</code> 0.9.0 or later for the Locks: <code>lox add</code> sets a lock up in the projects directory, and <code>lox run</code> runs it and serves the decisions. lea itself runs no <code>lox</code> command.</p>
+</section>
+<section aria-labelledby="lan">
+  <h2 id="lan">Can an agent reach a service on my LAN?</h2>
+  <p>Not by default. List the hosts it may reach in <code>LEA_INTERNAL_HOSTS</code>, with their port. <a href="../security/#egress">Egress</a>.</p>
+</section>
+<section aria-labelledby="deliver">
+  <h2 id="deliver">Can agents push and merge on their own?</h2>
+  <p>When you say so. <code>lea delivery on</code>, run on the host, lets every agent of a lea push its own branch, open its pull request and merge it, on the repositories it lists. <code>lea delivery off</code> takes it back.</p>
+</section>
+<section aria-labelledby="windows">
+  <h2 id="windows">Does it run on Windows?</h2>
+  <p>Through WSL 2: install and run lea from your WSL distribution, with Docker Desktop. Linux and macOS run it natively.</p>
+</section>
+<section aria-labelledby="cost">
+  <h2 id="cost">What does it cost?</h2>
+  <p>lea is free and open source under the Apache License 2.0. You bring your agent&#8217;s subscription or API key.</p>
+</section>
+</div>
+
+    </div>
+  </main>
+  <footer class="site-footer">
+    <div class="wrap footer-grid">
+      <div class="footer-about">
+        <a class="brand" href="../"><img src="../assets/logo.svg" alt="" width="32" height="32"><span class="wordmark">lea</span></a>
+        <p>Runs many agents in containers, wired to the Locks: they see your projects, never your keys or your private network.</p>
+        <p class="family-link">Part of the <a href="https://lockfamily.dev">Lock Family</a>, harness security for AI agents.</p>
+      </div>
+      <nav aria-labelledby="footer-lock">
+        <h2 id="footer-lock">lea</h2>
+        <ul>
+          <li><a href="https://github.com/DavidGodefroid/lea">Source on GitHub</a></li>
+          <li><a href="https://github.com/DavidGodefroid/lea/blob/main/README.md">README</a></li>
+          <li><a href="https://github.com/DavidGodefroid/lea/blob/main/CHANGELOG.md">Changelog</a></li>
+          <li><a href="https://github.com/DavidGodefroid/lea/releases">Releases</a></li>
+          <li><a href="https://github.com/DavidGodefroid/lea/blob/main/README.md#how-lea-keeps-your-machine-safe">Safety model</a></li>
+        </ul>
+      </nav>
+      <nav class="family-strip" aria-labelledby="footer-family">
+        <h2 id="footer-family">The Lock Family</h2>
+        <ul>
+          <li data-lock="locksql"><a href="https://github.com/DavidGodefroid/locksql">locksql</a><span>SQL databases, PII masked</span></li>
+          <li data-lock="lockmq"><a href="https://github.com/DavidGodefroid/lockmq">lockmq</a><span>RabbitMQ queues</span></li>
+          <li data-lock="lockfile"><a href="https://github.com/DavidGodefroid/lockfile">lockfile</a><span>Files: S3, SFTP, disk</span></li>
+          <li data-lock="lockhttp"><a href="https://github.com/DavidGodefroid/lockhttp">lockhttp</a><span>Outbound HTTP(S)</span></li>
+          <li data-lock="locklog"><a href="https://github.com/DavidGodefroid/locklog">locklog</a><span>Logs, masked search</span></li>
+          <li data-lock="lockssh"><a href="https://github.com/DavidGodefroid/lockssh">lockssh</a><span>Commands over SSH</span></li>
+          <li data-lock="lockhub"><a href="https://github.com/DavidGodefroid/lockhub">lockhub</a><span>The approval hub and <code>lox</code></span></li>
+          <li data-lock="lockkit"><a href="https://github.com/DavidGodefroid/lockkit">lockkit</a><span>The shared Go core</span></li>
+          <li data-lock="lea" aria-current="true"><a href="https://github.com/DavidGodefroid/lea">lea</a><span>Agents in containers</span></li>
+        </ul>
+      </nav>
+    </div>
+    <div class="wrap footer-bottom">
+      <p>Pre-release (v0.14.x). lea is licensed under the <a href="https://github.com/DavidGodefroid/lea/blob/main/LICENSE">Apache License 2.0</a>.</p>
+      <p>lea is an independent project, not affiliated with Anthropic. Claude and Claude Code are trademarks of Anthropic.</p>
+      <p><a href="https://lockfamily.dev">lockfamily.dev</a> · <a href="https://github.com/DavidGodefroid/lockfamily">the family on GitHub</a></p>
+    </div>
+  </footer>
+</body>
+</html>

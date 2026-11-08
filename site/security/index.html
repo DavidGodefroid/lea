@@ -1,0 +1,201 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>lea security model</title>
+  <meta name="description" content="What a lea agent can and cannot reach, what it can read, how the container is confined, and what lea does not protect against.">
+  <meta name="color-scheme" content="light dark">
+  <meta name="theme-color" content="#f4efe4" media="(prefers-color-scheme: light)">
+  <meta name="theme-color" content="#16140f" media="(prefers-color-scheme: dark)">
+  <link rel="canonical" href="https://leadeck.dev/security/">
+  <meta property="og:type" content="website">
+  <meta property="og:site_name" content="lea">
+  <meta property="og:title" content="lea security model">
+  <meta property="og:description" content="What a lea agent can and cannot reach, what it can read, how the container is confined, and what lea does not protect against.">
+  <meta property="og:url" content="https://leadeck.dev/security/">
+  <meta property="og:image" content="https://leadeck.dev/assets/og.png">
+  <meta property="og:image:type" content="image/png">
+  <meta property="og:image:width" content="1200">
+  <meta property="og:image:height" content="630">
+  <meta property="og:image:alt" content="lea: many agents, none of your machine.">
+  <meta property="og:locale" content="en_US">
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="lea security model">
+  <meta name="twitter:description" content="What a lea agent can and cannot reach, what it can read, how the container is confined, and what lea does not protect against.">
+  <meta name="twitter:image" content="https://leadeck.dev/assets/og.png">
+  <meta name="twitter:image:alt" content="lea: many agents, none of your machine.">
+  <link rel="icon" href="../assets/logo.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="../assets/apple-touch-icon.png">
+  <link rel="preload" href="../assets/fonts/zilla-slab-700.woff2" as="font" type="font/woff2" crossorigin>
+  <link rel="preload" href="../assets/fonts/source-serif-4-400.woff2" as="font" type="font/woff2" crossorigin>
+  <link rel="stylesheet" href="../assets/tokens.css">
+  <link rel="stylesheet" href="../assets/lock-site.css">
+  <script src="../assets/anchors.js" defer></script>
+  <script src="../assets/copy.js" defer></script>
+</head>
+<body>
+  <a class="skip-link" href="#main">Skip to content</a>
+  <header class="site-header">
+    <div class="wrap">
+      <a class="brand" href="../"><img src="../assets/logo.svg" alt="" width="32" height="32"><span class="wordmark">lea</span></a>
+      <nav class="site-nav" aria-label="Main">
+        <ul>
+          <li><a href="../">Home</a></li>
+          <li><a href="../install/">Install</a></li>
+          <li><a href="../how-it-works/">How it works</a></li>
+          <li><a href="../security/" aria-current="page">Security</a></li>
+          <li><a href="../faq/">FAQ</a></li>
+          <li><a href="https://github.com/DavidGodefroid/lea">GitHub</a></li>
+        </ul>
+      </nav>
+    </div>
+  </header>
+  <main id="main" tabindex="-1">
+    <div class="wrap">
+
+<p class="eyebrow">Security</p>
+<h1>lea&#8217;s security model</h1>
+<div class="prose">
+  <p class="lead">The boundary is the container and its proxy, not a prompt. Even a prompt-injected agent with every permission granted works inside these walls.</p>
+</div>
+
+<section aria-labelledby="reach">
+  <h2 id="reach">What an agent can reach</h2>
+<div class="table-wrap" role="region" aria-label="What an agent in lea can reach" tabindex="0">
+<table class="compare">
+<caption>What an agent in lea can reach</caption>
+<thead><tr><th scope="col">Resource</th><th scope="col">Reachable</th></tr></thead>
+<tbody>
+<tr><th scope="row">The projects directory, read/write</th><td class="yes">Yes</td></tr>
+<tr><th scope="row">An allow-list of <code>~/.claude</code>, read-only</th><td class="yes">Yes</td></tr>
+<tr><th scope="row">Public HTTPS on the egress allowlist</th><td class="yes">Yes</td></tr>
+<tr><th scope="row">Git over SSH to the endpoints you pin, with lea&#8217;s key</th><td class="yes">Yes</td></tr>
+<tr><th scope="row">Its own rootless containers</th><td class="yes">Yes</td></tr>
+<tr><th scope="row">The sockets of the locks <code>lox run</code> runs, read-only</th><td class="yes">Yes</td></tr>
+<tr><th scope="row"><code>~/.ssh</code>, <code>~/.aws</code>, <code>~/.kube</code> and the rest of your home</th><td class="no">No</td></tr>
+<tr><th scope="row">Private and link-local addresses: your NAS, intranet, cloud metadata</th><td class="no">No</td></tr>
+<tr><th scope="row">Host services listening on <code>0.0.0.0</code></th><td class="no">No</td></tr>
+<tr><th scope="row">Your Docker socket</th><td class="no">No</td></tr>
+<tr><th scope="row">Your clipboard (lea writes to it, never reads it for an agent)</th><td class="no">No</td></tr>
+<tr><th scope="row">A Lock&#8217;s credentials, its hub, its audit log</th><td class="no">No</td></tr>
+</tbody>
+</table>
+</div>
+  <div class="prose">
+    <p>Each agent network is isolated from the host: the host has no address on it (Docker Engine 28.0 or later). lea refuses to start a container on a network that is not.</p>
+  </div>
+</section>
+
+<section aria-labelledby="egress">
+  <h2 id="egress">Egress</h2>
+  <div class="prose">
+    <p>By default the allowlist holds the forges (GitHub, GitLab), the package registries (Go, npm, PyPI), the image registries and the model APIs. Each domain covers its subdomains; anything else is refused.</p>
+    <p>Only you change it, on the host: <code>lea egress allow</code>, <code>lea egress deny</code>, or <code>LEA_EGRESS_ALLOW</code> in <code>~/.config/lea/lea.conf</code>. No agent, MCP tool or grant reaches it.</p>
+    <p>A host of your network is reached only once listed in <code>LEA_INTERNAL_HOSTS</code>, and an internal name grants that name only: the proxy checks the TLS handshake&#8217;s server name.</p>
+  </div>
+</section>
+
+<section aria-labelledby="credentials">
+  <h2 id="credentials">What an agent can read</h2>
+  <div class="prose">
+    <p>No API key or token is in the agent container&#8217;s environment or image. What lea gives the agents, though, they run as the owner of. <code>lea doctor</code> lists what is there, by path, never by value.</p>
+  </div>
+<div class="table-wrap" role="region" aria-label="Credentials in the lea container" tabindex="0">
+<table>
+<caption>Credentials in the lea container</caption>
+<thead><tr><th scope="col">Credential</th><th scope="col">Readable by the agents</th></tr></thead>
+<tbody>
+<tr><td>Claude Code&#8217;s and Codex&#8217;s logins (lea&#8217;s own, per projects directory)</td><td>yes: the agent refreshes them</td></tr>
+<tr><td>GitHub token (<code>lea github login</code>)</td><td>no: in the proxy, usable through <code>gh</code> and <code>git</code></td></tr>
+<tr><td>Other forges, registry logins</td><td>yes</td></tr>
+<tr><td>lea&#8217;s SSH key</td><td>no: usable through the ssh-agent socket only</td></tr>
+<tr><td>Provider API keys</td><td>no: in the proxy, usable through the key forwarder</td></tr>
+</tbody>
+</table>
+</div>
+  <p class="prose">Keep the readable ones narrow: a forge token limited to its projects, registry logins for the registries the agents need.</p>
+</section>
+
+<section aria-labelledby="confinement">
+  <h2 id="confinement">Inside the container</h2>
+  <div class="prose">
+    <p>The entrypoint drops to your uid with no capabilities. The image has no <code>sudo</code> and no setuid file, so there is no way back to root.</p>
+    <p>lea&#8217;s seccomp profile is Docker&#8217;s default with a reviewed list of changes, each with its reason, checked in CI. It allows what the nested rootless Podman needs and keeps refusing the kernel keyring, <code>bpf</code>, <code>perf_event_open</code> and the kernel crypto sockets. On Linux the AppArmor profile <code>lea</code> applies too.</p>
+    <p>The proxy, the only container on both the agents&#8217; networks and the egress network, runs with a read-only root, almost every capability dropped, and no service as root.</p>
+  </div>
+</section>
+
+<section aria-labelledby="kernel">
+  <h2 id="kernel">The kernel</h2>
+  <div class="prose">
+    <p>Every lea container shares the host kernel, so the host&#8217;s patch level is part of the containment. <code>lea doctor</code> shows the kernel, Docker Engine, containerd and runc versions, and fails below the kernel minimum lea knows for your distribution.</p>
+    <p><code>LEA_RUNTIME=runsc</code> (gVisor) or <code>LEA_RUNTIME=kata</code> (Kata Containers) puts a second kernel in the way, for the agent containers. Each has a cost and a few features it drops. <a href="https://github.com/DavidGodefroid/lea/blob/main/README.md#a-second-kernel-gvisor-or-kata">A second kernel</a>.</p>
+  </div>
+</section>
+
+<section aria-labelledby="releases">
+  <h2 id="releases">Signed releases</h2>
+  <div class="prose">
+    <p>Each release is signed keyless with cosign by the release workflow: its <code>checksums.txt</code> and the <code>lea</code> and <code>lea-proxy</code> images, by digest. The installer, <code>lea update</code> and the background update verify the signature first, and stop when it is missing or bad.</p>
+    <p>Every signature is logged publicly (Rekor). The signature protects against a tampered asset or mirror; it does not replace trusting the GitHub account that publishes lea. <a href="https://github.com/DavidGodefroid/lea/blob/main/README.md#verify-a-release">Verify a release by hand</a>.</p>
+  </div>
+</section>
+
+<section class="limits" aria-labelledby="not-protected">
+  <h2 id="not-protected">What lea does not protect against</h2>
+  <div class="prose">
+    <p>These limits are part of the design. Read them before you rely on lea.</p>
+    <h3 id="host-kernel">A kernel bug</h3>
+    <p>With the default runtime, one kernel bug reachable from the container is enough to escape it, whatever seccomp and AppArmor refuse. A second kernel narrows that surface; it does not remove it.</p>
+    <h3 id="files">Files your host runs</h3>
+    <p>The projects directory is writable, and an agent can write what your host tools would run: git hooks, <code>.mcp.json</code>, <code>.claude/</code> settings, build scripts. lea reports changes to the first three when the last session closes; work in lea, not on the host, inside that directory.</p>
+    <h3 id="same-container">Agents of one container</h3>
+    <p>The agents of one lea share a uid. They can read each other&#8217;s environment and files, and the logins lea gives them. Use one projects directory per trust level.</p>
+    <h3 id="what-you-allow">What you allow</h3>
+    <p>A domain you add to the allowlist, an internal host you list, a grant you record: lea applies them as you wrote them. A domain that accepts uploads is a way out for data.</p>
+  </div>
+</section>
+
+    </div>
+  </main>
+  <footer class="site-footer">
+    <div class="wrap footer-grid">
+      <div class="footer-about">
+        <a class="brand" href="../"><img src="../assets/logo.svg" alt="" width="32" height="32"><span class="wordmark">lea</span></a>
+        <p>Runs many agents in containers, wired to the Locks: they see your projects, never your keys or your private network.</p>
+        <p class="family-link">Part of the <a href="https://lockfamily.dev">Lock Family</a>, harness security for AI agents.</p>
+      </div>
+      <nav aria-labelledby="footer-lock">
+        <h2 id="footer-lock">lea</h2>
+        <ul>
+          <li><a href="https://github.com/DavidGodefroid/lea">Source on GitHub</a></li>
+          <li><a href="https://github.com/DavidGodefroid/lea/blob/main/README.md">README</a></li>
+          <li><a href="https://github.com/DavidGodefroid/lea/blob/main/CHANGELOG.md">Changelog</a></li>
+          <li><a href="https://github.com/DavidGodefroid/lea/releases">Releases</a></li>
+          <li><a href="https://github.com/DavidGodefroid/lea/blob/main/README.md#how-lea-keeps-your-machine-safe">Safety model</a></li>
+        </ul>
+      </nav>
+      <nav class="family-strip" aria-labelledby="footer-family">
+        <h2 id="footer-family">The Lock Family</h2>
+        <ul>
+          <li data-lock="locksql"><a href="https://github.com/DavidGodefroid/locksql">locksql</a><span>SQL databases, PII masked</span></li>
+          <li data-lock="lockmq"><a href="https://github.com/DavidGodefroid/lockmq">lockmq</a><span>RabbitMQ queues</span></li>
+          <li data-lock="lockfile"><a href="https://github.com/DavidGodefroid/lockfile">lockfile</a><span>Files: S3, SFTP, disk</span></li>
+          <li data-lock="lockhttp"><a href="https://github.com/DavidGodefroid/lockhttp">lockhttp</a><span>Outbound HTTP(S)</span></li>
+          <li data-lock="locklog"><a href="https://github.com/DavidGodefroid/locklog">locklog</a><span>Logs, masked search</span></li>
+          <li data-lock="lockssh"><a href="https://github.com/DavidGodefroid/lockssh">lockssh</a><span>Commands over SSH</span></li>
+          <li data-lock="lockhub"><a href="https://github.com/DavidGodefroid/lockhub">lockhub</a><span>The approval hub and <code>lox</code></span></li>
+          <li data-lock="lockkit"><a href="https://github.com/DavidGodefroid/lockkit">lockkit</a><span>The shared Go core</span></li>
+          <li data-lock="lea" aria-current="true"><a href="https://github.com/DavidGodefroid/lea">lea</a><span>Agents in containers</span></li>
+        </ul>
+      </nav>
+    </div>
+    <div class="wrap footer-bottom">
+      <p>Pre-release (v0.14.x). lea is licensed under the <a href="https://github.com/DavidGodefroid/lea/blob/main/LICENSE">Apache License 2.0</a>.</p>
+      <p>lea is an independent project, not affiliated with Anthropic. Claude and Claude Code are trademarks of Anthropic.</p>
+      <p><a href="https://lockfamily.dev">lockfamily.dev</a> · <a href="https://github.com/DavidGodefroid/lockfamily">the family on GitHub</a></p>
+    </div>
+  </footer>
+</body>
+</html>

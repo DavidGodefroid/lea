@@ -1,0 +1,201 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>How lea works</title>
+  <meta name="description" content="How lea works: one container per projects directory, an egress proxy, the deck, teams of agents, providers and the Locks.">
+  <meta name="color-scheme" content="light dark">
+  <meta name="theme-color" content="#f4efe4" media="(prefers-color-scheme: light)">
+  <meta name="theme-color" content="#16140f" media="(prefers-color-scheme: dark)">
+  <link rel="canonical" href="https://leadeck.dev/how-it-works/">
+  <meta property="og:type" content="website">
+  <meta property="og:site_name" content="lea">
+  <meta property="og:title" content="How lea works">
+  <meta property="og:description" content="How lea works: one container per projects directory, an egress proxy, the deck, teams of agents, providers and the Locks.">
+  <meta property="og:url" content="https://leadeck.dev/how-it-works/">
+  <meta property="og:image" content="https://leadeck.dev/assets/og.png">
+  <meta property="og:image:type" content="image/png">
+  <meta property="og:image:width" content="1200">
+  <meta property="og:image:height" content="630">
+  <meta property="og:image:alt" content="lea: many agents, none of your machine.">
+  <meta property="og:locale" content="en_US">
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="How lea works">
+  <meta name="twitter:description" content="How lea works: one container per projects directory, an egress proxy, the deck, teams of agents, providers and the Locks.">
+  <meta name="twitter:image" content="https://leadeck.dev/assets/og.png">
+  <meta name="twitter:image:alt" content="lea: many agents, none of your machine.">
+  <link rel="icon" href="../assets/logo.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="../assets/apple-touch-icon.png">
+  <link rel="preload" href="../assets/fonts/zilla-slab-700.woff2" as="font" type="font/woff2" crossorigin>
+  <link rel="preload" href="../assets/fonts/source-serif-4-400.woff2" as="font" type="font/woff2" crossorigin>
+  <link rel="stylesheet" href="../assets/tokens.css">
+  <link rel="stylesheet" href="../assets/lock-site.css">
+  <script src="../assets/anchors.js" defer></script>
+  <script src="../assets/copy.js" defer></script>
+</head>
+<body>
+  <a class="skip-link" href="#main">Skip to content</a>
+  <header class="site-header">
+    <div class="wrap">
+      <a class="brand" href="../"><img src="../assets/logo.svg" alt="" width="32" height="32"><span class="wordmark">lea</span></a>
+      <nav class="site-nav" aria-label="Main">
+        <ul>
+          <li><a href="../">Home</a></li>
+          <li><a href="../install/">Install</a></li>
+          <li><a href="../how-it-works/" aria-current="page">How it works</a></li>
+          <li><a href="../security/">Security</a></li>
+          <li><a href="../faq/">FAQ</a></li>
+          <li><a href="https://github.com/DavidGodefroid/lea">GitHub</a></li>
+        </ul>
+      </nav>
+    </div>
+  </header>
+  <main id="main" tabindex="-1">
+    <div class="wrap">
+
+<p class="eyebrow">How it works</p>
+<h1>How lea works</h1>
+<div class="prose">
+  <p class="lead">One container per projects directory holds your agents. A proxy beside it is their only way out, and the deck is how you drive them.</p>
+</div>
+
+<section aria-labelledby="container">
+  <h2 id="container">The container</h2>
+  <figure>
+    <pre tabindex="0" class="diagram" aria-label="What the lea container sees">your machine
+┌───────────────────────────────────────────────────────────┐
+│  ~/projects ─────────── read/write ────────────┐          │
+│  ~/.claude (allow-list) ─── read-only ─────────┤          │
+│                                                ▼          │
+│  ~/.ssh ~/.aws ~/.kube ──╳     ┌─── lea container ───┐    │
+│  Docker socket ──────────╳     │  agent: lead        │    │
+│                                │  agent: dev         │    │
+│                                │  agent: reviewer    │    │
+│                                │  rootless Podman    │    │
+│                                └──────────┬──────────┘    │
+│                                           ▼               │
+│  192.168.0.0/16, 10.0.0.0/8 ◄──╳── egress proxy           │
+│                                           │               │
+└───────────────────────────────────────────┼───────────────┘
+                                            ▼
+                 public allowlist: GitHub, npm, the model API</pre>
+    <figcaption>What the lea container sees of your machine, and what it does not.</figcaption>
+  </figure>
+  <div class="prose">
+    <p>The container sees the projects directory (read/write) and a read-only allow-list of <code>~/.claude</code>: hooks, skills, agents, commands and the top-level <code>*.md</code> files. <code>settings.json</code> and <code>plugins</code> are lea&#8217;s own copies, never written back.</p>
+    <p>Each projects directory gets its own container, internal network, agent history and login. Agents run under <code>abduco</code>, so closing the deck does not stop them.</p>
+  </div>
+</section>
+
+<section aria-labelledby="proxy">
+  <h2 id="proxy">The proxy</h2>
+  <div class="prose">
+    <p>Every request of an agent goes through lea&#8217;s proxy. HTTPS reaches an allowlist of public domains: the forges, the package registries, the model APIs. Anything else is refused, with a first line that names the host and the command that allows it.</p>
+    <p><code>lea egress allow DOMAIN</code>, on the host, adds a domain to the running proxy: no restart, and no agent can run it. Private and link-local addresses, public IP literals and DNS-over-HTTPS resolvers are refused whatever the list says.</p>
+    <p>The proxy also holds what the agents must use but not read: lea&#8217;s GitHub token, your providers&#8217; API keys, and the SSH forwarders to the git endpoints you pinned.</p>
+  </div>
+</section>
+
+<section aria-labelledby="deck">
+  <h2 id="deck">The deck</h2>
+  <div class="prose">
+    <p>One keyboard-first terminal: your agents in a column on the left, the selected agent&#8217;s terminal on the right. The mouse works too.</p>
+  </div>
+<div class="table-wrap" role="region" aria-label="The deck&#8217;s main keys" tabindex="0">
+<table>
+<caption>The deck&#8217;s main keys (<kbd>?</kbd> lists them all)</caption>
+<thead><tr><th scope="col">Key</th><th scope="col">Action</th></tr></thead>
+<tbody>
+<tr><td><kbd>n</kbd></td><td>start a new agent</td></tr>
+<tr><td><kbd>j</kbd> <kbd>k</kbd></td><td>select an agent</td></tr>
+<tr><td><kbd>enter</kbd></td><td>type into the selected agent</td></tr>
+<tr><td><kbd>space</kbd></td><td>the next agent that needs you</td></tr>
+<tr><td><kbd>a</kbd> <kbd>d</kbd> <kbd>A</kbd></td><td>allow, deny, always allow a permission request</td></tr>
+<tr><td><kbd>m</kbd> <kbd>t</kbd></td><td>send the agent a message, read its messages</td></tr>
+<tr><td><kbd>s</kbd></td><td>a shell in the container</td></tr>
+<tr><td><kbd>q</kbd></td><td>leave the deck; agents keep running</td></tr>
+</tbody>
+</table>
+</div>
+  <div class="prose">
+    <p>A red dot needs you, a spinner works, a green dot is done. A sound plays only when an agent needs you. The deck is optional: <code>lea config deck off</code> runs your own tool in the container instead, with the same confinement.</p>
+  </div>
+</section>
+
+<section aria-labelledby="teams">
+  <h2 id="teams">Teams of agents</h2>
+  <div class="prose">
+    <p>Every agent has a role: <code>lead</code>, <code>dev</code> or <code>reviewer</code>. Only you change one. A lead starts devs and reviewers through lea&#8217;s MCP tools; any other agent asks a lead.</p>
+    <p>Agents message each other, report on their task (the deck and <code>lea board</code> show it) and lease the files they edit. An agent whose turn is over is woken when a message arrives.</p>
+    <p>A grant is a decision you record on the host and lea applies to every agent it covers: merge a pull request, close an issue, push the agent&#8217;s own branch. <code>lea delivery on</code> grants push, pull request and merge on the repositories of the projects directory.</p>
+  </div>
+</section>
+
+<section aria-labelledby="providers">
+  <h2 id="providers">Providers</h2>
+  <div class="prose">
+    <p>Claude Code is the default provider. Codex is in the image, with its own login per projects directory, and runs any OpenAI-compatible endpoint that serves the Responses API: Ollama, vLLM, a server of your own.</p>
+    <p>An endpoint&#8217;s key file is mounted in the proxy only. Agents reach the endpoint at <code>http://lea-proxy:4400/&lt;name&gt;</code> and see neither the key nor the upstream.</p>
+  </div>
+</section>
+
+<section aria-labelledby="locks">
+  <h2 id="locks">The Locks</h2>
+  <div class="prose">
+    <p>A Lock is a console that stands between your agents and a resource and alone holds its credentials. lea starts none of them: <a href="https://github.com/DavidGodefroid/lockhub"><code>lox run</code></a> does, for the projects directory, and decides their requests.</p>
+    <p>For each lock <code>lox run</code> runs (locksql, lockmq, lockfile, locklog), lea mounts that lock&#8217;s socket volume read-only on <code>/run/&lt;tool&gt;</code>, once Docker confirms it belongs to this projects directory. The agents reach the socket and nothing else: no credential, no profile, no audit log.</p>
+    <p>lockhttp works differently: its gate sits in the proxy&#8217;s network and every outbound request goes through it. Only the proxy joins the hub&#8217;s network; no agent reaches the hub.</p>
+  </div>
+</section>
+
+<section aria-labelledby="nested">
+  <h2 id="nested">Containers inside lea</h2>
+  <div class="prose">
+    <p>lea never gets the Docker socket. <code>docker</code> and <code>podman</code> in lea reach a rootless Podman of the agent&#8217;s own, so tests and builds run as usual.</p>
+    <p>What an agent starts there is stopped once it has been idle 10 minutes, and removed when the agent ends. <code>docker compose</code> with its own networks does not work yet; <code>docker run</code> does.</p>
+  </div>
+</section>
+
+    </div>
+  </main>
+  <footer class="site-footer">
+    <div class="wrap footer-grid">
+      <div class="footer-about">
+        <a class="brand" href="../"><img src="../assets/logo.svg" alt="" width="32" height="32"><span class="wordmark">lea</span></a>
+        <p>Runs many agents in containers, wired to the Locks: they see your projects, never your keys or your private network.</p>
+        <p class="family-link">Part of the <a href="https://lockfamily.dev">Lock Family</a>, harness security for AI agents.</p>
+      </div>
+      <nav aria-labelledby="footer-lock">
+        <h2 id="footer-lock">lea</h2>
+        <ul>
+          <li><a href="https://github.com/DavidGodefroid/lea">Source on GitHub</a></li>
+          <li><a href="https://github.com/DavidGodefroid/lea/blob/main/README.md">README</a></li>
+          <li><a href="https://github.com/DavidGodefroid/lea/blob/main/CHANGELOG.md">Changelog</a></li>
+          <li><a href="https://github.com/DavidGodefroid/lea/releases">Releases</a></li>
+          <li><a href="https://github.com/DavidGodefroid/lea/blob/main/README.md#how-lea-keeps-your-machine-safe">Safety model</a></li>
+        </ul>
+      </nav>
+      <nav class="family-strip" aria-labelledby="footer-family">
+        <h2 id="footer-family">The Lock Family</h2>
+        <ul>
+          <li data-lock="locksql"><a href="https://github.com/DavidGodefroid/locksql">locksql</a><span>SQL databases, PII masked</span></li>
+          <li data-lock="lockmq"><a href="https://github.com/DavidGodefroid/lockmq">lockmq</a><span>RabbitMQ queues</span></li>
+          <li data-lock="lockfile"><a href="https://github.com/DavidGodefroid/lockfile">lockfile</a><span>Files: S3, SFTP, disk</span></li>
+          <li data-lock="lockhttp"><a href="https://github.com/DavidGodefroid/lockhttp">lockhttp</a><span>Outbound HTTP(S)</span></li>
+          <li data-lock="locklog"><a href="https://github.com/DavidGodefroid/locklog">locklog</a><span>Logs, masked search</span></li>
+          <li data-lock="lockssh"><a href="https://github.com/DavidGodefroid/lockssh">lockssh</a><span>Commands over SSH</span></li>
+          <li data-lock="lockhub"><a href="https://github.com/DavidGodefroid/lockhub">lockhub</a><span>The approval hub and <code>lox</code></span></li>
+          <li data-lock="lockkit"><a href="https://github.com/DavidGodefroid/lockkit">lockkit</a><span>The shared Go core</span></li>
+          <li data-lock="lea" aria-current="true"><a href="https://github.com/DavidGodefroid/lea">lea</a><span>Agents in containers</span></li>
+        </ul>
+      </nav>
+    </div>
+    <div class="wrap footer-bottom">
+      <p>Pre-release (v0.14.x). lea is licensed under the <a href="https://github.com/DavidGodefroid/lea/blob/main/LICENSE">Apache License 2.0</a>.</p>
+      <p>lea is an independent project, not affiliated with Anthropic. Claude and Claude Code are trademarks of Anthropic.</p>
+      <p><a href="https://lockfamily.dev">lockfamily.dev</a> · <a href="https://github.com/DavidGodefroid/lockfamily">the family on GitHub</a></p>
+    </div>
+  </footer>
+</body>
+</html>
