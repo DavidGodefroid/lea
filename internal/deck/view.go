@@ -538,7 +538,9 @@ func (m Model) folderSummary(fi int, c charset, maxW int, bg func(lipgloss.Style
 	var parts []part
 	add := func(g string, st lipgloss.Style, n int) {
 		if n > 0 {
-			parts = append(parts, part{g + strconv.Itoa(n), st})
+			// A space between mark and count: the marks are East Asian Ambiguous width, and a
+			// terminal that draws them wide spills them onto a digit glued to them (#355).
+			parts = append(parts, part{g + " " + strconv.Itoa(n), st})
 		}
 	}
 	// Needs you is bold as well as red: it is what the header is for. In ASCII each state keeps

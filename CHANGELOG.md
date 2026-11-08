@@ -2,8 +2,9 @@
 
 ## Unreleased
 
-Changes:
-
+- In the deck, a folder header's summary sets each state mark apart from its count (`6 ◐ 6`, not
+  `6 ◐6`) (#355): the marks are East Asian Ambiguous width, and a terminal that draws them wide
+  drew the half-moon over the digit.
 - `lea update` on a Homebrew install runs `brew update` and `brew upgrade davidgodefroid/tap/lea`,
   then the new Cellar version refreshes its images and checks the dependencies (#354). It used to
   run lea's own installer, which left a second lea in `~/.local/share/lea-install`, linked at
