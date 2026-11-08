@@ -363,6 +363,12 @@ func (d *Daemon) grantCheck(o Origin, me string, raw json.RawMessage) (any, erro
 	if err := json.Unmarshal(raw, &p); err != nil {
 		return nil, err
 	}
+	// The control tower's guard comes first: no grant lets a tower act itself (#383).
+	if deny, err := d.towerCheck(me, p.Tool, p.Input); err != nil {
+		return nil, err
+	} else if deny {
+		return map[string]any{"verdict": grants.Deny, "reason": towerDeny}, nil
+	}
 	c, err := d.grantCaller(o, me, p.Cwd)
 	if err != nil {
 		return nil, err

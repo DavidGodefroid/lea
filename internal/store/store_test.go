@@ -1320,3 +1320,57 @@ func TestSetWoken(t *testing.T) {
 		t.Fatal("a reused name kept the mark")
 	}
 }
+
+// The tower mark (#383) is the agent's own: it outlives its container and its session (a resume
+// with --fresh finds it), and no other agent, nor a later agent of the same name, inherits it.
+func TestTowerMarkIsPerAgentAndPerIncarnation(t *testing.T) {
+	s := open(t)
+	a, _ := s.RegisterAgent("lea-a", "claude-1", "claude", "/p", 1)
+	s.RegisterAgent("lea-a", "dev-1", "claude", "/p", 1)
+	if on, err := s.Tower(a.Key); err != nil || on {
+		t.Fatalf("a new agent is not a tower: on=%v err=%v", on, err)
+	}
+	if err := s.SetTower(a.Key, true); err != nil {
+		t.Fatal(err)
+	}
+	// The container stops and the next one resumes the agent on a new session.
+	s.SetState(a.Key, "stopped", "sess-1", 2)
+	s.SetState(a.Key, "unknown", "", 3)
+	s.SetHookState(a.Key, "idle", "sess-2", 4)
+	if on, err := s.Tower(a.Key); err != nil || !on {
+		t.Fatalf("the resumed agent lost its mark: on=%v err=%v", on, err)
+	}
+	if on, _ := s.Tower("lea-a/dev-1"); on {
+		t.Fatal("another agent inherited the mark")
+	}
+	if on, _ := s.Tower("lea-b/claude-1"); on {
+		t.Fatal("the agent of the same name in another container inherited the mark")
+	}
+	// Ended, then created again under its name: a new incarnation, without the mark.
+	s.SetState(a.Key, "done", "", 5)
+	b, err := s.Register(NewAgent{Container: "lea-a", Name: "claude-1", Profile: "claude", Workdir: "/p", Role: "lead"}, Caps{}, 6)
+	if err != nil || b.Incarnation == a.Incarnation {
+		t.Fatalf("reuse: %+v err=%v", b, err)
+	}
+	if on, _ := s.Tower(a.Key); on {
+		t.Fatal("an agent created again under the name inherited the mark")
+	}
+	// Forgotten, then created again: no mark either.
+	s.SetTower(a.Key, true)
+	if err := s.ForgetAgent(a.Key); err != nil {
+		t.Fatal(err)
+	}
+	if on, err := s.Tower(a.Key); err != nil || on {
+		t.Fatalf("a forgotten agent: on=%v err=%v", on, err)
+	}
+	s.RegisterAgent("lea-a", "claude-1", "claude", "/p", 7)
+	if on, _ := s.Tower(a.Key); on {
+		t.Fatal("an agent created after the removal inherited the mark")
+	}
+	if err := s.SetTower(a.Key, false); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.SetTower("lea-a/nobody", true); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("an unknown agent: %v", err)
+	}
+}

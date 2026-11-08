@@ -21,6 +21,11 @@ Changes:
   drew the half-moon over the digit.
 - The "Copied" notice a mouse selection's release shows closes after 0.6 s instead of 1.5 s
   (#373).
+- A Control Tower resumed with its session (`--fresh`) keeps its guard from its first turn
+  (#383): the tower mark lives in lea's store with the agent (not in the container's `/tmp`),
+  set by `/lea:control-tower` and cleared only by the user's `/lea:control-tower off`; lea's own
+  PreToolUse hook enforces it, so no file in the container turns it off. An agent created again
+  under the name, or another agent, does not inherit it. The plugin's `tower-guard` hook is gone.
 
 ## v0.14.1 (2026-11-08)
 
