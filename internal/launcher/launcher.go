@@ -441,6 +441,11 @@ func (l *Launcher) dispatch(args []string) error {
 				return err
 			}
 		}
+		// No LEA_DECK configured yet (#335): asked first, on a terminal, as the answer decides
+		// what follows (the deck's checks, or the tool's arguments).
+		if err := l.deckQuestion(); err != nil {
+			return err
+		}
 		// LEA_DECK=0 (#135): the user's own tool in the same container, without the deck or tmux.
 		noDeck := l.Cfg.NoDeck()
 		deckArgs := args

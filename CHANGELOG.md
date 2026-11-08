@@ -14,6 +14,13 @@ Changes:
 - In the deck, a folder header's summary sets each state mark apart from its count (`6 ◐ 6`, not
   `6 ◐6`) (#355): the marks are East Asian Ambiguous width, and a terminal that draws them wide
   drew the half-moon over the digit.
+- The first run and upgrades ask the deck question (#335): the first `lea` on a terminal (the
+  Homebrew journey, `lea init --first-run`) asks "Use the lea deck ...? [Y/n]" and, on no, the
+  command to start in the lea container, before it opens anything. An install whose user config
+  has no `LEA_DECK` (made before v0.10.0) gets the same question once, at its next `lea` on a
+  terminal. The answer is recorded (the end of input records the deck) with the command that
+  switches it; no terminal, or `LEA_DECK` already set (environment or user config): no question,
+  the deck as before.
 
 ## v0.14.1 (2026-11-08)
 
@@ -101,6 +108,9 @@ Upgrading from v0.9.x:
   cannot read it. A token found in an agent's state is adopted once, when the proxy has none, and
   is otherwise discarded; `lea github login` sets it.
 - The agent image has no `sudo` and no setuid/setgid file any more (#100, #305).
+- The deck is optional now (#323): `lea config deck off` runs your own tool (Claude Code by
+  default, `lea config tool CMD`) in the lea container instead, `lea config deck on` brings it
+  back. Since #335, an install without `LEA_DECK` is asked once at its next `lea` on a terminal.
 
 Changes:
 
