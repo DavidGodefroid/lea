@@ -1,8 +1,18 @@
 # Changelog
 
-## Unreleased
+## v0.14.1 (2026-11-08)
 
-- Removed: rtk is no longer installed in the agent image (#359).
+Changes:
+
+- A spawn never gets the name of an agent that still runs (#350, #358): a row marked done while its
+  session lived (a nested Claude's SessionEnd, or a missed reconcile) could be reused in place, and
+  the live session received the new brief, repository and branch. A name now comes free only once
+  its row is removed and no running process answers to it; hooks from another Claude session than
+  the agent's own are ignored; reconcile marks an agent done only after a 3 s grace check.
+- In the deck, an agent that gets back the name of a done or forgotten agent leaves that agent's
+  folder and joins its own lead's folder, or stays at the root (#340, #357).
+- Removed: rtk is no longer installed in the agent image (#359, #360). Nothing in lea called it, and
+  its release download was an extra fetch on every image build.
 
 ## v0.14.0 (2026-11-08)
 
