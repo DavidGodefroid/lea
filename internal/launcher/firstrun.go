@@ -58,18 +58,57 @@ func (l *Launcher) firstRun() error {
 				return die("first run: %v: cd into the directory that holds your projects and run lea again, or LEA_PROJECTS_DIR=DIR lea", err)
 			}
 		}
+		// No LEA_DECK configured: lea init asks the deck question, on a terminal (#335).
+		if l.Cfg.DeckUnset() {
+			l.Cfg.Export("LEA_DECK_ASK", "1")
+		}
 		if err := l.sh("init", "--first-run"); err != nil {
 			return err
 		}
 	} else if err := l.sh("ensure-images"); err != nil {
 		return err
 	}
+	return l.reloadConfig()
+}
+
+// reloadConfig reads the configuration again, after lea-sh wrote the user config.
+func (l *Launcher) reloadConfig() error {
 	cfg, err := LoadConfig(l.Cfg.getenv, l.Root, l.Cwd)
 	if err != nil {
 		return err
 	}
 	l.Cfg = cfg
 	return nil
+}
+
+// deckTerminal is whether lea talks to a terminal it can ask the deck question on, a variable so
+// a test can have one.
+var deckTerminal = func(l *Launcher) bool { return IsTerminal(l.Stdin) && IsTerminal(l.Stderr) }
+
+// deckQuestion asks a lea with no LEA_DECK in its configuration (a new machine, or an install
+// made before the deck was optional, #335) whether it wants the deck or its own tool, once, on a
+// terminal, before anything depends on it: lea-sh deck-question records
+// the answer (the end of input keeps the deck, recorded too), and the configuration is read again
+// so that this lea applies it. Without a terminal it asks nothing: the deck, as before.
+func (l *Launcher) deckQuestion() error {
+	if !l.Cfg.DeckUnset() || !deckTerminal(l) {
+		return nil
+	}
+	l.Cfg.Export("LEA_DECK_ASK", "1")
+	if err := l.sh("deck-question"); err != nil {
+		return err
+	}
+	return l.reloadConfig()
+}
+
+// DeckUnset reports whether neither the environment nor the user configuration sets LEA_DECK
+// (config/lea.conf's default is no choice): the deck question was never answered.
+func (c *Config) DeckUnset() bool {
+	if c.getenv("LEA_DECK") != "" {
+		return false
+	}
+	_, f, ok := c.Assignment("LEA_DECK")
+	return !ok || f == c.defaults
 }
 
 // ensureHub is what lea checks of the Lock Family before it starts (#300): it runs no lox

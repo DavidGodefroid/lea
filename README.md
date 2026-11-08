@@ -99,7 +99,10 @@ lox add locksql                               # when your agents need a database
 On a first run lea initialises itself: it checks that Docker answers, pulls and verifies the
 images, installs its AppArmor profile on Linux hosts that use it (it needs `sudo` once: when
 `sudo` would prompt, lea stops with "the AppArmor profile 'lea' needs sudo once: run lea init,
-then lea"), records the projects directory, then opens the deck. The projects directory is `LEA_PROJECTS_DIR`
+then lea"), records the projects directory, then opens the deck. Before all that, on a
+terminal and while `LEA_DECK` is not set, it asks once whether you want the deck or your own
+tool in the lea container (see [Without the deck](#without-the-deck)): it records the answer
+and the command that switches it, and opens that tool instead of the deck on a no. The projects directory is `LEA_PROJECTS_DIR`
 when you preset it (in the environment or in `~/.config/lea/lea.conf`: a preset value wins over
 the working directory); when it is unset, it is the directory you ran `lea` from. If that
 directory cannot be one (`/`, your home directory or a parent of it, or one that overlaps
@@ -292,11 +295,13 @@ profile and state in the bottom border.
 ## Without the deck
 
 The deck is optional. `lea config deck off` (or `sh install.sh --no-deck [--tool CMD]`, or
-answering no in `lea init`) makes `lea` run your own tool inside the lea container instead:
+answering no to the deck question of the first run or of `lea init`) makes `lea` run your own tool inside the lea container instead:
 Claude Code by default, or any command (`lea config tool codex`, `lea config tool aider --model
 x`; a command and its arguments, never run through a shell). Arguments after `lea` go to it
 (`lea --resume`). `lea config deck on` brings the deck back. Either switch applies at the next
-`lea`, with the same container: nothing is rebuilt and running agents are not touched.
+`lea`, with the same container: nothing is rebuilt and running agents are not touched. An install
+made before the deck was optional (no `LEA_DECK` in its user config) is asked once, at its next
+`lea` on a terminal, and the answer is recorded.
 
 What stays the same: the container and its confinement (proxy and egress allowlist, seccomp,
 AppArmor, no host secrets), grants, lea's daemon and MCP server, and the Locks' sockets. The
