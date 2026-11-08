@@ -4,6 +4,15 @@
 
 Changes:
 
+- The control tower asks you one question at a time (#95): its new `user_ask` tool (leads only)
+  opens a question when none is open and queues it otherwise, by priority (`incident`,
+  `blocking`, `normal`) then in order; the queue is kept in lea.db. Your next prompt answers the
+  open question: lea tells the tower which agent the answer goes back to and gives it the next
+  question. While you have a question, lea denies the tower any other `AskUserQuestion` and holds
+  the questions agents `ask` it until you answer. One left unanswered `LEA_QUESTION_REMIND`
+  minutes (120; 0: never) is asked again once, prefixed with `reminder:`. The deck shows the
+  tower as `❓ 1 · 3 queued`; `lea questions` lists the questions and `lea questions drop ID`
+  drops a queued one.
 - The agents show your own Claude Code status line (#374): when your `~/.claude/settings.json`
   has a `statusLine` command, `lea statusline` still reports the agent's context and usage to the
   daemon, then runs your command with the same JSON (1.5 s at most, killed past it) and prints its

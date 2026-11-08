@@ -195,6 +195,10 @@ type Row struct {
 	LimitUntil int64 `json:"limit_until,omitempty"`
 	// Woken: lea woke the idle agent for a message in its inbox (store.Agent.Woken).
 	Woken bool `json:"woken,omitempty"`
+	// QuestionsOpen (0 or 1) and QuestionsQueued count a control tower's questions to the user
+	// (#95): the one the user has, and those that wait for its answer.
+	QuestionsOpen   int `json:"questions_open,omitempty"`
+	QuestionsQueued int `json:"questions_queued,omitempty"`
 }
 
 type Snapshot struct {

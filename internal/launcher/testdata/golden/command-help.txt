@@ -39,6 +39,8 @@ Usage:
   lea agents                  list agents (lea msg <agent> <text>, lea inbox, lea approvals, lea requests)
   lea requests                what waits for you: permissions and spawn requests of lea's agents
                               (lea approve ID [always], lea deny ID [reason]); Lock requests: lox run
+  lea questions [drop ID]     the control towers' questions to you: the open one, then the queue
+                              (one at a time); drop removes a queued one
   lea stop [--all] [--forget]
                               stop lea; its agents resume at the next lea (--forget drops them)
   lea config export [--output FILE] [--include-personal]
