@@ -118,3 +118,21 @@ func CheckLabel(label string) (string, error) {
 	}
 	return label, nil
 }
+
+// ReservedLabel reports whether label is one only the user or lea gives (#356): "user", "lea",
+// or a control tower's ("Control Tower", "Control Tower 2"…), whatever its case and spacing. An
+// agent bearing one would read as the user, lea or a tower in every message and in the deck.
+func ReservedLabel(label string) bool {
+	l := strings.ToLower(strings.Join(strings.Fields(label), " "))
+	return l == "user" || l == "lea" || l == "control tower" || strings.HasPrefix(l, "control tower ")
+}
+
+// CheckAgentLabel is CheckLabel for a label an agent chose, or the namer from an agent's brief or
+// prompt: a reserved one is refused.
+func CheckAgentLabel(label string) (string, error) {
+	l, err := CheckLabel(label)
+	if err == nil && ReservedLabel(l) {
+		return "", fmt.Errorf("the label %q is reserved to the user and lea: pick another", l)
+	}
+	return l, err
+}

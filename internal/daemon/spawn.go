@@ -133,7 +133,7 @@ func (d *Daemon) agentsSpawn(ctx context.Context, o Origin, me string, raw json.
 	if err := checkBrief(p.Brief, true); err != nil {
 		return nil, err
 	}
-	if _, err := agents.CheckLabel(p.Label); err != nil {
+	if _, err := agents.CheckAgentLabel(p.Label); err != nil {
 		return nil, fmt.Errorf("agents_spawn: %w", err)
 	}
 	a := d.manager()

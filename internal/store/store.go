@@ -535,10 +535,16 @@ func liveLabels(q interface {
 	return out, rows.Err()
 }
 
-// LabelHolder is the name of the live agent of key's container, key aside, whose label is label
-// whatever its case (#356); "" when none.
-func (s *Store) LabelHolder(key, label string) (string, error) {
-	ls, err := liveLabels(s.db, key)
+// SetLabelFree sets the label of an agent lea spawned unless another live agent of its
+// container holds it, whatever its case (#356), in one transaction: it returns that agent's name,
+// "" once the label is set. The caller checks the text (agents.CheckLabel).
+func (s *Store) SetLabelFree(key, label string) (string, error) {
+	tx, err := s.db.Begin()
+	if err != nil {
+		return "", err
+	}
+	defer tx.Rollback()
+	ls, err := liveLabels(tx, key)
 	if err != nil {
 		return "", err
 	}
@@ -547,7 +553,16 @@ func (s *Store) LabelHolder(key, label string) (string, error) {
 			return ls[i], nil
 		}
 	}
-	return "", nil
+	res, err := tx.Exec(`UPDATE agents SET label=? WHERE key=? AND profile<>''`, label, key)
+	if err != nil {
+		return "", err
+	}
+	if n, err := res.RowsAffected(); err != nil {
+		return "", err
+	} else if n == 0 {
+		return "", ErrNotFound
+	}
+	return "", tx.Commit()
 }
 
 // SetLabelUnique sets the label of an agent lea spawned, unique among the live agents of its

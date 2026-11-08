@@ -1,5 +1,17 @@
 # Changelog
 
+## Unreleased
+
+Changes:
+
+- One handle per agent, `label (name)` (#356, #368): the deck row, the tower, `lea board` and
+  `lea agents` name an agent by its label then its name. A lead gives a spawn a `label`
+  (`agents_spawn`, `agents_request_spawn`); without one, an agent started with a brief is named
+  after its brief, not after lea's first prompt. Labels are unique among the running agents of a
+  container, whatever their case: an automatic label that clashes gets ` 2`, ` 3`…, and the user's
+  rename to a running agent's label is refused. An agent's label, or the namer's from an agent's
+  brief or prompt, is never `user`, `lea` or `Control Tower…`: those are the user's and lea's.
+
 ## v0.14.1 (2026-11-08)
 
 Changes:

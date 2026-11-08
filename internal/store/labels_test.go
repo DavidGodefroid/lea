@@ -67,27 +67,38 @@ func TestSetLabelUniqueSuffixesAClash(t *testing.T) {
 	}
 }
 
-// LabelHolder names the live agent of a container that holds a label, whatever its case.
-func TestLabelHolder(t *testing.T) {
+// SetLabelFree sets a label no other live agent of the container holds, whatever its case, in
+// one transaction; it names the holder otherwise and leaves the label alone.
+func TestSetLabelFree(t *testing.T) {
 	s := open(t)
 	for _, n := range []string{"dev-1", "dev-2"} {
 		if _, err := s.Register(NewAgent{Container: "lea-a", Name: n, Profile: "claude", Workdir: "/p", Role: "dev"}, Caps{}, 1); err != nil {
 			t.Fatal(err)
 		}
 	}
-	if err := s.SetLabel("lea-a/dev-1", "auth work"); err != nil {
-		t.Fatal(err)
+	label := func(key string) string {
+		a, err := s.AgentByKey(key)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return a.Label
 	}
-	if n, err := s.LabelHolder("lea-a/dev-2", "Auth Work"); err != nil || n != "dev-1" {
-		t.Fatalf("holder %q err=%v", n, err)
+	if h, err := s.SetLabelFree("lea-a/dev-1", "auth work"); err != nil || h != "" || label("lea-a/dev-1") != "auth work" {
+		t.Fatalf("free: holder %q err=%v", h, err)
 	}
-	if n, err := s.LabelHolder("lea-a/dev-1", "auth work"); err != nil || n != "" {
-		t.Fatalf("own label %q err=%v", n, err)
+	if h, err := s.SetLabelFree("lea-a/dev-2", "Auth Work"); err != nil || h != "dev-1" || label("lea-a/dev-2") != "" {
+		t.Fatalf("taken: holder %q err=%v", h, err)
+	}
+	if h, err := s.SetLabelFree("lea-a/dev-1", "Auth work"); err != nil || h != "" || label("lea-a/dev-1") != "Auth work" {
+		t.Fatalf("its own: holder %q err=%v", h, err)
 	}
 	if err := s.SetState("lea-a/dev-1", "done", "", 2); err != nil {
 		t.Fatal(err)
 	}
-	if n, err := s.LabelHolder("lea-a/dev-2", "auth work"); err != nil || n != "" {
-		t.Fatalf("done holder %q err=%v", n, err)
+	if h, err := s.SetLabelFree("lea-a/dev-2", "auth work"); err != nil || h != "" || label("lea-a/dev-2") != "auth work" {
+		t.Fatalf("done holder: %q err=%v", h, err)
+	}
+	if _, err := s.SetLabelFree("lea-a/nobody", "x"); err != ErrNotFound {
+		t.Fatalf("unknown agent: %v", err)
 	}
 }

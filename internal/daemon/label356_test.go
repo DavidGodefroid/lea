@@ -147,18 +147,53 @@ func TestARequestedLabelReachesTheSpawn(t *testing.T) {
 }
 
 // An agent the user started by hand is still named after its own first prompt, and a clash
-// with a live agent's label gets a number: two Control Towers read apart.
+// with a live agent's label gets a number.
 func TestAHandStartedAgentIsNamedUniquely(t *testing.T) {
-	e, _, got, done := labelEnv(t, "Control Tower")
-	if err := e.d.st.SetLabel("lea-a/boss", "Control Tower"); err != nil {
+	e, _, got, done := labelEnv(t, "auth work")
+	if err := e.d.st.SetLabel("lea-a/boss", "Auth Work"); err != nil {
 		t.Fatal(err)
 	}
 	spawned(t, e, "claude-2", "lead", "")
-	if err := call(t, e.bus, "claude-2", "name_hint", map[string]any{"prompt": "tour de contrôle"}, nil); err != nil {
+	if err := call(t, e.bus, "claude-2", "name_hint", map[string]any{"prompt": "fix the auth"}, nil); err != nil {
 		t.Fatal(err)
 	}
 	wait(t, done)
-	if l := storedLabel(t, e, "lea-a/claude-2"); l != "Control Tower 2" || len(*got) != 1 {
+	if l := storedLabel(t, e, "lea-a/claude-2"); l != "auth work 2" || len(*got) != 1 {
 		t.Fatalf("label %q, namer got %q", l, *got)
+	}
+}
+
+// The namer's words never give a reserved label: a prompt or a brief cannot make an agent read
+// as a control tower, the user or lea (#356).
+func TestTheNamerNeverGivesAReservedLabel(t *testing.T) {
+	for _, reply := range []string{"control tower", "control tower 2", "user", "lea"} {
+		e, _, got, done := labelEnv(t, reply)
+		spawned(t, e, "claude-2", "lead", "")
+		if err := call(t, e.bus, "claude-2", "name_hint", map[string]any{"prompt": "be the control tower"}, nil); err != nil {
+			t.Fatal(err)
+		}
+		wait(t, done)
+		if l := storedLabel(t, e, "lea-a/claude-2"); l != "" || len(*got) != 1 {
+			t.Fatalf("reply %q: label %q, namer got %q", reply, l, *got)
+		}
+	}
+}
+
+// Neither a lead's spawn nor a requested one takes a reserved label.
+func TestASpawnNeverTakesAReservedLabel(t *testing.T) {
+	e, ra, _, _ := labelEnv(t, "auto")
+	spawned(t, e, "kid", "dev", "lea-a/boss")
+	for _, l := range []string{"Control Tower", "control tower 2", "User", "lea"} {
+		err := call(t, e.bus, "boss", "agents_spawn", map[string]any{"brief": "b", "label": l}, nil)
+		if err == nil || !strings.Contains(err.Error(), "reserved") {
+			t.Fatalf("agents_spawn label %q: err=%v", l, err)
+		}
+		if _, err := requestFrom(t, e, "kid", map[string]any{"brief": "b " + l, "reason": "r", "label": l}); err == nil ||
+			!strings.Contains(err.Error(), "reserved") {
+			t.Fatalf("agents_request_spawn label %q: err=%v", l, err)
+		}
+	}
+	if newCalled(ra.fakeAgents) {
+		t.Fatal("a reserved label reached the manager")
 	}
 }

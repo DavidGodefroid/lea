@@ -1563,16 +1563,15 @@ func (m *Manager) SetLabel(ctx context.Context, key, label string) error {
 	if _, err := m.spawned(key); err != nil {
 		return err
 	}
-	if l != "" {
-		// Labels are unique among the live agents (#356): the user's rename never takes one.
-		if holder, err := m.cfg.Store.LabelHolder(key, l); err != nil {
+	if l == "" {
+		if err := m.cfg.Store.SetLabel(key, l); err != nil {
 			return err
-		} else if holder != "" {
-			return fmt.Errorf("the label %q is already %s's: pick another", l, holder)
 		}
-	}
-	if err := m.cfg.Store.SetLabel(key, l); err != nil {
+	} else if holder, err := m.cfg.Store.SetLabelFree(key, l); err != nil {
 		return err
+	} else if holder != "" {
+		// Labels are unique among the live agents (#356): the user's rename never takes one.
+		return fmt.Errorf("the label %q is already %s's: pick another", l, holder)
 	}
 	m.feed.bump()
 	return nil
@@ -1580,12 +1579,13 @@ func (m *Manager) SetLabel(ctx context.Context, key, label string) error {
 
 // AutoLabel gives an agent lea spawned a label lea chose (#356): from its brief or its user's
 // first prompt. A label already set stays; a clash with a live agent's label gets " 2", " 3"….
-// It returns the agent's label.
+// A reserved label is refused: the words come from what an agent wrote. It returns the agent's
+// label.
 func (m *Manager) AutoLabel(ctx context.Context, key, label string) (string, error) {
 	if _, _, ok := parseShellKey(key); ok {
 		return "", errors.New("a shell has no label")
 	}
-	l, err := CheckLabel(label)
+	l, err := CheckAgentLabel(label)
 	if err != nil {
 		return "", err
 	}
@@ -1767,7 +1767,12 @@ func (m *Manager) New(ctx context.Context, r NewRequest) (Row, error) {
 			return Row{}, fmt.Errorf("brief: %w", err)
 		}
 	}
-	if r.Label, err = CheckLabel(r.Label); err != nil {
+	// A label from another agent (its brief's sender) is never a reserved one; the user's may be.
+	check := CheckLabel
+	if r.BriefFrom != "" && r.BriefFrom != "user" {
+		check = CheckAgentLabel
+	}
+	if r.Label, err = check(r.Label); err != nil {
 		return Row{}, err
 	}
 	if r.BriefFrom == "" {

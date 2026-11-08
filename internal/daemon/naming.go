@@ -111,7 +111,8 @@ func (d *Daemon) nameFrom(me, prompt string) {
 			log.Printf("lea daemon: name %s: %v", me, err)
 			return
 		}
-		name, err := agents.CheckLabel(autoName(out))
+		// Never a reserved label: the prompt is whatever the agent's hook sent (#356).
+		name, err := agents.CheckAgentLabel(autoName(out))
 		if err != nil || name == "" {
 			return
 		}

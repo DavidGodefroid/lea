@@ -81,7 +81,7 @@ func (d *Daemon) requestSpawn(o Origin, me string, raw json.RawMessage) (any, er
 	if err := checkBrief(p.Brief, true); err != nil {
 		return nil, err
 	}
-	if _, err := agents.CheckLabel(p.Label); err != nil {
+	if _, err := agents.CheckAgentLabel(p.Label); err != nil {
 		return nil, fmt.Errorf("agents_request_spawn: %w", err)
 	}
 	if len(p.Reason) > maxReason {

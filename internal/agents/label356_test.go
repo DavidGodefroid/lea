@@ -73,13 +73,13 @@ func TestAutoLabel(t *testing.T) {
 	e := newEnv(t)
 	e.ensure(t, "/p")
 	a, b := e.spawn(t, ""), e.spawn(t, "")
-	if got, err := e.m.AutoLabel(bg, a.Key, "Control Tower"); err != nil || got != "Control Tower" {
+	if got, err := e.m.AutoLabel(bg, a.Key, "Auth Work"); err != nil || got != "Auth Work" {
 		t.Fatalf("first %q err=%v", got, err)
 	}
-	if got, err := e.m.AutoLabel(bg, b.Key, "Control Tower"); err != nil || got != "Control Tower 2" {
+	if got, err := e.m.AutoLabel(bg, b.Key, "Auth Work"); err != nil || got != "Auth Work 2" {
 		t.Fatalf("second %q err=%v", got, err)
 	}
-	if got, err := e.m.AutoLabel(bg, a.Key, "else"); err != nil || got != "Control Tower" {
+	if got, err := e.m.AutoLabel(bg, a.Key, "else"); err != nil || got != "Auth Work" {
 		t.Fatalf("kept %q err=%v", got, err)
 	}
 	if _, err := e.m.AutoLabel(bg, a.Key, "bad\x07"); err == nil {
