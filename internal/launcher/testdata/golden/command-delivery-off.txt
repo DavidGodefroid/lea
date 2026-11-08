@@ -1,0 +1,6 @@
+status 0
+-- calls
+core [allow] [--container] [lea-$ID] [--projects] [$W/projects] [off] [deliver]
+-- lea
+lea: note: lea delivery off is now lea allow off deliver (lea delivery goes away in the next minor release)
+-- stdout

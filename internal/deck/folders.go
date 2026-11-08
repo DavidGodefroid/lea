@@ -331,6 +331,9 @@ func (m Model) pos(key string) int {
 
 // exists reports whether key is a listed agent or a folder.
 func (m Model) exists(key string) bool {
+	if isAllowKey(key) {
+		return m.hasAllowance(allowKeyID(key))
+	}
 	if isFolderKey(key) {
 		return m.folderAt(key) >= 0
 	}

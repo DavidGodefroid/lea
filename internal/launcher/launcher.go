@@ -386,8 +386,12 @@ func (l *Launcher) dispatch(args []string) error {
 		return l.sh(a0, rest...)
 	case "lock":
 		return l.lockConsole(rest)
+	case "allow":
+		return l.allow(rest)
 	case "delivery":
 		return l.delivery(rest)
+	case "grant":
+		return l.grant(rest)
 	case "github":
 		return l.github(rest)
 	case "shell":
@@ -509,7 +513,7 @@ func (l *Launcher) lockConsole([]string) error {
 }
 
 // doctor is lea doctor: the workstation's checks (lea-sh doctor), then, when the projects
-// directory resolves, lea's Lock clients against the locks lox runs (doctorLocks) and its lea's delivery (issue #92) through the core, which reads the grants
+// directory resolves, lea's Lock clients against the locks lox runs (doctorLocks) and its lea's allowances (#92, #319) through the core, which reads the grants
 // from the daemon and the credentials from lea's state. The worst of the two is the status.
 func (l *Launcher) doctor() error {
 	l.exportToolsOn()
@@ -533,32 +537,133 @@ func (l *Launcher) doctor() error {
 	if cerr := l.claudeDoctor(); cerr != nil && err == nil {
 		err = cerr
 	}
-	if l.coreCall("delivery", "--container", l.Cfg.ContainerName(proj), "--projects", proj, "check", "--state", l.Cfg.StateDir()) != nil && err == nil {
+	if l.coreCall("allow", "--container", l.Cfg.ContainerName(proj), "--projects", proj, "check", "--state", l.Cfg.StateDir()) != nil && err == nil {
 		return exitError{1}
 	}
 	return err
 }
 
-// delivery is lea delivery on [--yes DIGEST] [--gitlab HOST]...|off|status (issue #92), through the core, which the launcher
-// tells this projects dir's container and the directory whose repositories it covers.
+// allow is lea allow [ARGS] (#319), through the core, which the launcher tells this projects
+// dir's container (LEA_PROJECTS_DIR for another lea) and the directory whose repositories'
+// origins it pins. The core checks the arguments.
+func (l *Launcher) allow(args []string) error {
+	for _, a := range args {
+		if a == "--container" || a == "--projects" {
+			l.logf("error: lea allow names no --container or --projects: run it from the lea's projects directory (or set LEA_PROJECTS_DIR)")
+			return exitError{2}
+		}
+	}
+	proj, err := l.projectsDir()
+	if err != nil {
+		return err
+	}
+	if l.coreCall(append([]string{"allow", "--container", l.Cfg.ContainerName(proj), "--projects", proj}, args...)...) != nil {
+		return exitError{1}
+	}
+	return nil
+}
+
+// aliasNote tells the user the new form of an old command, which goes away in the next minor
+// release.
+func (l *Launcher) aliasNote(old, now string) {
+	family := strings.Join(strings.Fields(old)[:2], " ")
+	l.logf("note: %s is now %s (%s goes away in the next minor release)", old, now, family)
+}
+
+// delivery is lea delivery on [--yes DIGEST] [--gitlab HOST]...|off|status (issue #92), an alias
+// of lea allow (#319): on is lea allow deliver, off lea allow off deliver, status lea allow.
 func (l *Launcher) delivery(args []string) error {
 	ok := len(args) > 0 && (args[0] == "on" || (len(args) == 1 && (args[0] == "off" || args[0] == "status")))
 	for i := 1; ok && i < len(args); i += 2 {
 		ok = (args[i] == "--yes" || args[i] == "--gitlab") && i+1 < len(args) && args[i+1] != ""
 	}
 	if !ok {
-		l.logf("error: usage: lea delivery on [--yes DIGEST] [--gitlab HOST]...|off|status")
+		l.logf("error: usage: lea delivery on [--yes DIGEST] [--gitlab HOST]...|off|status (now: lea allow deliver|off deliver|lea allow)")
 		return exitError{2}
+	}
+	var now []string
+	switch args[0] {
+	case "on":
+		now = append([]string{"deliver"}, args[1:]...)
+	case "off":
+		now = []string{"off", "deliver"}
+	}
+	l.aliasNote("lea delivery "+args[0], strings.TrimSpace("lea allow "+strings.Join(now, " ")))
+	return l.allow(now)
+}
+
+// grant is lea grant: add and ls are aliases of lea allow (#319), translated here, where the
+// container is known; requests, approve, deny and revoke stay the core's.
+func (l *Launcher) grant(args []string) error {
+	if len(args) == 0 || (args[0] != "add" && args[0] != "ls") {
+		if l.coreCall(append([]string{"grant"}, args...)...) != nil {
+			return exitError{1}
+		}
+		return nil
+	}
+	usage := func() error {
+		l.logf("error: usage: lea grant add <action> [--repo R] [--github OWNER/NAME] [--branch GLOB] [--agent NAME] [--tag GLOB] [--expires D] | lea grant ls (now: lea allow)")
+		return exitError{2}
+	}
+	if args[0] == "ls" {
+		if len(args) > 2 || (len(args) == 2 && args[1] != "--all") {
+			return usage()
+		}
+		l.aliasNote("lea grant ls", "lea allow")
+		return l.allow(nil)
+	}
+	if len(args) < 2 {
+		return usage()
+	}
+	capName, ok := actionCapability[args[1]]
+	if !ok {
+		return usage()
+	}
+	now := []string{capName}
+	container := ""
+	for i := 2; i < len(args); i += 2 {
+		if i+1 >= len(args) || args[i+1] == "" {
+			return usage()
+		}
+		v := args[i+1]
+		switch args[i] {
+		case "--container", "--lea":
+			container = v
+		case "--repo", "--branch", "--agent", "--tag":
+			now = append(now, args[i], v)
+		case "--github":
+			now = append(now, "--check-pin", v)
+		case "--expires":
+			now = append(now, "--for", v)
+		default:
+			return usage()
+		}
 	}
 	proj, err := l.projectsDir()
 	if err != nil {
 		return err
 	}
-	if l.coreCall(append([]string{"delivery", "--container", l.Cfg.ContainerName(proj), "--projects", proj}, args...)...) != nil {
-		return exitError{1}
+	if container != "" && container != l.Cfg.ContainerName(proj) {
+		l.logf("error: --container %s is not this projects directory's lea (%s): run lea allow from that lea's projects directory, or set LEA_PROJECTS_DIR",
+			container, l.Cfg.ContainerName(proj))
+		return exitError{2}
 	}
-	return nil
+	shown := []string{}
+	for i := 0; i < len(now); i++ {
+		if now[i] == "--check-pin" {
+			i++
+			continue
+		}
+		shown = append(shown, now[i])
+	}
+	l.aliasNote("lea grant add", "lea allow "+strings.Join(shown, " "))
+	return l.allow(now)
 }
+
+// actionCapability maps lea grant add's action names to lea allow's capabilities.
+var actionCapability = map[string]string{"commit-identity": "push", "pr-create": "pr", "merge": "merge", "delete-own-branch": "delete-branch",
+	"close-issue": "issues", "stop-finished": "stop-finished", "release-tag": "release-tag",
+	"release-create": "release"}
 
 // shell is lea_shell: a shell, or a command, in the same lea.
 func (l *Launcher) shell(args []string) error {

@@ -3,8 +3,10 @@ package agents
 import (
 	"fmt"
 	"path/filepath"
+	"regexp"
 	"strings"
 
+	"github.com/DavidGodefroid/lea/internal/grants"
 	"github.com/DavidGodefroid/lea/internal/roles"
 	"github.com/DavidGodefroid/lea/internal/store"
 )
@@ -13,7 +15,8 @@ import (
 // carry no control character) that sends the agent to the brief waiting in its inbox. The brief
 // itself is a message, so it is stored, attributed and wrapped like any other.
 // repo, when set, is the repository's directory: the agent starts in the projects directory.
-func firstPrompt(a store.Agent, repo, worktree string, brief bool) string {
+// covered are the capabilities of the deliver preset that cover the agent as it starts (Covered).
+func firstPrompt(a store.Agent, repo, worktree string, brief bool, covered []string) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "You are the lea agent %s (role %s)", a.Name, a.Role)
 	if l, err := CheckLabel(a.Label); err == nil && l != "" && l == a.Label {
@@ -32,11 +35,9 @@ func firstPrompt(a store.Agent, repo, worktree string, brief bool) string {
 			fmt.Fprintf(&b, " of the repository %s", repo)
 		}
 		b.WriteString(" (create it with git worktree add if it does not exist), never in the shared checkout.")
-		// Grants (#271): the forms a delivery or user grant runs without asking.
-		fmt.Fprintf(&b, " When the user has granted delivery, lea runs these forms without asking, each as one plain command from your worktree's root,"+
-			" without -R: git push -u origin %s, gh pr create --head %s --title T --body-file F, gh pr merge <number> --squash --delete-branch"+
-			" (GitLab: glab mr create --source-branch %s --title T --yes, glab mr merge <number> --squash --remove-source-branch --yes).",
-			a.Branch, a.Branch, a.Branch)
+		// Grants (#271, #319): the forms lea runs without asking, for what covers the agent when it
+		// starts; otherwise the lea allow command the user runs. grants_list stays the live truth.
+		b.WriteString(deliveryForms(a, covered))
 	}
 	if r, err := roles.Get(a.Role); err == nil && r.CanSpawn {
 		fmt.Fprintf(&b, " As a %s you may start %s agents with agents_spawn and stop your own with agents_stop.", r.Name, strings.Join(r.SpawnRoles, " and "))
@@ -71,6 +72,58 @@ func firstPrompt(a store.Agent, repo, worktree string, brief bool) string {
 			" tell it with msg_send (to %s, kind result or request), at most 5 lines: the outcome, its evidence, the open question.", parent, parent)
 	}
 	return b.String()
+}
+
+// deliveryForms is the first prompt's sentence on pushing and PRs: the forms of the capabilities
+// in covered, and for the others the lea allow command that lets the agent run them.
+func deliveryForms(a store.Agent, covered []string) string {
+	has := map[string]bool{}
+	for _, c := range covered {
+		has[c] = true
+	}
+	var gh, glab []string
+	if has["push"] {
+		gh = append(gh, "git push -u origin "+a.Branch)
+		glab = append(glab, "git push -u origin "+a.Branch)
+	}
+	if has["pr"] {
+		gh = append(gh, "gh pr create --head "+a.Branch+" --title T --body-file F")
+		glab = append(glab, "glab mr create --source-branch "+a.Branch+" --title T --yes")
+	}
+	if has["merge"] {
+		gh = append(gh, "gh pr merge <number> --squash --delete-branch")
+		glab = append(glab, "glab mr merge <number> --squash --remove-source-branch --yes")
+	}
+	allow := "lea allow deliver"
+	if hintRepo.MatchString(a.Repo) {
+		allow += " --repo " + a.Repo
+	}
+	if len(gh) == 0 {
+		return " Pushing, opening or merging a PR asks the user; tell them " + allow + " lets you do it without asking."
+	}
+	s := fmt.Sprintf(" The user allowed you (lea allow), so lea runs these forms without asking, each as one plain command from your worktree's root,"+
+		" without -R: %s (GitLab: %s).", strings.Join(gh, ", "), strings.Join(glab, ", "))
+	if len(gh) < 3 {
+		s += " The rest of pushing, opening and merging a PR asks the user; " + allow + " lets you do it without asking."
+	}
+	return s
+}
+
+// hintRepo is a repository name the prompt may print.
+var hintRepo = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,99}$`)
+
+// Covered is what of the deliver preset (push, pr, merge) the active grants gs of a's lea cover
+// for a when it starts, a's lineage its key then its parents' (nearest first).
+func Covered(a store.Agent, lineage []string, gs []grants.Grant, now int64) []string {
+	c := grants.Caller{Key: a.Key, Container: a.Container, Repo: a.Repo, Branch: a.Branch, Lineage: lineage}
+	var out []string
+	for _, name := range []string{"push", "pr", "merge"} {
+		capb, _ := grants.CapabilityNamed(name)
+		if grants.Covers(capb.Action, c, gs, now) {
+			out = append(out, name)
+		}
+	}
+	return out
 }
 
 // taskTitle is the first non-blank line of a brief, on one clean line of at most 80 characters.
