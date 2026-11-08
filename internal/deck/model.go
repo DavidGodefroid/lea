@@ -139,6 +139,7 @@ type API interface {
 	// New starts an agent on provider ("" for the user's default one); Providers lists the
 	// providers it may name.
 	New(ctx context.Context, container, provider string) (Agent, error)
+	NewTower(ctx context.Context, container string) (Agent, error)
 	Providers(ctx context.Context) ([]string, error)
 	Show(ctx context.Context, key string, focus bool) error
 	Stop(ctx context.Context, key string) error
@@ -697,6 +698,14 @@ func (m Model) key(k string) (tea.Model, tea.Cmd) {
 			return newMsg{a, err}
 		}
 	case "N":
+		m.status = "starting a new Control Tower…"
+		return m, func() tea.Msg {
+			ctx, cancel := context.WithTimeout(context.Background(), callTimeout)
+			defer cancel()
+			a, err := api.NewTower(ctx, c)
+			return newMsg{a, err}
+		}
+	case "P":
 		m.status = "providers…"
 		return m, func() tea.Msg {
 			ctx, cancel := context.WithTimeout(context.Background(), callTimeout)
@@ -988,7 +997,7 @@ type providersMsg struct {
 	err   error
 }
 
-// providersPrompt is the status line while N waits for a provider's digit.
+// providersPrompt is the status line while P waits for a provider's digit.
 func providersPrompt(names []string) string {
 	var b strings.Builder
 	b.WriteString("new agent on:")

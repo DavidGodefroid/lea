@@ -257,6 +257,10 @@ type NewRequest struct {
 	// Hidden leaves the agent in its parking window: an agent another agent started never takes
 	// the slot or the keyboard.
 	Hidden bool
+	// Tower starts a Control Tower (#339): a lead on Claude labelled TowerLabel (suffixed while
+	// another holds it), whose first prompt runs the control-tower skill. The user's only: the
+	// daemon gives it to host callers (agent_new), never to an agent's spawn.
+	Tower bool
 }
 
 type Manager struct {
@@ -1693,6 +1697,11 @@ func (m *Manager) New(ctx context.Context, r NewRequest) (Row, error) {
 	if err != nil {
 		return Row{}, err
 	}
+	if r.Tower {
+		if err := checkTower(reg, &r); err != nil {
+			return Row{}, err
+		}
+	}
 	prov, model, err := reg.Resolve(r.Profile, r.Model, m.cfg.DefaultProvider, m.cfg.DefaultModel)
 	if err != nil {
 		return Row{}, err
@@ -1813,17 +1822,27 @@ func (m *Manager) New(ctx context.Context, r NewRequest) (Row, error) {
 	if err == nil {
 		a.TaskID = taskID
 	}
+	if err == nil && r.Tower {
+		// Before the first prompt names it, and before the daemon's auto-naming could.
+		if a.Label, err = m.towerLabel(r.Container, a.Key); err == nil {
+			err = m.cfg.Store.SetLabel(a.Key, a.Label)
+		}
+	}
 	if err == nil && r.Brief != "" {
 		_, err = m.cfg.Store.Send(store.Message{From: r.BriefFrom, To: a.Key, Kind: "request", Body: r.Brief,
 			ReplyTo: r.BriefReplyTo, Hops: briefHops, At: m.cfg.Now()})
 	}
 	prompt := ""
-	if err == nil && (r.Brief != "" || a.Branch != "" || repo != "") {
+	if err == nil && (r.Tower || r.Brief != "" || a.Branch != "" || repo != "") {
 		wt := ""
 		if a.Branch != "" {
 			wt = worktreePath(projects, r.Workdir, a)
 		}
 		prompt = firstPrompt(a, repo, wt, r.Brief != "")
+		if r.Tower {
+			// The skill's command first, on the prompt's one line: the tower guard reads it there.
+			prompt = TowerCommand + " " + prompt
+		}
 	}
 	if err == nil {
 		args, err = launchArgs(prov, a, "", r.Args, prompt)

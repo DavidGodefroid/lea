@@ -136,8 +136,9 @@ lea
 The installer checks the requirements, downloads the release for your platform and verifies its
 checksum and the release's signature (see [Verify a release](#verify-a-release)), links
 `~/.local/bin/lea`, then runs `lea init`, which asks for your projects directory and pulls the
-images. In the first agent, run `/login` once (Claude Code's own login, kept per
-projects directory). Press `n` for another agent.
+images. The first agent is a Control Tower (see [Control tower](#control-tower)); in it, run
+`/login` once (Claude Code's own login, kept per projects directory). Press `n` for another
+agent, `N` for another Control Tower.
 
 ### Requirements
 
@@ -202,6 +203,8 @@ closing the deck, or the terminal, does not stop it: the next `lea` reattaches.
 | `ctrl+space` | back to the column (and forth) |
 | `space` | the next agent that needs you (a permission, a message for you) |
 | `n` | start a new agent |
+| `N` | start a new Control Tower: a lead on Claude, labelled `Control Tower`, running `/lea:control-tower` |
+| `P`, then a digit | start a new agent on another provider (any other key cancels) |
 | `e` | rename the selected agent (enter saves, esc cancels, empty clears) |
 | `m` / `t` | send the selected agent a message / read its messages (see below) |
 | `a` / `d` / `A` | allow / deny / always allow the selected agent's permission request |
@@ -224,8 +227,8 @@ closing the deck, or the terminal, does not stop it: the next `lea` reattaches.
 The mouse works too: click a row to select it, scroll to move, right-click a row for its menu
 (Split horizontally / Split vertically open a shell beside the agent, as Terminator does; the
 shell shows with its agent and steps aside while another agent is shown). A right-click anywhere
-else in the column opens the deck's own menu: new agent, new shell, new folder, sounds, keys,
-detach; a click on a folder folds or unfolds it; ctrl + right-click makes a folder, holding the
+else in the column opens the deck's own menu: new agent, new Control Tower, new agent on another
+provider, new shell, new folder, sounds, keys, detach; a click on a folder folds or unfolds it; ctrl + right-click makes a folder, holding the
 agent under the pointer. The
 pointer over a row shows its whole name (cut in the row when long) with the agent's name, role,
 profile and state in the bottom border.
@@ -564,7 +567,8 @@ certificate, never the key, goes to the gate, to lea-keyproxy and into the agent
 
 ## Teams of agents
 
-Every agent has a role: `lead`, `dev` (the default) or `reviewer`. The first agent is a lead.
+Every agent has a role: `lead`, `dev` (the default) or `reviewer`. The first agent is a lead: a
+Control Tower (see below).
 Only you change a role (`r` in the deck, `lea role <agent> <role>`, `lea new -r reviewer`).
 Agents get lea's tools through MCP:
 
@@ -716,6 +720,13 @@ Needs you: palette for dark-mode
 ```
 
 Ask it for the `board`, the `detail` of an agent, or to `stop` one, in your own words.
+
+When `lea` opens the deck on a container with no agent running (the very first launch, or every
+agent ended), the agent it starts is a Control Tower: a lead on Claude, labelled
+`Control Tower`, whose first prompt runs `/lea:control-tower` (`lea deck-open --no-default`
+starts nothing). In the deck, `N` starts another one (`Control Tower 2`…). A Control Tower
+always runs on the `claude` provider, whatever the default one, since the skill and its hook ship
+in the Claude plugin. Only you start one: agents cannot.
 
 The tower never does the work itself, not even a `git push`: every request goes to an agent. The
 plugin enforces it with a hook: once `/lea:control-tower` runs, the session may only use lea's

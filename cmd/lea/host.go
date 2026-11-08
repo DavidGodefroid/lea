@@ -800,8 +800,9 @@ func runDeckOpen(args []string, stderr io.Writer) int {
 			return 0
 		}
 	}
+	// The default agent is a Control Tower (#339): a lead on Claude running the control-tower skill.
 	if err := hostCallT("agent_new", map[string]any{"container": container, "workdir": workdir,
-		"profile": "claude", "role": "lead", "focus": true}, nil, agentTimeout); err != nil {
+		"tower": true, "focus": true}, nil, agentTimeout); err != nil {
 		return fail(err)
 	}
 	return 0
