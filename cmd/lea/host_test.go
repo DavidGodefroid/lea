@@ -186,6 +186,10 @@ func (c *cliAgents) SetLabel(ctx context.Context, k, label string) error {
 	c.rec("label " + k)
 	return nil
 }
+func (c *cliAgents) AutoLabel(ctx context.Context, k, label string) (string, error) {
+	c.rec("autolabel " + k)
+	return label, nil
+}
 func (c *cliAgents) SetPaused(ctx context.Context, k string, paused bool) error {
 	c.rec("paused " + k)
 	return nil

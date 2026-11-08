@@ -10,6 +10,22 @@ import (
 	"github.com/DavidGodefroid/lea/internal/store"
 )
 
+// The board names a labelled agent by its handle, label (name), as the deck does (#356).
+func TestBoardNamesAgentsByTheirHandle(t *testing.T) {
+	var out bytes.Buffer
+	renderBoard(&out, board{Items: []boardItem{
+		{Task: 1, Container: "lea-a", Agent: "dev-4", Label: "lea#350 spawn reuse", Role: "dev", State: "working"},
+		{Task: 2, Container: "lea-a", Agent: "dev-5", Role: "dev", State: "idle"},
+		{Task: 3, Container: "lea-a", Agent: "dev-6", Label: "old work", State: "done", Title: "t", Status: "s", Ended: 1},
+	}})
+	s := out.String()
+	for _, want := range []string{"| lea\\#350 spawn reuse (dev\\-4) |", "| dev\\-5 |", "- old work (dev\\-6): t, s"} {
+		if !strings.Contains(s, want) {
+			t.Fatalf("missing %q in:\n%s", want, s)
+		}
+	}
+}
+
 func TestBoardMarkdownEscapesCellsAndKeepsTheTree(t *testing.T) {
 	var out bytes.Buffer
 	renderBoard(&out, board{Items: []boardItem{

@@ -604,7 +604,7 @@ func (m Model) row(a Agent, inner int, fi int) []string {
 		bg(plain).Render(gap) +
 		bg(lipgloss.NewStyle().Foreground(gc)).Render(g) +
 		bg(plain).Render(" ") +
-		bg(lipgloss.NewStyle().Foreground(theme.Text).Bold(sel)).Render(padRight(fit(display(a), nameW, c), nameW)) +
+		m.nameCell(a, nameW, bg, sel) +
 		bg(plain).Render(" ") +
 		bg(muted).Render(padLeft(fit(a.Profile, profW, c), profW)) +
 		bg(plain).Render(" ") +
@@ -630,6 +630,22 @@ func (m Model) row(a Agent, inner int, fi int) []string {
 			bg(plain).Render(pad)+bg(lipgloss.NewStyle().Foreground(theme.Text)).Render(padRight(fit(keys, inner-in, c), inner-in)))
 	}
 	return lines
+}
+
+// nameCell is a row's name, exactly w cells: the agent's name, or its label then the name
+// dimmed (#356), the handle the user and the tower share. When they do not both fit, the label is
+// cut first: the name, what the tools take, stays whole as long as it fits alone.
+func (m Model) nameCell(a Agent, w int, bg func(lipgloss.Style) lipgloss.Style, sel bool) string {
+	c := m.cs()
+	text := lipgloss.NewStyle().Foreground(theme.Text).Bold(sel)
+	const gap = "  "
+	name := safe(a.Name, c)
+	room := w - lipgloss.Width(name) - len(gap) // what the label may take
+	if a.Label == "" || a.Label == a.Name || room < 2 {
+		return bg(text).Render(padRight(fit(a.Name, w, c), w))
+	}
+	label := fit(a.Label, room, c)
+	return bg(text).Render(label) + bg(plain).Render(gap) + bg(muted).Render(padRight(name, w-lipgloss.Width(label)-len(gap)))
 }
 
 // detail is the second line of a row, for width cells (0: unbounded): the role (dev, the default,

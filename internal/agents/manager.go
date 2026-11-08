@@ -252,6 +252,9 @@ type NewRequest struct {
 	// replying to BriefReplyTo, before the agent starts; its first prompt sends it there.
 	Brief, BriefFrom string
 	BriefReplyTo     int64
+	// Label, when set, is the agent's label from the start (#356), checked by CheckLabel and
+	// made unique among the container's live agents.
+	Label string
 	// NamePrefix names an unnamed agent <prefix>-N (the profile when empty).
 	NamePrefix string
 	// Hidden leaves the agent in its parking window: an agent another agent started never takes
@@ -1560,11 +1563,43 @@ func (m *Manager) SetLabel(ctx context.Context, key, label string) error {
 	if _, err := m.spawned(key); err != nil {
 		return err
 	}
+	if l != "" {
+		// Labels are unique among the live agents (#356): the user's rename never takes one.
+		if holder, err := m.cfg.Store.LabelHolder(key, l); err != nil {
+			return err
+		} else if holder != "" {
+			return fmt.Errorf("the label %q is already %s's: pick another", l, holder)
+		}
+	}
 	if err := m.cfg.Store.SetLabel(key, l); err != nil {
 		return err
 	}
 	m.feed.bump()
 	return nil
+}
+
+// AutoLabel gives an agent lea spawned a label lea chose (#356): from its brief or its user's
+// first prompt. A label already set stays; a clash with a live agent's label gets " 2", " 3"….
+// It returns the agent's label.
+func (m *Manager) AutoLabel(ctx context.Context, key, label string) (string, error) {
+	if _, _, ok := parseShellKey(key); ok {
+		return "", errors.New("a shell has no label")
+	}
+	l, err := CheckLabel(label)
+	if err != nil {
+		return "", err
+	}
+	if l == "" {
+		return "", errors.New("the label is empty")
+	}
+	if _, err := m.spawned(key); err != nil {
+		return "", err
+	}
+	if l, err = m.cfg.Store.SetLabelUnique(key, l, MaxLabel, true); err != nil {
+		return "", err
+	}
+	m.feed.bump()
+	return l, nil
 }
 
 // SetPaused freezes an agent lea spawned (the deck's p), or lets a frozen one continue where it
@@ -1732,6 +1767,9 @@ func (m *Manager) New(ctx context.Context, r NewRequest) (Row, error) {
 			return Row{}, fmt.Errorf("brief: %w", err)
 		}
 	}
+	if r.Label, err = CheckLabel(r.Label); err != nil {
+		return Row{}, err
+	}
 	if r.BriefFrom == "" {
 		r.BriefFrom = "user"
 	}
@@ -1812,6 +1850,10 @@ func (m *Manager) New(ctx context.Context, r NewRequest) (Row, error) {
 	taskID, err := m.cfg.Store.CreateTask(r.Container, a.Key, taskTitle(r.Brief), m.cfg.Now())
 	if err == nil {
 		a.TaskID = taskID
+	}
+	if err == nil && r.Label != "" {
+		// Before the first prompt, which tells the agent how the user sees it.
+		a.Label, err = m.cfg.Store.SetLabelUnique(a.Key, r.Label, MaxLabel, false)
 	}
 	if err == nil && r.Brief != "" {
 		_, err = m.cfg.Store.Send(store.Message{From: r.BriefFrom, To: a.Key, Kind: "request", Body: r.Brief,

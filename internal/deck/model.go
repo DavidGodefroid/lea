@@ -174,10 +174,11 @@ func (m Model) setPaused(key string, pause bool) tea.Cmd {
 // pausedHint is the status while a paused agent is in the slot: its pane reads no key.
 func pausedHint(a Agent) string { return display(a) + " is paused: p resumes it" }
 
-// display is the name a row shows: the label when the user gave one.
+// display is how the deck's texts name an agent: its handle "label (name)" when it has a label
+// (#356), the same string the tower writes, else its name.
 func display(a Agent) string {
-	if a.Label != "" {
-		return a.Label
+	if a.Label != "" && a.Label != a.Name {
+		return a.Label + " (" + a.Name + ")"
 	}
 	return a.Name
 }

@@ -179,6 +179,7 @@ var agentColumns = [][2]string{
 // requestColumns are the spawn_requests columns added after it was created.
 var requestColumns = [][2]string{
 	{"model", "TEXT NOT NULL DEFAULT ''"},
+	{"label", "TEXT NOT NULL DEFAULT ''"},
 }
 
 // approvalColumns are the approvals columns added after phase 0.
@@ -510,6 +511,89 @@ func (s *Store) SetLabel(key, label string) error {
 		return ErrNotFound
 	}
 	return nil
+}
+
+// liveLabels are the names and labels, in pairs, of the labelled live (not done) agents of key's
+// container but key's own.
+func liveLabels(q interface {
+	Query(string, ...any) (*sql.Rows, error)
+}, key string) ([]string, error) {
+	rows, err := q.Query(`SELECT name, label FROM agents WHERE container=(SELECT container FROM agents WHERE key=?)
+		AND key<>? AND state<>'done' AND label<>''`, key, key)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []string
+	for rows.Next() {
+		var name, label string
+		if err := rows.Scan(&name, &label); err != nil {
+			return nil, err
+		}
+		out = append(out, name, label)
+	}
+	return out, rows.Err()
+}
+
+// LabelHolder is the name of the live agent of key's container, key aside, whose label is label
+// whatever its case (#356); "" when none.
+func (s *Store) LabelHolder(key, label string) (string, error) {
+	ls, err := liveLabels(s.db, key)
+	if err != nil {
+		return "", err
+	}
+	for i := 0; i < len(ls); i += 2 {
+		if strings.EqualFold(ls[i+1], label) {
+			return ls[i], nil
+		}
+	}
+	return "", nil
+}
+
+// SetLabelUnique sets the label of an agent lea spawned, unique among the live agents of its
+// container (#356): on a clash, whatever the case, it gets " 2", " 3"…, the label cut so that it
+// stays within maxRunes characters. With onlyIfEmpty, a label already set (the user's) stays.
+// It returns the agent's label. The caller checks the text (agents.CheckLabel).
+func (s *Store) SetLabelUnique(key, label string, maxRunes int, onlyIfEmpty bool) (string, error) {
+	tx, err := s.db.Begin()
+	if err != nil {
+		return "", err
+	}
+	defer tx.Rollback()
+	var cur string
+	if err := tx.QueryRow(`SELECT label FROM agents WHERE key=? AND profile<>''`, key).Scan(&cur); errors.Is(err, sql.ErrNoRows) {
+		return "", ErrNotFound
+	} else if err != nil {
+		return "", err
+	}
+	if onlyIfEmpty && cur != "" {
+		return cur, nil
+	}
+	ls, err := liveLabels(tx, key)
+	if err != nil {
+		return "", err
+	}
+	taken := func(l string) bool {
+		for i := 1; i < len(ls); i += 2 {
+			if strings.EqualFold(ls[i], l) {
+				return true
+			}
+		}
+		return false
+	}
+	l := label
+	for n := 2; taken(l); n++ {
+		suffix := fmt.Sprintf(" %d", n)
+		base := []rune(label)
+		if keep := maxRunes - len(suffix); len(base) > keep {
+			base = base[:max(keep, 0)]
+		}
+		l = strings.TrimRight(string(base), " ") + suffix
+	}
+	if _, err := tx.Exec(`UPDATE agents SET label=? WHERE key=?`, l, key); err != nil {
+		return "", err
+	}
+	return l, tx.Commit()
 }
 
 // SetPaused records that the user froze an agent lea spawned (the deck's p), or let it continue.

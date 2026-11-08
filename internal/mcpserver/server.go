@@ -49,6 +49,7 @@ type spawnIn struct {
 	Repo    string `json:"repo,omitempty" jsonschema:"a directory directly under the projects directory: the agent starts there"`
 	Branch  string `json:"branch,omitempty" jsonschema:"the git branch the agent works on, in its own worktree"`
 	Brief   string `json:"brief" jsonschema:"what the new agent must do, at most 32 KiB; it is its first message"`
+	Label   string `json:"label,omitempty" jsonschema:"the name the user sees in the deck, at most 24 characters: <repo>#<issue> and 2-3 words when there is an issue (lea#350 spawn reuse), else 3-4 words of the task; default: named after the brief"`
 	For     string `json:"for,omitempty" jsonschema:"answers a spawn request: #<request id>, or the requester's name (its oldest pending request)"`
 	Queue   bool   `json:"queue,omitempty" jsonschema:"when the host is under pressure, queue the spawn and start it once the pressure falls (you get a message) instead of refusing it"`
 }
@@ -61,6 +62,7 @@ type requestIn struct {
 	Branch  string `json:"branch,omitempty" jsonschema:"the git branch the new agent works on"`
 	Brief   string `json:"brief" jsonschema:"what the new agent must do, at most 32 KiB"`
 	Reason  string `json:"reason" jsonschema:"why you need it, at most 2 KiB"`
+	Label   string `json:"label,omitempty" jsonschema:"the name the user sees in the deck, at most 24 characters: <repo>#<issue> and 2-3 words when there is an issue (lea#350 spawn reuse), else 3-4 words of the task; default: named after the brief"`
 }
 
 type stopIn struct {

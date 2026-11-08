@@ -44,13 +44,10 @@ func (m Model) hovered() *Agent {
 	return nil
 }
 
-// hoverText is what the hover shows of a: the name it shows, whole, then the agent's name when a
-// label hides it, the role, the profile and the state. Raw: fit makes it safe when drawn.
+// hoverText is what the hover shows of a: its handle, whole (display), the role, the profile and
+// the state. Raw: fit makes it safe when drawn.
 func hoverText(a Agent) string {
 	parts := []string{display(a)}
-	if a.Label != "" {
-		parts = append(parts, a.Name)
-	}
 	if isShell(a) {
 		return strings.Join(append(parts, "shell"), " · ")
 	}
