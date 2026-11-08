@@ -543,3 +543,19 @@ func TestQuestionRemindSetting(t *testing.T) {
 		}
 	}
 }
+
+// LEA_HOLD_MAX: minutes before lea releases the user's pause of an inbox (#95).
+func TestHoldMaxSetting(t *testing.T) {
+	for v, want := range map[string]time.Duration{"": 30 * time.Minute, "0": 0, "5": 5 * time.Minute, "1440": 24 * time.Hour,
+		"1441": 30 * time.Minute, "-1": 30 * time.Minute, "x": 30 * time.Minute} {
+		get := func(k string) string {
+			if k == "LEA_HOLD_MAX" {
+				return v
+			}
+			return ""
+		}
+		if got := HoldMaxSetting(get); got != want {
+			t.Errorf("LEA_HOLD_MAX=%q: %v, want %v", v, got, want)
+		}
+	}
+}

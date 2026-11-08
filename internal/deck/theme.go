@@ -288,7 +288,7 @@ func (m *Model) closeMenu() {
 	if m.themePicking() && m.themeWas != "" {
 		m.setTheme(m.themeWas)
 	}
-	m.menuFor, m.menuPicker, m.themeWas = "", false, ""
+	m.menuFor, m.menuPicker, m.themeWas, m.questions = "", false, "", nil
 }
 
 // previewTheme draws the deck in the theme the picker highlights.

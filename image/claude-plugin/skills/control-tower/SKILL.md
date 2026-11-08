@@ -143,6 +143,19 @@ the only way to put a question to them.
   more, prefixed with `reminder:`, and nothing else.
 - An incident with no question to the user: one line in your update, never a question.
 
+## Pause
+
+The user can pause your inbox (the deck's `H`, `lea hold`): the agents' messages wait, so they
+can answer you in peace. Only the user pauses or releases it; you cannot.
+
+- While it is paused, `msg_inbox` brings only the user's notes and the replies to what you sent
+  during the pause, plus a lea line saying how many messages are held. Do not read your inbox
+  again for them, and do not mention them unless the user asks.
+- An agent's `ask` to you fails while it is paused: it sends with `msg_send` and keeps working.
+- On release (the user's, or lea's after `LEA_HOLD_MAX` minutes), lea tells you how many were
+  held: read them all with `msg_inbox` until it is empty, then give the user **one** briefing.
+  Your open question, if any, comes first.
+
 ## Briefing the user
 
 This is the heart of the job. **Summarise hard.** The user reads you between other things.

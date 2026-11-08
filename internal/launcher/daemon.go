@@ -109,6 +109,15 @@ func QuestionRemindSetting(get func(string) string) time.Duration {
 	return 2 * time.Hour
 }
 
+// HoldMaxSetting is how long the user's pause of an agent's inbox (the deck's H, lea hold) lasts
+// before lea releases it (#95): LEA_HOLD_MAX minutes, 0 (never) to 1440, 30 when unset or invalid.
+func HoldMaxSetting(get func(string) string) time.Duration {
+	if n, err := strconv.Atoi(get("LEA_HOLD_MAX")); err == nil && n >= 0 && n <= 1440 {
+		return time.Duration(n) * time.Minute
+	}
+	return 30 * time.Minute
+}
+
 // HeavySettings are the heavy jobs' slots per container (LEA_HEAVY_SLOTS, 0 or unset: three
 // quarters of the host's CPUs, LEA_HEAVY_WORKERS each; at most 256) and the workers of one job
 // (LEA_HEAVY_WORKERS, 1 to 256, 4 when unset or invalid) (#132).

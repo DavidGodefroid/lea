@@ -1,6 +1,7 @@
 package deck
 
 import (
+	"fmt"
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -24,6 +25,7 @@ type menuItem struct{ label, key, target string }
 var hints = map[string]string{
 	"m": "a note to its inbox, read on its next turn",
 	"t": "its notes, questions and answers",
+	"H": "agents' messages to it wait until you release them",
 }
 
 // hintLine is the owner item of a menu's hint line: inside the menu, on no item.
@@ -59,6 +61,15 @@ func menuItems(a Agent, inFolder bool) []menuItem {
 		items = append(items, menuItem{"Move to folder…", "o", ""})
 	}
 	items = append(items, menuItem{"Split horizontally", "-", ""}, menuItem{"Split vertically", "|", ""})
+	if a.QuestionsOpen+a.QuestionsQueued > 0 {
+		items = append(items, menuItem{"Questions…", "Q", ""})
+	}
+	switch {
+	case a.Held:
+		items = append(items, menuItem{fmt.Sprintf("Release messages (%d)", a.HeldCount), "H", ""})
+	case holdable(a):
+		items = append(items, menuItem{"Hold messages", "H", ""})
+	}
 	switch {
 	case a.Paused:
 		items = append(items, menuItem{"Resume", "p", ""})
@@ -137,6 +148,9 @@ func (m Model) openItems() []menuItem {
 		return folderMenuItems(m.layout.Folders[fi])
 	}
 	if a := m.menuAgent(); a != nil {
+		if m.questions != nil {
+			return questionItems(m.questions)
+		}
 		if m.menuPicker {
 			return m.pickerItems(a.Key)
 		}
@@ -155,7 +169,7 @@ func (m Model) menuAgent() *Agent {
 
 // openMenu opens key's menu on its first item.
 func (m *Model) openMenu(key string) {
-	m.menuFor, m.menuSel, m.menuPicker = key, 0, false
+	m.menuFor, m.menuSel, m.menuPicker, m.questions = key, 0, false, nil
 	m.confirm, m.confirmYes, m.roleFor, m.pauseFor = "", false, "", ""
 }
 
@@ -170,6 +184,9 @@ func (m Model) pick(i int) (tea.Model, tea.Cmd) {
 	if name, ok := strings.CutPrefix(items[i].target, themeTarget); ok && on == deckMenu {
 		m.menuFor, m.menuPicker, m.themeWas = "", false, ""
 		return m.keepTheme(name), nil
+	}
+	if a != nil && m.questions != nil {
+		return m.pickQuestion(items[i])
 	}
 	m.closeMenu()
 	if a != nil {

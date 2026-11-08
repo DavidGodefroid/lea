@@ -45,6 +45,8 @@ const Usage = `Usage:
                               (lea approve ID [always], lea deny ID [reason]); Lock requests: lox run
   lea questions [drop ID]     the control towers' questions to you: the open one, then the queue
                               (one at a time); drop removes a queued one
+  lea hold [--off] [AGENT]    hold the messages agents send the tower (or AGENT) while you answer
+                              it; --off releases them (the deck's H; LEA_HOLD_MAX)
   lea stop [--all] [--forget]
                               stop lea; its agents resume at the next lea (--forget drops them)
   lea config export [--output FILE] [--include-personal]

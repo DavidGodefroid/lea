@@ -64,6 +64,10 @@ type Agent struct {
 	// (agents.Row, #95). An open one needs the user.
 	QuestionsOpen   int `json:"questions_open,omitempty"`
 	QuestionsQueued int `json:"questions_queued,omitempty"`
+	// Held: the user paused the agent's inbox (the deck's H, agents.Row, #95); HeldCount
+	// messages wait in it.
+	Held      bool `json:"held,omitempty"`
+	HeldCount int  `json:"held_count,omitempty"`
 }
 
 // shownState is the state a row shows (issue #72): green only when nothing is pending. A live
@@ -160,6 +164,11 @@ type API interface {
 	SplitShell(ctx context.Context, key string, below bool) (Agent, error)
 	// SetSound switches the daemon's sounds and answers the new state.
 	SetSound(ctx context.Context, on bool) (string, error)
+	// SetHeld pauses an agent's inbox (the deck's H) or releases it.
+	SetHeld(ctx context.Context, key string, held bool) error
+	// Questions lists the control towers' questions to the user; DropQuestion drops a queued one.
+	Questions(ctx context.Context) ([]Question, error)
+	DropQuestion(ctx context.Context, id int64) error
 }
 
 // isShell reports whether a row is a shell.
@@ -253,6 +262,7 @@ type Model struct {
 	focused       bool          // the deck's pane has the keyboard (focus events)
 	menuFor       string        // key whose menu (right click) is open
 	menuSel       int           // the menu's highlighted item
+	questions     []Question    // the questions of agent menuFor, while its questions menu (Q) is open
 	settings      SettingsStore // the settings screen's store (WithSettings), nil when none
 	settingsOff   string        // why there is none
 	setOpen       bool          // the settings screen (,) is shown
@@ -429,6 +439,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.status = pausedHint(*a)
 		}
 		return m, m.call(func(ctx context.Context) error { return api.Show(ctx, key, false) })
+	case questionsMsg:
+		return m.questionsLoaded(msg)
 	case providersMsg:
 		if msg.err != nil {
 			m.status = oneLine(msg.err.Error())
@@ -579,7 +591,7 @@ func (m *Model) apply(s Snapshot) bool {
 		m.pauseFor, m.status = "", ""
 	}
 	if m.menuFor != "" && m.menuFor != deckMenu && !m.exists(m.menuFor) {
-		m.menuFor, m.menuPicker = "", false
+		m.menuFor, m.menuPicker, m.questions = "", false, nil
 	}
 	if m.editFor != "" && !m.exists(m.editFor) {
 		m.editFor, m.draft = "", nil
@@ -809,6 +821,10 @@ func (m Model) key(k string) (tea.Model, tea.Cmd) {
 		}
 		m.status = "resumed " + display(*a)
 		return m, m.setPaused(key, false)
+	case "H":
+		return m.holdKey()
+	case "Q":
+		return m.questionsKey()
 	case "r":
 		if a := m.selectedAgent(); a != nil && !isShell(*a) {
 			m.roleFor = a.Key

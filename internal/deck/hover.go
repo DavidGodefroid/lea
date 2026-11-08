@@ -1,6 +1,7 @@
 package deck
 
 import (
+	"fmt"
 	"strings"
 	"time"
 
@@ -64,5 +65,9 @@ func hoverText(a Agent) string {
 	if a.Paused {
 		state = "paused"
 	}
-	return strings.Join(append(parts, state), " · ")
+	parts = append(parts, state)
+	if a.Held {
+		parts = append(parts, fmt.Sprintf("messages held (%d)", a.HeldCount))
+	}
+	return strings.Join(parts, " · ")
 }

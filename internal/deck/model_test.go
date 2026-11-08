@@ -19,6 +19,8 @@ type fakeAPI struct {
 	err      error
 	newAgent Agent
 	newShell Agent
+	// questions is what Questions answers (questions_test.go).
+	questions []Question
 }
 
 func (f *fakeAPI) rec(s string) { f.mu.Lock(); f.calls = append(f.calls, s); f.mu.Unlock() }

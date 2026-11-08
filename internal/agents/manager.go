@@ -199,6 +199,9 @@ type Row struct {
 	// (#95): the one the user has, and those that wait for its answer.
 	QuestionsOpen   int `json:"questions_open,omitempty"`
 	QuestionsQueued int `json:"questions_queued,omitempty"`
+	// Held: the user paused the agent's inbox (the deck's H, #95); HeldCount messages wait in it.
+	Held      bool `json:"held,omitempty"`
+	HeldCount int  `json:"held_count,omitempty"`
 }
 
 type Snapshot struct {
@@ -386,7 +389,7 @@ func (m *Manager) snapshot(container string, v int64) (Snapshot, error) {
 
 func rowOf(a store.Agent) Row {
 	return Row{Key: a.Key, Name: a.Name, Label: a.Label, Profile: a.Profile, Model: a.Model, State: a.State, Workdir: a.Workdir, Updated: a.Updated,
-		Created: a.Created, Role: a.Role, Parent: a.Parent, Repo: a.Repo, Branch: a.Branch, CtxPct: -1, CostUSD: -1, Paused: a.Paused,
+		Created: a.Created, Role: a.Role, Parent: a.Parent, Repo: a.Repo, Branch: a.Branch, CtxPct: -1, CostUSD: -1, Paused: a.Paused, Held: a.HoldSince > 0,
 		LimitUntil: a.LimitUntil, Woken: a.Woken}
 }
 

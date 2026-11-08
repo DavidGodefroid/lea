@@ -83,6 +83,24 @@ func (c Client) SetPaused(ctx context.Context, key string, paused bool) error {
 	return c.call(ctx, "agent_pause", map[string]any{"key": key, "paused": paused}, nil)
 }
 
+// SetHeld pauses an agent's inbox (the deck's H) or releases it: the host socket's caller is the
+// user, the only one who may.
+func (c Client) SetHeld(ctx context.Context, key string, held bool) error {
+	return c.call(ctx, "agent_hold", map[string]any{"agent": key, "held": held}, nil)
+}
+
+// Questions lists the control towers' questions to the user (the open ones and their queues).
+func (c Client) Questions(ctx context.Context) ([]Question, error) {
+	var qs []Question
+	err := c.call(ctx, "question_list", nil, &qs)
+	return qs, err
+}
+
+// DropQuestion drops a queued question: it is never asked.
+func (c Client) DropQuestion(ctx context.Context, id int64) error {
+	return c.call(ctx, "question_drop", map[string]any{"id": id}, nil)
+}
+
 // OpenShell opens a shell in the container (the deck's s).
 func (c Client) OpenShell(ctx context.Context, container string) (Agent, error) {
 	var a Agent

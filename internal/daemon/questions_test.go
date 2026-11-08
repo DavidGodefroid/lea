@@ -83,7 +83,7 @@ func TestUserAskOneQuestionAtATime(t *testing.T) {
 	turnEnds(t, e, "tower")
 	// The incident went to the front, but did not interrupt q1: the user's answer opens it.
 	text := prompt(t, e, "tower", false)
-	for _, want := range []string{"question #1 is answered", "Relay the answer to lea-a/l1", "#3 is now open (incident from lea-a/l3)", `"prod down"`} {
+	for _, want := range []string{"question #1 is answered", "Relay the answer to lea-a/l1", "#3 is now open (incident from lea-a/l3)", "\n| prod down\n"} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("after the first answer, %q lacks %q", text, want)
 		}
@@ -221,7 +221,7 @@ func TestUserAskAnsweredThroughAskUserQuestion(t *testing.T) {
 		t.Fatalf("a Read answered: %q", text)
 	}
 	text := toolDone(t, e, "tower", "AskUserQuestion")
-	for _, want := range []string{"question #1 is answered by the user's answer to AskUserQuestion", "#2 is now open", `"merge?"`, "1 unread message(s)"} {
+	for _, want := range []string{"question #1 is answered by the user's answer to AskUserQuestion", "#2 is now open", "\n| merge?\n", "1 unread message(s)"} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("after AskUserQuestion, %q lacks %q", text, want)
 		}
