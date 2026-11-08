@@ -751,6 +751,15 @@ Needs you: palette for dark-mode
 
 Ask it for the `board`, the `detail` of an agent, or to `stop` one, in your own words.
 
+It asks you one question at a time, whatever the number of agents with a question for you: its
+`user_ask` tool opens a question when none is open and queues the others (an incident first,
+then what blocks an agent, then the rest, in order); the agents keep working meanwhile. Your next
+prompt, or your answer to its `AskUserQuestion`, answers the open question, and the tower relays the answer to the agent it came from, then
+asks the next one. While you have a question, lea denies the tower a second `AskUserQuestion`. A
+question left unanswered `LEA_QUESTION_REMIND` minutes (120) is asked once more, prefixed with
+`reminder:`. The deck shows the tower as `❓ 1 · 3 queued`; `lea questions` lists the questions,
+`lea questions drop ID` drops a queued one.
+
 The tower never does the work itself, not even a `git push`: every request goes to an agent. The
 plugin enforces it with a hook: once `/lea:control-tower` runs, the session may only use lea's
 team tools (`agents_*`, `msg_*`, `board_read`, `task_update`), ask you questions and run
@@ -1004,6 +1013,7 @@ lea                          # the deck, for $LEA_PROJECTS_DIR (unset: the worki
                              # (LEA_DECK=0: your own tool in the lea container, see Without the deck)
 lea attach [--print] [AGENT] # the tool in the lea container, or an agent's terminal (--print: the command)
 lea requests                 # what waits for you; lea approve ID [always], lea deny ID [reason]
+lea questions [drop ID]      # the control towers' questions to you: the open one, then the queue
 lea config deck on|off       # the deck, or your own tool (lea config tool CMD...), from the next lea
 lea new [name] [-- args]     # one more agent (its CLI's arguments after --; -p provider, -m model)
 lea shell [-- cmd...]        # a shell, or one command, in the same lea
@@ -1091,6 +1101,7 @@ read-only. The screen runs in the deck on the host: agents cannot open or drive 
 | `LEA_PROVIDERS` | `~/.config/lea/providers` | your OpenAI-compatible endpoints and their key files |
 | `LEA_AUTO_RESUME`, `LEA_RESUME_DELAY` | on, `60` | resume agents stopped on a usage limit, so many seconds after its reset (`0`: off) |
 | `LEA_STACK_IDLE` | `10` | minutes an agent stays idle before lea stops (not removes) the containers it started in the nested Podman (`0`: never); `lea board` lists what it freed |
+| `LEA_QUESTION_REMIND` | `120` | minutes a control tower's question waits for your answer before the tower asks it again, once, prefixed with `reminder:` (`0`: never) |
 | `LEA_AGENT_CPUS` | `4` | each agent's CPU window, the least shared CPUs: the agent, its tools and its nested containers run there, so `nproc`, PHPStan, Go… see that many CPUs (`0`: no window) |
 | `LEA_HEAVY_SLOTS`, `LEA_HEAVY_WORKERS` | `0` (¾ of the CPUs ÷ workers), `4` | heavy jobs (`lea heavy -- <command>`): how many run at once per container, and the CPUs and workers each gets |
 | `LEA_ADMIT_CPU_PSI`, `LEA_ADMIT_MEM_PCT`, `LEA_ADMIT_MEM_PSI`, `LEA_ADMIT_IO_PSI`, `LEA_ADMIT_LOAD` | `40`, `85`, `10`, `40`, `2` | [host pressure](#host-pressure) above which new agents wait: PSI in percent, memory in percent of the lea container's limit (the host's from 90 %), the host's load per CPU (`0`: that one off) |

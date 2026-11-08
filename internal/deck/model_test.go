@@ -636,3 +636,30 @@ func TestRoleChooserEndsWhenTheAgentGoes(t *testing.T) {
 		t.Fatalf("roleFor %q status %q", m.roleFor, m.status)
 	}
 }
+
+// A tower whose question the user has needs them: "❓ 1 · 3 queued" (#95), its status aside.
+func TestATowerQuestionNeedsTheUser(t *testing.T) {
+	tw := ag("t", "idle", 1)
+	tw.QuestionsOpen, tw.QuestionsQueued, tw.Status = 1, 3, "relaying answers"
+	m := loaded(t, &fakeAPI{}, "", tw, ag("b", "working", 1))
+	if got := m.shortStatus(m.agents[0]); got != "❓ 1 · 3 queued" {
+		t.Fatalf("label %q", got)
+	}
+	if r := rank(m.agents[0], m.seen); r != 2 {
+		t.Fatalf("rank %d", r)
+	}
+	m.agents[0].QuestionsQueued = 0
+	if got := m.label(m.agents[0]); got != "❓ 1" {
+		t.Fatalf("no queue: %q", got)
+	}
+	m.ascii = true
+	if got := m.label(m.agents[0]); got != "? 1" {
+		t.Fatalf("ascii: %q", got)
+	}
+	// Queued questions alone wait for the tower, not the user.
+	q := ag("q", "idle", 1)
+	q.QuestionsQueued = 2
+	if got := m.label(q); got != "idle" {
+		t.Fatalf("queued only: %q", got)
+	}
+}
