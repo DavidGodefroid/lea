@@ -99,6 +99,16 @@ func StackIdleSetting(get func(string) string) time.Duration {
 	return 10 * time.Minute
 }
 
+// QuestionRemindSetting is how long a control tower's question waits for the user before lea
+// reminds the tower of it, once (#95): LEA_QUESTION_REMIND minutes, 0 (never) to 10080, 120 when
+// unset or invalid.
+func QuestionRemindSetting(get func(string) string) time.Duration {
+	if n, err := strconv.Atoi(get("LEA_QUESTION_REMIND")); err == nil && n >= 0 && n <= 10080 {
+		return time.Duration(n) * time.Minute
+	}
+	return 2 * time.Hour
+}
+
 // HeavySettings are the heavy jobs' slots per container (LEA_HEAVY_SLOTS, 0 or unset: three
 // quarters of the host's CPUs, LEA_HEAVY_WORKERS each; at most 256) and the workers of one job
 // (LEA_HEAVY_WORKERS, 1 to 256, 4 when unset or invalid) (#132).

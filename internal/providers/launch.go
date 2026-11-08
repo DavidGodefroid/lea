@@ -61,7 +61,7 @@ func (r *Registry) Resolve(provider, model, defProvider, defModel string) (Provi
 var (
 	LeaApprovedTools = []string{"agents_list", "agents_request_spawn", "ask", "board_read", "grants_list", "grants_request",
 		"lease_acquire", "lease_release", "lock_hint", "msg_inbox", "msg_reply", "msg_send", "msg_wait",
-		"providers_list", "task_update"}
+		"providers_list", "task_update", "user_ask"}
 	LeaPromptedTools = []string{"agents_spawn", "agents_stop"}
 )
 

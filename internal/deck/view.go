@@ -138,9 +138,9 @@ var helpLines = []string{
 	"enter       show / fold folder",
 	"space       next needing you",
 	"n           new agent",
-	"N           new, other provider",
-	"s           new shell",
-	"- |         split with a shell",
+	"N           new Control Tower",
+	"P           new, other provider",
+	"s - |       new shell, split",
 	"m           note to its inbox",
 	"t           its messages",
 	"e c         rename, colour",
@@ -724,7 +724,7 @@ func (m Model) shortStatus(a Agent) string {
 
 // leaGlyphs are the marks lea draws itself (state, warning, unread, child): a status that starts
 // with one would pass for a label of lea's, so the agent's text loses them at its start.
-const leaGlyphs = " \t◆●◐○⚠✉↳⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"
+const leaGlyphs = " \t◆●◐○⚠✉❓↳⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"
 
 // ctxText is a context percentage ("42%"), empty when unknown.
 func ctxText(p int) string {

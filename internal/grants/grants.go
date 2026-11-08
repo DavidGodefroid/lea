@@ -382,12 +382,13 @@ var gitPins = []string{"core.hooksPath=/dev/null", "core.fsmonitor=false", "core
 //     token (gitlabScript);
 //   - git commit: plumbing in the caller's worktree (write-tree, commit-tree, update-ref): no
 //     hook, filter, index refresh or signing runs, whatever the repository's config says;
-//   - git push: from a bare repository lea creates for the call (mktemp -d: random name, mode
-//     0700), with the worktree's objects borrowed (alternates), to the grant's URL and the full
-//     ref: the worktree repository's config (url, pushurl, http, credential, push refspecs) is
-//     not read, and the bare repository's is checked just before the push. Not against a hostile
-//     agent: it runs as the same user and could rewrite that config between the check and the
-//     push.
+//   - git push: from a bare repository of lea's in the worktree's git directory (pushRepo, its
+//     config written anew for the call), with the worktree's objects borrowed (alternates), to
+//     the grant's URL and the full ref: the worktree repository's config (url, pushurl, http,
+//     credential, push refspecs) is not read, and the bare repository's is checked just before
+//     the push. Once pushed, origin/<branch> is recorded and, with -u, made the upstream. Not
+//     against a hostile agent: it runs as the same user and could rewrite that config between
+//     the check and the push.
 //
 // Every word lea builds is single-quoted. "" when the call cannot be pinned.
 func Command(req Request, c Caller, g Grant) string {
@@ -616,14 +617,31 @@ func pushScript(args []string, wt, gh, proxy string) string {
 	if pa[2] == "delete" {
 		return s + check + bare + " push " + shellWords([]string{url, "--delete", ref})
 	}
-	return s + "sha=$(" + git + " rev-parse --verify " + shellWords([]string{ref + "^{commit}"}) + ") || exit 1\n" +
-		check + bare + " push " + shellWords([]string{url}) + ` "$sha"` + shellWords([]string{":" + ref})
+	// Once pushed, the worktree records origin/<branch> as git would (the bare repository's push
+	// does not), and -u makes it the branch's upstream: a branch created from origin/main no
+	// longer tracks main (#381).
+	b := strings.TrimPrefix(ref, "refs/heads/")
+	s += "sha=$(" + git + " rev-parse --verify " + shellWords([]string{ref + "^{commit}"}) + ") || exit 1\n" +
+		check + bare + " push " + shellWords([]string{url}) + ` "$sha"` + shellWords([]string{":" + ref}) + " || exit 1\n" +
+		git + " update-ref " + shellWords([]string{"refs/remotes/origin/" + b}) + ` "$sha" || exit 1`
+	if pa[2] == "upstream" {
+		s += "\n" + git + " config " + shellWords([]string{"branch." + b + ".remote", "origin"}) + " || exit 1\n" +
+			git + " config " + shellWords([]string{"branch." + b + ".merge", ref}) + " || exit 1\n" +
+			"echo " + shellWords([]string{"branch '" + b + "' set up to track 'origin/" + b + "'."})
+	}
+	return s
 }
 
-// barePush is what every pinned push starts with: the script lines that create the bare
-// repository it runs from ($tmp, the worktree's objects borrowed), the git command in it (bare),
-// the URL it pushes to, and the line that checks the bare repository's own config again (check,
-// run right before the push). s is "" when gh cannot be pushed to.
+// pushRepo is the bare repository every pinned push runs from, in the worktree's own git
+// directory: a fixed path, reused, so the script deletes nothing (Claude Code refuses a shell -c
+// script that runs rm, even one a hook allowed: #381). Its config is written anew before each
+// push and checked again right before it.
+const pushRepo = "lea-push"
+
+// barePush is what every pinned push starts with: the script lines that prepare the bare
+// repository it runs from ($repo, pushRepo, the worktree's objects borrowed), the git command in
+// it (bare), the URL it pushes to, and the line that checks the bare repository's own config
+// again (check, run right before the push). s is "" when gh cannot be pushed to.
 func barePush(wt, gh, proxy string) (s, bare, url, check string) {
 	url = pinURL(gh) + ".git"
 	if pinURL(gh) == "" {
@@ -642,14 +660,21 @@ func barePush(wt, gh, proxy string) (s, bare, url, check string) {
 		bp = append(bp, "-c", "protocol.http.allow=always", "-c", "http."+base+".proxy=")
 	}
 	git := shellWords(gitIn(wt, proxy))
-	bare = shellWords([]string{gitPath, "--git-dir"}) + ` "$tmp" ` + shellWords(bp)
+	bare = shellWords([]string{gitPath, "--git-dir"}) + ` "$repo" ` + shellWords(bp)
 	s = configGuard(wt) +
+		"gd=$(" + git + " rev-parse --absolute-git-dir) || exit 1\n" +
 		"common=$(" + git + " rev-parse --path-format=absolute --git-common-dir) || exit 1\n" +
-		"tmp=$(" + shellWords([]string{mktempPath, "-d"}) + ") || exit 1\n" +
-		"trap " + shellWords([]string{rmPath + ` -rf "$tmp"`}) + " EXIT\n" +
-		shellWords([]string{gitPath, "init", "-q", "--bare", "--template="}) + ` "$tmp" || exit 1` + "\n" +
-		`echo "$common/objects" > "$tmp/objects/info/alternates" || exit 1` + "\n"
-	check = shellWords([]string{gitPath, "--git-dir"}) + ` "$tmp" ` + shellWords([]string{"config", "--local", "--get-regexp", riskyConfig}) +
+		`repo="$gd/` + pushRepo + `"` + "\n" +
+		shellWords([]string{mkdirPath, "-p"}) + ` "$repo" || exit 1` + "\n" +
+		// Left there before the call: a link would send the writes below elsewhere, commondir or
+		// gitdir make git read another repository.
+		`if [ -L "$repo" ] || [ -L "$repo/config" ] || [ -L "$repo/objects" ] || [ -L "$repo/objects/info" ] || [ -L "$repo/objects/info/alternates" ] || ` +
+		`[ -e "$repo/commondir" ] || [ -e "$repo/gitdir" ]; then ` + refuse("the push repository was changed") + "; fi\n" +
+		// A fresh config, before git init reads it: nothing a previous call left in it applies.
+		`echo '[core]' > "$repo/config" || exit 1` + "\n" +
+		shellWords([]string{gitPath, "init", "-q", "--bare", "--template="}) + ` "$repo" || exit 1` + "\n" +
+		`echo "$common/objects" > "$repo/objects/info/alternates" || exit 1` + "\n"
+	check = shellWords([]string{gitPath, "--git-dir"}) + ` "$repo" ` + shellWords([]string{"config", "--local", "--get-regexp", riskyConfig}) +
 		" >/dev/null 2>&1; s=$?; if [ \"$s\" -ne 1 ]; then " + refuse("the push repository config changed") + "; fi\n"
 	return s, bare, url, check
 }
@@ -716,9 +741,8 @@ const riskyConfig = `^(url\..*\.(insteadof|pushinsteadof)|include\.path|includei
 	`core\.attributesfile|core\.hookspath|core\.fsmonitor|core\.sshcommand|extensions\.worktreeconfig|http\..+)$`
 
 // pushArgs reads a validated "push [-u|--set-upstream] [--delete|-d] origin <branch>": it returns
-// the grant's repository URL, the full ref and "delete" or "push", or nil when args are not that
-// shape. Where it goes never depends on the remote's config. -u is accepted and does nothing: the
-// bare repository a push runs from has no upstream to record.
+// the grant's repository URL, the full ref and "delete", "upstream" (-u) or "push", or nil when
+// args are not that shape. Where it goes never depends on the remote's config.
 func pushArgs(args []string, gh string) []string {
 	upstream, del := false, false
 	var pos []string
@@ -736,8 +760,11 @@ func pushArgs(args []string, gh string) []string {
 		return nil
 	}
 	mode := "push"
-	if del {
+	switch {
+	case del:
 		mode = "delete"
+	case upstream:
+		mode = "upstream"
 	}
 	return []string{pinURL(gh) + ".git", "refs/heads/" + pos[1], mode}
 }
