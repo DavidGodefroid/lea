@@ -184,8 +184,13 @@ func New(sock, agent, version, instructions string) *mcp.Server {
 		func(ctx context.Context, _ *mcp.CallToolRequest, in grantRequestIn) (*mcp.CallToolResult, any, error) {
 			return proxy(ctx, sock, agent, "grants_request", short, in), nil, nil
 		})
+	// #343: what lea knows of a lock without a socket, never a guess.
+	mcp.AddTool(s, &mcp.Tool{Name: "lock_hint", Description: "When a Lock's client (locksql, lockmq, lockfile, locklog) finds no console (no socket, no answer): what the user must do, from what lea knows of the lock (whether lox run runs, whether it runs the lock, whether your container mounts it). Report the hint to the user as is, in blocked_on and to your lead; never tell them to run lox up or lox approve, or to restart or recreate a lock."},
+		func(ctx context.Context, _ *mcp.CallToolRequest, in lockHintIn) (*mcp.CallToolResult, any, error) {
+			return proxy(ctx, sock, agent, "lock_hint", short, in), nil, nil
+		})
 	// One question at a time to the user (#95): the daemon keeps the tower's queue.
-	mcp.AddTool(s, &mcp.Tool{Name: "user_ask", Description: "Control tower (leads only): the one way to put a question to the user. lea keeps at most one question open: with none open the answer is ask_now, and you ask it to the user in this reply; otherwise the question is queued and you do not mention it. The user's next prompt answers the open one, and lea then gives you the next queued question in that prompt's context. id instead of question asks an answered question again (the prompt answered something else)."},
+	mcp.AddTool(s, &mcp.Tool{Name: "user_ask", Description: "Control tower (leads only): the one way to put a question to the user. lea keeps at most one question open: with none open the answer is ask_now, and you ask it to the user in this reply; otherwise the question is queued and you do not mention it. The user's next prompt, or their answer to your AskUserQuestion, answers the open one, and lea then gives you the next queued question in that context. id instead of question asks an answered question again (the prompt answered something else)."},
 		func(ctx context.Context, _ *mcp.CallToolRequest, in userAskIn) (*mcp.CallToolResult, any, error) {
 			return proxy(ctx, sock, agent, "user_ask", short, in), nil, nil
 		})
@@ -198,6 +203,10 @@ type userAskIn struct {
 	From     string `json:"from,omitempty" jsonschema:"the agent the question comes from, so the answer goes back to it"`
 	Message  int64  `json:"message,omitempty" jsonschema:"the id of that agent's message to answer with msg_reply"`
 	ID       int64  `json:"id,omitempty" jsonschema:"ask the answered question #id again, instead of a new one"`
+}
+
+type lockHintIn struct {
+	Lock string `json:"lock,omitempty" jsonschema:"the lock's instance name (its --instance, or the one its client names); omit for every lock"`
 }
 
 type leaseIn struct {

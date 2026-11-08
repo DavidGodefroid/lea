@@ -562,7 +562,7 @@ lox_journal() {
 
 @test "LEA_LOX_UP is obsolete: lea doctor says so" {
   LEA_LOX_UP=1 run lea_doctor
-  [[ "$output" == *"warn  LEA_LOX_UP: obsolete and ignored: lea no longer runs lox up; remove it from your configuration"* ]]
+  [[ "$output" == *"warn  LEA_LOX_UP: obsolete and ignored: remove it from your configuration"* ]]
   run calls
   [[ "$output" != *"lox [up]"* ]]
 }

@@ -61,15 +61,12 @@ const usage = `usage: lea <command>
                              start an agent (used by the launcher, in this form only;
                              any other new is the launcher's lea new)
   role <agent> <role>        change an agent's role (lead, dev, reviewer)
-  grant add <action> --container NAME [--repo R] [--github OWNER/NAME] [--branch GLOB] [--agent NAME] [--expires 8h]
-                             let every agent of a lea (or one agent's subtree) take an action
-                             without asking: merge, stop-finished, close-issue,
-                             delete-own-branch, commit-identity, pr-create (hard denies always hold)
-  grant ls [--all] | grant revoke <id>
-                             list or revoke grants
-  delivery --container NAME --projects DIR on|off|status
-                             standing grants so every agent of a lea pushes its branch, opens
-                             and merges its PR on each GitHub repo of DIR (used by the launcher)
+  grant revoke <id>          revoke one grant row (lea allow off N: a whole allowance)
+  grant requests | grant approve <id>... | grant deny <id> [reason...]
+                             a lead's grant requests
+  allow --container NAME --projects DIR [ARGS]
+                             lea allow for a lea and its projects directory (used by the
+                             launcher; lea allow --help)
   sound [on|off]             show or switch lea's sounds (until the daemon restarts)
   hook claude <event>        Claude Code hook (inside lea)
   repair-transcript <id>     cut a session's transcript after its last valid line before a resume (inside lea)
@@ -113,8 +110,8 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		return runNew(args[1:], stdout, stderr)
 	case "lock-hello":
 		return runLockHello(args[1:], stdout, stderr)
-	case "delivery":
-		return runDelivery(args[1:], stdout, stderr)
+	case "allow":
+		return runAllow(args[1:], stdin, stdout, stderr)
 	case "hook":
 		if len(args) == 4 && args[1] == "codex" && args[2] == "notify" {
 			hook.CodexNotify(context.Background(), args[3], os.Getenv)
@@ -148,11 +145,11 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		if len(args) == 3 && args[1] == "--dump" {
 			dump = args[2]
 		}
-		post := func(r statusline.Report) []string {
+		post := func(r statusline.Report) statusline.Answer {
 			ctx, cancel := context.WithTimeout(context.Background(), statusBudget)
 			defer cancel()
-			added, _ := statusline.Post(ctx, identity.BusSock(os.Getenv), identity.Agent(os.Getenv), r)
-			return added
+			ans, _ := statusline.Post(ctx, identity.BusSock(os.Getenv), identity.Agent(os.Getenv), r)
+			return ans
 		}
 		// The user's own status line, from the container's copy of their Claude settings (#374);
 		// not when this run is itself the user's command.

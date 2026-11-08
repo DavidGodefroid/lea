@@ -1,5 +1,6 @@
 status 0
 -- calls
-core [delivery] [--container] [lea-$ID] [--projects] [$W/projects] [on] [--gitlab] [git.corp.example] [--yes] [0123456789abcdef]
+core [allow] [--container] [lea-$ID] [--projects] [$W/projects] [deliver] [--gitlab] [git.corp.example] [--yes] [0123456789abcdef]
 -- lea
+lea: note: lea delivery on is now lea allow deliver --gitlab git.corp.example --yes 0123456789abcdef (lea delivery goes away in the next minor release)
 -- stdout

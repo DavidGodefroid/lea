@@ -35,6 +35,7 @@ const (
 	rootTarget      = "\x00root"
 	newFolderTarget = "\x00new"
 	colourTarget    = "\x00colour:"
+	themeTarget     = "\x00theme:"
 )
 
 // menuItems are the actions of a row, in the order the menu shows them.
@@ -79,7 +80,7 @@ func deckMenuItems(sound string) []menuItem {
 	case "off":
 		items = append(items, menuItem{"Sounds on", "S", ""})
 	}
-	return append(items, menuItem{"Keys", "?", ""}, menuItem{"Detach", "q", ""})
+	return append(items, menuItem{"Theme…", "T", ""}, menuItem{"Keys", "?", ""}, menuItem{"Detach", "q", ""})
 }
 
 // folderMenuItems are the actions of a folder's row.
@@ -124,6 +125,9 @@ func (m Model) pickerItems(key string) []menuItem {
 // openItems are the open menu's items, nil when none is open.
 func (m Model) openItems() []menuItem {
 	if m.menuFor == deckMenu {
+		if m.menuPicker {
+			return themeItems()
+		}
 		return deckMenuItems(m.sound)
 	}
 	if fi := m.folderAt(m.menuFor); fi >= 0 {
@@ -159,10 +163,15 @@ func (m *Model) openMenu(key string) {
 // in the deck).
 func (m Model) pick(i int) (tea.Model, tea.Cmd) {
 	items, a, on := m.openItems(), m.menuAgent(), m.menuFor
-	m.menuFor, m.menuPicker = "", false
 	if i < 0 || i >= len(items) {
+		m.closeMenu()
 		return m, nil
 	}
+	if name, ok := strings.CutPrefix(items[i].target, themeTarget); ok && on == deckMenu {
+		m.menuFor, m.menuPicker, m.themeWas = "", false, ""
+		return m.keepTheme(name), nil
+	}
+	m.closeMenu()
 	if a != nil {
 		m.selected = a.Key
 	} else if isFolderKey(on) {
@@ -194,20 +203,22 @@ func (m Model) pick(i int) (tea.Model, tea.Cmd) {
 func (m Model) menuKey(k string) (tea.Model, tea.Cmd) {
 	items := m.openItems()
 	if items == nil {
-		m.menuFor, m.menuPicker = "", false
+		m.closeMenu()
 		return m, nil
 	}
 	switch k {
 	case "j", "down":
 		m.menuSel = min(m.menuSel+1, len(items)-1)
+		m.previewTheme()
 		return m, nil
 	case "k", "up":
 		m.menuSel = max(m.menuSel-1, 0)
+		m.previewTheme()
 		return m, nil
 	case "enter":
 		return m.pick(m.menuSel)
 	case "esc", "q", "ctrl+c":
-		m.menuFor, m.menuPicker = "", false
+		m.closeMenu()
 		return m, nil
 	}
 	for i, it := range items {
@@ -223,11 +234,11 @@ func (m Model) mouse(e tea.MouseMsg) (tea.Model, tea.Cmd) {
 	if _, _, ok := m.inputOpen(); ok {
 		return m.inputMouse(e)
 	}
-	if m.help || m.setOpen {
-		return m, nil
-	}
 	if m.confirm != "" {
 		return m.confirmMouse(e)
+	}
+	if m.help || m.setOpen || m.allowOpen {
+		return m, nil
 	}
 	if e.Action == tea.MouseActionMotion {
 		if e.Button != tea.MouseButtonNone { // a drag
@@ -271,11 +282,12 @@ func (m Model) mouse(e tea.MouseMsg) (tea.Model, tea.Cmd) {
 		if key == m.menuFor && item >= 0 {
 			if right { // on its own menu: the item under the pointer is highlighted
 				m.menuSel = item
+				m.previewTheme()
 				return m, nil
 			}
 			return m.pick(item)
 		}
-		m.menuFor, m.menuPicker = "", false
+		m.closeMenu()
 		if !right && (key == "" || item >= 0) {
 			return m, nil
 		}
@@ -334,9 +346,9 @@ func (m Model) menuLines(items []menuItem, inner int) []string {
 		hint := it.key
 		label := " " + it.label
 		line := padRight(label, w-len(hint)-1) + hint + " "
-		st := lipgloss.NewStyle().Foreground(theme.Text).Background(theme.Sel)
+		st := menuBg(lipgloss.NewStyle().Foreground(theme.Text))
 		if i == m.menuSel {
-			st = lipgloss.NewStyle().Foreground(theme.Accent).Background(theme.Sel).Bold(true)
+			st = selected(lipgloss.NewStyle().Foreground(theme.Accent)).Bold(true)
 			line = c.mark + line[len(" "):]
 		}
 		if name, ok := strings.CutPrefix(it.target, colourTarget); ok {
@@ -344,10 +356,21 @@ func (m Model) menuLines(items []menuItem, inner int) []string {
 				st = st.Foreground(col) // a colour picker's item shows its colour
 			}
 		}
+		if name, ok := strings.CutPrefix(it.target, themeTarget); ok && w >= 4+len(hint)+3 {
+			// A theme picker's item ends with a swatch of the theme, before its key.
+			t, _ := findTheme(name)
+			head := fit(padRight(label, w-4-len(hint)-2), w-4-len(hint)-2, c)
+			if i == m.menuSel {
+				head = c.mark + head[len(" "):]
+			}
+			out = append(out, plain.Render("    ")+st.Render(head+" ")+themeSwatch(t, m.ascii)+
+				st.Render(" "+hint+" "))
+			continue
+		}
 		out = append(out, plain.Render("    ")+st.Render(fit(line, w, c)))
 	}
 	if m.menuSel >= 0 && m.menuSel < len(items) && items[m.menuSel].target == "" && hints[items[m.menuSel].key] != "" {
-		st := lipgloss.NewStyle().Foreground(theme.Muted).Background(theme.Sel)
+		st := menuBg(lipgloss.NewStyle().Foreground(theme.Muted))
 		for _, l := range wrapWords(hints[items[m.menuSel].key], w-2, 3) {
 			out = append(out, plain.Render("    ")+st.Render(fit(padRight(" "+l, w), w, c)))
 		}

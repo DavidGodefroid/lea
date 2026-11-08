@@ -17,12 +17,18 @@ const Usage = `Usage:
                               start one more agent in the deck (roles: lead, dev, reviewer;
                               providers: claude, codex and those of ~/.config/lea/providers)
   lea role <agent> <role>     change an agent's role (only you can)
-  lea delivery on [--yes DIGEST] [--gitlab HOST]...|off|status
-                              let every agent of this lea push its own branch, open and merge
-                              its PR (GitHub) or MR (GitLab: gitlab.com, --gitlab hosts) on
-                              each repository here, without asking (standing grants; on lists
-                              new or changed pins and their digest, --yes DIGEST records
-                              exactly those; off revokes them)
+  lea allow [log]             what agents of this lea may do without asking, and their last
+                              uses (log: every use)
+  lea allow CAPABILITY... [--repo R]... [--branch GLOB] [--agent NAME] [--for 2h] [--gitlab HOST]...
+                              let agents of this lea act without asking: push, pr, merge,
+                              delete-branch, issues, stop-finished, release-tag, release
+                              (gh release create; --tag GLOB narrows its tags), or deliver
+                              (push pr merge delete-branch); every repository here with a
+                              forge origin unless --repo; until lea allow off unless --for;
+                              new or changed pins are asked about (off a terminal: --yes DIGEST)
+  lea allow off [N|CAPABILITY|deliver]
+                              revoke allowance N, a capability, the deliver sets, or everything
+                              (lea delivery and lea grant add|ls: old forms, until the next minor)
   lea github login|logout|status
                               lea's GitHub token, kept by the proxy only (agents use it through
                               gh and git, never read it); login reads it on stdin:

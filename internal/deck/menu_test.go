@@ -228,7 +228,7 @@ func TestDeckMenuItems(t *testing.T) {
 		}
 		return strings.Join(l, ",")
 	}
-	if g := got(""); g != "New agent=n,New shell=s,New folder=f,Keys=?,Detach=q" {
+	if g := got(""); g != "New agent=n,New shell=s,New folder=f,Theme…=T,Keys=?,Detach=q" {
 		t.Fatalf("no player: %s", g)
 	}
 	if g := got("on"); !strings.Contains(g, "Mute sounds=S") {

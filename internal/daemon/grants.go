@@ -14,12 +14,14 @@ import (
 )
 
 // Grants (issue #73): the user records on the host which actions every agent of a lea may take
-// without asking; the PreToolUse hook asks grant_check before each tool call. grant_add,
-// grant_revoke and grant_list are host-only (dispatch): no agent, MCP tool or message can write a
-// grant. An agent only reads the grants that apply to it (grants_list).
+// without asking (lea allow, #319: allow.go); the PreToolUse hook asks grant_check before each
+// tool call. allow_set, allow_off, allow_list and grant_revoke are host-only (dispatch): no agent,
+// MCP tool or message can write a grant. An agent only reads the grants that apply to it
+// (grants_list).
 
 const (
-	// DefaultGrantTTL is a grant's life when the user names none; MaxGrantTTL caps it.
+	// DefaultGrantTTL is the life of a lead's grant request when it names none; MaxGrantTTL caps
+	// every timed grant.
 	DefaultGrantTTL = 8 * time.Hour
 	MaxGrantTTL     = 30 * 24 * time.Hour
 	maxGrantUses    = 50
@@ -89,31 +91,11 @@ func checkGrant(p *grantParams) (time.Duration, error) {
 	return ttl, nil
 }
 
-// grantAdd records a grant: the host's only.
-func (d *Daemon) grantAdd(raw json.RawMessage) (any, error) {
-	var p grantParams
-	if err := json.Unmarshal(raw, &p); err != nil {
-		return nil, err
-	}
-	ttl, err := checkGrant(&p)
-	if err != nil {
-		return nil, err
-	}
-	if p.Agent != "" {
-		key, err := d.resolveSpawned(p.Agent, p.Container)
-		if err != nil {
-			return nil, fmt.Errorf("agent: %w", err)
-		}
-		p.Agent = key
-	}
-	return d.recordGrant(p, ttl)
-}
-
 // recordGrant records a checked grant, its agent a key.
 func (d *Daemon) recordGrant(p grantParams, ttl time.Duration) (grants.Grant, error) {
 	now := d.now()
 	g, err := d.st.AddGrant(grants.Grant{Container: p.Container, Action: p.Action, Repo: p.Repo, Branch: p.Branch,
-		Agent: p.Agent, GitHub: p.GitHub, Tag: p.Tag, Created: now, Expires: now + int64(ttl/time.Second)})
+		Agent: p.Agent, Pin: p.GitHub, Tag: p.Tag, Created: now, Expires: now + int64(ttl/time.Second)})
 	if err != nil {
 		return grants.Grant{}, err
 	}
@@ -130,75 +112,8 @@ func githubRepo(s string) (string, error) {
 	return "github.com/" + m[2] + "/" + m[3], nil
 }
 
-// deliverySet is lea delivery on|off (issue #92), the host's only: off revokes the standing
-// grants of a lea; on replaces them with the delivery actions on each repository it names, with
-// the GitHub repository the host read from that repository's origin. Standing grants never expire;
-// grants the user added by hand are left alone. A repository's forge pin is github.com/OWNER/NAME
-// (OWNER/NAME accepted) or gitlab:HOST/GROUP/.../NAME (grants.ValidPin).
-func (d *Daemon) deliverySet(raw json.RawMessage) (any, error) {
-	var p struct {
-		Container string
-		On        bool
-		Repos     []struct{ Repo, GitHub string }
-	}
-	if err := json.Unmarshal(raw, &p); err != nil {
-		return nil, err
-	}
-	if !containerName.MatchString(p.Container) {
-		return nil, errors.New("container: name the lea delivery applies to")
-	}
-	if !p.On && len(p.Repos) > 0 {
-		return nil, errors.New("repos: delivery off names none")
-	}
-	if len(p.Repos) > maxGrantList/len(grants.DeliveryActions) {
-		return nil, errors.New("repos: too many repositories")
-	}
-	seen := map[string]bool{}
-	for i, r := range p.Repos {
-		if !grantRepo.MatchString(r.Repo) || seen[r.Repo] {
-			return nil, fmt.Errorf("repo %q: a directory name under the projects directory, once", r.Repo)
-		}
-		seen[r.Repo] = true
-		if strings.HasPrefix(r.GitHub, "gitlab:") {
-			if !grants.ValidPin(r.GitHub) {
-				return nil, fmt.Errorf("repo %s: gitlab:HOST/GROUP/NAME of a GitLab project", r.Repo)
-			}
-			continue
-		}
-		gh, err := githubRepo(r.GitHub)
-		if err != nil {
-			return nil, fmt.Errorf("repo %s: %w", r.Repo, err)
-		}
-		p.Repos[i].GitHub = gh
-	}
-	now := d.now()
-	old, err := d.st.ActiveGrants(p.Container, now)
-	if err != nil {
-		return nil, err
-	}
-	for _, g := range old {
-		if g.IsStanding() {
-			if err := d.st.RevokeGrant(g.ID, now); err != nil && !errors.Is(err, store.ErrDecided) {
-				return nil, err
-			}
-		}
-	}
-	out := []grants.Grant{}
-	for _, r := range p.Repos {
-		for _, a := range grants.DeliveryActions {
-			g, err := d.st.AddGrant(grants.Grant{Container: p.Container, Action: a, Repo: r.Repo, GitHub: r.GitHub,
-				Created: now, Expires: grants.Standing})
-			if err != nil {
-				return nil, err
-			}
-			out = append(out, g)
-		}
-	}
-	d.changed()
-	return map[string]any{"grants": out}, nil
-}
-
-// grantRevoke ends a grant at once: its next matching call takes the normal path again.
+// grantRevoke ends one grant at once (lea grant revoke): its next matching call takes the normal
+// path again, and a set left with no active row ends with it.
 func (d *Daemon) grantRevoke(raw json.RawMessage) (any, error) {
 	var p struct{ ID int64 }
 	if err := json.Unmarshal(raw, &p); err != nil {
@@ -216,31 +131,6 @@ func (d *Daemon) grantRevoke(raw json.RawMessage) (any, error) {
 	return struct{}{}, nil
 }
 
-// grantList is the host's view: active grants, or every recent one with all, and recent uses.
-func (d *Daemon) grantList(raw json.RawMessage) (any, error) {
-	var p struct{ All bool }
-	if len(raw) > 0 {
-		if err := json.Unmarshal(raw, &p); err != nil {
-			return nil, err
-		}
-	}
-	var gs []grants.Grant
-	var err error
-	if p.All {
-		gs, err = d.st.RecentGrants(maxGrantList)
-	} else {
-		gs, err = d.st.ActiveGrants("", d.now())
-	}
-	if err != nil {
-		return nil, err
-	}
-	us, err := d.st.GrantUses(maxGrantUses)
-	if err != nil {
-		return nil, err
-	}
-	return map[string]any{"grants": gs, "uses": us, "now": d.now()}, nil
-}
-
 // grantsMine is an agent's read-only view: the active grants of its lea that cover it.
 func (d *Daemon) grantsMine(o Origin, me string) (any, error) {
 	c, err := d.grantCaller(o, me, "")
@@ -256,8 +146,8 @@ func (d *Daemon) grantsMine(o Origin, me string) (any, error) {
 		if g.Agent != "" && !contains(c.Lineage, g.Agent) {
 			continue
 		}
-		out = append(out, map[string]any{"id": g.ID, "action": g.Action, "repo": g.Repo, "branch": g.Branch,
-			"agent": g.Agent, "github": g.GitHub, "expires": g.Expires})
+		out = append(out, map[string]any{"id": g.ID, "set": g.SetID, "action": g.Action, "repo": g.Repo, "branch": g.Branch,
+			"agent": g.Agent, "github": g.Pin, "expires": g.Expires})
 	}
 	return out, nil
 }

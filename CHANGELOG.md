@@ -6,13 +6,18 @@ Changes:
 
 - The control tower asks you one question at a time (#95): its new `user_ask` tool (leads only)
   opens a question when none is open and queues it otherwise, by priority (`incident`,
-  `blocking`, `normal`) then in order; the queue is kept in lea.db. Your next prompt, or your answer to the
-  tower's `AskUserQuestion`, answers the open question: lea tells the tower which agent the answer goes back to and gives it the next
-  question. While you have a question, lea denies the tower any other `AskUserQuestion` and holds
+  `blocking`, `normal`) then in order; the queue is kept in lea.db. Your next prompt, or your
+  answer to the tower's `AskUserQuestion`, answers the open question: lea tells the tower which
+  agent the answer goes back to and gives it the next question. While you have a question, lea denies the tower any other `AskUserQuestion` and holds
   the questions agents `ask` it until you answer. One left unanswered `LEA_QUESTION_REMIND`
   minutes (120; 0: never) is asked again once, prefixed with `reminder:`. The deck shows the
   tower as `❓ 1 · 3 queued`; `lea questions` lists the questions and `lea questions drop ID`
   drops a queued one.
+- Deck colour themes (#337): `LEA_THEME` picks `catppuccin` (the default), `gruvbox`, `nord`,
+  `tokyo-night`, `solarized`, `high-contrast` or `mono`; `T` in the deck (or its right-click menu)
+  opens a picker that previews each theme live (`enter` keeps and saves it, `esc` restores), the
+  settings screen's Theme row applies at once, and the tmux pane borders follow. `NO_COLOR` gives
+  `mono` while `LEA_THEME` is not set; an unknown name gives `catppuccin` with a warning.
 - The agents show your own Claude Code status line (#374): when your `~/.claude/settings.json`
   has a `statusLine` command, `lea statusline` still reports the agent's context and usage to the
   daemon, then runs your command with the same JSON (1.5 s at most, killed past it) and prints its
@@ -21,19 +26,56 @@ Changes:
 - `release-create` grant action (#353): `gh release create <tag> --verify-tag [--title T]
   [--notes-file F | --generate-notes] [--prerelease] [--latest]`, one plain command at the root of
   the agent's worktree, pinned like every allowed gh call, for a pushed semver tag matching the
-  grant's `--tag` glob (`lea grant add release-create ... --tag 'v0.15.*'`, or `grants_request`
+  grant's `--tag` glob (`lea allow release --repo R --tag 'v0.15.*'`, or `grants_request`
   with `tag`). `--draft`, `--target`, assets and the other `gh release` subcommands stay
-  uncovered; `lea delivery on` never records it. A call the grant does not cover tells the agent
+  uncovered; `deliver` never includes it. A call the grant does not cover tells the agent
   the form, the glob and `grants_request`.
 - In the deck, a folder header's summary sets each state mark apart from its count (`6 ◐ 6`, not
   `6 ◐6`) (#355): the marks are East Asian Ambiguous width, and a terminal that draws them wide
   drew the half-moon over the digit.
+- `lea allow` (#319): one allowance model and one command for what `lea grant` and `lea delivery`
+  did. `lea allow deliver` (push, pr, merge, delete-branch), `lea allow merge issues --repo api`,
+  `lea allow push --branch 'feat/*' --agent dev-1 --for 2h`, `lea allow stop-finished`: one call
+  records one set of grants, shown as one line by `lea allow` (capabilities, repositories and pins,
+  time left, last use) and revoked as one unit by `lea allow off N` (or a capability, `deliver`, or
+  everything of the lea). `lea allow log` lists this lea's uses. The container is always the
+  projects directory's lea, and every forge capability is pinned to each repository's `origin`
+  (GitHub or GitLab, `--gitlab HOST` remembered), with the pin confirmation `lea delivery on` had:
+  on a terminal, `record these? [y/N]`; off one, `--yes DIGEST`. Recorded again, an allowance that
+  holds until revoked keeps the ids of its unchanged rows.
+- **Lifetime**: an allowance holds until revoked unless `--for DURATION` (1m to 30 days) says
+  otherwise, hand grants included (they used to expire after 8 h).
+- The deck has an Allowed screen (`g`): the lea's allowances, with `x` to revoke one after the
+  usual confirmation.
+- An agent's first prompt lists the forms lea runs without asking only for what covers it when it
+  starts; otherwise it says `lea allow deliver --repo <repo>` lets it push and open PRs without
+  asking. A merge, PR or push no allowance covers gets a hint naming `lea allow <capability> --repo
+  <repo>`.
+- `lea doctor` reports `allowances` (the pin and credential checks of delivery).
+- Deprecated: `lea delivery on|off|status` and `lea grant add|ls` are aliases of `lea allow` for this
+  minor release, with a notice; they go in the next one. `lea grant add --github X` is refused when
+  X is not the repository's origin. The daemon methods `grant_add`, `grant_list` and `delivery_set`
+  are replaced by `allow_set`, `allow_list` and `allow_off` (host only).
+- `lea.db` gains `grant_sets` and `grants.set_id`: on open, a lea's standing grants become one
+  `deliver` allowance and every other active grant an allowance of one; ids do not change, and an
+  older lea still reads the table.
+- Agents point the user to `lox run`, never `lox up` or `lox approve` (#343): a new `lock_hint`
+  tool (read-only, agents only) tells an agent whose Lock client finds no console what the user
+  must do, from lea's state of the lock rather than a guess: "lock NAME waits for you: answer in
+  lox run (or lox attach NAME)" while `lox run` runs it, "start lox run in the projects directory"
+  when none serves, "restart lea" for a lock added while lea runs; never a command that restarts
+  or recreates a lock. The first prompt sends agents to it, and the agents' status line says
+  "no lox run: start it in the projects directory" while none serves. The `LEA_LOX_UP` warning
+  and LockHTTP's refusal page no longer mention `lox up` or `lox approve`.
 - The "Copied" notice a mouse selection's release shows closes after 0.6 s instead of 1.5 s
   (#373).
 - A granted `gh pr create` or `gh release create` whose `--title` reads like the file flag (`-F`,
   `--body-file`, `--notes-file`) hands gh the body or notes file the parser approved (#382): the
   pinned command took the file's index from a second scan of the args, which took the title's
   value for the flag and swapped the wrong argument for `-`.
+- A lead's child spawned without `repo` starts where its lead works (#364): the lead's repository,
+  or without one the lead's own directory, not the directory `lea` was last launched from. An
+  explicit `repo` still wins; `agents_spawn` with `for` keeps the request's repo and branch.
 
 ## v0.14.1 (2026-11-08)
 

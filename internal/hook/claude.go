@@ -178,7 +178,7 @@ func Claude(ctx context.Context, event string, stdin io.Reader, stdout io.Writer
 				"hookEventName": event, "additionalContext": r.Text}})
 		}
 	case "PreToolUse":
-		// The user's grants (lea grant add) and lea's hard denies: the daemon reads the tool input
+		// The user's allowances (lea allow) and lea's hard denies: the daemon reads the tool input
 		// and the working directory in memory and never stores them. No verdict prints nothing:
 		// the call takes the normal path (Claude's checks, the deck). No answer or an error is a
 		// deny: the hard denies were not checked.

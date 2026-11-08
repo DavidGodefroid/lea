@@ -188,7 +188,8 @@ merge (or push release tags, or publish releases) on some repositories:
    (the directory under the projects directory), `github` `OWNER/NAME`, `ttl_s` up to 2592000 (30
    days) when the user says "always" or "from now on", `reason` the user's words.
 2. Tell the user, in one line, what to approve on the host: `lea approve g12 g13` (or
-   `lea requests` to see them). Nothing is granted until they do.
+   `lea requests` to see them). Nothing is granted until they do. For every agent of the lea at
+   once, the user can instead run `lea allow merge --repo <repo>` (or `lea allow deliver`).
 3. The approval comes back to you as a message. Then tell the children concerned to run their
    merge (`gh pr merge <n> --squash --delete-branch`) or tag push
    (`git push origin refs/tags/vX.Y.Z`) or release (`gh release create vX.Y.Z --verify-tag --generate-notes`) again.

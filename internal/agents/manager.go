@@ -1756,8 +1756,18 @@ func (m *Manager) New(ctx context.Context, r NewRequest) (Row, error) {
 		return Row{}, err
 	}
 	if r.Parent != "" {
-		if err := m.checkParent(r.Container, r.Parent, r.Role); err != nil {
+		lead, err := m.checkParent(r.Container, r.Parent, r.Role)
+		if err != nil {
 			return Row{}, err
+		}
+		// A child naming no repo works where its lead works, not in the container's last launch
+		// directory (#364): the lead's repo, or without one the lead's own directory.
+		if r.Repo == "" && r.Workdir == "" {
+			if lead.Repo != "" {
+				r.Repo = lead.Repo
+			} else {
+				r.Workdir = lead.Workdir
+			}
 		}
 	}
 	projects := ""
@@ -1827,7 +1837,7 @@ func (m *Manager) New(ctx context.Context, r NewRequest) (Row, error) {
 		if a.Branch != "" {
 			wt = worktreePath(projects, r.Workdir, a)
 		}
-		prompt = firstPrompt(a, repo, wt, r.Brief != "")
+		prompt = firstPrompt(a, repo, wt, r.Brief != "", m.covered(a))
 	}
 	if err == nil {
 		args, err = launchArgs(prov, a, "", r.Args, prompt)
@@ -1927,26 +1937,26 @@ func (m *Manager) checkBriefSource(r NewRequest) (int, error) {
 }
 
 // checkParent refuses a child whose parent is not a running agent of the same container, or
-// whose role may not give role (the store checks the tree, not the roles).
-func (m *Manager) checkParent(container, parent, role string) error {
+// whose role may not give role (the store checks the tree, not the roles), and returns the parent.
+func (m *Manager) checkParent(container, parent, role string) (store.Agent, error) {
 	p, err := m.cfg.Store.AgentByKey(parent)
 	if errors.Is(err, store.ErrNotFound) {
-		return fmt.Errorf("unknown parent agent %q", parent)
+		return store.Agent{}, fmt.Errorf("unknown parent agent %q", parent)
 	}
 	if err != nil {
-		return err
+		return store.Agent{}, err
 	}
 	if p.Container != container {
-		return fmt.Errorf("parent %s runs in another container", p.Name)
+		return store.Agent{}, fmt.Errorf("parent %s runs in another container", p.Name)
 	}
 	if p.State == "done" {
-		return fmt.Errorf("parent %s has ended", p.Name)
+		return store.Agent{}, fmt.Errorf("parent %s has ended", p.Name)
 	}
 	pr, err := roles.Get(p.Role)
 	if err != nil {
-		return err
+		return store.Agent{}, err
 	}
-	return roles.CanGive(pr, role)
+	return p, roles.CanGive(pr, role)
 }
 
 // spawned returns an agent lea spawned, by key.
@@ -2491,4 +2501,26 @@ func (m *Manager) Detach(ctx context.Context, container string) error {
 		}
 	}
 	return nil
+}
+
+// covered is what of the deliver preset covers a as it starts (Covered): none when the grants
+// cannot be read.
+func (m *Manager) covered(a store.Agent) []string {
+	if a.Branch == "" {
+		return nil
+	}
+	gs, err := m.cfg.Store.ActiveGrants(a.Container, m.cfg.Now())
+	if err != nil {
+		return nil
+	}
+	lineage := []string{a.Key}
+	for p := a.Parent; p != "" && len(lineage) < 32 && !slices.Contains(lineage, p); {
+		lineage = append(lineage, p)
+		pa, err := m.cfg.Store.AgentByKey(p)
+		if err != nil {
+			break
+		}
+		p = pa.Parent
+	}
+	return Covered(a, lineage, gs, m.cfg.Now())
 }
