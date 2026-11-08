@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## v0.14.0 (2026-11-08)
 
 Changes:
 
@@ -17,6 +17,12 @@ Changes:
   `lea egress allow` command; an agent's first prompt says how to recognise an egress refusal behind
   `CONNECT tunnel failed, response 403` and to hand the user that command instead of working
   around the proxy.
+- The deck's width no longer changes when a drag crosses the divider (#341, #347): selecting text
+  in the deck, or in a program that takes the mouse, then moving over the divider resized the deck
+  and stored the new width. Only a press on the divider itself starts a resize now.
+- Granted `gh` calls work again (#348, #349): lea's read-only forge-gh config now carries gh's
+  current `version: "1"`, so gh no longer migrates it and tries to write it back, which made every
+  granted call fail with `failed to write config after migration`.
 
 ## v0.13.0 (2026-11-07)
 
