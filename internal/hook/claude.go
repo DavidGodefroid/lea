@@ -169,6 +169,9 @@ func Claude(ctx context.Context, event string, stdin io.Reader, stdout io.Writer
 			// The prompt answers the tower's open question (#95), unless lea typed it.
 			params["prompt"] = true
 			params["lea"] = leaPrompt(p.Prompt)
+		} else if p.ToolName == "AskUserQuestion" && p.AgentID == "" {
+			// The user's answer to the tower's own AskUserQuestion answers its open question too.
+			params["asked"] = true
 		}
 		if c.call(bctx, "context_unread", params, &r) == nil && r.Text != "" {
 			json.NewEncoder(stdout).Encode(map[string]any{"hookSpecificOutput": map[string]any{

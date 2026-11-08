@@ -604,3 +604,39 @@ func TestPromptSubmitAnswersTheOpenQuestion(t *testing.T) {
 		t.Fatalf("PostToolUse closed the question: %v", err)
 	}
 }
+
+// The user's answer to AskUserQuestion comes back as its tool result, with no prompt: its
+// PostToolUse answers the open question, and the context says so (#95).
+func TestAskUserQuestionResultAnswersTheOpenQuestion(t *testing.T) {
+	_, bus, db := startDB(t)
+	st, err := store.Open(db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	if _, err := st.Register(store.NewAgent{Container: "lea-a", Name: "tower", Profile: "claude", Workdir: "/p", Role: "lead"}, store.Caps{}, 1); err != nil {
+		t.Fatal(err)
+	}
+	for _, b := range []string{"deploy?", "merge?"} {
+		if _, err := st.AskUser(store.UserQuestion{Agent: "lea-a/tower", Body: b, Priority: store.PriorityNormal}, 1); err != nil {
+			t.Fatal(err)
+		}
+	}
+	tower := map[string]string{"LEA_AGENT": "tower"}
+	// A subagent's AskUserQuestion is not the tower's.
+	if out := runHook(bus, "PostToolUse", `{"session_id":"s1","tool_name":"AskUserQuestion","agent_id":"a1b2c3"}`, tower); out != "" {
+		t.Fatalf("a subagent's AskUserQuestion answered: %q", out)
+	}
+	out := runHook(bus, "PostToolUse", `{"session_id":"s1","tool_name":"AskUserQuestion","tool_response":{"answers":{"Deploy?":"yes"}}}`, tower)
+	var r struct {
+		HookSpecificOutput struct{ HookEventName, AdditionalContext string }
+	}
+	if err := json.Unmarshal([]byte(out), &r); err != nil || r.HookSpecificOutput.HookEventName != "PostToolUse" ||
+		!strings.Contains(r.HookSpecificOutput.AdditionalContext, "question #1 is answered by the user's answer to AskUserQuestion") ||
+		!strings.Contains(r.HookSpecificOutput.AdditionalContext, "#2 is now open") {
+		t.Fatalf("out=%q", out)
+	}
+	if q, err := st.OpenQuestion("lea-a/tower"); err != nil || q.ID != 2 {
+		t.Fatalf("open = %+v %v, want #2", q, err)
+	}
+}

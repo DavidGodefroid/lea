@@ -740,7 +740,7 @@ Ask it for the `board`, the `detail` of an agent, or to `stop` one, in your own 
 It asks you one question at a time, whatever the number of agents with a question for you: its
 `user_ask` tool opens a question when none is open and queues the others (an incident first,
 then what blocks an agent, then the rest, in order); the agents keep working meanwhile. Your next
-prompt answers the open question, and the tower relays the answer to the agent it came from, then
+prompt, or your answer to its `AskUserQuestion`, answers the open question, and the tower relays the answer to the agent it came from, then
 asks the next one. While you have a question, lea denies the tower a second `AskUserQuestion`. A
 question left unanswered `LEA_QUESTION_REMIND` minutes (120) is asked once more, prefixed with
 `reminder:`. The deck shows the tower as `❓ 1 · 3 queued`; `lea questions` lists the questions,

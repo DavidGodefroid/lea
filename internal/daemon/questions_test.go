@@ -4,6 +4,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/DavidGodefroid/lea/internal/store"
 )
 
 type userAskResult struct {
@@ -161,15 +163,101 @@ func TestUserAskLeaPromptsAnswerNothing(t *testing.T) {
 	if text := prompt(t, e, "tower", true); text != "" {
 		t.Fatalf("lea's first prompt answered: %q", text)
 	}
-	e.d.mu.Lock()
-	e.d.leaPrompts["lea-a/tower"] = true
-	e.d.mu.Unlock()
+	e.d.markLeaPrompt("lea-a/tower", time.Minute)
 	if text := prompt(t, e, "tower", false); text != "" {
 		t.Fatalf("a resume prompt answered: %q", text)
 	}
 	if text := prompt(t, e, "tower", false); !strings.Contains(text, "question #1 is answered") {
 		t.Fatalf("the user's prompt: %q", text)
 	}
+}
+
+// A resume that started but whose prompt never came: the user's later answer still counts.
+func TestUserAskResumeWithoutPromptAnswersLater(t *testing.T) {
+	e := start(t)
+	fa := &fakeAgents{st: e.d.st}
+	e.d.SetAgents(fa)
+	k := spawned(t, e, "tower", "lead", "")
+	userAsk(t, e, "tower", map[string]any{"question": "deploy?"})
+	turnEnds(t, e, "tower")
+	if err := e.d.st.AddHubWait(k, testTicket, "locksql", "crm-prod", e.d.now()); err != nil {
+		t.Fatal(err)
+	}
+	e.d.SetKeepalive(0)
+	if err := e.d.suspend(k); err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, func() bool { return agentState(t, e, k) == store.StateSuspendedCold })
+	if _, err := e.d.st.DecideHubWaits(testTicket, "crm-prod", store.DecisionApproved, "", e.d.now()); err != nil {
+		t.Fatal(err)
+	}
+	e.d.wakeSuspended(k)
+	waitResumes(t, fa, k, 1)
+	waitDelivered(t, e, k)
+	// No UserPromptSubmit followed the resume; later, the user answers.
+	e.clock.Add(int64((leaPromptGrace + time.Second) / time.Second))
+	if text := prompt(t, e, "tower", false); !strings.Contains(text, "question #1 is answered") {
+		t.Fatalf("the user's answer after a promptless resume: %q", text)
+	}
+}
+
+// The user answers through AskUserQuestion: its result, with no prompt, closes the question,
+// opens the next, frees the held asks and stops the reminder; the next prompt answers the next
+// question, not the first one.
+func TestUserAskAnsweredThroughAskUserQuestion(t *testing.T) {
+	e := start(t)
+	tw := spawned(t, e, "tower", "lead", "")
+	spawned(t, e, "l1", "dev", tw)
+	e.d.SetQuestionRemind(2 * time.Hour)
+	userAsk(t, e, "tower", map[string]any{"question": "deploy?"})
+	userAsk(t, e, "tower", map[string]any{"question": "merge?"})
+	if v, why := askVerdict(t, e, "tower"); v == "deny" {
+		t.Fatalf("the open question was denied: %s", why)
+	}
+	go call(t, e.bus, "l1", "ask", map[string]any{"to": "tower", "question": "which branch?", "timeout_s": 2}, nil)
+	waitFor(t, func() bool { n, _ := e.d.st.UnreadCount("lea-a/tower"); return n == 1 })
+	// Another tool's result answers nothing.
+	if text := toolDone(t, e, "tower", "Read"); strings.Contains(text, "answered") {
+		t.Fatalf("a Read answered: %q", text)
+	}
+	text := toolDone(t, e, "tower", "AskUserQuestion")
+	for _, want := range []string{"question #1 is answered by the user's answer to AskUserQuestion", "#2 is now open", `"merge?"`, "1 unread message(s)"} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("after AskUserQuestion, %q lacks %q", text, want)
+		}
+	}
+	// The same turn shows #2 with AskUserQuestion: allowed once.
+	if v, why := askVerdict(t, e, "tower"); v == "deny" {
+		t.Fatalf("the next question was denied: %s", why)
+	}
+	turnEnds(t, e, "tower")
+	e.clock.Add(7200)
+	e.d.remindQuestions()
+	var ms []delivered
+	if err := call(t, e.bus, "tower", "msg_inbox", nil, &ms); err != nil {
+		t.Fatal(err)
+	}
+	for _, m := range ms {
+		if strings.Contains(m.Text, "deploy?") {
+			t.Fatalf("the answered question was reminded: %+v", m)
+		}
+	}
+	if text := prompt(t, e, "tower", false); !strings.Contains(text, "question #2 is answered") {
+		t.Fatalf("the next prompt: %q", text)
+	}
+}
+
+// toolDone is a tool's end in agent's turn: the hook's PostToolUse and its context_unread.
+func toolDone(t *testing.T, e env, agent, tool string) string {
+	t.Helper()
+	call(t, e.bus, agent, "hook_event", map[string]any{"event": "PostToolUse", "session_id": "s", "payload": map[string]any{"tool_name": tool}}, nil)
+	var r struct {
+		Text string `json:"text"`
+	}
+	if err := call(t, e.bus, agent, "context_unread", map[string]any{"session_id": "s", "asked": tool == "AskUserQuestion"}, &r); err != nil {
+		t.Fatal(err)
+	}
+	return r.Text
 }
 
 // A prompt that answered something else: the question is asked again before the rest.

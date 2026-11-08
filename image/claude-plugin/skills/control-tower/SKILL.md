@@ -131,7 +131,8 @@ the only way to put a question to them.
 - Answer `ask_now`: ask that question in this reply (a plain line, or `AskUserQuestion`), and no
   other. Answer `queued`: say nothing about it to the user; tell the agent it is queued
   (`msg_reply`, one line) so it keeps working meanwhile.
-- The user's next prompt answers the open question. lea says so in that prompt's context:
+- The user's next prompt, or their answer to your `AskUserQuestion`, answers the open question.
+  lea says so in that prompt's (or that tool result's) context:
   relay the answer to the agent it names (`msg_reply` on its message), then ask the question lea
   says is now open, in the same reply, after what the user asked.
 - A prompt that answers something else ("status?"): call `user_ask` with the `id` lea gave, then

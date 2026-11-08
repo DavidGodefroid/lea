@@ -187,7 +187,7 @@ type Daemon struct {
 	// Questions to the user (questions.go, #95): how long an open one waits before lea reminds
 	// the tower (0: never), and the agents whose next prompt lea typed (it answers no question).
 	questionRemind time.Duration
-	leaPrompts     map[string]bool
+	leaPrompts     map[string]int64 // until when (unix seconds) the next prompt is lea's
 }
 
 func New(st *store.Store, runDir string, now func() int64) *Daemon {
@@ -198,7 +198,7 @@ func New(st *store.Store, runDir string, now func() int64) *Daemon {
 	return &Daemon{subs: map[string]*subagents{}, subTTL: subagentTTL, afterFunc: time.AfterFunc, st: st, lim: bus.Default, now: now, runDir: runDir,
 		attached: map[string]string{}, notify: map[string]chan struct{}{},
 		verdicts: map[int64]chan string{}, asks: map[string]pendingAsk{}, blocks: map[string]int{}, stopped: map[string]bool{}, rewakes: map[string]int{}, rewoken: map[string][]int64{}, woken: map[string]bool{}, keyMu: map[string]*sync.Mutex{}, statusPaths: map[string]string{}, named: map[string]bool{}, rang: map[string]time.Time{}, notified: map[string]time.Time{},
-		resumeDelay: DefaultResumeDelay, questionRemind: DefaultQuestionRemind, leaPrompts: map[string]bool{}, windows: map[string][]limitWindow{}, limitJobs: map[string]string{},
+		resumeDelay: DefaultResumeDelay, questionRemind: DefaultQuestionRemind, leaPrompts: map[string]int64{}, windows: map[string][]limitWindow{}, limitJobs: map[string]string{},
 		stackIdle: DefaultStackIdle, parkTimers: map[string]*time.Timer{}, parked: map[string]string{},
 		keepalive: DefaultKeepalive, keepTimers: map[string]*time.Timer{}, resumeFails: map[string]resumeFail{}, resuming: map[string]bool{},
 		heavy: map[string]*heavyPool{}, heavySlots: DefaultHeavySlots(runtime.NumCPU(), DefaultHeavyWorkers), heavyWorkers: DefaultHeavyWorkers}
@@ -1181,12 +1181,17 @@ func (d *Daemon) dispatchHooks(ctx context.Context, o Origin, me string, req wir
 		var cp struct {
 			Prompt bool `json:"prompt"`
 			Lea    bool `json:"lea"`
+			Asked  bool `json:"asked"`
 		}
 		_ = json.Unmarshal(req.Params, &cp)
 		answered := ""
-		if cp.Prompt {
+		switch {
+		case cp.Prompt:
 			// The user's prompt answers the open question (#95).
 			answered = d.questionAnswered(me, cp.Lea)
+		case cp.Asked:
+			// So does the user's answer to AskUserQuestion, a tool result with no prompt.
+			answered = d.askAnswered(me)
 		}
 		n, err := d.unreadNotice(me)
 		if err != nil || answered == "" {

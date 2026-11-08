@@ -6,8 +6,8 @@ Changes:
 
 - The control tower asks you one question at a time (#95): its new `user_ask` tool (leads only)
   opens a question when none is open and queues it otherwise, by priority (`incident`,
-  `blocking`, `normal`) then in order; the queue is kept in lea.db. Your next prompt answers the
-  open question: lea tells the tower which agent the answer goes back to and gives it the next
+  `blocking`, `normal`) then in order; the queue is kept in lea.db. Your next prompt, or your answer to the
+  tower's `AskUserQuestion`, answers the open question: lea tells the tower which agent the answer goes back to and gives it the next
   question. While you have a question, lea denies the tower any other `AskUserQuestion` and holds
   the questions agents `ask` it until you answer. One left unanswered `LEA_QUESTION_REMIND`
   minutes (120; 0: never) is asked again once, prefixed with `reminder:`. The deck shows the

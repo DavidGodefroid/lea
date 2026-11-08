@@ -28,6 +28,9 @@ const (
 	DefaultQuestionRemind = 2 * time.Hour
 	// questionTick is how often lea looks for a question to remind.
 	questionTick = time.Minute
+	// leaPromptGrace is how long after a resume lea takes the agent's next prompt for the
+	// resume's: a resume whose prompt never came leaves the user's later answer an answer.
+	leaPromptGrace = time.Minute
 )
 
 // askQuestionTool is Claude Code's tool that puts a question to the user.
@@ -155,19 +158,38 @@ func (d *Daemon) askAnswer(q store.UserQuestion) (map[string]any, error) {
 		"text": fmt.Sprintf("queued #%d (position %d): the user has another question open. Do not mention this one to the user: lea gives it back to you once the open one is answered.", q.ID, pos)}, nil
 }
 
+// markLeaPrompt says me's next prompt, within ttl, is lea's (a resume's): it answers no question.
+func (d *Daemon) markLeaPrompt(me string, ttl time.Duration) {
+	d.mu.Lock()
+	d.leaPrompts[me] = d.now() + int64(ttl/time.Second)
+	d.mu.Unlock()
+}
+
 // questionAnswered is what a prompt of the user to me answers: the open question it closes and
 // the one that opens, for that prompt's context ("" when me had none open). A prompt lea typed
 // (lea is true: a resume, a first prompt) answers nothing.
 func (d *Daemon) questionAnswered(me string, lea bool) string {
 	d.mu.Lock()
-	if d.leaPrompts[me] {
+	if until, ok := d.leaPrompts[me]; ok {
 		delete(d.leaPrompts, me)
-		lea = true
+		lea = lea || d.now() <= until
 	}
 	d.mu.Unlock()
 	if lea {
 		return ""
 	}
+	return d.answerOpen(me, "this prompt")
+}
+
+// askAnswered is what the user's answer to the tower's AskUserQuestion answers: it comes back as
+// the tool's result, with no prompt, so its PostToolUse closes the open question (#95).
+func (d *Daemon) askAnswered(me string) string {
+	return d.answerOpen(me, "the user's answer to AskUserQuestion")
+}
+
+// answerOpen closes me's open question, answered by by, and opens the next: the context that says
+// so ("" when me had none open).
+func (d *Daemon) answerOpen(me, by string) string {
 	a, next, err := d.st.AnswerQuestion(me, d.now())
 	if errors.Is(err, store.ErrNotFound) {
 		return ""
@@ -177,14 +199,14 @@ func (d *Daemon) questionAnswered(me string, lea bool) string {
 		return ""
 	}
 	d.changed()
-	text := fmt.Sprintf("lea: question #%d is answered by this prompt.", a.ID)
+	text := fmt.Sprintf("lea: question #%d is answered by %s.", a.ID, by)
 	switch {
 	case a.Message != 0:
 		text += fmt.Sprintf(" Relay the answer to %s with msg_reply on message %d.", a.From, a.Message)
 	case a.From != "":
 		text += fmt.Sprintf(" Relay the answer to %s with msg_send.", a.From)
 	}
-	text += fmt.Sprintf(" If this prompt answers something else, call user_ask with id %d: lea asks it again.", a.ID)
+	text += fmt.Sprintf(" If %s answers something else, call user_ask with id %d: lea asks it again.", by, a.ID)
 	if next.ID != 0 {
 		from := ""
 		if next.From != "" {
