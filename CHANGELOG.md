@@ -7,6 +7,11 @@ Changes:
 - The deck's first agent is a Control Tower (#339): `lea deck-open` with no agent running starts a
   lead on Claude labelled `Control Tower`, whose first prompt runs `/lea:control-tower`; `N` starts
   another (`Control Tower 2`…), and the provider picker moves from `N` to `P`. Host only.
+- A `gh pr create --body-file` or `gh release create --notes-file` refused for its file now says
+  why (#384): the hint names the file (cut past 80 characters) and the rule the matcher applies
+  (a relative path inside the worktree of at most 256 characters from `A-Za-z0-9._/-`, not
+  starting with `.`, `-` or `/`, with no empty, `.` or `..` segment, outside `.git`) with an
+  example, `pr-body.md`.
 - Deck colour themes (#337): `LEA_THEME` picks `catppuccin` (the default), `gruvbox`, `nord`,
   `tokyo-night`, `solarized`, `high-contrast` or `mono`; `T` in the deck (or its right-click menu)
   opens a picker that previews each theme live (`enter` keeps and saves it, `esc` restores), the
