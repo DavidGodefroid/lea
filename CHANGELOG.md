@@ -14,6 +14,13 @@ Changes:
 - In the deck, a folder header's summary sets each state mark apart from its count (`6 ◐ 6`, not
   `6 ◐6`) (#355): the marks are East Asian Ambiguous width, and a terminal that draws them wide
   drew the half-moon over the digit.
+- `lea update` on a Homebrew install runs `brew update` and `brew upgrade davidgodefroid/tap/lea`,
+  then the new Cellar version refreshes its images and checks the dependencies (#354). It used to
+  run lea's own installer, which left a second lea in `~/.local/share/lea-install`, linked at
+  `~/.local/bin/lea`, beside Homebrew's. A failing brew fails `lea update` with brew's status;
+  without brew on `PATH`, lea refuses to update a Homebrew install itself. The background update
+  installs nothing on a Homebrew install, even with `LEA_AUTOUPDATE=1`: it only announces the
+  release. install.sh and git installs are unchanged.
 
 ## v0.14.1 (2026-11-08)
 
