@@ -751,6 +751,7 @@ lea grant add delete-own-branch --container lea-myproj --repo api --github me/ap
 lea grant add commit-identity --container lea-myproj --repo api --github me/api --branch 'feat/*'  # git commit -m (no --amend), git push [-u] origin <own branch>
 lea grant add pr-create --container lea-myproj --repo api --github me/api  # gh pr create --head <own branch> --title T --body B|--body-file F
 lea grant add release-tag --container lea-myproj --repo api --github me/api  # git push origin refs/tags/vX.Y.Z (a new semver tag on a commit of the default branch)
+lea grant add release-create --container lea-myproj --repo api --github me/api --tag 'v0.15.*'  # gh release create v0.15.N --verify-tag [--notes-file F|--generate-notes]
 lea grant ls [--all]                                                # active grants (--all: revoked, expired) and recent uses
 lea grant revoke 3
 ```
@@ -858,6 +859,18 @@ root of the agent's worktree. lea pushes it from a bare repository it creates fo
 when the tag's commit is on the default branch of the remote (fetched at that moment), and without
 force, so a tag the remote already has is refused. `--tags`, `--follow-tags`, force, a refspec,
 another remote and a non-semver tag stay denied. `lea delivery on` never records it.
+
+**Release publication.** A repository with no workflow that publishes a release on tag push needs
+`gh release create` after the tag push; a `release-create` grant covers exactly
+`gh release create <tag> --verify-tag [--title T] [--notes-file F | --generate-notes] [--prerelease] [--latest]`,
+one plain command at the root of the agent's worktree, for a semver tag that `--tag GLOB` matches
+(none given: any semver tag). `--verify-tag` is required, so gh never creates the tag (that stays
+`release-tag`'s job). lea runs it pinned like every allowed gh call (`env -i`, `-R` the grant's
+`--github`, lea's gh config, through lea's proxy); a notes file follows the rule of
+`gh pr create --body-file`. `--draft`, `--target`, `--notes`, assets, `--latest=false` (use the
+plain flags) and every other `gh release` subcommand (`edit`, `delete`, `upload`, `delete-asset`)
+stay uncovered; a lead asks for the grant with `grants_request` (action `release-create`, `tag`
+the glob). `lea delivery on` never records it.
 
 ### Let agents deliver (push, PR/MR, merge)
 
