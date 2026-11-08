@@ -46,13 +46,13 @@ func TestExpandedFolderLook(t *testing.T) {
 			}
 		}
 		head, sep := cells(ls[0]), cells(ls[5])
-		if !strings.HasPrefix(head, " ▾ web") || !strings.Contains(head, "2 ◐1 ✓1") {
+		if !strings.HasPrefix(head, " ▾ web") || !strings.Contains(head, "2 ◐ 1 ✓ 1") {
 			t.Fatalf("width %d: header %q", width, head)
 		}
 		if strings.TrimSpace(sep) != "" || owners[5] != (lineOwner{"", -1}) {
 			t.Fatalf("width %d: separator %q owner %+v", width, sep, owners[5])
 		}
-		if h := cells(ls[6]); !strings.HasPrefix(h, " ▾ ops") || !strings.Contains(h, "1 ✓1") {
+		if h := cells(ls[6]); !strings.HasPrefix(h, " ▾ ops") || !strings.Contains(h, "1 ✓ 1") {
 			t.Fatalf("width %d: ops header %q", width, h)
 		}
 		// The root agent after the folders is set apart too: it does not read as ops's.
@@ -72,7 +72,7 @@ func TestFoldedFolderIsOneSummedUpLine(t *testing.T) {
 	if len(ls) != 4 { // web's header, a blank line, c's two lines
 		t.Fatalf("%d lines: %q", len(ls), ls)
 	}
-	if h := cells(ls[0]); !strings.HasPrefix(h, " ▸ web") || !strings.Contains(h, "2 ◐1 ✓1") {
+	if h := cells(ls[0]); !strings.HasPrefix(h, " ▸ web") || !strings.Contains(h, "2 ◐ 1 ✓ 1") {
 		t.Fatalf("folded header %q", h)
 	}
 }
@@ -84,12 +84,12 @@ func TestAFolderThatNeedsYouStandsOut(t *testing.T) {
 	st := &memStore{l: Layout{Folders: []Folder{{ID: "f1", Name: "web", Agents: []string{"lea-a/a", "lea-a/b"}}}}}
 	m := withFolders(t, st, withTask(ag("a", "working", 9_990), false, true), ag("b", "idle", 9_990))
 	m.selected = "lea-a/b"
-	if h := m.rows(m.innerWidth())[0]; !strings.Contains(h, sgrOf(theme.Blocked)+"m●1") {
+	if h := m.rows(m.innerWidth())[0]; !strings.Contains(h, sgrOf(theme.Blocked)+"m● 1") {
 		t.Fatalf("header %q", h)
 	}
 	m = m.toggleFold(folderKey("f1"))
 	h := m.rows(m.innerWidth())[0]
-	if !strings.Contains(cells(h), "▸ web") || !strings.Contains(h, sgrOf(theme.Blocked)+"m●1") {
+	if !strings.Contains(cells(h), "▸ web") || !strings.Contains(h, sgrOf(theme.Blocked)+"m● 1") {
 		t.Fatalf("folded header %q", h)
 	}
 }
@@ -126,10 +126,10 @@ func TestFolderLookASCII(t *testing.T) {
 	if len(ls) != 5 { // web, a(2), blank, ops folded
 		t.Fatalf("%d lines: %q", len(ls), ls)
 	}
-	if h := cells(ls[0]); !strings.HasPrefix(h, " v web") || !strings.Contains(h, "1 +1") {
+	if h := cells(ls[0]); !strings.HasPrefix(h, " v web") || !strings.Contains(h, "1 + 1") {
 		t.Fatalf("web header %q", h)
 	}
-	if h := cells(ls[4]); !strings.HasPrefix(h, " > ops") || !strings.Contains(h, "1 =1") {
+	if h := cells(ls[4]); !strings.HasPrefix(h, " > ops") || !strings.Contains(h, "1 = 1") {
 		t.Fatalf("ops header %q", h)
 	}
 	for i, l := range ls {
@@ -154,7 +154,7 @@ func TestFolderLookWithoutColour(t *testing.T) {
 		t.Fatalf("colour on a monochrome terminal:\n%q", out)
 	}
 	s := strings.Join(strings.Split(out, "\n"), "\n")
-	for _, w := range []string{" ▾ web", "2 ◐1 ✓1", " ▾ ops", "1 ✓1"} {
+	for _, w := range []string{" ▾ web", "2 ◐ 1 ✓ 1", " ▾ ops", "1 ✓ 1"} {
 		if !strings.Contains(s, w) {
 			t.Fatalf("no-colour view lacks %q:\n%s", w, s)
 		}
@@ -221,9 +221,9 @@ func TestFolderHeaderNeverOverflows(t *testing.T) {
 						t.Fatalf("ascii %v folded %v width %d: view line %d is %d cells: %q", ascii, folded, width, i, w, cells(l))
 					}
 				}
-				need := "4 ●1"
+				need := "4 ● 1"
 				if ascii {
-					need = "4 !1"
+					need = "4 ! 1"
 				}
 				if h := cells(ls[0]); !strings.Contains(h, need) {
 					t.Fatalf("ascii %v folded %v width %d: header %q lacks %q", ascii, folded, width, h, need)

@@ -11,13 +11,14 @@ import (
 	"github.com/DavidGodefroid/lea/internal/grants"
 )
 
-const grantUsage = `usage: lea grant add <action> --container NAME [--repo R] [--github OWNER/NAME] [--branch GLOB] [--agent NAME] [--expires 8h]
+const grantUsage = `usage: lea grant add <action> --container NAME [--repo R] [--github OWNER/NAME] [--branch GLOB] [--agent NAME] [--tag GLOB] [--expires 8h]
        (merge and close-issue need --github: every gh call they allow is pinned to it)
+       (release-create: gh release create <tag> --verify-tag of a pushed semver tag; --tag 'v0.15.*' narrows the tags)
        lea grant ls [--all]
        lea grant revoke <id>
        lea grant requests | lea grant approve <id>... [--expires 30d] | lea grant deny <id> [reason...]
        (a lead's grant requests, g<id>: approving one records the grant for the lead and its children)
-actions: ` + "merge, stop-finished, close-issue, delete-own-branch, commit-identity, pr-create, release-tag"
+actions: ` + "merge, stop-finished, close-issue, delete-own-branch, commit-identity, pr-create, release-tag, release-create"
 
 // runGrant is lea grant: the user's only channel to record, list and revoke grants (issue #73).
 // It talks to the host API, which no container can reach.
@@ -66,6 +67,8 @@ func runGrant(args []string, stdout, stderr io.Writer) int {
 				p["branch"] = v
 			case "--agent":
 				p["agent"] = v
+			case "--tag":
+				p["tag"] = v
 			case "--expires":
 				d, err := time.ParseDuration(v)
 				if err != nil || d <= 0 {
@@ -162,6 +165,9 @@ func describeGrant(g grants.Grant) string {
 	}
 	if g.Branch != "" && g.Branch != "*" {
 		s += " branch " + oneLine(g.Branch, 128)
+	}
+	if g.Tag != "" {
+		s += " tag " + oneLine(g.Tag, 64)
 	}
 	if g.Agent != "" {
 		s += " for " + oneLine(g.Agent, 129) + " and its children"

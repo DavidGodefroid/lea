@@ -72,13 +72,14 @@ CREATE INDEX IF NOT EXISTS lock_requests_container ON lock_requests(container, t
 CREATE TABLE IF NOT EXISTS grants(
   id INTEGER PRIMARY KEY AUTOINCREMENT, container TEXT NOT NULL, action TEXT NOT NULL,
   repo TEXT NOT NULL DEFAULT '', branch TEXT NOT NULL DEFAULT '', agent TEXT NOT NULL DEFAULT '',
-  github TEXT NOT NULL DEFAULT '', created INTEGER NOT NULL, expires INTEGER NOT NULL, revoked INTEGER NOT NULL DEFAULT 0);
+  github TEXT NOT NULL DEFAULT '', created INTEGER NOT NULL, expires INTEGER NOT NULL, revoked INTEGER NOT NULL DEFAULT 0,
+  tag TEXT NOT NULL DEFAULT '');
 CREATE INDEX IF NOT EXISTS grants_container ON grants(container, revoked, expires);
 CREATE TABLE IF NOT EXISTS grant_requests(
   id INTEGER PRIMARY KEY AUTOINCREMENT, container TEXT NOT NULL, requester TEXT NOT NULL, action TEXT NOT NULL,
   repo TEXT NOT NULL, branch TEXT NOT NULL DEFAULT '', github TEXT NOT NULL, ttl_s INTEGER NOT NULL,
   reason TEXT NOT NULL DEFAULT '', state TEXT NOT NULL DEFAULT 'pending', grant_id INTEGER NOT NULL DEFAULT 0,
-  at INTEGER NOT NULL, decided INTEGER NOT NULL DEFAULT 0);
+  at INTEGER NOT NULL, decided INTEGER NOT NULL DEFAULT 0, tag TEXT NOT NULL DEFAULT '');
 CREATE INDEX IF NOT EXISTS grant_requests_state ON grant_requests(state, requester);
 CREATE TABLE IF NOT EXISTS grant_uses(
   id INTEGER PRIMARY KEY AUTOINCREMENT, grant_id INTEGER NOT NULL, agent TEXT NOT NULL,
@@ -186,6 +187,11 @@ var approvalColumns = [][2]string{
 	{"always", "INTEGER NOT NULL DEFAULT 0"},
 }
 
+// tagColumns: the release-create tag glob (#353), on grants and grant_requests.
+var tagColumns = [][2]string{
+	{"tag", "TEXT NOT NULL DEFAULT ''"},
+}
+
 func migrate(db *sql.DB) error {
 	if err := addColumns(db, "agents", agentColumns); err != nil {
 		return err
@@ -194,6 +200,12 @@ func migrate(db *sql.DB) error {
 		return err
 	}
 	if err := addColumns(db, "approvals", approvalColumns); err != nil {
+		return err
+	}
+	if err := addColumns(db, "grants", tagColumns); err != nil {
+		return err
+	}
+	if err := addColumns(db, "grant_requests", tagColumns); err != nil {
 		return err
 	}
 	return addColumns(db, "hub_waits", hubWaitColumns)

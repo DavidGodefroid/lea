@@ -171,6 +171,8 @@ func bashRequest(w []string, c Caller) (Request, bool) {
 		r, ok = ghMerge(w[3:], c)
 	case len(w) >= 3 && w[0] == "gh" && w[1] == "pr" && w[2] == "create":
 		r, ok = ghPRCreate(w[3:], c)
+	case len(w) >= 3 && w[0] == "gh" && w[1] == "release" && w[2] == "create":
+		r, ok = ghReleaseCreate(w[3:])
 	case len(w) >= 3 && w[0] == "glab" && w[1] == "mr" && w[2] == "create":
 		r, ok = glabMRCreate(w[3:], c)
 	case len(w) >= 3 && w[0] == "glab" && w[1] == "mr" && w[2] == "merge":
@@ -309,6 +311,49 @@ func ghPRCreate(args []string, c Caller) (Request, bool) {
 		return Request{}, false
 	}
 	return Request{Action: PRCreate, Target: "pr create " + head}, true
+}
+
+// ghReleaseCreate: gh release create <tag> --verify-tag [--title T] [--notes-file F |
+// --generate-notes] [--prerelease] [--latest] (#353). The tag is semver and must already be on
+// the remote (--verify-tag: gh never creates it); no --repo (lea pins it), --draft, --target,
+// --notes, assets or discussion. The notes file is a relative path inside the worktree, as
+// gh pr create's body file (Command checks where it resolves).
+func ghReleaseCreate(args []string) (Request, bool) {
+	seen := map[string]bool{}
+	tag := ""
+	for i := 0; i < len(args); i++ {
+		a := args[i]
+		switch a {
+		case "--verify-tag", "--generate-notes", "--latest":
+		case "--prerelease", "-p":
+			a = "--prerelease"
+		case "--title", "-t", "--notes-file", "-F":
+			if i+1 >= len(args) {
+				return Request{}, false
+			}
+			v := args[i+1]
+			i++
+			if a == "--title" || a == "-t" {
+				a = "--title"
+			} else if a = "--notes-file"; !bodyFile(v) {
+				return Request{}, false
+			}
+		default:
+			if tag != "" || !semverTag.MatchString(a) {
+				return Request{}, false
+			}
+			tag = a
+			continue
+		}
+		if seen[a] {
+			return Request{}, false
+		}
+		seen[a] = true
+	}
+	if tag == "" || !seen["--verify-tag"] || (seen["--notes-file"] && seen["--generate-notes"]) {
+		return Request{}, false
+	}
+	return Request{Action: ReleaseCreate, Target: "release " + tag, Tag: tag}, true
 }
 
 // glabMRCreate: glab mr create --source-branch <own branch> --title T [--description D]
