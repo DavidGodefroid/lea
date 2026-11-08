@@ -2,5 +2,5 @@ status 2
 -- calls
 
 -- lea
-lea: error: usage: lea delivery on [--yes DIGEST] [--gitlab HOST]...|off|status
+lea: error: usage: lea delivery on [--yes DIGEST] [--gitlab HOST]...|off|status (now: lea allow deliver|off deliver|lea allow)
 -- stdout

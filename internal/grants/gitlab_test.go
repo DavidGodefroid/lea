@@ -39,7 +39,7 @@ func gitlabRun(t *testing.T, call, token string, responses map[string]string) (s
 	if strings.Contains(call, " create") {
 		g = all(PRCreate)
 	}
-	g.GitHub = "gitlab:gitlab.example.com/grp/app"
+	g.Pin = "gitlab:gitlab.example.com/grp/app"
 	d := Decide("Bash", bash(call), dev, []Grant{g}, now, false)
 	if d.Verdict != Allow {
 		t.Fatalf("%s: %+v", call, d)
@@ -233,7 +233,7 @@ func TestPinnedGitLabIgnoresTheAgentsGlabConfig(t *testing.T) {
 		if strings.Contains(call, "create") {
 			g = all(PRCreate)
 		}
-		g.GitHub = "gitlab:gitlab.example.com/grp/app"
+		g.Pin = "gitlab:gitlab.example.com/grp/app"
 		d := Decide("Bash", bash(call), c, []Grant{g}, now, false)
 		if d.Verdict != Allow {
 			t.Fatalf("%s: %+v", call, d)
@@ -300,6 +300,6 @@ func TestPinnedGitLabGoesThroughLeaProxy(t *testing.T) {
 
 func glGrant(action string) Grant {
 	g := all(action)
-	g.GitHub = "gitlab:gitlab.example.com/grp/app"
+	g.Pin = "gitlab:gitlab.example.com/grp/app"
 	return g
 }

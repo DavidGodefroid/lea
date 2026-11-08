@@ -1823,7 +1823,7 @@ func (m *Manager) New(ctx context.Context, r NewRequest) (Row, error) {
 		if a.Branch != "" {
 			wt = worktreePath(projects, r.Workdir, a)
 		}
-		prompt = firstPrompt(a, repo, wt, r.Brief != "")
+		prompt = firstPrompt(a, repo, wt, r.Brief != "", m.covered(a))
 	}
 	if err == nil {
 		args, err = launchArgs(prov, a, "", r.Args, prompt)
@@ -2487,4 +2487,26 @@ func (m *Manager) Detach(ctx context.Context, container string) error {
 		}
 	}
 	return nil
+}
+
+// covered is what of the deliver preset covers a as it starts (Covered): none when the grants
+// cannot be read.
+func (m *Manager) covered(a store.Agent) []string {
+	if a.Branch == "" {
+		return nil
+	}
+	gs, err := m.cfg.Store.ActiveGrants(a.Container, m.cfg.Now())
+	if err != nil {
+		return nil
+	}
+	lineage := []string{a.Key}
+	for p := a.Parent; p != "" && len(lineage) < 32 && !slices.Contains(lineage, p); {
+		lineage = append(lineage, p)
+		pa, err := m.cfg.Store.AgentByKey(p)
+		if err != nil {
+			break
+		}
+		p = pa.Parent
+	}
+	return Covered(a, lineage, gs, m.cfg.Now())
 }

@@ -352,8 +352,8 @@ func (d *Daemon) dispatch(ctx context.Context, o Origin, req wire.Request) (any,
 	}
 	if req.Method == "container_attach" || req.Method == "approval_decide" || req.Method == "approval_list" ||
 		req.Method == "thread_list" || req.Method == "agent_role" || req.Method == "request_list" || req.Method == "request_decide" || req.Method == "board_list" ||
-		req.Method == "sound" || req.Method == "grant_add" || req.Method == "grant_revoke" || req.Method == "grant_list" ||
-		req.Method == "delivery_set" || req.Method == "grant_request_list" || req.Method == "grant_request_decide" {
+		req.Method == "sound" || req.Method == "allow_set" || req.Method == "allow_off" || req.Method == "allow_list" ||
+		req.Method == "grant_revoke" || req.Method == "grant_request_list" || req.Method == "grant_request_decide" {
 		if o.Container != "" {
 			return nil, fmt.Errorf("%s: host only", req.Method)
 		}
@@ -1319,14 +1319,14 @@ func (d *Daemon) dispatchHooks(ctx context.Context, o Origin, me string, req wir
 		d.mu.Unlock()
 		d.changed()
 		return struct{}{}, nil
-	case "grant_add":
-		return d.grantAdd(req.Params)
+	case "allow_set":
+		return d.allowSet(req.Params)
+	case "allow_off":
+		return d.allowOff(req.Params)
+	case "allow_list":
+		return d.allowList(req.Params)
 	case "grant_revoke":
 		return d.grantRevoke(req.Params)
-	case "grant_list":
-		return d.grantList(req.Params)
-	case "delivery_set":
-		return d.deliverySet(req.Params)
 	case "grants_list":
 		return d.grantsMine(o, me)
 	case "grants_request":

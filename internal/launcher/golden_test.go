@@ -269,7 +269,7 @@ func commandSetup(t *testing.T, root string, sc commandScenario) (*world, []stri
 	}
 	args := make([]string, len(sc.args))
 	for i, a := range sc.args {
-		args[i] = strings.ReplaceAll(a, "$W", w.dir)
+		args[i] = strings.ReplaceAll(strings.ReplaceAll(a, "$W", w.dir), "$ID", w.id())
 	}
 	cwd := w.proj
 	if sc.cwd != "" {
@@ -674,7 +674,7 @@ func TestCommandsMatchTheGoldenFiles(t *testing.T) {
 			},
 			want: []string{"ok    docker reachable", "ok    Docker Engine 29.4.2 (containerd v2.1.4, runc 1.3.0)",
 				"warn  kernel 7.0.0-38-generic: no known minimum for ubuntu 24.04", "FAIL  user config",
-				"core [delivery] [--container] [lea-$ID] [--projects] [$W/projects] [check] [--state]"}, absent: []string{"launcher"}},
+				"core [allow] [--container] [lea-$ID] [--projects] [$W/projects] [check] [--state]"}, absent: []string{"launcher"}},
 		// Without a projects directory there is no lea to check delivery for.
 		// The host versions are pinned as in doctor: the recording never depends on the machine.
 		{name: "doctor without a projects dir", args: []string{"doctor"}, exit: 1,
@@ -684,23 +684,42 @@ func TestCommandsMatchTheGoldenFiles(t *testing.T) {
 				os.WriteFile(w.dir+"/os-release", []byte("ID=ubuntu\nVERSION_ID=\"24.04\"\n"), 0o644)
 				os.WriteFile(w.dir+"/bin/uname", []byte("#!/bin/sh\necho 7.0.0-38-generic\n"), 0o755)
 			},
-			want: []string{"ok    docker reachable", "warn  kernel 7.0.0-38-generic: no known minimum for ubuntu 24.04"}, absent: []string{"core [delivery]"}},
+			want: []string{"ok    docker reachable", "warn  kernel 7.0.0-38-generic: no known minimum for ubuntu 24.04"}, absent: []string{"core [allow]"}},
 		// lea lock was removed (#300): lea shows no lock console, and says lox run shows what the
 		// locks ask; it calls neither the core nor lox.
 		{name: "lock is removed", args: []string{"lock", "open", "locksql"}, exit: 2,
 			want:   []string{"lea: error: lea lock was removed: lea shows no lock console. Open another terminal (outside lea) and run `lox run`"},
 			absent: []string{"core [lock]", "lox ["}},
-		// lea delivery: the core form, with this projects dir's container and the directory.
+		// lea allow (#319): the core form, with this projects dir's container and the directory.
+		{name: "allow", args: []string{"allow"},
+			want: []string{"core [allow] [--container] [lea-$ID] [--projects] [$W/projects]"}},
+		{name: "allow deliver", args: []string{"allow", "deliver", "--repo", "api", "--yes", "0123456789abcdef"},
+			want: []string{"core [allow] [--container] [lea-$ID] [--projects] [$W/projects] [deliver] [--repo] [api] [--yes] [0123456789abcdef]"}},
+		{name: "allow with a container", args: []string{"allow", "merge", "--container", "lea-x"}, exit: 2,
+			want: []string{"lea: error: lea allow names no --container or --projects"}, absent: []string{"core [allow]"}},
+		// lea delivery and lea grant add|ls are aliases (#319): translated, with a notice.
 		{name: "delivery on", args: []string{"delivery", "on"},
-			want: []string{"core [delivery] [--container] [lea-$ID] [--projects] [$W/projects] [on]"}},
+			want: []string{"core [allow] [--container] [lea-$ID] [--projects] [$W/projects] [deliver]", "lea: note: lea delivery on is now lea allow deliver"}},
 		{name: "delivery on --yes", args: []string{"delivery", "on", "--yes", "0123456789abcdef"},
-			want: []string{"core [delivery] [--container] [lea-$ID] [--projects] [$W/projects] [on] [--yes] [0123456789abcdef]"}},
+			want: []string{"core [allow] [--container] [lea-$ID] [--projects] [$W/projects] [deliver] [--yes] [0123456789abcdef]"}},
 		{name: "delivery on --gitlab", args: []string{"delivery", "on", "--gitlab", "git.corp.example", "--yes", "0123456789abcdef"},
-			want: []string{"core [delivery] [--container] [lea-$ID] [--projects] [$W/projects] [on] [--gitlab] [git.corp.example] [--yes] [0123456789abcdef]"}},
-		{name: "delivery on --yes without a digest", args: []string{"delivery", "on", "--yes"}, exit: 2, absent: []string{"core [delivery]"}},
-		{name: "delivery off --yes", args: []string{"delivery", "off", "--yes"}, exit: 2, absent: []string{"core [delivery]"}},
+			want: []string{"core [allow] [--container] [lea-$ID] [--projects] [$W/projects] [deliver] [--gitlab] [git.corp.example] [--yes] [0123456789abcdef]"}},
+		{name: "delivery off", args: []string{"delivery", "off"},
+			want: []string{"core [allow] [--container] [lea-$ID] [--projects] [$W/projects] [off] [deliver]", "lea: note: lea delivery off is now lea allow off deliver"}},
+		{name: "delivery status", args: []string{"delivery", "status"},
+			want: []string{"core [allow] [--container] [lea-$ID] [--projects] [$W/projects]", "lea: note: lea delivery status is now lea allow"}},
+		{name: "delivery on --yes without a digest", args: []string{"delivery", "on", "--yes"}, exit: 2, absent: []string{"core [allow]"}},
+		{name: "delivery off --yes", args: []string{"delivery", "off", "--yes"}, exit: 2, absent: []string{"core [allow]"}},
 		{name: "delivery without a verb", args: []string{"delivery"}, exit: 2,
-			want: []string{"lea: error: usage: lea delivery on [--yes DIGEST] [--gitlab HOST]...|off|status"}, absent: []string{"core [delivery]"}},
+			want: []string{"lea: error: usage: lea delivery on [--yes DIGEST] [--gitlab HOST]...|off|status"}, absent: []string{"core [allow]"}},
+		{name: "grant add", args: []string{"grant", "add", "merge", "--container", "lea-$ID", "--repo", "api", "--github", "o/api", "--expires", "2h"},
+			want: []string{"core [allow] [--container] [lea-$ID] [--projects] [$W/projects] [merge] [--repo] [api] [--check-pin] [o/api] [--for] [2h]",
+				"lea: note: lea grant add is now lea allow merge --repo api --for 2h"}},
+		{name: "grant add for another lea", args: []string{"grant", "add", "merge", "--container", "lea-other", "--repo", "api"}, exit: 2,
+			want: []string{"lea: error: --container lea-other is not this projects directory's lea"}, absent: []string{"core [allow]"}},
+		{name: "grant add an unknown action", args: []string{"grant", "add", "rm-rf"}, exit: 2, absent: []string{"core [allow]"}},
+		{name: "grant ls", args: []string{"grant", "ls"},
+			want: []string{"core [allow] [--container] [lea-$ID] [--projects] [$W/projects]", "lea: note: lea grant ls is now lea allow"}},
 		{name: "kube refresh", args: []string{"kube", "refresh"}, exit: 1, env: map[string]string{"LEA_K8S_USER": "dev"},
 			want: []string{"kubectl [config] [get-contexts]", "lea: error: no cluster issued a token"}},
 		{name: "init without a terminal", args: []string{"init"}, want: []string{"lea: ready. Run: lea"}, absent: []string{"ssh-keygen"}},
