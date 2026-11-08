@@ -38,6 +38,12 @@ Changes:
 - In the deck, a folder header's summary sets each state mark apart from its count (`6 ◐ 6`, not
   `6 ◐6`) (#355): the marks are East Asian Ambiguous width, and a terminal that draws them wide
   drew the half-moon over the digit.
+- A granted `git push -u origin <branch>` from a worktree branch created from `origin/main` goes
+  through at the first try (#381): the pinned push no longer runs `rm` in its `sh -c` script
+  (Claude Code refused it, hook allow or not), it runs from a bare repository reused in the
+  worktree's git directory; once pushed, it records `origin/<branch>` and `-u` makes it the
+  branch's upstream (it did nothing, so the branch kept tracking `main`). The agent prompt says to
+  create the worktree with `git worktree add --no-track`.
 - The first run and upgrades ask the deck question (#335): the first `lea` on a terminal (the
   Homebrew journey, `lea init --first-run`) asks "Use the lea deck ...? [Y/n]" and, on no, the
   command to start in the lea container, before it opens anything. An install whose user config
