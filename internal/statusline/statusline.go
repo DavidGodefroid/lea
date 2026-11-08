@@ -63,6 +63,15 @@ const loxRunOff = " · no lox run: start it in the projects directory"
 // raw JSON is also written there (mode 0600). Nothing here may fail Claude: bad input prints "lea"
 // and reports nothing.
 func Run(stdin io.Reader, stdout io.Writer, dump string, post func(Report) Answer) error {
+	return RunWith(stdin, stdout, dump, post, User{})
+}
+
+// RunWith is Run chained with the user's own status line (#374): when u names a command it runs
+// with the same JSON on stdin while lea reports to the daemon, and its output is printed instead
+// of lea's line. A command that fails, prints nothing or outlasts u.Timeout (it is killed) leaves
+// lea's line. The report is sent whatever the command does; the lox run and +lock parts follow
+// either line.
+func RunWith(stdin io.Reader, stdout io.Writer, dump string, post func(Report) Answer, u User) error {
 	in, err := io.ReadAll(io.LimitReader(stdin, 1<<20))
 	if err != nil {
 		fmt.Fprintln(stdout, "lea")
@@ -78,6 +87,7 @@ func Run(stdin io.Reader, stdout io.Writer, dump string, post func(Report) Answe
 		fmt.Fprintln(stdout, "lea")
 		return dumpErr
 	}
+	user := u.start(in)
 	r := parse(doc)
 	ws := windows(doc)
 	r.Limits = limits(ws)
@@ -86,6 +96,9 @@ func Run(stdin io.Reader, stdout io.Writer, dump string, post func(Report) Answe
 		ans = post(r)
 	}
 	ln := line(doc, r, ws, os.Getenv("NO_COLOR") == "", time.Now())
+	if out := user(); out != "" {
+		ln = out
+	}
 	if ans.LoxRun == "off" {
 		ln += loxRunOff
 	}
