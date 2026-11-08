@@ -190,3 +190,49 @@ func TestPinnedReleaseCreateRuns(t *testing.T) {
 		}
 	}
 }
+
+// TestCreateFileIndexFromParser: the body or notes file gh reads on its stdin is the one the
+// parser took as the flag's value, not a value that merely looks like the flag (#382); "="
+// forms are no form the parser takes.
+func TestCreateFileIndexFromParser(t *testing.T) {
+	gs := []Grant{all(PRCreate), releaseGrant("v0.15.*")}
+	for _, tc := range []struct{ name, cmd, file, argv string }{
+		{"pr title -F", "gh pr create --head feat/73-x --title -F --body-file body.md", "body.md",
+			"'pr' 'create' '--head' 'feat/73-x' '--title' '-F' '--body-file' '-' '-R'"},
+		{"pr title --body-file", "gh pr create --head feat/73-x -t --body-file -F body.md", "body.md",
+			"'pr' 'create' '--head' 'feat/73-x' '-t' '--body-file' '-F' '-' '-R'"},
+		{"pr file after title -F", "gh pr create --head feat/73-x -F body.md --title -F", "body.md",
+			"'pr' 'create' '--head' 'feat/73-x' '-F' '-' '--title' '-F' '-R'"},
+		{"release title -F", "gh release create v0.15.0 --verify-tag --title -F --notes-file notes.md", "notes.md",
+			"'release' 'create' 'v0.15.0' '--verify-tag' '--title' '-F' '--notes-file' '-' '-R'"},
+		{"release title --notes-file", "gh release create v0.15.0 --verify-tag -t --notes-file -F notes.md", "notes.md",
+			"'release' 'create' 'v0.15.0' '--verify-tag' '-t' '--notes-file' '-F' '-' '-R'"},
+	} {
+		d := Decide("Bash", bash(tc.cmd), dev, gs, now, false)
+		if d.Verdict != Allow {
+			t.Fatalf("%s: verdict %q (%s)", tc.name, d.Verdict, d.Reason)
+		}
+		s := inner(d.Command)
+		if !strings.Contains(s, "exec 3< '/p/.lea/worktrees/lea/dev-2/"+tc.file+"'") || !strings.Contains(s, tc.argv) {
+			t.Fatalf("%s: command does not read %s with %s:\n%s", tc.name, tc.file, tc.argv, s)
+		}
+	}
+	// A title alone, whatever it looks like, never makes gh read its stdin.
+	d := Decide("Bash", bash("gh pr create --head feat/73-x --title -F --body x"), dev, gs, now, false)
+	if s := inner(d.Command); d.Verdict != Allow || strings.Contains(s, "exec 3<") || !strings.Contains(s, "'--title' '-F' '--body' 'x' '-R'") {
+		t.Fatalf("title -F with --body: %q %s", d.Verdict, s)
+	}
+	for _, cmd := range []string{
+		"gh pr create --head feat/73-x --title x --body-file=body.md",
+		"gh pr create --head feat/73-x --title=-F --body-file body.md",
+		"gh pr create --head feat/73-x --title x -F=body.md",
+		"gh release create v0.15.0 --verify-tag --notes-file=notes.md",
+		"gh release create v0.15.0 --verify-tag --title=-F --notes-file notes.md",
+		"gh pr create --head feat/73-x --title x --body-file body.md --body-file other.md",
+		"gh release create v0.15.0 --verify-tag --notes-file notes.md -F other.md",
+	} {
+		if d := Decide("Bash", bash(cmd), dev, gs, now, false); d.Verdict == Allow {
+			t.Fatalf("%s allowed: %s", cmd, d.Command)
+		}
+	}
+}

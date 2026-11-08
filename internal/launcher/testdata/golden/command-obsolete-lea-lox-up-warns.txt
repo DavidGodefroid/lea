@@ -21,6 +21,6 @@ core [attach-container] [lea-$ID]
 core [deck-open] [--container] [lea-$ID] [--workdir] [$W/projects]
 tmux [-L] [lea] [-f] [$W/data/lea/host/tmux.conf] [attach-session] [-t] [=lea-$ID]
 -- lea
-lea: warning: LEA_LOX_UP=1 is obsolete and ignored: lea no longer runs lox up; remove it from your configuration (lox run, in another terminal, starts the hub and the locks)
+lea: warning: LEA_LOX_UP=1 is obsolete and ignored: remove it from your configuration (lox run, in another terminal, starts the hub and the locks)
 lea: Open another terminal (outside lea) and run `lox run` to approve the agents' connections and writes.
 -- stdout
