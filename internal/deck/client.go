@@ -31,6 +31,13 @@ func (c Client) New(ctx context.Context, container, provider string) (Agent, err
 	return a, err
 }
 
+// NewTower starts a Control Tower (#339), focused: the daemon makes it a lead on Claude.
+func (c Client) NewTower(ctx context.Context, container string) (Agent, error) {
+	var a Agent
+	err := c.call(ctx, "agent_new", map[string]any{"container": container, "tower": true, "focus": true}, &a)
+	return a, err
+}
+
 func (c Client) Providers(ctx context.Context) ([]string, error) {
 	var ps []struct{ Name string }
 	if err := c.call(ctx, "providers_list", nil, &ps); err != nil {

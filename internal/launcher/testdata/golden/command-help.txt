@@ -58,6 +58,10 @@ Usage:
   lea config deck on|off      the deck, or your own tool in the lea container (from the next lea)
   lea config tool CMD [ARG...]
                               the tool lea runs in the lea container without the deck (claude)
+  lea config claude [KEY VALUE|KEY --unset|LIST add|remove ENTRY]
+                              Claude's base settings for your agents (defaultMode, allow, ask,
+                              deny, additionalDirectories, env, model...), each with its source;
+                              kept in lea's configuration, from the next lea container
   lea update [--deps ask|all|none]
                               the latest lea, then each newer locksql release (lockmq,
                               lockfile, locklog: their launchers update themselves)

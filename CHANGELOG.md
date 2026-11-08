@@ -15,6 +15,24 @@ Changes:
   context framed as untrusted data, as `msg_inbox` frames an agent's message, with its control,
   bidi and zero-width characters replaced (#95): an agent's words in a queued question could
   pass for lea's instructions.
+- `lea config claude` (#334): your base settings for Claude Code in lea, without editing a file or
+  rebuilding the image: `defaultMode`, entries to add to or remove from `allow`, `ask`, `deny` and
+  `additionalDirectories` (lea's built-in rules included), `env`, `model`, `language`,
+  `outputStyle`, `alwaysThinkingEnabled`; `lea config claude` alone shows every effective setting
+  with its source. Kept in `claude.json` next to `lea.conf`, never in `~/.claude/settings.json`;
+  they outrank the host's `permissions` and apply to the containers started from then on. lea's
+  hooks, `allowManagedPermissionRulesOnly`, `disableBypassPermissionsMode`, the status line and
+  lea's own variables are refused with the reason. Host only; `lea doctor` lists the overrides,
+  `lea config export` never carries them.
+- The deck's first agent is a Control Tower (#339): `lea deck-open` with no agent running starts a
+  lead on Claude labelled `Control Tower`, whose first prompt runs `/lea:control-tower`; `N` starts
+  another (`Control Tower 2`…), and the provider picker moves from `N` to `P`. Host only.
+- The agent containers no longer rely on Docker's default resolver (#98): lea starts them with
+  `--dns 192.0.2.1` (TEST-NET-1, never routed, out of reach of the internal network), so a lookup of an external name, from an agent or a nested container, is
+  never forwarded to the host's resolver (lea-proxy, which resolves names for the agents, is still
+  answered). `lea doctor` fails on a running container that resolves an external name, and warns
+  about one started without it (`lea stop`, then `lea`). `make test-isolation` checks that no lookup, direct
+  query to a public resolver or long TXT name reaches a decoy DNS server, on the decoy network or on the host's 127.0.0.1:53.
 - The control tower asks you one question at a time (#95): its new `user_ask` tool (leads only)
   opens a question when none is open and queues it otherwise, by priority (`incident`,
   `blocking`, `normal`) then in order; the queue is kept in lea.db. Your next prompt, or your
@@ -49,6 +67,12 @@ Changes:
 - In the deck, a folder header's summary sets each state mark apart from its count (`6 ◐ 6`, not
   `6 ◐6`) (#355): the marks are East Asian Ambiguous width, and a terminal that draws them wide
   drew the half-moon over the digit.
+- A granted `git push -u origin <branch>` from a worktree branch created from `origin/main` goes
+  through at the first try (#381): the pinned push no longer runs `rm` in its `sh -c` script
+  (Claude Code refused it, hook allow or not), it runs from a bare repository reused in the
+  worktree's git directory; once pushed, it records `origin/<branch>` and `-u` makes it the
+  branch's upstream (it did nothing, so the branch kept tracking `main`). The agent prompt says to
+  create the worktree with `git worktree add --no-track`.
 - The first run and upgrades ask the deck question (#335): the first `lea` on a terminal (the
   Homebrew journey, `lea init --first-run`) asks "Use the lea deck ...? [Y/n]" and, on no, the
   command to start in the lea container, before it opens anything. An install whose user config

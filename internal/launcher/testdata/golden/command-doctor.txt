@@ -15,6 +15,7 @@ docker [network] [ls] [--filter] [label=lea.prefix=lea] [--format] [{{.Name}}]
 docker [ps] [--filter] [label=lea.prefix=lea] [--filter] [label=lea.role=session] [--format] [{{.Names}}]
 docker [info] [--format] [{{.Host.Security.Rootless}} {{.Host.CgroupControllers}}]
 docker [ps] [--filter] [label=lea.prefix=lea] [--filter] [label=lea.role=session] [--format] [{{.Names}}]
+docker [ps] [--filter] [label=lea.prefix=lea] [--filter] [label=lea.role=session] [--format] [{{.Names}}]
 docker [image] [inspect] [lea:dev]
 docker [run] [--rm] [--pull] [never] [--network] [none] [--entrypoint] [/usr/local/libexec/lea/managed-check] [lea:dev]
 docker [ps] [--filter] [label=lea.prefix=lea] [--filter] [label=lea.role=session] [--format] [{{.Names}}]
@@ -50,3 +51,4 @@ ok    agent-readable credentials: none
 ok    not agent-readable: no GitHub token (lea github login keeps one in the proxy), provider API keys (proxy), lea's SSH key (ssh-agent socket only)
 warn  kubernetes token: none (optional): lea kube refresh
 ok    Lock clients: one set, lockkit-v0.13.1: locksql v0.17.0, lockmq v0.8.0, lockfile v0.8.0, locklog v0.2.1, lockhttp v0.8.0, lox v0.10.0
+ok    lea config claude: no overrides (lea's defaults and the host's ~/.claude/settings.json permissions)

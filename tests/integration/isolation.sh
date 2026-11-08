@@ -103,7 +103,7 @@ wait_for() {
 cleanup() {
   release_holders
   if [ -n "$facade_pid" ]; then kill "$facade_pid" 2>/dev/null || true; fi
-  docker rm -f lea-canary >/dev/null 2>&1 || true
+  docker rm -f lea-canary lea-canary-dns lea-canary-dns-host >/dev/null 2>&1 || true
   docker network rm lea-canary-net >/dev/null 2>&1 || true
   "$root/bin/lea" stop --all >/dev/null 2>&1 || true
   docker rm -f "lea-test-$id" "lea-test-$sid" "lea-test-$pid" lea-test-proxy >/dev/null 2>&1 || true
@@ -129,6 +129,43 @@ i=0
 until curl -sf --max-time 2 http://127.0.0.1:18080/ 2>/dev/null | grep -qx canary; do
   i=$((i + 1))
   if [ "$i" -ge 10 ]; then echo "isolation: the decoy does not answer on 127.0.0.1:18080 (positive control failed)" >&2; exit 1; fi
+  sleep 1
+done
+# A decoy DNS server (#98) that logs every query it gets: the DNS checks inside lea send lookups of
+# names under DNS_MARK, which must never reach it. lea's image has the Python it runs on.
+docker run -d --name lea-canary-dns --network lea-canary-net --user 0 --entrypoint python3 \
+  -v "$root/tests/integration/dns-decoy.py:/dns-decoy.py:ro" "$image" -I /dns-decoy.py >/dev/null
+dns_ip=$(docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' lea-canary-dns)
+dns_mark="lea-it-$id.lea-decoy.test"
+# Positive control: a container whose resolver is the decoy (as Docker's default is the host's)
+# gets its lookups to it through Docker's embedded resolver, so the decoy's log would show a leak.
+i=0
+until docker logs lea-canary-dns 2>/dev/null | grep -q "^query ctl.$dns_mark 1$"; do
+  docker run --rm --network lea-canary-net --dns "$dns_ip" busybox:1.37 nslookup "ctl.$dns_mark" >/dev/null 2>&1 || true
+  i=$((i + 1))
+  if [ "$i" -ge 10 ]; then
+    echo "isolation: the decoy DNS server gets no query through Docker's embedded resolver (positive control failed)" >&2
+    docker logs lea-canary-dns >&2 2>&1 || true; exit 1
+  fi
+  sleep 1
+done
+# A second decoy on the host's 127.0.0.1:53: Docker may query a loopback resolver from the host's
+# namespace (its default, host(127.0.0.53)), so a loopback --dns would reach a resolver listening
+# there (dnsmasq, unbound). Positive control: a query from the host reaches it.
+docker run -d --name lea-canary-dns-host --network host --user 0 --entrypoint python3 \
+  -v "$root/tests/integration/dns-decoy.py:/dns-decoy.py:ro" "$image" -I /dns-decoy.py 127.0.0.1 >/dev/null
+i=0
+until docker logs lea-canary-dns-host 2>/dev/null | grep -q "^query ctl-host.$dns_mark 1$"; do
+  python3 -I -c 'import socket, struct, sys
+q = struct.pack(">HHHHHH", 1, 0x0100, 1, 0, 0, 0) + b"".join(bytes([len(p)]) + p.encode() for p in sys.argv[1].split(".")) + b"\0\0\1\0\1"
+c = socket.socket(socket.AF_INET, socket.SOCK_DGRAM); c.settimeout(2); c.sendto(q, ("127.0.0.1", 53))
+try: c.recvfrom(512)
+except OSError: pass' "ctl-host.$dns_mark" 2>/dev/null || true
+  i=$((i + 1))
+  if [ "$i" -ge 10 ]; then
+    echo "note: the decoy DNS server on the host's 127.0.0.1:53 did not start (port in use?): the host-loopback DNS check did not run"
+    docker logs lea-canary-dns-host 2>&1 | sed 's/^/     | /'; break
+  fi
   sleep 1
 done
 # Local routing table lookup: no packet is sent.
@@ -171,6 +208,13 @@ if [ -f "$HOME/.claude/settings.json" ] && [ ! -L "$HOME/.claude/settings.json" 
   # One of the host's own allow rules: the managed settings must carry it (#111).
   host_rule=$(jq -r '[.permissions.allow[]? | strings | select(length > 0 and length <= 1024)][0] // empty' "$HOME/.claude/settings.json" 2>/dev/null || true)
 fi
+# lea config claude (#334): the user's own base settings, kept in lea's configuration ($work, next
+# to LEA_CONFIG), reach the managed settings of the containers started from now on.
+"$root/bin/lea" config claude defaultMode auto >/dev/null
+"$root/bin/lea" config claude allow add 'Bash(lea-config-claude *)' >/dev/null
+# The default mode the host's settings.json gives once lea config claude's is unset (#333).
+host_mode=''
+[ -z "$settings_sha" ] || host_mode=$(jq -r '.permissions.defaultMode // empty | select(IN("default", "acceptEdits", "plan", "dontAsk", "auto"))' "$HOME/.claude/settings.json" 2>/dev/null || true)
 mk="$projects/lea-it-market"
 mkdir -p "$mk/.claude-plugin" "$mk/plugins/lea-it/.claude-plugin" "$mk/plugins/lea-it/commands"
 printf '{"name":"lea-it-market","owner":{"name":"lea"},"plugins":[{"name":"lea-it","source":"./plugins/lea-it","description":"lea isolation test plugin"}]}\n' \
@@ -277,9 +321,25 @@ else echo "FAIL no forge-migrated marker: a token planted in the state could rep
 "$root/tests/proxy/check-confined.sh" lea-test-proxy || rc=1
 echo "isolation: the checks inside lea"
 LEA_PROJECTS_DIR="$projects" timeout 900 "$root/bin/lea" shell -- env FORGE_NEEDLE="$forge_needle" FORGE_EXPECT="$forge_expect" CANARY_IP="$canary_ip" GW_IP="$gw_ip" HOST_IP="$host_ip" \
-  SIBLING_IP="$sibling_ip" HOST_KERNEL="$(uname -r)" SECOND_KERNEL="${runtime:+1}" HOST_FACADE="$facade" HOST_CRED_SHA="$cred_sha" HOST_HIST_SHA="$hist_sha" \
-  HOST_SETTINGS_SHA="$settings_sha" HOST_ALLOW_RULE="$host_rule" LEA_IT_MARKET="$mk" sh "$projects/inside-isolation.sh" || rc=$?
+  SIBLING_IP="$sibling_ip" DECOY_DNS_IP="$dns_ip" DNS_MARK="$dns_mark" HOST_KERNEL="$(uname -r)" SECOND_KERNEL="${runtime:+1}" HOST_FACADE="$facade" HOST_CRED_SHA="$cred_sha" HOST_HIST_SHA="$hist_sha" \
+  HOST_SETTINGS_SHA="$settings_sha" HOST_ALLOW_RULE="$host_rule" LEA_IT_MARKET="$mk" CONFIG_CLAUDE=1 sh "$projects/inside-isolation.sh" || rc=$?
+# No lookup made inside lea or its nested containers reached either decoy (#98): only the positive
+# controls' names are in their logs.
+dns_leaks() { for d in lea-canary-dns lea-canary-dns-host; do docker logs "$d" 2>&1 | grep "^query " | grep -v "^query ctl\(-host\)\?\.$dns_mark " | grep -F "$dns_mark" | sed "s/^/$d: /"; done; }
+if [ -n "$(dns_leaks)" ]; then
+  echo "FAIL no DNS query from inside lea reached the decoy:"; dns_leaks | sed 's/^/     | /'; rc=1
+else echo "ok   no DNS query from inside lea reached the decoy"; fi
 # What the agents did to their copies never reached the host (#111).
 if [ "$(host_claude_sum)" = "$host_sum" ]; then echo "ok   host ~/.claude settings.json and plugins unchanged"
 else echo "FAIL host ~/.claude settings.json and plugins unchanged"; rc=1; fi
+# lea config claude (#334): its rule removed and its mode unset, a fresh container has neither.
+release_holders
+"$root/bin/lea" stop --all >/dev/null 2>&1 || true
+"$root/bin/lea" config claude allow remove 'Bash(lea-config-claude *)' >/dev/null
+"$root/bin/lea" config claude defaultMode --unset >/dev/null
+got=$(LEA_PROJECTS_DIR="$projects" timeout 300 "$root/bin/lea" shell -- \
+  jq -r '[(.permissions.defaultMode // "none"), (.permissions.allow | index("Bash(lea-config-claude *)") // "none")] | join(" ")' \
+  /etc/claude-code/managed-settings.json </dev/null 2>/dev/null | tail -n 1 || true)
+if [ "$got" = "${host_mode:-none} none" ]; then echo "ok   lea config claude: remove and --unset apply at the next start"
+else echo "FAIL lea config claude: remove and --unset apply at the next start (got '$got', want '${host_mode:-none} none')"; rc=1; fi
 exit "$rc"

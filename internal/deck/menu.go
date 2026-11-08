@@ -84,7 +84,8 @@ const deckMenu = "\x00deck"
 
 // deckMenuItems are the deck's own actions, those of no row; S only when the host plays sounds.
 func deckMenuItems(sound string) []menuItem {
-	items := []menuItem{{"New agent", "n", ""}, {"New shell", "s", ""}, {"New folder", "f", ""}}
+	items := []menuItem{{"New agent", "n", ""}, {"New Control Tower", "N", ""}, {"New, other provider", "P", ""},
+		{"New shell", "s", ""}, {"New folder", "f", ""}}
 	switch sound {
 	case "on":
 		items = append(items, menuItem{"Mute sounds", "S", ""})
