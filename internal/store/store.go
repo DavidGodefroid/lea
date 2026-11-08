@@ -99,6 +99,13 @@ CREATE INDEX IF NOT EXISTS hub_waits_ticket ON hub_waits(ticket);
 CREATE TABLE IF NOT EXISTS hub_abandoned(
   instance TEXT NOT NULL, ticket TEXT NOT NULL, at INTEGER NOT NULL, PRIMARY KEY(instance, ticket));
 CREATE TABLE IF NOT EXISTS kv(key TEXT PRIMARY KEY, value TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS user_questions(
+  id INTEGER PRIMARY KEY AUTOINCREMENT, agent TEXT NOT NULL, from_agent TEXT NOT NULL DEFAULT '',
+  message INTEGER NOT NULL DEFAULT 0, body TEXT NOT NULL, priority TEXT NOT NULL, rank INTEGER NOT NULL,
+  seq INTEGER NOT NULL, state TEXT NOT NULL, shown INTEGER NOT NULL DEFAULT 0,
+  reminded INTEGER NOT NULL DEFAULT 0, created INTEGER NOT NULL, asked_at INTEGER NOT NULL DEFAULT 0,
+  answered_at INTEGER NOT NULL DEFAULT 0);
+CREATE INDEX IF NOT EXISTS user_questions_agent ON user_questions(agent, state);
 `
 
 type Store struct{ db *sql.DB }
@@ -651,6 +658,10 @@ func (s *Store) ForgetAgent(key string) error {
 	if _, err := tx.Exec(`DELETE FROM hub_waits WHERE agent_key=?`, key); err != nil {
 		return err
 	}
+	// Its questions to the user go with it: nobody would relay their answers.
+	if _, err := tx.Exec(`DELETE FROM user_questions WHERE agent=?`, key); err != nil {
+		return err
+	}
 	if _, err := tx.Exec(`DELETE FROM agents WHERE key=?`, key); err != nil {
 		return err
 	}
@@ -825,7 +836,19 @@ func (s *Store) Get(id int64) (Message, error) {
 }
 
 func (s *Store) Unread(to string, limit int) ([]Message, error) {
-	rows, err := s.db.Query(`SELECT `+msgCols+` FROM messages WHERE recipient=? AND read_at=0
+	return s.UnreadHolding(to, limit, false)
+}
+
+// heldAsks leaves out the questions agents ask (ask, kind question) that answer nothing.
+const heldAsks = ` AND NOT (kind='question' AND reply_to=0)`
+
+// UnreadHolding is Unread; holdAsks leaves the questions agents ask unread and out (#95).
+func (s *Store) UnreadHolding(to string, limit int, holdAsks bool) ([]Message, error) {
+	cond := ""
+	if holdAsks {
+		cond = heldAsks
+	}
+	rows, err := s.db.Query(`SELECT `+msgCols+` FROM messages WHERE recipient=? AND read_at=0`+cond+`
 		ORDER BY id LIMIT ?`, to, limit)
 	if err != nil {
 		return nil, err
@@ -872,9 +895,16 @@ func (s *Store) eachID(ids []int64, q string, lead ...any) error {
 }
 
 // UnreadCount counts the unread messages of one recipient.
-func (s *Store) UnreadCount(to string) (int, error) {
+func (s *Store) UnreadCount(to string) (int, error) { return s.UnreadCountHolding(to, false) }
+
+// UnreadCountHolding is UnreadCount; holdAsks leaves out the questions agents ask (#95).
+func (s *Store) UnreadCountHolding(to string, holdAsks bool) (int, error) {
+	cond := ""
+	if holdAsks {
+		cond = heldAsks
+	}
 	var n int
-	err := s.db.QueryRow(`SELECT COUNT(*) FROM messages WHERE recipient=? AND read_at=0`, to).Scan(&n)
+	err := s.db.QueryRow(`SELECT COUNT(*) FROM messages WHERE recipient=? AND read_at=0`+cond, to).Scan(&n)
 	return n, err
 }
 

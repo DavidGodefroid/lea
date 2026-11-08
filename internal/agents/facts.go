@@ -24,6 +24,7 @@ type facts struct {
 	approval        map[string]*Approval
 	status          map[string]store.TaskState
 	subagents       map[string]int
+	qOpen, qQueued  map[string]int
 }
 
 func loadFacts(st *store.Store, container string, now int64) (facts, error) {
@@ -42,6 +43,9 @@ func loadFacts(st *store.Store, container string, now int64) (facts, error) {
 		return f, err
 	}
 	if f.subagents, err = st.Subagents(container); err != nil {
+		return f, err
+	}
+	if f.qOpen, f.qQueued, err = st.QuestionCounts(); err != nil {
 		return f, err
 	}
 	pend, err := st.PendingApprovals()
@@ -66,6 +70,7 @@ func (f facts) row(r Row) Row {
 	ts := f.status[r.Key]
 	r.Status, r.Waiting, r.BlockedOn = ts.Status, ts.Next, ts.Blocked
 	r.Subagents = f.subagents[r.Key]
+	r.QuestionsOpen, r.QuestionsQueued = f.qOpen[r.Key], f.qQueued[r.Key]
 	return r
 }
 

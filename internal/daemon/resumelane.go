@@ -190,7 +190,12 @@ func (d *Daemon) resumeSuspended(a Agents, key string) {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), suspendTimeout)
 	defer cancel()
+	// The resume's prompt is lea's: it answers no question of the user (#95).
+	d.markLeaPrompt(key, suspendTimeout+leaPromptGrace)
 	if err := a.ResumeSuspended(ctx, key, prompt); err != nil {
+		d.mu.Lock()
+		delete(d.leaPrompts, key)
+		d.mu.Unlock()
 		if errors.Is(err, agents.ErrNotSuspended) {
 			d.mu.Lock()
 			delete(d.resumeFails, key)
@@ -209,6 +214,10 @@ func (d *Daemon) resumeSuspended(a Agents, key string) {
 	} else {
 		d.mu.Lock()
 		delete(d.resumeFails, key)
+		if _, ok := d.leaPrompts[key]; ok {
+			// Its prompt comes soon or never: a later prompt is the user's.
+			d.leaPrompts[key] = d.now() + int64(leaPromptGrace/time.Second)
+		}
 		d.mu.Unlock()
 		d.markDelivered(key, ws)
 	}

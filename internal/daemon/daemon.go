@@ -184,6 +184,10 @@ type Daemon struct {
 	lockDebounce   time.Duration
 	afterLockEvent func(LockEvent)
 	lockWarnf      func(string, ...any)
+	// Questions to the user (questions.go, #95): how long an open one waits before lea reminds
+	// the tower (0: never), and the agents whose next prompt lea typed (it answers no question).
+	questionRemind time.Duration
+	leaPrompts     map[string]int64 // until when (unix seconds) the next prompt is lea's
 }
 
 func New(st *store.Store, runDir string, now func() int64) *Daemon {
@@ -194,7 +198,7 @@ func New(st *store.Store, runDir string, now func() int64) *Daemon {
 	return &Daemon{subs: map[string]*subagents{}, subTTL: subagentTTL, afterFunc: time.AfterFunc, st: st, lim: bus.Default, now: now, runDir: runDir,
 		attached: map[string]string{}, notify: map[string]chan struct{}{},
 		verdicts: map[int64]chan string{}, asks: map[string]pendingAsk{}, blocks: map[string]int{}, stopped: map[string]bool{}, rewakes: map[string]int{}, rewoken: map[string][]int64{}, woken: map[string]bool{}, keyMu: map[string]*sync.Mutex{}, statusPaths: map[string]string{}, named: map[string]bool{}, rang: map[string]time.Time{}, notified: map[string]time.Time{},
-		resumeDelay: DefaultResumeDelay, windows: map[string][]limitWindow{}, limitJobs: map[string]string{},
+		resumeDelay: DefaultResumeDelay, questionRemind: DefaultQuestionRemind, leaPrompts: map[string]int64{}, windows: map[string][]limitWindow{}, limitJobs: map[string]string{},
 		stackIdle: DefaultStackIdle, parkTimers: map[string]*time.Timer{}, parked: map[string]string{},
 		keepalive: DefaultKeepalive, keepTimers: map[string]*time.Timer{}, resumeFails: map[string]resumeFail{}, resuming: map[string]bool{},
 		heavy: map[string]*heavyPool{}, heavySlots: DefaultHeavySlots(runtime.NumCPU(), DefaultHeavyWorkers), heavyWorkers: DefaultHeavyWorkers}
@@ -353,7 +357,8 @@ func (d *Daemon) dispatch(ctx context.Context, o Origin, req wire.Request) (any,
 	if req.Method == "container_attach" || req.Method == "approval_decide" || req.Method == "approval_list" ||
 		req.Method == "thread_list" || req.Method == "agent_role" || req.Method == "request_list" || req.Method == "request_decide" || req.Method == "board_list" ||
 		req.Method == "sound" || req.Method == "allow_set" || req.Method == "allow_off" || req.Method == "allow_list" ||
-		req.Method == "grant_revoke" || req.Method == "grant_request_list" || req.Method == "grant_request_decide" {
+		req.Method == "grant_revoke" || req.Method == "grant_request_list" || req.Method == "grant_request_decide" ||
+		req.Method == "question_list" || req.Method == "question_drop" {
 		if o.Container != "" {
 			return nil, fmt.Errorf("%s: host only", req.Method)
 		}
@@ -459,6 +464,12 @@ func (d *Daemon) dispatch(ctx context.Context, o Origin, req wire.Request) (any,
 		return d.limitWait(ctx, o, me, req.Params)
 	case "thread_list":
 		return d.threadList(req.Params)
+	case "user_ask":
+		return d.userAsk(o, me, req.Params)
+	case "question_list":
+		return d.questionList()
+	case "question_drop":
+		return d.questionDrop(req.Params)
 	case "container_attach":
 		var p struct{ Name string }
 		if err := json.Unmarshal(req.Params, &p); err != nil {
@@ -694,7 +705,7 @@ func (d *Daemon) restore(res any) {
 // always at least one), and marks exactly those read; the rest stay unread for the next call.
 func (d *Daemon) take(me string) (batch, error) {
 	defer d.lockKey("take:" + me)()
-	ms, err := d.st.Unread(me, inboxBatch)
+	ms, err := d.st.UnreadHolding(me, inboxBatch, d.holdsAsks(me))
 	if err != nil {
 		return batch{}, err
 	}
@@ -779,11 +790,12 @@ func (d *Daemon) wait(ctx context.Context, me string, timeoutS int) (batch, erro
 // the senders: no body content enters the context outside the untrusted wrapping that msg_inbox
 // applies.
 func (d *Daemon) unreadNotice(me string) (map[string]any, error) {
-	n, err := d.st.UnreadCount(me)
+	hold := d.holdsAsks(me)
+	n, err := d.st.UnreadCountHolding(me, hold)
 	if err != nil || n == 0 {
 		return map[string]any{"count": 0, "text": ""}, err
 	}
-	ms, err := d.st.Unread(me, inboxBatch)
+	ms, err := d.st.UnreadHolding(me, inboxBatch, hold)
 	if err != nil {
 		return nil, err
 	}
@@ -961,6 +973,9 @@ func (d *Daemon) pruneForgotten() {
 	for k := range d.rewoken {
 		keys = append(keys, k)
 	}
+	for k := range d.leaPrompts {
+		keys = append(keys, k)
+	}
 	d.mu.Unlock()
 	for _, k := range keys {
 		if _, err := d.st.AgentByKey(k); errors.Is(err, store.ErrNotFound) {
@@ -974,6 +989,7 @@ func (d *Daemon) pruneForgotten() {
 			d.forgetStackLocked(k)
 			d.forgetKeepaliveLocked(k)
 			d.forgetWokenLocked(k)
+			delete(d.leaPrompts, k)
 			d.mu.Unlock()
 		}
 	}
@@ -1070,6 +1086,10 @@ func (d *Daemon) dispatchHooks(ctx context.Context, o Origin, me string, req wir
 				d.endWoken(me)
 			}
 		}
+		if p.Event == "Stop" {
+			// The turn that asked the open question is over: the user has it (#95).
+			d.questionShown(me)
+		}
 		if p.Event == "StopFailure" {
 			d.turnFailed(me, p.Payload)
 		} else {
@@ -1158,7 +1178,30 @@ func (d *Daemon) dispatchHooks(ctx context.Context, o Origin, me string, req wir
 		if d.foreignSession(me, sessionParam(req.Params), "", "") {
 			return map[string]any{"count": 0, "text": ""}, nil
 		}
-		return d.unreadNotice(me)
+		var cp struct {
+			Prompt bool `json:"prompt"`
+			Lea    bool `json:"lea"`
+			Asked  bool `json:"asked"`
+		}
+		_ = json.Unmarshal(req.Params, &cp)
+		answered := ""
+		switch {
+		case cp.Prompt:
+			// The user's prompt answers the open question (#95).
+			answered = d.questionAnswered(me, cp.Lea)
+		case cp.Asked:
+			// So does the user's answer to AskUserQuestion, a tool result with no prompt.
+			answered = d.askAnswered(me)
+		}
+		n, err := d.unreadNotice(me)
+		if err != nil || answered == "" {
+			return n, err
+		}
+		if t, _ := n["text"].(string); t != "" {
+			answered += "\n" + t
+		}
+		n["text"] = answered
+		return n, nil
 	case "approval_request":
 		var p struct {
 			Tool     string          `json:"tool"`
