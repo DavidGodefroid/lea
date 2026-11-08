@@ -90,7 +90,7 @@ func (m Model) inputModal(inner, n int) (top int, lines []string, save, cancel [
 	// A margin and the border, then the Save button, a space and the Cancel button.
 	save = [2]int{2, 2 + 1 + len(saveLabel)}
 	cancel = [2]int{save[1] + 1, save[1] + 2 + len(cancelLabelEsc)}
-	buttons := lipgloss.NewStyle().Foreground(theme.Accent).Background(theme.Sel).Bold(true).Render(c.mark+saveLabel) +
+	buttons := selected(lipgloss.NewStyle().Foreground(theme.Accent)).Bold(true).Render(c.mark+saveLabel) +
 		" " + muted.Render(" "+cancelLabelEsc)
 	if cancel[1]-2 > w { // too narrow for both buttons: the keys alone
 		buttons, save, cancel = fit(" enter save, esc cancel", w, c), [2]int{}, [2]int{}

@@ -4,6 +4,11 @@
 
 Changes:
 
+- Deck colour themes (#337): `LEA_THEME` picks `catppuccin` (the default), `gruvbox`, `nord`,
+  `tokyo-night`, `solarized`, `high-contrast` or `mono`; `T` in the deck (or its right-click menu)
+  opens a picker that previews each theme live (`enter` keeps and saves it, `esc` restores), the
+  settings screen's Theme row applies at once, and the tmux pane borders follow. `NO_COLOR` gives
+  `mono` while `LEA_THEME` is not set; an unknown name gives `catppuccin` with a warning.
 - The agents show your own Claude Code status line (#374): when your `~/.claude/settings.json`
   has a `statusLine` command, `lea statusline` still reports the agent's context and usage to the
   daemon, then runs your command with the same JSON (1.5 s at most, killed past it) and prints its
@@ -25,8 +30,20 @@ Changes:
   worktree's git directory; once pushed, it records `origin/<branch>` and `-u` makes it the
   branch's upstream (it did nothing, so the branch kept tracking `main`). The agent prompt says to
   create the worktree with `git worktree add --no-track`.
+- Agents point the user to `lox run`, never `lox up` or `lox approve` (#343): a new `lock_hint`
+  tool (read-only, agents only) tells an agent whose Lock client finds no console what the user
+  must do, from lea's state of the lock rather than a guess: "lock NAME waits for you: answer in
+  lox run (or lox attach NAME)" while `lox run` runs it, "start lox run in the projects directory"
+  when none serves, "restart lea" for a lock added while lea runs; never a command that restarts
+  or recreates a lock. The first prompt sends agents to it, and the agents' status line says
+  "no lox run: start it in the projects directory" while none serves. The `LEA_LOX_UP` warning
+  and LockHTTP's refusal page no longer mention `lox up` or `lox approve`.
 - The "Copied" notice a mouse selection's release shows closes after 0.6 s instead of 1.5 s
   (#373).
+- A granted `gh pr create` or `gh release create` whose `--title` reads like the file flag (`-F`,
+  `--body-file`, `--notes-file`) hands gh the body or notes file the parser approved (#382): the
+  pinned command took the file's index from a second scan of the args, which took the title's
+  value for the flag and swapped the wrong argument for `-`.
 
 ## v0.14.1 (2026-11-08)
 

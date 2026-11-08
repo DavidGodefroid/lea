@@ -200,6 +200,9 @@ type Request struct {
 	Args []string
 	// Tag is the tag a release-create call publishes, matched against the grant's Tag glob.
 	Tag string
+	// File is the index in Args of a pr-create body file or release-create notes file, as the
+	// parser took it (0: none); prCreateScript swaps that argument, never rescans Args.
+	File int
 }
 
 // Verdicts of Decide.
@@ -418,7 +421,7 @@ func Command(req Request, c Caller, g Grant) string {
 		}
 		script = shellWords(append(append([]string{ghPath}, req.Args...), "-R", g.GitHub))
 		if req.Action == PRCreate || req.Action == ReleaseCreate {
-			script = prCreateScript(req.Args, c.Worktree, g.GitHub)
+			script = prCreateScript(req.Args, req.File, c.Worktree, g.GitHub)
 		}
 		if req.Action == Merge && len(req.Args) > 2 {
 			if c.Branch == "" || !BranchName(c.Branch) || Protected(c.Branch) {
@@ -515,15 +518,10 @@ func prHeadCheck(n, branch, gh string) string {
 // opened once, on fd 3; the file actually opened must resolve (realpath of /proc/self/fd/3) to a
 // plain file of the worktree wt, outside .git; gh reads that open file on its stdin
 // (--body-file -, --notes-file -): swapping the path for a symlink to lea's state or
-// a credential after the check changes nothing.
-func prCreateScript(args []string, wt, gh string) string {
-	file := -1
-	for i, a := range args {
-		if (a == "--body-file" || a == "--notes-file" || a == "-F") && i+1 < len(args) {
-			file = i + 1
-		}
-	}
-	if file < 0 {
+// a credential after the check changes nothing. file is the file's index in args, as the parser
+// took it (Request.File, 0: none): a title that reads -F is never taken for the flag (#382).
+func prCreateScript(args []string, file int, wt, gh string) string {
+	if file <= 0 || file >= len(args) {
 		return shellWords(append(append([]string{ghPath}, args...), "-R", gh))
 	}
 	if wt == "" || !strings.HasPrefix(wt, "/") {
