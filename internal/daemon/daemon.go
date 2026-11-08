@@ -1339,6 +1339,8 @@ func (d *Daemon) dispatchHooks(ctx context.Context, o Origin, me string, req wir
 		return d.grantCheck(o, me, req.Params)
 	case "status_report":
 		return d.statusReport(ctx, o, me, req.Params)
+	case "lock_hint":
+		return d.lockHintCall(ctx, o, req.Params)
 	default:
 		return nil, fmt.Errorf("unknown method %q", req.Method)
 	}

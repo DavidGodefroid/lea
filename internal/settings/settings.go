@@ -82,7 +82,12 @@ var catalog = []Setting{
 	{Key: "LEA_DECK_WIDTH", Group: "Deck", Name: "Deck width", Kind: Text, Default: strconv.Itoa(tmux.DeckWidth),
 		Apply: ApplyNow, Live: true,
 		Help: "the deck column's width, its border included (24 to 60, at most half the window); < and > in the deck move it, its border drags it", check: deckWidth},
+	{Key: "LEA_THEME", Group: "Deck", Name: "Theme", Kind: Choice, Choices: Themes, Default: Themes[0], Apply: ApplyNow, Live: true,
+		Help: "the deck's colours; T in the deck picks one with a preview. NO_COLOR gives mono while this is not set"},
 }
+
+// Themes are the deck's built-in themes (deck.ThemeNames, in its order), the default first.
+var Themes = []string{"catppuccin", "gruvbox", "nord", "tokyo-night", "solarized", "high-contrast", "mono"}
 
 // Store reads and writes the settings of the lea installed at Root, for the deck run from Cwd
 // under the launcher (whose environment Getenv reads).
