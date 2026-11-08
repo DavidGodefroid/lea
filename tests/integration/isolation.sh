@@ -208,6 +208,13 @@ if [ -f "$HOME/.claude/settings.json" ] && [ ! -L "$HOME/.claude/settings.json" 
   # One of the host's own allow rules: the managed settings must carry it (#111).
   host_rule=$(jq -r '[.permissions.allow[]? | strings | select(length > 0 and length <= 1024)][0] // empty' "$HOME/.claude/settings.json" 2>/dev/null || true)
 fi
+# lea config claude (#334): the user's own base settings, kept in lea's configuration ($work, next
+# to LEA_CONFIG), reach the managed settings of the containers started from now on.
+"$root/bin/lea" config claude defaultMode auto >/dev/null
+"$root/bin/lea" config claude allow add 'Bash(lea-config-claude *)' >/dev/null
+# The default mode the host's settings.json gives once lea config claude's is unset (#333).
+host_mode=''
+[ -z "$settings_sha" ] || host_mode=$(jq -r '.permissions.defaultMode // empty | select(IN("default", "acceptEdits", "plan", "dontAsk", "auto"))' "$HOME/.claude/settings.json" 2>/dev/null || true)
 mk="$projects/lea-it-market"
 mkdir -p "$mk/.claude-plugin" "$mk/plugins/lea-it/.claude-plugin" "$mk/plugins/lea-it/commands"
 printf '{"name":"lea-it-market","owner":{"name":"lea"},"plugins":[{"name":"lea-it","source":"./plugins/lea-it","description":"lea isolation test plugin"}]}\n' \
@@ -315,7 +322,7 @@ else echo "FAIL no forge-migrated marker: a token planted in the state could rep
 echo "isolation: the checks inside lea"
 LEA_PROJECTS_DIR="$projects" timeout 900 "$root/bin/lea" shell -- env FORGE_NEEDLE="$forge_needle" FORGE_EXPECT="$forge_expect" CANARY_IP="$canary_ip" GW_IP="$gw_ip" HOST_IP="$host_ip" \
   SIBLING_IP="$sibling_ip" DECOY_DNS_IP="$dns_ip" DNS_MARK="$dns_mark" HOST_KERNEL="$(uname -r)" SECOND_KERNEL="${runtime:+1}" HOST_FACADE="$facade" HOST_CRED_SHA="$cred_sha" HOST_HIST_SHA="$hist_sha" \
-  HOST_SETTINGS_SHA="$settings_sha" HOST_ALLOW_RULE="$host_rule" LEA_IT_MARKET="$mk" sh "$projects/inside-isolation.sh" || rc=$?
+  HOST_SETTINGS_SHA="$settings_sha" HOST_ALLOW_RULE="$host_rule" LEA_IT_MARKET="$mk" CONFIG_CLAUDE=1 sh "$projects/inside-isolation.sh" || rc=$?
 # No lookup made inside lea or its nested containers reached either decoy (#98): only the positive
 # controls' names are in their logs.
 dns_leaks() { for d in lea-canary-dns lea-canary-dns-host; do docker logs "$d" 2>&1 | grep "^query " | grep -v "^query ctl\(-host\)\?\.$dns_mark " | grep -F "$dns_mark" | sed "s/^/$d: /"; done; }
@@ -325,4 +332,14 @@ else echo "ok   no DNS query from inside lea reached the decoy"; fi
 # What the agents did to their copies never reached the host (#111).
 if [ "$(host_claude_sum)" = "$host_sum" ]; then echo "ok   host ~/.claude settings.json and plugins unchanged"
 else echo "FAIL host ~/.claude settings.json and plugins unchanged"; rc=1; fi
+# lea config claude (#334): its rule removed and its mode unset, a fresh container has neither.
+release_holders
+"$root/bin/lea" stop --all >/dev/null 2>&1 || true
+"$root/bin/lea" config claude allow remove 'Bash(lea-config-claude *)' >/dev/null
+"$root/bin/lea" config claude defaultMode --unset >/dev/null
+got=$(LEA_PROJECTS_DIR="$projects" timeout 300 "$root/bin/lea" shell -- \
+  jq -r '[(.permissions.defaultMode // "none"), (.permissions.allow | index("Bash(lea-config-claude *)") // "none")] | join(" ")' \
+  /etc/claude-code/managed-settings.json </dev/null 2>/dev/null | tail -n 1 || true)
+if [ "$got" = "${host_mode:-none} none" ]; then echo "ok   lea config claude: remove and --unset apply at the next start"
+else echo "FAIL lea config claude: remove and --unset apply at the next start (got '$got', want '${host_mode:-none} none')"; rc=1; fi
 exit "$rc"

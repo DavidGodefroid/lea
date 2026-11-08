@@ -4,6 +4,15 @@
 
 Changes:
 
+- `lea config claude` (#334): your base settings for Claude Code in lea, without editing a file or
+  rebuilding the image: `defaultMode`, entries to add to or remove from `allow`, `ask`, `deny` and
+  `additionalDirectories` (lea's built-in rules included), `env`, `model`, `language`,
+  `outputStyle`, `alwaysThinkingEnabled`; `lea config claude` alone shows every effective setting
+  with its source. Kept in `claude.json` next to `lea.conf`, never in `~/.claude/settings.json`;
+  they outrank the host's `permissions` and apply to the containers started from then on. lea's
+  hooks, `allowManagedPermissionRulesOnly`, `disableBypassPermissionsMode`, the status line and
+  lea's own variables are refused with the reason. Host only; `lea doctor` lists the overrides,
+  `lea config export` never carries them.
 - The deck's first agent is a Control Tower (#339): `lea deck-open` with no agent running starts a
   lead on Claude labelled `Control Tower`, whose first prompt runs `/lea:control-tower`; `N` starts
   another (`Control Tower 2`…), and the provider picker moves from `N` to `P`. Host only.

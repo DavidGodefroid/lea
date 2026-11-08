@@ -668,7 +668,9 @@ func TestDecideTools(t *testing.T) {
 	if d := Decide(StopTool, stop, dev, nil, now, true); d.Verdict != "" {
 		t.Fatalf("no grant allowed: %+v", d)
 	}
-	for _, p := range []string{"/home/u/.claude/settings.json", "/home/u/.claude/settings.local.json", "/repo/.claude/settings.json", "/usr/local/share/lea/claude-settings.json", "/lea/state/git/config", "/p/lea/.git/config", "/p/lea/.git/hooks/pre-commit", "/home/u/.gitconfig", "/home/u/.bashrc", ".claude/settings.json"} {
+	for _, p := range []string{"/home/u/.claude/settings.json", "/home/u/.claude/settings.local.json", "/repo/.claude/settings.json", "/usr/local/share/lea/claude-settings.json", "/lea/state/git/config", "/p/lea/.git/config", "/p/lea/.git/hooks/pre-commit", "/home/u/.gitconfig", "/home/u/.bashrc", ".claude/settings.json",
+		// lea config claude's storage (#334): the user's base settings for Claude.
+		"/home/u/.config/lea/claude.json"} {
 		in, _ := json.Marshal(map[string]string{"file_path": p})
 		if d := Decide("Edit", in, dev, gs, now, true); d.Verdict != Deny {
 			t.Fatalf("edit %s: %+v", p, d)

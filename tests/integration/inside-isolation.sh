@@ -175,6 +175,12 @@ if [ -n "${HOST_ALLOW_RULE:-}" ]; then
   must "the host's permission rules are managed"  jq -e --arg r "$HOST_ALLOW_RULE" '.permissions.allow | index($r)' "$m"
 fi
 mustnt "an agent's rule is not managed"           jq -e '.permissions.allow | index("Bash(lea-isolation *)")' "$m"
+if [ -n "${CONFIG_CLAUDE:-}" ]; then
+  # lea config claude (#334), set on the host before this start; managed-check above still passes.
+  must "lea config claude's defaultMode is managed" jq -e '.permissions.defaultMode == "auto"' "$m"
+  must "lea config claude's rule is managed"       jq -e '.permissions.allow | index("Bash(lea-config-claude *)")' "$m"
+  mustnt "lea config claude cannot run inside lea" lea config claude defaultMode plan
+fi
 mustnt "the host's rules are not writable"        sh -c 'echo "{}" >/etc/lea/claude-permissions.json'
 must   "managed settings are root's"             test "$(stat -c %u "$m")" = 0
 mustnt "managed settings are not writable"       touch "$m"
