@@ -153,3 +153,14 @@ nothing_outside_brew() {
     [[ "$output" != *brew* ]]
   done
 }
+
+@test "lea init links no ~/.local/bin/lea on a Homebrew install: brew links bin/lea" {
+  lea__init_launcher
+  [ ! -e "$HOME/.local/bin/lea" ] && [ ! -L "$HOME/.local/bin/lea" ]
+}
+
+@test "lea init still links ~/.local/bin/lea on a release install" {
+  r="$BATS_TEST_TMPDIR/inst/v0.13.0"; mkdir -p "$r/bin"; LEA_ROOT=$r
+  lea__init_launcher
+  [ "$(readlink "$HOME/.local/bin/lea")" = "$r/bin/lea" ]
+}

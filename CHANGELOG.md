@@ -11,7 +11,9 @@
   `~/.local/bin/lea`, beside Homebrew's. A failing brew fails `lea update` with brew's status;
   without brew on `PATH`, lea refuses to update a Homebrew install itself. The background update
   installs nothing on a Homebrew install, even with `LEA_AUTOUPDATE=1`: it only announces the
-  release. install.sh and git installs are unchanged.
+  release. `lea init` no longer links `~/.local/bin/lea` to the Cellar version on a Homebrew
+  install (brew links `<prefix>/bin/lea`; that link outlived `brew upgrade`). install.sh and git
+  installs are unchanged.
 
 ## v0.14.1 (2026-11-08)
 
