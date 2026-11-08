@@ -4,6 +4,11 @@
 
 Changes:
 
+- Deck colour themes (#337): `LEA_THEME` picks `catppuccin` (the default), `gruvbox`, `nord`,
+  `tokyo-night`, `solarized`, `high-contrast` or `mono`; `T` in the deck (or its right-click menu)
+  opens a picker that previews each theme live (`enter` keeps and saves it, `esc` restores), the
+  settings screen's Theme row applies at once, and the tmux pane borders follow. `NO_COLOR` gives
+  `mono` while `LEA_THEME` is not set; an unknown name gives `catppuccin` with a warning.
 - The agents show your own Claude Code status line (#374): when your `~/.claude/settings.json`
   has a `statusLine` command, `lea statusline` still reports the agent's context and usage to the
   daemon, then runs your command with the same JSON (1.5 s at most, killed past it) and prints its
