@@ -108,7 +108,7 @@ directory cannot be one (`/`, your home directory or a parent of it, or one that
 lea`.
 
 **Approvals live outside lea, in `lox run`.** lea runs no `lox` command: it starts no hub (no
-`lox init`, no `lox up`) and shows no approval, ticket or lock console. Keep
+`lox init`) and shows no approval, ticket or lock console. Keep
 [`lox run`](https://github.com/DavidGodefroid/lockhub/blob/main/docs/lox-run.md) open in a
 terminal of its own, outside lea (`lox` 0.9.0 or later: `brew install davidgodefroid/tap/lox`):
 it starts the projects directory's hub and locks, shows every request of the agents, approves
@@ -473,6 +473,14 @@ that is on without a lock of `lox run` in the projects directory gets no socket,
 that says "no such lock yet: `lox add <tool>`": there is no fixed `<tool>-run` volume of a console started by the
 tool's own launcher any more. `lea lockmq` / `lea lockfile` tell you whether the tool is on and how
 its console runs. Restart lea (`lea stop`, then `lea`) after adding a lock or turning one on.
+
+When an agent's Lock client finds no console (a console that waits at its terminal for its start
+questions, after its idle session ended, has no socket yet), the agent asks lea (its `lock_hint`
+tool) and reports what you must do, from what lea knows of the lock rather than a guess: "lock
+NAME waits for you: answer in lox run (or lox attach NAME)" while `lox run` runs the lock, and
+"start lox run in the projects directory" when no `lox run` serves; never a command that restarts
+or recreates the lock. The agents' status line says "no lox run: start it in the projects
+directory" while none serves.
 
 ## Logs, with locklog
 
@@ -1012,7 +1020,7 @@ read-only. The screen runs in the deck on the host: agents cannot open or drive 
 | `LEA_LOCKHTTP` | `0` | send the agents' web requests through a LockHTTP gate (refuses `LEA_GIT_SSH` and `LEA_OTEL_UPSTREAM`) |
 | `LEA_HUB` | `1` | follow the Lock Family approval hub (lockhub's facade socket: `LEA_HUB_SOCKET`, else `$XDG_RUNTIME_DIR/lockhub/facade.sock`): an agent whose Lock call waits for a decision there is suspended until it comes, and `lox run`, outside lea, decides them (lea shows and answers no ticket); while no hub answers, no agent is suspended, the deck says `lockhub unreachable` and `lea doctor` warns. `0`: lea reads no hub and resumes the agents it suspended. **Upgrading from v0.2**: the default was `0`; put `LEA_HUB=0` in `~/.config/lea/lea.conf` to keep that, then restart lea |
 | `LEA_HUB_KEEPALIVE` | `300` | seconds (`0` to `3600`) an agent suspended on a hub ticket keeps its process before lea stops it alone, keeping its session for the decision or a message to resume it; read only with `LEA_HUB=1` (changing it while the hub is off restarts nothing) |
-| `LEA_LOX_UP` | none | obsolete (#300): lea no longer runs `lox up`; set, lea and `lea doctor` warn and ignore it. Run `lox run` in another terminal instead |
+| `LEA_LOX_UP` | none | obsolete (#300): set, lea and `lea doctor` warn and ignore it. Run `lox run` in another terminal instead |
 | `LEA_INTERNAL_HOSTS` | none | private hosts the proxy may reach (format in `config/internal-hosts`) |
 | `LEA_EGRESS_ALLOW` | empty (lea's default list) | the only web domains agents may reach, comma separated (subdomains included); `default` stands for lea's list, `*` opens the web |
 | `LEA_NESTED_NETWORKS` | empty | networks your compose files expect, created at start |

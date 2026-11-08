@@ -47,11 +47,22 @@ const (
 // keyName is a key lea may report: a plain identifier. Other keys are left out of Paths.
 var keyName = regexp.MustCompile(`^[A-Za-z0-9_]{1,40}$`)
 
+// Answer is what the daemon answers a report: the locks lox run runs that the agent's container
+// does not mount, and LoxRun "off" when the workspace has locks and no lox run serves them (#343).
+type Answer struct {
+	LocksAdded []string `json:"locks_added"`
+	LoxRun     string   `json:"lox_run"`
+}
+
+// loxRunOff is what the line says while no lox run serves the workspace's locks.
+const loxRunOff = " · no lox run: start it in the projects directory"
+
 // Run prints the status line for the JSON on stdin and hands post (when not nil) what lea needs
 // from it; post answers the locks lox run runs that the agent's container does not mount, which
-// the line names ("+lock orders: restart lea"). When dump is set the raw JSON is also written
-// there (mode 0600). Nothing here may fail Claude: bad input prints "lea" and reports nothing.
-func Run(stdin io.Reader, stdout io.Writer, dump string, post func(Report) []string) error {
+// the line names ("+lock orders: restart lea"), and whether lox run serves. When dump is set the
+// raw JSON is also written there (mode 0600). Nothing here may fail Claude: bad input prints "lea"
+// and reports nothing.
+func Run(stdin io.Reader, stdout io.Writer, dump string, post func(Report) Answer) error {
 	in, err := io.ReadAll(io.LimitReader(stdin, 1<<20))
 	if err != nil {
 		fmt.Fprintln(stdout, "lea")
@@ -70,12 +81,15 @@ func Run(stdin io.Reader, stdout io.Writer, dump string, post func(Report) []str
 	r := parse(doc)
 	ws := windows(doc)
 	r.Limits = limits(ws)
-	var added []string
+	var ans Answer
 	if post != nil {
-		added = post(r)
+		ans = post(r)
 	}
 	ln := line(doc, r, ws, os.Getenv("NO_COLOR") == "", time.Now())
-	for _, n := range added {
+	if ans.LoxRun == "off" {
+		ln += loxRunOff
+	}
+	for _, n := range ans.LocksAdded {
 		if lockInstance.MatchString(n) {
 			ln += " · +lock " + n + ": restart lea"
 		}
@@ -87,22 +101,21 @@ func Run(stdin io.Reader, stdout io.Writer, dump string, post func(Report) []str
 // lockInstance is a lock's instance name, as lox run names it (internal/launcher's lockUpInstance).
 var lockInstance = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,62}$`)
 
-// Post sends r to the daemon on the container's bus and returns the locks the daemon says the
-// container does not mount (a lock added while lea runs). Without an agent identity it does
-// nothing. The caller bounds it with ctx: the status line must never hold Claude up.
-func Post(ctx context.Context, sock, agent string, r Report) ([]string, error) {
+// Post sends r to the daemon on the container's bus and returns its answer: the locks the
+// container does not mount (a lock added while lea runs) and whether lox run serves. Without an
+// agent identity it does nothing. The caller bounds it with ctx: the status line must never hold
+// Claude up.
+func Post(ctx context.Context, sock, agent string, r Report) (Answer, error) {
 	if agent == "" {
-		return nil, nil
+		return Answer{}, nil
 	}
 	raw, err := json.Marshal(r)
 	if err != nil {
-		return nil, err
+		return Answer{}, err
 	}
-	var ans struct {
-		LocksAdded []string `json:"locks_added"`
-	}
+	var ans Answer
 	err = client.Call(ctx, sock, wire.Request{Method: "status_report", Agent: agent, Params: raw}, &ans)
-	return ans.LocksAdded, err
+	return ans, err
 }
 
 // parse reads the context % and the cost. The status-line fields are not a documented contract

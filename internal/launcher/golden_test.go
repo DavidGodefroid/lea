@@ -563,7 +563,7 @@ func TestCommandsMatchTheGoldenFiles(t *testing.T) {
 			absent: []string{"lox [", "lea: error"}},
 		// LEA_LOX_UP is obsolete: lea warns, and runs no lox up.
 		{name: "obsolete LEA_LOX_UP warns", setup: func(w *world) { hubWithLocks(w); writeUserConf(w.t, w, "LEA_LOX_UP=1\n") },
-			want:   []string{"lea: warning: LEA_LOX_UP=1 is obsolete and ignored: lea no longer runs lox up", open},
+			want:   []string{"lea: warning: LEA_LOX_UP=1 is obsolete and ignored: remove it from your configuration", open},
 			absent: []string{"lox [", "lea: error"}},
 		{name: "old form refused", args: []string{"$W/projects"}, exit: 2,
 			want: []string{"lea: error: lea no longer takes a directory"}, absent: []string{"docker"}},

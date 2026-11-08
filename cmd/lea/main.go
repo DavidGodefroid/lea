@@ -146,11 +146,11 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		if len(args) == 3 && args[1] == "--dump" {
 			dump = args[2]
 		}
-		post := func(r statusline.Report) []string {
+		post := func(r statusline.Report) statusline.Answer {
 			ctx, cancel := context.WithTimeout(context.Background(), statusBudget)
 			defer cancel()
-			added, _ := statusline.Post(ctx, identity.BusSock(os.Getenv), identity.Agent(os.Getenv), r)
-			return added
+			ans, _ := statusline.Post(ctx, identity.BusSock(os.Getenv), identity.Agent(os.Getenv), r)
+			return ans
 		}
 		if err := statusline.Run(stdin, stdout, dump, post); err != nil {
 			fmt.Fprintln(stderr, "lea statusline:", err)
