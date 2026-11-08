@@ -55,11 +55,11 @@ fresh() {
   host="$XDG_DATA_HOME/lea/host"
 }
 
-# cellar V: lea vV in the Cellar of $P, as the formula installs a release (versioned images, the
-# background update off).
+# cellar V: lea vV in the Cellar of $P, as the formula installs a release (the directories of
+# tools/dist.sh's archive, versioned images, the background update off).
 cellar() {
   d="$P/Cellar/lea/$1/libexec"; mkdir -p "$d/build"
-  cp -R "$root/bin" "$root/libexec" "$root/config" "$d/"
+  cp -R "$root/bin" "$root/config" "$root/libexec" "$root/apparmor" "$root/image" "$root/proxy""$d/"
   sed -i -e "s|^LEA_IMAGE=.*|LEA_IMAGE=ghcr.io/davidgodefroid/lea:$1|" \
     -e "s|^LEA_PROXY_IMAGE=.*|LEA_PROXY_IMAGE=ghcr.io/davidgodefroid/lea-proxy:$1|" \
     -e 's|^LEA_AUTOUPDATE=1$|LEA_AUTOUPDATE=0|' "$d/config/lea.conf"
@@ -79,7 +79,7 @@ case \$1 in
   --prefix) echo "$P" ;;
   upgrade)
     d="$P/Cellar/lea/$NEW/libexec"; mkdir -p "\$d/build"
-    cp -R "$root/bin" "$root/libexec" "$root/config" "\$d/"
+    cp -R "$root/bin" "$root/config" "$root/libexec" "$root/apparmor" "$root/image" "$root/proxy""\$d/"
     sed -i -e "s|^LEA_IMAGE=.*|LEA_IMAGE=ghcr.io/davidgodefroid/lea:$NEW|" \\
       -e "s|^LEA_PROXY_IMAGE=.*|LEA_PROXY_IMAGE=ghcr.io/davidgodefroid/lea-proxy:$NEW|" \\
       -e 's|^LEA_AUTOUPDATE=1\$|LEA_AUTOUPDATE=0|' "\$d/config/lea.conf"
