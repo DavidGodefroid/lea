@@ -1995,3 +1995,67 @@ func TestDefaultProviderAndEndpointProviders(t *testing.T) {
 		t.Fatal("an unknown provider was started")
 	}
 }
+
+// A lead's child without a repo starts where its lead works, not in the directory lea was last
+// launched from (#364).
+func TestNewLeadsChildStartsInItsLeadsDirectory(t *testing.T) {
+	e := newEnv(t)
+	projects := t.TempDir()
+	for _, d := range []string{"lea", "shop"} {
+		if err := os.Mkdir(filepath.Join(projects, d), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	e.ctr.projects[C] = projects
+	s := e.ensure(t, projects)
+	root, err := e.m.New(bg, NewRequest{Container: C, Name: "tower", Role: "lead"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	inA, err := e.m.New(bg, NewRequest{Container: C, Name: "boss", Role: "lead", Repo: "shop"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The user runs lea again from another repo: the container's workdir moves, its leads do not.
+	e.ensure(t, filepath.Join(projects, "lea"))
+
+	kid, err := e.m.New(bg, NewRequest{Container: C, Role: "dev", Parent: root.Key, NamePrefix: "dev", Hidden: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if kid.Workdir != projects || kid.Repo != "" {
+		t.Fatalf("root lead's child=%+v, want the projects root and no repo", kid)
+	}
+	if p := lastArg(s, kid.Name); strings.Contains(p, "Your repository is") {
+		t.Fatalf("root lead's child was given a repository: %q", p)
+	}
+
+	kid, err = e.m.New(bg, NewRequest{Container: C, Role: "dev", Parent: inA.Key, NamePrefix: "dev", Hidden: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if kid.Workdir != projects || kid.Repo != "shop" {
+		t.Fatalf("repo lead's child=%+v, want repo shop", kid)
+	}
+	if p := lastArg(s, kid.Name); !strings.Contains(p, "Your repository is "+filepath.Join(projects, "shop")+":") {
+		t.Fatalf("repo lead's child prompt %q", p)
+	}
+
+	// An explicit repo wins over the lead's.
+	kid, err = e.m.New(bg, NewRequest{Container: C, Role: "dev", Parent: inA.Key, NamePrefix: "dev", Repo: "lea", Hidden: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if kid.Repo != "lea" {
+		t.Fatalf("explicit repo child=%+v, want repo lea", kid)
+	}
+
+	// An agent without a parent still starts in the directory lea was last launched from.
+	solo, err := e.m.New(bg, NewRequest{Container: C, Name: "solo"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if solo.Workdir != filepath.Join(projects, "lea") || solo.Repo != "" {
+		t.Fatalf("parentless agent=%+v, want the launch directory", solo)
+	}
+}

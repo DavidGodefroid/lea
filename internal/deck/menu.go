@@ -235,11 +235,11 @@ func (m Model) mouse(e tea.MouseMsg) (tea.Model, tea.Cmd) {
 	if _, _, ok := m.inputOpen(); ok {
 		return m.inputMouse(e)
 	}
-	if m.help || m.setOpen {
-		return m, nil
-	}
 	if m.confirm != "" {
 		return m.confirmMouse(e)
+	}
+	if m.help || m.setOpen || m.allowOpen {
+		return m, nil
 	}
 	if e.Action == tea.MouseActionMotion {
 		if e.Button != tea.MouseButtonNone { // a drag
