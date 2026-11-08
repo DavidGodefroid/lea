@@ -563,3 +563,38 @@ func TestSubagentsShowAnIdleAgentAtWork(t *testing.T) {
 		t.Fatalf("after SubagentStop: state=%s subagents=%d, want idle 0", st, n)
 	}
 }
+
+// /lea:control-tower typed by the user turns the agent's tower mark on in lea's store, and
+// "/lea:control-tower off" turns it off (#383): lea's PreToolUse hook then holds the tower to the
+// team's tools, in this session and in the next one.
+func TestPromptSubmitTurnsTowerModeOnAndOff(t *testing.T) {
+	_, bus := start(t)
+	edit := func(session string) string {
+		t.Helper()
+		out := runHook(bus, "PreToolUse", `{"session_id":"`+session+`","tool_name":"Edit","tool_input":{}}`, nil)
+		if out == "" {
+			return "allow"
+		}
+		var r struct {
+			HookSpecificOutput struct{ PermissionDecision, PermissionDecisionReason string }
+		}
+		json.Unmarshal([]byte(out), &r)
+		return r.HookSpecificOutput.PermissionDecision
+	}
+	runHook(bus, "UserPromptSubmit", `{"session_id":"s1","prompt":"go"}`, nil)
+	if got := edit("s1"); got != "allow" {
+		t.Fatalf("outside tower mode: %s", got)
+	}
+	runHook(bus, "UserPromptSubmit", `{"session_id":"s1","prompt":"/lea:control-tower\nrun the team"}`, nil)
+	if got := edit("s1"); got != "deny" {
+		t.Fatalf("in tower mode: %s", got)
+	}
+	runHook(bus, "SessionStart", `{"session_id":"s2","source":"resume"}`, nil)
+	if got := edit("s2"); got != "deny" {
+		t.Fatalf("the resumed session lost tower mode: %s", got)
+	}
+	runHook(bus, "UserPromptSubmit", `{"session_id":"s2","prompt":"/lea:control-tower off"}`, nil)
+	if got := edit("s2"); got != "allow" {
+		t.Fatalf("after off: %s", got)
+	}
+}

@@ -175,6 +175,7 @@ var agentColumns = [][2]string{
 	{"limit_tries", "INTEGER NOT NULL DEFAULT 0"},
 	{"incarnation", "TEXT NOT NULL DEFAULT ''"},
 	{"woken", "INTEGER NOT NULL DEFAULT 0"},
+	{"tower", "INTEGER NOT NULL DEFAULT 0"},
 }
 
 // requestColumns are the spawn_requests columns added after it was created.
@@ -440,7 +441,7 @@ func (s *Store) Register(n NewAgent, c Caps, now int64) (Agent, error) {
 			return Agent{}, err
 		}
 		_, err = tx.Exec(`UPDATE agents SET profile=?, workdir=?, created=?, updated=?, state='unknown', session_id='',
-			ctx_pct=-1, cost_usd=-1, role=?, parent=?, repo=?, branch=?, task_id=0, label='', args='', prompt='', paused=0, subagents=0, limit_until=0, limit_tries=0, woken=0, model=?, incarnation=? WHERE key=?`,
+			ctx_pct=-1, cost_usd=-1, role=?, parent=?, repo=?, branch=?, task_id=0, label='', args='', prompt='', paused=0, subagents=0, limit_until=0, limit_tries=0, woken=0, tower=0, model=?, incarnation=? WHERE key=?`,
 			n.Profile, n.Workdir, now, now, n.Role, n.Parent, n.Repo, n.Branch, n.Model, inc, key)
 	} else {
 		_, err = tx.Exec(`INSERT INTO agents(key, container, name, profile, workdir, created, updated, role, parent, repo, branch, model, incarnation)
@@ -542,6 +543,33 @@ func (s *Store) SetPaused(key string, paused bool) error {
 func (s *Store) SetWoken(key string, woken bool) error {
 	_, err := s.db.Exec(`UPDATE agents SET woken=? WHERE key=?`, woken, key)
 	return err
+}
+
+// SetTower turns the agent's tower mark on or off (#383): the control tower's guard holds the
+// agent to delegating while it is on. It lives in the agent's row, so it outlives the agent's
+// container and session, and goes with the row: an agent created again under the name (a new
+// incarnation) or after ForgetAgent starts without it.
+func (s *Store) SetTower(key string, on bool) error {
+	res, err := s.db.Exec(`UPDATE agents SET tower=? WHERE key=?`, on, key)
+	if err != nil {
+		return err
+	}
+	if n, err := res.RowsAffected(); err != nil {
+		return err
+	} else if n == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+// Tower says whether the agent's tower mark is on; an unknown agent has none.
+func (s *Store) Tower(key string) (bool, error) {
+	var on bool
+	err := s.db.QueryRow(`SELECT tower FROM agents WHERE key=?`, key).Scan(&on)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	}
+	return on, err
 }
 
 // SetLimit records an agent's usage-limit state (Agent.LimitUntil, Agent.LimitTries).

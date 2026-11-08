@@ -10,6 +10,7 @@ import (
 	"io"
 	"regexp"
 	"strconv"
+	"strings"
 	"time"
 	"unicode/utf8"
 
@@ -155,6 +156,11 @@ func Claude(ctx context.Context, event string, stdin io.Reader, stdout io.Writer
 			// The daemon names an unlabelled agent after its first prompt; the prompt is not
 			// stored (hook_event above never carries it).
 			_ = c.call(bctx, "name_hint", map[string]any{"prompt": truncate(p.Prompt, maxNamePrompt), "session_id": p.SessionID}, nil)
+			// /lea:control-tower [off] turns the agent's tower mark on or off (#383): the
+			// command's line only, never the rest of the prompt.
+			if line, _, _ := strings.Cut(strings.TrimSpace(p.Prompt), "\n"); strings.HasPrefix(line, "/") {
+				_ = c.call(bctx, "tower_prompt", map[string]any{"prompt": truncate(line, 200), "session_id": p.SessionID}, nil)
+			}
 		}
 		var r struct {
 			Count int    `json:"count"`

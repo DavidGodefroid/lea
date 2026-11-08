@@ -31,8 +31,8 @@ another issue or task: start a new agent for the next one.
 | questions to the user | reading, searching or exploring code (`Read`, `Grep`, `Glob`, subagents) |
 | the one Bash job `lea inbox --agent --wait` | any other Bash command, web fetches, other MCP tools |
 
-lea enforces it: once this skill runs, a hook denies every forbidden tool for the rest of the
-session. A denial is your cue to delegate, never to find another way round. The user leaves tower
+lea enforces it: once this skill runs, a hook denies every forbidden tool, in this session and
+after a resume. A denial is your cue to delegate, never to find another way round. The user leaves tower
 mode with `/lea:control-tower off`.
 
 Anti-pattern, never do this:
