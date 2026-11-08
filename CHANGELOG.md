@@ -8,11 +8,16 @@ Changes:
   opens a question when none is open and queues it otherwise, by priority (`incident`,
   `blocking`, `normal`) then in order; the queue is kept in lea.db. Your next prompt, or your
   answer to the tower's `AskUserQuestion`, answers the open question: lea tells the tower which
-  agent the answer goes back to and gives it the next question. While you have a question, lea denies the tower any other `AskUserQuestion` and holds
-  the questions agents `ask` it until you answer. One left unanswered `LEA_QUESTION_REMIND`
+  agent the answer goes back to and gives it the next question. While you have a question, lea denies the tower any other
+  `AskUserQuestion` and holds the questions agents `ask` it until you answer. One left unanswered `LEA_QUESTION_REMIND`
   minutes (120; 0: never) is asked again once, prefixed with `reminder:`. The deck shows the
   tower as `❓ 1 · 3 queued`; `lea questions` lists the questions and `lea questions drop ID`
   drops a queued one.
+- A `gh pr create --body-file` or `gh release create --notes-file` refused for its file now says
+  why (#384): the hint names the file (cut past 80 characters) and the rule the matcher applies
+  (a relative path inside the worktree of at most 256 characters from `A-Za-z0-9._/-`, not
+  starting with `.`, `-` or `/`, with no empty, `.` or `..` segment, outside `.git`) with an
+  example, `pr-body.md`.
 - Deck colour themes (#337): `LEA_THEME` picks `catppuccin` (the default), `gruvbox`, `nord`,
   `tokyo-night`, `solarized`, `high-contrast` or `mono`; `T` in the deck (or its right-click menu)
   opens a picker that previews each theme live (`enter` keeps and saves it, `esc` restores), the
