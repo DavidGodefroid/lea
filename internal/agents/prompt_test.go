@@ -113,3 +113,14 @@ func TestFirstPromptExplainsEgressRefusals(t *testing.T) {
 		t.Fatalf("the prompt holds a shell expansion: %q", p)
 	}
 }
+
+// An agent whose Lock client finds no console asks lea (lock_hint) what the user must do, and
+// never suggests lox up or a command that restarts a lock (#343).
+func TestFirstPromptSendsToLockHint(t *testing.T) {
+	p := firstPrompt(store.Agent{Name: "dev-1", Role: "dev"}, "", "", true, nil)
+	for _, want := range []string{"finds no console, call lock_hint and report its hint as is", "never tell the user to run lox up or lox approve"} {
+		if !strings.Contains(p, want) {
+			t.Fatalf("missing %q in %q", want, p)
+		}
+	}
+}

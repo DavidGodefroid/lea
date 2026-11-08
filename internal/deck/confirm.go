@@ -112,7 +112,7 @@ func (m Model) modal(inner, n int) (top int, lines []string, yes, no [2]int) {
 	button := func(label string, on bool) string {
 		st := muted
 		if on {
-			st = lipgloss.NewStyle().Foreground(theme.Accent).Background(theme.Sel).Bold(true)
+			st = selected(lipgloss.NewStyle().Foreground(theme.Accent)).Bold(true)
 		}
 		return st.Render(mark(on) + label)
 	}

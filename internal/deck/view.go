@@ -151,7 +151,7 @@ var helpLines = []string{
 	"a d A       allow deny always",
 	"x           stop or remove",
 	"< >         deck width",
-	"S           sounds",
+	"S T         sounds, theme",
 	", g         settings, allowed",
 	"ctrl+space  deck or terminal",
 	"q ?         detach, these keys",
@@ -208,6 +208,9 @@ func (m Model) folderHint() string {
 // frameStyle is the style of the deck's frame: the accent while the deck has the keyboard, so the
 // focused pane is plain to see.
 func (m Model) frameStyle() lipgloss.Style {
+	if m.focused && current.mono { // no accent: the focused frame is bold
+		return lipgloss.NewStyle().Bold(true)
+	}
 	if m.focused {
 		return lipgloss.NewStyle().Foreground(theme.Accent)
 	}
@@ -437,7 +440,7 @@ func (m Model) rowLines(inner int) ([]string, []lineOwner) {
 	if m.menuFor == deckMenu {
 		var r []string
 		var o []lineOwner
-		items := deckMenuItems(m.sound)
+		items := m.openItems() // its own actions, or the theme picker (T)
 		for j, l := range m.menuLines(items, inner) {
 			r, o = append(r, l), append(o, lineOwner{deckMenu, menuOwner(j, len(items))})
 		}
@@ -488,7 +491,7 @@ func (m Model) folderRow(fi int, inner int) []string {
 	sel := folderKey(f.ID) == m.selected
 	bg := func(s lipgloss.Style) lipgloss.Style {
 		if sel {
-			return s.Background(theme.Sel)
+			return selected(s)
 		}
 		return s
 	}
@@ -597,7 +600,7 @@ func (m Model) row(a Agent, inner int, fi int) []string {
 	}
 	bg := func(s lipgloss.Style) lipgloss.Style {
 		if sel {
-			return s.Background(theme.Sel)
+			return selected(s)
 		}
 		return s
 	}

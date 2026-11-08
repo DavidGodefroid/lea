@@ -15,8 +15,16 @@ import (
 func Run(api API, container string, ascii bool, notice func() string, st SettingsStore, off string, layout LayoutStore) error {
 	drv := tmuxWidthDrive(os.Getenv)
 	m := New(api, container, ascii, time.Now).WithIntro().WithNotice(notice).WithSettings(st, off).WithLayout(layout).
-		WithWidthDrive(drv.apply, drv.window, drv.read)
+		WithWidthDrive(drv.apply, drv.window, drv.read).WithThemeDrive(tmuxThemeDrive(os.Getenv))
 	m = m.restoreWidth()
+	if m.applyFrame != nil {
+		if err := m.applyFrame(current); err != nil && m.status == "" {
+			m.status = "theme: " + oneLine(err.Error())
+		}
+	}
+	if startWarning != "" && m.status == "" {
+		m.status = startWarning
+	}
 	_, err := tea.NewProgram(m, tea.WithAltScreen(), tea.WithReportFocus(), tea.WithMouseAllMotion()).Run()
 	return err
 }

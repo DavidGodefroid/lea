@@ -452,7 +452,7 @@ func (f *Forwarder) errorHandler(w http.ResponseWriter, r *http.Request, err err
 		return
 	}
 	if gateRefused {
-		http.Error(w, "LockHTTP refused this request: ask the user (lox approve and the gate's audit show why)", http.StatusForbidden)
+		http.Error(w, "LockHTTP refused this request: ask the user (lox run and the gate's audit show why)", http.StatusForbidden)
 		return
 	}
 	http.Error(w, "bad gateway", http.StatusBadGateway)
