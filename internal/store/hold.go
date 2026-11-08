@@ -17,9 +17,9 @@ type Hold struct {
 const heldAsks = `(kind='question' AND reply_to=0)`
 
 // heldByPause is the condition of a message a pause since ? holds: from an agent (or lea), and not
-// in a thread its recipient opened during the pause.
+// a reply in a thread its recipient opened, during the pause, with that sender.
 const heldByPause = `(sender<>'user' AND NOT EXISTS (SELECT 1 FROM messages r
-	WHERE r.id=messages.thread AND r.sender=messages.recipient AND r.at>=?))`
+	WHERE r.id=messages.thread AND r.sender=messages.recipient AND r.recipient=messages.sender AND r.at>=?))`
 
 // cond is the WHERE condition (and its arguments) that leaves out what h holds.
 func (h Hold) cond() (string, []any) {
@@ -58,7 +58,7 @@ func (s *Store) HeldCount(to string, since int64) (int, error) {
 // HeldCounts counts, per paused agent, the unread messages its pause holds.
 func (s *Store) HeldCounts() (map[string]int, error) {
 	return s.countBy(`SELECT a.key, COUNT(m.id) FROM agents a LEFT JOIN messages m ON m.recipient=a.key AND m.read_at=0
-		AND m.sender<>'user' AND NOT EXISTS (SELECT 1 FROM messages r WHERE r.id=m.thread AND r.sender=m.recipient AND r.at>=a.hold_since)
+		AND m.sender<>'user' AND NOT EXISTS (SELECT 1 FROM messages r WHERE r.id=m.thread AND r.sender=m.recipient AND r.recipient=m.sender AND r.at>=a.hold_since)
 		WHERE a.hold_since>0 GROUP BY a.key`)
 }
 

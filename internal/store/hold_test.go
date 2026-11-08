@@ -70,6 +70,8 @@ func TestHeldInboxLeavesOutSpontaneousAgentMessages(t *testing.T) {
 	during := send(Message{From: "lea-a/tower", To: "lea-a/kid", Kind: "request", Body: "new ask", At: 10})
 	reply := send(Message{From: "lea-a/kid", To: "lea-a/tower", Kind: "result", Body: "new reply", ReplyTo: during.ID, At: 11})
 	send(Message{From: "lea-a/kid", To: "lea-a/tower", Kind: "question", Body: "spont", At: 11})
+	// Another agent replying in the tower's new thread to kid is held: the thread is not its own.
+	send(Message{From: "lea-a/other", To: "lea-a/tower", Kind: "result", Body: "hijack", ReplyTo: during.ID, At: 11})
 	user := send(Message{From: "user", To: "lea-a/tower", Kind: "note", Body: "from the user", At: 11})
 	h := Hold{Since: 10}
 	ms, err := s.UnreadHolding("lea-a/tower", 10, h)
@@ -86,10 +88,10 @@ func TestHeldInboxLeavesOutSpontaneousAgentMessages(t *testing.T) {
 	if n, _ := s.UnreadCountHolding("lea-a/tower", h); n != 2 {
 		t.Fatalf("count %d", n)
 	}
-	if n, _ := s.HeldCount("lea-a/tower", 10); n != 3 {
-		t.Fatalf("held %d, want early, old reply and spont", n)
+	if n, _ := s.HeldCount("lea-a/tower", 10); n != 4 {
+		t.Fatalf("held %d, want early, old reply, spont and hijack", n)
 	}
-	if n, _ := s.UnreadCountHolding("lea-a/tower", Hold{}); n != 5 {
+	if n, _ := s.UnreadCountHolding("lea-a/tower", Hold{}); n != 6 {
 		t.Fatalf("no hold: %d", n)
 	}
 }
