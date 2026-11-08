@@ -87,6 +87,29 @@ func TestClaudeSharedEntriesAreReadOnly(t *testing.T) {
 	}
 }
 
+// The agent container's resolver forwards nowhere (#98): Docker's embedded resolver still answers
+// the names of the containers on its network (lea-proxy), and sends every other query to
+// 127.0.0.1 in the container's namespace, where nothing listens, instead of the host's resolver.
+func TestRunArgsPinANonForwardingResolver(t *testing.T) {
+	w := newWorld(t, repoRoot(t))
+	args, err := w.launcher().runArgs(w.proj, "172.18.0.5")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var dns []string
+	for i, a := range args {
+		if a == "--dns" && i+1 < len(args) {
+			dns = append(dns, args[i+1])
+		}
+		if strings.HasPrefix(a, "--dns=") || a == "--dns-search" || a == "--dns-option" {
+			t.Errorf("unexpected resolver argument %q", a)
+		}
+	}
+	if len(dns) != 1 || dns[0] != "127.0.0.1" {
+		t.Fatalf("--dns = %q, want exactly [127.0.0.1]", dns)
+	}
+}
+
 func TestRunArgsRefuseCommas(t *testing.T) {
 	w := newWorld(t, repoRoot(t))
 	os.MkdirAll(w.dir+"/a,b", 0o755)

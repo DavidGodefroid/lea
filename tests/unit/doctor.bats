@@ -408,6 +408,22 @@ host_minimums() {
   [[ "$output" == *"ok    lea-abc CPU windows: none"* ]]
 }
 
+@test "DNS: each running lea container resolves no external name and has lea's resolver (#98)" {
+  export FAKE_DOCKER_OUT_PS___FILTER=lea-abc
+  export FAKE_DOCKER_OUT_CONTAINER_INSPECT='["127.0.0.1"]' FAKE_DOCKER_RC_EXEC__W=2
+  run lea_doctor
+  [[ "$output" == *"ok    lea-abc DNS: resolves no external name (resolver 127.0.0.1)"* ]]
+  grep -q -- '\[exec\] \[-w\] \[/\] \[lea-abc\] \[timeout\] \[10\] \[getent\] \[hosts\] \[example.com\]' "$FAKE_LOG"
+  # Started by an older lea: Docker's default resolver, which forwards to the host's.
+  export FAKE_DOCKER_OUT_CONTAINER_INSPECT='null'
+  run lea_doctor
+  [[ "$output" == *"warn  lea-abc DNS: no pinned resolver (started by an older lea): its queries may reach the host's resolver; run lea stop, then lea"* ]]
+  # It resolves an external name: a way out that bypasses the proxy.
+  export FAKE_DOCKER_OUT_CONTAINER_INSPECT='["127.0.0.1"]' FAKE_DOCKER_RC_EXEC__W=0 FAKE_DOCKER_OUT_EXEC__W='93.184.215.14 example.com'
+  run lea_doctor
+  [[ "$output" == *"warn  lea-abc DNS: resolves example.com (93.184.215.14): DNS reaches outside lea-proxy; run lea stop, then lea"* ]]
+}
+
 @test "pressure: PSI, each lea container's cgroup and the thresholds (#132, P2)" {
   export LEA_DOCTOR_PROC="$BATS_TEST_TMPDIR/proc" LEA_DOCTOR_CGROUP="$BATS_TEST_TMPDIR/cg"
   mkdir -p "$LEA_DOCTOR_PROC/pressure" "$LEA_DOCTOR_PROC/4242" "$LEA_DOCTOR_CGROUP/user.slice/libpod-abc.scope"
