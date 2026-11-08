@@ -14,6 +14,9 @@ Changes:
 - In the deck, a folder header's summary sets each state mark apart from its count (`6 ◐ 6`, not
   `6 ◐6`) (#355): the marks are East Asian Ambiguous width, and a terminal that draws them wide
   drew the half-moon over the digit.
+- A lead's child spawned without `repo` starts where its lead works (#364): the lead's repository,
+  or without one the lead's own directory, not the directory `lea` was last launched from. An
+  explicit `repo` still wins; `agents_spawn` with `for` keeps the request's repo and branch.
 
 ## v0.14.1 (2026-11-08)
 
