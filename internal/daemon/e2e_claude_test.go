@@ -3,7 +3,6 @@ package daemon
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -555,20 +554,21 @@ func TestClaudeNestedSessionDoesNotEndTheAgent(t *testing.T) {
 	a := e.until("the agent idle", 45, func(a store.Agent) bool { return a.State == "idle" && a.SessionID != "" })
 	own := a.SessionID
 	ends, _ := e.st.EventPayloads("lea-a/dev", "SessionEnd")
-	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
-	defer cancel()
-	nested := exec.CommandContext(ctx, e.claude, "--settings", e.sf, "-p", "say hi")
+	// In a pseudo-terminal too, as from the agent's own shell; it ends once it has answered.
+	var out strings.Builder
+	nested := exec.Command("python3", "-I", "-c", claudePty, "60", e.claude, "--settings", e.sf, "-p", "say hi")
 	nested.Dir, nested.Env = e.wd, e.env
-	// A child Claude leaves behind may hold its output open: the wait ends with Claude itself.
-	nested.WaitDelay = 5 * time.Second
-	if out, err := nested.CombinedOutput(); err != nil && !errors.Is(err, exec.ErrWaitDelay) {
-		t.Fatalf("nested claude -p: %v\n%s", err, out)
+	nested.Stdout, nested.Stderr = &out, &out
+	if err := nested.Run(); err != nil {
+		t.Fatalf("nested claude -p: %v\n%s", err, out.String())
 	}
-	e.until("the nested SessionEnd", 20, func(store.Agent) bool {
-		ps, _ := e.st.EventPayloads("lea-a/dev", "SessionEnd")
-		return len(ps) > len(ends)
-	})
-	ps, _ := e.st.EventPayloads("lea-a/dev", "SessionEnd")
+	var ps []string
+	for end := time.Now().Add(20 * time.Second); len(ps) <= len(ends); time.Sleep(200 * time.Millisecond) {
+		if time.Now().After(end) {
+			t.Fatalf("no SessionEnd of the nested claude -p:\n%s", out.String())
+		}
+		ps, _ = e.st.EventPayloads("lea-a/dev", "SessionEnd")
+	}
 	if strings.Contains(ps[len(ps)-1], own) {
 		t.Fatalf("the SessionEnd came from the agent's own session: %s", ps[len(ps)-1])
 	}
