@@ -294,6 +294,30 @@ class Site(unittest.TestCase):
         self.assertIn('LEA_LOCKHTTP=1', install)
         self.assertIn('curl -fsSL https://leadeck.dev/install.sh | sh', install)
 
+    def test_v0_15_facts(self):
+        everything = ''.join(self.html.values())
+        # lea allow replaced lea delivery and lea grant (#319)
+        for old in ('lea delivery', 'lea grant'):
+            self.assertNotIn(old, everything)
+        self.assertNotIn('v0.14', everything)
+        for page in PAGES:
+            if page != '404.html':
+                self.assertIn('Pre-release (v0.15.x)', self.html[page], page)
+        home, how = self.html['index.html'], self.html['how-it-works/index.html']
+        self.assertIn('<code>lea allow deliver</code>', home)
+        self.assertIn('<code>lea allow deliver</code>', self.html['faq/index.html'])
+        # the first agent is a Control Tower (#339), one question at a time (#95)
+        self.assertIn('The first agent is a Control Tower', home)
+        self.assertIn('one question at a time', home)
+        self.assertIn('<h2 id="tower">The Control Tower</h2>', how)
+        self.assertIn('<h2 id="allowances">Allowances</h2>', how)
+        for key, what in (('N', 'Control Tower'), ('Q', 'questions'), ('H', 'pause'), ('g', 'allowed'), ('T', 'theme')):
+            self.assertRegex(how, r'<kbd>%s</kbd>[^\n]*</td><td>[^<]*%s' % (key, what), key)
+        self.assertIn('<code>lea config claude</code>', how)
+        self.assertIn('<code>statusLine</code>', how)
+        self.assertIn('works where the lead works', how)
+        self.assertIn('A DNS resolver', self.html['security/index.html'])
+
     def test_limits(self):
         self.assertIn('<h2 id="limits">Know the limits</h2>', self.html['index.html'])
         self.assertIn('<section class="limits"', self.html['security/index.html'])

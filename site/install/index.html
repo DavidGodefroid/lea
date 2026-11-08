@@ -54,7 +54,7 @@
   <main id="main" tabindex="-1">
     <div class="wrap">
 
-<p class="eyebrow">Install · pre-release v0.14.x</p>
+<p class="eyebrow">Install · pre-release v0.15.x</p>
 <h1>Install lea</h1>
 <div class="prose">
   <p class="lead">lea runs in Docker. On your machine you need Docker, the <code>lea</code> command and, for the Locks, <code>lox</code>.</p>
@@ -81,8 +81,8 @@
       <pre tabindex="0"><code>cd ~/projects
 lea</code></pre></li>
     <li><p>lea checks that Docker answers, pulls and verifies its images, and records the projects directory. On Linux hosts where Docker uses AppArmor, it installs its profile with <code>sudo</code>, once.</p></li>
-    <li><p>The deck opens on a first agent. Log in once (<code>/login</code> in Claude Code); the login is lea&#8217;s own, kept per projects directory, never your host&#8217;s.</p></li>
-    <li><p>Press <kbd>n</kbd> for another agent, <kbd>?</kbd> for the keys, <kbd>q</kbd> to leave. The agents keep running.</p></li>
+    <li><p>The deck opens on a Control Tower, a lead on Claude Code that runs <code>/lea:control-tower</code>. Log in once (<code>/login</code>); the login is lea&#8217;s own, kept per projects directory, never your host&#8217;s.</p></li>
+    <li><p>Press <kbd>n</kbd> for another agent, <kbd>N</kbd> for another Control Tower, <kbd>?</kbd> for the keys, <kbd>q</kbd> to leave. The agents keep running.</p></li>
   </ol>
   <div class="prose">
     <p><code>LEA_PROJECTS_DIR</code>, in the environment or in <code>~/.config/lea/lea.conf</code>, wins over the working directory. lea refuses <code>/</code>, your home directory, a parent of it, and a directory that overlaps <code>~/.claude</code> or a credentials directory.</p>
@@ -200,7 +200,7 @@ docker image ls &#39;ghcr.io/davidgodefroid/lea*&#39;   <span class="cmt"># then
       </nav>
     </div>
     <div class="wrap footer-bottom">
-      <p>Pre-release (v0.14.x). lea is licensed under the <a href="https://github.com/DavidGodefroid/lea/blob/main/LICENSE">Apache License 2.0</a>.</p>
+      <p>Pre-release (v0.15.x). lea is licensed under the <a href="https://github.com/DavidGodefroid/lea/blob/main/LICENSE">Apache License 2.0</a>.</p>
       <p>lea is an independent project, not affiliated with Anthropic. Claude and Claude Code are trademarks of Anthropic.</p>
       <p><a href="https://lockfamily.dev">lockfamily.dev</a> · <a href="https://github.com/DavidGodefroid/lockfamily">the family on GitHub</a></p>
     </div>

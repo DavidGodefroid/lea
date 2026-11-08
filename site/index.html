@@ -56,7 +56,7 @@
 
 <section class="hero" aria-labelledby="hero-title">
   <div class="hero-text">
-    <p class="eyebrow"><span class="badge">v0.14 pre-release</span>Part of the Lock&nbsp;Family · open&nbsp;source · Apache&nbsp;2.0</p>
+    <p class="eyebrow"><span class="badge">v0.15 pre-release</span>Part of the Lock&nbsp;Family · open&nbsp;source · Apache&nbsp;2.0</p>
     <h1 id="hero-title">Many agents. <span class="key">None of your machine.</span></h1>
     <p class="lead">lea runs your AI agents side by side in containers: Claude Code by default, Codex or a model of your own too. They see one projects directory and reach the internet through a proxy, never your keys or your private network.</p>
     <div class="install">
@@ -127,19 +127,20 @@
   <div class="prose">
     <p>Two kinds of request wait for you, in two places. An agent&#8217;s own permission request (run this command, edit that file) shows on its row in the deck: <kbd>a</kbd> allows, <kbd>d</kbd> denies, <kbd>space</kbd> jumps to the next agent that needs you.</p>
     <p>A request to a Lock (a database, a queue, files, logs, the web) is not lea&#8217;s. It waits in <a href="https://github.com/DavidGodefroid/lockhub/blob/main/docs/lox-run.md"><code>lox run</code></a>, which you keep open in a terminal of your own, outside lea. lea runs no <code>lox</code> command and shows no ticket.</p>
-    <p>To stop being asked for routine steps, a grant records your decision on the host: merge a pull request, close an issue, push the agent&#8217;s own branch. <code>lea delivery on</code> grants the whole push, pull request and merge cycle. <a href="how-it-works/#teams">Teams and grants</a>.</p>
+    <p>To stop being asked for routine steps, an allowance records your decision on the host: merge a pull request, close an issue, push the agent&#8217;s own branch. <code>lea allow deliver</code> allows the whole push, pull request and merge cycle; <code>lea allow</code> lists what you allowed and <code>lea allow off</code> takes it back. <a href="how-it-works/#allowances">Allowances</a>.</p>
+    <p>With a team at work, the Control Tower asks you one question at a time, whatever the number of agents waiting on you: the others queue by priority, and <kbd>H</kbd> pauses its inbox while you answer.</p>
   </div>
 </section>
 
 <section aria-labelledby="highlights">
   <h2 id="highlights">Highlights</h2>
   <ul class="cards">
-    <li><h3>Side by side</h3><p>Your agents in a column, the selected one&#8217;s terminal next to it. Each row shows its state, context use, branch and its own report on its task.</p><p>Close the terminal: they keep working, and the next <code>lea</code> reattaches.</p></li>
+    <li><h3>Side by side</h3><p>Your agents in a column, the selected one&#8217;s terminal next to it. Each row shows its state, context use, branch and its own report on its task.</p><p>Close the terminal: they keep working, and the next <code>lea</code> reattaches. <kbd>T</kbd> picks one of seven colour themes.</p></li>
     <li><h3>Isolated by construction</h3><p>The container sees your projects directory and a read-only allow-list of your agent configuration. No home directory, no SSH keys, no cloud credentials, no Docker socket.</p></li>
-    <li><h3>Online, on your terms</h3><p>Egress goes through lea&#8217;s proxy, to an allowlist of public domains. Your LAN and link-local addresses are refused; <code>lea egress allow</code> adds a domain live, from the host only.</p></li>
+    <li><h3>Online, on your terms</h3><p>Egress goes through lea&#8217;s proxy, to an allowlist of public domains. Your LAN and link-local addresses are refused, and no DNS lookup leaves the container; <code>lea egress allow</code> adds a domain live, from the host only.</p></li>
     <li><h3>A real dev box</h3><p><code>make test</code> and <code>docker run</code> work: agents get their own rootless Podman inside lea, under seccomp and, on Linux, AppArmor.</p></li>
-    <li><h3>Any agent CLI</h3><p>Claude Code is the default. Codex runs too, and through it any OpenAI-compatible endpoint (Ollama, vLLM); the endpoint&#8217;s key stays in the proxy.</p></li>
-    <li><h3>Teams of agents</h3><p>A lead starts devs and reviewers through MCP. Agents message each other, report their progress and lease the files they edit; only you change a role.</p></li>
+    <li><h3>Any agent CLI</h3><p>Claude Code is the default, with your own status line, and <code>lea config claude</code> sets its settings in lea. Codex runs too, and through it any OpenAI-compatible endpoint (Ollama, vLLM); the endpoint&#8217;s key stays in the proxy.</p></li>
+    <li><h3>A control tower</h3><p>The first agent is a Control Tower: you talk to it, it starts devs and reviewers, follows them and briefs you in a line per agent. Agents message each other and lease the files they edit; only you change a role.</p></li>
     <li><h3>Wired to the Locks</h3><p>With <code>lox add</code>, agents reach locksql, lockmq, lockfile, locklog and lockhttp through their sockets, read-only. The consoles alone hold the credentials.</p></li>
     <li><h3>Signed releases</h3><p>Every release and image is signed with cosign. The installer and <code>lea update</code> refuse a release whose signature does not check.</p></li>
   </ul>
@@ -152,7 +153,7 @@
     <li><p>In the directory that holds your projects (not a project inside it), run <code>lea</code>. The first run checks Docker, pulls and verifies the images, then opens the deck.</p>
       <pre tabindex="0"><code>cd ~/projects
 lea</code></pre></li>
-    <li><p>In the first agent, log in once (<code>/login</code> for Claude Code). Press <kbd>n</kbd> for the next agent.</p></li>
+    <li><p>The first agent is a Control Tower. Log in once (<code>/login</code> for Claude Code), then tell it what you want done. Press <kbd>n</kbd> for an agent of your own, <kbd>N</kbd> for another Control Tower.</p></li>
     <li><p>When your agents need a database, a queue, files, logs or the web, add a Lock in the same directory and keep <code>lox run</code> open in another terminal, outside lea.</p>
       <pre tabindex="0"><code>lox add locksql
 lox run</code></pre></li>
@@ -207,7 +208,7 @@ lox run</code></pre></li>
       </nav>
     </div>
     <div class="wrap footer-bottom">
-      <p>Pre-release (v0.14.x). lea is licensed under the <a href="https://github.com/DavidGodefroid/lea/blob/main/LICENSE">Apache License 2.0</a>.</p>
+      <p>Pre-release (v0.15.x). lea is licensed under the <a href="https://github.com/DavidGodefroid/lea/blob/main/LICENSE">Apache License 2.0</a>.</p>
       <p>lea is an independent project, not affiliated with Anthropic. Claude and Claude Code are trademarks of Anthropic.</p>
       <p><a href="https://lockfamily.dev">lockfamily.dev</a> · <a href="https://github.com/DavidGodefroid/lockfamily">the family on GitHub</a></p>
     </div>

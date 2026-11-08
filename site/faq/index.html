@@ -92,7 +92,11 @@
 </section>
 <section aria-labelledby="deliver">
   <h2 id="deliver">Can agents push and merge on their own?</h2>
-  <p>When you say so. <code>lea delivery on</code>, run on the host, lets every agent of a lea push its own branch, open its pull request and merge it, on the repositories it lists. <code>lea delivery off</code> takes it back.</p>
+  <p>When you say so. <code>lea allow deliver</code>, run on the host, lets every agent of a lea push its own branch, open its pull request and merge it, on the repositories it lists. <code>lea allow</code> shows what you allowed; <code>lea allow off</code> takes it back. <a href="../how-it-works/#allowances">Allowances</a>.</p>
+</section>
+<section aria-labelledby="claude-settings">
+  <h2 id="claude-settings">Can I keep my Claude Code settings in lea?</h2>
+  <p>Yes, on the host: <code>lea config claude</code> sets the default mode, the allow, ask and deny rules, the model and a few more for every agent, without editing a file; alone, it shows each setting and its source. A <code>statusLine</code> command in your <code>~/.claude/settings.json</code> draws the agents&#8217; status line too.</p>
 </section>
 <section aria-labelledby="windows">
   <h2 id="windows">Does it run on Windows?</h2>
@@ -139,7 +143,7 @@
       </nav>
     </div>
     <div class="wrap footer-bottom">
-      <p>Pre-release (v0.14.x). lea is licensed under the <a href="https://github.com/DavidGodefroid/lea/blob/main/LICENSE">Apache License 2.0</a>.</p>
+      <p>Pre-release (v0.15.x). lea is licensed under the <a href="https://github.com/DavidGodefroid/lea/blob/main/LICENSE">Apache License 2.0</a>.</p>
       <p>lea is an independent project, not affiliated with Anthropic. Claude and Claude Code are trademarks of Anthropic.</p>
       <p><a href="https://lockfamily.dev">lockfamily.dev</a> · <a href="https://github.com/DavidGodefroid/lockfamily">the family on GitHub</a></p>
     </div>

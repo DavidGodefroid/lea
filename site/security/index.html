@@ -76,6 +76,7 @@
 <tr><th scope="row"><code>~/.ssh</code>, <code>~/.aws</code>, <code>~/.kube</code> and the rest of your home</th><td class="no">No</td></tr>
 <tr><th scope="row">Private and link-local addresses: your NAS, intranet, cloud metadata</th><td class="no">No</td></tr>
 <tr><th scope="row">Host services listening on <code>0.0.0.0</code></th><td class="no">No</td></tr>
+<tr><th scope="row">A DNS resolver: of your host, your network or the internet</th><td class="no">No</td></tr>
 <tr><th scope="row">Your Docker socket</th><td class="no">No</td></tr>
 <tr><th scope="row">Your clipboard (lea writes to it, never reads it for an agent)</th><td class="no">No</td></tr>
 <tr><th scope="row">A Lock&#8217;s credentials, its hub, its audit log</th><td class="no">No</td></tr>
@@ -91,8 +92,9 @@
   <h2 id="egress">Egress</h2>
   <div class="prose">
     <p>By default the allowlist holds the forges (GitHub, GitLab), the package registries (Go, npm, PyPI), the image registries and the model APIs. Each domain covers its subdomains; anything else is refused.</p>
-    <p>Only you change it, on the host: <code>lea egress allow</code>, <code>lea egress deny</code>, or <code>LEA_EGRESS_ALLOW</code> in <code>~/.config/lea/lea.conf</code>. No agent, MCP tool or grant reaches it.</p>
+    <p>Only you change it, on the host: <code>lea egress allow</code>, <code>lea egress deny</code>, or <code>LEA_EGRESS_ALLOW</code> in <code>~/.config/lea/lea.conf</code>. No agent, MCP tool or allowance reaches it.</p>
     <p>A host of your network is reached only once listed in <code>LEA_INTERNAL_HOSTS</code>, and an internal name grants that name only: the proxy checks the TLS handshake&#8217;s server name.</p>
+    <p>The agents resolve no external name: lea starts their container with a resolver address that is never routed, so no lookup, from an agent or a container it starts, reaches your host&#8217;s resolver or the internet. The proxy resolves names for them. <code>lea doctor</code> fails on a container that resolves an external name.</p>
   </div>
 </section>
 
@@ -153,7 +155,7 @@
     <h3 id="same-container">Agents of one container</h3>
     <p>The agents of one lea share a uid. They can read each other&#8217;s environment and files, and the logins lea gives them. Use one projects directory per trust level.</p>
     <h3 id="what-you-allow">What you allow</h3>
-    <p>A domain you add to the allowlist, an internal host you list, a grant you record: lea applies them as you wrote them. A domain that accepts uploads is a way out for data.</p>
+    <p>A domain you add to the allowlist, an internal host you list, an allowance you record: lea applies them as you wrote them. A domain that accepts uploads is a way out for data.</p>
   </div>
 </section>
 
@@ -192,7 +194,7 @@
       </nav>
     </div>
     <div class="wrap footer-bottom">
-      <p>Pre-release (v0.14.x). lea is licensed under the <a href="https://github.com/DavidGodefroid/lea/blob/main/LICENSE">Apache License 2.0</a>.</p>
+      <p>Pre-release (v0.15.x). lea is licensed under the <a href="https://github.com/DavidGodefroid/lea/blob/main/LICENSE">Apache License 2.0</a>.</p>
       <p>lea is an independent project, not affiliated with Anthropic. Claude and Claude Code are trademarks of Anthropic.</p>
       <p><a href="https://lockfamily.dev">lockfamily.dev</a> · <a href="https://github.com/DavidGodefroid/lockfamily">the family on GitHub</a></p>
     </div>

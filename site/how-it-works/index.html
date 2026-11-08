@@ -84,6 +84,7 @@
   </figure>
   <div class="prose">
     <p>The container sees the projects directory (read/write) and a read-only allow-list of <code>~/.claude</code>: hooks, skills, agents, commands and the top-level <code>*.md</code> files. <code>settings.json</code> and <code>plugins</code> are lea&#8217;s own copies, never written back.</p>
+    <p><code>lea config claude</code>, on the host, sets your base settings for Claude Code in lea: the default mode, the allow, ask and deny rules, the model, the environment. They are kept beside <code>lea.conf</code>, never in your <code>~/.claude</code>, and lea&#8217;s own guards stay. A <code>statusLine</code> command in your <code>settings.json</code> draws the agents&#8217; status line, inside the container.</p>
     <p>Each projects directory gets its own container, internal network, agent history and login. Agents run under <code>abduco</code>, so closing the deck does not stop them.</p>
   </div>
 </section>
@@ -93,6 +94,7 @@
   <div class="prose">
     <p>Every request of an agent goes through lea&#8217;s proxy. HTTPS reaches an allowlist of public domains: the forges, the package registries, the model APIs. Anything else is refused, with a first line that names the host and the command that allows it.</p>
     <p><code>lea egress allow DOMAIN</code>, on the host, adds a domain to the running proxy: no restart, and no agent can run it. Private and link-local addresses, public IP literals and DNS-over-HTTPS resolvers are refused whatever the list says.</p>
+    <p>The proxy is also the agents&#8217; only resolver. Their container gets a DNS address that is never routed, so a lookup cannot carry data out through your host&#8217;s resolver.</p>
     <p>The proxy also holds what the agents must use but not read: lea&#8217;s GitHub token, your providers&#8217; API keys, and the SSH forwarders to the git endpoints you pinned.</p>
   </div>
 </section>
@@ -108,27 +110,52 @@
 <thead><tr><th scope="col">Key</th><th scope="col">Action</th></tr></thead>
 <tbody>
 <tr><td><kbd>n</kbd></td><td>start a new agent</td></tr>
+<tr><td><kbd>N</kbd></td><td>start a new Control Tower</td></tr>
 <tr><td><kbd>j</kbd> <kbd>k</kbd></td><td>select an agent</td></tr>
 <tr><td><kbd>enter</kbd></td><td>type into the selected agent</td></tr>
 <tr><td><kbd>space</kbd></td><td>the next agent that needs you</td></tr>
 <tr><td><kbd>a</kbd> <kbd>d</kbd> <kbd>A</kbd></td><td>allow, deny, always allow a permission request</td></tr>
 <tr><td><kbd>m</kbd> <kbd>t</kbd></td><td>send the agent a message, read its messages</td></tr>
+<tr><td><kbd>Q</kbd> <kbd>H</kbd></td><td>the tower&#8217;s questions to you, pause its inbox</td></tr>
+<tr><td><kbd>g</kbd></td><td>what you allowed the agents, and revoke it</td></tr>
+<tr><td><kbd>T</kbd></td><td>pick a colour theme, previewed live</td></tr>
 <tr><td><kbd>s</kbd></td><td>a shell in the container</td></tr>
 <tr><td><kbd>q</kbd></td><td>leave the deck; agents keep running</td></tr>
 </tbody>
 </table>
 </div>
   <div class="prose">
-    <p>A red dot needs you, a spinner works, a green dot is done. A sound plays only when an agent needs you. The deck is optional: <code>lea config deck off</code> runs your own tool in the container instead, with the same confinement.</p>
+    <p>The deck comes in seven colour themes, <code>high-contrast</code> and <code>mono</code> among them; <code>LEA_THEME</code> sets one and <code>NO_COLOR</code> gives <code>mono</code>. A red dot needs you, a spinner works, a green dot is done. A sound plays only when an agent needs you. The deck is optional: <code>lea config deck off</code> runs your own tool in the container instead, with the same confinement.</p>
   </div>
 </section>
 
 <section aria-labelledby="teams">
   <h2 id="teams">Teams of agents</h2>
   <div class="prose">
-    <p>Every agent has a role: <code>lead</code>, <code>dev</code> or <code>reviewer</code>. Only you change one. A lead starts devs and reviewers through lea&#8217;s MCP tools; any other agent asks a lead.</p>
+    <p>Every agent has a role: <code>lead</code>, <code>dev</code> or <code>reviewer</code>. Only you change one. A lead starts devs and reviewers through lea&#8217;s MCP tools; any other agent asks a lead. An agent a lead starts works where the lead works, unless the lead names another repository, and joins its folder in the deck.</p>
     <p>Agents message each other, report on their task (the deck and <code>lea board</code> show it) and lease the files they edit. An agent whose turn is over is woken when a message arrives.</p>
-    <p>A grant is a decision you record on the host and lea applies to every agent it covers: merge a pull request, close an issue, push the agent&#8217;s own branch. <code>lea delivery on</code> grants push, pull request and merge on the repositories of the projects directory.</p>
+  </div>
+</section>
+
+<section aria-labelledby="tower">
+  <h2 id="tower">The Control Tower</h2>
+  <div class="prose">
+    <p>When the deck opens with no agent running, its first agent is a Control Tower: a lead on Claude Code that runs <code>/lea:control-tower</code>. You talk to it only. It splits your requests into tasks, starts the agents that do them, follows them and briefs you in a line per agent. It never does the work itself; a hook keeps it to lea&#8217;s team tools.</p>
+    <p>It asks you one question at a time. The others queue, an incident first, then what blocks an agent, then the rest; your next prompt answers the open one, and the tower relays it to the agent that asked. <kbd>Q</kbd> lists the queue, <kbd>H</kbd> (or <code>lea hold</code>) pauses the messages agents send it while you answer. <kbd>N</kbd> starts another tower.</p>
+  </div>
+</section>
+
+<section aria-labelledby="allowances">
+  <h2 id="allowances">Allowances</h2>
+  <div class="prose">
+    <p>An allowance is a decision you record on the host and lea applies to every agent it covers: merge a pull request, close an issue, push the agent&#8217;s own branch. Each one is pinned to the repository&#8217;s <code>origin</code>, and no agent can record one.</p>
+  </div>
+  <pre tabindex="0"><code>lea allow deliver              # push, pull request, merge, on every repository here
+lea allow push --branch 'feat/*' --agent dev-1 --for 2h
+lea allow                      # what you allowed, the time left, the last uses
+lea allow off 1                # take allowance 1 back</code></pre>
+  <div class="prose">
+    <p>An allowance holds until you revoke it, unless <code>--for</code> says otherwise. In the deck, <kbd>g</kbd> shows the same list.</p>
   </div>
 </section>
 
@@ -192,7 +219,7 @@
       </nav>
     </div>
     <div class="wrap footer-bottom">
-      <p>Pre-release (v0.14.x). lea is licensed under the <a href="https://github.com/DavidGodefroid/lea/blob/main/LICENSE">Apache License 2.0</a>.</p>
+      <p>Pre-release (v0.15.x). lea is licensed under the <a href="https://github.com/DavidGodefroid/lea/blob/main/LICENSE">Apache License 2.0</a>.</p>
       <p>lea is an independent project, not affiliated with Anthropic. Claude and Claude Code are trademarks of Anthropic.</p>
       <p><a href="https://lockfamily.dev">lockfamily.dev</a> · <a href="https://github.com/DavidGodefroid/lockfamily">the family on GitHub</a></p>
     </div>
