@@ -28,6 +28,12 @@ func startDaemonWithStore(t *testing.T) (api, bus string, st *store.Store) {
 	t.Helper()
 	dir, _ := os.MkdirTemp("", "lea")
 	t.Cleanup(func() { os.RemoveAll(dir) })
+	return startDaemonIn(t, dir)
+}
+
+// startDaemonIn is startDaemonWithStore on the database dir/lea.db, which may already exist.
+func startDaemonIn(t *testing.T, dir string) (api, bus string, st *store.Store) {
+	t.Helper()
 	st, err := store.Open(filepath.Join(dir, "lea.db"))
 	if err != nil {
 		t.Fatal(err)

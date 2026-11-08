@@ -11,6 +11,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/DavidGodefroid/lea/internal/roles"
 	_ "modernc.org/sqlite"
@@ -75,6 +76,10 @@ CREATE TABLE IF NOT EXISTS grants(
   github TEXT NOT NULL DEFAULT '', created INTEGER NOT NULL, expires INTEGER NOT NULL, revoked INTEGER NOT NULL DEFAULT 0,
   tag TEXT NOT NULL DEFAULT '');
 CREATE INDEX IF NOT EXISTS grants_container ON grants(container, revoked, expires);
+CREATE TABLE IF NOT EXISTS grant_sets(
+  id INTEGER PRIMARY KEY AUTOINCREMENT, container TEXT NOT NULL, capabilities TEXT NOT NULL,
+  created INTEGER NOT NULL, expires INTEGER NOT NULL, revoked INTEGER NOT NULL DEFAULT 0);
+CREATE INDEX IF NOT EXISTS grant_sets_container ON grant_sets(container, revoked, expires);
 CREATE TABLE IF NOT EXISTS grant_requests(
   id INTEGER PRIMARY KEY AUTOINCREMENT, container TEXT NOT NULL, requester TEXT NOT NULL, action TEXT NOT NULL,
   repo TEXT NOT NULL, branch TEXT NOT NULL DEFAULT '', github TEXT NOT NULL, ttl_s INTEGER NOT NULL,
@@ -209,7 +214,13 @@ func migrate(db *sql.DB) error {
 	if err := addColumns(db, "grant_requests", tagColumns); err != nil {
 		return err
 	}
-	return addColumns(db, "hub_waits", hubWaitColumns)
+	if err := addColumns(db, "hub_waits", hubWaitColumns); err != nil {
+		return err
+	}
+	if err := addColumns(db, "grants", grantColumns); err != nil {
+		return err
+	}
+	return migrateGrantSets(db, time.Now().Unix())
 }
 
 // addColumns adds the columns table lacks. table is one of this file's constants, never input.

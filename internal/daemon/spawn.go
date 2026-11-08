@@ -164,6 +164,10 @@ func (d *Daemon) agentsSpawn(ctx context.Context, o Origin, me string, raw json.
 	if req != nil && p.Label == "" {
 		p.Label = req.Label
 	}
+	if req != nil && p.Repo == "" && p.Branch == "" {
+		// Where the requester asked the agent to work, unless the lead names it (#364).
+		p.Repo, p.Branch = req.Repo, req.Branch
+	}
 	nr := agents.NewRequest{Container: o.Container, Profile: p.Profile, Model: p.Model, Role: p.Role, Parent: me,
 		Repo: p.Repo, Branch: p.Branch, Brief: p.Brief, BriefFrom: me, Label: p.Label, NamePrefix: p.Role, Hidden: true}
 	if admit != nil {

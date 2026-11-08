@@ -257,6 +257,9 @@ type Model struct {
 	setSel        int                // its selected setting
 	setEditing    bool               // the selected text setting's field is open
 	setDraft      []rune             // the field's text
+	allowOpen     bool               // the Allowed screen (g) is shown (allowed.go)
+	allowList     []Allowance        // its rows
+	allowSel      int                // its selected row
 	hoverFor      string             // key of the row under the pointer, "" when none
 	hoverSeq      int                // the latest pointer move; older fades are dropped
 	menuPicker    bool               // the open menu picks the folder of agent menuFor (o), the colour of folder menuFor (c), or the deck's theme (T)
@@ -397,7 +400,13 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, tea.Batch(m.watch(), tea.Tick(showDelay, func(time.Time) tea.Msg { return showMsg{seq} }), anim)
 		}
 		anim = m.animate()
+		if m.allowOpen {
+			// The version moves when an allowance does: read the screen's rows again.
+			return m, tea.Batch(m.watch(), anim, m.readAllowed())
+		}
 		return m, tea.Batch(m.watch(), anim)
+	case allowedMsg:
+		return m.takeAllowed(msg), nil
 	case frameMsg:
 		m.ticking = false
 		m.frame++
@@ -455,6 +464,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		if m.setOpen {
 			return m.settingsKey(msg)
+		}
+		if m.allowOpen && m.confirm == "" {
+			return m.allowedKey(msg.String())
 		}
 		if m.editFor != "" {
 			return m.editKey(msg)
@@ -753,6 +765,8 @@ func (m Model) key(k string) (tea.Model, tea.Cmd) {
 		return m, nil
 	case ",":
 		return m.openSettings()
+	case "g":
+		return m.openAllowed()
 	case "e":
 		if a := m.selectedAgent(); a != nil && !isShell(*a) {
 			m.editFor, m.draft, m.editTitle, m.status = a.Key, []rune(a.Label), "Rename agent", ""
