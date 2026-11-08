@@ -162,6 +162,7 @@ func grantRequestLines(stdout io.Writer) (int, error) {
 	var gs []struct {
 		ID                                            int64
 		Container, From, Action, Repo, Branch, GitHub string
+		Tag                                           string
 		TTLS                                          int64 `json:"ttl_s"`
 		Reason                                        string
 	}
@@ -172,6 +173,9 @@ func grantRequestLines(stdout io.Writer) (int, error) {
 		where := ""
 		if g.Branch != "" && g.Branch != "*" {
 			where = " branch " + oneLine(g.Branch, 128)
+		}
+		if g.Tag != "" {
+			where += " tag " + oneLine(g.Tag, 64)
 		}
 		fmt.Fprintf(stdout, "g%d %s (lead in %s) asks for a %s grant on repo %s (gh %s)%s for itself and its children, %s\n", g.ID,
 			oneLine(g.From, 64), oneLine(g.Container, 64), oneLine(g.Action, 32), oneLine(g.Repo, 100), oneLine(g.GitHub, 160), where,

@@ -13,17 +13,19 @@ type GrantRequest struct {
 	ID                                 int64
 	Container, Requester, Action, Repo string
 	Branch, GitHub, Reason, State      string
-	TTLS                               int64
-	Grant                              int64
-	At, Decided                        int64
+	// Tag is the tag glob of a release-create request (#353).
+	Tag         string
+	TTLS        int64
+	Grant       int64
+	At, Decided int64
 }
 
-const grantRequestCols = `id, container, requester, action, repo, branch, github, ttl_s, reason, state, grant_id, at, decided`
+const grantRequestCols = `id, container, requester, action, repo, branch, github, ttl_s, reason, state, grant_id, at, decided, tag`
 
 func scanGrantRequest(sc interface{ Scan(...any) error }) (GrantRequest, error) {
 	var r GrantRequest
 	err := sc.Scan(&r.ID, &r.Container, &r.Requester, &r.Action, &r.Repo, &r.Branch, &r.GitHub, &r.TTLS, &r.Reason,
-		&r.State, &r.Grant, &r.At, &r.Decided)
+		&r.State, &r.Grant, &r.At, &r.Decided, &r.Tag)
 	if errors.Is(err, sql.ErrNoRows) {
 		return GrantRequest{}, ErrNotFound
 	}
@@ -31,7 +33,7 @@ func scanGrantRequest(sc interface{ Scan(...any) error }) (GrantRequest, error) 
 }
 
 // AddGrantRequest records a pending grant request. The same request still pending (same
-// requester, action, repo, branch and GitHub repository) is returned as it is, with ErrExists; a
+// requester, action, repo, branch, GitHub repository and tag) is returned as it is, with ErrExists; a
 // requester with maxPending pending requests is refused (ErrLimit).
 func (s *Store) AddGrantRequest(r GrantRequest, maxPending int, now int64) (GrantRequest, error) {
 	tx, err := s.db.Begin()
@@ -40,8 +42,8 @@ func (s *Store) AddGrantRequest(r GrantRequest, maxPending int, now int64) (Gran
 	}
 	defer tx.Rollback()
 	same, err := scanGrantRequest(tx.QueryRow(`SELECT `+grantRequestCols+` FROM grant_requests
-		WHERE state='pending' AND requester=? AND action=? AND repo=? AND branch=? AND github=? ORDER BY id LIMIT 1`,
-		r.Requester, r.Action, r.Repo, r.Branch, r.GitHub))
+		WHERE state='pending' AND requester=? AND action=? AND repo=? AND branch=? AND github=? AND tag=? ORDER BY id LIMIT 1`,
+		r.Requester, r.Action, r.Repo, r.Branch, r.GitHub, r.Tag))
 	switch {
 	case err == nil:
 		return same, ErrExists
@@ -55,8 +57,8 @@ func (s *Store) AddGrantRequest(r GrantRequest, maxPending int, now int64) (Gran
 	if n >= maxPending {
 		return GrantRequest{}, fmt.Errorf("%w: %d grant requests of yours already wait for the user (at most %d)", ErrLimit, n, maxPending)
 	}
-	res, err := tx.Exec(`INSERT INTO grant_requests(container, requester, action, repo, branch, github, ttl_s, reason, at)
-		VALUES(?,?,?,?,?,?,?,?,?)`, r.Container, r.Requester, r.Action, r.Repo, r.Branch, r.GitHub, r.TTLS, r.Reason, now)
+	res, err := tx.Exec(`INSERT INTO grant_requests(container, requester, action, repo, branch, github, ttl_s, reason, at, tag)
+		VALUES(?,?,?,?,?,?,?,?,?,?)`, r.Container, r.Requester, r.Action, r.Repo, r.Branch, r.GitHub, r.TTLS, r.Reason, now, r.Tag)
 	if err != nil {
 		return GrantRequest{}, err
 	}
