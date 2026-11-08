@@ -1263,6 +1263,13 @@ so. Changes apply after `lea init` (endpoints, keys, images, locksql) or `lea st
   its option says; `LEA_ALLOW_GATEWAY=1` (in your configuration or the environment) accepts a plain
   internal network instead, with a warning. `lea doctor` prints the gateway mode of each internal
   network and fails on one that is not isolated (a warning under `LEA_ALLOW_GATEWAY=1`).
+- The agents resolve no external name: lea starts each agent container with `--dns 192.0.2.1`
+  (TEST-NET-1, never routed; not a loopback address, which Docker may query from the host's
+  namespace), out of reach of its internal network, so Docker's embedded resolver answers the names of the containers on its
+  network (`lea-proxy`) and forwards nothing to the host's resolver, which would otherwise carry a
+  query name past the proxy. lea-proxy resolves the names the agents reach; nested containers use
+  the same resolver. `lea doctor` fails on a running container that resolves `example.com`, and warns
+  about one an older lea started without this resolver.
 - Work in lea, not on the host, inside the projects directory: an agent can write files your host
   tools would run. When the last session closes, lea reports changes to git hooks, risky git
   configuration, `.mcp.json` and `.claude/` settings.

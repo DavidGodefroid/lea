@@ -171,6 +171,9 @@ jobs:
                    'keyctl refused (seccomp)' 'perf_event_open refused (seccomp)' 'reboot refused (seccomp)' 'vmsplice refused (seccomp)' 'NETLINK_AUDIT socket refused (seccomp)' \
                    'NETLINK_AUDIT socket with high protocol bits refused (seccomp)' 'AF_ALG socket with high family bits refused (seccomp)' \
                    'sudo absent' 'no setuid or setgid file' \
+                   "lea-proxy resolves (Docker's embedded resolver)" 'an external name does not resolve (example.com)' 'no direct DNS to 8.8.8.8:53 over udp' 'no direct DNS to 1.1.1.1:53 over tcp' \
+                   "DNS exfiltration attempts sent (isolation.sh checks the decoy's log)" 'nested: an external name does not resolve (example.com)' 'nested: no direct DNS to 8.8.8.8:53 over tcp' \
+                   "nested: DNS exfiltration attempts sent (isolation.sh checks the decoy's log)" 'no DNS query from inside lea reached the decoy' \
                    'settings.json is a copy of the host'"'"'s' '/permissions adds a rule' '/plugin install works' 'marketplace update works' 'managed settings carry lea'"'"'s hooks' 'permission rules are managed only' 'the host'"'"'s permission rules are managed' 'an agent'"'"'s rule is not managed' 'the host'"'"'s rules are not writable' 'managed settings are not writable' 'host ~/.claude settings.json and plugins unchanged'; do
             grep -qxF "ok   $c" isolation.log || { echo "isolation: '$c' did not run" >&2; exit 1; }
           done
@@ -269,7 +272,7 @@ jobs:
         run: |
           make test-isolation 2>&1 | tee isolation.log
           if grep -E '^FAIL |^note: ' isolation.log; then echo "an isolation check failed or was skipped" >&2; exit 1; fi
-          for c in "lea-test-proxy keeps the engine's default runtime (runc)" 'a nested container runs' 'AF_ALG socket refused (seccomp)' 'NETLINK_AUDIT socket with high protocol bits refused (seccomp)' 'AF_ALG socket with high family bits refused (seccomp)' '.lockfamily write gets EROFS' 'host facade socket not visible' 'no facade socket in the container' 'sibling lea unreachable directly' 'host port unreachable via host IP' 'public HTTPS works through the proxy' 'the Claude API answers through the proxy' 'nested HTTP between containers is direct' "lea doctor: $LEA_TEST_RUNTIME applies lea's seccomp profile"; do
+          for c in "lea-test-proxy keeps the engine's default runtime (runc)" 'a nested container runs' 'AF_ALG socket refused (seccomp)' 'NETLINK_AUDIT socket with high protocol bits refused (seccomp)' 'AF_ALG socket with high family bits refused (seccomp)' '.lockfamily write gets EROFS' 'host facade socket not visible' 'no facade socket in the container' 'sibling lea unreachable directly' 'host port unreachable via host IP' 'public HTTPS works through the proxy' 'the Claude API answers through the proxy' 'nested HTTP between containers is direct' 'an external name does not resolve (example.com)' 'no DNS query from inside lea reached the decoy' "lea doctor: $LEA_TEST_RUNTIME applies lea's seccomp profile"; do
             grep -qxF "ok   $c" isolation.log || { echo "isolation: '$c' did not run" >&2; exit 1; }
           done
           [ "$(grep -c "^ok   lea-test-[0-9a-f]* runs on the $LEA_TEST_RUNTIME runtime\$" isolation.log)" -eq 2 ] || { echo "isolation: the agent containers are not on $LEA_TEST_RUNTIME" >&2; exit 1; }

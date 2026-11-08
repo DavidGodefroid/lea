@@ -4,6 +4,12 @@
 
 Changes:
 
+- The agent containers no longer rely on Docker's default resolver (#98): lea starts them with
+  `--dns 192.0.2.1` (TEST-NET-1, never routed, out of reach of the internal network), so a lookup of an external name, from an agent or a nested container, is
+  never forwarded to the host's resolver (lea-proxy, which resolves names for the agents, is still
+  answered). `lea doctor` fails on a running container that resolves an external name, and warns
+  about one started without it (`lea stop`, then `lea`). `make test-isolation` checks that no lookup, direct
+  query to a public resolver or long TXT name reaches a decoy DNS server, on the decoy network or on the host's 127.0.0.1:53.
 - The control tower asks you one question at a time (#95): its new `user_ask` tool (leads only)
   opens a question when none is open and queues it otherwise, by priority (`incident`,
   `blocking`, `normal`) then in order; the queue is kept in lea.db. Your next prompt, or your
