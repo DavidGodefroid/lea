@@ -723,6 +723,26 @@ permission. The agents of one container share one user, so they are one trust do
 that names another agent of its container in `LEA_AGENT` is still guarded by the same hard denies
 and the container's grants.
 
+### Your own status line
+
+lea draws the agents' status line itself (`lea statusline`: model, context and 5-hour/7-day
+usage), since it reports each agent's context use to the deck and feeds limit auto-resume. When
+your `~/.claude/settings.json` has a `statusLine` command, lea runs it after its report and shows
+its output instead (#374):
+
+- Your command gets the same JSON on stdin as on your host, and runs **inside the container**, in
+  the agent's directory: no host-only tool or path. A script below `~/.claude` that the command
+  names (`~/.claude/statusline.sh`, `bash ~/.claude/bin/line.py`...) is mounted read-only, when it
+  is a real file (no symbolic link on its path) and executable or named as a script. Nothing
+  outside `~/.claude` is mounted: such a command fails and lea's own line shows.
+- When the command exits non-zero, prints nothing or takes more than 1.5 s (it is killed, with
+  what it started), lea prints its own line. The context report is sent whatever it does.
+- The command is read from the container's copy of your settings, at every refresh; the script
+  is mounted when lea starts, as your host's `settings.json` names it (never as an agent's copy
+  does, so an agent cannot get another host file mounted), and never one of Claude Code's own state
+  directories (`projects`, `shell-snapshots`, `todos`...). After adding one, restart lea (`lea
+  stop`, then `lea`). Remove the `statusLine` entry to get lea's line back.
+
 ### Control tower
 
 lea brings its own Claude Code plugin, `lea`, loaded in every agent (from the image, for the

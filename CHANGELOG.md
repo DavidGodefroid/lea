@@ -13,6 +13,11 @@ Changes:
   hooks, `allowManagedPermissionRulesOnly`, `disableBypassPermissionsMode`, the status line and
   lea's own variables are refused with the reason. Host only; `lea doctor` lists the overrides,
   `lea config export` never carries them.
+- The agents show your own Claude Code status line (#374): when your `~/.claude/settings.json`
+  has a `statusLine` command, `lea statusline` still reports the agent's context and usage to the
+  daemon, then runs your command with the same JSON (1.5 s at most, killed past it) and prints its
+  output; lea's own line comes back when it fails, prints nothing or times out. A script below
+  `~/.claude` the command names is mounted read-only into the containers (and lea-ctl).
 - `release-create` grant action (#353): `gh release create <tag> --verify-tag [--title T]
   [--notes-file F | --generate-notes] [--prerelease] [--latest]`, one plain command at the root of
   the agent's worktree, pinned like every allowed gh call, for a pushed semver tag matching the
@@ -23,6 +28,8 @@ Changes:
 - In the deck, a folder header's summary sets each state mark apart from its count (`6 ◐ 6`, not
   `6 ◐6`) (#355): the marks are East Asian Ambiguous width, and a terminal that draws them wide
   drew the half-moon over the digit.
+- The "Copied" notice a mouse selection's release shows closes after 0.6 s instead of 1.5 s
+  (#373).
 
 ## v0.14.1 (2026-11-08)
 
