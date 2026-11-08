@@ -142,6 +142,13 @@ func (f *fakeAgents) SetLabel(ctx context.Context, k, label string) error {
 	f.rec(fmt.Sprintf("label %s %q", k, label))
 	return nil
 }
+func (f *fakeAgents) AutoLabel(ctx context.Context, k, label string) (string, error) {
+	f.rec(fmt.Sprintf("autolabel %s %q", k, label))
+	if f.st == nil {
+		return label, nil
+	}
+	return f.st.SetLabelUnique(k, label, agents.MaxLabel, true)
+}
 func (f *fakeAgents) SetPaused(ctx context.Context, k string, paused bool) error {
 	f.rec(fmt.Sprintf("paused %s %v", k, paused))
 	return nil

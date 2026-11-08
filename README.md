@@ -286,7 +286,13 @@ profile and state in the bottom border.
   with `0`.
 - **Names.** An agent you have not renamed is named after its first prompt, by a short
   `claude -p` run on the host with a small model (`LEA_AUTONAME_MODEL`, `haiku` by default;
-  `LEA_AUTONAME=0` turns it off). The prompt is not stored.
+  `LEA_AUTONAME=0` turns it off). The prompt is not stored. An agent started with a brief (a
+  lead's `agents_spawn`) is named after its brief instead, unless the lead gave it a `label`.
+  A row shows the label, then the agent's name dimmed (`lea#350 spawn reuse  dev-4`): the name
+  is never cut, and the tower, `lea board` and `lea agents` name the agent the same way,
+  `label (name)`. Labels are unique among the running agents: a clash gets ` 2`, ` 3`…, and a
+  rename to a running agent's label is refused. `user`, `lea` and `Control Tower…` are reserved:
+  only the user gives them, never a lead's `label` nor the automatic name.
 - **Copy and paste.** Drag to select text in an agent's terminal: releasing the button copies it
   to your clipboard and flashes "Copied". `ctrl+v` pastes your clipboard's text into the pane that
   has the keyboard (the agent's input, a shell, the deck). lea reads your clipboard only when you

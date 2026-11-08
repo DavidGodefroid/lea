@@ -79,6 +79,16 @@ tool() {
   grep -q '/lea:control-tower off' "$k"
 }
 
+@test "the skill names agents by their handle, label (name), and names the deck row (#356)" {
+  k="$P/skills/control-tower/SKILL.md"
+  grep -qF '<label> (<name>) · <state> · <at most 12 words>' "$k"
+  grep -qF '**Name each agent by its handle, `<label> (<name>)`**' "$k"
+  grep -qF '**When you ask the user to act in an agent'"'"'s session**, name the deck row exactly' "$k"
+  grep -qF 'go to the row "lea#350 spawn reuse  dev-4" and approve the merge' "$k"
+  grep -qF '`<repo>#<issue> <2-3 words>`' "$k"
+  ! grep -qF '<agent> · <state>' "$k"
+}
+
 @test "the denial names the way out, /lea:control-tower off" {
   prompt "/lea:control-tower"
   out=$(jq -n '{session_id: "s1", tool_name: "Edit", tool_input: {}}' | sh "$G" tool)
