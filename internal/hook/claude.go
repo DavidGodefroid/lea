@@ -144,7 +144,7 @@ func Claude(ctx context.Context, event string, stdin io.Reader, stdout io.Writer
 			Block  bool   `json:"block"`
 			Reason string `json:"reason"`
 		}
-		if c.call(bctx, "stop_check", nil, &r) == nil && r.Block {
+		if c.call(bctx, "stop_check", map[string]any{"session_id": p.SessionID}, &r) == nil && r.Block {
 			json.NewEncoder(stdout).Encode(map[string]any{"decision": "block", "reason": r.Reason})
 		}
 	case "UserPromptSubmit", "PostToolUse":
@@ -154,13 +154,13 @@ func Claude(ctx context.Context, event string, stdin io.Reader, stdout io.Writer
 		if event == "UserPromptSubmit" && p.Prompt != "" {
 			// The daemon names an unlabelled agent after its first prompt; the prompt is not
 			// stored (hook_event above never carries it).
-			_ = c.call(bctx, "name_hint", map[string]any{"prompt": truncate(p.Prompt, maxNamePrompt)}, nil)
+			_ = c.call(bctx, "name_hint", map[string]any{"prompt": truncate(p.Prompt, maxNamePrompt), "session_id": p.SessionID}, nil)
 		}
 		var r struct {
 			Count int    `json:"count"`
 			Text  string `json:"text"`
 		}
-		if c.call(bctx, "context_unread", nil, &r) == nil && r.Count > 0 {
+		if c.call(bctx, "context_unread", map[string]any{"session_id": p.SessionID}, &r) == nil && r.Count > 0 {
 			json.NewEncoder(stdout).Encode(map[string]any{"hookSpecificOutput": map[string]any{
 				"hookEventName": event, "additionalContext": r.Text}})
 		}

@@ -43,6 +43,8 @@ func newEnv(t *testing.T) env {
 	ctr := &fakeContainers{live: map[string][]string{}, projects: map[string]string{}}
 	m := NewManager(Config{Store: st, Term: term, Containers: ctr, LeaBin: leaBin, UID: 1000, GID: 1000,
 		Now: func() int64 { return 1000 }})
+	// An agent not live is done at the first miss here; the tests of doneGrace set it.
+	m.doneGrace = 0
 	return env{m, term, ctr, st}
 }
 
@@ -187,7 +189,8 @@ func TestNewNamesAndRefusals(t *testing.T) {
 	}
 }
 
-func TestNewReusesTheNameOfAnEndedAgent(t *testing.T) {
+// A done row keeps its name (#350): only once the row is removed does the name come free.
+func TestNewReusesTheNameOfAnEndedAgentOnlyOnceItsRowIsGone(t *testing.T) {
 	e := newEnv(t)
 	s := e.ensure(t, "/p")
 	e.spawn(t, "")
@@ -197,12 +200,101 @@ func TestNewReusesTheNameOfAnEndedAgent(t *testing.T) {
 	if e.state(t, "claude-1") != "done" {
 		t.Fatal("ended agent not marked done")
 	}
+	if r := e.spawn(t, ""); r.Name != "claude-2" {
+		t.Fatalf("the done agent's name was reused: %+v", r)
+	}
+	if err := e.st.ForgetAgent(C + "/claude-1"); err != nil {
+		t.Fatal(err)
+	}
 	r := e.spawn(t, "")
 	if r.Name != "claude-1" || r.State != "unknown" {
 		t.Fatalf("row=%+v", r)
 	}
 	if s.pane(old.id) != nil {
 		t.Fatal("the ended agent's old pane was not removed")
+	}
+}
+
+// One reconcile that does not list a live agent does not make it done (#350): it is done only
+// when it is still not live doneGrace later, and a reconcile is scheduled to look again.
+func TestReconcileNeedsTheAgentGoneForDoneGrace(t *testing.T) {
+	e := newEnv(t)
+	clk := &fakeClock{now: time.Unix(5000, 0)}
+	e.m.clock, e.m.schedule = clk.Now, clk.schedule
+	e.m.doneGrace = 3 * time.Second
+	s := e.ensure(t, "/p")
+	e.spawn(t, "")
+	e.ctr.setLive(C, "claude-1")
+	if err := e.st.SetState(C+"/claude-1", "working", "", 1); err != nil {
+		t.Fatal(err)
+	}
+	pane := s.byAgent("claude-1")
+	s.locked(func() { pane.dead = true })
+	e.ctr.setLive(C) // a transient miss
+	e.m.Ensure(bg, C, "")
+	if st := e.state(t, "claude-1"); st != "working" {
+		t.Fatalf("state=%s after one miss", st)
+	}
+	clk.mu.Lock()
+	waits, fns := clk.waits, len(clk.fns)
+	clk.mu.Unlock()
+	if !slices.Contains(waits, 3*time.Second) || fns == 0 {
+		t.Fatalf("no recheck scheduled: waits=%v", waits)
+	}
+	e.ctr.setLive(C, "claude-1") // back: the miss is forgotten
+	e.m.Ensure(bg, C, "")
+	clk.mu.Lock()
+	clk.now = clk.now.Add(10 * time.Second)
+	clk.mu.Unlock()
+	e.ctr.setLive(C)
+	s.locked(func() { s.byAgent("claude-1").dead = true })
+	e.m.Ensure(bg, C, "") // a new first miss, not the old one
+	if st := e.state(t, "claude-1"); st != "working" {
+		t.Fatalf("state=%s: an old miss counted", st)
+	}
+	if r := e.spawn(t, ""); r.Name != "claude-2" {
+		t.Fatalf("name %q", r.Name)
+	}
+	clk.mu.Lock()
+	clk.now = clk.now.Add(3 * time.Second)
+	clk.mu.Unlock()
+	e.m.Ensure(bg, C, "") // still gone doneGrace later: done
+	if st := e.state(t, "claude-1"); st != "done" {
+		t.Fatalf("state=%s: an ended agent stays live", st)
+	}
+}
+
+// freeName skips a done row whose process still runs, and a live process that has no row (#350).
+func TestNewNeverGivesTheNameOfALiveAgent(t *testing.T) {
+	e := newEnv(t)
+	e.ensure(t, "/p")
+	e.spawn(t, "")
+	e.ctr.setLive(C, "claude-1", "claude-3")
+	if err := e.st.SetState(C+"/claude-1", "done", "sess-live", 1); err != nil {
+		t.Fatal(err)
+	}
+	if err := e.st.SetLabel(C+"/claude-1", "lockhub #155"); err != nil {
+		t.Fatal(err)
+	}
+	before, _ := e.st.AgentByKey(C + "/claude-1")
+	r, err := e.m.New(bg, NewRequest{Container: C, Brief: "start locklog#143"})
+	if err != nil || r.Name != "claude-2" {
+		t.Fatalf("name %q err=%v", r.Name, err)
+	}
+	after, _ := e.st.AgentByKey(C + "/claude-1")
+	if after.Label != before.Label || after.Incarnation != before.Incarnation || after.SessionID != "sess-live" ||
+		after.Repo != before.Repo || after.Branch != before.Branch {
+		t.Fatalf("the live agent's row changed: %+v, was %+v", after, before)
+	}
+	if n, _ := e.st.UnreadCount(C + "/claude-1"); n != 0 {
+		t.Fatalf("the live agent got %d messages: the new spawn's brief", n)
+	}
+	if r := e.spawn(t, ""); r.Name != "claude-4" {
+		t.Fatalf("name %q: a live process's name was given", r.Name)
+	}
+	// Asked by name, a live done row is refused too, and stays as it was.
+	if _, err := e.m.New(bg, NewRequest{Container: C, Name: "claude-1"}); !errors.Is(err, store.ErrExists) {
+		t.Fatalf("spawn over a live done row: err=%v", err)
 	}
 }
 
@@ -486,6 +578,10 @@ func TestReconcileLeavesStatesWhenLiveAgentsAreUnknown(t *testing.T) {
 	if st := e.state(t, "claude-1"); st != "unknown" {
 		t.Fatalf("state=%s: an agent was marked done without knowing it ended", st)
 	}
+	if _, err := e.m.New(bg, NewRequest{Container: C}); err == nil {
+		t.Fatal("spawned without knowing which agents run")
+	}
+	e.ctr.fail(nil, nil)
 	if r := e.spawn(t, ""); r.Name != "claude-2" {
 		t.Fatalf("name %q reused", r.Name)
 	}

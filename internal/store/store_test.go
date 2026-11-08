@@ -188,6 +188,27 @@ func TestRegisterAgentRefusesALiveNameAndReusesAnEndedOne(t *testing.T) {
 	}
 }
 
+// A done row whose process still runs is never reused (#350): the live agent would get the
+// new spawn's brief, repo and branch.
+func TestRegisterRefusesADoneRowWhoseAgentIsLive(t *testing.T) {
+	s := open(t)
+	if _, err := s.Register(NewAgent{Container: "lea-a", Name: "dev-4", Profile: "claude", Workdir: "/p", Role: "dev",
+		Repo: "lockhub", Branch: "fix/149"}, Caps{}, 10); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.SetState("lea-a/dev-4", "done", "sess-live", 11); err != nil {
+		t.Fatal(err)
+	}
+	_, err := s.Register(NewAgent{Container: "lea-a", Name: "dev-4", Profile: "claude", Workdir: "/p", Role: "dev",
+		Repo: "locklog", Branch: "dependabot/x", Live: true}, Caps{}, 12)
+	if !errors.Is(err, ErrExists) {
+		t.Fatalf("register over a live done row: err=%v", err)
+	}
+	if got, _ := s.AgentByKey("lea-a/dev-4"); got.Repo != "lockhub" || got.Branch != "fix/149" || got.SessionID != "sess-live" {
+		t.Fatalf("live row changed: %+v", got)
+	}
+}
+
 func TestSpawnedAgentsAndForget(t *testing.T) {
 	s := open(t)
 	s.RegisterAgent("lea-a", "zed", "claude", "/p", 1)

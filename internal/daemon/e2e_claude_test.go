@@ -542,3 +542,33 @@ func TestClaudePendingLockCallSuspendsTheAgent(t *testing.T) {
 		t.Fatalf("state %s after the turn", b.State)
 	}
 }
+
+// A nested Claude under the agent's identity (#350): the live agent runs claude -p, which
+// inherits LEA_AGENT and runs lea's hooks with a session of its own. Its SessionStart, Stop and
+// SessionEnd leave the agent as it was: still idle, on its own session, not done (a done row's
+// name could be given to the next spawn, which would hand this live agent its brief).
+func TestClaudeNestedSessionDoesNotEndTheAgent(t *testing.T) {
+	e := newClaudeE2E(t)
+	e.setLimited(false)
+	e.run("say hi")
+	a := e.until("the agent idle", 45, func(a store.Agent) bool { return a.State == "idle" && a.SessionID != "" })
+	own := a.SessionID
+	ends, _ := e.st.EventPayloads("lea-a/dev", "SessionEnd")
+	nested := exec.Command(e.claude, "--settings", e.sf, "-p", "say hi")
+	nested.Dir, nested.Env = e.wd, e.env
+	if out, err := nested.CombinedOutput(); err != nil {
+		t.Fatalf("nested claude -p: %v\n%s", err, out)
+	}
+	e.until("the nested SessionEnd", 20, func(store.Agent) bool {
+		ps, _ := e.st.EventPayloads("lea-a/dev", "SessionEnd")
+		return len(ps) > len(ends)
+	})
+	ps, _ := e.st.EventPayloads("lea-a/dev", "SessionEnd")
+	if strings.Contains(ps[len(ps)-1], own) {
+		t.Fatalf("the SessionEnd came from the agent's own session: %s", ps[len(ps)-1])
+	}
+	time.Sleep(500 * time.Millisecond)
+	if a, _ := e.st.AgentByKey("lea-a/dev"); a.State != "idle" || a.SessionID != own {
+		t.Fatalf("the nested session moved the agent: %+v (own session %s)", a, own)
+	}
+}
