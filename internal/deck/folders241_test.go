@@ -209,7 +209,7 @@ func TestCPicksAFolderColour(t *testing.T) {
 	if !strings.Contains(ls[0], sgrOf(pink)+"m▾") || !strings.Contains(ls[0], "1;"+sgrOf(pink)+"mweb") {
 		t.Fatalf("folder row %q", ls[0])
 	}
-	if !strings.Contains(ls[0], sgrOf(theme.Blocked)+"m●1") {
+	if !strings.Contains(ls[0], sgrOf(theme.Blocked)+"m● 1") {
 		t.Fatalf("the header lost the blocked mark's colour: %q", ls[0])
 	}
 	if strings.Contains(ls[1], sgrOf(pink)) || strings.Contains(ls[1], "╎") || strings.Contains(ls[3], sgrOf(pink)) {
