@@ -21,6 +21,10 @@ Changes:
   drew the half-moon over the digit.
 - The "Copied" notice a mouse selection's release shows closes after 0.6 s instead of 1.5 s
   (#373).
+- A granted `gh pr create` or `gh release create` whose `--title` reads like the file flag (`-F`,
+  `--body-file`, `--notes-file`) hands gh the body or notes file the parser approved (#382): the
+  pinned command took the file's index from a second scan of the args, which took the title's
+  value for the flag and swapped the wrong argument for `-`.
 
 ## v0.14.1 (2026-11-08)
 
