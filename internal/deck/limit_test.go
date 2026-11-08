@@ -53,14 +53,14 @@ func TestAFolderWithALimitedAgent(t *testing.T) {
 		b    Agent
 		want string
 	}{
-		{ag("b", "idle", 9_990), "✓1"},
-		{ag("b", "working", 9_990), "◐1"},
-		{ag("b", "blocked", 9_990), "●1"},
+		{ag("b", "idle", 9_990), "✓ 1"},
+		{ag("b", "working", 9_990), "◐ 1"},
+		{ag("b", "blocked", 9_990), "● 1"},
 	} {
 		m := withFolders(t, st, limited("a", clock.Unix()+60), c.b)
 		line := viewLines(m)[1]
-		if !strings.Contains(line, "◷1") || !strings.Contains(line, c.want) {
-			t.Errorf("with %s: line %q, want ◷1 and %q", c.b.State, line, c.want)
+		if !strings.Contains(line, "◷ 1") || !strings.Contains(line, c.want) {
+			t.Errorf("with %s: line %q, want ◷ 1 and %q", c.b.State, line, c.want)
 		}
 	}
 }
