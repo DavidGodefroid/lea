@@ -14,6 +14,11 @@ Changes:
   `the user`, `lea`, `tower` (alone or numbered: `Tower 2`, `user #1`) or holds `Control
   Tower`, `Tower Control` or `Ctrl Tower` (`The Control Tower`, `CT`), whatever its case,
   punctuation or look-alike digits (`C0ntrol 7ower`): those are the user's and lea's.
+- A `gh pr create --body-file` or `gh release create --notes-file` refused for its file now says
+  why (#384): the hint names the file (cut past 80 characters) and the rule the matcher applies
+  (a relative path inside the worktree of at most 256 characters from `A-Za-z0-9._/-`, not
+  starting with `.`, `-` or `/`, with no empty, `.` or `..` segment, outside `.git`) with an
+  example, `pr-body.md`.
 - Deck colour themes (#337): `LEA_THEME` picks `catppuccin` (the default), `gruvbox`, `nord`,
   `tokyo-night`, `solarized`, `high-contrast` or `mono`; `T` in the deck (or its right-click menu)
   opens a picker that previews each theme live (`enter` keeps and saves it, `esc` restores), the
