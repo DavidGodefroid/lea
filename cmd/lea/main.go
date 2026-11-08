@@ -152,7 +152,17 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 			added, _ := statusline.Post(ctx, identity.BusSock(os.Getenv), identity.Agent(os.Getenv), r)
 			return added
 		}
-		if err := statusline.Run(stdin, stdout, dump, post); err != nil {
+		// The user's own status line, from the container's copy of their Claude settings (#374);
+		// not when this run is itself the user's command.
+		var user statusline.User
+		if os.Getenv(statusline.ChainedEnv) == "" {
+			dir := os.Getenv("CLAUDE_CONFIG_DIR")
+			if dir == "" {
+				dir = filepath.Join(os.Getenv("HOME"), ".claude")
+			}
+			user.Command = statusline.UserCommand(filepath.Join(dir, "settings.json"))
+		}
+		if err := statusline.RunWith(stdin, stdout, dump, post, user); err != nil {
 			fmt.Fprintln(stderr, "lea statusline:", err)
 		}
 		return 0

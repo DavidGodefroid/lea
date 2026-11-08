@@ -555,6 +555,9 @@ func (l *Launcher) claudeMounts(home, proj, st string) ([]string, error) {
 	if err := l.claudeLayer(src, priv, sbase); err != nil {
 		return nil, err
 	}
+	if err := add(l.statusLineMounts(src, priv, sbase)); err != nil {
+		return nil, err
+	}
 	if err := add(l.hostPermissionsFile(src, priv, sbase)); err != nil {
 		return nil, err
 	}
