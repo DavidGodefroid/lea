@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- The agents show your own Claude Code status line (#374): when your `~/.claude/settings.json`
+  has a `statusLine` command, `lea statusline` still reports the agent's context and usage to the
+  daemon, then runs your command with the same JSON (1.5 s at most, killed past it) and prints its
+  output; lea's own line comes back when it fails, prints nothing or times out. A script below
+  `~/.claude` the command names is mounted read-only into the containers (and lea-ctl).
+
 - In the deck, a folder header's summary sets each state mark apart from its count (`6 ◐ 6`, not
   `6 ◐6`) (#355): the marks are East Asian Ambiguous width, and a terminal that draws them wide
   drew the half-moon over the digit.
