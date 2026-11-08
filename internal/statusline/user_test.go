@@ -15,7 +15,7 @@ func runUser(t *testing.T, in, command string, timeout time.Duration) (string, [
 	t.Setenv("NO_COLOR", "1")
 	var out bytes.Buffer
 	var got []Report
-	post := func(r Report) []string { got = append(got, r); return nil }
+	post := func(r Report) Answer { got = append(got, r); return Answer{} }
 	if err := RunWith(strings.NewReader(in), &out, "", post, User{Command: command, Timeout: timeout}); err != nil {
 		t.Fatal(err)
 	}
@@ -92,15 +92,15 @@ func TestUserLineMarksTheChain(t *testing.T) {
 	}
 }
 
-// The restart notice still shows behind the user's line.
+// The lox run and restart notices still show behind the user's line.
 func TestUserLineKeepsTheLockNotice(t *testing.T) {
 	t.Setenv("NO_COLOR", "1")
 	var out bytes.Buffer
-	post := func(Report) []string { return []string{"orders"} }
+	post := func(Report) Answer { return Answer{LocksAdded: []string{"orders"}, LoxRun: "off"} }
 	if err := RunWith(strings.NewReader(userIn), &out, "", post, User{Command: "echo mine"}); err != nil {
 		t.Fatal(err)
 	}
-	if got := strings.TrimSpace(out.String()); got != "mine · +lock orders: restart lea" {
+	if got := strings.TrimSpace(out.String()); got != "mine · no lox run: start it in the projects directory · +lock orders: restart lea" {
 		t.Fatalf("out=%q", got)
 	}
 }

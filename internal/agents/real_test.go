@@ -303,3 +303,123 @@ func TestRealRetiredPanesGo(t *testing.T) {
 		t.Fatalf("the deck or its placeholder went:\n%s", got)
 	}
 }
+
+// TestRealLeadsChildRunsInItsLeadsDirectory runs against a real tmux server (#364): after the
+// user runs lea again from another repo, a lead's child started without a repo runs where its
+// lead works (pane_current_path), not where lea was last launched from.
+func TestRealLeadsChildRunsInItsLeadsDirectory(t *testing.T) {
+	if _, err := exec.LookPath("tmux"); err != nil {
+		t.Skip("tmux is not installed: make go-test-tmux runs this test")
+	}
+	dir, err := os.MkdirTemp("", "lw")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.RemoveAll(dir) })
+	t.Setenv("TMUX_TMPDIR", dir)
+	conf := filepath.Join(dir, "tmux.conf")
+	if err := tmux.WriteConf(conf, ""); err != nil {
+		t.Fatal(err)
+	}
+	bin := filepath.Join(dir, "lea")
+	if err := os.WriteFile(bin, []byte("#!/bin/sh\nexec sleep 600\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	real, err := filepath.EvalSymlinks(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	projects, ran := filepath.Join(real, "projects"), filepath.Join(real, "ran")
+	if err := os.Mkdir(ran, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	// docker exec -w DIR ... stands in as a process that runs in DIR until it is killed, and
+	// records DIR under the agent's name (tmux cannot always read a pane's cwd in a container).
+	docker := filepath.Join(dir, "docker")
+	script := "#!/bin/sh\nfor a; do case $a in LEA_AGENT=*) name=${a#LEA_AGENT=};; esac; done\n" +
+		"while [ $# -gt 0 ]; do if [ \"$1\" = -w ]; then cd \"$2\" || exit 1; fi; shift; done\n" +
+		"pwd -P >" + ran + "/\"$name\"\nexec sleep 600\n"
+	if err := os.WriteFile(docker, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for _, d := range []string{"lea", "shop"} {
+		if err := os.MkdirAll(filepath.Join(projects, d), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	const sock = "lea-test-workdir"
+	t.Cleanup(func() { exec.Command("tmux", "-L", sock, "kill-server").Run() })
+	tm := func(args ...string) string {
+		t.Helper()
+		out, err := exec.Command("tmux", append([]string{"-L", sock, "-f", conf}, args...)...).CombinedOutput()
+		if err != nil {
+			t.Fatalf("%v: %v: %s", args, err, out)
+		}
+		return strings.TrimSpace(string(out))
+	}
+	st, err := store.Open(filepath.Join(dir, "lea.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { st.Close() })
+	ctr := &fakeContainers{live: map[string][]string{}, projects: map[string]string{C: projects}}
+	m := NewManager(Config{Store: st, Term: Tmux(tmux.Server{Socket: sock, Conf: conf}),
+		Containers: ctr, LeaBin: bin, Docker: docker, UID: 1000, GID: 1000, Now: func() int64 { return 1000 }})
+	if err := m.Ensure(bg, C, projects); err != nil {
+		t.Fatal(err)
+	}
+	tower, err := m.New(bg, NewRequest{Container: C, Name: "tower", Role: "lead"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	boss, err := m.New(bg, NewRequest{Container: C, Name: "boss", Role: "lead", Repo: "shop"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctr.setLive(C, "tower", "boss")
+	// The user runs lea again from the lea checkout.
+	if err := m.Ensure(bg, C, filepath.Join(projects, "lea")); err != nil {
+		t.Fatal(err)
+	}
+	cwd := func(name string) string {
+		t.Helper()
+		deadline := time.Now().Add(10 * time.Second)
+		for {
+			if b, err := os.ReadFile(filepath.Join(ran, name)); err == nil && len(b) > 0 {
+				got := strings.TrimSpace(string(b))
+				// Where tmux can read the pane's cwd, it must agree.
+				panes := tm("list-panes", "-s", "-t", "="+C, "-F", "#{@lea_agent}|#{pane_current_path}")
+				for _, l := range strings.Split(panes, "\n") {
+					if p, ok := strings.CutPrefix(l, name+"|"); ok && p != "" && p != got {
+						t.Fatalf("%s: pane_current_path %q, the process runs in %q", name, p, got)
+					}
+				}
+				return got
+			}
+			if time.Now().After(deadline) {
+				t.Fatalf("%s never started", name)
+			}
+			time.Sleep(50 * time.Millisecond)
+		}
+	}
+	for _, c := range []struct {
+		lead, want string
+	}{{tower.Key, projects}, {boss.Key, projects}} {
+		kid, err := m.New(bg, NewRequest{Container: C, Role: "dev", Parent: c.lead, NamePrefix: "dev", Hidden: true})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := cwd(kid.Name); got != c.want {
+			t.Fatalf("%s's child runs in %q, want %q", c.lead, got, c.want)
+		}
+	}
+	// The repo lead's child is told the lead's repo, not the launch directory's.
+	if a, _ := st.AgentByKey(C + "/dev-2"); a.Repo != "shop" {
+		t.Fatalf("repo lead's child=%+v", a)
+	}
+	if solo, err := m.New(bg, NewRequest{Container: C, Name: "solo"}); err != nil {
+		t.Fatal(err)
+	} else if got := cwd(solo.Name); got != filepath.Join(projects, "lea") {
+		t.Fatalf("parentless agent runs in %q", got)
+	}
+}
