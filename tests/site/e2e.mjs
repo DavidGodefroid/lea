@@ -77,6 +77,10 @@ async function main() {
     runs++;
     console.log((ok ? 'ok   ' : 'FAIL ') + name + (ok ? '' : ': ' + JSON.stringify(detail)));
     if (!ok) fails.push(name);
+    // In GitHub Actions a failure is also an annotation, readable without the job's log.
+    if (!ok && process.env.GITHUB_ACTIONS && fails.length <= 10) {
+      console.log(`::error title=site e2e::${name}: ${JSON.stringify(detail)}`.replace(/\r?\n/g, ' '));
+    }
   };
 
   const browser = await Browser.connect(chrome.ws);
@@ -164,4 +168,10 @@ async function main() {
   return 0;
 }
 
-process.exitCode = await main();
+try {
+  process.exitCode = await main();
+} catch (e) {
+  console.log(`FAIL ${e.stack || e}`);
+  if (process.env.GITHUB_ACTIONS) console.log(`::error title=site e2e::${String(e.stack || e).replace(/\r?\n/g, ' ')}`);
+  process.exitCode = 1;
+}
