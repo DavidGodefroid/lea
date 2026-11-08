@@ -17,9 +17,9 @@ Changes:
 - `release-create` grant action (#353): `gh release create <tag> --verify-tag [--title T]
   [--notes-file F | --generate-notes] [--prerelease] [--latest]`, one plain command at the root of
   the agent's worktree, pinned like every allowed gh call, for a pushed semver tag matching the
-  grant's `--tag` glob (`lea grant add release-create ... --tag 'v0.15.*'`, or `grants_request`
+  grant's `--tag` glob (`lea allow release --repo R --tag 'v0.15.*'`, or `grants_request`
   with `tag`). `--draft`, `--target`, assets and the other `gh release` subcommands stay
-  uncovered; `lea delivery on` never records it. A call the grant does not cover tells the agent
+  uncovered; `deliver` never includes it. A call the grant does not cover tells the agent
   the form, the glob and `grants_request`.
 - In the deck, a folder header's summary sets each state mark apart from its count (`6 ◐ 6`, not
   `6 ◐6`) (#355): the marks are East Asian Ambiguous width, and a terminal that draws them wide
@@ -30,6 +30,32 @@ Changes:
   worktree's git directory; once pushed, it records `origin/<branch>` and `-u` makes it the
   branch's upstream (it did nothing, so the branch kept tracking `main`). The agent prompt says to
   create the worktree with `git worktree add --no-track`.
+- `lea allow` (#319): one allowance model and one command for what `lea grant` and `lea delivery`
+  did. `lea allow deliver` (push, pr, merge, delete-branch), `lea allow merge issues --repo api`,
+  `lea allow push --branch 'feat/*' --agent dev-1 --for 2h`, `lea allow stop-finished`: one call
+  records one set of grants, shown as one line by `lea allow` (capabilities, repositories and pins,
+  time left, last use) and revoked as one unit by `lea allow off N` (or a capability, `deliver`, or
+  everything of the lea). `lea allow log` lists this lea's uses. The container is always the
+  projects directory's lea, and every forge capability is pinned to each repository's `origin`
+  (GitHub or GitLab, `--gitlab HOST` remembered), with the pin confirmation `lea delivery on` had:
+  on a terminal, `record these? [y/N]`; off one, `--yes DIGEST`. Recorded again, an allowance that
+  holds until revoked keeps the ids of its unchanged rows.
+- **Lifetime**: an allowance holds until revoked unless `--for DURATION` (1m to 30 days) says
+  otherwise, hand grants included (they used to expire after 8 h).
+- The deck has an Allowed screen (`g`): the lea's allowances, with `x` to revoke one after the
+  usual confirmation.
+- An agent's first prompt lists the forms lea runs without asking only for what covers it when it
+  starts; otherwise it says `lea allow deliver --repo <repo>` lets it push and open PRs without
+  asking. A merge, PR or push no allowance covers gets a hint naming `lea allow <capability> --repo
+  <repo>`.
+- `lea doctor` reports `allowances` (the pin and credential checks of delivery).
+- Deprecated: `lea delivery on|off|status` and `lea grant add|ls` are aliases of `lea allow` for this
+  minor release, with a notice; they go in the next one. `lea grant add --github X` is refused when
+  X is not the repository's origin. The daemon methods `grant_add`, `grant_list` and `delivery_set`
+  are replaced by `allow_set`, `allow_list` and `allow_off` (host only).
+- `lea.db` gains `grant_sets` and `grants.set_id`: on open, a lea's standing grants become one
+  `deliver` allowance and every other active grant an allowance of one; ids do not change, and an
+  older lea still reads the table.
 - Agents point the user to `lox run`, never `lox up` or `lox approve` (#343): a new `lock_hint`
   tool (read-only, agents only) tells an agent whose Lock client finds no console what the user
   must do, from lea's state of the lock rather than a guess: "lock NAME waits for you: answer in
@@ -44,6 +70,9 @@ Changes:
   `--body-file`, `--notes-file`) hands gh the body or notes file the parser approved (#382): the
   pinned command took the file's index from a second scan of the args, which took the title's
   value for the flag and swapped the wrong argument for `-`.
+- A lead's child spawned without `repo` starts where its lead works (#364): the lead's repository,
+  or without one the lead's own directory, not the directory `lea` was last launched from. An
+  explicit `repo` still wins; `agents_spawn` with `for` keeps the request's repo and branch.
 
 ## v0.14.1 (2026-11-08)
 

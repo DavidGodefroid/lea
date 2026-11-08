@@ -29,7 +29,7 @@ func TestPinnedPushScriptRunsNoRm(t *testing.T) {
 			t.Fatalf("%v runs rm: %s", args, cmd)
 		}
 	}
-	if s := tagScript("v1.2.3", c.Worktree, g.GitHub, c.Proxy); s == "" || rmWord.MatchString(s) {
+	if s := tagScript("v1.2.3", c.Worktree, g.Pin, c.Proxy); s == "" || rmWord.MatchString(s) {
 		t.Fatalf("tag script runs rm (or is empty): %s", s)
 	}
 }
@@ -38,11 +38,11 @@ func TestPinnedPushScriptRunsNoRm(t *testing.T) {
 // succeeded; a plain push leaves the upstream as it is.
 func TestPinnedPushSetsTheUpstream(t *testing.T) {
 	g := all(CommitIdentity)
-	up := pushScript([]string{"push", "-u", "origin", "feat/73-x"}, dev.Worktree, g.GitHub, dev.Proxy)
+	up := pushScript([]string{"push", "-u", "origin", "feat/73-x"}, dev.Worktree, g.Pin, dev.Proxy)
 	if !strings.Contains(up, "'branch.feat/73-x.merge' 'refs/heads/feat/73-x'") || !strings.Contains(up, "'branch.feat/73-x.remote' 'origin'") {
 		t.Fatalf("-u does not set the upstream: %s", up)
 	}
-	plain := pushScript([]string{"push", "origin", "feat/73-x"}, dev.Worktree, g.GitHub, dev.Proxy)
+	plain := pushScript([]string{"push", "origin", "feat/73-x"}, dev.Worktree, g.Pin, dev.Proxy)
 	if strings.Contains(plain, "branch.feat/73-x.") {
 		t.Fatalf("a push without -u sets the upstream: %s", plain)
 	}
@@ -99,7 +99,7 @@ func TestPushFromAWorktreeTrackingMain(t *testing.T) {
 	c := dev
 	c.Branch, c.Worktree, c.Cwd, c.Env = "feat/x", wt, wt, map[string]string{"HOME": root}
 	g := all(CommitIdentity)
-	g.GitHub = "github.com/someone/lea"
+	g.Pin = "github.com/someone/lea"
 	push := func() {
 		t.Helper()
 		d := Decide("Bash", bash("git push -u origin feat/x"), c, []Grant{g}, now, false)
@@ -110,7 +110,7 @@ func TestPushFromAWorktreeTrackingMain(t *testing.T) {
 			t.Fatalf("the rewritten push runs rm: %s", d.Command)
 		}
 		// The forge forwarder's address, lea-proxy:4401, is the test server's here.
-		forge := strings.TrimSuffix(forgePushURL(c.Proxy, g.GitHub), "someone/lea.git")
+		forge := strings.TrimSuffix(forgePushURL(c.Proxy, g.Pin), "someone/lea.git")
 		cmd := strings.ReplaceAll(d.Command, forge, server.URL+"/")
 		sh(wt, cmd)
 		if got, want := sh(root, "git -C "+remote+" rev-parse refs/heads/feat/x"), sh(wt, "git rev-parse HEAD"); got != want {

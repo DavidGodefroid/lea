@@ -184,6 +184,35 @@ func TestAcceptingARequestSpawnsAChildAndSharesTheThread(t *testing.T) {
 	}
 }
 
+// Accepting a request without naming where to work keeps the requester's repo and branch (#364);
+// a lead naming them wins.
+func TestAcceptingARequestKeepsItsRepoAndBranch(t *testing.T) {
+	e := start(t)
+	fa := &fakeAgents{}
+	e.d.SetAgents(fa)
+	boss := spawned(t, e, "boss", "lead", "")
+	spawned(t, e, "kid", "dev", boss)
+	if _, err := requestFrom(t, e, "kid", map[string]any{"role": "reviewer", "repo": "shop", "branch": "feat/cart", "brief": "review the cart"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := call(t, e.bus, "boss", "agents_spawn", map[string]any{"for": "kid", "role": "reviewer", "brief": "review it"}, nil); err != nil {
+		t.Fatal(err)
+	}
+	if fa.req.Repo != "shop" || fa.req.Branch != "feat/cart" {
+		t.Fatalf("request=%+v, want the requester's repo and branch", fa.req)
+	}
+	e.clock.Add(61)
+	if _, err := requestFrom(t, e, "kid", map[string]any{"role": "reviewer", "repo": "shop", "branch": "feat/cart", "brief": "review the tests"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := call(t, e.bus, "boss", "agents_spawn", map[string]any{"for": "kid", "role": "reviewer", "repo": "lea", "brief": "review them"}, nil); err != nil {
+		t.Fatal(err)
+	}
+	if fa.req.Repo != "lea" || fa.req.Branch != "" {
+		t.Fatalf("request=%+v, want the lead's repo", fa.req)
+	}
+}
+
 func TestAFailedSpawnLeavesTheRequestPending(t *testing.T) {
 	e := start(t)
 	fa := &fakeAgents{newErr: errors.New("boom")}

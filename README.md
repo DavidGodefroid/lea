@@ -766,32 +766,100 @@ dev-2: dark mode, tests being written
 dev-2: palette, Catppuccin or Nord?
 ```
 
-### Grants: let every agent merge, close issues, stop finished agents
+### Allowances: let agents deliver, merge, close issues without asking
 
 Claude Code judges each action from its own conversation: "you may merge" told to a lead does
-not reach its children, and relayed in a lea message it is rightly distrusted. A **grant** is
-that decision recorded by you on the host, applied the same way to every agent it covers:
+not reach its children, and relayed in a lea message it is rightly distrusted. An **allowance**
+is that decision recorded by you on the host, with `lea allow`, and applied the same way to every
+agent it covers. `lox run` approves what agents do with your data through Locks; `lea allow` says
+which forge actions they take without asking.
+
+#### Let agents deliver
+
+To let every agent of a lea push its own branch, open its pull request (GitHub) or merge request
+(GitLab) and merge it without a prompt, on the host, in the projects directory:
+
+1. `lea allow deliver`: lea reads each repository's `origin` and lists the forge repository each
+   one is pinned to (`github.com/OWNER/NAME` or `gitlab:HOST/GROUP/…/NAME`).
+2. Check them and answer `y` (off a terminal, run it again with the `--yes DIGEST` it printed).
+   It says what it recorded: `allowance #1: agents of lea-myproj may push their branch, open PRs,
+   merge PRs and delete their branch on api (github.com/me/api), web (gitlab:git.example.com/g/web),
+   until lea allow off 1`.
+3. `lea allow` (or `g` in the deck) shows what agents may do, the time left and the last uses;
+   `lea allow off 1` (or `x` in the deck's Allowed screen) stops it.
 
 ```sh
-lea grant add merge --container lea-myproj --repo api --github me/api --expires 8h  # gh pr merge N|own-branch --squash|--merge|--rebase [--delete-branch] (the PR's head must be the agent's branch)
-lea grant add stop-finished --container lea-myproj                  # agents_stop on an idle or ended child
-lea grant add close-issue --container lea-myproj --repo api --github me/api  # gh issue close|reopen|comment N
-lea grant add delete-own-branch --container lea-myproj --repo api --github me/api  # git push origin --delete <the agent's own branch>
-lea grant add commit-identity --container lea-myproj --repo api --github me/api --branch 'feat/*'  # git commit -m (no --amend), git push [-u] origin <own branch>
-lea grant add pr-create --container lea-myproj --repo api --github me/api  # gh pr create --head <own branch> --title T --body B|--body-file F
-lea grant add release-tag --container lea-myproj --repo api --github me/api  # git push origin refs/tags/vX.Y.Z (a new semver tag on a commit of the default branch)
-lea grant add release-create --container lea-myproj --repo api --github me/api --tag 'v0.15.*'  # gh release create v0.15.N --verify-tag [--notes-file F|--generate-notes]
-lea grant ls [--all]                                                # active grants (--all: revoked, expired) and recent uses
-lea grant revoke 3
+lea allow                          # this lea's allowances, one line each, and the last 10 uses
+lea allow log                      # every recorded use: agent, capability, target, when
+lea allow deliver                  # push pr merge delete-branch, on every forge repository here
+lea allow deliver --gitlab git.example.com  # also a self-hosted GitLab (gitlab.com is known; a host once pinned stays known)
+lea allow merge issues --repo api --repo web
+lea allow push --branch 'feat/*' --agent dev-1 --for 2h
+lea allow stop-finished
+lea allow release --repo api --tag 'v0.15.*'  # gh release create v0.15.N --verify-tag [--notes-file F|--generate-notes]
+lea allow off 12                   # allowance #12; or a capability (lea allow off merge), deliver, or nothing: everything of this lea
 ```
 
-`--container` is the lea (`lea board` shows its name); `--repo` (the directory) and `--github`
-(its GitHub repository) go together on every grant but stop-finished; `--branch` (a glob on the
-agent's branch) and `--agent NAME` (that agent and its children) narrow it. A grant expires
-after 8 hours unless `--expires` says otherwise (1m to 30 days). lea's `PreToolUse` hook asks the
-daemon before each tool call: a call a grant covers is allowed, with the grant's id as the
-reason, and audited (`lea grant ls` lists the uses: agent, action, target, never the command);
-anything else takes the usual path. Revocation and expiry apply on the next call.
+#### Capabilities
+
+| capability | covers |
+|---|---|
+| `push` | `git commit -m M` (no `--amend`), `git push [-u] origin <own branch>` |
+| `pr` | `gh pr create --head <own branch> --title T (--body B \| --body-file F) [--base B] [--draft]`, `glab mr create --source-branch <own branch> --title T [--description D] [--target-branch B] [--draft] [--remove-source-branch] [--yes]` |
+| `merge` | `gh pr merge <n>\|<own branch> --squash\|--merge\|--rebase [--delete-branch]`, `glab mr merge <n>\|<own branch> [--squash] [--remove-source-branch] [--yes]` |
+| `delete-branch` | `git push origin --delete <own branch>` |
+| `issues` | `gh issue close\|reopen\|comment N` |
+| `stop-finished` | `agents_stop` on an idle or ended child |
+| `release-tag` | `git push origin refs/tags/vX.Y.Z` (a new semver tag on a commit of the default branch, see below) |
+| `release` | `gh release create <tag> --verify-tag [--title T] [--notes-file F \| --generate-notes] [--prerelease] [--latest]`, for tags `--tag GLOB` matches (see below) |
+
+`deliver` is `push pr merge delete-branch`. The container is always this projects directory's lea
+(`LEA_PROJECTS_DIR=~/other lea allow …` for another one). Every capability but stop-finished is
+pinned to each repository's `origin`, read from its `.git/config` (as a file: no git runs on the
+host) at that moment, on github.com, gitlab.com or a `--gitlab` host: every repository here with
+such an origin, or the ones `--repo` names (repeatable; one without a forge origin is an error).
+`--branch` (a glob on the agent's branch, never the default branch) and `--agent NAME` (that
+agent and its children) narrow it. An allowance holds until `lea allow off`, or for `--for`
+(1m to 30 days); every line of `lea allow` says which.
+
+Agents can write a repository's `.git/config` (or add a repository): lea records nothing while a
+pin is new or differs from the last one recorded for that repository of this lea (revoked ones
+included). On a terminal it lists them and asks `record these? [y/N]`, and reads the origins again
+after your `y`: a pin that changed meanwhile records nothing. Off a terminal it lists them and
+exits 1 with a digest; `--yes DIGEST` records exactly those pins. Once confirmed, the same command
+applies without a question. Running `lea allow deliver` again (after adding a repository or
+changing an origin) updates the same allowance: rows of unchanged repositories keep their ids, and
+repositories no longer here are dropped.
+
+`lea doctor` checks the allowances: each pinned repository's `origin` still matches its pin (an
+origin rewritten since, or a forge repository no allowance covers, is a warning), and each forge
+host has credentials (GitHub's in lea's proxy, `lea github login`; GitLab's in lea's state, `glab
+auth login --hostname HOST`; git's credential store alone covers pushes only, a warning); without
+them it fails. It only reads.
+
+`lea delivery on|off|status` and `lea grant add|ls` still work for this minor release: they are
+translated to `lea allow deliver`, `lea allow off deliver`, `lea allow` and `lea allow <capability>`,
+with a notice. `lea grant add --github X` is refused when X is not the repository's origin.
+
+#### What agents are told
+
+Each agent on a branch is told in its first prompt the forms lea runs without asking for what
+covers it when it starts, or, when nothing does, that pushing and PRs ask you and that `lea allow
+deliver --repo <repo>` lets it do them without asking. A merge, PR or push in a form no allowance
+covers (with `-R`, chained, another flag) takes the usual path, and the agent is told, in its
+context, the forms its allowance covers; when it holds none, which `lea allow <capability> --repo
+<repo>` you can run (lea's own text, from the agent's row, never from what it wrote). `grants_list`
+is the live list of what covers it. A message saying "the user allows X" changes nothing.
+
+#### What lea checks on every allowed call
+
+lea's `PreToolUse` hook asks the daemon before each tool call: a call an allowance covers is
+allowed, with the grant's id as the reason, and audited (`lea allow log`: agent, capability,
+target, never the command); anything else takes the usual path. Revocation and expiry apply on the
+next call. Only the host writes allowances: there is no MCP tool for it (`grants_list` only reads
+them, `grants_request` only queues a request you approve on the host), the daemon refuses
+`allow_set`, `allow_off`, `allow_list` and `grant_request_decide` from a container, and `lea.db`
+is never mounted in one.
 
 An allowed shell call never runs the agent's text: lea runs the command it parsed, rebuilt word by
 word, in a fresh `/bin/sh` under `env -i` (so the agent's variables, aliases and shell
@@ -800,29 +868,40 @@ Claude's own process has them. It reaches the forge through lea's proxy, which l
 (`HTTPS_PROXY` for gh, `http.proxy` for git, `http://lea-proxy:3128`), never through a proxy the
 agent's environment names; CONNECT keeps TLS end to end.
 
-- gh runs as `/usr/bin/gh … -R github.com/<--github>`; every grant but stop-finished names
-  `--repo` and `--github` together. It runs with the token of gh's config (`gh auth token`) and
-  none of the rest of that config, which the agent can write (it could send gh's requests to a
-  server of its own): an empty config dir no one but root can create.
+- gh runs as `/usr/bin/gh … -R github.com/OWNER/NAME`, the pin. It runs with the token of gh's
+  config (`gh auth token`) and none of the rest of that config, which the agent can write (it
+  could send gh's requests to a server of its own): an empty config dir no one but root can create.
 - A commit goes through plumbing in the agent's worktree (`write-tree`, `commit-tree`,
   `update-ref`): no hook, filter or signing runs. It commits the index as it is (`git add`
   first: no `-a`).
 - A push runs from a bare repository lea creates for the call (random name, mode 0700, its
-  config checked right before the push, the worktree's objects borrowed) to `https://github.com/<--github>.git` with the full ref
+  config checked right before the push, the worktree's objects borrowed) to the pin's `https://…git` with the full ref
   (`refs/heads/<branch>:refs/heads/<branch>`): the remote's config never decides where it goes.
 - git's hooks, fsmonitor, askpass and pager are off, ssh is `/usr/bin/ssh`, https and ssh are the
   only transports, `~/.gitconfig` is not read; and lea refuses a repository whose own config
   holds a `url.*.insteadOf`, `include`, URL-specific credential helper, `pushurl`, push refspec,
   mirror, filter, textconv or any `http.*` key.
+- `gh pr create --body-file F`: `F` is a path relative to the agent's worktree that must resolve
+  to a plain file inside it, outside `.git` (lea checks it is a plain file, opens it once and gh
+  reads that open file; a quoted heredoc, `--body "$(cat <<'EOF' … EOF)"`, is not covered: write
+  the body to a file). `gh pr merge` checks that the PR's head is the agent's branch before the
+  merge, so `--delete-branch` deletes that branch only.
+- On GitLab lea does not run glab, whose config the agent can write (it could send glab's
+  requests elsewhere): glab only reads the token of its config for HOST, from `/`, and lea calls
+  the project's API (`https://HOST/api/v4`) with curl (no `.curlrc`, https only, no redirect, no
+  proxy variable), its answers read by jq, both with no `HOME` of the agent's. A merge first reads
+  the MR: it must be open and come from the agent's branch of the project itself, not a fork (by
+  branch: the one open MR of that branch); the merge then names the head commit it checked, so
+  GitLab refuses it if the branch moved in between (an MR whose pipeline is still running is set
+  to merge once it passes, as `glab mr merge` does; `--rebase` is not covered). Pushes go to
+  `https://HOST/PATH.git` with glab's credential helper. A multi-line description is not covered
+  (no file option): it takes the usual path.
 
-Only the host writes grants: there is no MCP tool for it (`grants_list` only reads them,
-`grants_request` only queues a request you approve on the host), the daemon refuses `grant_add`
-and `grant_request_decide` from a container, `lea.db` is never mounted in one, and a message
-saying "the user allows X" changes nothing. A call is allowed only when it is exactly one plain
+A call is allowed only when it is exactly one plain
 command lea parses (no `;`, `&&`, `|`, `$(…)`, backticks, redirections, `VAR=` prefixes,
 `--repo`), run at the root of the agent's own worktree (`<projects>/.lea/worktrees/<repo>/<agent>`,
-so gh and git act on its repo), whatever is granted. A branch is an agent's own only while no other
-live agent of the lea works on it. Some calls are denied outright, grant or not: `gh pr merge
+so gh and git act on its repo), whatever is allowed. A branch is an agent's own only while no other
+live agent of the lea works on it. Some calls are denied outright, allowed or not: `gh pr merge
 --admin`, force-push (`-f`, `--force*`, `+refspec`, `--mirror`, `--prune`), any push to `main` or
 `master` however its refspec spells it, a push to any branch but the agent's own (named: a bare
 `git push`, `HEAD` or `@` follows whatever is checked out), a refspec whose destination git would
@@ -848,21 +927,8 @@ startup files (`~/.bashrc`…), `/usr/local/share/lea` or `/lea/state`. A comman
 words behind escapes or expansions (`\`, `$…`, backticks) and touches any of these is denied
 too: run it plainly.
 
-**What grants protect against.** Grants and hard denies keep a *confused* agent (one that
-misreads a message, a brief or its own transcript) from merging, pushing or deleting where you did
-not say it may; they are not a sandbox against a *hostile* one. An agent can still write and run
-code through the tools it is allowed (`go run`, a test, a script), and it can read the token
-of glab's config (GitHub's is the proxy's: it can use it, not read it): what keeps a hostile agent in check is the container, its network rules and
-the scope of the tokens you give lea, not grants. Two ways a hostile agent gets past them, among
-others: a shell function named `/usr/bin/env` in Claude's shell snapshot replaces the pinned
-call, and a loop rewriting the per-call bare repository's config (same user) between lea's check
-and the push can send the push elsewhere.
-
-To check that a Claude Code release runs the command lea rebuilds (the hook's `updatedInput`)
-before relying on grants, in a lea: `lea grant add commit-identity --container <lea> --repo <r>
---github <owner>/<r> --expires 10m`, ask an agent working on a branch of `<r>` to `git add` a
-file and run `git commit -m test`, then check that `git reflog -1` in its worktree says
-`commit (lea grant)` (a plain `git commit` writes `commit: test`); `lea grant ls` lists the use.
+Branch protection on the forge (required reviews, required checks) stays the control that decides
+whether a merge goes through: an allowance only removes the prompt.
 
 **Approving a merge for your team.** You usually say it to a lead, in its chat ("your team may
 merge on api"). The lead turns those words into a **grant request** (`grants_request`): it records
@@ -875,96 +941,52 @@ lea deny g14 not this one    # the lead is told, with your reason
 lea grant requests|approve|deny  # the same, under lea grant
 ```
 
-The approved grant is the lead's subtree's (`--agent` the lead): its children then merge their own
-PRs (`gh pr merge N --squash --delete-branch`) without a prompt, and no agent outside that lead's
-team is covered. The lead gets a message when you decide, and when a request expires (a day
-without an answer). Only leads file requests, checked as `lea grant add` checks a grant; no agent
-can approve one (`grant_request_decide` is host-only). A child whose merge no grant covers is told
-to ask its lead for one.
+The approved request is an allowance of the lead's subtree (`--agent` the lead): its children then
+merge their own PRs (`gh pr merge N --squash --delete-branch`) without a prompt, and no agent
+outside that lead's team is covered. The lead gets a message when you decide, and when a request
+expires (a day without an answer). Only leads file requests; no agent can approve one
+(`grant_request_decide` is host-only). A child whose merge nothing covers is told to ask its lead
+for one, or you for `lea allow merge --repo <repo>`.
 
-**Release tags.** A tag push is a hard deny, but for the one form a `release-tag` grant covers:
+**Release tags.** A tag push is a hard deny, but for the one form `release-tag` covers:
 `git push origin refs/tags/vX.Y.Z` (an optional pre-release, `-rc.1`), one plain command at the
 root of the agent's worktree. lea pushes it from a bare repository it creates for the call, only
 when the tag's commit is on the default branch of the remote (fetched at that moment), and without
 force, so a tag the remote already has is refused. `--tags`, `--follow-tags`, force, a refspec,
-another remote and a non-semver tag stay denied. `lea delivery on` never records it.
+another remote and a non-semver tag stay denied. `deliver` never includes it.
 
 **Release publication.** A repository with no workflow that publishes a release on tag push needs
-`gh release create` after the tag push; a `release-create` grant covers exactly
+`gh release create` after the tag push; the `release` capability covers exactly
 `gh release create <tag> --verify-tag [--title T] [--notes-file F | --generate-notes] [--prerelease] [--latest]`,
 one plain command at the root of the agent's worktree, for a semver tag that `--tag GLOB` matches
 (none given: any semver tag). `--verify-tag` is required, so gh never creates the tag (that stays
-`release-tag`'s job). lea runs it pinned like every allowed gh call (`env -i`, `-R` the grant's
-`--github`, lea's gh config, through lea's proxy); a notes file follows the rule of
+`release-tag`'s job). lea runs it pinned like every allowed gh call (`env -i`, `-R` the pin,
+lea's gh config, through lea's proxy); a notes file follows the rule of
 `gh pr create --body-file`. `--draft`, `--target`, `--notes`, assets, `--latest=false` (use the
 plain flags) and every other `gh release` subcommand (`edit`, `delete`, `upload`, `delete-asset`)
-stay uncovered; a lead asks for the grant with `grants_request` (action `release-create`, `tag`
-the glob). `lea delivery on` never records it.
+stay uncovered; a lead asks for it with `grants_request` (action `release-create`, `tag`
+the glob). `deliver` never includes it.
 
-### Let agents deliver (push, PR/MR, merge)
+#### What allowances protect against
 
-To let every agent of a lea push its own branch, open its pull request (GitHub) or merge request
-(GitLab) and merge it without a prompt, run once, on the host, in the projects directory:
+Allowances and hard denies keep a *confused* agent (one that misreads a message, a brief or its
+own transcript) from merging, pushing or deleting where you did not say it may; they are not a
+sandbox against a *hostile* one. An agent can still write and run code through the tools it is
+allowed (`go run`, a test, a script), and it can read the token of glab's config (GitHub's is the
+proxy's: it can use it, not read it): what keeps a hostile agent in check is the container, its
+network rules and the scope of the tokens you give lea, not allowances. Two ways a hostile agent
+gets past them, among others: a shell function named `/usr/bin/env` in Claude's shell snapshot
+replaces the pinned call, and a loop rewriting the per-call bare repository's config (same user)
+between lea's check and the push can send the push elsewhere. Revoking is your lever: `lea allow
+off`, or `x` in the deck's Allowed screen.
 
-```sh
-lea delivery on                # lists the forge repository each repository here is pinned to, and their digest
-lea delivery on --yes DIGEST   # records exactly those: standing grants on each one on github.com or GitLab
-lea delivery on --gitlab git.example.com  # also a self-hosted GitLab (gitlab.com is known)
-lea delivery status            # which repositories are covered
-lea delivery off               # revoke them: agents ask as usual
-```
+#### Checking a Claude Code release
 
-`on` reads each repository's `origin` from its `.git/config` (as a file: no git runs on the host)
-at that moment, and records, for each one on github.com, gitlab.com or a `--gitlab` host (a host
-once pinned stays known), the grants `commit-identity`, `pr-create`, `merge` and
-`delete-own-branch` for every agent of this lea, pinned to that repository (`github.com/OWNER/NAME`
-or `gitlab:HOST/GROUP/…/NAME`), with no expiry (`lea grant ls` shows them as `standing`, and their uses). A repository
-added later, or an origin changed, is covered once you run `lea delivery on` again and confirm (it replaces
-the standing grants; grants you added by hand stay). Agents can write a repository's
-`.git/config` (or add a repository): `on` records nothing while a pin is new or differs from the
-last one recorded for that repository of this lea (revoked ones included); it lists them, you
-check them, then run `lea delivery on --yes DIGEST` with the digest it printed: if any pin
-was read differently in between, nothing is recorded. Once confirmed, a plain `on` applies. Delivery is
-off until you turn it on, and only the host can: the daemon refuses `delivery_set` from a
-container.
-
-`lea doctor` checks it: each covered repository's `origin` still matches its pin (an origin
-rewritten since, or a repository on a forge not covered yet, is a warning: run `lea delivery on`
-again), and each forge host has credentials in lea's state (`gh auth login`, `glab auth login
---hostname HOST`; git's credential store alone covers pushes only, a warning); without them it
-fails. It only reads.
-
-Everything in Grants above holds: an agent's own branch only, in its own worktree, every hard
-deny (no push to `main`, no force-push, no `--admin`). The calls covered:
-
-- `git commit -m …`, `git push [-u] origin <own branch>`;
-- `gh pr create --head <own branch> --title T (--body B | --body-file F) [--base B] [--draft]`:
-  `--head` is required, `F` is a path relative to the agent's worktree that must resolve to a
-  plain file inside it, outside `.git` (lea checks it is a plain file, opens it once and gh reads that open file; a quoted heredoc, `--body "$(cat <<'EOF' … EOF)"`, is
-  not covered: write the body to a file);
-- `gh pr merge <n>|<own branch> --squash|--merge|--rebase [--delete-branch]` (the PR's head must be
-  the agent's branch, checked before the merge, so `--delete-branch` deletes that branch only), and
-  `git push origin --delete <own branch>`;
-- on GitLab: `glab mr create --source-branch <own branch> --title T [--description D]
-  [--target-branch B] [--draft] [--remove-source-branch] [--yes]` and `glab mr merge <n>|<own
-  branch> [--squash] [--remove-source-branch] [--yes]` (`--rebase` is not covered). lea does not
-  run them with glab, whose config the agent can write (it could send glab's requests elsewhere):
-  glab only reads the token of its config for HOST, from `/`, and lea calls the project's API
-  (`https://HOST/api/v4`) with curl (no `.curlrc`, https only, no redirect, no proxy variable), its answers read by jq,
-  both with no `HOME` of the agent's.
-  A merge first reads the MR: it must be open and come from the agent's branch of the project
-  itself, not a fork (by branch: the one open MR of that branch); the merge then names the head
-  commit it checked, so GitLab refuses it if the branch moved in between. Pushes go to
-  `https://HOST/PATH.git` with glab's credential helper. A multi-line description is not covered
-  (no file option): it takes the usual path.
-
-A merge, PR or push in a form the agent's grant does not cover (with `-R`, chained, another flag)
-takes the usual path too, and the agent is told, in its context, the forms its grant covers. Each
-agent on a branch is also told them in its first prompt.
-
-Branch protection on the forge (required reviews, required checks) stays the control that decides
-whether a merge goes through: delivery only removes the prompt (on GitLab, an MR whose pipeline is still
-running is set to merge once it passes, as `glab mr merge` does).
+To check that a Claude Code release runs the command lea rebuilds (the hook's `updatedInput`)
+before relying on allowances, in a lea: `lea allow push --repo <r> --for 10m`, ask an agent working
+on a branch of `<r>` to `git add` a file and run `git commit -m test`, then check that `git reflog
+-1` in its worktree says `commit (lea grant)` (a plain `git commit` writes `commit: test`); `lea
+allow log` lists the use.
 
 `lea new --brief FILE` gives a new agent its first message; `--repo NAME` starts it in a
 directory of the projects directory; `--branch B` has it work in its own git worktree under
@@ -989,9 +1011,8 @@ lea init                     # set up again (idempotent)
 lea config export > team.json  # your team's shared settings, as one file
 lea config import team.json  # take them on another workstation (see Configure)
 LEA_PROJECTS_DIR=~/other lea # another projects directory, for this call only
-lea grant add|ls|revoke      # let agents take an action without asking (see Grants)
-lea approve gN               # approve a lead's grant request (lea requests lists them; see Grants)
-lea delivery on|off|status   # let agents push, open and merge their own PRs (see Let agents deliver)
+lea allow [deliver|CAPABILITY...|off N|log]  # what agents may do without asking (see Allowances)
+lea approve gN               # approve a lead's grant request (lea requests lists them; see Allowances)
 lea github login|logout|status  # lea's GitHub token, in the proxy only (see Git and forges)
 ```
 
