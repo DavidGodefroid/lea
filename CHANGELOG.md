@@ -4,6 +4,9 @@
 
 Changes:
 
+- The deck's first agent is a Control Tower (#339): `lea deck-open` with no agent running starts a
+  lead on Claude labelled `Control Tower`, whose first prompt runs `/lea:control-tower`; `N` starts
+  another (`Control Tower 2`…), and the provider picker moves from `N` to `P`. Host only.
 - The agent containers no longer rely on Docker's default resolver (#98): lea starts them with
   `--dns 192.0.2.1` (TEST-NET-1, never routed, out of reach of the internal network), so a lookup of an external name, from an agent or a nested container, is
   never forwarded to the host's resolver (lea-proxy, which resolves names for the agents, is still

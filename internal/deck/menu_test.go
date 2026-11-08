@@ -163,7 +163,7 @@ func TestARightClickOnAnEmptyDeckOpensTheDecksMenu(t *testing.T) {
 	if m.menuFor != deckMenu {
 		t.Fatalf("menu %q", m.menuFor)
 	}
-	// Line 1 says there is no agent yet; the menu follows: New agent at 2, New shell at 3.
+	// Line 1 says there is no agent yet; the menu follows: New agent at 2, New Control Tower at 3.
 	if k, i := m.hit(3); k != deckMenu || i != 1 {
 		t.Fatalf("line 3 is %q item %d", k, i)
 	}
@@ -228,7 +228,7 @@ func TestDeckMenuItems(t *testing.T) {
 		}
 		return strings.Join(l, ",")
 	}
-	if g := got(""); g != "New agent=n,New shell=s,New folder=f,Theme…=T,Keys=?,Detach=q" {
+	if g := got(""); g != "New agent=n,New Control Tower=N,New, other provider=P,New shell=s,New folder=f,Theme…=T,Keys=?,Detach=q" {
 		t.Fatalf("no player: %s", g)
 	}
 	if g := got("on"); !strings.Contains(g, "Mute sounds=S") {
