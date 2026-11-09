@@ -784,6 +784,9 @@ Needs you: palette for dark-mode
 
 Ask it for the `board`, the `detail` of an agent, or to `stop` one, in your own words.
 
+It replies in the language of your latest message, and switches as soon as you do; its agents'
+messages, mostly in English, never change it. In tower mode lea reminds it on every prompt.
+
 It asks you one question at a time, whatever the number of agents with a question for you: its
 `user_ask` tool opens a question when none is open and queues the others (an incident first,
 then what blocks an agent, then the rest, in order); the agents keep working meanwhile. Your next
@@ -1081,13 +1084,27 @@ lea approve gN               # approve a lead's grant request (lea requests list
 lea github login|logout|status  # lea's GitHub token, in the proxy only (see Git and forges)
 ```
 
+### Update
+
+One command per install method; each pulls the new version's images, then names the Lock clients
+(`update-deps`):
+
+- **Homebrew**: `lea update` runs `brew update` and `brew upgrade davidgodefroid/tap/lea`, then
+  the new version pulls its images. It never installs a second lea beside Homebrew's, and fails
+  with brew's status when brew fails. `brew upgrade lea` alone works too: the next `lea` pulls the
+  images it lacks and restarts the daemon on the new binary. Old versions are `brew cleanup`'s.
+- **install.sh**: `lea update`, or the daily background update below.
+- **git checkout**: `lea update` pulls and rebuilds (see [Install from source](#install-from-source)).
+
 A release install updates itself: at most once a day, `lea` looks for a new release in the
 background. A newer minor or patch release is installed beside the current one (its signature
 checked with cosign) and becomes active at the next `lea`; a newer major
 release is only announced in the deck, and so is a newer minor release while lea is 0.x (only
 its patch releases install themselves). Running containers keep their image until they stop.
 `LEA_AUTOUPDATE=0` in `~/.config/lea/lea.conf` turns it off; the log is
-`~/.local/share/lea/host/update.log`.
+`~/.local/share/lea/host/update.log`. A Homebrew install has it off (its formula sets
+`LEA_AUTOUPDATE=0`); turned back on, it only announces a new release, which `lea update` installs
+with brew.
 
 The Locks' clients in lea's image (locksql, lockmq, lockfile, locklog) come from one set of releases,
 `config/locks.lock`: for each Lock, the client's release, the protocol its handshake speaks, the

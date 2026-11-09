@@ -2,8 +2,15 @@
 
 ## Unreleased
 
-Changes:
-
+- `lea update` on a Homebrew install runs `brew update` and `brew upgrade davidgodefroid/tap/lea`,
+  then the new Cellar version refreshes its images and checks the dependencies (#354). It used to
+  run lea's own installer, which left a second lea in `~/.local/share/lea-install`, linked at
+  `~/.local/bin/lea`, beside Homebrew's. A failing brew fails `lea update` with brew's status;
+  without brew on `PATH`, lea refuses to update a Homebrew install itself. The background update
+  installs nothing on a Homebrew install, even with `LEA_AUTOUPDATE=1`: it only announces the
+  release. `lea init` no longer links `~/.local/bin/lea` to the Cellar version on a Homebrew
+  install (brew links `<prefix>/bin/lea`; that link outlived `brew upgrade`). install.sh and git
+  installs are unchanged.
 - Docker out of address pools is reported as such (#397): when Docker refuses lea's network with
   `all predefined address pools have been fully subnetted`, lea quotes Docker's message and says to
   remove unused networks (`docker network prune`) or add `default-address-pools` in

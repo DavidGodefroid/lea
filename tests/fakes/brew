@@ -1,0 +1,14 @@
+#!/bin/sh
+# Fake brew for unit tests: records the call (with HOMEBREW_NO_AUTO_UPDATE), prints
+# FAKE_BREW_PREFIX for --prefix. brew upgrade runs the script FAKE_BREW_UPGRADE (when set) and
+# exits FAKE_BREW_RC_UPGRADE; brew update exits FAKE_BREW_RC_UPDATE (default 0).
+{ printf 'brew'; for a in "$@"; do printf ' [%s]' "$a"; done; printf ' noauto=%s\n' "${HOMEBREW_NO_AUTO_UPDATE:-}"; } >>"${FAKE_LOG:?}"
+case ${1:-} in
+  --prefix) printf '%s\n' "${FAKE_BREW_PREFIX:?}" ;;
+  update) exit "${FAKE_BREW_RC_UPDATE:-0}" ;;
+  upgrade)
+    rc=${FAKE_BREW_RC_UPGRADE:-0}
+    [ "$rc" -eq 0 ] || { echo "Error: fake brew upgrade failed" >&2; exit "$rc"; }
+    if [ -n "${FAKE_BREW_UPGRADE:-}" ]; then sh "$FAKE_BREW_UPGRADE" || exit; fi ;;
+esac
+exit 0
