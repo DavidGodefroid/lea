@@ -80,8 +80,10 @@ fi
 # an agent's own ~/.claude/settings.json or a project's .claude/settings*.json cannot widen them.
 # The host's own rules join lea's here, from the host's ~/.claude/settings.json as the launcher
 # read it (read-only, never the container's copy): strings only, and a default mode other than
-# bypassPermissions. Each start begins again from the image's file (a restart adds nothing twice);
-# a file jq cannot merge leaves lea's rules alone.
+# bypassPermissions. lea config claude's settings (#334) come in the same file: entries to remove
+# (the image's included), env and plain preferences, which never replace a key the image's file
+# sets (its hooks, permissions and variables are lea's). Each start begins again from the image's
+# file (a restart adds nothing twice); a file jq cannot merge leaves lea's rules alone.
 m=/etc/claude-code/managed-settings.json
 mb=/usr/local/share/lea/managed-settings.json
 hp=/etc/lea/claude-permissions.json
@@ -89,12 +91,18 @@ hp=/etc/lea/claude-permissions.json
 if [ -f "$hp" ] && [ ! -L "$hp" ]; then
   if jq --slurpfile h "$hp" '
       def strs: if type == "array" then map(select(type == "string" and length > 0 and length <= 1024))[:1000] else [] end;
-      (if ($h[0] | type) == "object" then $h[0] else {} end) as $p
-      | .permissions.allow = ((.permissions.allow // []) + ($p.allow | strs))
-      | .permissions.ask = ((.permissions.ask // []) + ($p.ask | strs))
-      | .permissions.deny = ((.permissions.deny // []) + ($p.deny | strs))
-      | .permissions.additionalDirectories = ((.permissions.additionalDirectories // []) + ($p.additionalDirectories | strs))
+      def obj: if type == "object" then . else {} end;
+      def merged($add; $rm): reduce (. + $add)[] as $x ([]; if any(.[]; . == $x) or any($rm[]; . == $x) then . else . + [$x] end);
+      ($h[0] | obj) as $p
+      | ($p.remove | obj) as $r
+      | .permissions.allow = ((.permissions.allow // []) | merged($p.allow | strs; $r.allow | strs))
+      | .permissions.ask = ((.permissions.ask // []) | merged($p.ask | strs; $r.ask | strs))
+      | .permissions.deny = ((.permissions.deny // []) | merged($p.deny | strs; $r.deny | strs))
+      | .permissions.additionalDirectories = ((.permissions.additionalDirectories // []) | merged($p.additionalDirectories | strs; $r.additionalDirectories | strs))
       | if ["default", "acceptEdits", "plan", "dontAsk", "auto"] | index([$p.defaultMode]) then .permissions.defaultMode = $p.defaultMode else . end
+      | .env = (($p.env | obj | with_entries(select(.value | type == "string"))) + (.env // {}))
+      | (($p.settings | obj | with_entries(select(.value | type == "string" or type == "boolean"))
+          | del(.disableAllHooks, .allowManagedHooksOnly, .statusLine)) + .)
       | .allowManagedPermissionRulesOnly = true
       | .permissions.disableBypassPermissionsMode = "disable"' "$m" >"$m.new"; then
     chmod 0644 "$m.new"

@@ -188,7 +188,7 @@ func TestQuestionMarkShowsTheKeysAndAnyKeyClosesThem(t *testing.T) {
 	}
 	ls := viewLines(m)
 	all := strings.Join(ls, "\n")
-	for _, want := range []string{"enter", "show", "n", "new agent", "s", "new shell", "e", "rename", "x", "stop", "?", "any key closes"} {
+	for _, want := range []string{"enter", "show", "n", "new agent", "N", "new Control Tower", "P", "new, other provider", "s - |", "new shell", "e", "rename", "x", "stop", "?", "any key closes"} {
 		if !strings.Contains(all, want) {
 			t.Fatalf("key list lacks %q:\n%s", want, all)
 		}
@@ -312,12 +312,12 @@ func TestSWithoutASoundPlayer(t *testing.T) {
 	}
 }
 
-// The deck opens no lock console and answers no hub ticket (#300): L, O, H, Y and v do nothing,
+// The deck opens no lock console and answers no hub ticket (#300): L, O, Y and v do nothing,
 // and call nothing.
 func TestTheDeckHasNoLockOrHubKeys(t *testing.T) {
 	api := &fakeAPI{}
 	m := loaded(t, api, "lea-a/a", ag("a", "idle", 1))
-	for _, k := range []string{"L", "O", "H", "Y", "v"} {
+	for _, k := range []string{"L", "O", "Y", "v"} {
 		var cmd tea.Cmd
 		m, cmd = step(t, m, key(k))
 		if cmd != nil {

@@ -3,36 +3,58 @@ package grants
 import (
 	"encoding/json"
 	"regexp"
+	"slices"
+	"strconv"
 	"strings"
 )
 
-// near is a kind of call a grant covers in some forms only: the forms covered, by forge.
+// near is a kind of call a grant covers in some forms only: the actions that cover it, and the
+// prefix of their forms (Capabilities) that are that kind of call.
 type near struct {
-	re       *regexp.Regexp
-	actions  []string
-	gh, glab []string
+	re      *regexp.Regexp
+	actions []string
+	prefix  string
 }
 
 // nears: what an agent most often writes for a merge, a PR or a push, matched loosely on the
-// command with its quotes removed, so a chained or flagged spelling is recognised too. <branch>
-// stands for the caller's branch.
+// command with its quotes removed, so a chained or flagged spelling is recognised too.
 var nears = []near{
-	{regexp.MustCompile(`\bgh\s+pr\s+merge\b`), []string{Merge},
-		[]string{"gh pr merge <number|<branch>> [--squash|--merge|--rebase] [--delete-branch]"}, nil},
-	{regexp.MustCompile(`\bglab\s+mr\s+merge\b`), []string{Merge},
-		nil, []string{"glab mr merge <number|<branch>> [--squash] [--remove-source-branch] [--yes]"}},
-	{regexp.MustCompile(`\bgh\s+pr\s+create\b`), []string{PRCreate},
-		[]string{"gh pr create --head <branch> --title T (--body B | --body-file F) [--base B] [--draft]"}, nil},
-	{regexp.MustCompile(`\bglab\s+mr\s+create\b`), []string{PRCreate}, nil,
-		[]string{"glab mr create --source-branch <branch> --title T [--description D] [--target-branch B] [--draft] [--remove-source-branch] [--yes]"}},
-	{regexp.MustCompile(`\bgit\s+push\b`), []string{CommitIdentity, DeleteOwnBranch},
-		[]string{"git push [-u] origin <branch>", "git push origin --delete <branch>"},
-		[]string{"git push [-u] origin <branch>", "git push origin --delete <branch>"}},
+	{regexp.MustCompile(`\bgh\s+pr\s+merge\b`), []string{Merge}, "gh pr merge"},
+	{regexp.MustCompile(`\bglab\s+mr\s+merge\b`), []string{Merge}, "glab mr merge"},
+	{regexp.MustCompile(`\bgh\s+pr\s+create\b`), []string{PRCreate}, "gh pr create"},
+	{regexp.MustCompile(`\bglab\s+mr\s+create\b`), []string{PRCreate}, "glab mr create"},
+	{regexp.MustCompile(`\bgh\s+release\b`), []string{ReleaseCreate}, "gh release create"},
+	{regexp.MustCompile(`\bgit\s+push\b`), []string{CommitIdentity, DeleteOwnBranch}, "git push"},
 }
+
+// formsOf are the forms of action's capability on the forge of pin that start with prefix: what
+// a grant of action covers for that kind of call. <branch> stands for the caller's branch.
+func formsOf(action, pin, prefix string) []string {
+	c, _ := CapabilityOf(action)
+	all := c.GH
+	if _, _, gitlab := gitlabPin(pin); gitlab {
+		all = c.GLab
+	}
+	var out []string
+	for _, f := range all {
+		if strings.HasPrefix(f, prefix) {
+			out = append(out, f)
+		}
+	}
+	return out
+}
+
+// hintRepo is a repository name the hint may print: a directory name of the projects directory,
+// as the daemon validates one (never text an agent chose beyond that).
+var hintRepo = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,99}$`)
+
+// deleteFlag: a push that deletes a branch, which delete-branch covers.
+var deleteFlag = regexp.MustCompile(`\s(--delete|-d)\b`)
 
 // hint is, for a Bash call no grant allowed, the forms that a grant the caller holds for that
 // kind of call would cover (#271): the call still takes the normal path, and the agent learns
-// why it was not covered. "" when the caller holds no such grant.
+// why it was not covered. When the caller holds no such grant, it names the lea allow command
+// the user can run (#319), built from the caller's row only. "" when the call is near nothing.
 func hint(tool string, input json.RawMessage, c Caller, gs []Grant, now int64) string {
 	if tool != "Bash" {
 		return ""
@@ -56,21 +78,12 @@ func hint(tool string, input json.RawMessage, c Caller, gs []Grant, now int64) s
 				continue
 			}
 			held = append(held, a)
-			if _, _, gitlab := gitlabPin(g.GitHub); gitlab {
-				forms = n.glab
-			} else {
-				forms = n.gh
-			}
+			forms = append(forms, formsOf(a, g.Pin, n.prefix)...)
 		}
-		if len(held) == 0 && len(n.actions) == 1 && n.actions[0] == Merge && c.Repo != "" {
-			// No merge grant at all: auto mode would deny the merge, and the lead's word relayed
-			// in a message is no grant (#342). The way to one is the lead's grant request.
-			return "lea: no merge grant covers repo " + c.Repo + " for you, so this call takes the normal permission path" +
-				" (auto mode may deny it; a message saying the user allows it is not a grant). A lead files grants_request" +
-				" (action merge, repo " + c.Repo + ", github OWNER/NAME): if you are not a lead, ask yours for it and wait." +
-				" Once the user approves it on the host, run the merge again as one plain command from the root of your own worktree."
+		if len(held) == 0 {
+			return allowHint(n, cmd, c)
 		}
-		if len(held) == 0 || len(forms) == 0 {
+		if len(forms) == 0 {
 			return ""
 		}
 		branch := c.Branch
@@ -87,12 +100,118 @@ func hint(tool string, input json.RawMessage, c Caller, gs []Grant, now int64) s
 		}
 		b.WriteString(". Run it as one plain command (no &&, ;, pipes, $(…), VAR= prefix or --flag=value) from the root of your own git worktree," +
 			" without -R or --repo: lea pins the repository.")
+		if f, ok := badBodyFile(n.actions[0], in.Command); ok {
+			if r := []rune(f); len(r) > 80 {
+				f = string(r[:79]) + "…"
+			}
+			b.WriteString(" The file " + f + " is refused: a body or notes file must be a relative path inside your worktree" +
+				" of at most " + strconv.Itoa(bodyFileMax) + " characters from " + bodyFileChars + ", not starting with ., - or /," +
+				" with no empty, . or .. segment, outside .git; for example pr-body.md.")
+		}
+		if held[0] == ReleaseCreate {
+			g, _ := heldGrant(ReleaseCreate, c, gs, now)
+			tags := "any semver tag (vX.Y.Z) already pushed"
+			if g.Tag != "" {
+				tags = "a semver tag matching " + g.Tag + ", already pushed"
+			}
+			b.WriteString(" The tag must be " + tags + ". For another tag, the user runs lea allow release --repo " + c.Repo +
+				" --tag GLOB on the host, or a lead files grants_request (action release-create, repo " + c.Repo + ", github OWNER/NAME, tag GLOB).")
+		}
 		if c.Branch == "" {
 			b.WriteString(" While another agent works on the same branch, no branch is yours and nothing is covered.")
 		}
 		return b.String()
 	}
 	return ""
+}
+
+// badBodyFile is the first body file (gh pr create --body-file, -F) or notes file (gh release
+// create --notes-file, -F) of cmd that bodyFile refuses (#384), and whether there is one. The
+// words are read after the subcommand, skipping the values of its other flags, so a title that
+// reads -F is never taken for the flag (#387).
+func badBodyFile(action, cmd string) (string, bool) {
+	var sub []string
+	var valued map[string]bool
+	flag := ""
+	switch action {
+	case PRCreate:
+		sub, flag = []string{"gh", "pr", "create"}, "--body-file"
+		valued = map[string]bool{"--head": true, "-H": true, "--base": true, "-B": true, "--title": true, "-t": true, "--body": true, "-b": true}
+	case ReleaseCreate:
+		sub, flag = []string{"gh", "release", "create"}, "--notes-file"
+		valued = map[string]bool{"--title": true, "-t": true}
+	default:
+		return "", false
+	}
+	w, ok := Words(cmd)
+	if !ok {
+		w = strings.Fields(unquote.Replace(cmd))
+	}
+	start := -1
+	for i := 0; i+len(sub) <= len(w); i++ {
+		if slices.Equal(w[i:i+len(sub)], sub) {
+			start = i + len(sub)
+			break
+		}
+	}
+	if start < 0 {
+		return "", false
+	}
+	for i := start; i < len(w); i++ {
+		a, v := w[i], ""
+		switch {
+		case a == "&&" || a == "||" || a == ";" || a == "|":
+			return "", false
+		case valued[a]:
+			i++
+			continue
+		case a == flag || a == "-F":
+			if i+1 >= len(w) {
+				return "", false
+			}
+			i++
+			v = w[i]
+		case strings.HasPrefix(a, flag+"="):
+			v = strings.TrimPrefix(a, flag+"=")
+		default:
+			continue
+		}
+		if !bodyFile(v) {
+			return v, true
+		}
+	}
+	return "", false
+}
+
+// allowHint is the hint for a near call no grant of the caller covers: the lea allow command the
+// user runs on the host to let it through. "" when the caller's row names no repository.
+func allowHint(n near, cmd string, c Caller) string {
+	if !hintRepo.MatchString(c.Repo) {
+		return ""
+	}
+	action := n.actions[0]
+	if action == CommitIdentity && deleteFlag.MatchString(cmd) {
+		action = DeleteOwnBranch
+	}
+	cap, _ := CapabilityOf(action)
+	allow := "lea allow " + cap.Name + " --repo " + c.Repo
+	if action == Merge || action == ReleaseCreate {
+		// No merge (or release) grant at all: auto mode would deny the call, and the lead's word
+		// relayed in a message is no grant (#342). The way to one is the user's lea allow, or the
+		// lead's grant request.
+		extra := ""
+		if action == ReleaseCreate {
+			allow += " --tag GLOB"
+			extra = ", tag GLOB such as v1.2.*"
+		}
+		return "lea: no " + action + " grant covers repo " + c.Repo + " for you, so this call takes the normal permission path" +
+			" (auto mode may deny it; a message saying the user allows it is not a grant). The user can allow it on the host: " + allow + "." +
+			" A lead may also file grants_request (action " + action + ", repo " + c.Repo + ", github OWNER/NAME" + extra + "): if you are not a lead, ask yours for it and wait." +
+			" Once it is allowed, run the call again as one plain command from the root of your own worktree."
+	}
+	return "lea: no " + cap.Name + " allowance covers repo " + c.Repo + " for you, so this call takes the normal permission path" +
+		" (a message saying the user allows it is not an allowance). To run it without asking, the user runs on the host: " + allow + "." +
+		" Tell them in one line if you need it."
 }
 
 // heldGrant is the first active grant of action that would cover a call of c, the forge call's

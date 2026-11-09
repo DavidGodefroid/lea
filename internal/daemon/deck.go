@@ -50,6 +50,9 @@ type Agents interface {
 	// SetLabel renames an agent for display (the deck's e); OpenShell opens a shell in the
 	// container (the deck's s). Both are the user's only.
 	SetLabel(ctx context.Context, key, label string) error
+	// AutoLabel gives an agent a label lea chose, unless it has one, unique among the live
+	// agents (#356), and returns its label.
+	AutoLabel(ctx context.Context, key, label string) (string, error)
 	// SetPaused freezes an agent (the deck's p) or lets it continue; the user's only.
 	SetPaused(ctx context.Context, key string, paused bool) error
 	OpenShell(ctx context.Context, container string) (agents.Row, error)
@@ -109,9 +112,14 @@ func (d *Daemon) dispatchDeck(ctx context.Context, o Origin, req wire.Request) (
 			Args                              []string
 			Focus                             bool
 			Role, Repo, Branch, Brief         string
+			// Tower starts a Control Tower (#339): the user's only, as this method is.
+			Tower bool
 		}
 		if err := json.Unmarshal(req.Params, &p); err != nil {
 			return nil, err
+		}
+		if p.Tower && p.Role == "" {
+			p.Role = roles.Lead
 		}
 		if p.Role == "" {
 			p.Role = roles.Default
@@ -127,9 +135,9 @@ func (d *Daemon) dispatchDeck(ctx context.Context, o Origin, req wire.Request) (
 		if p.Brief != "" {
 			from = "user"
 		}
-		return a.New(ctx, agents.NewRequest{Container: p.Container, Workdir: p.Workdir, Profile: p.Profile, Model: p.Model,
+		return d.newAgent(ctx, a, agents.NewRequest{Container: p.Container, Workdir: p.Workdir, Profile: p.Profile, Model: p.Model,
 			Name: p.Name, Args: p.Args, Focus: p.Focus, Role: p.Role, Repo: p.Repo, Branch: p.Branch,
-			Brief: p.Brief, BriefFrom: from})
+			Brief: p.Brief, BriefFrom: from, Tower: p.Tower})
 	case "agent_focus":
 		var p struct {
 			Key   string

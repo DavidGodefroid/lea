@@ -70,6 +70,7 @@ type spawnParams struct {
 	Repo    string `json:"repo"`
 	Branch  string `json:"branch"`
 	Brief   string `json:"brief"`
+	Label   string `json:"label"`
 	For     string `json:"for"`
 	// Queue: under pressure, start the agent once it falls instead of refusing it (#132).
 	Queue bool `json:"queue"`
@@ -132,6 +133,9 @@ func (d *Daemon) agentsSpawn(ctx context.Context, o Origin, me string, raw json.
 	if err := checkBrief(p.Brief, true); err != nil {
 		return nil, err
 	}
+	if _, err := agents.CheckAgentLabel(p.Label); err != nil {
+		return nil, fmt.Errorf("agents_spawn: %w", err)
+	}
 	a := d.manager()
 	if a == nil {
 		return nil, errors.New("agents are not available in this daemon")
@@ -157,8 +161,15 @@ func (d *Daemon) agentsSpawn(ctx context.Context, o Origin, me string, raw json.
 		// The provider the requester asked for, unless the lead names one.
 		p.Profile, p.Model = req.Profile, req.Model
 	}
+	if req != nil && p.Label == "" {
+		p.Label = req.Label
+	}
+	if req != nil && p.Repo == "" && p.Branch == "" {
+		// Where the requester asked the agent to work, unless the lead names it (#364).
+		p.Repo, p.Branch = req.Repo, req.Branch
+	}
 	nr := agents.NewRequest{Container: o.Container, Profile: p.Profile, Model: p.Model, Role: p.Role, Parent: me,
-		Repo: p.Repo, Branch: p.Branch, Brief: p.Brief, BriefFrom: me, NamePrefix: p.Role, Hidden: true}
+		Repo: p.Repo, Branch: p.Branch, Brief: p.Brief, BriefFrom: me, Label: p.Label, NamePrefix: p.Role, Hidden: true}
 	if admit != nil {
 		id, err := d.queueSpawn(me, nr, req)
 		if err != nil {
@@ -173,7 +184,11 @@ func (d *Daemon) agentsSpawn(ctx context.Context, o Origin, me string, raw json.
 		return nil, err
 	}
 	d.changed()
-	return map[string]string{"name": row.Name, "key": row.Key, "role": row.Role, "provider": row.Profile, "model": row.Model}, nil
+	out := map[string]string{"name": row.Name, "key": row.Key, "role": row.Role, "provider": row.Profile, "model": row.Model}
+	if row.Label != "" {
+		out["label"] = row.Label
+	}
+	return out, nil
 }
 
 // startSpawn starts the agent nr asks for, accepting the spawn request req (nil: none) on lead's
@@ -185,7 +200,7 @@ func (d *Daemon) startSpawn(ctx context.Context, a Agents, lead string, nr agent
 		}
 		nr.BriefReplyTo = req.Message
 	}
-	row, err := a.New(ctx, nr)
+	row, err := d.newAgent(ctx, a, nr)
 	if err != nil {
 		if req != nil {
 			d.reopenRequest(req.ID)
@@ -196,6 +211,16 @@ func (d *Daemon) startSpawn(ctx context.Context, a Agents, lead string, nr agent
 		d.acceptRequest(*req, lead, nr.Role, row)
 	}
 	return row, nil
+}
+
+// newAgent starts the agent nr asks for; without a label, one started with a brief is named after
+// the brief (#356).
+func (d *Daemon) newAgent(ctx context.Context, a Agents, nr agents.NewRequest) (agents.Row, error) {
+	row, err := a.New(ctx, nr)
+	if err == nil && row.Label == "" && nr.Brief != "" {
+		d.nameFromBrief(row.Key, nr.Brief)
+	}
+	return row, err
 }
 
 // agentsStop stops one of the calling lead's own children (spec §5.2: several leads may run; each

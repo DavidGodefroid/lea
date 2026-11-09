@@ -195,6 +195,13 @@ type Row struct {
 	LimitUntil int64 `json:"limit_until,omitempty"`
 	// Woken: lea woke the idle agent for a message in its inbox (store.Agent.Woken).
 	Woken bool `json:"woken,omitempty"`
+	// QuestionsOpen (0 or 1) and QuestionsQueued count a control tower's questions to the user
+	// (#95): the one the user has, and those that wait for its answer.
+	QuestionsOpen   int `json:"questions_open,omitempty"`
+	QuestionsQueued int `json:"questions_queued,omitempty"`
+	// Held: the user paused the agent's inbox (the deck's H, #95); HeldCount messages wait in it.
+	Held      bool `json:"held,omitempty"`
+	HeldCount int  `json:"held_count,omitempty"`
 }
 
 type Snapshot struct {
@@ -252,11 +259,18 @@ type NewRequest struct {
 	// replying to BriefReplyTo, before the agent starts; its first prompt sends it there.
 	Brief, BriefFrom string
 	BriefReplyTo     int64
+	// Label, when set, is the agent's label from the start (#356), checked by CheckLabel and
+	// made unique among the container's live agents.
+	Label string
 	// NamePrefix names an unnamed agent <prefix>-N (the profile when empty).
 	NamePrefix string
 	// Hidden leaves the agent in its parking window: an agent another agent started never takes
 	// the slot or the keyboard.
 	Hidden bool
+	// Tower starts a Control Tower (#339): a lead on Claude labelled TowerLabel (suffixed while
+	// another holds it), whose first prompt runs the control-tower skill. The user's only: the
+	// daemon gives it to host callers (agent_new), never to an agent's spawn.
+	Tower bool
 }
 
 type Manager struct {
@@ -382,7 +396,7 @@ func (m *Manager) snapshot(container string, v int64) (Snapshot, error) {
 
 func rowOf(a store.Agent) Row {
 	return Row{Key: a.Key, Name: a.Name, Label: a.Label, Profile: a.Profile, Model: a.Model, State: a.State, Workdir: a.Workdir, Updated: a.Updated,
-		Created: a.Created, Role: a.Role, Parent: a.Parent, Repo: a.Repo, Branch: a.Branch, CtxPct: -1, CostUSD: -1, Paused: a.Paused,
+		Created: a.Created, Role: a.Role, Parent: a.Parent, Repo: a.Repo, Branch: a.Branch, CtxPct: -1, CostUSD: -1, Paused: a.Paused, Held: a.HoldSince > 0,
 		LimitUntil: a.LimitUntil, Woken: a.Woken}
 }
 
@@ -1560,11 +1574,43 @@ func (m *Manager) SetLabel(ctx context.Context, key, label string) error {
 	if _, err := m.spawned(key); err != nil {
 		return err
 	}
-	if err := m.cfg.Store.SetLabel(key, l); err != nil {
+	if l == "" {
+		if err := m.cfg.Store.SetLabel(key, l); err != nil {
+			return err
+		}
+	} else if holder, err := m.cfg.Store.SetLabelFree(key, l); err != nil {
 		return err
+	} else if holder != "" {
+		// Labels are unique among the live agents (#356): the user's rename never takes one.
+		return fmt.Errorf("the label %q is already %s's: pick another", l, holder)
 	}
 	m.feed.bump()
 	return nil
+}
+
+// AutoLabel gives an agent lea spawned a label lea chose (#356): from its brief or its user's
+// first prompt. A label already set stays; a clash with a live agent's label gets " 2", " 3"….
+// A reserved label is refused: the words come from what an agent wrote. It returns the agent's
+// label.
+func (m *Manager) AutoLabel(ctx context.Context, key, label string) (string, error) {
+	if _, _, ok := parseShellKey(key); ok {
+		return "", errors.New("a shell has no label")
+	}
+	l, err := CheckAgentLabel(label)
+	if err != nil {
+		return "", err
+	}
+	if l == "" {
+		return "", errors.New("the label is empty")
+	}
+	if _, err := m.spawned(key); err != nil {
+		return "", err
+	}
+	if l, err = m.cfg.Store.SetLabelUnique(key, l, MaxLabel, true); err != nil {
+		return "", err
+	}
+	m.feed.bump()
+	return l, nil
 }
 
 // SetPaused freezes an agent lea spawned (the deck's p), or lets a frozen one continue where it
@@ -1693,6 +1739,11 @@ func (m *Manager) New(ctx context.Context, r NewRequest) (Row, error) {
 	if err != nil {
 		return Row{}, err
 	}
+	if r.Tower {
+		if err := checkTower(reg, &r); err != nil {
+			return Row{}, err
+		}
+	}
 	prov, model, err := reg.Resolve(r.Profile, r.Model, m.cfg.DefaultProvider, m.cfg.DefaultModel)
 	if err != nil {
 		return Row{}, err
@@ -1732,6 +1783,14 @@ func (m *Manager) New(ctx context.Context, r NewRequest) (Row, error) {
 			return Row{}, fmt.Errorf("brief: %w", err)
 		}
 	}
+	// A label from another agent (its brief's sender) is never a reserved one; the user's may be.
+	check := CheckLabel
+	if r.BriefFrom != "" && r.BriefFrom != "user" {
+		check = CheckAgentLabel
+	}
+	if r.Label, err = check(r.Label); err != nil {
+		return Row{}, err
+	}
 	if r.BriefFrom == "" {
 		r.BriefFrom = "user"
 	}
@@ -1752,8 +1811,18 @@ func (m *Manager) New(ctx context.Context, r NewRequest) (Row, error) {
 		return Row{}, err
 	}
 	if r.Parent != "" {
-		if err := m.checkParent(r.Container, r.Parent, r.Role); err != nil {
+		lead, err := m.checkParent(r.Container, r.Parent, r.Role)
+		if err != nil {
 			return Row{}, err
+		}
+		// A child naming no repo works where its lead works, not in the container's last launch
+		// directory (#364): the lead's repo, or without one the lead's own directory.
+		if r.Repo == "" && r.Workdir == "" {
+			if lead.Repo != "" {
+				r.Repo = lead.Repo
+			} else {
+				r.Workdir = lead.Workdir
+			}
 		}
 	}
 	projects := ""
@@ -1813,17 +1882,30 @@ func (m *Manager) New(ctx context.Context, r NewRequest) (Row, error) {
 	if err == nil {
 		a.TaskID = taskID
 	}
+	if err == nil && r.Tower {
+		// Before the first prompt names it, and before the daemon's auto-naming could.
+		if a.Label, err = m.towerLabel(r.Container, a.Key); err == nil {
+			err = m.cfg.Store.SetLabel(a.Key, a.Label)
+		}
+	} else if err == nil && r.Label != "" {
+		// Before the first prompt, which tells the agent how the user sees it.
+		a.Label, err = m.cfg.Store.SetLabelUnique(a.Key, r.Label, MaxLabel, false)
+	}
 	if err == nil && r.Brief != "" {
 		_, err = m.cfg.Store.Send(store.Message{From: r.BriefFrom, To: a.Key, Kind: "request", Body: r.Brief,
 			ReplyTo: r.BriefReplyTo, Hops: briefHops, At: m.cfg.Now()})
 	}
 	prompt := ""
-	if err == nil && (r.Brief != "" || a.Branch != "" || repo != "") {
+	if err == nil && (r.Tower || r.Brief != "" || a.Branch != "" || repo != "") {
 		wt := ""
 		if a.Branch != "" {
 			wt = worktreePath(projects, r.Workdir, a)
 		}
-		prompt = firstPrompt(a, repo, wt, r.Brief != "")
+		prompt = firstPrompt(a, repo, wt, r.Brief != "", m.covered(a))
+		if r.Tower {
+			// The skill's command first, on the prompt's one line: the tower guard reads it there.
+			prompt = TowerCommand + " " + prompt
+		}
 	}
 	if err == nil {
 		args, err = launchArgs(prov, a, "", r.Args, prompt)
@@ -1923,26 +2005,26 @@ func (m *Manager) checkBriefSource(r NewRequest) (int, error) {
 }
 
 // checkParent refuses a child whose parent is not a running agent of the same container, or
-// whose role may not give role (the store checks the tree, not the roles).
-func (m *Manager) checkParent(container, parent, role string) error {
+// whose role may not give role (the store checks the tree, not the roles), and returns the parent.
+func (m *Manager) checkParent(container, parent, role string) (store.Agent, error) {
 	p, err := m.cfg.Store.AgentByKey(parent)
 	if errors.Is(err, store.ErrNotFound) {
-		return fmt.Errorf("unknown parent agent %q", parent)
+		return store.Agent{}, fmt.Errorf("unknown parent agent %q", parent)
 	}
 	if err != nil {
-		return err
+		return store.Agent{}, err
 	}
 	if p.Container != container {
-		return fmt.Errorf("parent %s runs in another container", p.Name)
+		return store.Agent{}, fmt.Errorf("parent %s runs in another container", p.Name)
 	}
 	if p.State == "done" {
-		return fmt.Errorf("parent %s has ended", p.Name)
+		return store.Agent{}, fmt.Errorf("parent %s has ended", p.Name)
 	}
 	pr, err := roles.Get(p.Role)
 	if err != nil {
-		return err
+		return store.Agent{}, err
 	}
-	return roles.CanGive(pr, role)
+	return p, roles.CanGive(pr, role)
 }
 
 // spawned returns an agent lea spawned, by key.
@@ -2487,4 +2569,26 @@ func (m *Manager) Detach(ctx context.Context, container string) error {
 		}
 	}
 	return nil
+}
+
+// covered is what of the deliver preset covers a as it starts (Covered): none when the grants
+// cannot be read.
+func (m *Manager) covered(a store.Agent) []string {
+	if a.Branch == "" {
+		return nil
+	}
+	gs, err := m.cfg.Store.ActiveGrants(a.Container, m.cfg.Now())
+	if err != nil {
+		return nil
+	}
+	lineage := []string{a.Key}
+	for p := a.Parent; p != "" && len(lineage) < 32 && !slices.Contains(lineage, p); {
+		lineage = append(lineage, p)
+		pa, err := m.cfg.Store.AgentByKey(p)
+		if err != nil {
+			break
+		}
+		p = pa.Parent
+	}
+	return Covered(a, lineage, gs, m.cfg.Now())
 }

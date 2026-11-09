@@ -15,7 +15,7 @@ var dev = Caller{Key: "lea-a/dev-2", Container: "lea-a", Repo: "lea", Branch: "f
 func all(action string) Grant {
 	g := Grant{ID: 7, Container: "lea-a", Action: action, Repo: "lea", Branch: "feat/*", Created: now - 10, Expires: now + 3600}
 	if NeedsGitHub(action) {
-		g.GitHub = "github.com/o/lea"
+		g.Pin = "github.com/o/lea"
 	}
 	return g
 }
@@ -542,7 +542,7 @@ func TestPinnedCommand(t *testing.T) {
 	prot := dev
 	prot.Branch = "main"
 	if d := Decide("Bash", bash("gh pr merge 42 --squash --delete-branch"), prot, []Grant{{ID: 1, Container: "lea-a", Action: Merge, Repo: "lea",
-		GitHub: "github.com/o/lea", Expires: now + 10}}, now, false); d.Verdict != "" {
+		Pin: "github.com/o/lea", Expires: now + 10}}, now, false); d.Verdict != "" {
 		t.Fatalf("protected branch: %+v", d)
 	}
 	d = Decide("Bash", bash(`git commit -m "it's done"`), dev, gs, now, false)
@@ -559,7 +559,7 @@ func TestPinnedCommand(t *testing.T) {
 	}
 	// A merge grant without a GitHub repository allows no gh call.
 	g := all(Merge)
-	g.GitHub = ""
+	g.Pin = ""
 	if d := Decide("Bash", bash("gh pr merge 42 --squash"), dev, []Grant{g}, now, false); d.Verdict != "" {
 		t.Fatalf("unpinned merge: %+v", d)
 	}
@@ -668,7 +668,9 @@ func TestDecideTools(t *testing.T) {
 	if d := Decide(StopTool, stop, dev, nil, now, true); d.Verdict != "" {
 		t.Fatalf("no grant allowed: %+v", d)
 	}
-	for _, p := range []string{"/home/u/.claude/settings.json", "/home/u/.claude/settings.local.json", "/repo/.claude/settings.json", "/usr/local/share/lea/claude-settings.json", "/lea/state/git/config", "/p/lea/.git/config", "/p/lea/.git/hooks/pre-commit", "/home/u/.gitconfig", "/home/u/.bashrc", ".claude/settings.json"} {
+	for _, p := range []string{"/home/u/.claude/settings.json", "/home/u/.claude/settings.local.json", "/repo/.claude/settings.json", "/usr/local/share/lea/claude-settings.json", "/lea/state/git/config", "/p/lea/.git/config", "/p/lea/.git/hooks/pre-commit", "/home/u/.gitconfig", "/home/u/.bashrc", ".claude/settings.json",
+		// lea config claude's storage (#334): the user's base settings for Claude.
+		"/home/u/.config/lea/claude.json"} {
 		in, _ := json.Marshal(map[string]string{"file_path": p})
 		if d := Decide("Edit", in, dev, gs, now, true); d.Verdict != Deny {
 			t.Fatalf("edit %s: %+v", p, d)
@@ -770,11 +772,11 @@ func TestPRCreate(t *testing.T) {
 	}
 }
 
-// TestStanding: delivery's standing grants never expire and show as such.
+// TestStanding: a grant that holds until revoked never expires.
 func TestStanding(t *testing.T) {
 	g := all(PRCreate)
 	g.Expires = Standing
-	if !g.Active(now) || !g.IsStanding() || all(PRCreate).IsStanding() {
+	if !g.Active(now) || (Set{Expires: Standing}).UntilRevoked() != true || (Set{Expires: now + 1}).UntilRevoked() {
 		t.Fatal("standing")
 	}
 	for _, a := range DeliveryActions {
@@ -790,7 +792,7 @@ func TestStanding(t *testing.T) {
 func TestGitLab(t *testing.T) {
 	gl := func(action string) Grant {
 		g := all(action)
-		g.GitHub = "gitlab:gitlab.example.com/grp/sub/app"
+		g.Pin = "gitlab:gitlab.example.com/grp/sub/app"
 		return g
 	}
 	gs := []Grant{gl(PRCreate), gl(Merge), gl(CommitIdentity), gl(DeleteOwnBranch)}
@@ -873,7 +875,7 @@ func TestHint(t *testing.T) {
 	gh := []Grant{all(Merge), all(PRCreate), all(CommitIdentity)}
 	gl := func(action string) Grant {
 		g := all(action)
-		g.GitHub = "gitlab:gitlab.example.com/grp/app"
+		g.Pin = "gitlab:gitlab.example.com/grp/app"
 		return g
 	}
 	away := dev
@@ -892,7 +894,15 @@ func TestHint(t *testing.T) {
 		{"merge allowed", "gh pr merge 42 --squash --delete-branch", dev, gh, []string{""}},
 		{"merge admin", "gh pr merge 42 --admin", dev, gh, []string{""}},
 		// No merge grant: the hint names the way to one, a lead's grant request (#342).
-		{"merge no grant", "gh pr merge 42 --squash", dev, nil, []string{"no merge grant covers repo lea", "grants_request", "ask yours"}},
+		{"merge no grant", "gh pr merge 42 --squash", dev, nil, []string{"no merge grant covers repo lea", "grants_request", "ask yours",
+			"lea allow merge --repo lea"}},
+		// Nothing held: the hint names the lea allow command the user runs (#319), from the
+		// caller's row only.
+		{"push no grant", "git push -u origin feat/73-x", dev, nil, []string{"no push allowance covers repo lea", "lea allow push --repo lea."}},
+		{"delete no grant", "git push origin --delete feat/73-x", dev, nil, []string{"lea allow delete-branch --repo lea."}},
+		{"pr no grant", "gh pr create --fill", dev, []Grant{all(Merge)}, []string{"lea allow pr --repo lea."}},
+		{"glab mr no grant", "glab mr create --fill", dev, nil, []string{"lea allow pr --repo lea."}},
+		{"push no grant odd repo", "git push origin x", Caller{Key: dev.Key, Container: "lea-a", Repo: "-rf", Branch: "x"}, nil, []string{""}},
 		{"merge other grant", "gh pr merge 42 --auto", dev, []Grant{all(CloseIssue)}, []string{"grants_request"}},
 		{"merge other repo's grant", "gh pr merge 42 --auto", Caller{Key: dev.Key, Container: "lea-a", Repo: "other", Branch: "feat/73-x",
 			OwnWorktree: true}, gh, []string{"covers repo other", "grants_request"}},
@@ -929,6 +939,88 @@ func TestHint(t *testing.T) {
 	shared.Branch = ""
 	if d := Decide("Bash", bash("gh pr merge 42 --squash"), shared, gh, now, false); !strings.Contains(d.Hint, "another agent") {
 		t.Fatalf("shared branch: %+v", d)
+	}
+}
+
+// TestBodyFileHint: a pr-create or release-create call refused for its body or notes file
+// learns the relative-path-in-worktree rule and an example (#384).
+func TestBodyFileHint(t *testing.T) {
+	want := []string{"relative path inside your worktree", "A-Za-z0-9._/-", "at most 256", "not starting with ., - or /",
+		"no empty, . or .. segment", "outside .git", "pr-body.md"}
+	pr, rel := []Grant{all(PRCreate)}, []Grant{releaseGrant("v0.15.*")}
+	for _, tc := range []struct {
+		cmd string
+		gs  []Grant
+	}{
+		{"gh pr create --head feat/73-x --title T --body-file /tmp/x.md", pr},
+		{"gh pr create --head feat/73-x --title T --body-file ./x.md", pr},
+		{"gh pr create --head feat/73-x --title T --body-file .x.md", pr},
+		{"gh pr create --head feat/73-x --title T -F a/../x.md", pr},
+		{"gh pr create --head feat/73-x --title T --body-file .git/x.md", pr},
+		{"gh release create v0.15.0 --verify-tag --notes-file /tmp/x.md", rel},
+		{"gh release create v0.15.0 --verify-tag --notes-file ./x.md", rel},
+		{"gh release create v0.15.0 --verify-tag -F .x.md", rel},
+		{"gh pr create --head feat/73-x --title T --body-file pr+body.md", pr},
+		{"gh pr create --head feat/73-x --title T --body-file -x.md", pr},
+		{"gh pr create --head feat/73-x --title T --body-file a//b.md", pr},
+		{"gh pr create --head feat/73-x --title T --body-file " + strings.Repeat("a", 257), pr},
+		{"gh pr create --head feat/73-x --title T --body-file /" + strings.Repeat("x", 400), pr},
+	} {
+		d := Decide("Bash", bash(tc.cmd), dev, tc.gs, now, false)
+		if d.Verdict != "" || len(d.Hint) > 1000 {
+			t.Fatalf("%q: verdict %q, want none; hint of %d bytes (the hook keeps 1000)", tc.cmd, d.Verdict, len(d.Hint))
+		}
+		for _, w := range want {
+			if !strings.Contains(d.Hint, w) {
+				t.Fatalf("%q: hint lacks %q:\n%s", tc.cmd, w, d.Hint)
+			}
+		}
+	}
+	// The file named is the flag's value, never another flag's value that reads like the flag
+	// (#387), and a long one is cut so the rule and the example still fit.
+	for _, tc := range []struct {
+		cmd, file string
+		gs        []Grant
+	}{
+		{"gh pr create --head feat/73-x --title -F --body-file /tmp/x.md", "/tmp/x.md", pr},
+		{"gh pr create --head feat/73-x --title --body-file -F /tmp/y.md", "/tmp/y.md", pr},
+		{"gh release create v0.15.0 --verify-tag --title -F --notes-file /tmp/z.md", "/tmp/z.md", rel},
+	} {
+		if d := Decide("Bash", bash(tc.cmd), dev, tc.gs, now, false); !strings.Contains(d.Hint, "The file "+tc.file+" is refused") {
+			t.Fatalf("%q: hint does not name %s:\n%s", tc.cmd, tc.file, d.Hint)
+		}
+	}
+	long := "/" + strings.Repeat("x", 400)
+	if d := Decide("Bash", bash("gh pr create --head feat/73-x --title T --body-file "+long), dev, pr, now, false); strings.Contains(d.Hint, long[:100]) ||
+		!strings.Contains(d.Hint, long[:79]+"…") {
+		t.Fatalf("long file name not cut:\n%s", d.Hint)
+	}
+	// What the rule allows, the matcher allows (#384): the shown charset, length and segments.
+	if got := bodyFileRe.String(); got != `^[A-Za-z0-9_][A-Za-z0-9._/-]{0,255}$` {
+		t.Fatalf("bodyFileRe changed: %s", got)
+	}
+	for _, f := range []string{"pr-body.md", "_x/y.z-1.md", strings.Repeat("a", 256)} {
+		if d := Decide("Bash", bash("gh pr create --head feat/73-x --title T --body-file "+f), dev, pr, now, false); d.Verdict != Allow {
+			t.Fatalf("%q: verdict %q (%s)", f, d.Verdict, d.Reason)
+		}
+	}
+	// The relative form the hint names is allowed.
+	for _, tc := range []struct {
+		cmd string
+		gs  []Grant
+	}{
+		{"gh pr create --head feat/73-x --title T --body-file pr-body.md", pr},
+		{"gh release create v0.15.0 --verify-tag --notes-file pr-body.md", rel},
+	} {
+		if d := Decide("Bash", bash(tc.cmd), dev, tc.gs, now, false); d.Verdict != Allow {
+			t.Fatalf("%q: verdict %q (%s)", tc.cmd, d.Verdict, d.Reason)
+		}
+	}
+	// A call refused for another reason, or with a good body file, does not get the rule.
+	for _, cmd := range []string{"gh pr create --fill", "gh pr create --head feat/73-x --title T --body-file pr-body.md --web"} {
+		if d := Decide("Bash", bash(cmd), dev, pr, now, false); d.Hint == "" || strings.Contains(d.Hint, "pr-body.md") {
+			t.Fatalf("%q: hint:\n%s", cmd, d.Hint)
+		}
 	}
 }
 

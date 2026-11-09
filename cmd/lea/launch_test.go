@@ -53,7 +53,9 @@ func TestLauncherRefusesInsideLea(t *testing.T) {
 		t.Fatalf("stop --all inside lea: %d", got)
 	}
 	// An agent cannot allow a domain itself (#345): lea egress is the launcher's, on the host.
-	for _, a := range [][]string{{"egress", "allow", "deb.debian.org"}, {"egress", "deny", "github.com"}, {"egress", "list"}} {
+	// Nor change the user's base settings for Claude (#334): lea config claude is the launcher's too.
+	for _, a := range [][]string{{"egress", "allow", "deb.debian.org"}, {"egress", "deny", "github.com"}, {"egress", "list"},
+		{"config", "claude", "defaultMode", "auto"}, {"config", "claude", "allow", "add", "Bash(*)"}, {"config", "claude"}} {
 		errb.Reset()
 		if got := run(a, strings.NewReader(""), &out, &errb); got != 2 || !strings.Contains(errb.String(), "the launcher runs on the host") {
 			t.Fatalf("%v inside lea: %d %q", a, got, errb.String())
@@ -99,7 +101,7 @@ func TestCoreCommandsMatchTheSwitch(t *testing.T) {
 		t.Fatalf("found only %d case labels in run: %v", len(cases), cases)
 	}
 	for c := range cases {
-		if c == "new" || c == "delivery" {
+		if c == "new" || c == "allow" {
 			continue
 		}
 		if !coreCommands[c] {
@@ -123,9 +125,18 @@ func TestCoreCommandsMatchTheSwitch(t *testing.T) {
 		!launcherCommand([]string{"lock", "--container", "lea-a", "list"}) {
 		t.Error("lock: the core keeps a form of it")
 	}
-	if !cases["delivery"] || coreCommands["delivery"] || !launcherCommand([]string{"delivery", "on"}) ||
-		launcherCommand([]string{"delivery", "--container", "lea-a", "--projects", "/p", "on"}) {
-		t.Error("delivery: the user's form goes to the launcher, the core form (--container) to the core")
+	if !cases["allow"] || coreCommands["allow"] || !launcherCommand([]string{"allow", "deliver"}) || !launcherCommand([]string{"allow"}) ||
+		launcherCommand([]string{"allow", "--container", "lea-a", "--projects", "/p", "deliver"}) {
+		t.Error("allow: the user's form goes to the launcher, the core form (--container) to the core")
+	}
+	// lea delivery and lea grant add|ls are aliases of lea allow (#319): the launcher translates
+	// them; the core keeps no delivery, and lea grant's other verbs.
+	if cases["delivery"] || !launcherCommand([]string{"delivery", "on"}) || !launcherCommand([]string{"delivery", "--container", "lea-a", "--projects", "/p", "on"}) {
+		t.Error("delivery: the core keeps a form of it")
+	}
+	if !launcherCommand([]string{"grant", "add", "merge"}) || !launcherCommand([]string{"grant", "ls"}) ||
+		launcherCommand([]string{"grant", "requests"}) || launcherCommand([]string{"grant", "revoke", "3"}) {
+		t.Error("grant: add and ls go to the launcher, the other verbs to the core")
 	}
 }
 

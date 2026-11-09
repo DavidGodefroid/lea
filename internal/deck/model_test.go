@@ -19,6 +19,8 @@ type fakeAPI struct {
 	err      error
 	newAgent Agent
 	newShell Agent
+	// questions is what Questions answers (questions_test.go).
+	questions []Question
 }
 
 func (f *fakeAPI) rec(s string) { f.mu.Lock(); f.calls = append(f.calls, s); f.mu.Unlock() }
@@ -31,6 +33,10 @@ func (f *fakeAPI) New(ctx context.Context, c, provider string) (Agent, error) {
 		c += " " + provider
 	}
 	f.rec("new " + c)
+	return f.newAgent, f.err
+}
+func (f *fakeAPI) NewTower(ctx context.Context, c string) (Agent, error) {
+	f.rec("tower " + c)
 	return f.newAgent, f.err
 }
 func (f *fakeAPI) Providers(ctx context.Context) ([]string, error) {
@@ -214,11 +220,41 @@ func TestNewSelectsTheNewAgent(t *testing.T) {
 	}
 }
 
-// N lists the providers, then a digit starts an agent on one; any other key cancels.
+// N starts a Control Tower (#339), focused like n, and selects it.
+func TestShiftNStartsAControlTower(t *testing.T) {
+	tower := ag("claude-2", "unknown", 1)
+	tower.Label, tower.Role = "Control Tower", "lead"
+	api := &fakeAPI{newAgent: tower}
+	m := loaded(t, api, "", ag("a", "idle", 1))
+	m, cmd := step(t, m, key("N"))
+	if m.status != "starting a new Control Tower…" {
+		t.Fatalf("status %q", m.status)
+	}
+	m, _ = step(t, m, cmd())
+	if m.selected != "lea-a/claude-2" || m.status != "" {
+		t.Fatalf("selected %q status %q", m.selected, m.status)
+	}
+	if got := api.got(); len(got) != 1 || got[0] != "tower lea-a" {
+		t.Fatalf("calls=%q", got)
+	}
+}
+
+// Without Claude, N says why on the status line and starts nothing.
+func TestShiftNWithoutClaudeSaysSo(t *testing.T) {
+	api := &fakeAPI{err: errors.New("a Control Tower runs on claude, which is not an enabled provider")}
+	m := loaded(t, api, "", ag("a", "idle", 1))
+	m, cmd := step(t, m, key("N"))
+	m, _ = step(t, m, cmd())
+	if !strings.Contains(m.status, "not an enabled provider") || m.selected != "lea-a/a" {
+		t.Fatalf("selected %q status %q", m.selected, m.status)
+	}
+}
+
+// P lists the providers, then a digit starts an agent on one; any other key cancels.
 func TestNewOnAnotherProvider(t *testing.T) {
 	api := &fakeAPI{newAgent: ag("codex-1", "unknown", 1)}
 	m := loaded(t, api, "", ag("a", "idle", 1))
-	m, cmd := step(t, m, key("N"))
+	m, cmd := step(t, m, key("P"))
 	m, _ = step(t, m, cmd())
 	if m.status != "new agent on: 1 claude 2 codex 3 ollama" {
 		t.Fatalf("status %q", m.status)
@@ -231,7 +267,7 @@ func TestNewOnAnotherProvider(t *testing.T) {
 	if got := api.got(); len(got) != 2 || got[1] != "new lea-a codex" {
 		t.Fatalf("calls=%q", got)
 	}
-	m, cmd = step(t, m, key("N"))
+	m, cmd = step(t, m, key("P"))
 	m, _ = step(t, m, cmd())
 	m, cmd = step(t, m, key("9")) // past the list: cancels
 	if cmd != nil || m.providers != nil || m.status != "" {
@@ -634,5 +670,32 @@ func TestRoleChooserEndsWhenTheAgentGoes(t *testing.T) {
 	m, _ = step(t, m, snapshotMsg{snap: Snapshot{Version: 8, Agents: []Agent{ag("b", "idle", 1)}}})
 	if m.roleFor != "" || m.status != "" {
 		t.Fatalf("roleFor %q status %q", m.roleFor, m.status)
+	}
+}
+
+// A tower whose question the user has needs them: "❓ 1 · 3 queued" (#95), its status aside.
+func TestATowerQuestionNeedsTheUser(t *testing.T) {
+	tw := ag("t", "idle", 1)
+	tw.QuestionsOpen, tw.QuestionsQueued, tw.Status = 1, 3, "relaying answers"
+	m := loaded(t, &fakeAPI{}, "", tw, ag("b", "working", 1))
+	if got := m.shortStatus(m.agents[0]); got != "❓ 1 · 3 queued" {
+		t.Fatalf("label %q", got)
+	}
+	if r := rank(m.agents[0], m.seen); r != 2 {
+		t.Fatalf("rank %d", r)
+	}
+	m.agents[0].QuestionsQueued = 0
+	if got := m.label(m.agents[0]); got != "❓ 1" {
+		t.Fatalf("no queue: %q", got)
+	}
+	m.ascii = true
+	if got := m.label(m.agents[0]); got != "? 1" {
+		t.Fatalf("ascii: %q", got)
+	}
+	// Queued questions alone wait for the tower, not the user.
+	q := ag("q", "idle", 1)
+	q.QuestionsQueued = 2
+	if got := m.label(q); got != "idle" {
+		t.Fatalf("queued only: %q", got)
 	}
 }

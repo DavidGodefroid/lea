@@ -953,3 +953,67 @@ c - -" ]
   [[ "$output" != *"Use the lea deck"* ]]
   [ ! -e "$U" ] || ! grep -q '^LEA_DECK=' "$U"
 }
+
+# The first run asks the deck question when no LEA_DECK is configured (#335): the launcher says
+# so with LEA_DECK_ASK=1.
+@test "--first-run on a terminal with no LEA_DECK asks the deck question" {
+  lea__init_tty() { :; }
+  export LEA_DECK_ASK=1
+  run lea_init --first-run <<<$'n\ncodex'
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"Use the lea deck (agents in a column, approvals, board)? [Y/n]"* ]]
+  [[ "$output" == *"Command to start in the lea container [claude]:"* ]]
+  grep -qx "LEA_DECK='0'" "$U"
+  grep -qx "LEA_TOOL='codex'" "$U"
+  [[ "$output" == *"no deck: lea runs codex in the lea container (LEA_DECK=0, LEA_TOOL; lea config deck on: the deck)"* ]]
+}
+
+@test "--first-run asking the deck question records the deck at the end of input" {
+  lea__init_tty() { :; }
+  export LEA_DECK_ASK=1
+  run lea_init --first-run </dev/null
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"Use the lea deck"* ]]
+  grep -qx "LEA_DECK='1'" "$U"
+  [[ "$output" == *"the deck: lea opens it (LEA_DECK=1; lea config deck off: your own tool instead)"* ]]
+}
+
+@test "--first-run without a terminal, or with LEA_DECK configured, asks nothing" {
+  lea__init_tty() { return 1; }
+  export LEA_DECK_ASK=1
+  run lea_init --first-run <<<"n"
+  [ "$status" -eq 0 ]
+  [[ "$output" != *"Use the lea deck"* ]]
+  [ ! -e "$U" ] || ! grep -q '^LEA_DECK=' "$U"
+  # A terminal, but LEA_DECK set (env or user config): the launcher gives no LEA_DECK_ASK.
+  lea__init_tty() { :; }
+  unset LEA_DECK_ASK
+  run lea_init --first-run <<<"n"
+  [ "$status" -eq 0 ]
+  [[ "$output" != *"Use the lea deck"* ]]
+  ! grep -q '^LEA_DECK=' "$U"
+}
+
+@test "lea-sh deck-question asks an older install once and records the answer" {
+  lea__init_tty() { :; }
+  unset LEA_DECK_ASK
+  run lea_deck_question <<<$'n\n'
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"the deck is optional: lea can run your own tool"* ]]
+  [[ "$output" == *"Use the lea deck"* ]]
+  grep -qx "LEA_DECK='0'" "$U"
+  grep -qx "LEA_TOOL='claude'" "$U"
+  [[ "$output" == *"lea config deck on: the deck"* ]]
+  # As the next lea loads it: off, so the end of input keeps it off.
+  LEA_DECK=0
+  run lea_deck_question </dev/null
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"[y/N]"* ]]
+  grep -qx "LEA_DECK='0'" "$U"
+}
+
+@test "lea-sh deck-question is in lea-sh's command list" {
+  run "$LEA_ROOT/libexec/lea-sh" deck-question extra
+  [ "$status" -eq 2 ]
+  [[ "$output" == *"deck-question"* ]]
+}

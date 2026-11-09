@@ -47,11 +47,37 @@ const (
 // keyName is a key lea may report: a plain identifier. Other keys are left out of Paths.
 var keyName = regexp.MustCompile(`^[A-Za-z0-9_]{1,40}$`)
 
+// Answer is what the daemon answers a report: the locks lox run runs that the agent's container
+// does not mount, and LoxRun "off" when the workspace has locks and no lox run serves them (#343).
+type Answer struct {
+	LocksAdded []string `json:"locks_added"`
+	LoxRun     string   `json:"lox_run"`
+	// QuestionsOpen (0 or 1) and QuestionsQueued count a control tower's questions to the user
+	// (#95); Held says the user paused its inbox, which holds HeldCount messages.
+	QuestionsOpen   int  `json:"questions_open"`
+	QuestionsQueued int  `json:"questions_queued"`
+	Held            bool `json:"held"`
+	HeldCount       int  `json:"held_count"`
+}
+
+// loxRunOff is what the line says while no lox run serves the workspace's locks.
+const loxRunOff = " · no lox run: start it in the projects directory"
+
 // Run prints the status line for the JSON on stdin and hands post (when not nil) what lea needs
 // from it; post answers the locks lox run runs that the agent's container does not mount, which
-// the line names ("+lock orders: restart lea"). When dump is set the raw JSON is also written
-// there (mode 0600). Nothing here may fail Claude: bad input prints "lea" and reports nothing.
-func Run(stdin io.Reader, stdout io.Writer, dump string, post func(Report) []string) error {
+// the line names ("+lock orders: restart lea"), and whether lox run serves. When dump is set the
+// raw JSON is also written there (mode 0600). Nothing here may fail Claude: bad input prints "lea"
+// and reports nothing.
+func Run(stdin io.Reader, stdout io.Writer, dump string, post func(Report) Answer) error {
+	return RunWith(stdin, stdout, dump, post, User{})
+}
+
+// RunWith is Run chained with the user's own status line (#374): when u names a command it runs
+// with the same JSON on stdin while lea reports to the daemon, and its output is printed instead
+// of lea's line. A command that fails, prints nothing or outlasts u.Timeout (it is killed) leaves
+// lea's line. The report is sent whatever the command does; the lox run and +lock parts follow
+// either line.
+func RunWith(stdin io.Reader, stdout io.Writer, dump string, post func(Report) Answer, u User) error {
 	in, err := io.ReadAll(io.LimitReader(stdin, 1<<20))
 	if err != nil {
 		fmt.Fprintln(stdout, "lea")
@@ -67,15 +93,23 @@ func Run(stdin io.Reader, stdout io.Writer, dump string, post func(Report) []str
 		fmt.Fprintln(stdout, "lea")
 		return dumpErr
 	}
+	user := u.start(in)
 	r := parse(doc)
 	ws := windows(doc)
 	r.Limits = limits(ws)
-	var added []string
+	var ans Answer
 	if post != nil {
-		added = post(r)
+		ans = post(r)
 	}
 	ln := line(doc, r, ws, os.Getenv("NO_COLOR") == "", time.Now())
-	for _, n := range added {
+	if out := user(); out != "" {
+		ln = out
+	}
+	ln += ans.towerParts()
+	if ans.LoxRun == "off" {
+		ln += loxRunOff
+	}
+	for _, n := range ans.LocksAdded {
 		if lockInstance.MatchString(n) {
 			ln += " · +lock " + n + ": restart lea"
 		}
@@ -84,25 +118,40 @@ func Run(stdin io.Reader, stdout io.Writer, dump string, post func(Report) []str
 	return dumpErr
 }
 
+// towerParts is what the line says of a tower's questions and of its paused inbox (#95):
+// " · ❓ 1 · 3 queued · ⏸ messages paused (2)", "" when neither.
+func (a Answer) towerParts() string {
+	s := ""
+	if a.QuestionsOpen > 0 || a.QuestionsQueued > 0 {
+		s += fmt.Sprintf(" · ❓ %d", a.QuestionsOpen)
+		if a.QuestionsQueued > 0 {
+			s += fmt.Sprintf(" · %d queued", a.QuestionsQueued)
+		}
+	}
+	if a.Held {
+		s += fmt.Sprintf(" · ⏸ messages paused (%d)", a.HeldCount)
+	}
+	return s
+}
+
 // lockInstance is a lock's instance name, as lox run names it (internal/launcher's lockUpInstance).
 var lockInstance = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,62}$`)
 
-// Post sends r to the daemon on the container's bus and returns the locks the daemon says the
-// container does not mount (a lock added while lea runs). Without an agent identity it does
-// nothing. The caller bounds it with ctx: the status line must never hold Claude up.
-func Post(ctx context.Context, sock, agent string, r Report) ([]string, error) {
+// Post sends r to the daemon on the container's bus and returns its answer: the locks the
+// container does not mount (a lock added while lea runs) and whether lox run serves. Without an
+// agent identity it does nothing. The caller bounds it with ctx: the status line must never hold
+// Claude up.
+func Post(ctx context.Context, sock, agent string, r Report) (Answer, error) {
 	if agent == "" {
-		return nil, nil
+		return Answer{}, nil
 	}
 	raw, err := json.Marshal(r)
 	if err != nil {
-		return nil, err
+		return Answer{}, err
 	}
-	var ans struct {
-		LocksAdded []string `json:"locks_added"`
-	}
+	var ans Answer
 	err = client.Call(ctx, sock, wire.Request{Method: "status_report", Agent: agent, Params: raw}, &ans)
-	return ans.LocksAdded, err
+	return ans, err
 }
 
 // parse reads the context % and the cost. The status-line fields are not a documented contract

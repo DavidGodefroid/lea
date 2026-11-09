@@ -308,14 +308,19 @@ func hostPermissions(src string) []byte {
 	return append(j, '\n')
 }
 
-// hostPermissionsFile writes hostPermissions next to the container's private ~/.claude (priv),
-// out of the agents' sight, and returns its mount: read-only at HostPermissionsPath.
+// hostPermissionsFile writes hostPermissions, with lea config claude's settings on top
+// (claudeHanded, #334), next to the container's private ~/.claude (priv), out of the agents'
+// sight, and returns its mount: read-only at HostPermissionsPath.
 func (l *Launcher) hostPermissionsFile(src, priv, sbase string) ([]string, error) {
 	p := priv + ".permissions.json"
 	if err := noComma(p); err != nil {
 		return nil, err
 	}
-	if err := WriteFile(sbase, p, hostPermissions(src)); err != nil {
+	c, err := readClaudeConfig(l.claudeConfigPath())
+	if err != nil {
+		return nil, die("%v", err)
+	}
+	if err := WriteFile(sbase, p, claudeHanded(hostPermissions(src), c)); err != nil {
 		return nil, die("%v", err)
 	}
 	// Readable by the container's root under every runtime and engine (a user namespace, a VM).

@@ -98,6 +98,11 @@ const configUsage = `Usage:
   lea config export [--output FILE] [--include-personal]
   lea config import FILE|- [--replace] [--dry-run] [--yes]
                     [--allow-egress] [--allow-host-keys] [--allow-code] [--allow-lock]
+  lea config deck on|off
+  lea config tool CMD [ARG...]
+  lea config claude [KEY VALUE|KEY --unset|LIST add|remove ENTRY]
+                    Claude's base settings in lea (lea config claude --help); personal:
+                    lea config export never carries them, --include-personal neither
 `
 
 // maxShareSize bounds a share file and each file it carries.

@@ -280,17 +280,23 @@ lea__init_tool() {
 # lea__init_deck: the deck or your own tool in the lea container (#135). --deck / --no-deck
 # [--tool CMD] decide without asking; otherwise a bare lea init, on a terminal only, asks,
 # defaulting to the current choice; the end of input, or no terminal, keeps it as it is.
+# LEA_DECK_ASK=1 (the launcher's, when no LEA_DECK is configured, #335): the first run asks too,
+# on a terminal, and the end of input records the default, so that the question comes once.
 lea__init_deck() {
   case $_in_deck in
     '')
       if [ -n "$_in_tool" ]; then lea_user_config_set LEA_TOOL "$LEA_TOOL"; fi
       # A lea init for some Locks only (--locksql, --no-lockmq ...) asks nothing else.
-      [ -z "$_in_only" ] && [ -z "${LEA_INIT_NONINTERACTIVE:-}" ] && lea__init_tty || return 0
+      [ -z "$_in_only" ] && { [ -z "${LEA_INIT_NONINTERACTIVE:-}" ] || [ "${LEA_DECK_ASK:-}" = 1 ]; } && lea__init_tty || return 0
       if [ "${LEA_DECK:-1}" = 0 ]; then printf 'Use the lea deck (agents in a column, approvals, board)? [y/N] ' >&2
       else printf 'Use the lea deck (agents in a column, approvals, board)? [Y/n] ' >&2; fi
       _id_d=y
       if [ "${LEA_DECK:-1}" = 0 ]; then _id_d=n; fi
-      lea__init_read "$_id_d" || return 0
+      if ! lea__init_read "$_id_d"; then
+        [ "${LEA_DECK_ASK:-}" = 1 ] || return 0
+        _ir_a=$_id_d
+        printf '\n' >&2
+      fi
       case $_ir_a in
         [yY] | [yY][eE][sS]) _in_deck=1 ;;
         *)
@@ -312,6 +318,16 @@ lea__init_deck() {
     lea_log "no deck: lea runs $LEA_TOOL in the lea container (LEA_DECK=0, LEA_TOOL; lea config deck on: the deck)"
   fi
   export LEA_DECK LEA_TOOL
+}
+
+# lea_deck_question: lea-sh deck-question, what lea asks once, on a terminal, an install whose
+# configuration has no LEA_DECK (made before the deck was optional, #335): the deck or your own
+# tool, recorded so that it is never asked again.
+lea_deck_question() {
+  _in_only='' _in_deck='' _in_tool=''
+  lea_log "the deck is optional: lea can run your own tool (claude, codex ...) in the lea container instead"
+  LEA_DECK_ASK=1
+  lea__init_deck
 }
 
 lea_init() {

@@ -28,6 +28,12 @@ func startDaemonWithStore(t *testing.T) (api, bus string, st *store.Store) {
 	t.Helper()
 	dir, _ := os.MkdirTemp("", "lea")
 	t.Cleanup(func() { os.RemoveAll(dir) })
+	return startDaemonIn(t, dir)
+}
+
+// startDaemonIn is startDaemonWithStore on the database dir/lea.db, which may already exist.
+func startDaemonIn(t *testing.T, dir string) (api, bus string, st *store.Store) {
+	t.Helper()
 	st, err := store.Open(filepath.Join(dir, "lea.db"))
 	if err != nil {
 		t.Fatal(err)
@@ -185,6 +191,10 @@ func (c *cliAgents) rec(s string) { c.mu.Lock(); c.calls = append(c.calls, s); c
 func (c *cliAgents) SetLabel(ctx context.Context, k, label string) error {
 	c.rec("label " + k)
 	return nil
+}
+func (c *cliAgents) AutoLabel(ctx context.Context, k, label string) (string, error) {
+	c.rec("autolabel " + k)
+	return label, nil
 }
 func (c *cliAgents) SetPaused(ctx context.Context, k string, paused bool) error {
 	c.rec("paused " + k)
@@ -375,13 +385,13 @@ func TestNewRefusesAnOversizedOrMissingBrief(t *testing.T) {
 	}
 }
 
-func TestDeckOpenStartsTheDefaultAgentAsALead(t *testing.T) {
+func TestDeckOpenStartsTheDefaultAgentAsAControlTower(t *testing.T) {
 	ca := &cliAgents{}
 	api := startDaemonWith(t, ca)
 	if rc, _, e := runEnv(t, map[string]string{"LEA_DAEMON_SOCK": api}, "deck-open", "--container", "lea-a", "--workdir", "/p"); rc != 0 {
 		t.Fatalf("rc=%d err=%q", rc, e)
 	}
-	if len(ca.reqs) != 1 || ca.reqs[0].Role != "lead" {
+	if len(ca.reqs) != 1 || ca.reqs[0].Role != "lead" || !ca.reqs[0].Tower || !ca.reqs[0].Focus {
 		t.Fatalf("requests=%+v", ca.reqs)
 	}
 }
@@ -458,7 +468,7 @@ func TestDeckOpenSpawnsTheDefaultAgentOnlyWhenNoneRuns(t *testing.T) {
 		if spawned != tc.spawn {
 			t.Fatalf("%s: spawned=%v calls=%q", tc.name, spawned, ca.calls)
 		}
-		if spawned && !reflect.DeepEqual(ca.reqs[0], agents.NewRequest{Container: "lea-a", Workdir: "/p", Profile: "claude", Focus: true, Role: "lead"}) {
+		if spawned && !reflect.DeepEqual(ca.reqs[0], agents.NewRequest{Container: "lea-a", Workdir: "/p", Focus: true, Role: "lead", Tower: true}) {
 			t.Fatalf("%s: request=%+v", tc.name, ca.reqs[0])
 		}
 	}

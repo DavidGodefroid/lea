@@ -18,6 +18,8 @@ type boardItem struct {
 	Repo, Branch, Title, Status, Next     string
 	BlockedOn                             string `json:"blocked_on"`
 	Updated, Ended                        int64
+	// Label is the agent's label, "" when none: the board names it "label (name)" (#356).
+	Label string
 	// WaitsOn and Question: the agent waits on an answer to its ask (the daemon's, not its text).
 	WaitsOn  string `json:"waits_on"`
 	Question int64
@@ -87,6 +89,15 @@ func mdCell(s string) string {
 		return "-"
 	}
 	return b.String()
+}
+
+// handle names an item's agent as the deck and the tower do (#356): "label (name)" when it has a
+// label, else its name.
+func handle(it boardItem) string {
+	if it.Label != "" && it.Label != it.Agent {
+		return mdCell(it.Label) + " (" + mdCell(it.Agent) + ")"
+	}
+	return mdCell(it.Agent)
 }
 
 func stamp(t int64) string {
@@ -186,7 +197,7 @@ func renderBoard(w io.Writer, b board) {
 			fmt.Fprintln(w, "\n| agent | role | state | branch | task | status | next | blocked on | updated |")
 			fmt.Fprintln(w, "|---|---|---|---|---|---|---|---|---|")
 			for _, it := range treeOrder(open) {
-				name := mdCell(it.Agent)
+				name := handle(it)
 				if it.Parent != "" && hasAgent(open, it.Parent) {
 					name = "↳ " + name
 				}
@@ -221,7 +232,7 @@ func renderBoard(w io.Writer, b board) {
 			fmt.Fprintln(w, "\n### Paused under pressure")
 			fmt.Fprintln(w)
 			for _, it := range shed {
-				fmt.Fprintf(w, "- %s: %s\n", mdCell(it.Agent), mdCell(it.Shed))
+				fmt.Fprintf(w, "- %s: %s\n", handle(it), mdCell(it.Shed))
 			}
 		}
 		if h, ok := heavy[c]; ok {
@@ -241,7 +252,7 @@ func renderBoard(w io.Writer, b board) {
 			fmt.Fprintln(w, "\n### Ended")
 			fmt.Fprintln(w)
 			for _, it := range ended {
-				fmt.Fprintf(w, "- %s: %s, %s (ended %s)\n", mdCell(it.Agent), mdCell(it.Title), mdCell(it.Status), stamp(it.Ended))
+				fmt.Fprintf(w, "- %s: %s, %s (ended %s)\n", handle(it), mdCell(it.Title), mdCell(it.Status), stamp(it.Ended))
 			}
 		}
 	}

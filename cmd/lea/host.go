@@ -218,6 +218,12 @@ func runDaemon(stderr io.Writer) int {
 		return 1
 	}
 	d.SetStackIdle(launcher.StackIdleSetting(os.Getenv))
+	// A control tower's question the user leaves unanswered is reminded once (#95).
+	d.SetQuestionRemind(launcher.QuestionRemindSetting(os.Getenv))
+	go d.RunQuestionReminders(ctx)
+	// The user's pause of an inbox (the deck's H, lea hold) ends on its own after a while.
+	d.SetHoldMax(launcher.HoldMaxSetting(os.Getenv))
+	go d.RunHoldExpiry(ctx)
 	d.SetHeavy(launcher.HeavySettings(os.Getenv))
 	// Same pattern for the admission thresholds (#132, P2): the daemon samples the host and each
 	// lea container, and refuses or queues new agents under pressure.
@@ -557,6 +563,14 @@ func runProbe(args []string, stdout, stderr io.Writer) int {
 
 func runDeck(args []string, stderr io.Writer) int {
 	ascii := os.Getenv("LEA_ASCII") == "1"
+	exe, _ := executable()
+	if real, err := filepath.EvalSymlinks(exe); err == nil {
+		exe = real
+	}
+	cwd, _ := os.Getwd()
+	st, off := deckSettings(os.Getenv, fileExists, exe, cwd)
+	theme, explicit := deckTheme(st, os.Getenv)
+	deck.StartTheme(theme, explicit, os.Getenv("NO_COLOR") != "")
 	var err error
 	switch {
 	case len(args) == 1 && args[0] == "--placeholder":
@@ -566,12 +580,6 @@ func runDeck(args []string, stderr io.Writer) int {
 			b, _ := os.ReadFile(filepath.Join(identity.HostDir(os.Getenv), "update-notice"))
 			return deck.UpdateNotice(string(b), version)
 		}
-		exe, _ := executable()
-		if real, err := filepath.EvalSymlinks(exe); err == nil {
-			exe = real
-		}
-		cwd, _ := os.Getwd()
-		st, off := deckSettings(os.Getenv, fileExists, exe, cwd)
 		// The folders are the user's: kept in the host's data dir, which no container mounts.
 		var layout deck.LayoutStore
 		if p, ok := deck.LayoutPath(identity.HostDir(os.Getenv), args[1]); ok {
@@ -589,6 +597,23 @@ func runDeck(args []string, stderr io.Writer) int {
 		return 1
 	}
 	return 0
+}
+
+// deckTheme is LEA_THEME and whether it is set (not lea's default): read from the files through
+// st, so a theme picked in a deck applies to every deck started later (a thread popup, a deck
+// after lea stop), else, without a store (inside lea), from the environment.
+func deckTheme(st deck.SettingsStore, getenv func(string) string) (string, bool) {
+	if st != nil {
+		if list, err := st.List(); err == nil {
+			for _, s := range list {
+				if s.Key == "LEA_THEME" {
+					return s.Value, s.Source != settings.SourceDefault
+				}
+			}
+		}
+	}
+	v := getenv("LEA_THEME")
+	return v, v != ""
 }
 
 // deckSettings is the store of the deck's settings screen: the configuration of the lea installed
@@ -800,8 +825,9 @@ func runDeckOpen(args []string, stderr io.Writer) int {
 			return 0
 		}
 	}
+	// The default agent is a Control Tower (#339): a lead on Claude running the control-tower skill.
 	if err := hostCallT("agent_new", map[string]any{"container": container, "workdir": workdir,
-		"profile": "claude", "role": "lead", "focus": true}, nil, agentTimeout); err != nil {
+		"tower": true, "focus": true}, nil, agentTimeout); err != nil {
 		return fail(err)
 	}
 	return 0

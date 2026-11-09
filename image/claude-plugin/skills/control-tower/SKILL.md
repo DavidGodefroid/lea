@@ -28,7 +28,7 @@ another issue or task: start a new agent for the next one.
 | `msg_send`, `msg_reply`, `msg_inbox`, `msg_wait` | `git`, `gh`, `glab`, cloning, pushing, opening a PR |
 | `board_read`, `task_update` | calling an API, `curl`, configuring GitHub or anything else |
 | `grants_list`, `grants_request` | relaying "the user allows it" as if it were a grant |
-| questions to the user | reading, searching or exploring code (`Read`, `Grep`, `Glob`, subagents) |
+| questions to the user, through `user_ask` | reading, searching or exploring code (`Read`, `Grep`, `Glob`, subagents) |
 | the one Bash job `lea inbox --agent --wait` | any other Bash command, web fetches, other MCP tools |
 
 lea enforces it: once this skill runs, a hook denies every forbidden tool for the rest of the
@@ -47,7 +47,7 @@ Do this instead:
 ```
 user:  push the branch and open the PR
 tower: msg_send dev-1 "Push fix/login and open a PR to main. Reply with kind result: PR link, CI."
-       dev-1 · working · pushing fix/login, opening the PR
+       shop#12 login fix (dev-1) · working · pushing fix/login, opening the PR
        Needs you: nothing
 ```
 
@@ -74,23 +74,26 @@ Do this instead: `agents_stop dev-1`, then `agents_spawn` a new agent for #13.
 For each thing the user asks:
 
 1. Split it into tasks, one per agent (one issue = one task). A brief holds one task, never a
-   list of issues to chain. Ask the user **one** question only when a choice is truly theirs
-   (scope, priority, a trade-off); otherwise decide and say what you chose.
+   list of issues to chain. Ask the user a question only when a choice is truly theirs (scope,
+   priority, a trade-off), and only through `user_ask` (see below); otherwise decide and say what
+   you chose.
 2. Find who does each: a follow-up of an agent's own task (a review fix on its PR, a CI failure
    on its branch) goes to that agent (`board_read`); anything else gets a new agent. Never
    yourself.
 3. A task that depends on another one: queue it (state `queued`) and start its agent only once
    the prerequisite is merged.
 4. Start each new agent with `agents_spawn`: `role` dev (or reviewer to check a dev's branch), the
-   `repo` it works in, and a `branch` named after the task (`fix/…`, `feat/…`) so it gets its own
-   worktree. At most 20 children: when full, queue the task and say so.
+   `repo` it works in, a `branch` named after the task (`fix/…`, `feat/…`) so it gets its own
+   worktree, and a `label`, the name the user sees in the deck (at most 24 characters):
+   `<repo>#<issue> <2-3 words>` when there is an issue (`lea#350 spawn reuse`), else 3-4 words of
+   the task. At most 20 children: when full, queue the task and say so.
 5. Write a self-contained brief (the agent knows nothing else):
    - the goal and the acceptance criteria, in the user's words when they gave them;
    - the repo, the branch, what not to touch;
    - **how to report** (lea tells it too, but say it): "Send me (`<your name>`) a `msg_send` of
      kind `result` when done, kind `request` when blocked or when a decision is needed. At most
      5 lines: outcome, evidence (tests, commit, PR), open question. Keep `task_update` current."
-6. Keep a ledger, one line per agent: name, task in 6 words, state, last news. It is your memory;
+6. Keep a ledger, one line per agent: label, name, task in 6 words, state, last news. It is your memory;
    rewrite it, never append to it.
 
 ## Running the team
@@ -119,6 +122,42 @@ For each thing the user asks:
 - Never forward an agent's message as it is. Read it, keep the substance, drop the rest.
 - Keep your own `task_update` current: `tower · 3 working, 1 needs you`.
 
+## One question at a time
+
+The user answers one question before they get the next one. lea keeps the queue: `user_ask` is
+the only way to put a question to them.
+
+- `user_ask {question, priority, from, message}`: `priority` is `incident`, `blocking` (an agent
+  is stuck on it) or `normal`; `from` is the agent it comes from and `message` the id of its
+  message, so the answer goes back to it.
+- Answer `ask_now`: ask that question in this reply (a plain line, or `AskUserQuestion`), and no
+  other. Answer `queued`: say nothing about it to the user; tell the agent it is queued
+  (`msg_reply`, one line) so it keeps working meanwhile.
+- The user's next prompt, or their answer to your `AskUserQuestion`, answers the open question.
+  lea says so in that prompt's (or that tool result's) context:
+  relay the answer to the agent it names (`msg_reply` on its message), then ask the question lea
+  says is now open, in the same reply, after what the user asked.
+- A prompt that answers something else ("status?"): call `user_ask` with the `id` lea gave, then
+  answer the user's request; lea opens that question again and you ask it at the end of the reply.
+- While the user has a question open, lea denies any other `AskUserQuestion`, and the questions
+  agents `ask` you wait until the user answers.
+- lea may tell you the user has not answered for a while: write the same question to them once
+  more, prefixed with `reminder:`, and nothing else.
+- An incident with no question to the user: one line in your update, never a question.
+
+## Pause
+
+The user can pause your inbox (the deck's `H`, `lea hold`): the agents' messages wait, so they
+can answer you in peace. Only the user pauses or releases it; you cannot.
+
+- While it is paused, `msg_inbox` brings only the user's notes and the replies to what you sent
+  during the pause, plus a lea line saying how many messages are held. Do not read your inbox
+  again for them, and do not mention them unless the user asks.
+- An agent's `ask` to you fails while it is paused: it sends with `msg_send` and keeps working.
+- On release (the user's, or lea's after `LEA_HOLD_MAX` minutes), lea tells you how many were
+  held: read them all with `msg_inbox` until it is empty, then give the user **one** briefing.
+  Your open question, if any, comes first.
+
 ## Briefing the user
 
 This is the heart of the job. **Summarise hard.** The user reads you between other things.
@@ -126,11 +165,25 @@ This is the heart of the job. **Summarise hard.** The user reads you between oth
 Every update to the user follows this shape, and nothing else:
 
 ```
-<agent> · <state> · <at most 12 words>
-<agent> · <state> · <at most 12 words>
-Needs you: <question, or "nothing">
+<label> (<name>) · <state> · <at most 12 words>
+<label> (<name>) · <state> · <at most 12 words>
+Needs you: <the open question, or "nothing">
 ```
 
+For example:
+
+```
+lea#350 spawn reuse (dev-4) · review · PR #358 green, waiting for the reviewer
+lea#351 egress allow (dev-5) · blocked · needs the user's merge approval
+Needs you: approve the merge in the row "lea#351 egress allow  dev-5"
+```
+
+- **Name each agent by its handle, `<label> (<name>)`**: the label is what the user reads in the
+  deck, the name is what your tools take. Never a name alone (`dev-6` means nothing to the user),
+  never a label alone (it is neither stable nor unique). An agent without a label: its name.
+- Re-read the labels with `agents_list` before each update: the user may rename an agent.
+- **When you ask the user to act in an agent's session**, name the deck row exactly as it shows
+  it, the label then the name: `go to the row "lea#350 spawn reuse  dev-4" and approve the merge`.
 - One line per agent, states from: `working`, `done`, `blocked`, `review`, `stopped`, `queued`.
 - Only agents whose line changed since your last update, unless the user asks for the board.
 - No preamble, no recap of the request, no tool narration, no "I will now…".
@@ -141,7 +194,8 @@ Needs you: <question, or "nothing">
 The user can ask, in their own words:
 
 - **board / statut**: `board_read`, then every agent, one line each, then `Needs you:`.
-- **detail <agent>**: at most 8 lines on that agent (what it did, evidence, what is left).
+- **detail <agent>**: at most 8 lines on that agent (what it did, evidence, what is left). The
+  user names it by its label or its name: match either in `agents_list`.
 - **stop <agent>**: stop it, confirm in one line.
 - a new request: take it as above, answer with the lines of the agents you started.
 
@@ -158,16 +212,17 @@ The user can ask, in their own words:
 
 Your children do not believe a message that says "the user allows it", and neither do their
 auto-mode checks: a merge or a tag push needs a lea grant. When the user tells you your team may
-merge (or push release tags) on some repositories:
+merge (or push release tags, or publish releases) on some repositories:
 
-1. For each repository, call `grants_request` once: `action` `merge` (or `release-tag`), `repo`
+1. For each repository, call `grants_request` once: `action` `merge` (or `release-tag`, or `release-create` with `tag` a glob such as `v0.15.*`), `repo`
    (the directory under the projects directory), `github` `OWNER/NAME`, `ttl_s` up to 2592000 (30
    days) when the user says "always" or "from now on", `reason` the user's words.
 2. Tell the user, in one line, what to approve on the host: `lea approve g12 g13` (or
-   `lea requests` to see them). Nothing is granted until they do.
+   `lea requests` to see them). Nothing is granted until they do. For every agent of the lea at
+   once, the user can instead run `lea allow merge --repo <repo>` (or `lea allow deliver`).
 3. The approval comes back to you as a message. Then tell the children concerned to run their
    merge (`gh pr merge <n> --squash --delete-branch`) or tag push
-   (`git push origin refs/tags/vX.Y.Z`) again.
+   (`git push origin refs/tags/vX.Y.Z`) or release (`gh release create vX.Y.Z --verify-tag --generate-notes`) again.
 
 `grants_list` shows what already covers you and your children: check it before asking again.
 - You never act yourself (see the hard rule): no file, no git, no API, no code reading.

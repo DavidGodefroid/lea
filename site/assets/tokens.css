@@ -1,0 +1,92 @@
+/* Lock Family identity tokens: "the signed ticket".
+   Fonts, colours, spacing for lockfamily.dev and the per-tool sites.
+   Self-hosted fonts (SIL OFL 1.1, assets/fonts/), no third-party request.
+   docs/identity.md documents every token; tests/test_site.py keeps the
+   two in step and checks the WCAG AA contrast of the pairs it lists. */
+
+@font-face {
+  font-family: "Zilla Slab";
+  src: url("fonts/zilla-slab-700.woff2") format("woff2");
+  font-weight: 700; font-style: normal; font-display: swap;
+}
+@font-face {
+  font-family: "Source Serif 4";
+  src: url("fonts/source-serif-4-400.woff2") format("woff2");
+  font-weight: 400; font-style: normal; font-display: swap;
+}
+@font-face {
+  font-family: "Source Serif 4";
+  src: url("fonts/source-serif-4-400-italic.woff2") format("woff2");
+  font-weight: 400; font-style: italic; font-display: swap;
+}
+@font-face {
+  font-family: "Source Serif 4";
+  src: url("fonts/source-serif-4-600.woff2") format("woff2");
+  font-weight: 600; font-style: normal; font-display: swap;
+}
+@font-face {
+  font-family: "IBM Plex Mono";
+  src: url("fonts/ibm-plex-mono-400.woff2") format("woff2");
+  font-weight: 400; font-style: normal; font-display: swap;
+}
+@font-face {
+  font-family: "IBM Plex Mono";
+  src: url("fonts/ibm-plex-mono-600.woff2") format("woff2");
+  font-weight: 600; font-style: normal; font-display: swap;
+}
+
+:root {
+  /* type */
+  --font-display: "Zilla Slab", "Rockwell", "Roboto Slab", Georgia, serif;
+  --font-text: "Source Serif 4", "Iowan Old Style", "Palatino Linotype", Georgia, serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+
+  /* paper (light): a printed ticket on a desk */
+  --paper: #f4efe4;    /* page */
+  --paper-2: #e9e2d2;  /* stub, tinted bands */
+  --card: #fffcf5;     /* the ticket's face */
+  --ink: #1d1b17;      /* text, logos */
+  --ink-2: #575146;    /* secondary text, control borders */
+  --rule: #b9af98;     /* ledger lines, perforations (decorative) */
+  --sign: #1f4a9c;     /* signature ink: links, a human's decision */
+  --stamp: #a8201a;    /* the denial stamp */
+  --auto: #2d6a35;     /* approved by a rule */
+  --asked: #8a5300;    /* waiting for you */
+  --mask: #0e6158;     /* masked values, the hub */
+  --agent: #2a55a8;    /* the agent's request */
+  --term-bg: #1a1814;  /* lox run: a real terminal, dark in both themes */
+  --term-text: #e2e8f0;
+  --term-dim: #94a3b8;
+
+  /* space: a 4px base */
+  --s-1: 4px; --s-2: 8px; --s-3: 12px; --s-4: 16px;
+  --s-5: 24px; --s-6: 32px; --s-7: 48px; --s-8: 72px;
+  --gutter: 16px;
+  --measure: 40rem;
+  --radius: 3px;       /* paper has corners */
+  --rule-w: 1px;
+  --perf: 2px dashed var(--rule);
+  color-scheme: light;
+}
+
+/* carbon (dark): designed on its own, a carbon copy, warm, not navy */
+@media (prefers-color-scheme: dark) {
+  :root {
+    --paper: #16140f;
+    --paper-2: #1f1c16;
+    --card: #25221b;
+    --ink: #ede6d6;
+    --ink-2: #b2a994;
+    --rule: #4a4438;
+    --sign: #a3bdff;
+    --stamp: #ff9384;
+    --auto: #7fcf8a;
+    --asked: #e8b860;
+    --mask: #6fd9c8;
+    --agent: #89b4fa;
+    --term-bg: #0e0d0a;
+    color-scheme: dark;
+  }
+}
+
+@media (min-width: 768px) { :root { --gutter: 32px; } }
