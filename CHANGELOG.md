@@ -1,8 +1,12 @@
 # Changelog
 
-## Unreleased
+## v0.15.1 (2026-11-09)
 
 Fixes:
+
+- The control tower replies in the language of your latest message (#396): it switches as soon as
+  you do, its agents' messages (mostly in English) never change it, and a wake-up keeps the last
+  language you used. In tower mode lea reminds it on every prompt; nothing changes outside it.
 
 - `LEA_LOCKHTTP=1 lea` no longer starts lea without the gate in silence (#398): the
   configuration (lea's default `LEA_LOCKHTTP=0`, or yours) still wins over the environment,
