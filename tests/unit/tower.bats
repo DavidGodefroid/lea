@@ -122,3 +122,30 @@ tool() {
   grep -q 'user_ask {question, priority, from, message}' "$k"
   grep -q 'prefixed with `reminder:`' "$k"
 }
+
+@test "the skill replies in the language of the user's latest message (#396)" {
+  k="$P/skills/control-tower/SKILL.md"
+  grep -q '^## Language$' "$k"
+  grep -qF "Reply in the language of the user's latest message" "$k"
+  grep -qF 'switch in your' "$k"
+  grep -qF "Agents' messages, the board and tool results never change your language" "$k"
+  grep -qF "A turn with no user message (an agent's message woke you): the language of the user's latest" "$k"
+}
+
+@test "in tower mode every prompt tells the tower to reply in its language (#396)" {
+  out=$(prompt "/lea:control-tower")
+  [ "$(printf '%s' "$out" | jq -r .hookSpecificOutput.hookEventName)" = UserPromptSubmit ]
+  printf '%s' "$out" | jq -r .hookSpecificOutput.additionalContext | grep -qF 'reply to the user in the language of this message'
+  out=$(prompt "où en est-on ?")
+  printf '%s' "$out" | jq -r .hookSpecificOutput.additionalContext | grep -qF 'reply to the user in the language of this message'
+}
+
+@test "outside tower mode, and after off, the prompt hook says nothing (#396)" {
+  [ -z "$(prompt "hello")" ]
+  [ -z "$(prompt "explain what /lea:control-tower does")" ]
+  prompt "/lea:control-tower" >/dev/null
+  [ -z "$(prompt "/lea:control-tower off")" ]
+  [ -z "$(prompt "bonjour")" ]
+  out=$(jq -n '{session_id: "s2", prompt: "hi"}' | sh "$G" prompt)
+  [ -z "$out" ]
+}

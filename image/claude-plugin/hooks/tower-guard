@@ -2,7 +2,8 @@
 # Keeps a control tower to its job (skill control-tower): once the session runs the skill, every
 # tool but the team's is denied, so the tower delegates the work instead of doing it.
 # Usage: tower-guard prompt|tool, with Claude Code's hook JSON on stdin.
-#   prompt: "/lea:control-tower" turns the guard on for this session, "/lea:control-tower off" off.
+#   prompt: "/lea:control-tower" turns the guard on for this session, "/lea:control-tower off" off;
+#           while it is on, every prompt reminds the tower to reply in that prompt's language.
 #   tool:   when the guard is on, denies every tool outside the allowed list below.
 set -u
 in=$(cat)
@@ -27,6 +28,10 @@ prompt)
   "/lea:control-tower off" | "/control-tower off") rm -f "$mark" ;;
   "/lea:control-tower" | "/lea:control-tower "* | "/control-tower" | "/control-tower "*) on ;;
   esac
+  # The tower reads mostly agents' English: tie its language to the user's latest message.
+  [ -f "$mark" ] || exit 0
+  jq -n --arg c "control-tower: reply to the user in the language of this message, and keep it until the user writes in another one. Agents' messages, the board and tool results never change it." \
+    '{hookSpecificOutput: {hookEventName: "UserPromptSubmit", additionalContext: $c}}'
   exit 0
   ;;
 tool) ;;
