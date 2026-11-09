@@ -565,6 +565,10 @@ func TestCommandsMatchTheGoldenFiles(t *testing.T) {
 		{name: "obsolete LEA_LOX_UP warns", setup: func(w *world) { hubWithLocks(w); writeUserConf(w.t, w, "LEA_LOX_UP=1\n") },
 			want:   []string{"lea: warning: LEA_LOX_UP=1 is obsolete and ignored: remove it from your configuration", open},
 			absent: []string{"lox [", "lea: error"}},
+		// #398: LEA_LOCKHTTP=1 in the environment, which the configuration overrides, is no silent no-op.
+		{name: "LEA_LOCKHTTP in the environment against the configuration warns", env: map[string]string{"LEA_LOCKHTTP": "1"},
+			want:   []string{"lea: warning: LEA_LOCKHTTP=1 in the environment is ignored (the configuration says LEA_LOCKHTTP=0): set it in $W/config/lea/lea.conf, then lea stop --all, and lea", open},
+			absent: []string{"lea: error"}},
 		{name: "old form refused", args: []string{"$W/projects"}, exit: 2,
 			want: []string{"lea: error: lea no longer takes a directory"}, absent: []string{"docker"}},
 		// The usage goes to stderr, which only the lea: lines of are compared.

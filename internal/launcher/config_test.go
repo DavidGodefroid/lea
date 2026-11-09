@@ -245,8 +245,30 @@ func TestLockHTTPSwitch(t *testing.T) {
 			t.Errorf("%q: Environ lacks LEA_LOCKHTTP", file)
 		}
 	}
+	// #398: the configuration wins over an unprotected key of the environment, never silently.
+	for _, tc := range []struct{ env, conf, want string }{
+		{"LEA_LOCKHTTP=1", "", "LEA_LOCKHTTP=1 in the environment is ignored (the configuration says LEA_LOCKHTTP=0): set it in $W/config/lea/lea.conf, then lea stop --all, and lea"},
+		{"LEA_LOCKHTTP=1", "LEA_LOCKHTTP=0\n", "LEA_LOCKHTTP=1 in the environment is ignored (the configuration says LEA_LOCKHTTP=0)"},
+		{"LEA_LOCKHTTP=0", "LEA_LOCKHTTP=1\n", "LEA_LOCKHTTP=0 in the environment is ignored (the configuration says LEA_LOCKHTTP=1)"},
+		{"LEA_LOCKHTTP_MITM=1", "LEA_LOCKHTTP=1\n", "LEA_LOCKHTTP_MITM=1 in the environment is ignored (the configuration says LEA_LOCKHTTP_MITM=0)"},
+		{"LEA_LOCKHTTP=1", "LEA_LOCKHTTP=1\n", ""},
+		{"LEA_LOCKHTTP=", "", ""},
+	} {
+		k, v, _ := strings.Cut(tc.env, "=")
+		w.env[k] = v
+		writeUserConf(t, w, tc.conf)
+		c, err := LoadConfig(w.getenv, w.root, w.proj)
+		if err != nil {
+			t.Fatalf("%s, %q: %v", tc.env, tc.conf, err)
+		}
+		got := strings.ReplaceAll(strings.Join(c.IgnoredEnv(), "\n"), w.dir, "$W")
+		delete(w.env, k)
+		if tc.want == "" && got != "" || !strings.Contains(got, tc.want) {
+			t.Errorf("%s, %q: IgnoredEnv = %q, want %q", tc.env, tc.conf, got, tc.want)
+		}
+	}
 	for conf, want := range map[string]string{
-		"LEA_LOCKHTTP=yes\n":                                    "LEA_LOCKHTTP must be 1 (agents' web egress through a LockHTTP gate) or 0, not 'yes'",
+		"LEA_LOCKHTTP=yes\n":                                   "LEA_LOCKHTTP must be 1 (agents' web egress through a LockHTTP gate) or 0, not 'yes'",
 		"LEA_HUB=yes\n":                                         "LEA_HUB must be 1 (lea follows the Lock Family approval hub) or 0, not 'yes'",
 		"LEA_ALLOW_GATEWAY=yes\n":                               "LEA_ALLOW_GATEWAY must be 0 (lea refuses an internal network the host is reachable from) or 1, not 'yes'",
 		"LEA_LOCKHTTP=1\nLEA_GIT_SSH=github.com:22\n":           "LEA_LOCKHTTP=1 refuses LEA_GIT_SSH",

@@ -112,7 +112,7 @@ lox run</code></pre>
   <div class="prose">
     <p><code>lox run</code> starts the projects directory&#8217;s hub and locks, approves what the rules allow on its own, and asks you for the rest. A Lock is on for lea as soon as <code>lox run</code> runs a lock of its type there; <code>LEA_LOCKSQL=0</code> (and so on) keeps one off.</p>
     <p>A lock added while lea runs reaches the agents after <code>lea stop</code>, then <code>lea</code>: Docker cannot add a mount to a running container.</p>
-    <p>lockhttp also needs <code>LEA_LOCKHTTP=1</code> in <code>~/.config/lea/lea.conf</code>: its gate then sits beside lea&#8217;s proxy and every outbound request goes through it. <a href="https://github.com/DavidGodefroid/lea/blob/main/README.md#web-requests-with-lockhttp">Web requests, with LockHTTP</a>.</p>
+    <p>lockhttp also needs <code>LEA_LOCKHTTP=1</code> in <code>~/.config/lea/lea.conf</code>: its gate then sits beside lea&#8217;s proxy and every outbound request goes through it, once you run <code>lea stop --all</code>, then <code>lea</code> (<code>LEA_LOCKHTTP=1 lea</code> alone is ignored, with a warning). <a href="https://github.com/DavidGodefroid/lea/blob/main/README.md#web-requests-with-lockhttp">Web requests, with LockHTTP</a>.</p>
   </div>
 </section>
 

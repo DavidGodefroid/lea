@@ -371,6 +371,9 @@ func (l *Launcher) dispatch(args []string) error {
 	if len(args) > 1 {
 		rest = args[1:]
 	}
+	for _, w := range l.Cfg.IgnoredEnv() {
+		l.logf("warning: %s", w)
+	}
 	// LEA_CTL=1 (#165): lea runs in its control container, but for what installs or configures it.
 	if l.Cfg.Ctl() && l.Cfg.Get("LEA_CTL_INSIDE") != "1" && !ctlHostOnly[a0] {
 		return l.viaCtl(args)

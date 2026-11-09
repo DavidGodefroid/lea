@@ -81,9 +81,20 @@ lea__lockhttp_gate_mounts() {
   printf '%s' "$_gm_r"
 }
 
+# lea__doctor_lockhttp: lea doctor's lockhttp line in every case (#398), off or on with the gate's
+# state, then, when on, the checks of the launcher, the gate and the console.
 lea__doctor_lockhttp() {
-  [ "${LEA_LOCKHTTP:-0}" = 1 ] || return 0
-  _dh_rc=0 _dh_g=$LEA_PREFIX-lockhttp-gate
+  if [ "${LEA_LOCKHTTP:-0}" != 1 ]; then
+    lea__ok "lockhttp: off (agents' web egress through lea-proxy's allowlist; to turn it on: LEA_LOCKHTTP=1 in $(lea_user_config_path), then lea stop --all, and lea)"
+    return 0
+  fi
+  _dh_rc=0 _dh_g=$LEA_PREFIX-lockhttp-gate _dh_i=
+  if ! lea_container_running "$LEA_PREFIX-proxy"; then lea__ok "lockhttp: on (gate not started: lea-proxy is not running; the next lea starts both)"
+  else
+    _dh_i=$(docker inspect -f '{{.State.Running}}|{{.Config.Image}}|{{.Config.User}}|{{range .Mounts}}{{.Name}}{{.Source}}>{{.Destination}};{{end}}' "$_dh_g" 2>/dev/null || true)
+    if [ "${_dh_i%%|*}" = true ]; then lea__ok "lockhttp: on (gate $_dh_g running)"
+    else lea__ok "lockhttp: on (gate $_dh_g not running)"; fi
+  fi
   if _dh_img=$(lea__lockhttp_image); then lea__ok "lockhttp launcher (gate image $_dh_img)"
   else lea__fail "lockhttp launcher" "$_dh_img"; _dh_img=; _dh_rc=1; fi
   # The launcher's release, but for a clone's (dev).
@@ -97,7 +108,6 @@ lea__doctor_lockhttp() {
   if [ -n "${LEA_OTEL_UPSTREAM:-}" ]; then lea__fail "LockHTTP" "LEA_OTEL_UPSTREAM is set: its TCP forwarder would bypass the gate"; _dh_rc=1; fi
   if lea_container_running "$LEA_PREFIX-proxy"; then
     _dh_restart="lea stop --all, then lea"
-    _dh_i=$(docker inspect -f '{{.State.Running}}|{{.Config.Image}}|{{.Config.User}}|{{range .Mounts}}{{.Name}}{{.Source}}>{{.Destination}};{{end}}' "$_dh_g" 2>/dev/null || true)
     _dh_run=${_dh_i%%|*} _dh_i=${_dh_i#*|}
     _dh_gimg=${_dh_i%%|*} _dh_i=${_dh_i#*|}
     _dh_user=${_dh_i%%|*} _dh_mounts=${_dh_i#*|}

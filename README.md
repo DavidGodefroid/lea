@@ -530,7 +530,11 @@ projects directory (`lox add lockhttp <name>`, which applies at once and starts 
 console; its policy in `.lockhttp/config.toml`, which
 `lockhttp profile add --trusted "<your LEA_EGRESS_ALLOW>"` writes). Then set
 `LEA_LOCKHTTP=1` in `~/.config/lea/lea.conf` and restart lea (`lea stop --all`, then `lea`);
-`lea doctor` checks each step. The gate runs hub-attached only: without a trusted
+`lea doctor` checks each step (its `lockhttp` line says `off`, or `on` with the gate's state).
+`LEA_LOCKHTTP=1 lea` is not enough: the configuration wins, and lea warns that the environment's
+value is ignored. lea-proxy and its gate are shared by every lea on the machine, so LockHTTP is
+on or off for all of them at once, and once it is on, a lea whose projects directory has no
+lockhttp lock does not start. The gate runs hub-attached only: without a trusted
 `.lockfamily/up.json` naming a lockhttp lock, lea does not start (it says to run `lox run`). Nothing else on the host: no account, group or socket directory.
 
 With it on, squid listens on the proxy's loopback only, behind the gate (its floor stays: DoH
