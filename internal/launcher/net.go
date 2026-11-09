@@ -121,8 +121,8 @@ func (l *Launcher) hostOnBridge(id, bridge string) string {
 func (l *Launcher) ensureNetworks(id string) error {
 	inet, egr := l.Cfg.InternalNetwork(id), l.prefix()+"-egress"
 	if l.quiet("docker", "network", "inspect", egr) != nil {
-		if err := l.run("docker", "network", "create", "--label", "lea.prefix="+l.prefix(), egr); err != nil {
-			return err
+		if msg, err := l.errOutput("docker", "network", "create", "--label", "lea.prefix="+l.prefix(), egr); err != nil {
+			return networkCreateError(egr, msg, err)
 		}
 	}
 	if info, err := l.output(false, "docker", "network", "inspect", "-f", networkFormat, inet); err == nil {
@@ -152,19 +152,69 @@ func (l *Launcher) ensureNetworks(id string) error {
 	}
 	why := l.isolatedUnavailable()
 	if why == "" {
-		if l.quiet("docker", "network", "create", "--label", "lea.prefix="+l.prefix(), "--label", "lea.id="+id, "--internal",
-			"-o", "com.docker.network.bridge.gateway_mode_ipv4=isolated", inet) == nil {
+		msg, err := l.errOutput("docker", "network", "create", "--label", "lea.prefix="+l.prefix(), "--label", "lea.id="+id, "--internal",
+			"-o", "com.docker.network.bridge.gateway_mode_ipv4=isolated", inet)
+		if err == nil {
 			info, _ := l.output(false, "docker", "network", "inspect", "-f", networkFormat, inet)
 			_, _, nid, bridge := parseNetwork(info)
 			return l.refuseHostOnBridge(inet, nid, bridge)
 		}
-		why = "Docker refused gateway_mode_ipv4=isolated"
+		// Only Docker rejecting the option itself is about the gateway (#397): any other refusal,
+		// such as exhausted address pools, would refuse a plain network too.
+		if !refusesGatewayMode(msg) {
+			return networkCreateError(inet, msg, err)
+		}
+		why = "Docker refused gateway_mode_ipv4=isolated (" + dockerMessage(msg) + ")"
 	}
 	if !l.allowGateway() {
 		return die("%s: lea will not start an agent on a network where the host is reachable (needs Docker Engine %s or later; set LEA_ALLOW_GATEWAY=1 to accept a plain internal network)", why, isolatedGatewayDocker)
 	}
 	l.logf("warning: %s; %s is created without it (LEA_ALLOW_GATEWAY=1): host services are reachable from the agents", why, inet)
-	return l.run("docker", "network", "create", "--label", "lea.prefix="+l.prefix(), "--label", "lea.id="+id, "--internal", inet)
+	if msg, err := l.errOutput("docker", "network", "create", "--label", "lea.prefix="+l.prefix(), "--label", "lea.id="+id, "--internal", inet); err != nil {
+		return networkCreateError(inet, msg, err)
+	}
+	return nil
+}
+
+// dockerMessage is Docker's stderr without its "Error response from daemon: " prefix, or a
+// placeholder when it said nothing.
+func dockerMessage(msg string) string {
+	msg = strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(msg), "Error response from daemon: "))
+	if msg == "" {
+		return "Docker gave no message"
+	}
+	return msg
+}
+
+// refusesGatewayMode tells whether Docker's error rejects the gateway_mode_ipv4 option itself
+// (an unknown or invalid option), the one refusal LEA_ALLOW_GATEWAY=1 works around.
+func refusesGatewayMode(msg string) bool {
+	return strings.Contains(strings.ToLower(msg), "gateway_mode")
+}
+
+// poolExhausted tells whether Docker's error says it has no free subnet left in its address
+// pools: "all predefined address pools have been fully subnetted", or "could not find an
+// available, non-overlapping IPv4 address pool among the defaults".
+func poolExhausted(msg string) bool {
+	m := strings.ToLower(msg)
+	return strings.Contains(m, "address pools have been fully subnetted") || strings.Contains(m, "non-overlapping ipv4 address pool")
+}
+
+// poolHint is what lea tells the user when Docker's address pools are exhausted (#397).
+const poolHint = "remove unused networks (docker network prune) or add default-address-pools in /etc/docker/daemon.json (lea doctor counts the free ones)"
+
+// networkCreateError is the error for Docker refusing to create the network name: Docker's own
+// message, with what to do when its address pools are exhausted. It never suggests
+// LEA_ALLOW_GATEWAY=1: a plain network would be refused the same way (#397). An interrupted
+// lea ends as interrupted.
+func networkCreateError(name, msg string, err error) error {
+	if err == errInterrupted {
+		return err
+	}
+	if poolExhausted(msg) {
+		return die("Docker has no free address pool for lea's network %s (%s): %s", name, dockerMessage(msg), poolHint)
+	}
+	return die("Docker could not create lea's network %s: %s", name, dockerMessage(msg))
 }
 
 // refuseHostOnBridge fails when the host holds an address on the bridge of inet (hostOnBridge),

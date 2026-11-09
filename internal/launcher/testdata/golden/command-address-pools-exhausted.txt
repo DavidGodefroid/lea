@@ -1,0 +1,16 @@
+status 1
+-- calls
+tmux [-V]
+docker [image] [inspect] [-f] [{{.Id}}] [lea:dev]
+docker [image] [inspect] [-f] [{{.Id}}] [lea-proxy:dev]
+tmux [-V]
+core [agents]
+core [version]
+docker [network] [inspect] [lea-egress]
+docker [network] [create] [--label] [lea.prefix=lea] [lea-egress]
+docker [network] [inspect] [-f] [{{.Internal}} {{index .Options "com.docker.network.bridge.gateway_mode_ipv4"}}|{{.Id}}|{{index .Options "com.docker.network.bridge.name"}}] [lea-internal-$ID]
+docker [version] [--format] [{{range .Server.Components}}{{.Name}}={{.Version}}{{"\n"}}{{end}}]
+docker [network] [create] [--label] [lea.prefix=lea] [--label] [lea.id=$ID] [--internal] [-o] [com.docker.network.bridge.gateway_mode_ipv4=isolated] [lea-internal-$ID]
+-- lea
+lea: error: Docker has no free address pool for lea's network lea-internal-$ID (all predefined address pools have been fully subnetted): remove unused networks (docker network prune) or add default-address-pools in /etc/docker/daemon.json (lea doctor counts the free ones)
+-- stdout

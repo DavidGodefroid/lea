@@ -565,6 +565,10 @@ func TestCommandsMatchTheGoldenFiles(t *testing.T) {
 		{name: "obsolete LEA_LOX_UP warns", setup: func(w *world) { hubWithLocks(w); writeUserConf(w.t, w, "LEA_LOX_UP=1\n") },
 			want:   []string{"lea: warning: LEA_LOX_UP=1 is obsolete and ignored: remove it from your configuration", open},
 			absent: []string{"lox [", "lea: error"}},
+		// #398: LEA_LOCKHTTP=1 in the environment, which the configuration overrides, is no silent no-op.
+		{name: "LEA_LOCKHTTP in the environment against the configuration warns", env: map[string]string{"LEA_LOCKHTTP": "1"},
+			want:   []string{"lea: warning: LEA_LOCKHTTP=1 in the environment is ignored (the configuration says LEA_LOCKHTTP=0): set it in $W/config/lea/lea.conf, then lea stop --all, and lea", open},
+			absent: []string{"lea: error"}},
 		{name: "old form refused", args: []string{"$W/projects"}, exit: 2,
 			want: []string{"lea: error: lea no longer takes a directory"}, absent: []string{"docker"}},
 		// The usage goes to stderr, which only the lea: lines of are compared.
@@ -585,12 +589,17 @@ func TestCommandsMatchTheGoldenFiles(t *testing.T) {
 			want: []string{"core [agents]\ncore [agents]", "the lea daemon did not start in 5 s"}, absent: []string{"docker [network]", "docker [run]", "[daemon]"},
 			goSide: daemonStarted},
 		// #105: no isolated gateway, no container, unless LEA_ALLOW_GATEWAY=1.
-		{name: "isolated gateway refused fails closed", env: stopped("FAKE_DOCKER_RC_NETWORK_INSPECT", "1", "FAKE_DOCKER_SEQ_NETWORK_CREATE", "0 1 0"), exit: 1,
-			want:   []string{"lea: error: Docker refused gateway_mode_ipv4=isolated: lea will not start an agent on a network where the host is reachable (needs Docker Engine 28.0 or later; set LEA_ALLOW_GATEWAY=1 to accept a plain internal network)"},
+		{name: "isolated gateway refused fails closed", env: stopped("FAKE_DOCKER_RC_NETWORK_INSPECT", "1", "FAKE_DOCKER_SEQ_NETWORK_CREATE", "0 1 0", "FAKE_DOCKER_ERR_NETWORK_CREATE", "Error response from daemon: invalid option com.docker.network.bridge.gateway_mode_ipv4"), exit: 1,
+			want:   []string{"lea: error: Docker refused gateway_mode_ipv4=isolated (invalid option com.docker.network.bridge.gateway_mode_ipv4): lea will not start an agent on a network where the host is reachable (needs Docker Engine 28.0 or later; set LEA_ALLOW_GATEWAY=1 to accept a plain internal network)"},
 			absent: []string{"docker [run]", "[--internal] [lea-internal-$ID]", "deck-open"}},
-		{name: "isolated gateway refused with LEA_ALLOW_GATEWAY", env: stopped("FAKE_DOCKER_RC_NETWORK_INSPECT", "1", "FAKE_DOCKER_SEQ_NETWORK_CREATE", "0 1 0", "LEA_ALLOW_GATEWAY", "1"),
-			want: []string{"lea: warning: Docker refused gateway_mode_ipv4=isolated; lea-internal-$ID is created without it (LEA_ALLOW_GATEWAY=1)",
+		{name: "isolated gateway refused with LEA_ALLOW_GATEWAY", env: stopped("FAKE_DOCKER_RC_NETWORK_INSPECT", "1", "FAKE_DOCKER_SEQ_NETWORK_CREATE", "0 1 0", "FAKE_DOCKER_ERR_NETWORK_CREATE", "Error response from daemon: invalid option com.docker.network.bridge.gateway_mode_ipv4", "LEA_ALLOW_GATEWAY", "1"),
+			want: []string{"lea: warning: Docker refused gateway_mode_ipv4=isolated (invalid option com.docker.network.bridge.gateway_mode_ipv4); lea-internal-$ID is created without it (LEA_ALLOW_GATEWAY=1)",
 				"[--internal] [lea-internal-$ID]", started, open}},
+		// #397: no address pool left is Docker's message and the way out, not the gateway mode.
+		{name: "address pools exhausted", env: stopped("FAKE_DOCKER_RC_NETWORK_INSPECT", "1", "FAKE_DOCKER_SEQ_NETWORK_CREATE", "0 1",
+			"FAKE_DOCKER_ERR_NETWORK_CREATE", "Error response from daemon: all predefined address pools have been fully subnetted"), exit: 1,
+			want:   []string{"lea: error: Docker has no free address pool for lea's network lea-internal-$ID (all predefined address pools have been fully subnetted): remove unused networks (docker network prune) or add default-address-pools in /etc/docker/daemon.json (lea doctor counts the free ones)"},
+			absent: []string{"docker [run]", "LEA_ALLOW_GATEWAY", "[--internal] [lea-internal-$ID]", "deck-open"}},
 		{name: "existing internal network without isolated gateway fails closed", env: stopped("FAKE_DOCKER_OUT_NETWORK_INSPECT", "true nat"), exit: 1,
 			want:   []string{"lea: error: network lea-internal-$ID exists without gateway_mode_ipv4=isolated (nat)"},
 			absent: []string{"docker [run]", "deck-open"}},

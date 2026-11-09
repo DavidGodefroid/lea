@@ -194,6 +194,15 @@ func (l *Launcher) run(name string, args ...string) error {
 // quiet is `cmd >/dev/null 2>&1`.
 func (l *Launcher) quiet(name string, args ...string) error { return l.exec(l.cmd(name, args...)) }
 
+// errOutput is `cmd >/dev/null 2>"$err"`: its stderr, trimmed, for lea to quote or classify.
+func (l *Launcher) errOutput(name string, args ...string) (string, error) {
+	c := l.cmd(name, args...)
+	var e bytes.Buffer
+	c.Stderr = &e
+	err := l.exec(c)
+	return strings.TrimSpace(e.String()), err
+}
+
 // output is "$(cmd)" (trailing newlines trimmed); showErr keeps stderr (else 2>/dev/null).
 func (l *Launcher) output(showErr bool, name string, args ...string) (string, error) {
 	c := l.cmd(name, args...)
@@ -375,6 +384,10 @@ func (l *Launcher) dispatch(args []string) error {
 	if l.Cfg.Ctl() && l.Cfg.Get("LEA_CTL_INSIDE") != "1" && !ctlHostOnly[a0] {
 		return l.viaCtl(args)
 	}
+	// Below viaCtl: the lea in the control container warns, once.
+	for _, w := range l.Cfg.IgnoredEnv() {
+		l.logf("warning: %s", w)
+	}
 	switch a0 {
 	case "-h", "--help", "help":
 		_, err := l.Stdout.Write([]byte(Usage))
@@ -524,6 +537,8 @@ func (l *Launcher) doctor() error {
 	l.exportToolsOn()
 	l.exportLimits()
 	err := l.sh("doctor")
+	// Docker's free address pools: none left and lea cannot create its network (#397).
+	l.doctorAddressPools()
 	proj, perr := l.projectsDir()
 	if perr != nil {
 		return err

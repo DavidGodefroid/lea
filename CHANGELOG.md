@@ -2,6 +2,34 @@
 
 ## v0.15.0 (2026-11-08)
 
+Fixes:
+
+- `LEA_LOCKHTTP=1 lea` no longer starts lea without the gate in silence (#398): the
+  configuration (lea's default `LEA_LOCKHTTP=0`, or yours) still wins over the environment,
+  since lea-proxy and its gate are shared by every lea on the machine, but lea now warns
+  `LEA_LOCKHTTP=1 in the environment is ignored (the configuration says LEA_LOCKHTTP=0): set it
+  in ~/.config/lea/lea.conf, then lea stop --all, and lea`; the same for `LEA_LOCKHTTP_MITM`.
+  `lea doctor` prints a `lockhttp` line in every case: `off`, with how to turn it on, or `on`
+  with the gate's state.
+- `lea update` on a Homebrew install runs `brew update` and `brew upgrade davidgodefroid/tap/lea`,
+  then the new Cellar version refreshes its images and checks the dependencies (#354). It used to
+  run lea's own installer, which left a second lea in `~/.local/share/lea-install`, linked at
+  `~/.local/bin/lea`, beside Homebrew's. A failing brew fails `lea update` with brew's status;
+  without brew on `PATH`, lea refuses to update a Homebrew install itself. The background update
+  installs nothing on a Homebrew install, even with `LEA_AUTOUPDATE=1`: it only announces the
+  release. `lea init` no longer links `~/.local/bin/lea` to the Cellar version on a Homebrew
+  install (brew links `<prefix>/bin/lea`; that link outlived `brew upgrade`). install.sh and git
+  installs are unchanged.
+- Docker out of address pools is reported as such (#397): when Docker refuses lea's network with
+  `all predefined address pools have been fully subnetted`, lea quotes Docker's message and says to
+  remove unused networks (`docker network prune`) or add `default-address-pools` in
+  `/etc/docker/daemon.json`, instead of asking for Docker Engine 28.0 or `LEA_ALLOW_GATEWAY=1`. The
+  gateway-mode advice comes only when Docker rejects `gateway_mode_ipv4` itself, with Docker's
+  message; any other refusal is Docker's own message. `lea doctor` counts Docker's free address
+  pools and warns when none is left.
+
+## v0.15.0 (2026-11-08)
+
 Changes:
 
 - Pause the tower's inbox while you answer it (#95): `H` in the deck (or Hold messages in a

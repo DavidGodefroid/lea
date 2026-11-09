@@ -1,288 +1,217 @@
 <!doctype html>
 <html lang="en">
 <head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>lea · Claude Code agents, side by side, isolated</title>
-<meta name="description" content="lea runs several Claude Code agents side by side in an isolated container. They see one projects directory, reach the internet through a proxy, and never see your SSH keys, credentials or private network. Free and open source.">
-<link rel="icon" href="assets/favicon.svg" type="image/svg+xml">
-<meta property="og:type" content="website">
-<meta property="og:title" content="lea · Claude Code agents, side by side, isolated">
-<meta property="og:description" content="Run many Claude Code agents at once, from one terminal deck, without giving them your machine.">
-<meta property="og:image" content="https://leadeck.dev/assets/social-card.png">
-<meta name="twitter:card" content="summary_large_image">
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;650;800&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
-<style>
-/* Catppuccin Mocha (dark) and Latte (light): the deck's own palette. */
-:root {
-  --crust:#11111b; --mantle:#181825; --base:#1e1e2e; --s0:#313244; --s1:#45475a;
-  --ov:#6c7086; --sub:#a6adc8; --text:#cdd6f4; --blue:#89b4fa; --lav:#b4befe;
-  --red:#f38ba8; --peach:#fab387; --green:#a6e3a1;
-  --bg:var(--crust); --card:var(--mantle); --line:var(--s0);
-  --mono:'JetBrains Mono',ui-monospace,Menlo,Consolas,monospace;
-  --sans:Inter,system-ui,-apple-system,'Segoe UI',Helvetica,Arial,sans-serif;
-}
-@media (prefers-color-scheme: light) {
-  :root:not([data-theme="dark"]) {
-    --crust:#dce0e8; --mantle:#e6e9ef; --base:#eff1f5; --s0:#ccd0da; --s1:#bcc0cc;
-    --ov:#6c6f85; --sub:#5c5f77; --text:#4c4f69; --blue:#1e66f5; --lav:#7287fd;
-    --red:#d20f39; --peach:#fe640b; --green:#40a02b;
-    --bg:var(--base); --card:#ffffff; --line:var(--s0);
-  }
-}
-* { box-sizing:border-box; }
-html { scroll-behavior:smooth; }
-body { margin:0; background:var(--bg); color:var(--text); font:17px/1.6 var(--sans); }
-a { color:var(--blue); text-decoration:none; }
-a:hover { text-decoration:underline; }
-code, pre, kbd { font-family:var(--mono); font-size:.9em; }
-.wrap { max-width:1120px; margin:0 auto; padding:0 24px; }
-nav { display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:4px 16px; padding:16px 0; }
-nav .brand { display:flex; align-items:center; min-height:44px; gap:10px; font-weight:800; font-size:22px; color:var(--text); }
-nav .brand img { width:34px; height:34px; }
-nav .links { display:flex; flex-wrap:wrap; gap:0 22px; font-weight:500; font-size:16px; }
-nav .links a { color:var(--sub); display:inline-flex; align-items:center; justify-content:center; min-height:44px; min-width:44px; }
-.hero { text-align:center; padding:56px 0 24px; }
-.eyebrow { display:inline-block; font:600 13px var(--mono); color:var(--green); border:1px solid var(--line);
-  padding:4px 12px; border-radius:99px; margin-bottom:22px; }
-h1 { font-size:clamp(34px,5.6vw,62px); line-height:1.08; letter-spacing:-.025em; margin:0 auto 20px; max-width:22ch; font-weight:800; }
-h1 em { font-style:normal; color:var(--blue); }
-.lede { font-size:clamp(17px,2vw,20px); color:var(--sub); max-width:46rem; margin:0 auto 34px; }
-.install { display:flex; min-width:0; align-items:center; gap:12px; max-width:720px; margin:0 auto 14px; background:var(--card);
-  border:1px solid var(--line); border-radius:14px; padding:12px 12px 12px 20px; text-align:left; }
-.install code { flex:1; min-width:0; overflow-x:auto; white-space:nowrap; color:var(--text); }
-.install code::before { content:"$ "; color:var(--ov); }
-button.copy { font:600 14px var(--sans); background:var(--blue); color:var(--crust); border:0; border-radius:9px;
-  padding:9px 16px; min-height:44px; min-width:44px; cursor:pointer; flex:none; }
-.ctas { font-size:16px; color:var(--ov); }
-.ctas code { overflow-wrap:anywhere; }
-.demo { margin:44px auto 0; max-width:1100px; border-radius:22px; overflow:hidden; border:1px solid var(--line);
-  box-shadow:0 30px 80px -30px rgba(0,0,0,.6); background:#11111b; }
-.demo a { display:block; }
-.demo img { display:block; width:100%; height:auto; }
-.demo-full { display:none; font-size:16px; margin:10px 0 0; }
-.demo-full a { display:inline-flex; align-items:center; min-height:44px; }
-section { padding:84px 0 0; }
-h2 { font-size:clamp(28px,3.6vw,40px); letter-spacing:-.02em; line-height:1.15; margin:0 0 14px; font-weight:800; }
-.sub { color:var(--sub); max-width:44rem; margin:0 0 36px; }
-.grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(min(300px,100%),1fr)); gap:18px; }
-.card { background:var(--card); border:1px solid var(--line); border-radius:16px; padding:26px; }
-.card h3 { margin:0 0 8px; font-size:19px; display:flex; align-items:center; gap:10px; }
-.card p { margin:0; color:var(--sub); font-size:16px; }
-.dot { width:11px; height:11px; border-radius:50%; flex:none; }
-.grid > *, .split > *, ol.steps > li { min-width:0; overflow-wrap:anywhere; }
-.split { display:grid; grid-template-columns:1fr 1fr; gap:18px; }
-.split ul { margin:0; padding:0; list-style:none; }
-.split li { padding:9px 0; border-top:1px solid var(--line); font-size:16px; }
-.split li:first-child { border-top:0; }
-.split li code { color:var(--text); }
-.yes h3 { color:var(--green); } .no h3 { color:var(--red); }
-.term { background:#11111b; color:#cdd6f4; border:1px solid var(--line); border-radius:16px; padding:22px 24px;
-  font:14px/1.75 var(--mono); overflow-x:auto; }
-.term .c { color:#6c7086; } .term .k { color:#89b4fa; } .term .g { color:#a6e3a1; } .term .r { color:#f38ba8; } .term .o { color:#fab387; }
-.keys { display:grid; grid-template-columns:repeat(auto-fit,minmax(min(240px,100%),1fr)); gap:4px 28px; }
-.keys div { display:flex; gap:12px; align-items:baseline; padding:7px 0; border-bottom:1px dashed var(--line); font-size:16px; }
-kbd { background:var(--card); border:1px solid var(--line); border-bottom-width:2px; border-radius:6px; padding:1px 7px;
-  color:var(--text); min-width:2.2em; text-align:center; }
-ol.steps { counter-reset:s; list-style:none; padding:0; margin:0; display:grid; gap:14px; }
-ol.steps li { counter-increment:s; background:var(--card); border:1px solid var(--line); border-radius:14px; padding:18px 20px 18px 64px; position:relative; }
-ol.steps li::before { content:counter(s); position:absolute; left:20px; top:16px; width:30px; height:30px; border-radius:50%;
-  background:var(--blue); color:var(--crust); font-weight:800; display:grid; place-items:center; font-size:15px; }
-details { background:var(--card); border:1px solid var(--line); border-radius:14px; padding:16px 20px; margin-bottom:12px; }
-summary { cursor:pointer; font-weight:650; padding:9px 0; margin:-9px 0; }
-details p { color:var(--sub); margin:12px 0 0; }
-footer { margin-top:96px; border-top:1px solid var(--line); padding:32px 0 48px; color:var(--ov); font-size:14px; }
-footer .row { display:flex; justify-content:space-between; gap:18px; flex-wrap:wrap; }
-footer a { display:inline-block; line-height:44px; }
-@media (max-width:760px) {
-  .wrap { padding:0 16px; }
-  nav .links a.hide-sm { display:none; }
-  .split { grid-template-columns:1fr; }
-  .install { flex-direction:column; align-items:stretch; padding:14px; }
-  .hero { padding-top:32px; }
-  .demo { border-radius:14px; }
-  .demo-full { display:block; }
-  ol.steps li { padding:16px 16px 16px 56px; }
-  ol.steps li::before { left:14px; }
-  .card { padding:20px; }
-  .term { padding:16px; }
-  section { padding-top:64px; }
-}
-</style>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>lea: many agents, none of your machine</title>
+  <meta name="description" content="lea runs many AI agents side by side in containers (Claude Code by default, Codex or your own model too): they see one projects directory, reach the internet through a proxy, and never touch your keys, credentials or private network.">
+  <meta name="color-scheme" content="light dark">
+  <meta name="theme-color" content="#f4efe4" media="(prefers-color-scheme: light)">
+  <meta name="theme-color" content="#16140f" media="(prefers-color-scheme: dark)">
+  <link rel="canonical" href="https://leadeck.dev/">
+  <meta property="og:type" content="website">
+  <meta property="og:site_name" content="lea">
+  <meta property="og:title" content="lea: many agents, none of your machine">
+  <meta property="og:description" content="lea runs many AI agents side by side in containers (Claude Code by default, Codex or your own model too): they see one projects directory, reach the internet through a proxy, and never touch your keys, credentials or private network.">
+  <meta property="og:url" content="https://leadeck.dev/">
+  <meta property="og:image" content="https://leadeck.dev/assets/og.png">
+  <meta property="og:image:type" content="image/png">
+  <meta property="og:image:width" content="1200">
+  <meta property="og:image:height" content="630">
+  <meta property="og:image:alt" content="lea: many agents, none of your machine.">
+  <meta property="og:locale" content="en_US">
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="lea: many agents, none of your machine">
+  <meta name="twitter:description" content="lea runs many AI agents side by side in containers (Claude Code by default, Codex or your own model too): they see one projects directory, reach the internet through a proxy, and never touch your keys, credentials or private network.">
+  <meta name="twitter:image" content="https://leadeck.dev/assets/og.png">
+  <meta name="twitter:image:alt" content="lea: many agents, none of your machine.">
+  <link rel="icon" href="assets/logo.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="assets/apple-touch-icon.png">
+  <link rel="preload" href="assets/fonts/zilla-slab-700.woff2" as="font" type="font/woff2" crossorigin>
+  <link rel="preload" href="assets/fonts/source-serif-4-400.woff2" as="font" type="font/woff2" crossorigin>
+  <link rel="stylesheet" href="assets/tokens.css">
+  <link rel="stylesheet" href="assets/lock-site.css">
+  <script src="assets/anchors.js" defer></script>
+  <script src="assets/copy.js" defer></script>
 </head>
 <body>
-<div class="wrap">
-  <nav>
-    <a class="brand" href="#"><img src="assets/favicon.svg" alt="">lea</a>
-    <div class="links">
-      <a class="hide-sm" href="#why">Why</a>
-      <a class="hide-sm" href="#safety">Safety</a>
-      <a href="#install">Install</a>
-      <a href="https://github.com/DavidGodefroid/lea">GitHub</a>
+  <a class="skip-link" href="#main">Skip to content</a>
+  <header class="site-header">
+    <div class="wrap">
+      <a class="brand" href="./"><img src="assets/logo.svg" alt="" width="32" height="32"><span class="wordmark">lea</span></a>
+      <nav class="site-nav" aria-label="Main">
+        <ul>
+          <li><a href="./" aria-current="page">Home</a></li>
+          <li><a href="install/">Install</a></li>
+          <li><a href="how-it-works/">How it works</a></li>
+          <li><a href="security/">Security</a></li>
+          <li><a href="faq/">FAQ</a></li>
+          <li><a href="https://github.com/DavidGodefroid/lea">GitHub</a></li>
+        </ul>
+      </nav>
     </div>
-  </nav>
-
-  <header class="hero">
-    <span class="eyebrow">open source · Linux · macOS · WSL2</span>
-    <h1>Many Claude Code agents.<br><em>None of your machine.</em></h1>
-    <p class="lede">lea runs Claude Code agents side by side in an isolated container. They see one projects
-      directory, reach the internet through a proxy, and never touch your SSH keys, your credentials or your
-      private network. You drive them all from one terminal deck.</p>
-    <div class="install">
-      <code id="cmd">brew trust davidgodefroid/tap &amp;&amp; brew install davidgodefroid/tap/lockfamily</code>
-      <button class="copy" data-copy="cmd">Copy</button>
-    </div>
-    <p class="ctas">or <code>curl -fsSL https://leadeck.dev/install.sh | sh</code> · then run <code>lea</code> in your projects directory ·<a href="https://github.com/DavidGodefroid/lea#readme">read the docs</a> · Apache 2.0</p>
-    <div class="demo"><a href="assets/demo.svg">
-      <img src="assets/demo.svg" width="1200" height="640"
-        alt="Three agents work in the lea container. One pushes to github.com through the proxy; its attempts to read ~/.ssh and to reach 192.168.1.10 are blocked. Another asks for a permission, answered from the deck.">
-    </a></div>
-    <p class="demo-full"><a href="assets/demo.svg">Open the demo full size</a></p>
   </header>
+  <main id="main" tabindex="-1">
+    <div class="wrap">
 
-  <section id="why">
-    <h2>Let agents run. Keep your machine.</h2>
-    <p class="sub">Agents get more done when you stop approving every command. lea makes that safe to do, and
-      makes several of them at once easy to follow.</p>
-    <div class="grid">
-      <div class="card"><h3><span class="dot" style="background:var(--peach)"></span>Side by side</h3>
-        <p>Your agents in a column, the selected one's terminal next to it. Each row shows its state, its context
-          use, its branch and its own report on its task. Close the terminal: they keep working.</p></div>
-      <div class="card"><h3><span class="dot" style="background:var(--blue)"></span>Isolated</h3>
-        <p>A container that sees your projects directory and a read-only slice of <code>~/.claude</code>. Nothing
-          else: no home directory, no SSH keys, no cloud credentials, no Docker socket.</p></div>
-      <div class="card"><h3><span class="dot" style="background:var(--green)"></span>Online, on your terms</h3>
-        <p>Egress goes through lea's proxy: public HTTPS yes, your LAN and link-local addresses no. SSH reaches only
-          the git endpoints you list, with lea's own key.</p></div>
-      <div class="card"><h3><span class="dot" style="background:var(--red)"></span>You answer from one place</h3>
-        <p>A permission request shows on the agent's row. Press <kbd>a</kbd> to allow, <kbd>d</kbd> to deny,
-          <kbd>space</kbd> to jump to the next agent that needs you. A sound tells you when.</p></div>
-      <div class="card"><h3><span class="dot" style="background:var(--lav)"></span>A real dev box</h3>
-        <p><code>make test</code> and <code>docker run</code> work: agents get their own rootless Podman inside lea,
-          under seccomp and, on Linux, AppArmor.</p></div>
-      <div class="card"><h3><span class="dot" style="background:var(--sub)"></span>Teams of agents</h3>
-        <p>A lead agent spawns devs and reviewers through MCP. Agents message each other, report progress and lease
-          the files they edit. You stay in charge of roles.</p></div>
+<section class="hero" aria-labelledby="hero-title">
+  <div class="hero-text">
+    <p class="eyebrow"><span class="badge">v0.15 pre-release</span>Part of the Lock&nbsp;Family · open&nbsp;source · Apache&nbsp;2.0</p>
+    <h1 id="hero-title">Many agents. <span class="key">None of your machine.</span></h1>
+    <p class="lead">lea runs your AI agents side by side in containers: Claude Code by default, Codex or a model of your own too. They see one projects directory and reach the internet through a proxy, never your keys or your private network.</p>
+    <div class="install">
+      <div class="install-head"><span>Install with Homebrew</span></div>
+      <pre tabindex="0" aria-label="Install commands"><code><span class="cmd">brew trust davidgodefroid/tap</span>
+<span class="cmd">brew install davidgodefroid/tap/lox davidgodefroid/tap/lea</span></code></pre>
+      <p class="install-note">Needs Docker. Then run <code>lea</code> in the directory that holds your projects, and keep <code>lox run</code> open beside it for the Locks. The whole family: <code>brew install davidgodefroid/tap/lockfamily</code>.</p>
     </div>
-  </section>
-
-  <section id="safety">
-    <h2>What an agent can reach</h2>
-    <p class="sub">The boundary is the container, not a prompt. Even a prompt-injected agent with every permission
-      granted works inside these walls.</p>
-    <div class="split">
-      <div class="card yes"><h3>Inside lea</h3><ul>
-        <li><code>~/projects</code>: your projects directory, read/write</li>
-        <li><code>~/.claude</code> allow-list: settings, skills, agents, hooks, read-only</li>
-        <li>Public HTTPS through the proxy: GitHub, npm, PyPI, the Claude API</li>
-        <li>Git over SSH to the endpoints you pin, with lea's key</li>
-        <li>Its own rootless containers, for tests and builds</li>
-      </ul></div>
-      <div class="card no"><h3>Out of reach</h3><ul>
-        <li><code>~/.ssh</code>, <code>~/.aws</code>, <code>~/.kube</code> and the rest of your home</li>
-        <li>Private and link-local addresses: your NAS, your intranet, cloud metadata</li>
-        <li>Your Docker socket, so no root on the host</li>
-        <li>Your clipboard (lea writes to it, never reads it)</li>
-        <li>Your database credentials: with <a href="https://github.com/DavidGodefroid/locksql">locksql</a>, you approve each statement</li>
-      </ul></div>
+    <div class="actions">
+      <a class="button primary" href="install/">Install guide</a>
+      <a class="button" href="how-it-works/">How it works</a>
+      <a class="button" href="https://github.com/DavidGodefroid/lea">GitHub</a>
     </div>
-    <p class="sub" style="margin-top:22px">When the last session closes, lea reports changes to git hooks, risky git
-      configuration, <code>.mcp.json</code> and <code>.claude/</code> settings, the files your host tools would run.</p>
-  </section>
-
-  <section id="deck">
-    <h2>The deck</h2>
-    <p class="sub">One keyboard-first terminal for every agent. The mouse works too.</p>
-    <pre class="term"><span class="c">╭─ lea ──────────── 3 agents ─╮│</span>
-<span class="c">│</span><span class="k">›▍</span><span class="o">⠹</span> fix login timeout  42%   <span class="c">││</span>  <span class="o">✻ Claude Code</span>
-<span class="c">│    shop · fix/login · 2m    ││</span>
-<span class="c">│ ▍</span><span class="g">●</span> review cart api    18%   <span class="c">││</span>  &gt; the timeout is set in session.go…
-<span class="c">│    reviewer · shop · now    ││</span>
-<span class="c">│ ▍</span><span class="r">●</span> add dark mode       7%   <span class="c">││</span>
-<span class="c">│    shop · </span><span class="r">needs you</span><span class="c">         ││</span>
-<span class="c">╰─ n new · m msg · ? keys ────╯│</span></pre>
-    <div class="keys" style="margin-top:24px">
-      <div><kbd>n</kbd> start a new agent</div>
-      <div><kbd>j</kbd><kbd>k</kbd> select an agent</div>
-      <div><kbd>enter</kbd> type into it</div>
-      <div><kbd>space</kbd> next agent that needs you</div>
-      <div><kbd>a</kbd><kbd>d</kbd> allow / deny a request</div>
-      <div><kbd>m</kbd> message an agent</div>
-      <div><kbd>s</kbd> shell in the container</div>
-      <div><kbd>q</kbd> leave; agents keep running</div>
+    <p class="hub-line">Part of the <a href="https://lockfamily.dev">Lock Family</a>: one hub (<code>lox run</code>) approves for every Lock.</p>
+  </div>
+  <figure class="hero-aside ticket" aria-labelledby="ticket-caption">
+    <div class="ticket-face">
+      <p class="ticket-head"><span>locksql · profile dev</span><span>lox run · outside lea</span></p>
+      <dl class="ticket-fields">
+        <div class="wide"><dt>Read · dev-2 · locksql</dt><dd><span class="status auto">auto</span><code>SELECT count(*) FROM orders LIMIT 1</code><span class="note">Approved by the lock&#8217;s rules; the agent never holds the password.</span></dd></div>
+        <div class="wide"><dt>Write · dev-2 · locksql</dt><dd><span class="status asked">asked</span><code>UPDATE orders SET status = &#39;shipped&#39; WHERE id = 88123</code><span class="note">Waits in <code>lox run</code>, in your own terminal, until you answer.</span></dd></div>
+      </dl>
+      <p class="stamp">Approved · <kbd>y</kbd></p>
     </div>
-  </section>
+    <div class="ticket-stub">
+      <p><span class="label">lea shows no approval</span></p>
+      <p>Inside lea the agent reaches the lock&#8217;s socket only. The decision is taken outside the container, in <code>lox run</code>.</p>
+    </div>
+    <figcaption id="ticket-caption">What an agent in lea asks a Lock, and where you answer it.</figcaption>
+  </figure>
+</section>
 
-  <section id="install">
-    <h2>Install, then run</h2>
-    <p class="sub">Needs Docker (Engine on Linux, Desktop elsewhere), <code>curl</code>, <code>tar</code>,
-      <code>ssh-keygen</code>, and a Claude subscription or API key. lea never runs <code>sudo</code>, except once
-      to install its AppArmor profile on Linux hosts that use it. The journey is brew, <code>lea</code>, <code>lox add</code>.</p>
-    <ol class="steps">
-      <li><strong>Install.</strong> With Homebrew, the whole Lock Family (lea, <code>lox</code> and the Locks’
-        launchers), or <code>brew install davidgodefroid/tap/lea</code> for lea alone. Homebrew asks you to trust a
-        third-party tap once, hence <code>brew trust</code> first:
-        <div class="install" style="margin:12px 0 0;max-width:none"><code id="cmd3">brew trust davidgodefroid/tap &amp;&amp; brew install davidgodefroid/tap/lockfamily</code><button class="copy" data-copy="cmd3">Copy</button></div>
-        Or lea’s own installer, which checks the requirements, verifies the release checksum, links
-        <code>~/.local/bin/lea</code> and runs <code>lea init</code>:
-        <div class="install" style="margin:12px 0 0;max-width:none"><code id="cmd2">curl -fsSL https://leadeck.dev/install.sh | sh</code><button class="copy" data-copy="cmd2">Copy</button></div></li>
-      <li><strong>Run <code>lea</code>.</strong> From the directory that holds your projects (not a project inside
-        it): lea initialises itself on the first run, pulls and verifies its images, and starts the Lock Family hub with
-        <code>lox init</code>. A projects directory you set in <code>LEA_PROJECTS_DIR</code> wins over the working
-        directory; unset, the working directory is used. In the first agent, type <code>/login</code> once. Press
-        <kbd>n</kbd> for the next agent.</li>
-      <li><strong>Optional: Locks.</strong> When your agents need a database, a queue, files or the web, run
-        <a href="https://github.com/DavidGodefroid/lockhub/blob/main/docs/lox-add.md"><code>lox add</code></a>
-        (<code>locksql</code>, <code>lockmq</code>, <code>lockfile</code> or <code>lockhttp</code>) in the projects
-        directory; <code>lox</code> must be on your <code>PATH</code>, 0.5.0 or later. A Lock you add while lea runs reaches
-        the agents after <code>lea stop</code>, then <code>lea</code>. You approve what your agents propose with
-        <code>lox approve</code> or in the deck; each Lock alone holds its credentials.</li>
-      <li><strong>Optional: git over SSH.</strong> List your forges in <code>~/.config/lea/lea.conf</code>, rerun
-        <code>lea init</code>, add the printed key to your forge. HTTPS works out of the box.</li>
-    </ol>
-  </section>
 
-  <section id="faq">
-    <h2>Questions</h2>
-    <details><summary>Is lea a replacement for Claude Code?</summary>
-      <p>No. lea runs the real Claude Code, with your own settings, skills and plugins. It gives it a safe place to
-        run and a deck to run several at once.</p></details>
-    <details><summary>Why not just use <code>--dangerously-skip-permissions</code>?</summary>
-      <p>On your host, that flag gives an agent everything your user can reach: keys, tokens, your network. In lea
-        the agent can still go fast, but what it can reach is fixed by the container and the proxy.</p></details>
-    <details><summary>How is this different from a devcontainer?</summary>
-      <p>A devcontainer isolates a toolchain; lea isolates the agent. It adds an egress proxy that refuses private
-        networks, keeps your credentials out, nests its own container engine, audits risky changes on exit and
-        gives you a deck to drive many agents.</p></details>
-    <details><summary>Does my code leave my machine?</summary>
-      <p>Only the way Claude Code already sends it: to the Claude API. lea has no server and no account, and sends
-        no telemetry of its own. Claude Code's usage metrics go nowhere unless you point
-        <code>LEA_OTEL_UPSTREAM</code> at your own OTLP collector.</p></details>
-    <details><summary>Windows?</summary>
-      <p>Yes, through WSL2: install and run lea from your WSL distribution, with Docker Desktop.</p></details>
-    <details><summary>What does it cost?</summary>
-      <p>lea is free and open source under Apache 2.0. You bring your Claude subscription or API key.</p></details>
-  </section>
+<section class="demo-section" aria-labelledby="demo">
+  <h2 id="demo" class="visually-hidden">See it run</h2>
+  <figure class="demo">
+    <a class="demo-link" href="assets/demo.svg"><img src="assets/demo.svg" width="1200" height="640" alt="Three agents (here Claude Code) work in the lea container. One pushes to github.com through the proxy; its attempts to read ~/.ssh and to reach 192.168.1.10 are blocked. Another asks for a permission, answered from the deck."></a>
+    <figcaption>Three agents (here Claude Code) in one lea container. The proxy lets a push to GitHub through and refuses <code>192.168.1.10</code>; <code>~/.ssh</code> is not there to read. The demo keeps the deck&#8217;s own terminal colours.</figcaption>
+  </figure>
+</section>
 
-  <footer>
-    <div class="row">
-      <span><img src="assets/favicon.svg" alt="" width="16" style="vertical-align:-3px"> lea · Apache 2.0 ·
-        <a href="https://github.com/DavidGodefroid/lea">GitHub</a> ·
-        <a href="https://github.com/DavidGodefroid/lea/releases">Releases</a> ·
-        <a href="https://github.com/DavidGodefroid/locksql">locksql</a></span>
-      <span>lea is an independent project, not affiliated with Anthropic. Claude and Claude Code are trademarks of Anthropic.</span>
+<section aria-labelledby="why">
+  <h2 id="why">Why lea?</h2>
+  <div class="prose">
+    <p>Agents do more when you stop approving every command, and a few of them in parallel do more than one. On your workstation both are risky: an agent runs as you, with your keys, your tokens and your network.</p>
+    <p>lea moves the boundary from the prompt to the container. What an agent can reach is fixed by the container and the proxy, not by its good behaviour.</p>
+  </div>
+<div class="table-wrap" role="region" aria-label="An agent on your host compared with an agent in lea" tabindex="0">
+<table class="compare">
+<caption>An agent with every permission granted, on your host and in lea</caption>
+<thead><tr><th scope="col"><span class="visually-hidden">Property</span></th><th scope="col">On your host</th><th scope="col">In lea</th></tr></thead>
+<tbody>
+<tr><th scope="row"><code>~/.ssh</code>, <code>~/.aws</code>, <code>~/.kube</code> out of reach</th><td class="no">No</td><td class="yes">Yes</td></tr>
+<tr><th scope="row">Private network and cloud metadata refused</th><td class="no">No</td><td class="yes">Yes</td></tr>
+<tr><th scope="row">The web limited to an allowlist of public domains</th><td class="no">No</td><td class="yes">Yes</td></tr>
+<tr><th scope="row">No Docker socket, no way to root on the host</th><td class="no">No</td><td class="yes">Yes</td></tr>
+<tr><th scope="row">GitHub token usable, never readable</th><td class="no">No</td><td class="yes">Yes</td></tr>
+<tr><th scope="row"><code>make test</code> and <code>docker run</code> still work</th><td class="yes">Yes</td><td class="yes">Yes</td></tr>
+<tr><th scope="row">Every agent followed from one screen</th><td class="no">No</td><td class="yes">Yes</td></tr>
+</tbody>
+</table>
+</div>
+  <blockquote><p>A permission prompt is a convenience; a container and a proxy are a boundary.</p></blockquote>
+</section>
+
+<section aria-labelledby="approve">
+  <h2 id="approve">See what you approve</h2>
+  <div class="prose">
+    <p>Two kinds of request wait for you, in two places. An agent&#8217;s own permission request (run this command, edit that file) shows on its row in the deck: <kbd>a</kbd> allows, <kbd>d</kbd> denies, <kbd>space</kbd> jumps to the next agent that needs you.</p>
+    <p>A request to a Lock (a database, a queue, files, logs, the web) is not lea&#8217;s. It waits in <a href="https://github.com/DavidGodefroid/lockhub/blob/main/docs/lox-run.md"><code>lox run</code></a>, which you keep open in a terminal of your own, outside lea. lea runs no <code>lox</code> command and shows no ticket.</p>
+    <p>To stop being asked for routine steps, an allowance records your decision on the host: merge a pull request, close an issue, push the agent&#8217;s own branch. <code>lea allow deliver</code> allows the whole push, pull request and merge cycle; <code>lea allow</code> lists what you allowed and <code>lea allow off</code> takes it back. <a href="how-it-works/#allowances">Allowances</a>.</p>
+    <p>With a team at work, the Control Tower asks you one question at a time, whatever the number of agents waiting on you: the others queue by priority, and <kbd>H</kbd> pauses its inbox while you answer.</p>
+  </div>
+</section>
+
+<section aria-labelledby="highlights">
+  <h2 id="highlights">Highlights</h2>
+  <ul class="cards">
+    <li><h3>Side by side</h3><p>Your agents in a column, the selected one&#8217;s terminal next to it. Each row shows its state, context use, branch and its own report on its task.</p><p>Close the terminal: they keep working, and the next <code>lea</code> reattaches. <kbd>T</kbd> picks one of seven colour themes.</p></li>
+    <li><h3>Isolated by construction</h3><p>The container sees your projects directory and a read-only allow-list of your agent configuration. No home directory, no SSH keys, no cloud credentials, no Docker socket.</p></li>
+    <li><h3>Online, on your terms</h3><p>Egress goes through lea&#8217;s proxy, to an allowlist of public domains. Your LAN and link-local addresses are refused, and no DNS lookup leaves the container; <code>lea egress allow</code> adds a domain live, from the host only.</p></li>
+    <li><h3>A real dev box</h3><p><code>make test</code> and <code>docker run</code> work: agents get their own rootless Podman inside lea, under seccomp and, on Linux, AppArmor.</p></li>
+    <li><h3>Any agent CLI</h3><p>Claude Code is the default, with your own status line, and <code>lea config claude</code> sets its settings in lea. Codex runs too, and through it any OpenAI-compatible endpoint (Ollama, vLLM); the endpoint&#8217;s key stays in the proxy.</p></li>
+    <li><h3>A control tower</h3><p>The first agent is a Control Tower: you talk to it, it starts devs and reviewers, follows them and briefs you in a line per agent. Agents message each other and lease the files they edit; only you change a role.</p></li>
+    <li><h3>Wired to the Locks</h3><p>With <code>lox add</code>, agents reach locksql, lockmq, lockfile, locklog and lockhttp through their sockets, read-only. The consoles alone hold the credentials.</p></li>
+    <li><h3>Signed releases</h3><p>Every release and image is signed with cosign. The installer and <code>lea update</code> refuse a release whose signature does not check.</p></li>
+  </ul>
+</section>
+
+<section aria-labelledby="quick-start">
+  <h2 id="quick-start">Quick start</h2>
+  <ol class="steps prose">
+    <li><p>Install with Homebrew (the box above). Docker must be running.</p></li>
+    <li><p>In the directory that holds your projects (not a project inside it), run <code>lea</code>. The first run checks Docker, pulls and verifies the images, then opens the deck.</p>
+      <pre tabindex="0"><code>cd ~/projects
+lea</code></pre></li>
+    <li><p>The first agent is a Control Tower. Log in once (<code>/login</code> for Claude Code), then tell it what you want done. Press <kbd>n</kbd> for an agent of your own, <kbd>N</kbd> for another Control Tower.</p></li>
+    <li><p>When your agents need a database, a queue, files, logs or the web, add a Lock in the same directory and keep <code>lox run</code> open in another terminal, outside lea.</p>
+      <pre tabindex="0"><code>lox add locksql
+lox run</code></pre></li>
+  </ol>
+  <div class="prose">
+    <p>A Lock added while lea runs reaches the agents once lea restarts: <code>lea stop</code>, then <code>lea</code>.</p>
+    <p><a href="install/">Without Homebrew, or step by step: the install guide</a></p>
+  </div>
+</section>
+
+<section aria-labelledby="limits">
+  <h2 id="limits">Know the limits</h2>
+  <div class="prose">
+    <p>Every lea container shares the host kernel, unless you put the agents on gVisor or Kata: keep the host patched. What lea gives the agents, they can read, such as their own Claude Code or Codex login.</p>
+    <p>An agent can write files your host tools would run. lea reports changes to git hooks, risky git configuration and agent settings when the last session closes.</p>
+    <p><a href="security/">Read the security model</a></p>
+  </div>
+</section>
+
+    </div>
+  </main>
+  <footer class="site-footer">
+    <div class="wrap footer-grid">
+      <div class="footer-about">
+        <a class="brand" href="./"><img src="assets/logo.svg" alt="" width="32" height="32"><span class="wordmark">lea</span></a>
+        <p>Runs many agents in containers, wired to the Locks: they see your projects, never your keys or your private network.</p>
+        <p class="family-link">Part of the <a href="https://lockfamily.dev">Lock Family</a>, harness security for AI agents.</p>
+      </div>
+      <nav aria-labelledby="footer-lock">
+        <h2 id="footer-lock">lea</h2>
+        <ul>
+          <li><a href="https://github.com/DavidGodefroid/lea">Source on GitHub</a></li>
+          <li><a href="https://github.com/DavidGodefroid/lea/blob/main/README.md">README</a></li>
+          <li><a href="https://github.com/DavidGodefroid/lea/blob/main/CHANGELOG.md">Changelog</a></li>
+          <li><a href="https://github.com/DavidGodefroid/lea/releases">Releases</a></li>
+          <li><a href="https://github.com/DavidGodefroid/lea/blob/main/README.md#how-lea-keeps-your-machine-safe">Safety model</a></li>
+        </ul>
+      </nav>
+      <nav class="family-strip" aria-labelledby="footer-family">
+        <h2 id="footer-family">The Lock Family</h2>
+        <ul>
+          <li data-lock="locksql"><a href="https://github.com/DavidGodefroid/locksql">locksql</a><span>SQL databases, PII masked</span></li>
+          <li data-lock="lockmq"><a href="https://github.com/DavidGodefroid/lockmq">lockmq</a><span>RabbitMQ queues</span></li>
+          <li data-lock="lockfile"><a href="https://github.com/DavidGodefroid/lockfile">lockfile</a><span>Files: S3, SFTP, disk</span></li>
+          <li data-lock="lockhttp"><a href="https://github.com/DavidGodefroid/lockhttp">lockhttp</a><span>Outbound HTTP(S)</span></li>
+          <li data-lock="locklog"><a href="https://github.com/DavidGodefroid/locklog">locklog</a><span>Logs, masked search</span></li>
+          <li data-lock="lockssh"><a href="https://github.com/DavidGodefroid/lockssh">lockssh</a><span>Commands over SSH</span></li>
+          <li data-lock="lockhub"><a href="https://github.com/DavidGodefroid/lockhub">lockhub</a><span>The approval hub and <code>lox</code></span></li>
+          <li data-lock="lockkit"><a href="https://github.com/DavidGodefroid/lockkit">lockkit</a><span>The shared Go core</span></li>
+          <li data-lock="lea" aria-current="true"><a href="https://github.com/DavidGodefroid/lea">lea</a><span>Agents in containers</span></li>
+        </ul>
+      </nav>
+    </div>
+    <div class="wrap footer-bottom">
+      <p>Pre-release (v0.15.x). lea is licensed under the <a href="https://github.com/DavidGodefroid/lea/blob/main/LICENSE">Apache License 2.0</a>.</p>
+      <p>lea is an independent project, not affiliated with Anthropic. Claude and Claude Code are trademarks of Anthropic.</p>
+      <p><a href="https://lockfamily.dev">lockfamily.dev</a> · <a href="https://github.com/DavidGodefroid/lockfamily">the family on GitHub</a></p>
     </div>
   </footer>
-</div>
-<script>
-document.querySelectorAll('button.copy').forEach(b => b.addEventListener('click', async () => {
-  const text = document.getElementById(b.dataset.copy).textContent;
-  try { await navigator.clipboard.writeText(text); b.textContent = 'Copied'; }
-  catch { b.textContent = 'Select & copy'; }
-  setTimeout(() => b.textContent = 'Copy', 1600);
-}));
-</script>
 </body>
 </html>

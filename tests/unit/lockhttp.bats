@@ -46,10 +46,19 @@ launcher() {
   [[ "$output" != *"older than"* ]]
 }
 
-@test "off: no LockHTTP check" {
+@test "off: a lockhttp line, how to turn it on, and no LockHTTP check" {
   LEA_LOCKHTTP=0 run lea__doctor_lockhttp
   [ "$status" -eq 0 ]
-  [ -z "$output" ]
+  [ "$output" = "ok    lockhttp: off (agents' web egress through lea-proxy's allowlist; to turn it on: LEA_LOCKHTTP=1 in $(lea_user_config_path), then lea stop --all, and lea)" ]
+  ! grep -qF 'docker [' "$FAKE_LOG"
+}
+
+@test "on: a lockhttp line with the gate's state" {
+  run lea__doctor_lockhttp
+  [[ "$output" == "ok    lockhttp: on (gate lea-lockhttp-gate running)"* ]]
+  FAKE_DOCKER_OUT_INSPECT__F_AT_LEA_LOCKHTTP_GATE="false|x|gate|" run lea__doctor_lockhttp
+  [[ "$output" == "ok    lockhttp: on (gate lea-lockhttp-gate not running)"* ]]
+  [[ "$output" == *"FAIL  LockHTTP gate: lea-lockhttp-gate is not running"* ]]
 }
 
 @test "a healthy setup: launcher, gate container (image, user, mounts, answers), loopback squid, console" {

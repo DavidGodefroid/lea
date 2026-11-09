@@ -1,0 +1,209 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Install lea</title>
+  <meta name="description" content="Install lea with Homebrew or its signed installer, run it in your projects directory, and add the Locks with lox add.">
+  <meta name="color-scheme" content="light dark">
+  <meta name="theme-color" content="#f4efe4" media="(prefers-color-scheme: light)">
+  <meta name="theme-color" content="#16140f" media="(prefers-color-scheme: dark)">
+  <link rel="canonical" href="https://leadeck.dev/install/">
+  <meta property="og:type" content="website">
+  <meta property="og:site_name" content="lea">
+  <meta property="og:title" content="Install lea">
+  <meta property="og:description" content="Install lea with Homebrew or its signed installer, run it in your projects directory, and add the Locks with lox add.">
+  <meta property="og:url" content="https://leadeck.dev/install/">
+  <meta property="og:image" content="https://leadeck.dev/assets/og.png">
+  <meta property="og:image:type" content="image/png">
+  <meta property="og:image:width" content="1200">
+  <meta property="og:image:height" content="630">
+  <meta property="og:image:alt" content="lea: many agents, none of your machine.">
+  <meta property="og:locale" content="en_US">
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="Install lea">
+  <meta name="twitter:description" content="Install lea with Homebrew or its signed installer, run it in your projects directory, and add the Locks with lox add.">
+  <meta name="twitter:image" content="https://leadeck.dev/assets/og.png">
+  <meta name="twitter:image:alt" content="lea: many agents, none of your machine.">
+  <link rel="icon" href="../assets/logo.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="../assets/apple-touch-icon.png">
+  <link rel="preload" href="../assets/fonts/zilla-slab-700.woff2" as="font" type="font/woff2" crossorigin>
+  <link rel="preload" href="../assets/fonts/source-serif-4-400.woff2" as="font" type="font/woff2" crossorigin>
+  <link rel="stylesheet" href="../assets/tokens.css">
+  <link rel="stylesheet" href="../assets/lock-site.css">
+  <script src="../assets/anchors.js" defer></script>
+  <script src="../assets/copy.js" defer></script>
+</head>
+<body>
+  <a class="skip-link" href="#main">Skip to content</a>
+  <header class="site-header">
+    <div class="wrap">
+      <a class="brand" href="../"><img src="../assets/logo.svg" alt="" width="32" height="32"><span class="wordmark">lea</span></a>
+      <nav class="site-nav" aria-label="Main">
+        <ul>
+          <li><a href="../">Home</a></li>
+          <li><a href="../install/" aria-current="page">Install</a></li>
+          <li><a href="../how-it-works/">How it works</a></li>
+          <li><a href="../security/">Security</a></li>
+          <li><a href="../faq/">FAQ</a></li>
+          <li><a href="https://github.com/DavidGodefroid/lea">GitHub</a></li>
+        </ul>
+      </nav>
+    </div>
+  </header>
+  <main id="main" tabindex="-1">
+    <div class="wrap">
+
+<p class="eyebrow">Install · pre-release v0.15.x</p>
+<h1>Install lea</h1>
+<div class="prose">
+  <p class="lead">lea runs in Docker. On your machine you need Docker, the <code>lea</code> command and, for the Locks, <code>lox</code>.</p>
+</div>
+
+<section aria-labelledby="homebrew">
+  <h2 id="homebrew">With Homebrew</h2>
+    <div class="install">
+      <div class="install-head"><span>Install with Homebrew</span></div>
+      <pre tabindex="0" aria-label="Install commands"><code><span class="cmd">brew trust davidgodefroid/tap</span>
+<span class="cmd">brew install davidgodefroid/tap/lox davidgodefroid/tap/lea</span></code></pre>
+      <p class="install-note">Needs Docker. Then run <code>lea</code> in the directory that holds your projects, and keep <code>lox run</code> open beside it for the Locks. The whole family: <code>brew install davidgodefroid/tap/lockfamily</code>.</p>
+    </div>
+  <div class="prose">
+    <p>Homebrew asks you to trust a third-party tap once, hence <code>brew trust</code> first. <code>lox</code> is the Lock Family&#8217;s hub; lea alone does not need it, its Locks do.</p>
+    <p>Upgrade with <code>brew upgrade lea lox</code>.</p>
+  </div>
+</section>
+
+<section aria-labelledby="first-run">
+  <h2 id="first-run">The first run</h2>
+  <ol class="steps prose">
+    <li><p>Go to the directory that holds your projects, not a project inside it, and run <code>lea</code>.</p>
+      <pre tabindex="0"><code>cd ~/projects
+lea</code></pre></li>
+    <li><p>lea checks that Docker answers, pulls and verifies its images, and records the projects directory. On Linux hosts where Docker uses AppArmor, it installs its profile with <code>sudo</code>, once.</p></li>
+    <li><p>The deck opens on a Control Tower, a lead on Claude Code that runs <code>/lea:control-tower</code>. Log in once (<code>/login</code>); the login is lea&#8217;s own, kept per projects directory, never your host&#8217;s.</p></li>
+    <li><p>Press <kbd>n</kbd> for another agent, <kbd>N</kbd> for another Control Tower, <kbd>?</kbd> for the keys, <kbd>q</kbd> to leave. The agents keep running.</p></li>
+  </ol>
+  <div class="prose">
+    <p><code>LEA_PROJECTS_DIR</code>, in the environment or in <code>~/.config/lea/lea.conf</code>, wins over the working directory. lea refuses <code>/</code>, your home directory, a parent of it, and a directory that overlaps <code>~/.claude</code> or a credentials directory.</p>
+  </div>
+</section>
+
+<section aria-labelledby="requirements">
+  <h2 id="requirements">Requirements</h2>
+  <ul class="prose">
+    <li>Linux, macOS, or Windows with WSL 2 (run lea from your WSL distribution).</li>
+    <li>Docker Engine on Linux, or Docker Desktop, running and usable without <code>sudo</code>; a patched host kernel (<a href="../security/#kernel">the kernel</a>).</li>
+    <li>On macOS, tmux 3.2 or later (<code>brew install tmux</code>); the Linux release brings its own.</li>
+    <li><code>curl</code>, <code>tar</code> and <code>ssh-keygen</code>.</li>
+    <li>A subscription or API key for your agent: Claude Code by default, or Codex.</li>
+  </ul>
+  <p class="prose">lea never runs <code>sudo</code> itself, except once in <code>lea init</code> to install its AppArmor profile, on the Linux hosts that use it.</p>
+</section>
+
+<section aria-labelledby="locks">
+  <h2 id="locks">Add the Locks</h2>
+  <div class="prose">
+    <p>The Locks keep a human between your agents and production: locksql (SQL databases), lockmq (RabbitMQ), lockfile (files), locklog (logs) and lockhttp (outbound HTTP). Each runs as a console that alone holds the credentials.</p>
+    <p>Run <a href="https://github.com/DavidGodefroid/lockhub/blob/main/docs/lox-add.md"><code>lox add</code></a> in lea&#8217;s projects directory, then keep <code>lox run</code> open in a terminal of its own, outside lea (<code>lox</code> 0.9.0 or later).</p>
+  </div>
+  <pre tabindex="0"><code>lox add locksql      <span class="cmt"># or lockmq, lockfile, locklog</span>
+lox run</code></pre>
+  <div class="prose">
+    <p><code>lox run</code> starts the projects directory&#8217;s hub and locks, approves what the rules allow on its own, and asks you for the rest. A Lock is on for lea as soon as <code>lox run</code> runs a lock of its type there; <code>LEA_LOCKSQL=0</code> (and so on) keeps one off.</p>
+    <p>A lock added while lea runs reaches the agents after <code>lea stop</code>, then <code>lea</code>: Docker cannot add a mount to a running container.</p>
+    <p>lockhttp also needs <code>LEA_LOCKHTTP=1</code> in <code>~/.config/lea/lea.conf</code>: its gate then sits beside lea&#8217;s proxy and every outbound request goes through it, once you run <code>lea stop --all</code>, then <code>lea</code> (<code>LEA_LOCKHTTP=1 lea</code> alone is ignored, with a warning). <a href="https://github.com/DavidGodefroid/lea/blob/main/README.md#web-requests-with-lockhttp">Web requests, with LockHTTP</a>.</p>
+  </div>
+</section>
+
+<section aria-labelledby="forges">
+  <h2 id="forges">Git and forges</h2>
+  <div class="prose">
+    <p>Git over HTTPS works out of the box, with any public forge. For GitHub, give lea a token on the host, once: it stays in the proxy, and the agents&#8217; <code>gh</code> and <code>git</code> use it without reading it.</p>
+  </div>
+  <pre tabindex="0"><code>gh auth token | lea github login
+lea github status</code></pre>
+  <div class="prose">
+    <p>Prefer a fine-grained token, limited to the repositories of the projects directory. For SSH, list the endpoints in <code>~/.config/lea/lea.conf</code>, pin their host keys and rerun <code>lea init</code>: it prints lea&#8217;s own public key to add to your forge.</p>
+  </div>
+  <pre tabindex="0"><code>echo 'LEA_GIT_SSH="github.com:22"' &gt;&gt; ~/.config/lea/lea.conf
+ssh-keyscan github.com &gt;&gt; ~/.config/lea/git_known_hosts   <span class="cmt"># compare the fingerprints</span>
+lea init</code></pre>
+</section>
+
+<section aria-labelledby="installer">
+  <h2 id="installer">Without Homebrew</h2>
+  <p class="prose">lea&#8217;s own installer checks the requirements, downloads the release for your platform and verifies its checksum and signature. It then links <code>~/.local/bin/lea</code> and runs <code>lea init</code>.</p>
+  <pre tabindex="0"><code>curl -fsSL https://leadeck.dev/install.sh | sh
+lea</code></pre>
+  <div class="prose">
+    <p>It never installs on the checksum alone: without a valid cosign signature it stops. <a href="../security/#releases">Signed releases</a>.</p>
+    <p>From source: clone the repository and run <code>bin/lea init</code>, which builds lea and its images with Docker only.</p>
+  </div>
+</section>
+
+<section aria-labelledby="providers">
+  <h2 id="providers">Other agents</h2>
+  <div class="prose">
+    <p>An agent runs on a provider: <code>claude</code> (Claude Code, the default), <code>codex</code> (OpenAI&#8217;s Codex CLI, in the image), or an OpenAI-compatible endpoint of your own, run through Codex.</p>
+  </div>
+  <pre tabindex="0"><code>lea new -p codex            <span class="cmt"># one Codex agent</span>
+lea config tool codex       <span class="cmt"># without the deck: your own tool in lea</span></code></pre>
+  <div class="prose">
+    <p><code>LEA_PROVIDER</code> and <code>LEA_MODEL</code> set the default. Endpoints such as Ollama or vLLM go in <code>~/.config/lea/providers</code>, with a key file that only the proxy mounts. <a href="../how-it-works/#providers">Providers</a>.</p>
+  </div>
+</section>
+
+<section aria-labelledby="update">
+  <h2 id="update">Update and uninstall</h2>
+  <div class="prose">
+    <p>A release install updates itself at most once a day: a new patch release, its signature checked, becomes active at the next <code>lea</code>. <code>lea update</code> does it now, <code>lea rollback</code> goes back one version, and <code>LEA_AUTOUPDATE=0</code> turns it off.</p>
+  </div>
+  <pre tabindex="0"><code>lea stop --all --forget
+rm -rf ~/.local/bin/lea ~/.local/share/lea-install ~/.local/share/lea ~/.config/lea
+docker image ls &#39;ghcr.io/davidgodefroid/lea*&#39;   <span class="cmt"># then docker image rm the ones listed</span></code></pre>
+  <p class="prose">Installed with Homebrew, <code>brew uninstall lea</code> removes the command; lea&#8217;s data, configuration and images are removed as above.</p>
+</section>
+
+    </div>
+  </main>
+  <footer class="site-footer">
+    <div class="wrap footer-grid">
+      <div class="footer-about">
+        <a class="brand" href="../"><img src="../assets/logo.svg" alt="" width="32" height="32"><span class="wordmark">lea</span></a>
+        <p>Runs many agents in containers, wired to the Locks: they see your projects, never your keys or your private network.</p>
+        <p class="family-link">Part of the <a href="https://lockfamily.dev">Lock Family</a>, harness security for AI agents.</p>
+      </div>
+      <nav aria-labelledby="footer-lock">
+        <h2 id="footer-lock">lea</h2>
+        <ul>
+          <li><a href="https://github.com/DavidGodefroid/lea">Source on GitHub</a></li>
+          <li><a href="https://github.com/DavidGodefroid/lea/blob/main/README.md">README</a></li>
+          <li><a href="https://github.com/DavidGodefroid/lea/blob/main/CHANGELOG.md">Changelog</a></li>
+          <li><a href="https://github.com/DavidGodefroid/lea/releases">Releases</a></li>
+          <li><a href="https://github.com/DavidGodefroid/lea/blob/main/README.md#how-lea-keeps-your-machine-safe">Safety model</a></li>
+        </ul>
+      </nav>
+      <nav class="family-strip" aria-labelledby="footer-family">
+        <h2 id="footer-family">The Lock Family</h2>
+        <ul>
+          <li data-lock="locksql"><a href="https://github.com/DavidGodefroid/locksql">locksql</a><span>SQL databases, PII masked</span></li>
+          <li data-lock="lockmq"><a href="https://github.com/DavidGodefroid/lockmq">lockmq</a><span>RabbitMQ queues</span></li>
+          <li data-lock="lockfile"><a href="https://github.com/DavidGodefroid/lockfile">lockfile</a><span>Files: S3, SFTP, disk</span></li>
+          <li data-lock="lockhttp"><a href="https://github.com/DavidGodefroid/lockhttp">lockhttp</a><span>Outbound HTTP(S)</span></li>
+          <li data-lock="locklog"><a href="https://github.com/DavidGodefroid/locklog">locklog</a><span>Logs, masked search</span></li>
+          <li data-lock="lockssh"><a href="https://github.com/DavidGodefroid/lockssh">lockssh</a><span>Commands over SSH</span></li>
+          <li data-lock="lockhub"><a href="https://github.com/DavidGodefroid/lockhub">lockhub</a><span>The approval hub and <code>lox</code></span></li>
+          <li data-lock="lockkit"><a href="https://github.com/DavidGodefroid/lockkit">lockkit</a><span>The shared Go core</span></li>
+          <li data-lock="lea" aria-current="true"><a href="https://github.com/DavidGodefroid/lea">lea</a><span>Agents in containers</span></li>
+        </ul>
+      </nav>
+    </div>
+    <div class="wrap footer-bottom">
+      <p>Pre-release (v0.15.x). lea is licensed under the <a href="https://github.com/DavidGodefroid/lea/blob/main/LICENSE">Apache License 2.0</a>.</p>
+      <p>lea is an independent project, not affiliated with Anthropic. Claude and Claude Code are trademarks of Anthropic.</p>
+      <p><a href="https://lockfamily.dev">lockfamily.dev</a> · <a href="https://github.com/DavidGodefroid/lockfamily">the family on GitHub</a></p>
+    </div>
+  </footer>
+</body>
+</html>
