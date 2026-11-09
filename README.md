@@ -1330,7 +1330,11 @@ so. Changes apply after `lea init` (endpoints, keys, images, locksql) or `lea st
   a new one; it also refuses one whose bridge, as the host sees it, holds a host address, whatever
   its option says; `LEA_ALLOW_GATEWAY=1` (in your configuration or the environment) accepts a plain
   internal network instead, with a warning. `lea doctor` prints the gateway mode of each internal
-  network and fails on one that is not isolated (a warning under `LEA_ALLOW_GATEWAY=1`).
+  network and fails on one that is not isolated (a warning under `LEA_ALLOW_GATEWAY=1`). When
+  Docker has no free address pool left for lea's network (`all predefined address pools have been
+  fully subnetted`), lea says so with Docker's message: remove unused networks (`docker network
+  prune`) or add `default-address-pools` in `/etc/docker/daemon.json`; `LEA_ALLOW_GATEWAY=1` does
+  not help there. `lea doctor` counts the free pools (Docker's defaults hold 31 networks).
 - The agents resolve no external name: lea starts each agent container with `--dns 192.0.2.1`
   (TEST-NET-1, never routed; not a loopback address, which Docker may query from the host's
   namespace), out of reach of its internal network, so Docker's embedded resolver answers the names of the containers on its

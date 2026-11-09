@@ -21,6 +21,7 @@ func TestInternalNetworkFailsClosedWithoutIsolatedGatewayMode(t *testing.T) {
 	w := newWorld(t, repoRoot(t))
 	w.env["FAKE_DOCKER_SEQ_NETWORK_INSPECT"] = "0 1" // egress exists, internal missing
 	w.env["FAKE_DOCKER_SEQ_NETWORK_CREATE"] = "1 0"  // isolated refused, plain accepted
+	w.env["FAKE_DOCKER_ERR_NETWORK_CREATE"] = "Error response from daemon: invalid option com.docker.network.bridge.gateway_mode_ipv4"
 	err := w.launcher().ensureNetworks("abc")
 	if err == nil || !strings.Contains(err.Error(), "Docker refused gateway_mode_ipv4=isolated") ||
 		!strings.Contains(err.Error(), "Docker Engine 28.0 or later") || !strings.Contains(err.Error(), "LEA_ALLOW_GATEWAY=1") {
@@ -35,6 +36,7 @@ func TestInternalNetworkFallsBackWithLeaAllowGateway(t *testing.T) {
 	w := newWorld(t, repoRoot(t))
 	w.env["FAKE_DOCKER_SEQ_NETWORK_INSPECT"] = "0 1"
 	w.env["FAKE_DOCKER_SEQ_NETWORK_CREATE"] = "1 0"
+	w.env["FAKE_DOCKER_ERR_NETWORK_CREATE"] = "Error response from daemon: invalid option com.docker.network.bridge.gateway_mode_ipv4"
 	w.env["LEA_ALLOW_GATEWAY"] = "1"
 	if err := w.launcher().ensureNetworks("abc"); err != nil {
 		t.Fatal(err)
@@ -44,6 +46,85 @@ func TestInternalNetworkFallsBackWithLeaAllowGateway(t *testing.T) {
 	}
 	if !w.hasCall("docker [network] [create] [--label] [lea.prefix=lea] [--label] [lea.id=abc] [--internal] [lea-internal-abc]") {
 		t.Fatalf("calls:\n%s", strings.Join(w.calls(), "\n"))
+	}
+}
+
+// #397: Docker out of address pools is reported as such, with Docker's own message, never as a
+// refused gateway mode, and never with LEA_ALLOW_GATEWAY=1 as the way out: a plain internal
+// network would be refused the same way, so none is tried, even with LEA_ALLOW_GATEWAY=1.
+func TestInternalNetworkPoolExhaustionIsNotAGatewayError(t *testing.T) {
+	for _, msg := range []string{
+		"Error response from daemon: all predefined address pools have been fully subnetted",
+		"Error response from daemon: could not find an available, non-overlapping IPv4 address pool among the defaults to assign to the network",
+	} {
+		for _, allow := range []string{"0", "1"} {
+			w := newWorld(t, repoRoot(t))
+			w.env["FAKE_DOCKER_SEQ_NETWORK_INSPECT"] = "0 1"
+			w.env["FAKE_DOCKER_RC_NETWORK_CREATE"] = "1"
+			w.env["FAKE_DOCKER_ERR_NETWORK_CREATE"] = msg
+			w.env["LEA_ALLOW_GATEWAY"] = allow
+			err := w.launcher().ensureNetworks("abc")
+			if err == nil || !strings.Contains(err.Error(), "Docker has no free address pool for lea's network lea-internal-abc") ||
+				!strings.Contains(err.Error(), strings.TrimPrefix(msg, "Error response from daemon: ")) ||
+				!strings.Contains(err.Error(), "docker network prune") || !strings.Contains(err.Error(), "default-address-pools in /etc/docker/daemon.json") {
+				t.Fatalf("%s (allow %s): err = %v", msg, allow, err)
+			}
+			if strings.Contains(err.Error()+w.errb.String(), "LEA_ALLOW_GATEWAY") || strings.Contains(err.Error(), "gateway_mode") ||
+				strings.Contains(err.Error(), "Docker Engine 28.0") {
+				t.Fatalf("%s (allow %s): a gateway error: %v\nstderr %q", msg, allow, err, w.errb.String())
+			}
+			if w.hasCall("docker [network] [create] [--label] [lea.prefix=lea] [--label] [lea.id=abc] [--internal] [lea-internal-abc]") {
+				t.Fatalf("%s (allow %s): a plain internal network is tried:\n%s", msg, allow, strings.Join(w.calls(), "\n"))
+			}
+		}
+	}
+	// The egress network, created first, says the same.
+	w := newWorld(t, repoRoot(t))
+	w.env["FAKE_DOCKER_RC_NETWORK_INSPECT"] = "1"
+	w.env["FAKE_DOCKER_RC_NETWORK_CREATE"] = "1"
+	w.env["FAKE_DOCKER_ERR_NETWORK_CREATE"] = "Error response from daemon: all predefined address pools have been fully subnetted"
+	err := w.launcher().ensureNetworks("abc")
+	if err == nil || !strings.Contains(err.Error(), "Docker has no free address pool for lea's network lea-egress") || strings.Contains(err.Error(), "LEA_ALLOW_GATEWAY") {
+		t.Fatalf("egress: err = %v", err)
+	}
+}
+
+// #397: any other refusal is Docker's own message, without the gateway-mode advice.
+func TestInternalNetworkOtherCreateErrorShowsDockersMessage(t *testing.T) {
+	w := newWorld(t, repoRoot(t))
+	w.env["FAKE_DOCKER_SEQ_NETWORK_INSPECT"] = "0 1"
+	w.env["FAKE_DOCKER_RC_NETWORK_CREATE"] = "1"
+	w.env["FAKE_DOCKER_ERR_NETWORK_CREATE"] = "Error response from daemon: failed to add bridge: operation not permitted"
+	err := w.launcher().ensureNetworks("abc")
+	if err == nil || err.Error() != "Docker could not create lea's network lea-internal-abc: failed to add bridge: operation not permitted" {
+		t.Fatalf("err = %v", err)
+	}
+}
+
+// #397: the gateway-mode advice comes with Docker's own message when Docker rejects the option.
+func TestInternalNetworkGatewayRefusalQuotesDocker(t *testing.T) {
+	w := newWorld(t, repoRoot(t))
+	w.env["FAKE_DOCKER_SEQ_NETWORK_INSPECT"] = "0 1"
+	w.env["FAKE_DOCKER_RC_NETWORK_CREATE"] = "1"
+	w.env["FAKE_DOCKER_ERR_NETWORK_CREATE"] = "Error response from daemon: invalid value for com.docker.network.bridge.gateway_mode_ipv4"
+	err := w.launcher().ensureNetworks("abc")
+	if err == nil || !strings.Contains(err.Error(), "Docker refused gateway_mode_ipv4=isolated (invalid value for com.docker.network.bridge.gateway_mode_ipv4)") ||
+		!strings.Contains(err.Error(), "LEA_ALLOW_GATEWAY=1") {
+		t.Fatalf("err = %v", err)
+	}
+}
+
+func TestPoolErrorClassification(t *testing.T) {
+	for msg, want := range map[string][2]bool{
+		"Error response from daemon: all predefined address pools have been fully subnetted":                         {true, false},
+		"could not find an available, non-overlapping IPv4 address pool among the defaults to assign to the network": {true, false},
+		"Error response from daemon: invalid option: com.docker.network.bridge.gateway_mode_ipv4":                    {false, true},
+		"Error response from daemon: something else":                                                                 {false, false},
+		"": {false, false},
+	} {
+		if got := [2]bool{poolExhausted(msg), refusesGatewayMode(msg)}; got != want {
+			t.Errorf("%q: pool, gateway = %v, want %v", msg, got, want)
+		}
 	}
 }
 

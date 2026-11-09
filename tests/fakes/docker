@@ -1,5 +1,5 @@
 #!/bin/sh
-# Fake docker for unit tests: records the call, answers from FAKE_DOCKER_OUT_/SEQ_/RC_<KEY>
+# Fake docker for unit tests: records the call, answers from FAKE_DOCKER_OUT_/SEQ_/RC_/ERR_<KEY>
 # (<KEY> is the first two arguments) or <KEY>_AT_<last argument>, and FAKE_DOCKER_OUTSEQ_<KEY>.
 { printf 'docker'; for a in "$@"; do printf ' [%s]' "$a"; done; printf '\n'; } >>"${FAKE_LOG:?}"
 key=$(printf '%s_%s' "${1:-}" "${2:-}" | tr '[:lower:]' '[:upper:]' | tr -c 'A-Z0-9_' '_')
@@ -39,4 +39,8 @@ if [ -n "$seq" ]; then
 fi
 # shellcheck disable=SC2154
 if [ -n "$out" ]; then printf '%s\n' "$out"; fi
+# FAKE_DOCKER_ERR_<KEY>: what a failing call (rc not 0) prints on stderr, as Docker's own message.
+eval "err=\${FAKE_DOCKER_ERR_$key:-}"
+# shellcheck disable=SC2154
+if [ "$rc" != 0 ] && [ -n "$err" ]; then printf '%s\n' "$err" >&2; fi
 exit "$rc"

@@ -11,6 +11,13 @@
   release. `lea init` no longer links `~/.local/bin/lea` to the Cellar version on a Homebrew
   install (brew links `<prefix>/bin/lea`; that link outlived `brew upgrade`). install.sh and git
   installs are unchanged.
+- Docker out of address pools is reported as such (#397): when Docker refuses lea's network with
+  `all predefined address pools have been fully subnetted`, lea quotes Docker's message and says to
+  remove unused networks (`docker network prune`) or add `default-address-pools` in
+  `/etc/docker/daemon.json`, instead of asking for Docker Engine 28.0 or `LEA_ALLOW_GATEWAY=1`. The
+  gateway-mode advice comes only when Docker rejects `gateway_mode_ipv4` itself, with Docker's
+  message; any other refusal is Docker's own message. `lea doctor` counts Docker's free address
+  pools and warns when none is left.
 
 ## v0.15.0 (2026-11-08)
 
