@@ -103,7 +103,10 @@ has_images() {
 # no_parallel_install: lea's own installer left no trace beside Homebrew's.
 no_parallel_install() {
   if [ -e "$HOME/.local/bin/lea" ] || [ -L "$HOME/.local/bin/lea" ]; then die "$HOME/.local/bin/lea exists beside Homebrew's lea"; fi
-  [ ! -e "$HOME/.local/share/lea-install" ] || die "$HOME/.local/share/lea-install exists beside Homebrew's lea"
+  # install.sh installs into ${XDG_DATA_HOME:-~/.local/share}/lea-install.
+  for d in "$XDG_DATA_HOME/lea-install" "$HOME/.local/share/lea-install"; do
+    [ ! -e "$d" ] || die "$d exists beside Homebrew's lea"
+  done
 }
 # shell_ok LEA OUT: LEA shell -- true succeeds in the projects directory, its output in OUT.
 shell_ok() {
@@ -142,7 +145,7 @@ say "3. install.sh install of v$OLD with this checkout's shell parts: lea update
 fresh; PATH=$base_path; export PATH
 curl -fsSL -o "$work/s/install.sh" "https://github.com/DavidGodefroid/lea/releases/download/v$OLD/install.sh"
 LEA_REQUIRE_COSIGN=1 sh "$work/s/install.sh" --version "v$OLD" --no-init || die "install.sh v$OLD failed"
-inst="$HOME/.local/share/lea-install/v$OLD"
+inst="$XDG_DATA_HOME/lea-install/v$OLD"
 [ -d "$inst" ] || die "install.sh left no $inst"
 rm -rf "$inst/libexec"; cp -R "$root/libexec" "$inst/"
 latest=$(curl -fsSLI -o /dev/null -w '%{url_effective}' https://github.com/DavidGodefroid/lea/releases/latest | sed 's|.*/tag/||')
