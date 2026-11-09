@@ -164,3 +164,11 @@ nothing_outside_brew() {
   lea__init_launcher
   [ "$(readlink "$HOME/.local/bin/lea")" = "$r/bin/lea" ]
 }
+
+@test "lea init on a Homebrew install still removes the locksql link an older lea made" {
+  mkdir -p "$HOME/.local/bin"
+  ln -s "$BATS_TEST_TMPDIR/gone/bin/locksql" "$HOME/.local/bin/locksql"
+  lea__init_launcher
+  [ ! -L "$HOME/.local/bin/locksql" ]
+  [ ! -e "$HOME/.local/bin/lea" ] && [ ! -L "$HOME/.local/bin/lea" ]
+}
