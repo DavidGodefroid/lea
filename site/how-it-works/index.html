@@ -140,7 +140,7 @@
 <section aria-labelledby="tower">
   <h2 id="tower">The Control Tower</h2>
   <div class="prose">
-    <p>When the deck opens with no agent running, its first agent is a Control Tower: a lead on Claude Code that runs <code>/lea:control-tower</code>. You talk to it only. It splits your requests into tasks, starts the agents that do them, follows them and briefs you in a line per agent. It never does the work itself; a hook keeps it to lea&#8217;s team tools.</p>
+    <p>When the deck opens with no agent running, its first agent is a Control Tower: a lead on Claude Code that runs <code>/lea:control-tower</code>. You talk to it only. It splits your requests into tasks, starts the agents that do them, follows them and briefs you in a line per agent. It never does the work itself; a hook keeps it to lea&#8217;s team tools. It answers in the language of your latest message, whatever language its agents write in.</p>
     <p>It asks you one question at a time. The others queue, an incident first, then what blocks an agent, then the rest; your next prompt answers the open one, and the tower relays it to the agent that asked. <kbd>Q</kbd> lists the queue, <kbd>H</kbd> (or <code>lea hold</code>) pauses the messages agents send it while you answer. <kbd>N</kbd> starts another tower.</p>
   </div>
 </section>
