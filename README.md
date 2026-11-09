@@ -788,6 +788,9 @@ Needs you: palette for dark-mode
 
 Ask it for the `board`, the `detail` of an agent, or to `stop` one, in your own words.
 
+It replies in the language of your latest message, and switches as soon as you do; its agents'
+messages, mostly in English, never change it. In tower mode lea reminds it on every prompt.
+
 It asks you one question at a time, whatever the number of agents with a question for you: its
 `user_ask` tool opens a question when none is open and queues the others (an incident first,
 then what blocks an agent, then the rest, in order); the agents keep working meanwhile. Your next
