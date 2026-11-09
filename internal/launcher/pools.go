@@ -42,7 +42,8 @@ func parsePools(out string) []addressPool {
 	return pools
 }
 
-// maxPoolSubnets caps the subnets counted in one pool (a 10.0.0.0/8 split in /24 is 65536).
+// maxPoolSubnets caps the subnets counted in one pool (a 10.0.0.0/8 split in /24 is 65536): a
+// finer split counts its first 65536 only.
 const maxPoolSubnets = 1 << 16
 
 // freeSubnets counts the subnets of pools and those of them no used subnet overlaps.
@@ -53,7 +54,7 @@ func freeSubnets(pools []addressPool, used []*net.IPNet) (free, total int) {
 			continue
 		}
 		ones, _ := base.Mask.Size()
-		if p.size < ones || p.size > 32 || p.size-ones > 16 {
+		if p.size < ones || p.size > 32 {
 			continue
 		}
 		n := 1 << (p.size - ones)

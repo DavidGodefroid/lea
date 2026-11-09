@@ -20,6 +20,9 @@ func TestFreeSubnets(t *testing.T) {
 	if free, total := freeSubnets(pools, parseSubnets("10.10.0.0/24 10.20.0.0/16")); free != 255 || total != 512 {
 		t.Fatalf("configured: %d of %d", free, total)
 	}
+	if free, total := freeSubnets([]addressPool{{"10.0.0.0/8", 28}}, nil); free != maxPoolSubnets || total != maxPoolSubnets {
+		t.Fatalf("capped: %d of %d", free, total)
+	}
 	if parsePools("") != nil {
 		t.Fatal("no pools must be nil")
 	}
