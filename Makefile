@@ -1,4 +1,4 @@
-.PHONY: test build test-proxy test-isolation test-ctl test-lockhost test-phase0 test-locklog test-pressure go-test go-build go-test-tmux go-get tmux-build test-site
+.PHONY: test build test-proxy test-isolation test-update-brew test-ctl test-lockhost test-phase0 test-locklog test-pressure go-test go-build go-test-tmux go-get tmux-build test-site
 test:
 	tests/run.sh
 build:
@@ -22,6 +22,9 @@ test-locklog:
 	tests/integration/locklog.sh
 test-isolation:
 	tests/integration/isolation.sh
+# lea update on Homebrew-shaped and install.sh installs (#354), real release images; needs go, cosign.
+test-update-brew:
+	tests/integration/update-brew.sh
 # lea-ctl (#165): lea in its control container on the host's engine; needs make build, build/lea.
 test-ctl:
 	tests/integration/ctl.sh

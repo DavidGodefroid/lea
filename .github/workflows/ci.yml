@@ -343,6 +343,33 @@ jobs:
         run: |
           tests/integration/firstrun.sh 2>&1 | tee firstrun.log
           grep -qx 'firstrun: OK' firstrun.log
+  # lea update on a Homebrew-shaped install (brew upgrade, never lea's installer), brew upgrade
+  # alone, and an install.sh install (#354), with real release images.
+  update-brew:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+        with:
+          go-version-file: go.mod
+      - uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+        with:
+          cosign-release: v3.1.3
+      - name: AppArmor profile (as lea init loads it)
+        run: |
+          if docker info --format '{{json .SecurityOptions}}' | grep -q 'name=apparmor'; then
+            if [ -e /etc/apparmor.d/abi/4.0 ]; then abi=4.0 userns='  userns,'; else abi=3.0 userns=''; fi
+            sed -e "s|@ABI@|$abi|" -e "s|^@USERNS@\$|$userns|" apparmor/lea.tmpl | sudo tee /etc/apparmor.d/lea >/dev/null
+            sudo apparmor_parser -r /etc/apparmor.d/lea
+          fi
+      - name: tests/integration/update-brew.sh
+        shell: bash
+        run: |
+          tests/integration/update-brew.sh 2>&1 | tee update-brew.log
+          grep -qx 'update-brew: OK' update-brew.log
   # The real Claude Code (the image's pinned version) with lea's hooks on a fake Messages API, and
   # lea's daemon: usage-limit resume, truncated transcripts, and the phase-3 suspend/resume demo
   # (a suspended agent stopped, resumed by its approval or a message). No secret, no real model.

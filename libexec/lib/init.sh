@@ -49,9 +49,12 @@ lea__init_known_hosts() {
 }
 
 # Links the launcher into ~/.local/bin (LEA_BIN_DIR) unless another file already has that name. The
-# locksql link an older lea made goes (lea__unlink_locksql).
+# locksql link an older lea made goes (lea__unlink_locksql). A Homebrew install gets no link: brew
+# links <prefix>/bin/lea, and a link to this Cellar version would outlive brew upgrade (the locksql
+# link an older lea made still goes).
 lea__init_launcher() {
   _in_bd=${LEA_BIN_DIR:-$HOME/.local/bin}
+  if lea__brew_install; then lea__unlink_locksql "$_in_bd"; return 0; fi
   _in_l=$_in_bd/lea
   if [ -L "$_in_l" ] && [ "$(readlink "$_in_l")" = "$LEA_ROOT/bin/lea" ]; then :
   elif [ -e "$_in_l" ] || [ -L "$_in_l" ]; then

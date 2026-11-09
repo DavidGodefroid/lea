@@ -32,5 +32,5 @@ core [attach-container] [lea-$ID]
 core [deck-open] [--container] [lea-$ID] [--workdir] [$W/projects] [--fresh]
 tmux [-L] [lea] [-f] [$W/data/lea/host/tmux.conf] [attach-session] [-t] [=lea-$ID]
 -- lea
-lea: warning: Docker refused gateway_mode_ipv4=isolated; lea-internal-$ID is created without it (LEA_ALLOW_GATEWAY=1): host services are reachable from the agents
+lea: warning: Docker refused gateway_mode_ipv4=isolated (invalid option com.docker.network.bridge.gateway_mode_ipv4); lea-internal-$ID is created without it (LEA_ALLOW_GATEWAY=1): host services are reachable from the agents
 -- stdout

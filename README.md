@@ -1088,13 +1088,27 @@ lea approve gN               # approve a lead's grant request (lea requests list
 lea github login|logout|status  # lea's GitHub token, in the proxy only (see Git and forges)
 ```
 
+### Update
+
+One command per install method; each pulls the new version's images, then names the Lock clients
+(`update-deps`):
+
+- **Homebrew**: `lea update` runs `brew update` and `brew upgrade davidgodefroid/tap/lea`, then
+  the new version pulls its images. It never installs a second lea beside Homebrew's, and fails
+  with brew's status when brew fails. `brew upgrade lea` alone works too: the next `lea` pulls the
+  images it lacks and restarts the daemon on the new binary. Old versions are `brew cleanup`'s.
+- **install.sh**: `lea update`, or the daily background update below.
+- **git checkout**: `lea update` pulls and rebuilds (see [Install from source](#install-from-source)).
+
 A release install updates itself: at most once a day, `lea` looks for a new release in the
 background. A newer minor or patch release is installed beside the current one (its signature
 checked with cosign) and becomes active at the next `lea`; a newer major
 release is only announced in the deck, and so is a newer minor release while lea is 0.x (only
 its patch releases install themselves). Running containers keep their image until they stop.
 `LEA_AUTOUPDATE=0` in `~/.config/lea/lea.conf` turns it off; the log is
-`~/.local/share/lea/host/update.log`.
+`~/.local/share/lea/host/update.log`. A Homebrew install has it off (its formula sets
+`LEA_AUTOUPDATE=0`); turned back on, it only announces a new release, which `lea update` installs
+with brew.
 
 The Locks' clients in lea's image (locksql, lockmq, lockfile, locklog) come from one set of releases,
 `config/locks.lock`: for each Lock, the client's release, the protocol its handshake speaks, the
@@ -1320,7 +1334,11 @@ so. Changes apply after `lea init` (endpoints, keys, images, locksql) or `lea st
   a new one; it also refuses one whose bridge, as the host sees it, holds a host address, whatever
   its option says; `LEA_ALLOW_GATEWAY=1` (in your configuration or the environment) accepts a plain
   internal network instead, with a warning. `lea doctor` prints the gateway mode of each internal
-  network and fails on one that is not isolated (a warning under `LEA_ALLOW_GATEWAY=1`).
+  network and fails on one that is not isolated (a warning under `LEA_ALLOW_GATEWAY=1`). When
+  Docker has no free address pool left for lea's network (`all predefined address pools have been
+  fully subnetted`), lea says so with Docker's message: remove unused networks (`docker network
+  prune`) or add `default-address-pools` in `/etc/docker/daemon.json`; `LEA_ALLOW_GATEWAY=1` does
+  not help there. `lea doctor` counts the free pools (Docker's defaults hold 31 networks).
 - The agents resolve no external name: lea starts each agent container with `--dns 192.0.2.1`
   (TEST-NET-1, never routed; not a loopback address, which Docker may query from the host's
   namespace), out of reach of its internal network, so Docker's embedded resolver answers the names of the containers on its
