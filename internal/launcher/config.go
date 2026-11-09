@@ -117,6 +117,23 @@ func (c *Config) EnvKeys() []string {
 // Protected reports whether a non-empty value of key in the environment beats both files.
 func Protected(key string) bool { return protectedKeys[key] }
 
+// envWarned are the unprotected keys whose value in the environment, when the configuration
+// overrides it, lea warns about instead of ignoring it silently (#398): LockHTTP is lea-proxy's,
+// shared by every lea on the machine, so a run cannot turn it on or off for itself alone.
+var envWarned = []string{"LEA_LOCKHTTP", "LEA_LOCKHTTP_MITM"}
+
+// IgnoredEnv are the warnings for the keys of envWarned that the environment sets to another
+// value than the configuration's (#398).
+func (c *Config) IgnoredEnv() []string {
+	var ws []string
+	for _, k := range envWarned {
+		if v, conf := c.getenv(k), c.Get(k); v != "" && v != conf {
+			ws = append(ws, fmt.Sprintf("%s=%s in the environment is ignored (the configuration says %s=%s): set it in %s, then lea stop --all, and lea", k, v, k, conf, c.UserConfigPath()))
+		}
+	}
+	return ws
+}
+
 // Assignment is the value a configuration file assigns to key and that file's path (the later
 // file winning); ok is false when neither assigns it.
 func (c *Config) Assignment(key string) (value, file string, ok bool) {

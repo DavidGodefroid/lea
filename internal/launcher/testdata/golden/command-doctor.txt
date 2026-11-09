@@ -48,6 +48,7 @@ ok    admission: cpu PSI 40%, memory 85% of the limit, memory PSI 10%, io PSI 40
 ok    shedding: after 30 s at memory 95% (LEA_SHED_*)
 ok    egress allowlist: lea's default (forges, registries, model APIs; LEA_EGRESS_ALLOW extends it with 'default,<domain>')
 ok    telemetry: off (LEA_OTEL_UPSTREAM)
+ok    lockhttp: off (agents' web egress through lea-proxy's allowlist; to turn it on: LEA_LOCKHTTP=1 in $W/config/lea/lea.conf, then lea stop --all, and lea)
 warn  approval hub: LEA_HUB=1 but no facade socket to read (set LEA_HUB_SOCKET, or XDG_RUNTIME_DIR): agents are not suspended on a Lock call that waits for the hub (LEA_HUB=0 to silence this)
 ok    lox 0.10.0
 ok    agent-readable credentials: none

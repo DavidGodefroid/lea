@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+Fixes:
+
+- `LEA_LOCKHTTP=1 lea` no longer starts lea without the gate in silence (#398): the
+  configuration (lea's default `LEA_LOCKHTTP=0`, or yours) still wins over the environment,
+  since lea-proxy and its gate are shared by every lea on the machine, but lea now warns
+  `LEA_LOCKHTTP=1 in the environment is ignored (the configuration says LEA_LOCKHTTP=0): set it
+  in ~/.config/lea/lea.conf, then lea stop --all, and lea`; the same for `LEA_LOCKHTTP_MITM`.
+  `lea doctor` prints a `lockhttp` line in every case: `off`, with how to turn it on, or `on`
+  with the gate's state.
 - `lea update` on a Homebrew install runs `brew update` and `brew upgrade davidgodefroid/tap/lea`,
   then the new Cellar version refreshes its images and checks the dependencies (#354). It used to
   run lea's own installer, which left a second lea in `~/.local/share/lea-install`, linked at

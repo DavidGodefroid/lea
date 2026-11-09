@@ -384,6 +384,10 @@ func (l *Launcher) dispatch(args []string) error {
 	if l.Cfg.Ctl() && l.Cfg.Get("LEA_CTL_INSIDE") != "1" && !ctlHostOnly[a0] {
 		return l.viaCtl(args)
 	}
+	// Below viaCtl: the lea in the control container warns, once.
+	for _, w := range l.Cfg.IgnoredEnv() {
+		l.logf("warning: %s", w)
+	}
 	switch a0 {
 	case "-h", "--help", "help":
 		_, err := l.Stdout.Write([]byte(Usage))
