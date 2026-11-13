@@ -1141,6 +1141,20 @@ its patch releases install themselves). Running containers keep their image unti
 `LEA_AUTOUPDATE=0`); turned back on, it only announces a new release, which `lea update` installs
 with brew.
 
+The agents' CLIs, Claude Code and Codex, update themselves too, between lea releases. lea's image
+pins the version its CI verified; in each lea container, a check at its start and then every 6
+hours asks registry.npmjs.org (in the default egress allowlist) for the latest release of each,
+and a newer one is installed in `/lea/cli`, beside the image's, checked (its `--version`), then
+made current with an atomic link swap. The agents started after it run it; a running agent keeps
+its version, which is never removed while a process runs it, and a release older than the
+image's pin is never installed. The check runs as `lea-cli`, a user of its own: the agents read
+`/lea/cli` but cannot write it, so no agent can leave the next ones a CLI of its making, and a
+`/lea/cli` someone else could write is ignored. Claude Code's own updater stays off
+(`DISABLE_UPDATES`). `agents_list` shows the version each Claude agent runs (`cli_version`), and
+`lea-cli-update status` in the container both versions of each CLI; the log is
+`/lea/cli/update.log`. `LEA_CLI_AUTOUPDATE=0` in `~/.config/lea/lea.conf` turns it off for the
+agents started after `lea stop --all`: they run the image's CLIs.
+
 The Locks' clients in lea's image (locksql, lockmq, lockfile, locklog) come from one set of releases,
 `config/locks.lock`: for each Lock, the client's release, the protocol its handshake speaks, the
 release's image by digest and the identity that signed it. lea's CI bumps the set as a whole

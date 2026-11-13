@@ -11,11 +11,14 @@ if [ "${1:-}" = --shell ]; then
   if [ $# -gt 0 ]; then exec "$@"; fi
   exec bash -l
 fi
+# Each CLI is the newer release lea-cli-update installed beside the image's, when there is one
+# (the next agent runs it, never a running one), or the image's.
+cli() { "${LEA_CLI_UPDATE:-lea-cli-update}" path "$1" 2>/dev/null || echo "$1"; }
 # A Codex agent (lea-agent run --cli codex): lea's flags come with its arguments (MCP server,
 # notify, sandbox: internal/providers); its state is ~/.codex, private to the projects dir.
 if [ "${1:-}" = --codex ]; then
   shift
-  exec codex "$@"
+  exec "$(cli codex)" "$@"
 fi
 # lea's Claude hooks (agent state, bus wake-up, approvals) and telemetry env come in through
 # --settings: file-based managed settings are skipped whenever an organisation has
@@ -38,4 +41,4 @@ for a in "$@"; do
 done
 if [ -d "$plugin" ]; then set -- --plugin-dir "$plugin" "$@"; fi
 if s=$(lea_settings); then set -- --settings "$s" "$@"; fi
-exec claude "$@"
+exec "$(cli claude)" "$@"

@@ -139,3 +139,49 @@ func TestStatusReportCapsRecordedPathEvents(t *testing.T) {
 		t.Fatalf("events=%d", len(ps))
 	}
 }
+
+// The agents' CLIs update themselves (image/lea-cli-update): agents_list says which version each
+// agent runs, as its status line last reported it, and refuses a version that is not a release.
+func TestAgentsListShowsTheCLIVersion(t *testing.T) {
+	e := start(t)
+	version := func() string {
+		t.Helper()
+		var as []struct {
+			Name       string
+			CLIVersion string `json:"cli_version"`
+		}
+		if err := call(t, e.bus, "dev", "agents_list", nil, &as); err != nil {
+			t.Fatal(err)
+		}
+		for _, a := range as {
+			if a.Name == "dev" {
+				return a.CLIVersion
+			}
+		}
+		t.Fatal("dev is not listed")
+		return ""
+	}
+	send := func(v string) error {
+		return call(t, e.bus, "dev", "status_report", map[string]any{"ctx_pct": 1, "cost_usd": 0, "paths": []string{}, "version": v}, nil)
+	}
+	if err := report(t, e, 1, 0); err != nil {
+		t.Fatal(err)
+	}
+	if v := version(); v != "" {
+		t.Fatalf("cli_version=%q before any report of it", v)
+	}
+	if err := send("2.1.323"); err != nil {
+		t.Fatal(err)
+	}
+	if v := version(); v != "2.1.323" {
+		t.Fatalf("cli_version=%q, want 2.1.323", v)
+	}
+	for _, bad := range []string{"latest", "2.1", "2.1.3 x", "2.1.3-beta"} {
+		if err := send(bad); err == nil {
+			t.Errorf("version %q accepted", bad)
+		}
+	}
+	if v := version(); v != "2.1.323" {
+		t.Fatalf("cli_version=%q after refused reports", v)
+	}
+}
