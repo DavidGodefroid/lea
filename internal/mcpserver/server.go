@@ -106,7 +106,7 @@ func LockGuidance(get func(string) string) string {
 func New(sock, agent, version, instructions string) *mcp.Server {
 	s := mcp.NewServer(&mcp.Implementation{Name: "lea", Version: version}, &mcp.ServerOptions{Instructions: instructions})
 	const short = 10 * time.Second
-	mcp.AddTool(s, &mcp.Tool{Name: "agents_list", Description: "List the agents of this lea: name, label (the name the user sees in the deck, your container only), role, profile, state, parent, branch, ctx_pct (percent of its context window used, when known; your container only); you=true is you. Never their screens."},
+	mcp.AddTool(s, &mcp.Tool{Name: "agents_list", Description: "List the agents of this lea: name, label (the name the user sees in the deck, your container only), role, profile, state, parent, branch, ctx_pct (percent of its context window used) and ctx_tokens (its context size in tokens), when known, your container only; relay=true marks your own child whose context passed the live relay_tokens (limits_get); you=true is you. Never their screens."},
 		func(ctx context.Context, _ *mcp.CallToolRequest, in empty) (*mcp.CallToolResult, any, error) {
 			return proxy(ctx, sock, agent, "agents_list", short, in), nil, nil
 		})
@@ -114,7 +114,7 @@ func New(sock, agent, version, instructions string) *mcp.Server {
 		func(ctx context.Context, _ *mcp.CallToolRequest, in empty) (*mcp.CallToolResult, any, error) {
 			return proxy(ctx, sock, agent, "providers_list", short, in), nil, nil
 		})
-	mcp.AddTool(s, &mcp.Tool{Name: "limits_get", Description: "Read lea's live limits, which the user changes while agents run (read-only: no agent sets them): each key's value, default, source and what it applies to; max_running caps the children of leads that run at once, host-wide (in_use: how many run). A spawn at the cap is refused, or queued with queue: true."},
+	mcp.AddTool(s, &mcp.Tool{Name: "limits_get", Description: "Read lea's live limits, which the user changes while agents run (read-only: no agent sets them): each key's value, default, source and what it applies to; max_running caps the children of leads that run at once, host-wide (in_use: how many run). A spawn at the cap is refused, or queued with queue: true. relay_tokens is the context size at which a control tower relays a child (0: above 50% of its window)."},
 		func(ctx context.Context, _ *mcp.CallToolRequest, in empty) (*mcp.CallToolResult, any, error) {
 			return proxy(ctx, sock, agent, "limits_get", short, in), nil, nil
 		})

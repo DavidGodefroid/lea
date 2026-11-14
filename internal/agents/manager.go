@@ -177,10 +177,11 @@ type Row struct {
 	// Unread counts the messages waiting for the agent; ForUser the unread ones it sent the user.
 	Unread  int `json:"unread"`
 	ForUser int `json:"for_user"`
-	// CtxPct and CostUSD come from the agent's status line; -1 is unknown.
-	CtxPct   int       `json:"ctx_pct"`
-	CostUSD  float64   `json:"cost_usd"`
-	Approval *Approval `json:"approval,omitempty"`
+	// CtxPct, CtxTokens and CostUSD come from the agent's status line; -1 is unknown.
+	CtxPct    int       `json:"ctx_pct"`
+	CtxTokens int       `json:"ctx_tokens"`
+	CostUSD   float64   `json:"cost_usd"`
+	Approval  *Approval `json:"approval,omitempty"`
 	// Paused: the user froze the agent (the deck's p); State is what it was doing.
 	Paused bool `json:"paused,omitempty"`
 	// Subagents counts the subagents the agent still runs (its Subagent hooks): an idle agent
@@ -396,12 +397,12 @@ func (m *Manager) snapshot(container string, v int64) (Snapshot, error) {
 
 func rowOf(a store.Agent) Row {
 	return Row{Key: a.Key, Name: a.Name, Label: a.Label, Profile: a.Profile, Model: a.Model, State: a.State, Workdir: a.Workdir, Updated: a.Updated,
-		Created: a.Created, Role: a.Role, Parent: a.Parent, Repo: a.Repo, Branch: a.Branch, CtxPct: -1, CostUSD: -1, Paused: a.Paused, Held: a.HoldSince > 0,
+		Created: a.Created, Role: a.Role, Parent: a.Parent, Repo: a.Repo, Branch: a.Branch, CtxPct: -1, CtxTokens: -1, CostUSD: -1, Paused: a.Paused, Held: a.HoldSince > 0,
 		LimitUntil: a.LimitUntil, Woken: a.Woken}
 }
 
 func shellRow(container, name string) Row {
-	return Row{Key: ShellKey(container, name), Name: name, Kind: KindShell, State: "running", CtxPct: -1, CostUSD: -1}
+	return Row{Key: ShellKey(container, name), Name: name, Kind: KindShell, State: "running", CtxPct: -1, CtxTokens: -1, CostUSD: -1}
 }
 
 // ShellKey is the key of a shell's row: never an agent's key, whose container part has no ':'.

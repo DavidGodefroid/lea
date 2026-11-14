@@ -347,26 +347,27 @@ func TestUsage(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if u, err := s.Usages("lea-a"); err != nil || u[a.Key] != (Usage{CtxPct: -1, CostUSD: -1}) {
+	if u, err := s.Usages("lea-a"); err != nil || u[a.Key] != (Usage{CtxPct: -1, CtxTokens: -1, CostUSD: -1}) {
 		t.Fatalf("usages=%+v err=%v", u, err)
 	}
 	for i, tc := range []struct {
 		u       Usage
 		changed bool
 	}{
-		{Usage{42, 1.2}, true}, {Usage{42, 1.2}, false}, {Usage{43, 1.2}, true}, {Usage{43, 1.25}, true},
+		{Usage{42, -1, 1.2}, true}, {Usage{42, -1, 1.2}, false}, {Usage{43, -1, 1.2}, true}, {Usage{43, -1, 1.25}, true},
+		{Usage{43, 182000, 1.25}, true}, {Usage{43, 182000, 1.25}, false},
 	} {
 		if ch, err := s.SetUsage(a.Key, tc.u); err != nil || ch != tc.changed {
 			t.Fatalf("step %d: changed=%v err=%v", i, ch, err)
 		}
 	}
-	if u, _ := s.Usages("lea-a"); u[a.Key] != (Usage{43, 1.25}) {
+	if u, _ := s.Usages("lea-a"); u[a.Key] != (Usage{43, 182000, 1.25}) {
 		t.Fatalf("usages=%+v", u)
 	}
 	if u, _ := s.Usages("lea-b"); len(u) != 0 {
 		t.Fatalf("other container: %+v", u)
 	}
-	if ch, err := s.SetUsage("lea-a/nobody", Usage{1, 1}); ch || err != nil {
+	if ch, err := s.SetUsage("lea-a/nobody", Usage{1, 1, 1}); ch || err != nil {
 		t.Fatalf("unknown agent: changed=%v err=%v", ch, err)
 	}
 	// A reused name starts with an unknown usage.
@@ -374,7 +375,7 @@ func TestUsage(t *testing.T) {
 	if _, err := s.RegisterAgent("lea-a", "claude-1", "claude", "/p", 3); err != nil {
 		t.Fatal(err)
 	}
-	if u, _ := s.Usages("lea-a"); u[a.Key] != (Usage{-1, -1}) {
+	if u, _ := s.Usages("lea-a"); u[a.Key] != (Usage{-1, -1, -1}) {
 		t.Fatalf("reused row usage=%+v", u)
 	}
 }
@@ -462,7 +463,7 @@ func TestMigrateAddsSlice2Columns(t *testing.T) {
 		if p, err := s.PendingApprovals(); err != nil || len(p) != 1 || p[0].Always {
 			t.Fatalf("open %d: pending=%+v err=%v", i, p, err)
 		}
-		if u, err := s.Usages("lea-a"); err != nil || u["lea-a/w1"] != (Usage{-1, -1}) {
+		if u, err := s.Usages("lea-a"); err != nil || u["lea-a/w1"] != (Usage{-1, -1, -1}) {
 			t.Fatalf("open %d: usages=%+v err=%v", i, u, err)
 		}
 		s.Close()

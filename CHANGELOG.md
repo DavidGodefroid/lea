@@ -36,6 +36,16 @@ Changes:
   waits (`queued: max_running 3/3`). A change never stops a running agent. **This caps a busy
   tower at 3 children by default**: `lea limits set max_running 0` turns the cap off.
 
+- The control tower relays a child at 120k tokens of context (#422), no longer at 50 % of its
+  window (500k on a 1M window, so every turn of a child re-read up to that much). The size is the
+  live limit `relay_tokens` (`LEA_RELAY_TOKENS`, default `120000`, `0`: the old 50 % rule): `lea
+  limits set relay_tokens N` applies at the tower's next board check, with no restart of the
+  tower or its children. The status line now reports the context's size in tokens next to its
+  percent; the deck and `agents_list` show both (`182k · 18%`; the percent alone for Codex or an
+  older Claude Code), and `agents_list` marks a tower's children past `relay_tokens` with
+  `relay: true`. The tower also relays a child between two tasks and always spawns with
+  `queue: true`. The README has a new "Cost" section on what drives usage.
+
 - lea no longer copies on select (#419): a drag in an agent's terminal no longer enters tmux's
   copy mode, copies the selection or flashes "Copied". Claude Code copies on select itself, through
   the same clipboard bridge: a copy worked and looked one way or the other depending on whether

@@ -4,6 +4,8 @@ import (
 	"strings"
 	"sync"
 	"testing"
+
+	"github.com/DavidGodefroid/lea/internal/store"
 )
 
 // mapLimits is a LimitStore in memory: the user file (file) over the environment (env).
@@ -88,7 +90,7 @@ func TestLimitsSetChecksAndGetAnswers(t *testing.T) {
 		params map[string]any
 		want   string
 	}{
-		{map[string]any{"key": "max_spawns", "value": "2"}, `"max_spawns" is not a live limit (one of: max_running)`},
+		{map[string]any{"key": "max_spawns", "value": "2"}, `"max_spawns" is not a live limit (one of: max_running, relay_tokens`},
 		{map[string]any{"key": "max_running", "value": "two"}, `max_running is a whole number from 0 to 100, not "two"`},
 		{map[string]any{"key": "max_running", "value": "101"}, "from 0 to 100"},
 		{map[string]any{"key": "max_running", "value": "-1"}, "from 0 to 100"},
@@ -307,4 +309,77 @@ func TestMaxRunningReservesTheStart(t *testing.T) {
 		t.Fatalf("after the start ended: %v", again)
 	}
 	e.d.endChildStart()
+}
+
+// limits_get answers relay_tokens to a lead (#422); agents_list marks the lead's own children
+// past it with relay, falls back to 50% of the window when a child's tokens are unknown or the
+// key is 0, and follows a change at once.
+func TestRelayTokens(t *testing.T) {
+	e := start(t)
+	e.d.SetAgents(&fakeAgents{})
+	e.d.SetLimits(newMapLimits())
+	boss := spawned(t, e, "boss", "lead", "")
+	other := spawned(t, e, "other", "lead", "")
+	big := spawned(t, e, "big", "dev", boss)
+	small := spawned(t, e, "small", "dev", boss)
+	old := spawned(t, e, "old", "dev", boss)
+	theirs := spawned(t, e, "theirs", "dev", other)
+	for k, u := range map[string]store.Usage{
+		big: {CtxPct: 6, CtxTokens: 130000, CostUSD: -1}, small: {CtxPct: 60, CtxTokens: 110000, CostUSD: -1},
+		old: {CtxPct: 55, CtxTokens: -1, CostUSD: -1}, theirs: {CtxPct: 90, CtxTokens: 900000, CostUSD: -1},
+	} {
+		if _, err := e.d.st.SetUsage(k, u); err != nil {
+			t.Fatal(err)
+		}
+	}
+	var r struct{ Limits []limitOut }
+	if err := call(t, e.bus, "boss", "limits_get", nil, &r); err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, l := range r.Limits {
+		if l.Key == "relay_tokens" {
+			found = l.Value == "120000" && l.Default == "120000" && l.Env == "LEA_RELAY_TOKENS" && l.Source == "default"
+		}
+	}
+	if !found {
+		t.Fatalf("limits_get=%+v", r.Limits)
+	}
+	relays := func() string {
+		var as []agentView
+		if err := call(t, e.bus, "boss", "agents_list", nil, &as); err != nil {
+			t.Fatal(err)
+		}
+		var out []string
+		for _, a := range as {
+			if a.Relay {
+				out = append(out, a.Name)
+			}
+		}
+		return strings.Join(out, ",")
+	}
+	if got := relays(); got != "big,old" {
+		t.Fatalf("at 120000: %q", got)
+	}
+	set := func(v string) {
+		t.Helper()
+		if err := call(t, e.api, "", "limits_set", map[string]any{"key": "relay_tokens", "value": v}, nil); err != nil {
+			t.Fatal(err)
+		}
+	}
+	set("100000")
+	if got := relays(); got != "big,old,small" {
+		t.Fatalf("at 100000: %q", got)
+	}
+	set("200000")
+	if got := relays(); got != "old" {
+		t.Fatalf("at 200000: %q", got)
+	}
+	set("0") // the 50% rule
+	if got := relays(); got != "old,small" {
+		t.Fatalf("at 0: %q", got)
+	}
+	if err := call(t, e.api, "", "limits_set", map[string]any{"key": "relay_tokens", "value": "-5"}, nil); err == nil || !strings.Contains(err.Error(), "whole number") {
+		t.Fatalf("bad value: %v", err)
+	}
 }
