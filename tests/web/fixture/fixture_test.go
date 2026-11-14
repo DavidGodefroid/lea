@@ -155,17 +155,82 @@ func TestTheBrowserFlowOverHTTP(t *testing.T) {
 		}
 		return false
 	})
+	// A spawn request to the user (no lead runs yet): it appears, and is declined (#415).
+	if err := call(bus, "dev-1", "agents_request_spawn", map[string]any{"role": "reviewer", "brief": "review it"}, nil); err != nil {
+		t.Fatal(err)
+	}
+	st := until("the spawn request", func(st web.State, _ []map[string]any) bool { return len(st.Requests) == 1 })
+	var sr struct{ ID int64 }
+	json.Unmarshal(st.Requests[0], &sr)
+	if code, out := post("request_decide", map[string]any{"id": sr.ID, "verdict": "decline", "reason": "not now"}); code != 200 {
+		t.Fatalf("request_decide: %d %v", code, out)
+	}
+	until("the spawn request declined", func(st web.State, _ []map[string]any) bool { return len(st.Requests) == 0 })
+	if err := call(bus, "dev-1", "msg_inbox", nil, &inbox); err != nil || !strings.Contains(mustJSON(inbox), "not now") {
+		t.Fatalf("dev-1 inbox %v %v", inbox, err)
+	}
 	if code, out := post("agent_new", map[string]any{"tower": true}); code != 200 {
 		t.Fatalf("tower: %d %v", code, out)
 	}
+	towerName := ""
 	until("the tower", func(_ web.State, as []map[string]any) bool {
 		for _, a := range as {
 			if a["label"] == "Control Tower" && a["role"] == "lead" {
+				towerName, _ = a["name"].(string)
 				return true
 			}
 		}
 		return false
 	})
+
+	// The tower's grant requests, grouped into one lea allow; one approved, one denied (#415).
+	for _, act := range []string{"pr-create", "close-issue"} {
+		if err := call(bus, towerName, "grants_request", map[string]any{"action": act, "repo": "lea", "github": "o/lea"}, nil); err != nil {
+			t.Fatal(err)
+		}
+	}
+	st = until("two grant requests", func(st web.State, _ []map[string]any) bool { return len(st.GrantRequests) == 2 })
+	if st.GrantAdvice == nil || st.GrantAdvice.Command != "lea allow pr issues --repo lea" || st.GrantRequests[0].Capability != "pr" {
+		t.Fatalf("advice %+v, requests %+v", st.GrantAdvice, st.GrantRequests)
+	}
+	g1, g2 := st.GrantRequests[0].ID, st.GrantRequests[1].ID
+	if code, out := post("grant_request_decide", map[string]any{"id": g1, "verdict": "approve"}); code != 200 {
+		t.Fatalf("approve: %d %v", code, out)
+	}
+	if code, out := post("grant_request_decide", map[string]any{"id": g2, "verdict": "deny"}); code != 200 {
+		t.Fatalf("deny: %d %v", code, out)
+	}
+	until("the grant requests decided", func(st web.State, _ []map[string]any) bool { return len(st.GrantRequests) == 0 })
+	var tin any
+	if err := call(bus, towerName, "msg_inbox", nil, &tin); err != nil || !strings.Contains(mustJSON(tin), "approved by the user") ||
+		!strings.Contains(mustJSON(tin), "denied") {
+		t.Fatalf("tower inbox %v %v", tin, err)
+	}
+	var mine []map[string]any
+	if err := call(bus, towerName, "grants_list", nil, &mine); err != nil || !strings.Contains(mustJSON(mine), "pr-create") || strings.Contains(mustJSON(mine), "close-issue") {
+		t.Fatalf("grants %v %v", mine, err)
+	}
+
+	// The tower's questions: the open one is answered from the page, the next one opens.
+	for _, q := range []string{"deploy?", "merge?"} {
+		if err := call(bus, towerName, "user_ask", map[string]any{"question": q}, nil); err != nil {
+			t.Fatal(err)
+		}
+	}
+	st = until("two questions", func(st web.State, _ []map[string]any) bool { return len(st.Questions) == 2 })
+	var q1 struct{ ID int64 }
+	json.Unmarshal(st.Questions[0], &q1)
+	if code, out := post("question_answer", map[string]any{"id": q1.ID, "text": "yes, deploy"}); code != 200 {
+		t.Fatalf("question_answer: %d %v", code, out)
+	}
+	until("the next question open", func(st web.State, _ []map[string]any) bool {
+		return len(st.Questions) == 1 && strings.Contains(string(st.Questions[0]), `"merge?"`) && strings.Contains(string(st.Questions[0]), `"open"`)
+	})
+	if err := call(bus, towerName, "msg_inbox", nil, &tin); err != nil || !strings.Contains(mustJSON(tin), "yes, deploy") ||
+		!strings.Contains(mustJSON(tin), "is now open") {
+		t.Fatalf("tower inbox %v %v", tin, err)
+	}
+
 	for m, p := range map[string]map[string]any{
 		"agent_label": {"key": container + "/dev-1", "label": "builder"},
 		"agent_pause": {"key": container + "/dev-1", "paused": true},
@@ -187,7 +252,7 @@ func TestTheBrowserFlowOverHTTP(t *testing.T) {
 		call(bus, "dev-1", "approval_request", map[string]any{"tool": "Bash", "input": map[string]any{"command": "make test"}, "timeout_s": 30, "always": true}, &v)
 		verdict <- v
 	}()
-	st := until("the permission", func(st web.State, _ []map[string]any) bool { return len(st.Approvals) == 1 })
+	st = until("the permission", func(st web.State, _ []map[string]any) bool { return len(st.Approvals) == 1 })
 	var p struct{ ID int64 }
 	json.Unmarshal(st.Approvals[0], &p)
 	if code, out := post("approval_decide", map[string]any{"id": p.ID, "verdict": "allow"}); code != 200 {

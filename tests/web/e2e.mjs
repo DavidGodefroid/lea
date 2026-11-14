@@ -13,6 +13,10 @@
 //   - the spawn form starts a labelled agent, N a control tower; rename, pause, hold and stop;
 //   - a permission prompt waits for the browser, and Allow answers it; once the browser is gone
 //     the next one is not held (the agent's own dialog asks at once);
+//   - a lead's grant requests appear grouped with their one-off, durable and not-covered lines,
+//     and Approve / Approve all answer them; the tower's open question is answered from the
+//     page, the tower gets the answer and the next question opens (#415);
+//   - the allowances screen lists the capabilities, the egress screen says allowing is durable;
 //   - the page has no console error and no horizontal overflow at 375 px, light and dark.
 // SCREENSHOTS=DIR keeps screenshots. Without Chrome it says so and exits 0, unless
 // WEB_E2E=required (CI). LEA_BIN and LEA_WEB_FIXTURE name the binaries (build/ by default).
@@ -184,6 +188,43 @@ async function main() {
     const tin = await op({ op: 'inbox', agent: towerKey.split('/')[1] });
     check('the tower chat sends the tower a request', JSON.stringify(tin).includes('ship the web UI') && JSON.stringify(tin).includes('"kind":"request"'), tin);
 
+    // The tower's grant requests (#415): grouped, with the one-off, durable and not-covered lines
+    // from the server; Approve answers one, Approve all the rest, as lea approve gN does.
+    const tname = towerKey.split('/')[1];
+    for (const [action, tag] of [['pr-create', ''], ['release-create', 'v0.15.*'], ['close-issue', '']]) {
+      await op({ op: 'grants', agent: tname, action, repo: 'lea', github: 'o/lea', tag });
+    }
+    ms = await until(`document.querySelectorAll('.card.grants li[data-request^="g"]').length === 3`);
+    check('pending grant requests appear, grouped, within 2 s', ms >= 0 && ms < 2000, ms);
+    const advice = await $(`document.querySelector('.card.grants .advice').textContent`);
+    check('the grant card shows one-off, durable and not-covered lines', advice.includes('One-off: lea approve g') &&
+      advice.includes(`lea allow pr issues release --repo lea --tag 'v0.15.*'`) && advice.includes('lea allow off N') &&
+      advice.includes('Not covered by pr issues release: push, merge, delete-branch, release-tag'), advice);
+    if (shots) await shot(page, shots, 'grants-1280', 1280);
+    await $(`document.querySelector('.card.grants li[data-request^="g"] button.allow').click()`);
+    ms = await until(`document.querySelectorAll('.card.grants li[data-request^="g"]').length === 2`);
+    check('Approve answers one grant request', ms >= 0, ms);
+    let tin2 = await op({ op: 'inbox', agent: tname });
+    check('the lead is told its grant request is approved', JSON.stringify(tin2).includes('approved by the user'), tin2);
+    await $(`[...document.querySelectorAll('.card.grants button')].find(b => b.textContent.startsWith('Approve all')).click()`);
+    ms = await until(`!document.querySelector('.card.grants')`);
+    check('Approve all answers the rest', ms >= 0, ms);
+    tin2 = await op({ op: 'inbox', agent: tname });
+    check('the lead is told of both', (JSON.stringify(tin2).match(/approved by the user/g) || []).length === 2, tin2);
+
+    // The tower's questions: the open one is answered from the page; the next one opens.
+    await op({ op: 'ask', agent: tname, question: 'deploy to prod?' });
+    await op({ op: 'ask', agent: tname, question: 'merge the docs?' });
+    ms = await until(`(document.querySelector('.card.question .body') || {}).textContent === 'deploy to prod?'`);
+    check('the tower\'s open question appears with its queue', ms >= 0 && (await $(`document.querySelector('.card.question summary').textContent`)) === '1 more question waits', ms);
+    const qid = await $(`document.querySelector('.card.question').dataset.question`);
+    await $(`(() => { const t = document.getElementById('answer-${qid}'); t.value = 'yes, deploy'; t.dispatchEvent(new Event('input'));
+      document.querySelector('.card.question button.primary').click(); return true; })()`);
+    ms = await until(`(document.querySelector('.card.question .body') || {}).textContent === 'merge the docs?'`);
+    check('answering opens the next question', ms >= 0, ms);
+    const tq = JSON.stringify(await op({ op: 'inbox', agent: tname }));
+    check('the tower receives the answer as the user\'s', tq.includes('yes, deploy') && tq.includes('"from":"user"') && tq.includes('is now open'), tq);
+
     // Rename, pause, hold, stop dev-1.
     await $(`document.querySelector('.strip[data-key="${C}/dev-1"]').click()`);
     await until(`document.getElementById('d-title').textContent === 'dev-1'`);
@@ -229,6 +270,22 @@ async function main() {
       if (shots) await shot(page, shots, `board-${scheme}-375`, 375);
     }
     check('no console error', errors.length === 0, errors);
+
+    // The allowances screen lists the capabilities of grants.Capabilities; the egress screen says
+    // there is no one-off egress approval. (After the console check: without the launcher here,
+    // their host calls answer 400.)
+    await page.send('Emulation.setDeviceMetricsOverride', { width: 1280, height: 900, deviceScaleFactor: 1, mobile: false });
+    await $(`document.getElementById('btn-allow').click()`);
+    ms = await until(`document.getElementById('dlg-allow').open && document.querySelectorAll('#allow-caps input[name=cap]').length >= 9`);
+    const capNames = await $(`[...document.querySelectorAll('#allow-caps input')].map(i => i.value).join(' ')`);
+    check('the allowances screen offers every capability and the deliver preset', ms >= 0 &&
+      capNames === 'deliver push pr merge delete-branch issues stop-finished release-tag release', capNames);
+    if (shots) await shot(page, shots, 'allowances-1280', 1280);
+    await $(`document.getElementById('dlg-allow').close()`);
+    await $(`document.getElementById('btn-egress').click()`);
+    check('the egress screen says allowing a host is durable', (await until(`document.getElementById('dlg-egress').open &&
+      document.getElementById('dlg-egress').textContent.includes('no one-off egress approval')`)) >= 0);
+    await $(`document.getElementById('dlg-egress').close()`);
 
     // The browser gone, prompts no longer wait for it.
     await page.close();

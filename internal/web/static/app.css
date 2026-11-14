@@ -81,6 +81,45 @@ button:disabled { opacity: 0.5; cursor: default; }
 .prompt .allow { background: var(--working); border-color: var(--working); color: #fff; font-weight: 600; }
 @keyframes arrive { from { transform: translateY(-6px); opacity: 0; } to { transform: none; opacity: 1; } }
 
+/* Requests and questions (#415): what else waits for the user. */
+.card { background: var(--strip); border: 2px solid var(--tower); border-radius: 8px; padding: 10px 12px; display: grid; gap: 6px; min-width: 0; }
+.card h3 { margin: 0; font-size: 15px; overflow-wrap: anywhere; }
+.card p { margin: 0; overflow-wrap: anywhere; }
+.card .sub { color: var(--ink-2); font-size: 13px; }
+.card .body { white-space: pre-wrap; }
+.card .row { display: flex; flex-wrap: wrap; gap: 6px; }
+.card .allow { background: var(--working); border-color: var(--working); color: #fff; font-weight: 600; }
+.card .what { margin: 4px 0 0; font: 13px/1.4 ui-monospace, "SF Mono", Menlo, Consolas, monospace; color: var(--ink-2); white-space: pre-wrap; word-break: break-word; max-height: 10em; overflow: auto; }
+.card summary { cursor: pointer; font-size: 13px; color: var(--ink-2); }
+.card.spawn { border-color: var(--waiting); }
+.card.grants { border-color: var(--waiting); }
+.answer { display: flex; gap: 8px; align-items: flex-end; }
+.answer textarea { flex: 1; min-width: 0; resize: vertical; border: 1px solid var(--line); border-radius: 8px; padding: 7px 9px; background: var(--rack); }
+.queue ol { margin: 4px 0 0; padding-left: 18px; font-size: 14px; }
+.glist { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; }
+.glist li, .sets li { display: grid; gap: 2px; padding: 6px 8px; background: var(--strip-2); border-radius: 6px; min-width: 0; }
+.line { display: flex; justify-content: space-between; align-items: center; gap: 8px; flex-wrap: wrap; overflow-wrap: anywhere; }
+.what-g { font-weight: 600; min-width: 0; }
+.advice { display: grid; gap: 3px; font-size: 13px; border-left: 3px solid var(--line); padding-left: 8px; }
+.advice .durable { font-weight: 600; }
+.advice .not-covered { color: var(--ink-2); }
+
+/* The allowances and egress screens */
+.dlg.wide { width: min(640px, calc(100vw - 32px)); }
+.dlg h3 { margin: 4px 0 0; font-size: 15px; }
+.sets { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; max-height: 30vh; overflow: auto; font-size: 14px; }
+.sets .sub { color: var(--ink-2); font-size: 13px; }
+.caps { border: 1px solid var(--line); border-radius: 6px; display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 4px 12px; padding: 8px 10px; margin: 0; }
+.caps legend { font-weight: 600; font-size: 14px; padding: 0 4px; }
+.dlg .cap { display: flex; gap: 6px; align-items: baseline; font-weight: 400; font-size: 13px; }
+.grid2 { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 8px 12px; }
+.preview { background: var(--strip-2); border-radius: 6px; padding: 8px 10px; font-size: 13px; display: grid; gap: 4px; overflow-wrap: anywhere; }
+.preview ul { margin: 0; padding-left: 18px; }
+.preview .unseen { color: var(--waiting); font-weight: 600; }
+.preview .warn { margin: 0; color: var(--waiting); font-weight: 600; }
+.said { margin: 0; font: 12px/1.4 ui-monospace, "SF Mono", Menlo, Consolas, monospace; white-space: pre-wrap; word-break: break-word; background: var(--strip-2); border-radius: 6px; padding: 6px 8px; }
+code { font: 12.5px ui-monospace, "SF Mono", Menlo, Consolas, monospace; overflow-wrap: anywhere; }
+
 /* The rack and its strips */
 .layout { flex: 1; display: grid; grid-template-columns: minmax(320px, 1fr) minmax(0, 1.25fr); gap: 16px; padding: 16px; min-height: 0; }
 .rack { min-width: 0; }
@@ -158,6 +197,8 @@ button:disabled { opacity: 0.5; cursor: default; }
 @media (max-width: 760px) {
   .bar { flex-wrap: wrap; gap: 8px; }
   .link { order: 3; width: 100%; }
+  .actions { flex-wrap: wrap; justify-content: flex-end; }
+  .answer { flex-direction: column; align-items: stretch; }
   .layout { grid-template-columns: 1fr; padding: 12px; }
   .detail { position: fixed; inset: 0; max-height: none; border-radius: 0; z-index: 5; }
   .back { display: block; }

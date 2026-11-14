@@ -97,6 +97,9 @@ func (f *fakeDaemon) serve(c net.Conn) {
 			return
 		}
 	}
+	if ans == nil && req.Method != "board_list" && strings.HasSuffix(req.Method, "_list") {
+		ans = []any{}
+	}
 	if ans == nil {
 		ans = struct{}{}
 	}
@@ -358,7 +361,7 @@ func TestPagesCarryAStrictCSP(t *testing.T) {
 func TestOnlyAllowlistedMethodsReachTheDaemon(t *testing.T) {
 	ts := newTestServer(t)
 	c := ts.login(t)
-	for _, m := range []string{"agents_watch", "container_attach", "allow_set", "grant_revoke", "agents_spawn", "deck_web_attach", "request_decide", "msg_inbox", "sound"} {
+	for _, m := range []string{"agents_watch", "container_attach", "allow_set", "grant_revoke", "agents_spawn", "deck_web_attach", "request_list", "grant_request_list", "question_drop", "msg_inbox", "sound"} {
 		if code, _ := ts.post(t, m, map[string]any{"key": "lea-a/dev-1"}, c, nil); code != http.StatusNotFound {
 			t.Fatalf("%s: %d", m, code)
 		}

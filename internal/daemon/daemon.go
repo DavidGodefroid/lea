@@ -363,7 +363,7 @@ func (d *Daemon) dispatch(ctx context.Context, o Origin, req wire.Request) (any,
 		req.Method == "thread_list" || req.Method == "agent_role" || req.Method == "request_list" || req.Method == "request_decide" || req.Method == "board_list" ||
 		req.Method == "sound" || req.Method == "allow_set" || req.Method == "allow_off" || req.Method == "allow_list" ||
 		req.Method == "grant_revoke" || req.Method == "grant_request_list" || req.Method == "grant_request_decide" ||
-		req.Method == "question_list" || req.Method == "question_drop" || req.Method == "agent_hold" || req.Method == "deck_web_attach" {
+		req.Method == "question_list" || req.Method == "question_drop" || req.Method == "question_answer" || req.Method == "agent_hold" || req.Method == "deck_web_attach" {
 		if o.Container != "" {
 			return nil, fmt.Errorf("%s: host only", req.Method)
 		}
@@ -475,6 +475,8 @@ func (d *Daemon) dispatch(ctx context.Context, o Origin, req wire.Request) (any,
 		return d.questionList()
 	case "question_drop":
 		return d.questionDrop(req.Params)
+	case "question_answer":
+		return d.questionAnswer(req.Params)
 	case "agent_hold":
 		return d.agentHold(req.Params)
 	case "deck_web_attach":

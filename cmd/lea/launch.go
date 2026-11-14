@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -97,47 +98,58 @@ func runLauncher(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		fmt.Fprintln(stderr, "lea: the launcher runs on the host; inside lea, use lea msg, lea inbox and the agents_* tools")
 		return 2
 	}
-	exe, err := executable()
-	if err == nil {
-		exe, err = filepath.EvalSymlinks(exe)
+	l, err := newLauncher(stdin, stdout, stderr)
+	var ce configError
+	if errors.As(err, &ce) && len(args) > 0 && args[0] == "doctor" {
+		// lea doctor reports the line instead of being blocked by it: libexec/lea-sh doctor
+		// loads the configuration in shell, as it always does, and is told what Go refused.
+		sh := filepath.Join(ce.root, "libexec", "lea-sh")
+		return handOver(stderr, []string{sh, "doctor"}, withEnv(os.Environ(), "LEA_GO_CONFIG_ERROR", ce.msg))
 	}
 	if err != nil {
 		fmt.Fprintln(stderr, "lea: error:", err)
 		return 1
 	}
-	root := filepath.Dir(filepath.Dir(exe)) // <root>/build/lea
-	if !fileExists(filepath.Join(root, "config", "lea.conf")) {
-		fmt.Fprintf(stderr, "lea: error: %s is not in a lea checkout (no config/lea.conf next to it); run the launcher from <checkout>/build/lea\n", exe)
-		return 1
-	}
-	cwd, err := os.Getwd()
-	if err == nil {
-		cwd, err = filepath.EvalSymlinks(cwd)
-	}
-	if err != nil {
-		fmt.Fprintln(stderr, "lea: error: the working directory:", err)
-		return 1
-	}
-	cfg, err := launcher.LoadConfig(os.Getenv, root, cwd)
-	if err != nil {
-		msg := clean(err.Error(), false)
-		if len(args) > 0 && args[0] == "doctor" {
-			// lea doctor reports the line instead of being blocked by it: libexec/lea-sh doctor
-			// loads the configuration in shell, as it always does, and is told what Go refused.
-			sh := filepath.Join(root, "libexec", "lea-sh")
-			return handOver(stderr, []string{sh, "doctor"}, withEnv(os.Environ(), "LEA_GO_CONFIG_ERROR", msg))
-		}
-		fmt.Fprintln(stderr, "lea: error:", msg)
-		return 1
-	}
-	l := &launcher.Launcher{Root: root, Core: exe, Cwd: cwd, Cfg: cfg, Environ: os.Environ(),
-		Stdin: stdin, Stdout: stdout, Stderr: stderr, Exec: execProcess, Sleep: time.Sleep, Getpid: os.Getpid, Version: version}
 	// INT/TERM run the exit traps (locks, an open session), then exit 130. Signals are caught,
 	// never ignored: an ignored signal would be inherited by every child across exec.
 	sigs := make(chan os.Signal, 1)
 	signal.Notify(sigs, os.Interrupt, syscall.SIGTERM)
 	l.Run(args, sigs, os.Exit)
 	return 0 // not reached: Run exits
+}
+
+// configError is a configuration the launcher refused to load, from the checkout root.
+type configError struct{ root, msg string }
+
+func (e configError) Error() string { return e.msg }
+
+// newLauncher is the launcher of this binary's checkout for the working directory, its
+// configuration loaded.
+func newLauncher(stdin io.Reader, stdout, stderr io.Writer) (*launcher.Launcher, error) {
+	exe, err := executable()
+	if err == nil {
+		exe, err = filepath.EvalSymlinks(exe)
+	}
+	if err != nil {
+		return nil, err
+	}
+	root := filepath.Dir(filepath.Dir(exe)) // <root>/build/lea
+	if !fileExists(filepath.Join(root, "config", "lea.conf")) {
+		return nil, fmt.Errorf("%s is not in a lea checkout (no config/lea.conf next to it); run the launcher from <checkout>/build/lea", exe)
+	}
+	cwd, err := os.Getwd()
+	if err == nil {
+		cwd, err = filepath.EvalSymlinks(cwd)
+	}
+	if err != nil {
+		return nil, fmt.Errorf("the working directory: %w", err)
+	}
+	cfg, err := launcher.LoadConfig(os.Getenv, root, cwd)
+	if err != nil {
+		return nil, configError{root, clean(err.Error(), false)}
+	}
+	return &launcher.Launcher{Root: root, Core: exe, Cwd: cwd, Cfg: cfg, Environ: os.Environ(),
+		Stdin: stdin, Stdout: stdout, Stderr: stderr, Exec: execProcess, Sleep: time.Sleep, Getpid: os.Getpid, Version: version}, nil
 }
 
 // execve replaces the process (the deck's tmux attach), as the shell's exec does.

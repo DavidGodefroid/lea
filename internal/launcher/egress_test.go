@@ -286,6 +286,25 @@ func TestEgressDenied(t *testing.T) {
 	}
 }
 
+// lea web reads the refusals as data (#415): who asked, and what allows a host now.
+func TestEgressRefused(t *testing.T) {
+	w := newWorld(t, repoRoot(t))
+	writeUserConf(t, w, "LEA_EGRESS_ALLOW=default,deb.debian.org\n")
+	w.env["FAKE_DOCKER_OUT_INSPECT__F"] = "true"
+	w.env["FAKE_DOCKER_OUT_LOGS___SINCE"] = "1730000000.100 172.25.0.5 CONNECT deb.debian.org:443 403 - ERR_LEA_EGRESS\n" +
+		"1730000001.100 172.25.0.5 CONNECT pkg.example:443 403 - ERR_LEA_EGRESS"
+	w.env["FAKE_DOCKER_OUT_PS__Q"] = "abc"
+	w.env["FAKE_DOCKER_OUT_INSPECT__F_AT_ABC"] = "/lea-0123 172.25.0.5"
+	rs, err := w.launcher().EgressRefused("24h")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rs) != 2 || rs[0].Host != "pkg.example" || rs[0].AllowedBy != "" || rs[0].Last != 1730000001 ||
+		!slices.Equal(rs[0].From, []string{"lea-0123"}) || rs[1].Host != "deb.debian.org" || rs[1].AllowedBy != "LEA_EGRESS_ALLOW (deb.debian.org)" {
+		t.Fatalf("%+v", rs)
+	}
+}
+
 func TestEgressList(t *testing.T) {
 	w := newWorld(t, repoRoot(t))
 	writeUserConf(t, w, "LEA_EGRESS_ALLOW=default,deb.debian.org\n")

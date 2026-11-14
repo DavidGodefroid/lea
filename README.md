@@ -331,6 +331,32 @@ in a light and a dark theme (it follows your system; the ◐ button switches it)
 its keys. See [How lea keeps your machine safe](#how-lea-keeps-your-machine-safe) for what
 protects it.
 
+The other decisions `lea requests`, `lea approve`, `lea allow` and `lea egress` take on the host
+show on the page too:
+
+- **Spawn requests** (`sN`, an agent asks for another when no lead runs): **Accept** or
+  **Decline**, as `lea approve sN` / `lea deny sN`. They have no durable form.
+- **Grant requests** (`gN`, a lead asks for a grant for itself and its children): grouped in one
+  card, each with the capability it maps to, **Approve** / **Deny** each or **Approve all**, as
+  `lea approve gN` / `lea deny gN`. Under them, in three lines built from lea's capability table:
+  the one-off answer, the one `lea allow` command that covers them all for every agent of the lea
+  (and `lea allow off N` to undo it), and what that command does not cover. **Allow durably…**
+  opens the allowances screen with that command filled in.
+- **The control tower's questions**: its open question shows with a box to answer it, and the
+  queue behind it. The tower gets your answer as your message, with lea's note that the question
+  is answered (and to whom to relay it); the next question opens, as after a prompt in its
+  terminal.
+- **Allowances** (`g`): what agents of this lea may do without asking, each with **Revoke**
+  (`lea allow off N`), and a form to add one: capabilities or the `deliver` preset, repositories
+  (empty: every one with a forge origin), branches, one agent, release tags, a duration.
+  **Preview** reads each repository's origin on the host, as `lea allow` does, and flags a pin
+  you have not recorded yet (agents can rewrite `.git/config`); **Record** records exactly the
+  pins you saw.
+- **Egress** (`w`): the hosts lea-proxy refused in the last 24 hours, who asked, and **Allow**
+  for each; a host field with **Allow** and **Deny**, the same as `lea egress allow|deny HOST`,
+  applied live. There is no one-off egress approval: an allowed host stays allowed until you deny
+  it.
+
 ## Without the deck
 
 The deck is optional. `lea config deck off` (or `sh install.sh --no-deck [--tool CMD]`, or
@@ -1264,7 +1290,11 @@ so. Changes apply after `lea init` (endpoints, keys, images, locksql) or `lea st
   prints carries a random one-time token (32 bytes) that the browser exchanges for an `HttpOnly`,
   `SameSite=Strict` cookie; every API call needs that cookie, and a request whose `Host` or
   `Origin` is not `127.0.0.1:PORT` or `localhost:PORT` is refused (another site's page, DNS
-  rebinding). The API forwards a fixed list of the daemon's methods, for this lea's agents only;
+  rebinding). The API forwards a fixed list of the daemon's methods, for this lea's agents only
+  (a request, grant request or question is answered only when the daemon lists it for one of
+  them; allowances are always this lea's); the daemon methods behind requests, grants,
+  allowances and questions (`question_answer` among them) are host-only, refused on any agent's
+  bus socket, and `lea allow` and `lea egress` from the page run on the host itself;
   there is no CORS, and a strict Content-Security-Policy keeps any other script or origin out
   of the page. To use it from another machine, forward the port over SSH
   (`ssh -L 8414:127.0.0.1:8414 host`, then `lea web --port 8414` on the host).

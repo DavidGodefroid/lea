@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"os/signal"
+	"path/filepath"
 	"runtime"
 	"strconv"
 	"syscall"
@@ -15,7 +16,7 @@ import (
 	"github.com/DavidGodefroid/lea/internal/web"
 )
 
-const webUsage = "usage: lea web --container NAME [--port N] [--open]"
+const webUsage = "usage: lea web --container NAME [--projects DIR] [--port N] [--open]"
 
 // openURL opens a URL in the user's browser; a test seam.
 var openURL = func(url string) error {
@@ -27,20 +28,28 @@ var openURL = func(url string) error {
 }
 
 // runWeb is lea web (#414): the deck in the browser, for one lea, on the host's loopback. The
-// launcher names the container (the projects directory's lea); it serves until ctrl+c.
+// launcher names the container (the projects directory's lea) and that directory, whose
+// repositories lea allow pins (#415); it serves until ctrl+c.
 func runWeb(args []string, stdout, stderr io.Writer) int {
-	var container string
+	var container, proj string
 	port, open := 0, false
 	for i := 0; i < len(args); i++ {
 		switch args[i] {
-		case "--container", "--port":
+		case "--container", "--projects", "--port":
 			if i+1 >= len(args) {
 				fmt.Fprintln(stderr, webUsage)
 				return 2
 			}
-			if args[i] == "--container" {
+			switch args[i] {
+			case "--container":
 				container = args[i+1]
-			} else {
+			case "--projects":
+				if !filepath.IsAbs(args[i+1]) {
+					fmt.Fprintln(stderr, "lea web: --projects takes an absolute directory")
+					return 2
+				}
+				proj = args[i+1]
+			default:
 				p, err := strconv.Atoi(args[i+1])
 				if err != nil || p < 1 || p > 65535 {
 					fmt.Fprintln(stderr, "lea web: --port must be a port number (1-65535)")
@@ -73,6 +82,8 @@ func runWeb(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintln(stderr, "lea web:", clean(err.Error(), false))
 		return 1
 	}
+	// lea allow and lea egress from the page, on the host (#415).
+	s.SetHost(&webHost{container: container, proj: proj})
 	l, err := s.Listen(port)
 	if err != nil {
 		fmt.Fprintln(stderr, "lea web:", clean(err.Error(), false))
