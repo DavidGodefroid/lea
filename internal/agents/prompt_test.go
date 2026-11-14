@@ -113,7 +113,7 @@ func TestFirstPromptNamesTheLabelAndTheRule(t *testing.T) {
 func TestFirstPromptExplainsEgressRefusals(t *testing.T) {
 	p := firstPrompt(store.Agent{Name: "dev-1", Role: "dev"}, "", "", true, nil)
 	for _, want := range []string{"CONNECT tunnel failed, response 403", "X-Squid-Error: ERR_LEA_EGRESS",
-		"run on the host: lea egress allow HOST (applies live, no restart)", "you cannot allow it yourself", "Do not retry, switch mirrors or work around the proxy"} {
+		"run on the host: lea egress allow HOST (applies live, no restart; there is no one-off form: it stays until lea egress deny HOST)", "you cannot allow it yourself", "Do not retry, switch mirrors or work around the proxy"} {
 		if !strings.Contains(p, want) {
 			t.Fatalf("missing %q in %q", want, p)
 		}

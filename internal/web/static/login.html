@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light dark">
+<title>lea web: sign in</title>
+<link rel="icon" href="data:,">
+<link rel="stylesheet" href="/static/app.css">
+<link rel="stylesheet" href="/static/remote.css">
+<script src="/static/login.js" defer></script>
+</head>
+<body class="signin">
+<main class="signin-card">
+  <div class="brand"><span class="mark" aria-hidden="true"></span><span>lea</span></div>
+  <h1>Sign in to lea web</h1>
+  <p>This lea web listens on the network. Type its token: the one <code>lea web --listen</code> printed, or the file it named, on the machine lea runs on.</p>
+  <form id="signin" autocomplete="off">
+    <label for="token">Token</label>
+    <input id="token" name="token" type="password" inputmode="text" spellcheck="false" autocapitalize="off" required minlength="64" maxlength="64">
+    <button type="submit" class="primary">Sign in</button>
+    <p id="signin-error" class="signin-error" role="alert" hidden></p>
+  </form>
+</main>
+</body>
+</html>

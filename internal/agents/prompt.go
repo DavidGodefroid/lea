@@ -58,7 +58,7 @@ func firstPrompt(a store.Agent, repo, worktree string, brief bool, covered []str
 	b.WriteString(" When a download fails with CONNECT tunnel failed, response 403 or 403 Forbidden through lea-proxy (the HTTPS_PROXY of your environment)," +
 		" lea-proxy refused the host: curl -sI https://HOST/ shows X-Squid-Error: ERR_LEA_EGRESS when it is not in the egress allowlist." +
 		" Do not retry, switch mirrors or work around the proxy: tell the user in one line, as \"lea-proxy refused HOST: not in the egress allowlist." +
-		" To allow it, run on the host: lea egress allow HOST (applies live, no restart).\", and wait; you cannot allow it yourself.")
+		" To allow it, run on the host: lea egress allow HOST (applies live, no restart; there is no one-off form: it stays until lea egress deny HOST).\", and wait; you cannot allow it yourself.")
 	// A lock without a socket (#343): lea knows its state, the agent must not guess a command.
 	b.WriteString(" When a Lock's client (locksql, lockmq, lockfile, locklog) finds no console, call lock_hint and report its hint as is;" +
 		" never tell the user to run lox up or lox approve, or to restart or recreate a lock.")

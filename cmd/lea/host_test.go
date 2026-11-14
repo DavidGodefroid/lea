@@ -730,3 +730,6 @@ func TestApproveAndDenyAnswerWhatRequestsLists(t *testing.T) {
 		}
 	}
 }
+func (c *cliAgents) Capture(ctx context.Context, k string) (agents.Screen, error) {
+	return agents.Screen{}, nil
+}

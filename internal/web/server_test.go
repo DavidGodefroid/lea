@@ -127,6 +127,23 @@ func (f *fakeDaemon) last(method string) map[string]any {
 	return nil
 }
 
+// nth is the params of the n-th call of method (0 first), nil when there were fewer.
+func (f *fakeDaemon) nth(method string, n int) map[string]any {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	for _, c := range f.calls {
+		if c.Method == method {
+			if n == 0 {
+				var m map[string]any
+				json.Unmarshal(c.Params, &m)
+				return m
+			}
+			n--
+		}
+	}
+	return nil
+}
+
 func (f *fakeDaemon) attachedNow() int {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -280,6 +297,69 @@ func TestTheTokenIsExchangedOnceForAStrictHttpOnlyCookie(t *testing.T) {
 	}
 	resp.Body.Close()
 	if resp.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("the token worked twice: %d", resp.StatusCode)
+	}
+	if code, _ := ts.post(t, "providers_list", map[string]any{}, c, nil); code != http.StatusOK {
+		t.Fatalf("with the cookie: %d", code)
+	}
+}
+
+func TestAnUnusedTokenExpires(t *testing.T) {
+	ts := newTestServer(t)
+	at := time.Now().Add(TokenTTL + time.Second)
+	ts.s.now = func() time.Time { return at }
+	resp, err := noRedirect().Get(ts.s.URL())
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusUnauthorized || len(resp.Cookies()) != 0 {
+		t.Fatalf("an expired token: %d %v", resp.StatusCode, resp.Cookies())
+	}
+	if TokenTTL > 5*time.Minute {
+		t.Fatalf("the token lives %v", TokenTTL)
+	}
+}
+
+// postLogin POSTs the form of the bootstrap page, as a browser does from a local file.
+func (ts *testServer) postLogin(t *testing.T, tok string) *http.Response {
+	t.Helper()
+	req, _ := http.NewRequest("POST", ts.url+"/login", strings.NewReader("token="+tok))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("Origin", "null")
+	req.Header.Set("Sec-Fetch-Site", "cross-site")
+	resp, err := noRedirect().Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	return resp
+}
+
+func TestTheBootstrapPagePostsTheTokenOnce(t *testing.T) {
+	ts := newTestServer(t)
+	tok := ts.s.token
+	page := string(ts.s.BootstrapPage())
+	if !strings.Contains(page, `action="`+ts.url+`/login"`) || !strings.Contains(page, `value="`+tok+`"`) || !strings.Contains(page, `method="post"`) {
+		t.Fatalf("bootstrap page %s", page)
+	}
+	if resp := ts.postLogin(t, strings.Repeat("a", 64)); resp.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("a wrong token: %d", resp.StatusCode)
+	}
+	resp := ts.postLogin(t, tok)
+	if resp.StatusCode != http.StatusSeeOther || resp.Header.Get("Location") != "/" {
+		t.Fatalf("login: %d %q", resp.StatusCode, resp.Header.Get("Location"))
+	}
+	var c *http.Cookie
+	for _, k := range resp.Cookies() {
+		if k.Name == cookieName {
+			c = k
+		}
+	}
+	if c == nil || c.Value != ts.s.session {
+		t.Fatalf("cookies %v", resp.Cookies())
+	}
+	if resp := ts.postLogin(t, tok); resp.StatusCode != http.StatusUnauthorized {
 		t.Fatalf("the token worked twice: %d", resp.StatusCode)
 	}
 	if code, _ := ts.post(t, "providers_list", map[string]any{}, c, nil); code != http.StatusOK {
@@ -493,7 +573,8 @@ func TestTheEventStreamPushesEachChangeAndAttachesAsADeck(t *testing.T) {
 	if st.Version != 1 || st.Container != "lea-a" || len(st.Tasks) != 1 || len(st.Approvals) != 1 || len(st.Questions) != 0 {
 		t.Fatalf("state %+v", st)
 	}
-	if p := ts.d.last("agents_watch"); p["container"] != "lea-a" || p["since"] != float64(-1) {
+	// The stream asks again as soon as it sent an event: look at the watches in their order.
+	if p := ts.d.nth("agents_watch", 0); p["container"] != "lea-a" || p["since"] != float64(-1) {
 		t.Fatalf("first watch %v", p)
 	}
 	for i := 0; i < 100 && ts.d.attachedNow() != 1; i++ {
@@ -516,7 +597,7 @@ func TestTheEventStreamPushesEachChangeAndAttachesAsADeck(t *testing.T) {
 	if st.Version != 2 || time.Since(began) > time.Second {
 		t.Fatalf("version %d after %s", st.Version, time.Since(began))
 	}
-	if p := ts.d.last("agents_watch"); p["since"] != float64(1) {
+	if p := ts.d.nth("agents_watch", 1); p["since"] != float64(1) {
 		t.Fatalf("second watch %v", p)
 	}
 	// The browser leaves: the deck detaches.

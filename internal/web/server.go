@@ -19,12 +19,14 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"html"
 	"io/fs"
 	"net"
 	"net/http"
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/DavidGodefroid/lea/internal/client"
 	"github.com/DavidGodefroid/lea/internal/wire"
@@ -35,6 +37,8 @@ var staticFS embed.FS
 
 const (
 	cookieName = "lea_web"
+	// TokenTTL is how long the one-time token signs a browser in, unused (#436).
+	TokenTTL = 2 * time.Minute
 	// maxBody caps an API request's body: a message is at most 64 KiB, escaped JSON a few times that.
 	maxBody = 512 << 10
 	csp     = "default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; " +
@@ -67,10 +71,25 @@ type Server struct {
 	token, session string
 	mu             sync.Mutex
 	tokenUsed      bool
+	// expires ends the token unused; now is the clock, a seam for the tests.
+	expires time.Time
+	now     func() time.Time
 	// hosts are the Host headers (and origins, with http://) this server answers: 127.0.0.1:port
 	// and localhost:port, set by Listen.
 	hosts map[string]bool
 	port  int
+	// scheme is http on the loopback, https on the network (ListenRemote), where remote signs
+	// browsers in with the persistent token instead of the one-time one.
+	scheme string
+	remote *remoteAuth
+	// terms counts the open terminal streams (terminal.go); captureEvery paces them (0: the
+	// default).
+	terms        terminals
+	captureEvery time.Duration
+	// layoutPath is the deck's layout file of this lea (folders.go), foldersEvery how often the
+	// folder stream reads it (0: the default).
+	layoutPath   string
+	foldersEvery time.Duration
 	// retry is how long the event stream waits before it asks the daemon again after an error.
 	retry func(ctx context.Context)
 }
@@ -85,7 +104,8 @@ func New(call Caller, container string) (*Server, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &Server{call: call, container: container, token: tok, session: ses, hosts: map[string]bool{}, retry: sleepRetry}, nil
+	return &Server{call: call, container: container, token: tok, session: ses, hosts: map[string]bool{}, scheme: "http", retry: sleepRetry,
+		expires: time.Now().Add(TokenTTL), now: time.Now}, nil
 }
 
 func randomHex(n int) (string, error) {
@@ -120,9 +140,23 @@ func (s *Server) URL() string {
 	return "http://127.0.0.1:" + strconv.Itoa(s.port) + "/?token=" + s.token
 }
 
+// BootstrapPage is a page that signs the browser in by POSTing the token to /login: lea web --open
+// opens it as a private local file, so the token is never in a command line (#436) nor in the
+// browser's history.
+func (s *Server) BootstrapPage() []byte {
+	action := "http://127.0.0.1:" + strconv.Itoa(s.port) + "/login"
+	return []byte(`<!doctype html>
+<meta charset="utf-8"><meta name="referrer" content="no-referrer"><title>lea web</title>
+<form method="post" action="` + html.EscapeString(action) + `"><input type="hidden" name="token" value="` + html.EscapeString(s.token) + `">
+<noscript><button>Open lea web</button></noscript></form>
+<script>document.forms[0].submit()</script>
+`)
+}
+
 // Serve serves l until ctx ends.
 func (s *Server) Serve(ctx context.Context, l net.Listener) error {
-	hs := &http.Server{Handler: s.Handler(), BaseContext: func(net.Listener) context.Context { return ctx }}
+	hs := &http.Server{Handler: s.Handler(), BaseContext: func(net.Listener) context.Context { return ctx },
+		ReadHeaderTimeout: 10 * time.Second}
 	go func() { <-ctx.Done(); hs.Close() }()
 	err := hs.Serve(l)
 	if errors.Is(err, http.ErrServerClosed) {
@@ -138,13 +172,28 @@ func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /{$}", func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Query().Has("token") {
-			s.exchange(w, r)
+			s.exchange(w, r, r.URL.Query().Get("token"))
+			return
+		}
+		if s.remote != nil && !s.signedIn(r) {
+			r2 := r.Clone(r.Context())
+			r2.URL.Path = "/login.html"
+			files.ServeHTTP(w, r2)
 			return
 		}
 		files.ServeHTTP(w, r)
 	})
+	// The bootstrap page is a local file: its Origin is null, and the token alone signs in.
+	mux.HandleFunc("POST /login", func(w http.ResponseWriter, r *http.Request) {
+		r.Body = http.MaxBytesReader(w, r.Body, 4<<10)
+		s.exchange(w, r, r.PostFormValue("token"))
+	})
 	mux.Handle("GET /static/", http.StripPrefix("/static/", files))
+	mux.HandleFunc("POST /api/login", s.login)
+	mux.HandleFunc("POST /api/logout", s.api(s.logout))
 	mux.HandleFunc("GET /api/events", s.api(s.events))
+	mux.HandleFunc("GET /api/terminal", s.api(s.terminal))
+	mux.HandleFunc("GET /api/folders", s.api(s.folders))
 	mux.HandleFunc("POST /api/{method}", s.api(s.method))
 	mux.HandleFunc("/api/", s.api(func(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "no such API")
@@ -163,6 +212,9 @@ func (s *Server) guard(next http.Handler) http.Handler {
 		h.Set("Referrer-Policy", "no-referrer")
 		h.Set("Cross-Origin-Opener-Policy", "same-origin")
 		h.Set("Cross-Origin-Resource-Policy", "same-origin")
+		if s.remote != nil {
+			h.Set("Strict-Transport-Security", "max-age=31536000")
+		}
 		if !s.hosts[r.Host] {
 			writeError(w, http.StatusForbidden, "foreign Host")
 			return
@@ -179,8 +231,7 @@ func (s *Server) api(next http.HandlerFunc) http.HandlerFunc {
 			writeError(w, http.StatusForbidden, "foreign Origin")
 			return
 		}
-		c, err := r.Cookie(cookieName)
-		if err != nil || subtle.ConstantTimeCompare([]byte(c.Value), []byte(s.session)) != 1 {
+		if !s.signedIn(r) {
 			writeError(w, http.StatusUnauthorized, "open the URL lea web printed")
 			return
 		}
@@ -188,12 +239,25 @@ func (s *Server) api(next http.HandlerFunc) http.HandlerFunc {
 	}
 }
 
+// signedIn reports whether r carries a session cookie: the one the one-time token bought on the
+// loopback, one the persistent token bought on the network.
+func (s *Server) signedIn(r *http.Request) bool {
+	c, err := r.Cookie(cookieName)
+	if err != nil {
+		return false
+	}
+	if s.remote != nil {
+		return s.remote.valid(c.Value)
+	}
+	return subtle.ConstantTimeCompare([]byte(c.Value), []byte(s.session)) == 1
+}
+
 // sameOrigin: a browser sends Origin on every POST and on any cross-origin request, and
 // Sec-Fetch-Site on all of them: either one naming another site refuses the request. A POST
 // without Origin is refused too (no browser sends one; a script outside it has no cookie).
 func (s *Server) sameOrigin(r *http.Request) bool {
 	if o := r.Header.Get("Origin"); o != "" {
-		host, ok := strings.CutPrefix(o, "http://")
+		host, ok := strings.CutPrefix(o, s.scheme+"://")
 		if !ok || !s.hosts[host] || host != r.Host {
 			return false
 		}
@@ -207,12 +271,19 @@ func (s *Server) sameOrigin(r *http.Request) bool {
 	return false
 }
 
-// exchange trades the one-time token for the session cookie, once, and sends the browser to the
-// page without the token in its address.
-func (s *Server) exchange(w http.ResponseWriter, r *http.Request) {
-	tok := r.URL.Query().Get("token")
+// exchange trades the one-time token for the session cookie, once and before it expires, and
+// sends the browser to the page without the token in its address.
+func (s *Server) exchange(w http.ResponseWriter, r *http.Request, tok string) {
+	if s.remote != nil {
+		// On the network the token never travels in an address: history and logs keep those.
+		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+		w.Header().Set("Cache-Control", "no-store")
+		w.WriteHeader(http.StatusBadRequest)
+		fmt.Fprintln(w, "lea web on the network takes no token in its address: open it without one and type the token into its sign-in page.")
+		return
+	}
 	s.mu.Lock()
-	ok := !s.tokenUsed && subtle.ConstantTimeCompare([]byte(tok), []byte(s.token)) == 1
+	ok := !s.tokenUsed && s.now().Before(s.expires) && subtle.ConstantTimeCompare([]byte(tok), []byte(s.token)) == 1
 	if ok {
 		s.tokenUsed = true
 	}
@@ -220,7 +291,7 @@ func (s *Server) exchange(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 		w.WriteHeader(http.StatusUnauthorized)
-		fmt.Fprintln(w, "This link was already used or is not lea web's: start lea web again for a new one.")
+		fmt.Fprintln(w, "This link was already used, has expired or is not lea web's: start lea web again for a new one.")
 		return
 	}
 	http.SetCookie(w, &http.Cookie{Name: cookieName, Value: s.session, Path: "/", HttpOnly: true, SameSite: http.SameSiteStrictMode})

@@ -68,6 +68,15 @@ var folderColours = []struct {
 	{"pink", 2}, {"mauve", 3}, {"peach", 6}, {"yellow", 7}, {"teal", 9}, {"sky", 10}, {"blue", 12}, {"lavender", 13},
 }
 
+// FolderColourNames are the colours a folder can take (lea web offers the deck's, #416).
+func FolderColourNames() []string {
+	out := make([]string, len(folderColours))
+	for i, c := range folderColours {
+		out[i] = c.name
+	}
+	return out
+}
+
 // folderColour is the colour of name; ok is false for "" and for a name the deck does not know.
 func folderColour(name string) (lipgloss.AdaptiveColor, bool) {
 	for _, c := range folderColours {
