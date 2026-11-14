@@ -165,6 +165,9 @@ type API interface {
 	SplitShell(ctx context.Context, key string, below bool) (Agent, error)
 	// SetSound switches the daemon's sounds and answers the new state.
 	SetSound(ctx context.Context, on bool) (string, error)
+	// SetLimit sets a live limit on the running daemon (limits_set, #420), which applies it at
+	// once and writes it to the user configuration.
+	SetLimit(ctx context.Context, key, value string) error
 	// SetHeld pauses an agent's inbox (the deck's H) or releases it.
 	SetHeld(ctx context.Context, key string, held bool) error
 	// Questions lists the control towers' questions to the user; DropQuestion drops a queued one.
@@ -288,6 +291,7 @@ type Model struct {
 	widthDelay    time.Duration      // how long the width must hold still before it is read (widthSettle when 0)
 	layout        Layout             // the folders (folders.go)
 	store         LayoutStore        // where the layout persists, nil when nowhere
+	layoutWatch   bool               // the store is read again for lea web's changes (layoutwatch.go)
 	ticking       bool               // a frame tick is pending
 	width, height int
 }
@@ -329,9 +333,9 @@ func (m Model) WithIntro() Model {
 
 func (m Model) Init() tea.Cmd {
 	if m.intro > 0 {
-		return tea.Batch(m.watch(), tea.Tick(frameDelay, func(time.Time) tea.Msg { return frameMsg{} }))
+		return tea.Batch(m.watch(), tea.Tick(frameDelay, func(time.Time) tea.Msg { return frameMsg{} }), m.readLayout())
 	}
-	return m.watch()
+	return tea.Batch(m.watch(), m.readLayout())
 }
 
 // working reports whether an agent works: the spinner and the logo's wave then move.
@@ -422,6 +426,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, tea.Batch(m.watch(), anim)
 	case allowedMsg:
 		return m.takeAllowed(msg), nil
+	case layoutMsg:
+		return m.takeLayout(msg)
 	case frameMsg:
 		m.ticking = false
 		m.frame++

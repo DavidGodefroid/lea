@@ -21,10 +21,33 @@ Features:
   a browser shows it, permission prompts wait for it as for the deck in tmux. The printed link
   signs one browser in once, within 2 minutes (a 32-byte token traded for an `HttpOnly`,
   `SameSite=Strict` cookie); `--open` hands the browser a private local page that posts the
-  token, so it is never in a command line (#436); foreign `Host` or `Origin` headers are refused, and only a fixed list of the daemon's
-  methods, for this lea's agents, is reachable. Phone width, light and dark, keyboard shortcuts.
+  token, so it is never in a command line (#436); foreign `Host` or `Origin` headers are
+  refused, and only a fixed list of the daemon's methods, for this lea's agents, is reachable. Phone width, light and dark, keyboard shortcuts.
+- lea web from another machine, agents' terminals, notifications and folders (#416). The README
+  documents the SSH tunnel (`ssh -L`), which stays the way to reach it remotely; `lea web
+  --listen ADDR:PORT` is the explicit opt-in to the network: it refuses to start without TLS
+  (`--tls-cert`/`--tls-key`, or `--tls-self-signed`, a certificate lea keeps and whose SHA-256 it
+  prints) and a lasting 256-bit token (kept 0600, typed into a sign-in page, never in a link;
+  `--new-token` replaces it; per-browser sessions; wrong tokens slow that source down), and
+  refuses wildcards, container bridges and container network subnets. An agent's **Terminal**
+  tab (`v`) shows its pane live and read-only, colours included (a new host-only daemon method,
+  `agent_capture`, reads it with tmux `capture-pane`). The 🔔 button raises browser notifications
+  for new pN, sN, gN and tower questions while the tab is in the background. Folders are the
+  deck's own layout file: made or changed in the browser, they show in the deck (which now reads
+  its layout again every 2 s), and the other way round.
 
 Changes:
+
+- Live limits (#420): `lea limits` shows the limits you can change while agents run, with their
+  value, default and source; `lea limits set KEY VALUE` and `lea limits reset KEY` change one on
+  the running lea, at once, without a restart, and keep it in your file (the next `lea` does not
+  restart the daemon for it). The deck's settings screen lists them in its Limits group and sets
+  them the same way; agents read them with the `limits_get` tool and cannot set them. The first
+  one, `max_running` (`LEA_MAX_RUNNING`, default `3`, `0`: no cap), caps the children of leads
+  that run at once, host-wide: at the cap a lead's `agents_spawn` is refused, or with
+  `queue: true` waits and starts once a child ends; `lea board` and `agents_list` show why it
+  waits (`queued: max_running 3/3`). A change never stops a running agent. **This caps a busy
+  tower at 3 children by default**: `lea limits set max_running 0` turns the cap off.
 
 - lea no longer copies on select (#419): a drag in an agent's terminal no longer enters tmux's
   copy mode, copies the selection or flashes "Copied". Claude Code copies on select itself, through

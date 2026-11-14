@@ -1,7 +1,9 @@
 // Package settings is the catalog of the configuration keys the deck's settings screen shows and
 // edits: each key's value, where it comes from (lea's defaults, the user file, the environment)
 // and when a change applies. It reads and writes the user configuration on the host only, in the
-// deck's own process: no daemon method reaches it, so an agent can neither read nor drive it.
+// deck's own process: no daemon method reaches it, so an agent can neither read nor drive it. The
+// live limits (internal/limits) are the exception: the daemon writes them, for the host only
+// (limits_set), and agents read them (limits_get).
 package settings
 
 import (
@@ -12,6 +14,7 @@ import (
 	"strings"
 
 	"github.com/DavidGodefroid/lea/internal/launcher"
+	"github.com/DavidGodefroid/lea/internal/limits"
 	"github.com/DavidGodefroid/lea/internal/providers"
 	"github.com/DavidGodefroid/lea/internal/tmux"
 )
@@ -48,6 +51,9 @@ type Setting struct {
 	Apply                  string
 	// Live: the deck applies a change at once (the daemon's sound switch).
 	Live bool
+	// Limit is the live limit's name (internal/limits) when the setting is one: the deck sets it
+	// through the daemon (limits_set), which applies and writes it, never in the file itself.
+	Limit string
 	// Value is the effective value (Default when nothing sets it), Source where it comes from.
 	Value, Source string
 	// Locked says why the setting is read-only, "" when it can be changed.
@@ -84,6 +90,14 @@ var catalog = []Setting{
 		Help: "the deck column's width, its border included (24 to 60, at most half the window); < and > in the deck move it, its border drags it", check: deckWidth},
 	{Key: "LEA_THEME", Group: "Deck", Name: "Theme", Kind: Choice, Choices: Themes, Default: Themes[0], Apply: ApplyNow, Live: true,
 		Help: "the deck's colours; T in the deck picks one with a preview. NO_COLOR gives mono while this is not set"},
+}
+
+// The live limits (#420) close the catalog, one setting each.
+func init() {
+	for _, l := range limits.Defs {
+		catalog = append(catalog, Setting{Key: l.Env, Group: "Limits", Name: l.Name, Kind: Text, Default: l.Default,
+			Apply: ApplyNow, Live: true, Limit: l.Name, Help: l.Help, check: l.Check})
+	}
 }
 
 // Themes are the deck's built-in themes (deck.ThemeNames, in its order), the default first.
@@ -205,6 +219,27 @@ func (s Store) Set(key, value string) error {
 	return nil
 }
 
+// Unset removes key from the user configuration: the environment, else lea's default, sets it
+// again.
+func (s Store) Unset(key string) error {
+	known := false
+	for _, d := range catalog {
+		known = known || d.Key == key
+	}
+	if !known {
+		return fmt.Errorf("%s is not a setting of this screen", key)
+	}
+	c, _, err := s.load()
+	if err != nil {
+		return err
+	}
+	path := c.UserConfigFile(s.Cwd)
+	if _, err := os.Stat(path); os.IsNotExist(err) {
+		return nil
+	}
+	return dropKey(path, key)
+}
+
 // dropKey removes every line that sets key from the user configuration at path.
 func dropKey(path, key string) error {
 	b, err := os.ReadFile(path)
@@ -234,6 +269,9 @@ func restore(path string, old []byte, existed bool) error {
 	}
 	return launcher.ReplaceUserConfig(path, old)
 }
+
+// Check refuses a value the setting would not take, as Set does.
+func (d Setting) Check(v string) error { return d.validate(v) }
 
 func (d Setting) validate(v string) error {
 	if strings.ContainsAny(v, "\n\r\x00") {
