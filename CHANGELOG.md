@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## v0.17.0 (2026-11-14)
 
 Features:
 
@@ -57,6 +57,20 @@ Changes:
   Running agents are never stopped or paused, and unknown usage never holds a spawn. **This holds
   new spawns above 60 % of the 5-hour window by default**: `lea limits set budget_5h_pct 0` turns
   it off.
+- The control tower relays a child at 120k tokens of context (#422), no longer at 50 % of its
+  window (500k on a 1M window, so every turn of a child re-read up to that much). The size is the
+  live limit `relay_tokens` (`LEA_RELAY_TOKENS`, default `120000`, `0`: the old 50 % rule): `lea
+  limits set relay_tokens N` applies at the tower's next board check, with no restart of the
+  tower or its children. The status line now reports the context's size in tokens next to its
+  percent; the deck and `agents_list` show both (`182k · 18%`; the percent alone for Codex or an
+  older Claude Code), and `agents_list` marks a tower's children past `relay_tokens` with
+  `relay: true`. The tower also relays a child between two tasks and always spawns with
+  `queue: true`. The README has a new "Cost" section on what drives usage.
+- The Lock set (`config/locks.lock`) moves to lox v0.12.1 and lockhttp v0.12.0 (the same lockkit
+  v0.20.0 set; the other Locks are unchanged). lockhttp v0.12.0's console takes lockkit's
+  `--runtime-gids`, which `lox run` v0.12.1 passes: a client of its socket holding one of those
+  gids is refused as unconfined. `lea doctor` now warns about a lockhttp launcher older than
+  v0.12.0: `brew upgrade davidgodefroid/tap/lockfamily`, then `lox run`.
 
 Security:
 
@@ -79,6 +93,15 @@ Security:
   that `lox run` would review later. A symbolic link or a file in its place now stops lea, as when
   the Lock is wired, instead of a warning: remove it and start lea again. Users who never use the
   Lock see two empty directories, `.locksql` and `.locklog`, in their projects directory.
+
+Fixes:
+
+- A Control Tower resumed in a new container keeps its tower guard (#383). Its mark lived in the
+  container's `/tmp`, so after `lea` started the container again the tower had all its tools
+  until `/lea:control-tower` ran again. The mark now lives in Claude Code's own directory, which
+  lea keeps per projects dir, and is bound to the agent's incarnation (`LEA_AGENT_INCARNATION`,
+  new when an agent is created, kept across its resumes): a resumed tower has its guard on from
+  the first turn, and an agent created later under the same name does not inherit it.
 
 ## v0.16.0 (2026-11-14)
 
@@ -181,16 +204,6 @@ Changes:
   agent of unknown cost is never paused; `lea limits` and `lea doctor` name such agents. The
   deck's header shows the total against `budget_usd_total` while it is on (red once reached).
 
-- The control tower relays a child at 120k tokens of context (#422), no longer at 50 % of its
-  window (500k on a 1M window, so every turn of a child re-read up to that much). The size is the
-  live limit `relay_tokens` (`LEA_RELAY_TOKENS`, default `120000`, `0`: the old 50 % rule): `lea
-  limits set relay_tokens N` applies at the tower's next board check, with no restart of the
-  tower or its children. The status line now reports the context's size in tokens next to its
-  percent; the deck and `agents_list` show both (`182k · 18%`; the percent alone for Codex or an
-  older Claude Code), and `agents_list` marks a tower's children past `relay_tokens` with
-  `relay: true`. The tower also relays a child between two tasks and always spawns with
-  `queue: true`. The README has a new "Cost" section on what drives usage.
-
 - Approval prompts give the one-off and the durable route (#412): a lead's grant request, in the
   user's message, the `grants_request` note relayed by the lead, `lea requests` and the desktop
   notification, names `lea approve gN` (with `lea requests` to read it), the `lea allow …` command
@@ -245,12 +258,6 @@ Fixes:
   escaped slashes in the ref name of `git/refs`, `git/ref` and `git/matching-refs` only, and
   matches the call as its plain form: no call is allowed that the plain form was not. The merge
   grant still deletes only the PR's head, the agent's own branch.
-- A Control Tower resumed in a new container keeps its tower guard (#383). Its mark lived in the
-  container's `/tmp`, so after `lea` started the container again the tower had all its tools
-  until `/lea:control-tower` ran again. The mark now lives in Claude Code's own directory, which
-  lea keeps per projects dir, and is bound to the agent's incarnation (`LEA_AGENT_INCARNATION`,
-  new when an agent is created, kept across its resumes): a resumed tower has its guard on from
-  the first turn, and an agent created later under the same name does not inherit it.
 - A granted push or commit no longer stops on a repository that only holds `core.hooksPath`
   (overridden by lea's pins) or a `remote.origin.pushurl` to the grant's own repository (#413).
   The refusal used to say "the repository git config redirects or runs programs" whether a key

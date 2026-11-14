@@ -10,8 +10,8 @@
 # as it is, so a lea's clients never mix sets. lea doctor compares each with the lock lox runs.
 # A key is LOCKS_<LOCK>_<FIELD>, one per line, KEY=VALUE without quotes.
 LOCKS_SET=lockkit-v0.20.0
-LOCKS_LOX_VERSION=v0.12.0
-LOCKS_LOX_IDENTITY=https://github.com/DavidGodefroid/lockhub/.github/workflows/release.yml@refs/tags/v0.12.0
+LOCKS_LOX_VERSION=v0.12.1
+LOCKS_LOX_IDENTITY=https://github.com/DavidGodefroid/lockhub/.github/workflows/release.yml@refs/tags/v0.12.1
 LOCKS_LOCKSQL_VERSION=v0.20.0
 LOCKS_LOCKSQL_PROTOCOL=1
 LOCKS_LOCKSQL_IMAGE=ghcr.io/davidgodefroid/locksql@sha256:cdc33538eb7d12d52cf86e0a4019c4c35b6f1c585a5fc86c6e3cbb7a81fe4e45
@@ -45,7 +45,7 @@ LOCKS_LOCKSSH_IMAGE_VAULT=ghcr.io/davidgodefroid/lockssh@sha256:63cac65fdfbd97d0
 LOCKS_LOCKSSH_IDENTITY=https://github.com/DavidGodefroid/lockssh/.github/workflows/release.yml@refs/tags/v0.3.0
 LOCKS_LOCKSSH_SHA256_AMD64=7d20fdda269a2d6e2760a772a0de749bee0e002abc85ac2846b21380ce7348aa
 LOCKS_LOCKSSH_SHA256_ARM64=36818cce7940b4207f3836d60d6e2ed8f3c8ac87c9fae51ef5e567ba5b0a3987
-LOCKS_LOCKHTTP_VERSION=v0.11.0
+LOCKS_LOCKHTTP_VERSION=v0.12.0
 LOCKS_LOCKHTTP_PROTOCOL=1
-LOCKS_LOCKHTTP_IMAGE=ghcr.io/davidgodefroid/lockhttp@sha256:e2685b31eac092a79f2e27a365c1ced60f980043f5352bf8076f02e113dea62e
-LOCKS_LOCKHTTP_IDENTITY=https://github.com/DavidGodefroid/lockhttp/.github/workflows/release.yml@refs/tags/v0.11.0
+LOCKS_LOCKHTTP_IMAGE=ghcr.io/davidgodefroid/lockhttp@sha256:63621282ba743a581ed1e95303f50b82b8adeab4fd34afed36b675d7274ecc83
+LOCKS_LOCKHTTP_IDENTITY=https://github.com/DavidGodefroid/lockhttp/.github/workflows/release.yml@refs/tags/v0.12.0
