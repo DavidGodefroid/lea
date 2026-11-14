@@ -174,18 +174,23 @@ type limitView struct {
 }
 
 // limitsGet is limits_get: every live key with its value, default and source; for the host and
-// for every agent (read-only).
-func (d *Daemon) limitsGet() (any, error) {
+// for every agent (read-only). An agent sees the spend of its own container's agents only; the
+// total is host-wide.
+func (d *Daemon) limitsGet(container string) (any, error) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	out := make([]limitView, 0, len(limits.Defs))
 	for _, def := range limits.Defs {
-		out = append(out, d.limitViewLocked(def))
+		out = append(out, d.limitViewInLocked(def, container))
 	}
-	return map[string]any{"limits": out, "budget": d.budgetViewLocked("")}, nil
+	return map[string]any{"limits": out, "budget": d.budgetViewLocked(container)}, nil
 }
 
-func (d *Daemon) limitViewLocked(def limits.Def) limitView {
+func (d *Daemon) limitViewLocked(def limits.Def) limitView { return d.limitViewInLocked(def, "") }
+
+// limitViewInLocked is the key's view, its budget_usd_agent spend over the agents of container
+// ("" every container). Callers hold d.mu.
+func (d *Daemon) limitViewInLocked(def limits.Def, container string) limitView {
 	v, ok := d.limitVals[def.Name]
 	if !ok {
 		v = limitVal{def.Default, "default"}
@@ -201,7 +206,7 @@ func (d *Daemon) limitViewLocked(def limits.Def) limitView {
 	case "budget_usd_agent":
 		top := 0.0
 		for k, s := range d.budgetLocked().Spend {
-			if a, err := d.st.AgentByKey(k); err == nil && budgetLive(a) {
+			if a, err := d.st.AgentByKey(k); err == nil && budgetLive(a) && (container == "" || a.Container == container) {
 				top = max(top, s.Last)
 			}
 		}

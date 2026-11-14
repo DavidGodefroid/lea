@@ -300,3 +300,21 @@ func mustDef(t *testing.T, name string) limits.Def {
 	}
 	return d
 }
+
+// A report lower than the cost at the pause (an agent of the container speaking for the frozen
+// one) does not lift it: only the host does, by raising the budget.
+func TestBudgetLowerReportKeepsThePause(t *testing.T) {
+	e, sa := budgetEnv(t)
+	kid := spawned(t, e, "kid", "dev", "")
+	setLimit(t, e, "budget_usd_agent", "10")
+	costReport(t, e, "kid", 11)
+	waitFor(t, func() bool { return sa.log() == "pause "+kid })
+	settleBudget(t, e)
+	costReport(t, e, "kid", 1)
+	settleBudget(t, e)
+	if sa.log() != "pause "+kid || budgetLabel(e, kid) == "" {
+		t.Fatalf("lifted: %s", sa.log())
+	}
+	setLimit(t, e, "budget_usd_agent", "12")
+	waitFor(t, func() bool { return sa.log() == "pause "+kid+", resume "+kid })
+}

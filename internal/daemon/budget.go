@@ -328,7 +328,9 @@ func (d *Daemon) budgetStepLocked(now time.Time) []budgetAction {
 			c = -1
 		}
 		if p := b.Paused[k]; p != nil {
-			if !p.pending && !overAgent(c) && !overTotal {
+			// The cost at the pause, not a later report: a frozen agent spends nothing, and a
+			// lower report (from its container) must not lift the pause; only the host does.
+			if !p.pending && !overAgent(max(c, p.Cost)) && !overTotal {
 				delete(b.Paused, k)
 				dirty = true
 				out = append(out, budgetAction{key: k, parent: a.Parent, name: a.Name})

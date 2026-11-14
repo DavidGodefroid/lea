@@ -392,7 +392,7 @@ func (d *Daemon) dispatch(ctx context.Context, o Origin, req wire.Request) (any,
 	case "providers_list":
 		return d.providersList()
 	case "limits_get":
-		return d.limitsGet()
+		return d.limitsGet(o.Container)
 	case "limits_set":
 		return d.limitsSet(ctx, req.Params)
 	case "msg_send":
