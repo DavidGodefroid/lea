@@ -98,11 +98,15 @@ func (d *Daemon) allowRows(p *allowParams, now int64) ([]grants.Capability, []gr
 		return nil, nil, 0, errors.New("tag: a glob on a semver tag, starting with v (v0.15.*)")
 	}
 	expires := grants.Standing
+	ttl := time.Duration(p.TTLS) * time.Second
+	if p.TTLS != 0 && (ttl < time.Minute || ttl > MaxGrantTTL) {
+		return nil, nil, 0, fmt.Errorf("--for must be between 1m and %s", MaxGrantTTL)
+	}
+	// The company's grant_ttl_max and standing_grants (#399): refused beyond them.
+	if _, _, err := d.grantTTL(ttl, true, p.TTLS == 0); err != nil {
+		return nil, nil, 0, err
+	}
 	if p.TTLS != 0 {
-		ttl := time.Duration(p.TTLS) * time.Second
-		if ttl < time.Minute || ttl > MaxGrantTTL {
-			return nil, nil, 0, fmt.Errorf("--for must be between 1m and %s", MaxGrantTTL)
-		}
 		expires = now + p.TTLS
 	}
 	if p.Agent != "" {
@@ -174,7 +178,11 @@ func (d *Daemon) allowSet(raw json.RawMessage) (any, error) {
 		}
 	}
 	names := strings.Fields(capNames(caps))
-	s, err := d.st.AddGrantSet(grants.Set{Container: p.Container, Capabilities: names, Created: now, Expires: expires}, rows)
+	fp := ""
+	if m, err := d.managedPolicy(); err == nil {
+		fp = m.Fingerprint()
+	}
+	s, err := d.st.AddGrantSet(grants.Set{Container: p.Container, Capabilities: names, Created: now, Expires: expires, Managed: fp}, rows)
 	if err != nil {
 		return nil, err
 	}
@@ -372,5 +380,13 @@ func (d *Daemon) allowList(raw json.RawMessage) (any, error) {
 	for id, at := range last {
 		lastUse[fmt.Sprint(id)] = at
 	}
-	return map[string]any{"sets": sets, "uses": uses, "last_use": lastUse, "pins": pins, "now": now}, nil
+	// The company's managed bounds (#399): lea allow shows the sets they suspend or shorten.
+	mv := map[string]any{}
+	if m, err := d.managedPolicy(); err != nil {
+		mv["error"] = err.Error()
+	} else if m != nil {
+		max, noStanding := m.GrantBounds()
+		mv["describe"], mv["max_ttl_s"], mv["no_standing"] = m.Describe(), max, noStanding
+	}
+	return map[string]any{"sets": sets, "uses": uses, "last_use": lastUse, "pins": pins, "now": now, "managed": mv}, nil
 }

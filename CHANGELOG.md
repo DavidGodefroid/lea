@@ -12,6 +12,11 @@ Features:
   rules, the deck's header names the organisation. A managed file that is badly owned, invalid or
   has a `[lea]` key lea does not know stops lea and its daemon from starting. No file: nothing
   changes.
+- The managed `[lea]` section bounds the grants (#399, second part). `grant_ttl_max` refuses
+  `lea allow --for` and `lea approve --expires` beyond it, shortens a lead's grant request to it,
+  and ends a grant recorded before once it is that old. `standing_grants = false` refuses `lea
+  allow` without `--for` and suspends the allowances recorded until revoked. Each allowance and
+  each use records the managed file's sha256; a managed file that stops loading ends every grant.
 
 ## v0.16.0 (2026-11-14)
 

@@ -23,6 +23,7 @@ import (
 	"time"
 
 	"github.com/DavidGodefroid/lea/internal/bus"
+	"github.com/DavidGodefroid/lea/internal/grants"
 	"github.com/DavidGodefroid/lea/internal/providers"
 	"github.com/DavidGodefroid/lea/internal/roles"
 	"github.com/DavidGodefroid/lea/internal/store"
@@ -136,6 +137,8 @@ type Config struct {
 	// how long the deck has before the agent's dialog takes over.
 	Approvals       string
 	ApprovalTimeout int
+	// BoundGrants keeps the grants within the company's managed bounds (#399); nil: all.
+	BoundGrants func([]grants.Grant) []grants.Grant
 	// Providers is the registry of the providers an agent may be started on, read at each spawn
 	// and restart (the user's providers file may change); nil: the built-in ones.
 	// DefaultProvider and DefaultModel (LEA_PROVIDER, LEA_MODEL) apply to an agent started
@@ -2678,6 +2681,9 @@ func (m *Manager) covered(a store.Agent) []string {
 	gs, err := m.cfg.Store.ActiveGrants(a.Container, m.cfg.Now())
 	if err != nil {
 		return nil
+	}
+	if m.cfg.BoundGrants != nil {
+		gs = m.cfg.BoundGrants(gs)
 	}
 	lineage := []string{a.Key}
 	for p := a.Parent; p != "" && len(lineage) < 32 && !slices.Contains(lineage, p); {

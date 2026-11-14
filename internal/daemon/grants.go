@@ -91,11 +91,12 @@ func checkGrant(p *grantParams) (time.Duration, error) {
 	return ttl, nil
 }
 
-// recordGrant records a checked grant, its agent a key.
-func (d *Daemon) recordGrant(p grantParams, ttl time.Duration) (grants.Grant, error) {
+// recordGrant records a checked grant, its agent a key, under the managed file of fingerprint
+// managed ("" none).
+func (d *Daemon) recordGrant(p grantParams, ttl time.Duration, managed string) (grants.Grant, error) {
 	now := d.now()
-	g, err := d.st.AddGrant(grants.Grant{Container: p.Container, Action: p.Action, Repo: p.Repo, Branch: p.Branch,
-		Agent: p.Agent, Pin: p.GitHub, Tag: p.Tag, Created: now, Expires: now + int64(ttl/time.Second)})
+	g, err := d.st.AddManagedGrant(grants.Grant{Container: p.Container, Action: p.Action, Repo: p.Repo, Branch: p.Branch,
+		Agent: p.Agent, Pin: p.GitHub, Tag: p.Tag, Created: now, Expires: now + int64(ttl/time.Second)}, managed)
 	if err != nil {
 		return grants.Grant{}, err
 	}
@@ -137,7 +138,7 @@ func (d *Daemon) grantsMine(o Origin, me string) (any, error) {
 	if err != nil {
 		return nil, err
 	}
-	gs, err := d.st.ActiveGrants(o.Container, d.now())
+	gs, err := d.activeGrants(o.Container, d.now())
 	if err != nil {
 		return nil, err
 	}
@@ -299,9 +300,11 @@ func (d *Daemon) grantCheck(o Origin, me string, raw json.RawMessage) (any, erro
 		}
 	}
 	now := d.now()
-	gs, err := d.st.ActiveGrants(o.Container, now)
+	gs, err := d.activeGrants(o.Container, now)
 	if err != nil {
-		return nil, err
+		// Fail closed (#399): no grant applies, the call takes the normal path.
+		log.Printf("lea daemon: grant_check: %v", err)
+		return map[string]any{"verdict": ""}, nil
 	}
 	finished := p.Tool == grants.StopTool && d.finishedChild(o, me, p.Input)
 	dec := grants.Decide(p.Tool, p.Input, c, gs, now, finished)
@@ -312,8 +315,12 @@ func (d *Daemon) grantCheck(o Origin, me string, raw json.RawMessage) (any, erro
 		}
 	}
 	if dec.Verdict == grants.Allow {
+		fp := ""
+		if p, err := d.managedPolicy(); err == nil {
+			fp = p.Fingerprint()
+		}
 		if err := d.st.AddGrantUse(store.GrantUse{Grant: dec.Grant, Agent: me, Action: dec.Request.Action,
-			Target: capText(dec.Request.Target, 200), At: now}); err != nil {
+			Target: capText(dec.Request.Target, 200), At: now, Managed: fp}); err != nil {
 			// No audit row, no allow.
 			log.Printf("lea daemon: audit grant #%d: %v", dec.Grant, err)
 			return map[string]any{"verdict": ""}, nil

@@ -234,6 +234,11 @@ func migrate(db *sql.DB) error {
 	if err := addColumns(db, "grants", grantColumns); err != nil {
 		return err
 	}
+	for _, t := range []string{"grant_sets", "grant_uses"} {
+		if err := addColumns(db, t, managedColumns); err != nil {
+			return err
+		}
+	}
 	return migrateGrantSets(db, time.Now().Unix())
 }
 
