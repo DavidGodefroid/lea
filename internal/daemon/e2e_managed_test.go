@@ -378,13 +378,20 @@ func TestClaudeLeadBuiltinAgentToolIsDenied(t *testing.T) {
 		if strings.Contains(body, `"tool_result"`) {
 			return "", ""
 		}
+		// Claude Code's sub-agent tool, under its current name or its former one.
+		if !strings.Contains(body, `"Agent"`) && strings.Contains(body, `"Task"`) {
+			return "Task", string(in)
+		}
 		return "Agent", string(in)
 	}
 	e.mu.Unlock()
 	e.run("delegate it")
 	res := e.toolResult("the Agent call's tool result", 0)
+	if i := strings.Index(res, `"tool_result"`); i >= 0 {
+		res = res[i:]
+	}
 	if !strings.Contains(res, "agents_spawn") || !strings.Contains(res, "never with the built-in Agent tool") {
-		t.Fatalf("the Agent call was not denied by lea's hook:\n%.3000s", res)
+		t.Fatalf("the Agent call was not denied by lea's hook:\n%.2000s", res)
 	}
 	if ps, _ := e.st.EventPayloads("lea-a/dev", "SubagentStart"); len(ps) != 0 {
 		t.Fatalf("a sub-agent started: %q", ps)
