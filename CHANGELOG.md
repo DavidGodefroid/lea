@@ -122,6 +122,12 @@ Fixes:
   escaped slashes in the ref name of `git/refs`, `git/ref` and `git/matching-refs` only, and
   matches the call as its plain form: no call is allowed that the plain form was not. The merge
   grant still deletes only the PR's head, the agent's own branch.
+- A granted push or commit no longer stops on a repository that only holds `core.hooksPath`
+  (overridden by lea's pins) or a `remote.origin.pushurl` to the grant's own repository (#413).
+  The refusal used to say "the repository git config redirects or runs programs" whether a key
+  matched or `git config` itself failed, so agents could not tell why. It now names the keys
+  (`… sets filter.x.clean, which redirects git or runs programs`) or says `git config failed in
+  the worktree: <git's message>`. Every other key it refused is still refused.
 
 ## v0.15.1 (2026-11-09)
 
