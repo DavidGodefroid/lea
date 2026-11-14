@@ -47,12 +47,6 @@ var conf = perKey(strings.NewReplacer(
 ).Replace(confTemplate))
 
 const (
-	// DragOption is the server option naming the drag in progress in the history (its number,
-	// from DragCountOption): the conf's lea-drag-scroll alias sets it when a drag starts and
-	// every release clears it; the drag's edge scroll stops once it names another drag or none.
-	DragOption = "@lea_drag"
-	// DragCountOption counts the drags, so that a drag's edge scroll never acts for a newer one.
-	DragCountOption = "@lea_drag_n"
 	// BorderPressOption is the server option set while the left button went down on a border of
 	// the deck window: only such a press arms the border drag's resize and its release's stored
 	// width (#341). A press in a pane and every root release clear it.
