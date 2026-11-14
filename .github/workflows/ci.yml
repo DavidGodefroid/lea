@@ -427,10 +427,11 @@ jobs:
           grep -q -- '^--- PASS: TestClaudeWithoutTheDeckAnApprovalIsAnsweredWithLeaApprove ' claude-e2e.log
           grep -q -- '^--- PASS: TestClaudeNestedSessionDoesNotEndTheAgent ' claude-e2e.log
           grep -q -- '^--- PASS: TestClaudeTowerFirstPromptTurnsTheGuardOn ' claude-e2e.log
+          grep -q -- '^--- PASS: TestClaudeTowerClearCtResumesTheBoard ' claude-e2e.log
           grep -q -- '^--- PASS: TestClaudeGrantedCommitRunsWithoutAsking ' claude-e2e.log
           n=$(grep -c -- '^--- PASS: TestClaude' claude-e2e.log)
           echo "$n Claude e2e tests passed"
-          [ "$n" -eq 19 ]
+          [ "$n" -eq 20 ]
   # The lockmq / lockfile socket wiring (tests/integration/lockhost.sh, phase 0): the lockmq
   # client of the release image/Containerfile pins (sha256-checked) reaches a console's socket
   # through its volume, as lea wires it, with no host account; outsiders and other uids refused.

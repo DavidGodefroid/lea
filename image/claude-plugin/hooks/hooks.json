@@ -1,6 +1,9 @@
 {
-  "description": "control-tower delegates: once /lea:control-tower runs, the session keeps only the team's tools.",
+  "description": "control-tower delegates: once /lea:control-tower runs, the session keeps only the team's tools, also across a /clear or a compaction.",
   "hooks": {
+    "SessionStart": [
+      { "matcher": "clear|compact", "hooks": [ { "type": "command", "command": "sh \"${CLAUDE_PLUGIN_ROOT}/hooks/tower-guard\" session" } ] }
+    ],
     "UserPromptSubmit": [
       { "hooks": [ { "type": "command", "command": "sh \"${CLAUDE_PLUGIN_ROOT}/hooks/tower-guard\" prompt" } ] }
     ],

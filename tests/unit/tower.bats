@@ -149,3 +149,120 @@ tool() {
   out=$(jq -n '{session_id: "s2", prompt: "hi"}' | sh "$G" prompt)
   [ -z "$out" ]
 }
+
+# /lea:clear-ct (#410): a tower's /clear or compaction keeps tower mode and resumes the board.
+# as SID AGENT MODE [JSON-FIELDS]: the guard's output for that session and agent.
+as() {
+  jq -n --arg s "$1" --argjson f "${4:-{\}}" '{session_id: $s} + $f' | LEA_AGENT="$2" sh "$G" "$3"
+}
+tool_as() {
+  out=$(as "$1" "$2" tool "$(jq -n --arg t "$3" --argjson i "${4:-{\}}" '{tool_name: $t, tool_input: $i}')")
+  if [ -z "$out" ]; then echo allow; else printf '%s' "$out" | jq -r .hookSpecificOutput.permissionDecision; fi
+}
+
+@test "the plugin runs the tower guard on a SessionStart that clears or compacts (#410)" {
+  h="$P/hooks/hooks.json"
+  [ "$(jq -r '.hooks.SessionStart[0].matcher' "$h")" = 'clear|compact' ]
+  [ "$(jq -r '.hooks.SessionStart[0].hooks[0].command' "$h")" = 'sh "${CLAUDE_PLUGIN_ROOT}/hooks/tower-guard" session' ]
+}
+
+@test "a tower's /clear carries tower mode to the new session, with no gap (#410)" {
+  as s1 tower prompt '{"prompt":"/lea:control-tower"}' >/dev/null
+  [ "$(tool_as s2 tower Bash '{"command":"git push"}')" = allow ]
+  out=$(as s2 tower session '{"source":"clear"}')
+  [ "$(printf '%s' "$out" | jq -r .hookSpecificOutput.hookEventName)" = SessionStart ]
+  c=$(printf '%s' "$out" | jq -r .hookSpecificOutput.additionalContext)
+  printf '%s' "$c" | grep -qF 'Skill lea:control-tower'
+  printf '%s' "$c" | grep -qF 'resume branch'
+  printf '%s' "$c" | grep -qF 'agents_list and board_read'
+  printf '%s' "$c" | grep -qF 'never respawn a child'
+  ! printf '%s' "$c" | grep -qF 'Read '
+  for t in Bash Edit Write Read Agent; do [ "$(tool_as s2 tower "$t" '{"command":"git push"}')" = deny ]; done
+  [ "$(tool_as s2 tower mcp__lea__agents_list)" = allow ]
+  # The old session's marker is gone: the tower lives in the new one.
+  [ ! -e "$LEA_TOWER_DIR/s1" ]
+  [ "$(cat "$LEA_TOWER_DIR/tower.tower")" = s2 ]
+  # A compaction keeps the session id and the mode.
+  out=$(as s2 tower session '{"source":"compact"}')
+  printf '%s' "$out" | jq -r .hookSpecificOutput.additionalContext | grep -qF 'compacted'
+  [ "$(tool_as s2 tower Edit)" = deny ]
+  [ -e "$LEA_TOWER_DIR/s2" ]
+}
+
+@test "a non-tower /clear gets no tower context and keeps its tools (#410)" {
+  [ -z "$(as s2 plain session '{"source":"clear"}')" ]
+  [ "$(tool_as s2 plain Edit)" = allow ]
+  # Another agent's tower does not make this one a tower.
+  as s1 tower prompt '{"prompt":"/lea:control-tower"}' >/dev/null
+  [ -z "$(as s3 plain session '{"source":"clear"}')" ]
+  [ "$(tool_as s3 plain Edit)" = allow ]
+  # A new or a resumed session does not take tower mode over, nor does one without an identity.
+  for src in startup resume; do [ -z "$(as s4 tower session "$(jq -n --arg s "$src" '{source: $s}')")" ]; done
+  [ -z "$(jq -n '{session_id: "s5", source: "clear"}' | env -u LEA_AGENT sh "$G" session)" ]
+  [ "$(tool_as s4 tower Edit)" = allow ]
+}
+
+@test "/lea:control-tower off ends tower mode for the next clear too (#410)" {
+  as s1 tower prompt '{"prompt":"/lea:control-tower"}' >/dev/null
+  as s1 tower prompt '{"prompt":"/lea:control-tower off"}' >/dev/null
+  [ -z "$(as s2 tower session '{"source":"clear"}')" ]
+  [ "$(tool_as s2 tower Edit)" = allow ]
+}
+
+@test "/lea:clear-ct gives the handoff path, the guard allows writing it and reading it back after the clear (#410)" {
+  as s1 tower prompt '{"prompt":"/lea:control-tower"}' >/dev/null
+  h="$LEA_TOWER_DIR/tower.handoff.md" r="$LEA_TOWER_DIR/tower.resume.md"
+  echo stale >"$h"; echo older >"$r"
+  out=$(as s1 tower prompt '{"prompt":"/lea:clear-ct"}')
+  c=$(printf '%s' "$out" | jq -r .hookSpecificOutput.additionalContext)
+  printf '%s' "$c" | grep -qF "the handoff file is $h."
+  printf '%s' "$c" | grep -qF 'tell the user to type /clear'
+  printf '%s' "$c" | grep -qF 'reply to the user in the language of this message'
+  # Rewritten, never appended: the old snapshots are gone; the directory is private.
+  [ ! -e "$h" ] && [ ! -e "$r" ]
+  [ "$(stat -c %a "$LEA_TOWER_DIR")" = 700 ]
+  [ "$(tool_as s1 tower Write "$(jq -n --arg f "$h" '{file_path: $f, content: "x"}')")" = allow ]
+  for f in "$r" "$LEA_TOWER_DIR/other.handoff.md" "$h.x" /tmp/x "$LEA_TOWER_DIR/s1"; do
+    [ "$(tool_as s1 tower Write "$(jq -n --arg f "$f" '{file_path: $f, content: "x"}')")" = deny ]
+  done
+  [ "$(tool_as s1 tower Edit "$(jq -n --arg f "$h" '{file_path: $f}')")" = deny ]
+  [ "$(tool_as s1 tower Read "$(jq -n --arg f "$h" '{file_path: $f}')")" = deny ]
+  [ "$(tool_as s1 tower Bash '{"command":"git push"}')" = deny ]
+  printf 'ledger: dev-1, dev-2\n' >"$h"
+  # The cleared session reads the snapshot under its resume name, and nothing else.
+  out=$(as s2 tower session '{"source":"clear"}')
+  printf '%s' "$out" | jq -r .hookSpecificOutput.additionalContext | grep -qF "Read $r first"
+  [ ! -e "$h" ] && [ "$(cat "$r")" = 'ledger: dev-1, dev-2' ]
+  [ "$(tool_as s2 tower Read "$(jq -n --arg f "$r" '{file_path: $f}')")" = allow ]
+  [ "$(tool_as s2 tower Read "$(jq -n --arg f "$h" '{file_path: $f}')")" = deny ]
+  [ "$(tool_as s2 tower Read '{"file_path":"/etc/passwd"}')" = deny ]
+}
+
+@test "/lea:clear-ct outside a tower refuses in one line and changes nothing (#410)" {
+  mkdir -p "$LEA_TOWER_DIR"; echo keep >"$LEA_TOWER_DIR/plain.handoff.md"
+  out=$(as s1 plain prompt '{"prompt":"/lea:clear-ct"}')
+  printf '%s' "$out" | jq -r .hookSpecificOutput.additionalContext | grep -qF 'not a control tower session; use /clear'
+  [ "$(cat "$LEA_TOWER_DIR/plain.handoff.md")" = keep ]
+  [ ! -e "$LEA_TOWER_DIR/s1" ] && [ ! -e "$LEA_TOWER_DIR/plain.tower" ]
+  [ "$(tool_as s1 plain Edit)" = allow ]
+  # Through the Skill tool as well: context only, no decision.
+  out=$(as s1 plain tool '{"tool_name":"Skill","tool_input":{"skill":"lea:clear-ct"}}')
+  [ "$(printf '%s' "$out" | jq -r .hookSpecificOutput.hookEventName)" = PreToolUse ]
+  printf '%s' "$out" | jq -r .hookSpecificOutput.additionalContext | grep -qF 'not a control tower session; use /clear'
+  [ "$(printf '%s' "$out" | jq -r '.hookSpecificOutput.permissionDecision // "none"')" = none ]
+}
+
+@test "the clear-ct skill ships with the plugin: snapshot, refusal, the /clear to type (#410)" {
+  k="$P/skills/clear-ct/SKILL.md"
+  [ "$(sed -n 1p "$k")" = --- ]
+  grep -q '^name: clear-ct$' "$k"
+  grep -q '^description: Use when the user types /lea:clear-ct' "$k"
+  grep -qxF 'not a control tower session; use /clear' "$k"
+  grep -qF 'Type /clear' "$k"
+  grep -qF 'at most 40 lines' "$k"
+  grep -qF 'Never append' "$k"
+  t="$P/skills/control-tower/SKILL.md"
+  grep -qF '**Resume branch.**' "$t"
+  grep -qF 'whose `parent` is your own' "$t"
+  grep -qF 'type /lea:clear-ct' "$t"
+}

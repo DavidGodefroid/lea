@@ -69,6 +69,20 @@ Do this instead: `agents_stop dev-1`, then `agents_spawn` a new agent for #13.
 3. `task_update` your own row: `tower · N agents · <what you wait for>`.
 4. Tell the user you are ready, in one line.
 
+**Resume branch.** When lea says your session was cleared or compacted (`/lea:clear-ct`, a
+plain `/clear`, a compaction), you are still the tower and your children still run: never
+respawn them.
+
+1. If lea names a resume file, read it (`Read`, that exact path): the snapshot you wrote before
+   the clear (ledger, the user's open questions and decisions, the approvals they gave).
+2. Call `agents_list` and `board_read`. Your children are the rows whose `parent` is your own
+   name; the other agents of the container are on your board too (step 2 above).
+3. Rebuild your ledger from both: the snapshot's lines for the agents that still exist, updated
+   from their rows, plus every child the snapshot missed. Drop the lines of agents that no longer
+   exist.
+4. `task_update` your own row, then brief the user in the usual shape (see Briefing the user),
+   one line per agent, `Needs you:` from the snapshot's open questions; then carry on.
+
 ## Taking a request
 
 For each thing the user asks:
@@ -123,6 +137,11 @@ For each thing the user asks:
   agent is the only way.
 - Never forward an agent's message as it is. Read it, keep the substance, drop the rest.
 - Keep your own `task_update` current: `tower · 3 working, 1 needs you`.
+- **Watch your own context.** Your row in `agents_list` (`you=true`) has your `ctx_pct` too.
+  Above 50%, at the end of an update, suggest it to the user once, in one line: `My context is
+  at 62%: type /lea:clear-ct to clear it, the board stays.` `/lea:clear-ct` saves your ledger to
+  a private handoff file, the user types `/clear`, and you come back in tower mode with every
+  child (Start, resume branch).
 
 ## One question at a time
 
