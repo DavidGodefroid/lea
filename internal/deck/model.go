@@ -268,6 +268,7 @@ type Model struct {
 	notice        func() string // the update notice (WithNotice)
 	noticeText    string        // its latest text, shown while there is no status
 	sound         string        // the daemon's sound switch (Snapshot.Sound)
+	org           string        // the organisation of the company's managed configuration (#399), "" none
 	locks         []LockState   // each Lock's approvals state (Snapshot.Locks)
 	pressure      *Pressure     // the container's pressure gauge (Snapshot.Pressure)
 	hubDown       bool          // lea follows the hub but cannot reach it (Snapshot.HubState)
@@ -337,6 +338,13 @@ const (
 	introFrames = 5 * introStep
 	waveStep    = 3
 )
+
+// WithOrganisation shows org, the organisation whose managed configuration lea runs under (#399),
+// in the header.
+func (m Model) WithOrganisation(org string) Model {
+	m.org = org
+	return m
+}
 
 // WithIntro plays the logo's start animation (the deck run by lea; tests see the logo still).
 func (m Model) WithIntro() Model {

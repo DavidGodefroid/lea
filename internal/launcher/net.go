@@ -315,7 +315,7 @@ func (l *Launcher) proxyRules(confine []string) string {
 func (l *Launcher) ensureProxy(proj string) error {
 	image := l.Cfg.Get("LEA_PROXY_IMAGE")
 	confine, dropped := l.proxyConfinement(image)
-	name, allow, rules := l.prefix()+"-proxy", l.Cfg.Get("LEA_EGRESS_ALLOW"), l.proxyRules(confine)
+	name, allow, rules := l.prefix()+"-proxy", l.Cfg.EgressAllow(), l.proxyRules(confine)
 	fw, err := l.forwarder(proj)
 	if err != nil {
 		return err

@@ -33,6 +33,8 @@ const (
 	SourceDefault     = "default"
 	SourceFile        = "file"
 	SourceEnvironment = "environment"
+	// SourceManaged: the company's managed configuration enforces it (#399).
+	SourceManaged = "managed"
 )
 
 // When a change applies.
@@ -141,7 +143,11 @@ func (s Store) List() ([]Setting, error) {
 			d.Value = d.Default
 		}
 		_, file, assigned := c.Assignment(d.Key)
+		mv, rule, enforced := c.ManagedValue(d.Key)
 		switch env := s.Getenv(d.Key); {
+		case enforced:
+			d.Value, d.Source = mv, SourceManaged
+			d.Locked = "set by the company's managed configuration (" + rule + "): ask your administrator"
 		case launcher.Protected(d.Key) && fromEnv[d.Key] && env != "":
 			d.Source = SourceEnvironment
 			d.Locked = "set by the environment, which wins over the files: change it where it is exported"
