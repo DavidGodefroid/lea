@@ -17,6 +17,10 @@ Features:
   and ends a grant recorded before once it is that old. `standing_grants = false` refuses `lea
   allow` without `--for` and suspends the allowances recorded until revoked. Each allowance and
   each use records the managed file's sha256; a managed file that stops loading ends every grant.
+- `[lea.claude_enforced]` in the managed configuration sets Claude Code settings in every agent
+  (#399, third part): `defaultMode`, `model`, `language`, `outputStyle`, `alwaysThinkingEnabled`,
+  `disableBypassPermissionsMode = "disable"`. `lea config claude` refuses to change them and shows
+  them as company policy; any other key is refused.
 
 ## v0.16.0 (2026-11-14)
 

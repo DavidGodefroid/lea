@@ -245,3 +245,56 @@ func TestManagedDoctor(t *testing.T) {
 		}
 	}
 }
+
+// claude_enforced sets Claude Code settings in every agent's managed settings: lea config claude
+// cannot change them, and what lea hands the entrypoint carries them over the user's.
+func TestManagedClaudeEnforced(t *testing.T) {
+	withManaged(t, "[lea.claude_enforced]\ndefaultMode = \"plan\"\nmodel = \"opus\"\ndisableBypassPermissionsMode = \"disable\"\n")
+	w := newWorld(t, repoRoot(t))
+	l := w.launcher()
+	if rc := l.Main([]string{"config", "claude", "defaultMode", "acceptEdits"}); rc == 0 ||
+		!strings.Contains(w.errb.String(), "blocked by company policy: lea.claude_enforced.defaultMode = plan") {
+		t.Fatalf("rc %d: %s", rc, w.errb.String())
+	}
+	if rc := l.Main([]string{"config", "claude", "model", "--unset"}); rc == 0 || !strings.Contains(w.errb.String(), "lea.claude_enforced.model = opus") {
+		t.Fatalf("rc %d: %s", rc, w.errb.String())
+	}
+	if rc := l.Main([]string{"config", "claude", "language", "French"}); rc != 0 {
+		t.Fatalf("a key the file leaves alone: rc %d: %s", rc, w.errb.String())
+	}
+	user := &claudeConfig{DefaultMode: "acceptEdits", Settings: map[string]any{"model": "sonnet", "language": "French"}}
+	got := string(claudeHanded(nil, l.Cfg.withManagedClaude(user)))
+	for _, want := range []string{`"defaultMode": "plan"`, `"model": "opus"`, `"language": "French"`} {
+		if !strings.Contains(got, want) {
+			t.Errorf("handed lacks %s:\n%s", want, got)
+		}
+	}
+	if user.DefaultMode != "acceptEdits" || user.Settings["model"] != "sonnet" {
+		t.Errorf("the user's configuration changed: %+v", user)
+	}
+	w.out.Reset()
+	if rc := l.Main([]string{"config", "claude"}); rc != 0 || !strings.Contains(w.out.String(), "company policy (lea.claude_enforced)") {
+		t.Fatalf("rc %d:\n%s", rc, w.out.String())
+	}
+}
+
+// Fail closed: a Claude setting lea cannot enforce, or that would loosen lea, is refused.
+func TestManagedClaudeEnforcedRefuses(t *testing.T) {
+	for in, want := range map[string]string{
+		`hooks = "x"`:      "is lea's to keep",
+		`statusLine = "x"`: "is lea's to keep",
+		`skipDangerousModePermissionPrompt = true`: "is not a setting lea can enforce",
+		`defaultMode = "bypassPermissions"`:        "bypassPermissions is lea's to refuse",
+		`disableBypassPermissionsMode = "allow"`:   `can only be "disable"`,
+		`alwaysThinkingEnabled = "yes"`:            "is true or false",
+		`model = 1`:                                "is a string",
+	} {
+		f, err := km.Parse([]byte("version = 1\n[lea.claude_enforced]\n" + in + "\n"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := managed.FromFile(f); err == nil || !strings.Contains(err.Error(), want) {
+			t.Errorf("%s: %v, want %q", in, err, want)
+		}
+	}
+}

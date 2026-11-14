@@ -99,6 +99,29 @@ func TestLoad(t *testing.T) {
 	}
 }
 
+// claude_enforced goes through CheckClaude, which the launcher sets; without it, refused.
+func TestClaudeEnforcedNeedsAChecker(t *testing.T) {
+	old := CheckClaude
+	t.Cleanup(func() { CheckClaude = old })
+	CheckClaude = nil
+	if _, err := parse(t, "[lea.claude_enforced]\nmodel = \"opus\"\n"); err == nil || !strings.Contains(err.Error(), "cannot check") {
+		t.Fatalf("no checker: %v", err)
+	}
+	CheckClaude = func(k string, v any) error {
+		if k != "model" {
+			return errors.New("no")
+		}
+		return nil
+	}
+	p, err := parse(t, "[lea.claude_enforced]\nmodel = \"opus\"\n")
+	if err != nil || p.ClaudeEnforced["model"] != "opus" || !strings.Contains(strings.Join(p.Rules(), "\n"), "lea.claude_enforced.model = opus") {
+		t.Fatalf("%+v %v", p, err)
+	}
+	if _, err := parse(t, "[lea.claude_enforced]\nhooks = \"x\"\n"); err == nil || !strings.Contains(err.Error(), "lea.claude_enforced.hooks: no") {
+		t.Fatalf("refused key: %v", err)
+	}
+}
+
 func TestParseTTL(t *testing.T) {
 	for in, want := range map[string]time.Duration{"8h": 8 * time.Hour, "90m": 90 * time.Minute, "7d": 7 * 24 * time.Hour} {
 		if d, ok := ParseTTL(in); !ok || d != want {

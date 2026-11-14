@@ -33,11 +33,12 @@ var Approvals = []string{"deck", "pane"}
 
 // lea is [lea] as the file writes it.
 type lea struct {
-	Approvals      string   `toml:"approvals"`
-	Autoupdate     *bool    `toml:"autoupdate"`
-	GrantTTLMax    string   `toml:"grant_ttl_max"`
-	StandingGrants *bool    `toml:"standing_grants"`
-	EgressAllow    []string `toml:"egress_allow"`
+	Approvals      string         `toml:"approvals"`
+	Autoupdate     *bool          `toml:"autoupdate"`
+	GrantTTLMax    string         `toml:"grant_ttl_max"`
+	StandingGrants *bool          `toml:"standing_grants"`
+	EgressAllow    []string       `toml:"egress_allow"`
+	ClaudeEnforced map[string]any `toml:"claude_enforced"`
 }
 
 // Policy is the managed file and its [lea] rules, checked. A nil Policy is no managed file:
@@ -56,6 +57,9 @@ type Policy struct {
 	// EgressAllow are the domains (each with its subdomains) the agents may reach at most, in the
 	// file's order, lower-cased; "default" stands for lea's default list. Nil: no bound.
 	EgressAllow []string
+	// ClaudeEnforced are Claude Code settings the company sets in every agent's managed settings,
+	// by key (CheckClaude validated them).
+	ClaudeEnforced map[string]any
 }
 
 // load reads the machine's managed file (lockkit's Load); tests replace it.
@@ -128,8 +132,29 @@ func FromFile(f *km.File) (*Policy, error) {
 			}
 		}
 	}
+	if s.ClaudeEnforced != nil {
+		// Fail closed: lea refuses a Claude setting it cannot check.
+		if CheckClaude == nil {
+			return nil, fmt.Errorf("%s: this build cannot check Claude Code settings", where("claude_enforced"))
+		}
+		keys := make([]string, 0, len(s.ClaudeEnforced))
+		for k := range s.ClaudeEnforced {
+			keys = append(keys, k)
+		}
+		slices.Sort(keys)
+		for _, k := range keys {
+			if err := CheckClaude(k, s.ClaudeEnforced[k]); err != nil {
+				return nil, fmt.Errorf("%s.%s: %v", where("claude_enforced"), k, err)
+			}
+		}
+		p.ClaudeEnforced = s.ClaudeEnforced
+	}
 	return p, nil
 }
+
+// CheckClaude validates one claude_enforced key and its value; the launcher, which knows Claude
+// Code's settings, sets it. Nil: every claude_enforced is refused.
+var CheckClaude func(key string, v any) error
 
 // ParseTTL reads a grant's life as lea's commands do: a Go duration (8h, 90m) or a number of days
 // (30d).
@@ -219,6 +244,14 @@ func (p *Policy) Rules() []string {
 	}
 	if p.EgressAllow != nil {
 		out = append(out, Key("egress_allow")+" = "+strings.Join(p.EgressAllow, ",")+": the agents reach these domains at most")
+	}
+	keys := make([]string, 0, len(p.ClaudeEnforced))
+	for k := range p.ClaudeEnforced {
+		keys = append(keys, k)
+	}
+	slices.Sort(keys)
+	for _, k := range keys {
+		out = append(out, fmt.Sprintf("%s.%s = %v: set in the agents' Claude Code settings", Key("claude_enforced"), k, p.ClaudeEnforced[k]))
 	}
 	if len(out) == 0 {
 		out = append(out, "no [lea] rule: lea runs on your configuration")

@@ -267,6 +267,10 @@ func (l *Launcher) configClaude(args []string) error {
 	if why, ok := claudeEnforced[k]; ok {
 		return die("%s is lea's to keep: %s", k, why)
 	}
+	// The company's managed configuration (#399) sets it.
+	if err := l.Cfg.managedClaudeRefuses(k); err != nil {
+		return die("%v", err)
+	}
 	var said string
 	switch {
 	case k == "defaultMode":
@@ -492,6 +496,7 @@ const (
 	srcHost     = "host ~/.claude/settings.json"
 	srcLea      = "lea config claude"
 	srcEnforced = "lea, enforced"
+	srcManaged  = "company policy (lea.claude_enforced)"
 )
 
 // claudeShow prints every effective setting with its source.
@@ -508,7 +513,14 @@ func (l *Launcher) claudeShow(p string, c *claudeConfig) error {
 	}
 	perms, _ := img["permissions"].(map[string]any)
 	mode, _ := perms["defaultMode"].(string)
+	mc := l.Cfg.Managed()
+	var enforced map[string]any
+	if mc != nil {
+		enforced = mc.ClaudeEnforced
+	}
 	switch hm, _ := host["defaultMode"].(string); {
+	case enforced["defaultMode"] != nil:
+		row("defaultMode", fmt.Sprint(enforced["defaultMode"]), srcManaged)
 	case c.DefaultMode != "":
 		row("defaultMode", c.DefaultMode, srcLea)
 	case hm != "":
@@ -563,7 +575,9 @@ func (l *Launcher) claudeShow(p string, c *claudeConfig) error {
 		row("env "+k, env[k], from[k])
 	}
 	for _, k := range sortedKeys(claudePrefs) {
-		if v, ok := c.Settings[k]; ok {
+		if v, ok := enforced[k]; ok {
+			row(k, fmt.Sprint(v), srcManaged)
+		} else if v, ok := c.Settings[k]; ok {
 			row(k, fmt.Sprint(v), srcLea)
 		} else if v, ok := img[k]; ok {
 			row(k, fmt.Sprint(v), srcImage)
