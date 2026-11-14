@@ -137,6 +137,76 @@ func TestLockLogWired(t *testing.T) {
 	}
 }
 
+// A profile directory is read-only whatever the switch and lox run say (lea#467): an existing
+// .locklog or .locksql is mounted read-only with the Lock off, and before `lox add` (on, no lock
+// yet); a missing one is not made; a link or a file in its place is not mounted, with a warning.
+func TestProfileDirReadOnlyUnwired(t *testing.T) {
+	ro := func(w *world, name string) string {
+		d := w.proj + "/" + name
+		return "type=bind,src=" + d + ",dst=" + d + ",readonly"
+	}
+	for _, c := range []struct {
+		name, conf string
+		up, off    bool
+	}{
+		{"off", "LEA_LOCKSQL=0\nLEA_LOCKLOG=0\n", false, true},
+		{"off, though lox run runs the locks", "LEA_LOCKSQL=0\nLEA_LOCKLOG=0\n", true, true},
+		{"on, before lox add", "LEA_LOCKSQL=1\nLEA_LOCKLOG=1\n", false, false},
+	} {
+		w := newWorld(t, repoRoot(t))
+		writeUserConf(t, w, c.conf)
+		if c.up {
+			writeUp(t, w, lockUp("crm", "locksql")+","+lockUp("logs", "locklog"))
+			labels(w, "crm", "locksql", "socket")
+			labels(w, "logs", "locklog", "socket")
+		}
+		args := lockArgs(t, w)
+		for _, n := range []string{".locksql", ".locklog"} {
+			if contains(args, ro(w, n)) {
+				t.Errorf("%s: %s mounted though missing", c.name, n)
+			}
+			if _, err := os.Lstat(w.proj + "/" + n); err == nil {
+				t.Errorf("%s: %s made", c.name, n)
+			}
+			if err := os.MkdirAll(w.proj+"/"+n, 0o755); err != nil {
+				t.Fatal(err)
+			}
+		}
+		args = lockArgs(t, w)
+		for _, n := range []string{".locksql", ".locklog"} {
+			if !contains(args, ro(w, n)) {
+				t.Errorf("%s: missing %q in %v", c.name, ro(w, n), args)
+			}
+		}
+		if strings.Contains(w.errb.String(), "is not a directory") {
+			t.Errorf("%s: warnings: %s", c.name, w.errb.String())
+		}
+		for _, a := range args {
+			if c.off && (strings.Contains(a, "/run/locklog") || a == "10050" || a == "LEA_LOCKLOG=1") {
+				t.Errorf("%s: locklog wired: %s", c.name, a)
+			}
+		}
+	}
+	// A link or a file in its place: not mounted, a warning, and lea still starts.
+	w := newWorld(t, repoRoot(t))
+	writeUserConf(t, w, "LEA_LOCKLOG=0\n")
+	if err := os.Symlink(w.home, w.proj+"/.locklog"); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(w.proj+"/.locksql", nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	args := lockArgs(t, w)
+	for _, n := range []string{".locksql", ".locklog"} {
+		if contains(args, ro(w, n)) {
+			t.Errorf("%s mounted though not a directory", n)
+		}
+		if !strings.Contains(w.errb.String(), w.proj+"/"+n+" is not a directory (a symbolic link or a file): lea's agents can rewrite what it holds; remove it") {
+			t.Errorf("no warning for %s: %s", n, w.errb.String())
+		}
+	}
+}
+
 // The consoles run hub-attached only, under lox run: a tool that is on, and has no lock of lox run
 // for the projects directory, gets no socket (never the fixed <tool>-run volume of a console of
 // its own launcher), and lea says to add one (`lox add <tool>`).

@@ -10,6 +10,12 @@ Security:
   which only a close reading of `lox run`'s next review caught. lea now makes `.locklog` when it
   is missing and refuses a symbolic link or a file in its place, as for `.locksql`. The locklog
   client still reads its profiles there.
+- A Lock's profile directory (`.locksql`, `.locklog`) is read-only for the agents whatever the
+  switch and `lox run` say (#467). Before, it was mounted read-only only while the Lock was on and
+  `lox run` ran its lock: with `LEA_LOCKSQL=0`, or before `lox add`, an agent could stage
+  profiles or auto rules that `lox run` would review later. An existing directory is now always
+  mounted read-only; lea makes none for a Lock it does not wire, and warns about a symbolic link
+  or a file in its place instead of refusing to start.
 
 ## v0.16.0 (2026-11-14)
 
