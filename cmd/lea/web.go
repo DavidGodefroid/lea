@@ -18,7 +18,7 @@ import (
 	"github.com/DavidGodefroid/lea/internal/web"
 )
 
-const webUsage = "usage: lea web --container NAME [--port N] [--open] " +
+const webUsage = "usage: lea web --container NAME [--projects DIR] [--port N] [--open] " +
 	"[--listen ADDR:PORT (--tls-self-signed | --tls-cert FILE --tls-key FILE) [--new-token]]"
 
 // openerCommand opens target, a local file or a URL without a token, in the user's browser. Its
@@ -51,14 +51,15 @@ func openBrowser(s *web.Server, getenv func(string) string) (cleanup func(), err
 }
 
 // runWeb is lea web (#414): the deck in the browser, for one lea, on the host's loopback. The
-// launcher names the container (the projects directory's lea); it serves until ctrl+c.
+// launcher names the container (the projects directory's lea) and that directory, whose
+// repositories lea allow pins (#415); it serves until ctrl+c.
 func runWeb(args []string, stdout, stderr io.Writer) int {
-	var container string
+	var container, proj string
 	var ro web.RemoteOptions
 	port, open := 0, false
 	for i := 0; i < len(args); i++ {
 		switch args[i] {
-		case "--container", "--port", "--listen", "--tls-cert", "--tls-key":
+		case "--container", "--projects", "--port", "--listen", "--tls-cert", "--tls-key":
 			if i+1 >= len(args) {
 				fmt.Fprintln(stderr, webUsage)
 				return 2
@@ -72,6 +73,12 @@ func runWeb(args []string, stdout, stderr io.Writer) int {
 				ro.CertFile = args[i+1]
 			case "--tls-key":
 				ro.KeyFile = args[i+1]
+			case "--projects":
+				if !filepath.IsAbs(args[i+1]) {
+					fmt.Fprintln(stderr, "lea web: --projects takes an absolute directory")
+					return 2
+				}
+				proj = args[i+1]
 			default:
 				p, err := strconv.Atoi(args[i+1])
 				if err != nil || p < 1 || p > 65535 {
@@ -117,6 +124,8 @@ func runWeb(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintln(stderr, "lea web:", clean(err.Error(), false))
 		return 1
 	}
+	// lea allow and lea egress from the page, on the host (#415).
+	s.SetHost(&webHost{container: container, proj: proj})
 	if p, ok := deck.LayoutPath(identity.HostDir(os.Getenv), container); ok {
 		s.SetLayoutPath(p)
 	}

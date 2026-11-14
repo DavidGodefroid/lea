@@ -1,5 +1,5 @@
 status 0
 -- calls
-core [web] [--container] [lea-$ID] [--port] [8414] [--open]
+core [web] [--container] [lea-$ID] [--projects] [$W/projects] [--port] [8414] [--open]
 -- lea
 -- stdout

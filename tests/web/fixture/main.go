@@ -13,6 +13,9 @@
 //	{"op":"inbox","agent":"dev-1"}                      the agent reads its messages
 //	{"op":"screen","agent":"dev-1","lines":["…"]}       what the agent's terminal shows (#416)
 //	{"op":"question","agent":"lead-1","question":"…"}   a lead asks the user (user_ask, #416)
+//	{"op":"grants","agent":"lead","action":"merge","repo":"lea","github":"o/lea","tag":""}
+//	                                                    a lead files a grant request (gN, #415)
+//	{"op":"request","agent":"dev-1","role":"reviewer"}  an agent asks for another (sN, #415)
 //
 // It prints {"event":"ready"} once it serves.
 package main
@@ -64,7 +67,7 @@ func main() {
 	for in.Scan() {
 		var c struct {
 			Op, Name, Role, Agent, Status, Next, Tool, Command string
-			Question                                           string
+			Action, Repo, GitHub, Tag, Question                string
 			Lines                                              []string
 		}
 		if err := json.Unmarshal(in.Bytes(), &c); err != nil {
@@ -83,6 +86,11 @@ func main() {
 			err = call(bus, c.Agent, "user_ask", map[string]any{"question": c.Question}, &res)
 		case "screen":
 			fa.setScreen(container+"/"+c.Agent, c.Lines)
+		case "grants":
+			err = call(bus, c.Agent, "grants_request", map[string]any{"action": c.Action, "repo": c.Repo, "github": c.GitHub,
+				"tag": c.Tag, "reason": "the user said ship it"}, &res)
+		case "request":
+			err = call(bus, c.Agent, "agents_request_spawn", map[string]any{"role": c.Role, "brief": "review the web UI", "reason": "a second pair of eyes"}, &res)
 		case "approve":
 			// Answered in the browser, or at once ({"id":0}) when no deck is attached.
 			go func(agent, tool, command string) {

@@ -355,30 +355,73 @@ func parseEgressRefusals(log string) []egressRefusal {
 	return out
 }
 
-// egressDenied is lea egress denied: the hosts the proxy refused for the allowlist lately, with
-// the containers that asked and the command that allows each.
-func (l *Launcher) egressDenied(since string) error {
+// EgressHost is a host the proxy refused for the allowlist lately (lea egress denied), as lea web
+// shows it (#415): how many times, last when (Unix seconds), from which containers, and what
+// allows it now ("" nothing: lea egress allow HOST would).
+type EgressHost struct {
+	Host      string   `json:"host"`
+	Count     int      `json:"count"`
+	Last      int64    `json:"last"`
+	From      []string `json:"from"`
+	AllowedBy string   `json:"allowed_by,omitempty"`
+}
+
+// EgressRefused is lea egress denied as data: the hosts the proxy refused within since (a
+// duration such as 24h), most recent first.
+func (l *Launcher) EgressRefused(since string) ([]EgressHost, error) {
 	name := l.prefix() + "-proxy"
 	if !l.containerRunning(name) {
-		return die("%s is not running", name)
+		return nil, die("%s is not running", name)
 	}
 	log, err := l.output(false, "docker", "logs", "--since", since, name)
 	if err != nil {
-		return die("could not read the logs of %s", name)
+		return nil, die("could not read the logs of %s", name)
 	}
 	rs := parseEgressRefusals(log)
+	v := l.Cfg.Get("LEA_EGRESS_ALLOW")
+	who := map[string]string{}
+	if len(rs) > 0 {
+		who = l.containersByIP()
+	}
+	out := make([]EgressHost, 0, len(rs))
+	for _, r := range rs {
+		h := EgressHost{Host: r.host, Count: r.count, Last: r.last.Unix(), From: []string{}}
+		for _, c := range r.clients {
+			h.From = append(h.From, nonEmpty(who[c], c))
+		}
+		if v == "*" {
+			h.AllowedBy = "LEA_EGRESS_ALLOW='*'"
+		} else {
+			h.AllowedBy = egressCoveredBy(v, r.host)
+		}
+		out = append(out, h)
+	}
+	return out, nil
+}
+
+// EgressChange is lea egress allow|deny DOMAIN... (lea web, #415): what it reports goes to
+// l.Stderr, a refusal comes back as the error.
+func (l *Launcher) EgressChange(allow bool, domains []string) error {
+	return l.egressChange(allow, domains)
+}
+
+// DieMessage is the message of a launcher error, as the launcher would print it.
+func DieMessage(err error) string { return dieMsg(err) }
+
+// egressDenied is lea egress denied: the hosts the proxy refused for the allowlist lately, with
+// the containers that asked and the command that allows each.
+func (l *Launcher) egressDenied(since string) error {
+	rs, err := l.EgressRefused(since)
+	if err != nil {
+		return err
+	}
 	if len(rs) == 0 {
 		fmt.Fprintf(l.Stdout, "no host refused for the egress allowlist in the last %s\n", since)
 		return nil
 	}
-	who := l.containersByIP()
 	for _, r := range rs {
-		var from []string
-		for _, c := range r.clients {
-			from = append(from, nonEmpty(who[c], c))
-		}
 		fmt.Fprintf(l.Stdout, "%s refused %d time(s), last at %s, from %s: lea egress allow %s\n",
-			r.host, r.count, r.last.Local().Format("15:04:05"), strings.Join(from, ", "), r.host)
+			r.Host, r.Count, time.Unix(r.Last, 0).Local().Format("15:04:05"), strings.Join(r.From, ", "), r.Host)
 	}
 	return nil
 }
