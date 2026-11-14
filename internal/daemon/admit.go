@@ -75,7 +75,7 @@ func (d *Daemon) samplePressure(ctx context.Context) {
 		return
 	}
 	// A 5-hour window that reset since the last report lets the spawns its budget held start.
-	d.budgetEval(ctx)
+	d.usageEval(ctx)
 	host, scopes := src.Sample(ctx, cs)
 	d.mu.Lock()
 	before := d.gaugesLocked()

@@ -6,9 +6,11 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"strings"
 	"time"
 
 	"github.com/DavidGodefroid/lea/internal/bus"
+	"github.com/DavidGodefroid/lea/internal/grants"
 	"github.com/DavidGodefroid/lea/internal/store"
 )
 
@@ -67,11 +69,33 @@ func (d *Daemon) grantsRequest(ctx context.Context, o Origin, me string, raw jso
 		return nil, err
 	}
 	d.changed()
-	text := fmt.Sprintf("%s asks for a %s grant: lea approve g%d or lea deny g%d (lea requests)", shortName(me), describeRequest(r), r.ID, r.ID)
+	asks := d.pendingAsks(o.Container, r)
+	routes := grants.Routes(asks)
+	text := fmt.Sprintf("%s asks for a %s grant; %s", shortName(me), describeRequest(r), strings.Join(routes, "\n"))
 	d.post(me, "user", "request", text, 0)
-	d.attention(ctx, o.Container, me, text)
+	// A notification holds a few words: the two routes' commands; lea requests has the rest.
+	notice := fmt.Sprintf("%s asks for a %s grant: lea approve g%d (once)", shortName(me), r.Action, r.ID)
+	if cmds := grants.AllowCommands(asks); len(cmds) > 0 {
+		notice += " or " + strings.Join(cmds, "; ") + " (every agent of this lea, until lea allow off)"
+	}
+	d.attention(ctx, o.Container, me, notice+"; lea requests says what it covers")
 	return map[string]any{"request": fmt.Sprintf("g%d", r.ID), "state": "pending",
-		"note": fmt.Sprintf("the user decides on the host (lea approve g%d); you get a message when it is decided. Until then no grant exists: tell the user, in one line, what to approve.", r.ID)}, nil
+		"note": fmt.Sprintf("the user decides on the host (lea approve g%d); you get a message when it is decided. Until then no grant exists:"+
+			" tell the user, in at most three lines, both routes and what the durable one leaves out, as is: %s", r.ID, strings.Join(routes, " | "))}, nil
+}
+
+// pendingAsks is r and the other grant requests waiting in container, oldest first: the user's
+// routes are grouped over them all (#412).
+func (d *Daemon) pendingAsks(container string, r store.GrantRequest) []grants.Ask {
+	asks := []grants.Ask{}
+	if rs, err := d.st.PendingGrantRequests(maxGrantList); err == nil {
+		for _, x := range rs {
+			if x.Container == container && x.ID != r.ID {
+				asks = append(asks, grants.Ask{ID: x.ID, Action: x.Action, Repo: x.Repo, Branch: x.Branch, Tag: x.Tag})
+			}
+		}
+	}
+	return append(asks, grants.Ask{ID: r.ID, Action: r.Action, Repo: r.Repo, Branch: r.Branch, Tag: r.Tag})
 }
 
 // describeRequest is a request as the user reads it.

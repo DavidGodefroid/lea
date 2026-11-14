@@ -68,6 +68,8 @@ type Agent struct {
 	// messages wait in it.
 	Held      bool `json:"held,omitempty"`
 	HeldCount int  `json:"held_count,omitempty"`
+	// Budget is why lea paused the agent on a spend budget (agents.Row, #424), the daemon's text.
+	Budget string `json:"budget,omitempty"`
 }
 
 // shownState is the state a row shows (issue #72): green only when nothing is pending. A live
@@ -119,6 +121,9 @@ type Snapshot struct {
 	// LoxRun is "off" when the workspace has locks and no lox run serves their decisions
 	// (agents.Snapshot.LoxRun, #300): the deck says to run it in another terminal.
 	LoxRun string `json:"lox_run,omitempty"`
+	// Spend is the total spend against budget_usd_total while it is on (agents.Snapshot.Spend,
+	// #424): the header shows it.
+	Spend *Spend `json:"spend,omitempty"`
 	// LocksAdded are the locks lox run runs that this container does not mount
 	// (agents.Snapshot.LocksAdded): the deck says to restart lea to use them.
 	LocksAdded []string `json:"locks_added,omitempty"`
@@ -140,6 +145,13 @@ type Usage struct {
 type UsageWindow struct {
 	Pct      int   `json:"pct"`
 	ResetsAt int64 `json:"resets_at,omitempty"`
+}
+
+// Spend is the total spend against budget_usd_total (agents.SpendView).
+type Spend struct {
+	TotalUSD float64 `json:"total_usd"`
+	LimitUSD float64 `json:"limit_usd"`
+	Reached  bool    `json:"reached,omitempty"`
 }
 
 // Pressure is what the deck shows of the pressure (#132, P2): a short gauge of the container
@@ -279,6 +291,7 @@ type Model struct {
 	usage         *Usage        // the account's usage and budget (Snapshot.Usage, #421)
 	hubDown       bool          // lea follows the hub but cannot reach it (Snapshot.HubState)
 	loxRunOff     bool          // the workspace has locks and no lox run serves them (Snapshot.LoxRun)
+	spend         *Spend        // the total spend against budget_usd_total (Snapshot.Spend)
 	locksAdded    []string      // locks this container does not mount (Snapshot.LocksAdded)
 	seq           int           // the latest selection; older delayed shows are dropped
 	frame         int           // the working spinner's frame
@@ -310,6 +323,7 @@ type Model struct {
 	widthDelay    time.Duration      // how long the width must hold still before it is read (widthSettle when 0)
 	layout        Layout             // the folders (folders.go)
 	store         LayoutStore        // where the layout persists, nil when nowhere
+	layoutWatch   bool               // the store is read again for lea web's changes (layoutwatch.go)
 	ticking       bool               // a frame tick is pending
 	width, height int
 }
@@ -351,9 +365,9 @@ func (m Model) WithIntro() Model {
 
 func (m Model) Init() tea.Cmd {
 	if m.intro > 0 {
-		return tea.Batch(m.watch(), tea.Tick(frameDelay, func(time.Time) tea.Msg { return frameMsg{} }))
+		return tea.Batch(m.watch(), tea.Tick(frameDelay, func(time.Time) tea.Msg { return frameMsg{} }), m.readLayout())
 	}
-	return m.watch()
+	return tea.Batch(m.watch(), m.readLayout())
 }
 
 // working reports whether an agent works: the spinner and the logo's wave then move.
@@ -444,6 +458,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, tea.Batch(m.watch(), anim)
 	case allowedMsg:
 		return m.takeAllowed(msg), nil
+	case layoutMsg:
+		return m.takeLayout(msg)
 	case frameMsg:
 		m.ticking = false
 		m.frame++
@@ -576,7 +592,7 @@ func (m *Model) apply(s Snapshot) bool {
 	before, was := m.shown, m.selected
 	m.version, m.shown, m.sound, m.locks, m.pressure, m.hubDown = s.Version, s.Shown, s.Sound, s.Locks, s.Pressure, s.HubState == "down"
 	m.usage = s.Usage
-	m.locksAdded, m.loxRunOff = s.LocksAdded, s.LoxRun == "off"
+	m.locksAdded, m.loxRunOff, m.spend = s.LocksAdded, s.LoxRun == "off", s.Spend
 	for _, a := range s.Agents {
 		if a.Key == s.Shown && a.State == "done" {
 			m.seen[a.Key] = a.Updated
@@ -995,6 +1011,8 @@ func (m Model) label(a Agent) string {
 	switch r := rank(a, m.seen); {
 	case isShell(a):
 		return "shell"
+	case a.Paused && a.Budget != "": // paused by lea on a spend budget (#424)
+		return a.Budget
 	case a.Paused:
 		return "paused"
 	case a.State == "blocked" && a.Approval == nil:

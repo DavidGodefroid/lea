@@ -78,12 +78,18 @@ func (d *Daemon) statusReport(ctx context.Context, o Origin, me string, raw json
 	// The account's usage (#421): every agent reports the same account; the newest report wins.
 	if d.recordAccount(acct) {
 		d.changed()
-		d.budgetEval(d.lifetime(ctx))
+		d.usageEval(d.lifetime(ctx))
 	}
-	changed, err := d.st.SetUsage(me, store.Usage{CtxPct: p.CtxPct, CostUSD: math.Round(p.CostUSD*100) / 100})
+	cost := math.Round(p.CostUSD*100) / 100
+	changed, err := d.st.SetUsage(me, store.Usage{CtxPct: p.CtxPct, CostUSD: cost})
 	if err != nil {
 		return nil, err
 	}
+	// The spend budgets (#424): the period's spend, then a pause if one is crossed.
+	d.mu.Lock()
+	d.observeCostLocked(me, cost)
+	d.mu.Unlock()
+	d.budgetCheck()
 	if changed {
 		d.changed()
 	}

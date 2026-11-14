@@ -271,6 +271,21 @@ func (m Model) top(w int) string {
 	if l := m.lockLine(); l != "" {
 		count = l + " " + c.dot + " " + count
 	}
+	// The total spend against budget_usd_total while it is on (#424), red once reached; with no
+	// room for both, it takes the place of the count: it may pause every agent.
+	countText := muted.Render(count)
+	if m.spend != nil {
+		t := spendText(m.spend.TotalUSD) + "/" + spendText(m.spend.LimitUSD)
+		st := muted
+		if m.spend.Reached {
+			st = alert
+		}
+		if w-8-tw-lipgloss.Width(count)-lipgloss.Width(t+" "+c.dot+" ") >= 1 {
+			count, countText = t+" "+c.dot+" "+count, st.Render(t)+muted.Render(" "+c.dot+" "+count)
+		} else {
+			count, countText = t, st.Render(t)
+		}
+	}
 	// The account's usage (#421) leads, the longest form that fits: with the 5-hour reset time
 	// and the count, then without the reset time, then the same without the count, then the
 	// 5-hour usage alone. Amber at or above budget_5h_pct: new spawns wait.
@@ -292,11 +307,11 @@ func (m Model) top(w int) string {
 		if fill < 1 || text == "" {
 			continue
 		}
-		right := muted.Render(text)
+		right := countText
 		if f.usage != "" {
 			right = m.usageStyle().Render(f.usage)
 			if f.count != "" {
-				right += muted.Render(" " + c.dot + " " + f.count)
+				right += muted.Render(" "+c.dot+" ") + countText
 			}
 		}
 		return m.frameStyle().Render(c.tl+c.h+" ") + title + m.frameStyle().Render(" "+strings.Repeat(c.h, fill)+" ") +
@@ -331,6 +346,17 @@ func (m Model) usageText(reset, week bool) string {
 		s += fmt.Sprintf(" %s 7d %d%%", c.dot, min(100, max(0, w.Pct)))
 	}
 	return s
+}
+
+// spendText is an amount for the header: "$12.40", "$50", "$1.2k" from a thousand.
+func spendText(v float64) string {
+	switch {
+	case v >= 1000:
+		return fmt.Sprintf("$%.1fk", v/1000)
+	case v == float64(int64(v)):
+		return fmt.Sprintf("$%d", int64(v))
+	}
+	return fmt.Sprintf("$%.2f", v)
 }
 
 // lockLine is what the top border says of the Locks' approvals, which lox run decides (#300):
@@ -670,6 +696,9 @@ func (m Model) row(a Agent, inner int, fi int) []string {
 		g, gc = "$", theme.Unknown
 	} else if a.Paused {
 		g, gc = "‖", theme.Muted
+		if a.Budget != "" { // paused by lea on a spend budget (#424): red
+			gc = theme.Blocked
+		}
 		if m.ascii {
 			g = "="
 		}
@@ -684,7 +713,11 @@ func (m Model) row(a Agent, inner int, fi int) []string {
 		bg(plain).Render(" ") +
 		bg(muted).Render(padLeft(ctxText(a.CtxPct), ctxW))
 	detail := fit(m.detail(a, inner-in), inner-in, c)
-	line2 := bg(plain).Render(pad) + bg(muted).Render(padRight(detail, inner-in))
+	dst := muted
+	if a.Paused && a.Budget != "" {
+		dst = alert
+	}
+	line2 := bg(plain).Render(pad) + bg(dst).Render(padRight(detail, inner-in))
 	lines := []string{line1, line2}
 	if ap := a.Approval; ap != nil {
 		warn := "⚠"

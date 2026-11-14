@@ -2,177 +2,480 @@ package daemon
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log"
+	"os"
+	"path/filepath"
+	"sort"
+	"strings"
 	"time"
 
-	"github.com/DavidGodefroid/lea/internal/agents"
 	"github.com/DavidGodefroid/lea/internal/limits"
-	"github.com/DavidGodefroid/lea/internal/roles"
+	"github.com/DavidGodefroid/lea/internal/store"
 )
 
-// Usage budget (#421, #404): the account's 5-hour and 7-day usage, as the agents' status lines
-// report it (subscription accounts only), shows on the deck and in limits_get; above the live
-// limit budget_5h_pct, new children of leads are held like at the max_running cap (refused, or
-// queued with queue: true). Running agents are never stopped or paused. Unknown usage (no report
-// yet, an API account, a window that ended) never holds a spawn.
+// Spend budgets (#424, #404): on API billing nothing else stops a runaway agent. Two live limits
+// (limits.go): budget_usd_agent, the most one agent may spend (its status line's cost_usd), and
+// budget_usd_total, the most all agents may spend together since a reset point. Crossing one
+// pauses the agent, or every running agent, with the mechanism shedding uses (SetPaused): its
+// session and its work are kept, nothing is killed. While the total is reached, new spawns wait
+// (queue: true) or are refused. An agent whose cost is unknown (-1) is never paused.
+//
+// The user resumes by raising the limit (lea resumes the agents it paused), lea limits reset
+// budget_usd_total (a new period), or by resuming an agent by hand (the deck's p): that agent is
+// not paused again before it spends budget_usd_step percent more of the budget it crossed.
 
-// windowSlack is how far two reports' reset times of one window may differ: the reset time is
-// the provider's, read at each report, and may move by a few seconds.
-const windowSlack = 120
+// budgetFile keeps the spend of the period and the agents lea paused across a daemon restart.
+const budgetFile = "budget.json"
 
-// windowSpan is each window's length: a report whose reset time lies beyond it (or in the past)
-// is not believed. The status reports are the agents' own, untrusted: this bounds how long a
-// made-up report can hold or free spawns.
-var windowSpan = map[string]int64{"5h": 5 * 3600, "7d": 7 * 24 * 3600}
+// budgetRetry is how long lea waits before it tries again to pause an agent whose pause failed.
+const budgetRetry = time.Minute
 
-// acctWindow is the account's latest usage of one window: its used share and when it resets (0:
-// unknown).
-type acctWindow struct {
-	pct      int
-	resetsAt int64
+// budgetSpend is one agent's spend in the period: Last is the cost its status line last
+// reported, Acc what it spent since the period began. A cost that goes down (a new session's
+// counter) adds its whole value: the spend before it is kept.
+type budgetSpend struct {
+	Last float64 `json:"last"`
+	Acc  float64 `json:"acc"`
 }
 
-// newerWindow reports whether report r is newer than the kept window k: a later window (a later
-// reset), or the same window with as much usage or more (usage only grows within a window). A
-// report from an earlier window, or with less usage in the same one, is an older status line
-// (an agent idle since) and is not kept. A report without a reset time replaces only a kept window
-// without one.
-func newerWindow(k, r acctWindow) bool {
-	switch {
-	case k.resetsAt == 0:
-		return true
-	case r.resetsAt == 0:
-		return false
-	case r.resetsAt > k.resetsAt+windowSlack:
-		return true
-	case r.resetsAt < k.resetsAt-windowSlack:
-		return false
-	}
-	return r.pct >= k.pct
+// budgetPause is an agent lea paused on a budget: which one ("agent" or "total") and why.
+type budgetPause struct {
+	Budget string `json:"budget"`
+	Reason string `json:"reason"`
+	At     int64  `json:"at"`
+	// Cost and Total are the agent's cost and the total when lea paused it: a frozen agent
+	// spends nothing, so a hand resume starts its grace from there.
+	Cost  float64 `json:"cost"`
+	Total float64 `json:"total"`
+	// pending: the pause is in flight; the agent's row may not say paused yet.
+	pending bool
 }
 
-// recordAccount keeps the account's usage of each window ws reports ("5h", "7d") when it is
-// newer than what lea holds, and its reset time within the window's span from now; it reports
-// whether anything changed.
-func (d *Daemon) recordAccount(ws map[string]acctWindow) bool {
-	d.mu.Lock()
-	defer d.mu.Unlock()
-	if d.account == nil {
-		d.account = map[string]acctWindow{}
-	}
-	now := d.now()
-	changed := false
-	for label, r := range ws {
-		if r.resetsAt != 0 && (r.resetsAt <= now || r.resetsAt > now+windowSpan[label]+windowSlack) {
-			continue
-		}
-		k, ok := d.account[label]
-		if ok && k.resetsAt > 0 && now >= k.resetsAt {
-			ok = false // that window reset: any report is newer
-		}
-		if ok && (k == r || !newerWindow(k, r)) {
-			continue
-		}
-		d.account[label] = r
-		changed = true
-	}
-	return changed
+// budgetGrace is where a hand resume leaves an agent over a budget: its cost (Agent) and the
+// total (Total) then, 0 when it was not over that budget. lea pauses it again only once it
+// spends budget_usd_step percent of the budget more.
+type budgetGrace struct {
+	Agent float64 `json:"agent,omitempty"`
+	Total float64 `json:"total,omitempty"`
 }
 
-// usageLocked is the account's usage of window label, ok false when unknown: no report yet, or
-// the window it reported has reset since. Callers hold d.mu.
-func (d *Daemon) usageLocked(label string) (acctWindow, bool) {
-	w, ok := d.account[label]
-	if !ok || (w.resetsAt > 0 && d.now() >= w.resetsAt) {
-		return acctWindow{}, false
-	}
-	return w, true
+type budgetState struct {
+	// Since is when the period began (unix seconds).
+	Since  int64                   `json:"since"`
+	Spend  map[string]*budgetSpend `json:"spend"`
+	Paused map[string]*budgetPause `json:"paused"`
+	Grace  map[string]budgetGrace  `json:"grace"`
+	// failed: when a pause last failed, by agent (memory only).
+	failed map[string]time.Time
 }
 
-// budget5hLocked is the budget_5h_pct value, 0 when off. Callers hold d.mu.
-func (d *Daemon) budget5hLocked() int {
-	def, _ := limits.Lookup("budget_5h_pct")
-	return def.Int(d.limitLocked(def))
-}
-
-// budgetWhyLocked is why the budget holds new spawns ("5h usage 64 % ≥ budget_5h_pct 60"), ""
-// when it does not: off, unknown usage, or usage below it. Callers hold d.mu.
-func (d *Daemon) budgetWhyLocked() string {
-	b := d.budget5hLocked()
-	if b == 0 {
-		return ""
-	}
-	w, ok := d.usageLocked("5h")
-	if !ok || w.pct < b {
-		return ""
-	}
-	return fmt.Sprintf("5h usage %d %% ≥ budget_5h_pct %d", w.pct, b)
-}
-
-// budgetLocked is nil when the budget lets one more child start, else the refusal. Callers hold
+// budgetLocked is the budget state, loaded from the run directory the first time. Callers hold
 // d.mu.
-func (d *Daemon) budgetLocked() error {
-	why := d.budgetWhyLocked()
-	if why == "" {
+func (d *Daemon) budgetLocked() *budgetState {
+	if d.budget != nil {
+		return d.budget
+	}
+	b := &budgetState{}
+	if raw, err := os.ReadFile(filepath.Join(d.runDir, budgetFile)); err == nil {
+		if json.Unmarshal(raw, b) != nil {
+			b = &budgetState{}
+		}
+	}
+	if b.Since == 0 {
+		b.Since = d.now()
+	}
+	if b.Spend == nil {
+		b.Spend = map[string]*budgetSpend{}
+	}
+	if b.Paused == nil {
+		b.Paused = map[string]*budgetPause{}
+	}
+	if b.Grace == nil {
+		b.Grace = map[string]budgetGrace{}
+	}
+	for k, s := range b.Spend {
+		if s == nil || s.Acc < 0 || s.Last < 0 {
+			delete(b.Spend, k)
+		}
+	}
+	for k, p := range b.Paused {
+		if p == nil {
+			delete(b.Paused, k)
+		}
+	}
+	b.failed = map[string]time.Time{}
+	d.budget = b
+	return b
+}
+
+// saveBudgetLocked writes the budget state. Callers hold d.mu.
+func (d *Daemon) saveBudgetLocked() {
+	b := d.budgetLocked()
+	raw, err := json.Marshal(b)
+	if err != nil {
+		return
+	}
+	if err := os.MkdirAll(d.runDir, 0o700); err != nil {
+		return
+	}
+	p := filepath.Join(d.runDir, budgetFile)
+	tmp := p + ".tmp"
+	if err := os.WriteFile(tmp, raw, 0o600); err == nil {
+		_ = os.Rename(tmp, p)
+	}
+}
+
+// budgetLimitsLocked is budget_usd_agent, budget_usd_total (0: off) and budget_usd_step (a
+// percent). Callers hold d.mu.
+func (d *Daemon) budgetLimitsLocked() (agent, total float64, step int) {
+	da, _ := limits.Lookup("budget_usd_agent")
+	dt, _ := limits.Lookup("budget_usd_total")
+	ds, _ := limits.Lookup("budget_usd_step")
+	return da.USD(d.limitLocked(da)), dt.USD(d.limitLocked(dt)), ds.Int(d.limitLocked(ds))
+}
+
+// usd prints an amount: "$10", "$12.40".
+func usd(v float64) string {
+	if v == float64(int64(v)) {
+		return fmt.Sprintf("$%d", int64(v))
+	}
+	return fmt.Sprintf("$%.2f", v)
+}
+
+// observeCostLocked records the cost an agent's status line reports (-1: unknown) in the
+// period's spend. Callers hold d.mu.
+func (d *Daemon) observeCostLocked(key string, cost float64) {
+	if cost < 0 {
+		return
+	}
+	b := d.budgetLocked()
+	s := b.Spend[key]
+	if s == nil {
+		s = &budgetSpend{}
+		b.Spend[key] = s
+	}
+	if s.Last == cost {
+		return
+	}
+	if cost > s.Last {
+		s.Acc += cost - s.Last
+	} else {
+		s.Acc += cost // a new session: its counter started again at 0
+	}
+	s.Last = cost
+	d.saveBudgetLocked()
+}
+
+// totalSpentLocked is what all agents spent in the period. Callers hold d.mu.
+func (d *Daemon) totalSpentLocked() float64 {
+	t := 0.0
+	for _, s := range d.budgetLocked().Spend {
+		t += s.Acc
+	}
+	return float64(int64(t*100+0.5)) / 100
+}
+
+// budgetGateLocked is nil when a new spawn may start under budget_usd_total, else the refusal.
+// Callers hold d.mu.
+func (d *Daemon) budgetGateLocked() error {
+	_, total, _ := d.budgetLimitsLocked()
+	if total <= 0 {
 		return nil
 	}
-	when := ""
-	if w, _ := d.usageLocked("5h"); w.resetsAt > 0 {
-		when = " at " + time.Unix(w.resetsAt, 0).Format("15:04")
+	if t := d.totalSpentLocked(); t >= total {
+		return fmt.Errorf("budget reached: total spend %s ≥ budget_usd_total %s: the user raises it or starts a new period (lea limits reset budget_usd_total); retry with queue: true",
+			usd(t), usd(total))
 	}
-	return fmt.Errorf("%s: retry with queue: true to start it once the 5-hour window resets%s or the user raises the budget", why, when)
+	return nil
 }
 
-// budgetEval follows the budget's crossings: above it, each running lead gets one note (not one
-// per spawn) and the deck turns amber; below it again (usage fell, the window reset, the user
-// raised or turned off the budget), the queued spawns start. It stops no agent.
-func (d *Daemon) budgetEval(ctx context.Context) {
+// budgetReasonLocked is why a queued spawn waits on the total budget, "" when it does not.
+// Callers hold d.mu.
+func (d *Daemon) budgetReasonLocked() string {
+	_, total, _ := d.budgetLimitsLocked()
+	if t := d.totalSpentLocked(); total > 0 && t >= total {
+		return fmt.Sprintf("queued: budget_usd_total %s/%s", usd(t), usd(total))
+	}
+	return ""
+}
+
+// budgetAction is one pause or resume a budget check decided.
+type budgetAction struct {
+	pause      bool
+	key, why   string
+	parent     string
+	name, cost string
+}
+
+// budgetCheck pauses the agents over a budget and resumes the ones lea paused that no budget
+// holds any more, beside the caller.
+func (d *Daemon) budgetCheck() {
 	d.mu.Lock()
-	why := d.budgetWhyLocked()
-	over := why != ""
-	was := d.budgetOver
-	d.budgetOver = over
+	a := d.agents
+	acts := d.budgetStepLocked(time.Now())
 	d.mu.Unlock()
-	switch {
-	case over && !was:
-		as, err := d.st.Agents()
+	if a == nil || len(acts) == 0 {
+		return
+	}
+	d.budgetWG.Add(1)
+	go func() {
+		defer d.budgetWG.Done()
+		d.budgetRun(a, acts)
+	}()
+}
+
+// budgetCosts is the cost each agent's status line last reported (-1: unknown), by key.
+func (d *Daemon) budgetCosts(as []store.Agent) map[string]float64 {
+	out := map[string]float64{}
+	seen := map[string]bool{}
+	for _, a := range as {
+		if seen[a.Container] {
+			continue
+		}
+		seen[a.Container] = true
+		us, err := d.st.Usages(a.Container)
 		if err != nil {
-			log.Printf("lea daemon: budget_5h_pct: %v", err)
+			log.Printf("lea daemon: budget: %v", err)
+			continue
 		}
-		for _, a := range as {
-			if a.Role == roles.Lead && a.State != "done" && a.State != "stopped" {
-				d.post("user", a.Key, "note", "lea: "+why+": new spawns are held (agents_spawn with queue: true waits) until the 5-hour window resets or the user raises the budget (lea limits set budget_5h_pct N). Running agents go on.", 0)
+		for k, u := range us {
+			out[k] = u.CostUSD
+		}
+	}
+	return out
+}
+
+// budgetLive says a is an agent a budget covers: one lea spawned that still runs.
+func budgetLive(a store.Agent) bool {
+	return a.Profile != "" && a.State != "done" && a.State != "stopped"
+}
+
+// budgetStepLocked decides the pauses and resumes. Callers hold d.mu.
+func (d *Daemon) budgetStepLocked(now time.Time) []budgetAction {
+	b := d.budgetLocked()
+	agentMax, totalMax, step := d.budgetLimitsLocked()
+	if agentMax <= 0 && totalMax <= 0 && len(b.Paused) == 0 && len(b.Grace) == 0 {
+		return nil
+	}
+	as, err := d.st.Agents()
+	if err != nil {
+		log.Printf("lea daemon: budget: %v", err)
+		return nil
+	}
+	costs := d.budgetCosts(as)
+	total := d.totalSpentLocked()
+	byKey := map[string]store.Agent{}
+	for _, a := range as {
+		byKey[a.Key] = a
+	}
+	dirty := false
+	// What the user did meanwhile: an agent lea paused that ended or that they resumed by hand.
+	for k, p := range b.Paused {
+		if p.pending {
+			continue
+		}
+		a, ok := byKey[k]
+		switch {
+		case !ok || !budgetLive(a):
+			delete(b.Paused, k)
+			dirty = true
+		case !a.Paused:
+			g := budgetGrace{}
+			if agentMax > 0 && p.Cost >= agentMax {
+				g.Agent = p.Cost
 			}
+			if totalMax > 0 && p.Total >= totalMax {
+				g.Total = p.Total
+			}
+			b.Grace[k] = g
+			delete(b.Paused, k)
+			dirty = true
+			log.Printf("lea daemon: %s resumed by hand over its budget: paused again after %d%% more", k, step)
 		}
-		d.changed()
-	case !over && was:
-		d.changed()
-		d.startQueued(ctx)
+	}
+	overAgent := func(c float64) bool { return agentMax > 0 && c >= agentMax }
+	overTotal := totalMax > 0 && total >= totalMax
+	// A budget that no longer holds: its grace ends, and what lea paused on it resumes.
+	for k, g0 := range b.Grace {
+		g := g0
+		if g.Agent > 0 && !overAgent(costs[k]) {
+			g.Agent = 0
+		}
+		if g.Total > 0 && !overTotal {
+			g.Total = 0
+		}
+		switch _, ok := byKey[k]; {
+		case !ok || g == (budgetGrace{}):
+			delete(b.Grace, k)
+			dirty = true
+		case g != g0:
+			b.Grace[k] = g
+			dirty = true
+		}
+	}
+	var out []budgetAction
+	keys := make([]string, 0, len(byKey))
+	for k := range byKey {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	for _, k := range keys {
+		a := byKey[k]
+		c, known := costs[k]
+		if !known {
+			c = -1
+		}
+		if p := b.Paused[k]; p != nil {
+			// The cost at the pause, not a later report: a frozen agent spends nothing, and a
+			// lower report (from its container) must not lift the pause; only the host does.
+			if !p.pending && !overAgent(max(c, p.Cost)) && !overTotal {
+				delete(b.Paused, k)
+				dirty = true
+				out = append(out, budgetAction{key: k, parent: a.Parent, name: a.Name})
+			}
+			continue
+		}
+		if !budgetLive(a) || a.Paused || c < 0 {
+			continue
+		}
+		if t, ok := b.failed[k]; ok && now.Sub(t) < budgetRetry {
+			continue
+		}
+		g := b.Grace[k]
+		why, which := "", ""
+		switch {
+		case overAgent(c) && (g.Agent == 0 || c+1e-9 >= g.Agent+agentMax*float64(step)/100):
+			why, which = fmt.Sprintf("budget reached: %s ≥ budget_usd_agent %s", usd(c), usd(agentMax)), "agent"
+		case overTotal && (g.Total == 0 || total+1e-9 >= g.Total+totalMax*float64(step)/100):
+			why, which = fmt.Sprintf("budget reached: total %s ≥ budget_usd_total %s", usd(total), usd(totalMax)), "total"
+		default:
+			continue
+		}
+		delete(b.Grace, k)
+		b.Paused[k] = &budgetPause{Budget: which, Reason: why, At: d.now(), Cost: c, Total: total, pending: true}
+		dirty = true
+		out = append(out, budgetAction{pause: true, key: k, why: why, parent: a.Parent, name: a.Name, cost: usd(c)})
+	}
+	if dirty {
+		d.saveBudgetLocked()
+	}
+	return out
+}
+
+// budgetRun runs the pauses and resumes a budget check decided, and tells each agent's lead.
+func (d *Daemon) budgetRun(a Agents, acts []budgetAction) {
+	again := false
+	for _, act := range acts {
+		ctx, cancel := context.WithTimeout(context.Background(), shedTimeout)
+		err := a.SetPaused(ctx, act.key, act.pause)
+		cancel()
+		c, _, _ := strings.Cut(act.key, "/")
+		if !act.pause {
+			if err != nil {
+				log.Printf("lea daemon: resume %s under its budget: %v", act.key, err)
+				continue
+			}
+			d.wake(act.key)
+			log.Printf("lea daemon: resumed %s: under its budget again", act.key)
+			if act.parent != "" {
+				d.post("user", act.parent, "note", fmt.Sprintf("lea resumed %s: no spend budget holds it any more.", act.name), 0)
+			}
+			continue
+		}
+		d.mu.Lock()
+		b := d.budgetLocked()
+		if err != nil {
+			delete(b.Paused, act.key)
+			b.failed[act.key] = time.Now()
+		} else if p := b.Paused[act.key]; p != nil {
+			p.pending = false
+			delete(b.failed, act.key)
+		}
+		d.saveBudgetLocked()
+		d.mu.Unlock()
+		if err != nil {
+			log.Printf("lea daemon: pause %s on its budget: %v", act.key, err)
+			continue
+		}
+		again = true
+		log.Printf("lea daemon: paused %s (%s)", act.key, act.why)
+		d.sound(context.Background(), c, SoundAttention)
+		if act.parent != "" {
+			d.post("user", act.parent, "note", fmt.Sprintf("lea paused %s, its session kept: %s. The user resumes it: lea limits set, lea limits reset budget_usd_total, or p in the deck.",
+				act.name, act.why), 0)
+		}
+	}
+	d.changed()
+	if again {
+		// A limit raised while a pause was in flight resumes it now.
+		d.budgetCheck()
 	}
 }
 
-// usageView is the account's usage as the deck and limits_get show it, nil when no window is
-// known.
-func (d *Daemon) usageView() *agents.UsageView {
+// budgetResetPeriod starts a new period of budget_usd_total: what the agents spent so far no
+// longer counts.
+func (d *Daemon) budgetResetPeriod() {
 	d.mu.Lock()
 	defer d.mu.Unlock()
-	return d.usageViewLocked()
+	b := d.budgetLocked()
+	for _, s := range b.Spend {
+		s.Acc = 0
+	}
+	b.Since = d.now()
+	d.saveBudgetLocked()
 }
 
-// usageViewLocked is usageView. Callers hold d.mu.
-func (d *Daemon) usageViewLocked() *agents.UsageView {
-	var v agents.UsageView
-	if w, ok := d.usageLocked("5h"); ok {
-		v.FiveHour = &agents.UsageWindow{Pct: w.pct, ResetsAt: w.resetsAt}
+// budgetLabelLocked is why lea paused key on a budget, for the deck and the board, "" when it
+// did not. Callers hold d.mu.
+func (d *Daemon) budgetLabelLocked(key string) string {
+	if p := d.budgetLocked().Paused[key]; p != nil {
+		return p.Reason
 	}
-	if w, ok := d.usageLocked("7d"); ok {
-		v.SevenDay = &agents.UsageWindow{Pct: w.pct, ResetsAt: w.resetsAt}
+	return ""
+}
+
+// budgetView is what limits_get and the deck show of the spend.
+type budgetView struct {
+	// Total is what all agents spent since Since (unix seconds), Limit budget_usd_total (0: off).
+	Total float64 `json:"total_usd"`
+	Limit float64 `json:"limit_usd"`
+	Since int64   `json:"since"`
+	// Reached: the total budget is reached.
+	Reached bool `json:"reached,omitempty"`
+	// Paused are the agents lea paused on a budget, with why; NotCovered the running agents
+	// whose cost is unknown, which no budget pauses.
+	Paused     []budgetPausedView `json:"paused,omitempty"`
+	NotCovered []string           `json:"not_covered,omitempty"`
+}
+
+type budgetPausedView struct {
+	Agent  string `json:"agent"`
+	Reason string `json:"reason"`
+}
+
+// budgetViewLocked is the spend; container "" every container's agents. Callers hold d.mu.
+func (d *Daemon) budgetViewLocked(container string) budgetView {
+	b := d.budgetLocked()
+	_, total, _ := d.budgetLimitsLocked()
+	v := budgetView{Total: d.totalSpentLocked(), Limit: total, Since: b.Since}
+	v.Reached = total > 0 && v.Total >= total
+	as, err := d.st.Agents()
+	if err != nil {
+		return v
 	}
-	if v.FiveHour == nil && v.SevenDay == nil {
-		return nil
+	costs := d.budgetCosts(as)
+	for _, a := range as {
+		if container != "" && a.Container != container {
+			continue
+		}
+		if p := b.Paused[a.Key]; p != nil {
+			v.Paused = append(v.Paused, budgetPausedView{Agent: shortName(a.Key), Reason: p.Reason})
+		}
+		if c, ok := costs[a.Key]; budgetLive(a) && (!ok || c < 0) {
+			v.NotCovered = append(v.NotCovered, shortName(a.Key))
+		}
 	}
-	v.Budget = d.budget5hLocked()
-	v.Over = d.budgetWhyLocked() != ""
-	return &v
+	return v
 }

@@ -9,35 +9,42 @@ import (
 	"testing"
 	"time"
 
-	tea "github.com/charmbracelet/bubbletea"
-
-	"github.com/DavidGodefroid/lea/internal/agents"
 	"github.com/DavidGodefroid/lea/internal/client"
-	"github.com/DavidGodefroid/lea/internal/deck"
 	"github.com/DavidGodefroid/lea/internal/store"
 	"github.com/DavidGodefroid/lea/internal/wire"
 )
 
-// watchAgents is regAgents with an empty deck snapshot: the daemon adds what it knows (the usage).
-type watchAgents struct{ *regAgents }
-
-func (w watchAgents) Watch(ctx context.Context, container string, since int64, timeout time.Duration) (agents.Snapshot, error) {
-	return agents.Snapshot{Version: since + 1}, nil
+// SetPaused freezes or thaws an agent as the manager does: the store says so once it is done.
+func (r *regAgents) SetPaused(ctx context.Context, key string, paused bool) error {
+	return r.st.SetPaused(key, paused)
 }
 
-func budgetCall(t *testing.T, bus, agent, method string, params, out any) error {
+func budgetCall(t *testing.T, bus, agent, method string, params map[string]any) error {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	p, _ := json.Marshal(params)
-	return client.Call(ctx, bus, wire.Request{Method: method, Agent: agent, Params: p}, out)
+	return client.Call(ctx, bus, wire.Request{Method: method, Agent: agent, Params: p}, nil)
 }
 
-// E2E of #421 on a real daemon, its sockets, the user configuration on disk, the CLI and the
-// deck's model: a status report with 5-hour usage 70 % shows in the deck's top border, in lea
-// limits and in limits_get; with budget_5h_pct 60 a lead's agents_spawn with queue: true waits
-// and the lead hears why; lea limits set budget_5h_pct 80 on the same running daemon starts it.
-func TestUsageBudgetE2E(t *testing.T) {
+func waitPaused(t *testing.T, st *store.Store, key string, paused bool) {
+	t.Helper()
+	for i := 0; i < 300; i++ {
+		if a, err := st.AgentByKey(key); err == nil && a.Paused == paused {
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatalf("%s: paused is not %v", key, paused)
+}
+
+// E2E of #424 on a real daemon, its sockets, the user configuration on disk and the CLI: with
+// budget_usd_agent just above a child's cost, one status report over it pauses the child (its
+// session kept) and the board says why; lea limits set raises it on the same daemon and the
+// child resumes. With budget_usd_total reached, a lead's agents_spawn is refused with the
+// reason, or queued; lea limits reset budget_usd_total starts a new period, resumes the child
+// and starts the queued spawn. lea limits and lea doctor's line name the agents of unknown cost.
+func TestSpendBudgetsE2E(t *testing.T) {
 	dir, _ := os.MkdirTemp("", "lea")
 	t.Cleanup(func() { os.RemoveAll(dir) })
 	root := filepath.Join(dir, "root")
@@ -52,84 +59,98 @@ func TestUsageBudgetE2E(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Setenv("LEA_CONFIG", user)
-	t.Setenv("LEA_MAX_RUNNING", "")
-	t.Setenv("LEA_BUDGET_5H_PCT", "")
-
-	api, bus, st, ra, d, stop := liveLimitsDaemon(t, dir, root)
-	defer stop()
-	d.SetAgents(watchAgents{ra})
-	env := map[string]string{"LEA_DAEMON_SOCK": api}
-	if rc, out, e := runEnv(t, env, "limits"); rc != 0 || !strings.Contains(out, "budget_5h_pct 60") || !strings.Contains(out, "usage: unknown") {
-		t.Fatalf("lea limits before a report: rc=%d out=%q err=%q", rc, out, e)
+	for _, k := range []string{"LEA_MAX_RUNNING", "LEA_BUDGET_USD_AGENT", "LEA_BUDGET_USD_TOTAL", "LEA_BUDGET_USD_STEP"} {
+		t.Setenv(k, "")
 	}
-	tower, err := st.Register(store.NewAgent{Container: "lea-a", Name: "tower", Profile: "claude", Workdir: "/p", Role: "lead"}, store.Caps{}, 1)
+	api, bus, st, ra, _, stop := liveLimitsDaemon(t, dir, root)
+	defer stop()
+	env := map[string]string{"LEA_DAEMON_SOCK": api}
+	if _, err := st.Register(store.NewAgent{Container: "lea-a", Name: "tower", Profile: "claude", Workdir: "/p", Role: "lead"}, store.Caps{}, 1); err != nil {
+		t.Fatal(err)
+	}
+	r, err := spawnAs(t, bus, "tower", map[string]any{"brief": "work"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := st.Register(store.NewAgent{Container: "lea-a", Name: "kid", Profile: "claude", Workdir: "/p", Role: "dev", Parent: tower.Key}, store.Caps{}, 1); err != nil {
+	kidName, _ := r["name"].(string)
+	kid := "lea-a/" + kidName
+	before, err := st.AgentByKey(kid)
+	if err != nil {
 		t.Fatal(err)
 	}
-	// A child's status line reports the account's windows, as statusline does.
-	reset := time.Now().Add(2 * time.Hour).Unix()
-	if err := budgetCall(t, bus, "kid", "status_report", map[string]any{"ctx_pct": 10, "cost_usd": -1, "limits": []map[string]any{
-		{"window": "5h", "pct": 70, "resets_at": reset}, {"window": "7d", "pct": 18, "resets_at": reset + 86400}}}, nil); err != nil {
+	if err := budgetCall(t, bus, kidName, "task_update", map[string]any{"status_text": "building"}); err != nil {
 		t.Fatal(err)
 	}
-
-	// The deck's top border, through the daemon's agents_watch.
-	m := deck.New(deck.Client{Sock: api}, "lea-a", false, time.Now)
-	tm, _ := m.Update(tea.WindowSizeMsg{Width: 60, Height: 10})
-	tm, _ = tm.Update(m.Init()())
-	top := strings.SplitN(tm.View(), "\n", 2)[0]
-	if want := "5h 70% (" + time.Unix(reset, 0).Format("15:04") + ") · 7d 18%"; !strings.Contains(top, want) {
-		t.Fatalf("deck top %q, want %q", top, want)
-	}
-	// lea limits and limits_get (an agent's, read-only).
-	if rc, out, e := runEnv(t, env, "limits"); rc != 0 || !strings.Contains(out, "budget_5h_pct 60") || !strings.Contains(out, "70 in use") ||
-		!strings.Contains(out, "usage: 5h 70 %") || !strings.Contains(out, "7d 18 %") || !strings.Contains(out, "new spawns held (budget_5h_pct 60)") {
-		t.Fatalf("lea limits: rc=%d out=%q err=%q", rc, out, e)
-	}
-	var g struct {
-		Usage struct {
-			FiveHour struct{ Pct int } `json:"five_hour"`
-			Over     bool
+	report := func(cost float64) {
+		t.Helper()
+		if err := budgetCall(t, bus, kidName, "status_report", map[string]any{"ctx_pct": 20, "cost_usd": cost}); err != nil {
+			t.Fatal(err)
 		}
 	}
-	if err := budgetCall(t, bus, "tower", "limits_get", nil, &g); err != nil || g.Usage.FiveHour.Pct != 70 || !g.Usage.Over {
-		t.Fatalf("limits_get: %+v %v", g, err)
-	}
+	report(4.9)
 
-	// The lead's spawn waits, and the lead heard once why.
-	r, err := spawnAs(t, bus, "tower", map[string]any{"brief": "x", "queue": true})
-	if err != nil || r["queued"] == nil || !strings.Contains(r["reason"].(string), "5h usage 70 % ≥ budget_5h_pct 60") {
-		t.Fatalf("spawn: %v %v", r, err)
+	// Just above its cost: one report over it pauses it.
+	if rc, out, e := runEnv(t, env, "limits", "set", "budget_usd_agent", "5"); rc != 0 || !strings.Contains(out, "budget_usd_agent 5") || !strings.Contains(out, "$4.90 spent") {
+		t.Fatalf("set: rc=%d out=%q err=%q", rc, out, e)
 	}
-	if ra.started() != 0 {
-		t.Fatalf("%d started above the budget", ra.started())
-	}
-	var inbox []struct{ Kind, Text string }
-	if err := budgetCall(t, bus, "tower", "msg_inbox", nil, &inbox); err != nil {
-		t.Fatal(err)
-	}
-	notes := 0
-	for _, x := range inbox {
-		if x.Kind == "note" && strings.Contains(x.Text, "5h usage 70 % ≥ budget_5h_pct 60") {
-			notes++
-		}
-	}
-	if notes != 1 {
-		t.Fatalf("tower inbox %+v: %d budget notes, want 1", inbox, notes)
-	}
-
-	// The user's plan changed: raised on the same running daemon, the queued spawn starts.
-	if rc, out, e := runEnv(t, env, "limits", "set", "budget_5h_pct", "80"); rc != 0 || !strings.Contains(out, "budget_5h_pct 80") || !strings.Contains(out, "from your file") {
-		t.Fatalf("set 80: rc=%d out=%q err=%q", rc, out, e)
-	}
-	waitStarted(t, ra, 1)
-	if b, _ := os.ReadFile(user); string(b) != "LEA_BUDGET_5H_PCT='80'\n" {
+	if b, _ := os.ReadFile(user); !strings.Contains(string(b), "LEA_BUDGET_USD_AGENT='5'") {
 		t.Fatalf("user file=%q", b)
 	}
-	if kid, _ := st.AgentByKey("lea-a/kid"); kid.State == "done" || kid.State == "stopped" {
-		t.Fatalf("kid is %s", kid.State)
+	report(5.25)
+	waitPaused(t, st, kid, true)
+	reason := `budget reached\: \$5\.25 ≥ budget\_usd\_agent \$5`
+	if rc, out, e := runEnv(t, env, "board"); rc != 0 || !strings.Contains(out, "### Paused on a spend budget") || !strings.Contains(out, reason) {
+		t.Fatalf("board: rc=%d out=%s err=%q", rc, out, e)
+	}
+	if rc, out, _ := runEnv(t, env, "limits"); rc != 0 || !strings.Contains(out, "paused: "+kidName+": budget reached: $5.25") {
+		t.Fatalf("limits: %q", out)
+	}
+	// Its session is kept: paused, not stopped.
+	if a, _ := st.AgentByKey(kid); a.State == "done" || a.State == "stopped" || a.SessionID != before.SessionID || a.Incarnation != before.Incarnation {
+		t.Fatalf("after the pause: %+v", a)
+	}
+
+	// Raised on the running daemon: it resumes, without a restart.
+	if rc, _, e := runEnv(t, env, "limits", "set", "budget_usd_agent", "20"); rc != 0 {
+		t.Fatal(e)
+	}
+	waitPaused(t, st, kid, false)
+
+	// The total reached: the child is paused, and a lead's spawn is refused, or queued.
+	if rc, _, e := runEnv(t, env, "limits", "set", "budget_usd_total", "5"); rc != 0 {
+		t.Fatal(e)
+	}
+	waitPaused(t, st, kid, true)
+	if _, err := spawnAs(t, bus, "tower", map[string]any{"brief": "more"}); err == nil || !strings.Contains(err.Error(), "budget reached: total spend $5.25 ≥ budget_usd_total $5") {
+		t.Fatalf("spawn: %v", err)
+	}
+	if r, err := spawnAs(t, bus, "tower", map[string]any{"brief": "more", "queue": true}); err != nil || r["queued"] == nil {
+		t.Fatalf("queued: %v %v", r, err)
+	}
+	if ra.started() != 1 {
+		t.Fatalf("%d started", ra.started())
+	}
+	if rc, out, _ := runEnv(t, env, "board"); rc != 0 || !strings.Contains(out, `queued\: budget\_usd\_total \$5\.25\/\$5`) {
+		t.Fatalf("board: %s", out)
+	}
+	// A new period: the child resumes and the queued spawn starts.
+	if rc, out, e := runEnv(t, env, "limits", "reset", "budget_usd_total"); rc != 0 || !strings.Contains(out, "budget_usd_total 5") || !strings.Contains(out, "$0.00 spent") {
+		t.Fatalf("reset: rc=%d out=%q err=%q", rc, out, e)
+	}
+	waitPaused(t, st, kid, false)
+	waitStarted(t, ra, 2)
+
+	// An agent whose status line reports no cost is never paused, and is named.
+	if err := budgetCall(t, bus, "tower", "status_report", map[string]any{"ctx_pct": 5, "cost_usd": -1}); err != nil {
+		t.Fatal(err)
+	}
+	if rc, out, _ := runEnv(t, env, "limits"); rc != 0 || !strings.Contains(out, "not covered by the spend budgets (unknown cost): ") || !strings.Contains(out, "tower") {
+		t.Fatalf("limits: %q", out)
+	}
+	if rc, out, _ := runEnv(t, env, "limits", "doctor"); rc != 0 || !strings.Contains(out, "warn  spend budgets:") || !strings.Contains(out, "tower") {
+		t.Fatalf("doctor: %q", out)
+	}
+	if a, _ := st.AgentByKey("lea-a/tower"); a.Paused {
+		t.Fatal("the tower, of unknown cost, was paused")
 	}
 }

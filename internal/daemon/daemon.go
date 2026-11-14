@@ -197,10 +197,14 @@ type Daemon struct {
 	limitStore  LimitStore
 	limitVals   map[string]limitVal
 	childStarts int
-	// Usage budget (budget.go, #421): the account's latest usage of each window ("5h", "7d")
+	// budget is the spend budgets' state (budget.go, #424), loaded on first use.
+	budget *budgetState
+	// budgetWG counts the budget pauses and resumes that run.
+	budgetWG sync.WaitGroup
+	// Usage budget (usage.go, #421): the account's latest usage of each window ("5h", "7d")
 	// and whether the 5-hour one is at or above budget_5h_pct (its crossings note the leads).
-	account    map[string]acctWindow
-	budgetOver bool
+	account   map[string]acctWindow
+	usageOver bool
 }
 
 func New(st *store.Store, runDir string, now func() int64) *Daemon {
@@ -392,7 +396,7 @@ func (d *Daemon) dispatch(ctx context.Context, o Origin, req wire.Request) (any,
 	case "providers_list":
 		return d.providersList()
 	case "limits_get":
-		return d.limitsGet()
+		return d.limitsGet(o.Container)
 	case "limits_set":
 		return d.limitsSet(ctx, req.Params)
 	case "msg_send":
@@ -1271,7 +1275,12 @@ func (d *Daemon) dispatchHooks(ctx context.Context, o Origin, me string, req wir
 		d.mu.Unlock()
 		d.changed()
 		// Without the deck the user answers on the host (#135): a notification says so.
-		d.desktop(fmt.Sprintf("%s#p%d", me, id), fmt.Sprintf("%s asks to use %s: lea approve p%d or lea deny p%d (lea requests)", shortName(me), capTool(p.Tool), id, id))
+		// The one-off answer, and the durable one when the dialog offers it (#412).
+		ask := fmt.Sprintf("%s asks to use %s: lea approve p%d (once) or lea deny p%d; lea requests says what it asks", shortName(me), capTool(p.Tool), id, id)
+		if p.Always {
+			ask += fmt.Sprintf("; lea approve p%d always also allows it for this agent until lea restarts; it covers no other agent", id)
+		}
+		d.desktop(fmt.Sprintf("%s#p%d", me, id), ask)
 		timer := after(time.Duration(p.TimeoutS)*time.Second, func() { close(timedOut) })
 		defer timer.Stop()
 		v := ""

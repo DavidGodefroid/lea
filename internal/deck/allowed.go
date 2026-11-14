@@ -199,7 +199,7 @@ func (m Model) allowedLines(inner, room int) []string {
 		muted.Render(padLeft("esc closes ", 11))
 	var lines []string
 	if len(m.allowList) == 0 {
-		for _, l := range wrapWords("Nothing: agents ask as usual. On the host, lea allow deliver lets them push, open and merge their own PRs.", inner-2, 4) {
+		for _, l := range wrapWords("Nothing: agents ask as usual. On the host, lea allow deliver lets them push, open and merge their own PRs; it does not cover issues, release-tag or release (lea allow issues|release-tag|release).", inner-2, 4) {
 			lines = append(lines, padRight(" "+muted.Render(l), inner))
 		}
 	}
