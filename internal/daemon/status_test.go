@@ -24,7 +24,8 @@ func TestStatusReportStoresUsageAndNotifiesOnChange(t *testing.T) {
 	if err := report(t, e, 42, 1.204); err != nil {
 		t.Fatal(err)
 	}
-	if u, _ := e.d.st.Usages("lea-a"); u["lea-a/dev"] != (store.Usage{CtxPct: 42, CostUSD: 1.2}) {
+	// A report without tokens (an older lea's status line) keeps them unknown.
+	if u, _ := e.d.st.Usages("lea-a"); u["lea-a/dev"] != (store.Usage{CtxPct: 42, CtxTokens: -1, CostUSD: 1.2}) {
 		t.Fatalf("usages=%+v", u)
 	}
 	report(t, e, 42, 1.2)
@@ -36,8 +37,47 @@ func TestStatusReportStoresUsageAndNotifiesOnChange(t *testing.T) {
 		t.Fatalf("changed=%d after new values", n)
 	}
 	report(t, e, -1, -1)
-	if u, _ := e.d.st.Usages("lea-a"); u["lea-a/dev"] != (store.Usage{CtxPct: -1, CostUSD: -1}) {
+	if u, _ := e.d.st.Usages("lea-a"); u["lea-a/dev"] != (store.Usage{CtxPct: -1, CtxTokens: -1, CostUSD: -1}) {
 		t.Fatalf("unknown again: %+v", u)
+	}
+}
+
+// A report with the context's tokens stores them (#422); agents_list shows them next to the
+// percent, and leaves both out of a report that has neither. Out-of-range tokens are refused.
+func TestStatusReportStoresContextTokens(t *testing.T) {
+	e := start(t)
+	e.d.SetAgents(&fakeAgents{})
+	if err := call(t, e.bus, "dev", "status_report", map[string]any{"ctx_pct": 18, "ctx_tokens": 182000, "cost_usd": 1, "paths": []string{}}, nil); err != nil {
+		t.Fatal(err)
+	}
+	if u, _ := e.d.st.Usages("lea-a"); u["lea-a/dev"] != (store.Usage{CtxPct: 18, CtxTokens: 182000, CostUSD: 1}) {
+		t.Fatalf("usages=%+v", u)
+	}
+	row := func() agentView {
+		var as []agentView
+		if err := call(t, e.bus, "dev", "agents_list", nil, &as); err != nil {
+			t.Fatal(err)
+		}
+		for _, a := range as {
+			if a.Name == "dev" {
+				return a
+			}
+		}
+		t.Fatalf("no dev in %+v", as)
+		return agentView{}
+	}
+	if a := row(); a.CtxTokens == nil || *a.CtxTokens != 182000 || a.CtxPct == nil || *a.CtxPct != 18 {
+		t.Fatalf("row=%+v", a)
+	}
+	report(t, e, 18, 1)
+	if a := row(); a.CtxTokens != nil || a.CtxPct == nil {
+		t.Fatalf("without tokens: row=%+v", a)
+	}
+	for _, n := range []int{-2, 100000000} {
+		err := call(t, e.bus, "dev", "status_report", map[string]any{"ctx_pct": 1, "ctx_tokens": n, "cost_usd": 1, "paths": []string{}}, nil)
+		if err == nil || !strings.Contains(err.Error(), "ctx_tokens must be") {
+			t.Fatalf("%d: err=%v", n, err)
+		}
 	}
 }
 

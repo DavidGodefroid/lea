@@ -26,26 +26,27 @@ const maxLabel = 24
 // Agent is one row: an agent, or a shell (Kind KindShell). Label is the user's display name for
 // an agent ("" when none): the row shows it instead of Name.
 type Agent struct {
-	Key      string    `json:"key"`
-	Name     string    `json:"name"`
-	Kind     string    `json:"kind,omitempty"`
-	Label    string    `json:"label,omitempty"`
-	Profile  string    `json:"profile"`
-	Model    string    `json:"model,omitempty"`
-	State    string    `json:"state"`
-	Workdir  string    `json:"workdir"`
-	Updated  int64     `json:"updated"`
-	Created  int64     `json:"created,omitempty"`
-	Role     string    `json:"role"`
-	Parent   string    `json:"parent"`
-	Repo     string    `json:"repo"`
-	Branch   string    `json:"branch"`
-	Status   string    `json:"status"`
-	Unread   int       `json:"unread"`
-	ForUser  int       `json:"for_user"`
-	CtxPct   int       `json:"ctx_pct"`
-	CostUSD  float64   `json:"cost_usd"`
-	Approval *Approval `json:"approval,omitempty"`
+	Key       string    `json:"key"`
+	Name      string    `json:"name"`
+	Kind      string    `json:"kind,omitempty"`
+	Label     string    `json:"label,omitempty"`
+	Profile   string    `json:"profile"`
+	Model     string    `json:"model,omitempty"`
+	State     string    `json:"state"`
+	Workdir   string    `json:"workdir"`
+	Updated   int64     `json:"updated"`
+	Created   int64     `json:"created,omitempty"`
+	Role      string    `json:"role"`
+	Parent    string    `json:"parent"`
+	Repo      string    `json:"repo"`
+	Branch    string    `json:"branch"`
+	Status    string    `json:"status"`
+	Unread    int       `json:"unread"`
+	ForUser   int       `json:"for_user"`
+	CtxPct    int       `json:"ctx_pct"`
+	CtxTokens int       `json:"ctx_tokens"`
+	CostUSD   float64   `json:"cost_usd"`
+	Approval  *Approval `json:"approval,omitempty"`
 	// Paused: the user froze the agent (p); it continues where it stopped on resume.
 	Paused bool `json:"paused,omitempty"`
 	// Subagents counts the subagents the agent still runs (agents.Row.Subagents).
@@ -268,6 +269,7 @@ type Model struct {
 	notice        func() string // the update notice (WithNotice)
 	noticeText    string        // its latest text, shown while there is no status
 	sound         string        // the daemon's sound switch (Snapshot.Sound)
+	org           string        // the organisation of the company's managed configuration (#399), "" none
 	locks         []LockState   // each Lock's approvals state (Snapshot.Locks)
 	pressure      *Pressure     // the container's pressure gauge (Snapshot.Pressure)
 	hubDown       bool          // lea follows the hub but cannot reach it (Snapshot.HubState)
@@ -337,6 +339,13 @@ const (
 	introFrames = 5 * introStep
 	waveStep    = 3
 )
+
+// WithOrganisation shows org, the organisation whose managed configuration lea runs under (#399),
+// in the header.
+func (m Model) WithOrganisation(org string) Model {
+	m.org = org
+	return m
+}
 
 // WithIntro plays the logo's start animation (the deck run by lea; tests see the logo still).
 func (m Model) WithIntro() Model {
