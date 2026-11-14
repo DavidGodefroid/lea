@@ -13,7 +13,9 @@ Features:
   the `lockssh` MCP server. `lea lockssh`, `lea init --lockssh` and `lea doctor` cover it. The
   set (`config/locks.lock`) moves to lockkit v0.20.0 and lox v0.12.0, and the releases it runs:
   locksql v0.20.0, lockmq v0.10.0, lockfile v0.10.0, locklog v0.4.0, lockhttp v0.11.0, with
-  lockssh v0.3.0.
+  lockssh v0.3.0. Their consoles refuse a client that does not report its confinement
+  (lockkit v0.20.0): `lea doctor`'s hello probe now sends the report lockkit's `confine.Check`
+  makes in lea's image.
 - lea logs packets that get past its proxy (#104). lea's agents have no route but their own
   network, so they reach nothing but the proxy. If something gets around that (a container with
   `NET_ADMIN` on an agent network, a misconfigured network), the packet it sends past the proxy,

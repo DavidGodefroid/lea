@@ -11,6 +11,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/DavidGodefroid/lockkit/confine"
 )
 
 func repoSet(t *testing.T) *Set {
@@ -189,6 +191,12 @@ func fakeConsole(t *testing.T, dir, name string, speaks int, answer string) {
 					c.Write([]byte(`{"jsonrpc":"2.0","id":1,"error":{"code":-32602,"message":"invalid params for hello"}}` + "\n"))
 					return
 				}
+				// As a lockkit v0.20.0 console: a hello without a confinement report is an old
+				// client's, refused (lockkit#133).
+				if conf, ok := req.Params["confinement"].(map[string]any); !ok || conf["confined"] == nil {
+					c.Write([]byte(`{"jsonrpc":"2.0","id":1,"error":{"code":-32009,"message":"refused: this agent does not run confined (old_client)"}}` + "\n"))
+					return
+				}
 				if req.Params["protocol_major"] != float64(speaks) {
 					c.Write([]byte(fmt.Sprintf(`{"jsonrpc":"2.0","id":1,"error":{"code":-32600,"message":"protocol mismatch: client speaks %v, console speaks %d; use the same locksql version on both sides"}}`,
 						req.Params["protocol_major"], speaks) + "\n"))
@@ -229,6 +237,52 @@ func TestAskHello(t *testing.T) {
 	}
 	if _, err := AskHello(t.TempDir(), nil, 10001, 1, time.Second); err == nil || !strings.Contains(err.Error(), "no console socket") {
 		t.Errorf("empty dir: %v", err)
+	}
+}
+
+// The handshake carries confine.Check's report as is (lockkit#133): an unconfined probe says why,
+// and the console decides.
+func TestAskHelloSendsTheConfinementReport(t *testing.T) {
+	dir, err := os.MkdirTemp("", "lh")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.RemoveAll(dir) })
+	ln, err := net.Listen("unix", filepath.Join(dir, "a-dev.sock"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { ln.Close() })
+	got := make(chan string, 1)
+	go func() {
+		c, err := ln.Accept()
+		if err != nil {
+			return
+		}
+		defer c.Close()
+		line, _ := bufio.NewReader(c).ReadString('\n')
+		got <- line
+		c.Write([]byte(`{"jsonrpc":"2.0","id":1,"error":{"code":-32009,"message":"refused: this agent does not run confined (in_container)"}}` + "\n"))
+	}()
+	oldUID, oldConf := peerUID, confinement
+	t.Cleanup(func() { peerUID, confinement = oldUID, oldConf })
+	peerUID = func(net.Conn) (int, error) { return 10001, nil }
+	confinement = func() confine.Report { return confine.Report{Reasons: []string{confine.InContainer}} }
+	rs, err := AskHello(dir, []string{"a-dev.sock"}, 10001, 1, 2*time.Second)
+	if err != nil || len(rs) != 1 || rs[0].Hello != nil || !strings.Contains(rs[0].Err, "does not run confined (in_container)") {
+		t.Fatalf("%v %+v", err, rs)
+	}
+	var req struct {
+		Params struct {
+			Confinement *struct {
+				Confined bool     `json:"confined"`
+				Reasons  []string `json:"reasons"`
+			} `json:"confinement"`
+		} `json:"params"`
+	}
+	if line := <-got; json.Unmarshal([]byte(line), &req) != nil || req.Params.Confinement == nil ||
+		req.Params.Confinement.Confined || len(req.Params.Confinement.Reasons) != 1 || req.Params.Confinement.Reasons[0] != "in_container" {
+		t.Errorf("hello sent: %s", line)
 	}
 }
 

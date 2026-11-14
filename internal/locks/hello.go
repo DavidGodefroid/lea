@@ -16,6 +16,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/DavidGodefroid/lockkit/confine"
 )
 
 // HelloAt is the handshake of the console on one socket: Hello, or why there is none.
@@ -28,6 +30,10 @@ type HelloAt struct {
 // peerUID is the uid of the process serving conn (the kernel's peer credentials); it is a
 // variable so tests can stand in for the console account.
 var peerUID = socketPeerUID
+
+// confinement is the confinement report the handshake carries (lockkit's confine.Check of where
+// lea lock-hello runs); a variable so tests can stand in for a container.
+var confinement = func() confine.Report { return confine.Check(confine.RealEnv()) }
 
 // SocketNames are the names a console of profile may give its socket in a lock's socket
 // directory dir, as lockkit's ipc computes them: <key>-<profile>.sock (or, for a path longer than
@@ -108,8 +114,17 @@ func askOne(path string, uid, protocol int, timeout time.Duration) (*Hello, erro
 		return nil, fmt.Errorf("served by uid %d, not by the console account (uid %d): not asked", got, uid)
 	}
 	_ = c.SetDeadline(time.Now().Add(timeout))
-	req := fmt.Sprintf(`{"jsonrpc":"2.0","id":1,"method":"hello","params":{"protocol_major":%d,"client":"lea-doctor"}}`, protocol) + "\n"
-	if _, err := io.WriteString(c, req); err != nil {
+	// A lockkit v0.20.0 console refuses a hello without the client's confinement report
+	// (lockkit#133, old_client): lea's probe sends the one lockkit's confine.Check makes where it
+	// runs (lea's image, the socket volume alone), as a Lock's client does.
+	rep := confinement()
+	req, err := json.Marshal(map[string]any{"jsonrpc": "2.0", "id": 1, "method": "hello", "params": map[string]any{
+		"protocol_major": protocol, "client": "lea-doctor",
+		"confinement": map[string]any{"confined": rep.Confined, "reasons": rep.Reasons}}})
+	if err != nil {
+		return nil, err
+	}
+	if _, err := c.Write(append(req, '\n')); err != nil {
 		return nil, fmt.Errorf("cannot write the handshake: %v", err)
 	}
 	line, err := bufio.NewReader(io.LimitReader(c, 1<<16)).ReadBytes('\n')
