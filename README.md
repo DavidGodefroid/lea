@@ -754,6 +754,29 @@ permission. The agents of one container share one user, so they are one trust do
 that names another agent of its container in `LEA_AGENT` is still guarded by the same hard denies
 and the container's grants.
 
+### Lean children
+
+Every agent of a projects directory shares its copy of your plugins and MCP servers, so a lead's
+child loads the skill listing of every plugin and the tool listing of every server you have, even
+those that have nothing to do with its repository, and re-reads them on each of its turns. Two
+keys of `~/.config/lea/lea.conf` leave them out of the children (dev and reviewer agents a lead
+spawns):
+
+```sh
+LEA_CHILD_PLUGINS='my-plugin,other-plugin@my-marketplace' # plugins: a name (every marketplace) or name@marketplace
+LEA_CHILD_MCP='claude.ai Gmail,my-server'                # MCP servers, by the name /mcp lists
+```
+
+- **Children only.** Leads (a control tower) and the sessions you start yourself keep
+  everything. Empty keys (the default) change nothing.
+- **Read at each spawn.** The daemon reads the keys when a lead's child starts: an edit applies
+  to the next child without a restart, and a running child keeps what it started with.
+- **Your copy is untouched.** A child gets lea's `--settings` with those plugins disabled
+  (`enabledPlugins`) and those servers denied (`deniedMcpServers`); the container's
+  `settings.json` and `plugins` stay as they are for every other agent.
+- **lea's own are kept.** lea's plugin and MCP server, and the Locks' clients (`locksql`,
+  `lockmq`, `lockfile`, `locklog` and their instances), are never left out, whatever the keys say.
+
 ### Your own status line
 
 lea draws the agents' status line itself (`lea statusline`: model, context and 5-hour/7-day
@@ -1173,6 +1196,7 @@ read-only. The screen runs in the deck on the host: agents cannot open or drive 
 | `LEA_APPROVALS`, `LEA_APPROVAL_TIMEOUT` | `deck`, `60` | who answers permission requests |
 | `LEA_PROVIDER`, `LEA_MODEL` | `claude`, empty | the default provider and model of a new agent ([providers](#other-providers-codex-ollama-vllm)) |
 | `LEA_PROVIDERS` | `~/.config/lea/providers` | your OpenAI-compatible endpoints and their key files |
+| `LEA_CHILD_PLUGINS`, `LEA_CHILD_MCP` | empty | [lean children](#lean-children): the host plugins and MCP servers a lead's children start without, comma separated; read at each spawn |
 | `LEA_AUTO_RESUME`, `LEA_RESUME_DELAY` | on, `60` | resume agents stopped on a usage limit, so many seconds after its reset (`0`: off) |
 | `LEA_STACK_IDLE` | `10` | minutes an agent stays idle before lea stops (not removes) the containers it started in the nested Podman (`0`: never); `lea board` lists what it freed |
 | `LEA_QUESTION_REMIND` | `120` | minutes a control tower's question waits for your answer before the tower asks it again, once, prefixed with `reminder:` (`0`: never) |

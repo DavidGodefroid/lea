@@ -21,6 +21,19 @@ func hostProviders(exe string, getenv func(string) string) func() (*providers.Re
 	}
 }
 
+// hostChildDeny is the deny-lists of a lead's children (#423), read from lea's config files at
+// each start of a child: an edit applies to the next child without a restart. None when the
+// configuration does not load.
+func hostChildDeny(exe string) func() (string, string) {
+	return func() (string, string) {
+		cfg, err := loadLeaConfig(exe)
+		if err != nil {
+			return "", ""
+		}
+		return cfg.ChildDeny()
+	}
+}
+
 func daemonProvidersStamp(exe string) string {
 	on, several := daemonLockTools(exe)
 	return launcher.DaemonProvidersStamp(on, several, os.Getenv)

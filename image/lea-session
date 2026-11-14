@@ -37,5 +37,14 @@ for a in "$@"; do
   prev=$a
 done
 if [ -d "$plugin" ]; then set -- --plugin-dir "$plugin" "$@"; fi
-if s=$(lea_settings); then set -- --settings "$s" "$@"; fi
+if s=$(lea_settings); then
+  # A lead's child (#423): the daemon passes the deny-lists of lea's configuration
+  # (LEA_CHILD_PLUGINS, LEA_CHILD_MCP); lea's settings go in with those plugins disabled and those
+  # MCP servers denied, as one JSON value. Should lea fail, the child starts with lea's settings
+  # as they are.
+  if [ -n "${LEA_CHILD_PLUGINS:-}${LEA_CHILD_MCP:-}" ] && j=$("$lea" child-settings "$s"); then
+    s=$j
+  fi
+  set -- --settings "$s" "$@"
+fi
 exec claude "$@"

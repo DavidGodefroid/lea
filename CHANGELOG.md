@@ -4,6 +4,11 @@
 
 Changes:
 
+- Lean children (#423): `LEA_CHILD_PLUGINS` and `LEA_CHILD_MCP` list the host plugins and MCP
+  servers a lead's children start without (a child loaded every plugin's skill listing and every
+  server's tools, about half its starting context). Leads and your own sessions keep everything;
+  lea's plugin and MCP server and the Locks' clients are always kept. Read at each spawn: an edit
+  applies to the next child, without a restart.
 - lea no longer copies on select (#419): a drag in an agent's terminal no longer enters tmux's
   copy mode, copies the selection or flashes "Copied". Claude Code copies on select itself, through
   the same clipboard bridge: a copy worked and looked one way or the other depending on whether

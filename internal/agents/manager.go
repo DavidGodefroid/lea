@@ -149,6 +149,10 @@ type Config struct {
 	// it as the requester of a plan, and the Lock runs a ticket only for the token that asked.
 	// Not a security boundary: the agents of a container share one UID. nil: no token.
 	RequesterToken func(container, agent, incarnation string) string
+	// ChildDeny is the deny-lists of host plugins and MCP servers a lead's children start
+	// without (LEA_CHILD_PLUGINS, LEA_CHILD_MCP, #423), read at each start of a child so an edit
+	// applies to the next one; nil: none. Leads and the user's sessions never get them.
+	ChildDeny func() (plugins, mcp string)
 }
 
 type Row struct {
@@ -459,6 +463,15 @@ func (m *Manager) paneCmd(container string, a store.Agent, args []string, attach
 	}
 	if m.cfg.RequesterToken != nil && !attach {
 		cmd = append(cmd, "-e", "LEA_AGENT_TOKEN="+m.cfg.RequesterToken(container, a.Name, a.Incarnation))
+	}
+	if m.cfg.ChildDeny != nil && a.Parent != "" && !attach {
+		plugins, mcp := m.cfg.ChildDeny()
+		if plugins != "" {
+			cmd = append(cmd, "-e", "LEA_CHILD_PLUGINS="+plugins)
+		}
+		if mcp != "" {
+			cmd = append(cmd, "-e", "LEA_CHILD_MCP="+mcp)
+		}
 	}
 	cmd = append(cmd, "-w", a.Workdir, container, "abduco")
 	if attach {

@@ -304,6 +304,7 @@ func runDaemon(stderr io.Writer) int {
 		DefaultModel:    os.Getenv("LEA_MODEL"),
 		ProxyToken:      proxyToken,
 		RequesterToken:  requesterToken,
+		ChildDeny:       hostChildDeny(exe),
 	})
 	d.SetAgents(m)
 	// Whether lox run serves the workspace's decisions (#300): the deck says to run it when not.
