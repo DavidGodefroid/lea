@@ -69,10 +69,11 @@
 <tbody>
 <tr><th scope="row">The projects directory, read/write</th><td class="yes">Yes</td></tr>
 <tr><th scope="row">An allow-list of <code>~/.claude</code>, read-only</th><td class="yes">Yes</td></tr>
-<tr><th scope="row">Public HTTPS on the egress allowlist</th><td class="yes">Yes</td></tr>
+<tr><th scope="row"><code>~/.claude/projects/&lt;slug&gt;</code>, this projects directory&#8217;s Claude Code transcripts, read/write</th><td class="yes">Yes</td></tr>
+<tr><th scope="row">Public HTTP and HTTPS on the egress allowlist</th><td class="yes">Yes</td></tr>
 <tr><th scope="row">Git over SSH to the endpoints you pin, with lea&#8217;s key</th><td class="yes">Yes</td></tr>
 <tr><th scope="row">Its own rootless containers</th><td class="yes">Yes</td></tr>
-<tr><th scope="row">The sockets of the locks <code>lox run</code> runs, read-only</th><td class="yes">Yes</td></tr>
+<tr><th scope="row">The sockets of the locks <code>lox run</code> runs, mounted read-only (writes wait for your approval)</th><td class="yes">Yes</td></tr>
 <tr><th scope="row"><code>~/.ssh</code>, <code>~/.aws</code>, <code>~/.kube</code> and the rest of your home</th><td class="no">No</td></tr>
 <tr><th scope="row">Private and link-local addresses: your NAS, intranet, cloud metadata</th><td class="no">No</td></tr>
 <tr><th scope="row">Host services listening on <code>0.0.0.0</code></th><td class="no">No</td></tr>
@@ -84,16 +85,16 @@
 </table>
 </div>
   <div class="prose">
-    <p>Each agent network is isolated from the host: the host has no address on it (Docker Engine 28.0 or later). lea refuses to start a container on a network that is not.</p>
+    <p>Each agent network is isolated from the host: the host has no address on it (Docker Engine 28.0 or later). lea refuses to start a container on a network that is not, unless you set <code>LEA_ALLOW_GATEWAY=1</code> (Podman, or a Docker Engine older than 28.0): the host&#8217;s services are then reachable from the agents&#8217; network.</p>
   </div>
 </section>
 
 <section aria-labelledby="egress">
   <h2 id="egress">Egress</h2>
   <div class="prose">
-    <p>By default the allowlist holds the forges (GitHub, GitLab), the package registries (Go, npm, PyPI), the image registries and the model APIs. Each domain covers its subdomains; anything else is refused.</p>
+    <p>By default the allowlist holds the forges (GitHub, GitLab), the package registries (Go, npm, yarn, PyPI), the image registries, the Fedora and Alpine mirrors of nested builds and the model APIs (Anthropic, and openai.com and chatgpt.com for Codex), on ports 80 and 443. Each domain covers its subdomains; anything else is refused. <code>LEA_EGRESS_ALLOW=&#39;*&#39;</code> opens every domain; with <code>LEA_LOCKHTTP=1</code> the LockHTTP gate decides the destinations instead of the list.</p>
     <p>Only you change it, on the host: <code>lea egress allow</code>, <code>lea egress deny</code>, or <code>LEA_EGRESS_ALLOW</code> in <code>~/.config/lea/lea.conf</code>. No agent, MCP tool or allowance reaches it.</p>
-    <p>A host of your network is reached only once listed in <code>LEA_INTERNAL_HOSTS</code>, and an internal name grants that name only: the proxy checks the TLS handshake&#8217;s server name.</p>
+    <p>A host of your network is reached only once listed in the internal-hosts file (<code>LEA_INTERNAL_HOSTS</code> is its path, by default <code>config/internal-hosts</code> in lea&#8217;s installation), one <code>&lt;host or IPv4&gt; &lt;ports&gt;</code> entry per line, and an internal name grants that name only: the proxy checks the TLS handshake&#8217;s server name.</p>
     <p>The agents resolve no external name: lea starts their container with a resolver address that is never routed, so no lookup, from an agent or a container it starts, reaches your host&#8217;s resolver or the internet. The proxy resolves names for them. <code>lea doctor</code> fails on a container that resolves an external name.</p>
   </div>
 </section>
@@ -113,6 +114,7 @@
 <tr><td>Other forges, registry logins</td><td>yes</td></tr>
 <tr><td>lea&#8217;s SSH key</td><td>no: usable through the ssh-agent socket only</td></tr>
 <tr><td>Provider API keys</td><td>no: in the proxy, usable through the key forwarder</td></tr>
+<tr><td>Kubernetes view token (<code>lea kube refresh</code>, at <code>~/.kube/lea</code>)</td><td>yes: read-only, valid 8 h</td></tr>
 </tbody>
 </table>
 </div>
@@ -122,16 +124,16 @@
 <section aria-labelledby="confinement">
   <h2 id="confinement">Inside the container</h2>
   <div class="prose">
-    <p>The entrypoint drops to your uid with no capabilities. The image has no <code>sudo</code> and no setuid file, so there is no way back to root.</p>
-    <p>lea&#8217;s seccomp profile is Docker&#8217;s default with a reviewed list of changes, each with its reason, checked in CI. It allows what the nested rootless Podman needs and keeps refusing the kernel keyring, <code>bpf</code>, <code>perf_event_open</code> and the kernel crypto sockets. On Linux the AppArmor profile <code>lea</code> applies too.</p>
-    <p>The proxy, the only container on both the agents&#8217; networks and the egress network, runs with a read-only root, almost every capability dropped, and no service as root.</p>
+    <p>The entrypoint drops to your uid with no effective capabilities. The image has no <code>sudo</code> and no setuid file; only <code>newuidmap</code> and <code>newgidmap</code> keep the file capabilities rootless Podman needs (<code>cap_setuid</code>, <code>cap_setgid</code>), which is why the container runs without <code>no-new-privileges</code>.</p>
+    <p>lea&#8217;s seccomp profile is Docker&#8217;s default with a reviewed list of changes, each with its reason, checked in CI. It allows what the nested rootless Podman needs and keeps refusing the kernel keyring, <code>bpf</code>, <code>perf_event_open</code> and the kernel crypto sockets. Where Docker uses AppArmor (not on SELinux distributions or Docker Desktop), the AppArmor profile <code>lea</code> applies too.</p>
+    <p>The proxy, the only container on both the agents&#8217; networks and the egress network, runs with a read-only root and almost every capability dropped (when its image carries the <code>lea.confine=1</code> label; an older pinned <code>LEA_PROXY_IMAGE</code> runs unconfined, with a warning). No service runs as root, except under rootless Podman, where the key forwarder runs as the container&#8217;s root, which is your user on the host.</p>
   </div>
 </section>
 
 <section aria-labelledby="kernel">
   <h2 id="kernel">The kernel</h2>
   <div class="prose">
-    <p>Every lea container shares the host kernel, so the host&#8217;s patch level is part of the containment. <code>lea doctor</code> shows the kernel, Docker Engine, containerd and runc versions, and fails below the kernel minimum lea knows for your distribution.</p>
+    <p>Every lea container shares the host kernel, so the host&#8217;s patch level is part of the containment. <code>lea doctor</code> shows the kernel, Docker Engine, containerd and runc versions, and warns when <code>config/host-minimums</code> has no kernel minimum for your distribution; it fails below one only once a minimum is listed (none is yet).</p>
     <p><code>LEA_RUNTIME=runsc</code> (gVisor) or <code>LEA_RUNTIME=kata</code> (Kata Containers) puts a second kernel in the way, for the agent containers. Each has a cost and a few features it drops. <a href="https://github.com/DavidGodefroid/lea/blob/main/README.md#a-second-kernel-gvisor-or-kata">A second kernel</a>.</p>
   </div>
 </section>
@@ -194,7 +196,7 @@
       </nav>
     </div>
     <div class="wrap footer-bottom">
-      <p>Pre-release (v0.15.x). lea is licensed under the <a href="https://github.com/DavidGodefroid/lea/blob/main/LICENSE">Apache License 2.0</a>.</p>
+      <p>Pre-release. lea is licensed under the <a href="https://github.com/DavidGodefroid/lea/blob/main/LICENSE">Apache License 2.0</a>.</p>
       <p>lea is an independent project, not affiliated with Anthropic. Claude and Claude Code are trademarks of Anthropic.</p>
       <p><a href="https://lockfamily.dev">lockfamily.dev</a> · <a href="https://github.com/DavidGodefroid/lockfamily">the family on GitHub</a></p>
     </div>

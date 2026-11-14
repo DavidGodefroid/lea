@@ -57,7 +57,7 @@ lea_doctor() {
   elif _dtb=$(lea_tmux_bin); then
     _dtv=$("$_dtb" -V 2>/dev/null || true)
     if lea_tmux_version_ok "$_dtv"; then lea__ok "tmux ($_dtv, $(lea_tmux_source "$_dtb"))"
-    else lea__fail "tmux" "$_dtv is older than $LEA_TMUX_MIN: $(lea_tmux_install_hint), or $(lea_tmux_build_hint)"; _drc=1; fi
+    else lea__fail "tmux" "$_dtv is older than $LEA_TMUX_MIN: $(lea_tmux_install_hint)$(lea_tmux_build_hint)"; _drc=1; fi
   else
     lea__fail "tmux" "$(lea_tmux_missing) (the deck needs it)"; _drc=1
   fi

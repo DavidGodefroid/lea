@@ -285,7 +285,9 @@ class Site(unittest.TestCase):
         self.assertNotIn('lox approve', everything)
         self.assertNotIn('lox init', everything)
         self.assertNotIn('0.5.0', everything)
-        self.assertIn('<code>lox</code> 0.9.0 or later', self.html['install/index.html'])
+        # no hard-coded lox minimum: lea doctor names the release lea pins (#477)
+        self.assertNotIn('0.9.0', everything)
+        self.assertIn('older than the release lea pins', self.html['install/index.html'])
         for page in ('index.html', 'install/index.html', 'faq/index.html', 'how-it-works/index.html'):
             self.assertIn('<code>lox run</code>', self.html[page], page)
         install = self.html['install/index.html']
@@ -300,9 +302,12 @@ class Site(unittest.TestCase):
         for old in ('lea delivery', 'lea grant'):
             self.assertNotIn(old, everything)
         self.assertNotIn('v0.14', everything)
+        # the footer names no version, so it never goes stale (#477)
         for page in PAGES:
-            if page != '404.html':
-                self.assertIn('Pre-release (v0.15.x)', self.html[page], page)
+            footer = self.html[page].split('<footer', 1)[1]
+            self.assertIn('<p>Pre-release. lea is licensed', footer, page)
+            self.assertNotRegex(footer, r'v0\.\d', page)
+        self.assertNotRegex(self.html['index.html'], r'class="badge">v\d', 'badge')
         home, how = self.html['index.html'], self.html['how-it-works/index.html']
         self.assertIn('<code>lea allow deliver</code>', home)
         self.assertIn('<code>lea allow deliver</code>', self.html['faq/index.html'])

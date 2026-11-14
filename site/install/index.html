@@ -54,7 +54,7 @@
   <main id="main" tabindex="-1">
     <div class="wrap">
 
-<p class="eyebrow">Install · pre-release v0.15.x</p>
+<p class="eyebrow">Install · pre-release</p>
 <h1>Install lea</h1>
 <div class="prose">
   <p class="lead">lea runs in Docker. On your machine you need Docker, the <code>lea</code> command and, for the Locks, <code>lox</code>.</p>
@@ -66,7 +66,7 @@
       <div class="install-head"><span>Install with Homebrew</span></div>
       <pre tabindex="0" aria-label="Install commands"><code><span class="cmd">brew trust davidgodefroid/tap</span>
 <span class="cmd">brew install davidgodefroid/tap/lox davidgodefroid/tap/lea</span></code></pre>
-      <p class="install-note">Needs Docker. Then run <code>lea</code> in the directory that holds your projects, and keep <code>lox run</code> open beside it for the Locks. The whole family: <code>brew install davidgodefroid/tap/lockfamily</code>.</p>
+      <p class="install-note">Needs Docker (on macOS, the formula also installs tmux). Then run <code>lea</code> in the directory that holds your projects, and keep <code>lox run</code> open beside it for the Locks. The whole family: <code>brew install davidgodefroid/tap/lockfamily</code>.</p>
     </div>
   <div class="prose">
     <p>Homebrew asks you to trust a third-party tap once, hence <code>brew trust</code> first. <code>lox</code> is the Lock Family&#8217;s hub; lea alone does not need it, its Locks do.</p>
@@ -80,8 +80,8 @@
     <li><p>Go to the directory that holds your projects, not a project inside it, and run <code>lea</code>.</p>
       <pre tabindex="0"><code>cd ~/projects
 lea</code></pre></li>
-    <li><p>lea checks that Docker answers, pulls and verifies its images, and records the projects directory. On Linux hosts where Docker uses AppArmor, it installs its profile with <code>sudo</code>, once.</p></li>
-    <li><p>The deck opens on a Control Tower, a lead on Claude Code that runs <code>/lea:control-tower</code>. Log in once (<code>/login</code>); the login is lea&#8217;s own, kept per projects directory, never your host&#8217;s.</p></li>
+    <li><p>lea asks once whether you want lea deck or your own tool in the container (<code>lea config deck on|off</code> changes it later). It checks that Docker answers, pulls and verifies its images, and records the projects directory. On Linux hosts where Docker uses AppArmor, the first <code>lea</code> does not prompt for <code>sudo</code>: it stops and tells you to run <code>lea init</code> once (it asks for <code>sudo</code> to install lea&#8217;s AppArmor profile and egress log), then <code>lea</code>.</p></li>
+    <li><p>lea deck, lea&#8217;s terminal interface, opens on a Control Tower, a lead on Claude Code that runs <code>/lea:control-tower</code>. Log in once (<code>/login</code>); the login is lea&#8217;s own, kept per projects directory, never your host&#8217;s.</p></li>
     <li><p>Press <kbd>n</kbd> for another agent, <kbd>N</kbd> for another Control Tower, <kbd>?</kbd> for the keys, <kbd>q</kbd> to leave. The agents keep running.</p></li>
   </ol>
   <div class="prose">
@@ -95,36 +95,36 @@ lea</code></pre></li>
     <li>Linux, macOS, or Windows with WSL 2 (run lea from your WSL distribution).</li>
     <li>Docker Engine on Linux, or Docker Desktop, running and usable without <code>sudo</code>; a patched host kernel (<a href="../security/#kernel">the kernel</a>).</li>
     <li>On macOS, tmux 3.2 or later (<code>brew install tmux</code>); the Linux release brings its own.</li>
-    <li><code>curl</code>, <code>tar</code> and <code>ssh-keygen</code>.</li>
+    <li><code>curl</code>, <code>tar</code>, <code>ssh-keygen</code>, and <code>sha256sum</code> or <code>shasum</code>. The installer downloads <code>cosign</code> when it is missing.</li>
     <li>A subscription or API key for your agent: Claude Code by default, or Codex.</li>
   </ul>
-  <p class="prose">lea never runs <code>sudo</code> itself, except once in <code>lea init</code> to install its AppArmor profile, on the Linux hosts that use it.</p>
+  <p class="prose">lea runs <code>sudo</code> only on Linux, to install two host files once: its AppArmor profile (where Docker uses AppArmor) and its egress log, an nftables table with its systemd unit <code>lea-egress-log.service</code> (where nft and systemd are present). <code>lea init</code> asks for it; a plain <code>lea</code> uses it only when <code>sudo</code> needs no password, and <code>lea doctor</code> runs <code>sudo -n</code> checks that never prompt.</p>
 </section>
 
 <section aria-labelledby="locks">
   <h2 id="locks">Add the Locks</h2>
   <div class="prose">
     <p>The Locks keep a human between your agents and production: locksql (SQL databases), lockmq (RabbitMQ), lockfile (files), locklog (logs), lockssh (commands over SSH) and lockhttp (outbound HTTP). Each runs as a console that alone holds the credentials.</p>
-    <p>Run <a href="https://github.com/DavidGodefroid/lockhub/blob/main/docs/lox-add.md"><code>lox add</code></a> in lea&#8217;s projects directory, then keep <code>lox run</code> open in a terminal of its own, outside lea (<code>lox</code> 0.9.0 or later).</p>
+    <p>Run <a href="https://github.com/DavidGodefroid/lockhub/blob/main/docs/lox-add.md"><code>lox add</code></a> in lea&#8217;s projects directory, then keep <code>lox run</code> open in a terminal of its own, outside lea. Use a recent <code>lox</code>: <code>lea doctor</code> warns when it is older than the release lea pins.</p>
   </div>
   <pre tabindex="0"><code>lox add locksql      <span class="cmt"># or lockmq, lockfile, locklog, lockssh</span>
 lox run</code></pre>
   <div class="prose">
     <p><code>lox run</code> starts the projects directory&#8217;s hub and locks, approves what the rules allow on its own, and asks you for the rest. A Lock is on for lea as soon as <code>lox run</code> runs a lock of its type there; <code>LEA_LOCKSQL=0</code> (and so on) keeps one off.</p>
     <p>A lock added while lea runs reaches the agents after <code>lea stop</code>, then <code>lea</code>: Docker cannot add a mount to a running container.</p>
-    <p>lockhttp also needs <code>LEA_LOCKHTTP=1</code> in <code>~/.config/lea/lea.conf</code>: its gate then sits beside lea&#8217;s proxy and every outbound request goes through it, once you run <code>lea stop --all</code>, then <code>lea</code> (<code>LEA_LOCKHTTP=1 lea</code> alone is ignored, with a warning). <a href="https://github.com/DavidGodefroid/lea/blob/main/README.md#web-requests-with-lockhttp">Web requests, with LockHTTP</a>.</p>
+    <p>lockhttp also needs its launcher on the host (<code>brew install davidgodefroid/tap/lockfamily</code>) and <code>LEA_LOCKHTTP=1</code> in <code>~/.config/lea/lea.conf</code>; it refuses <code>LEA_GIT_SSH</code> and <code>LEA_OTEL_UPSTREAM</code>, whose forwarders would bypass its gate. Its gate then sits beside lea&#8217;s proxy and every outbound request goes through it, once you run <code>lea stop --all</code>, then <code>lea</code> (<code>LEA_LOCKHTTP=1 lea</code> alone is ignored, with a warning). <a href="https://github.com/DavidGodefroid/lea/blob/main/README.md#web-requests-with-lockhttp">Web requests, with LockHTTP</a>.</p>
   </div>
 </section>
 
 <section aria-labelledby="forges">
   <h2 id="forges">Git and forges</h2>
   <div class="prose">
-    <p>Git over HTTPS works out of the box, with any public forge. For GitHub, give lea a token on the host, once: it stays in the proxy, and the agents&#8217; <code>gh</code> and <code>git</code> use it without reading it.</p>
+    <p>Git over HTTPS works out of the box with GitHub and GitLab; another forge (Bitbucket, Codeberg, your own) needs <code>lea egress allow DOMAIN</code> once. For GitHub, give lea a token on the host, once: it stays in the proxy, and the agents&#8217; <code>gh</code> and <code>git</code> use it without reading it.</p>
   </div>
   <pre tabindex="0"><code>gh auth token | lea github login
 lea github status</code></pre>
   <div class="prose">
-    <p>Prefer a fine-grained token, limited to the repositories of the projects directory. For SSH, list the endpoints in <code>~/.config/lea/lea.conf</code>, pin their host keys and rerun <code>lea init</code>: it prints lea&#8217;s own public key to add to your forge.</p>
+    <p>Prefer a fine-grained token, limited to the repositories of the projects directory. For SSH (refused with <code>LEA_LOCKHTTP=1</code>), list the endpoints in <code>~/.config/lea/lea.conf</code>, pin their host keys and rerun <code>lea init</code>: it prints lea&#8217;s own public key to add to your forge.</p>
   </div>
   <pre tabindex="0"><code>echo 'LEA_GIT_SSH="github.com:22"' &gt;&gt; ~/.config/lea/lea.conf
 ssh-keyscan github.com &gt;&gt; ~/.config/lea/git_known_hosts   <span class="cmt"># compare the fingerprints</span>
@@ -133,12 +133,12 @@ lea init</code></pre>
 
 <section aria-labelledby="installer">
   <h2 id="installer">Without Homebrew</h2>
-  <p class="prose">lea&#8217;s own installer checks the requirements, downloads the release for your platform and verifies its checksum and signature. It then links <code>~/.local/bin/lea</code> and runs <code>lea init</code>.</p>
+  <p class="prose">lea&#8217;s own installer checks the requirements, downloads the release for your platform and verifies its checksum and signature. It then links <code>~/.local/bin/lea</code> (when <code>~/.local/bin</code> is not on your <code>PATH</code>, it only prints a hint) and runs <code>lea init</code>, which asks for your projects directory.</p>
   <pre tabindex="0"><code>curl -fsSL https://leadeck.dev/install.sh | sh
 lea</code></pre>
   <div class="prose">
-    <p>It never installs on the checksum alone: without a valid cosign signature it stops. <a href="../security/#releases">Signed releases</a>.</p>
-    <p>From source: clone the repository and run <code>bin/lea init</code>, which builds lea and its images with Docker only.</p>
+    <p>It never installs on the checksum alone: without a valid cosign signature it stops. The only exceptions are v0.1.0 and v0.1.1, released before signing: their <code>checksums.txt</code> is accepted when it matches the SHA-256 the installer pins, unless <code>LEA_REQUIRE_COSIGN=1</code>. <a href="../security/#releases">Signed releases</a>.</p>
+    <p>From source: clone the repository and run <code>bin/lea init</code>, which builds lea and its images with <code>make</code> and Docker (Go runs in a container).</p>
   </div>
 </section>
 
@@ -148,7 +148,8 @@ lea</code></pre>
     <p>An agent runs on a provider: <code>claude</code> (Claude Code, the default), <code>codex</code> (OpenAI&#8217;s Codex CLI, in the image), or an OpenAI-compatible endpoint of your own, run through Codex.</p>
   </div>
   <pre tabindex="0"><code>lea new -p codex            <span class="cmt"># one Codex agent</span>
-lea config tool codex       <span class="cmt"># without the deck: your own tool in lea</span></code></pre>
+lea config tool codex       <span class="cmt"># the tool lea starts without the deck</span>
+lea config deck off         <span class="cmt"># without the deck, from the next lea</span></code></pre>
   <div class="prose">
     <p><code>LEA_PROVIDER</code> and <code>LEA_MODEL</code> set the default. Endpoints such as Ollama or vLLM go in <code>~/.config/lea/providers</code>, with a key file that only the proxy mounts. <a href="../how-it-works/#providers">Providers</a>.</p>
   </div>
@@ -161,8 +162,15 @@ lea config tool codex       <span class="cmt"># without the deck: your own tool 
   </div>
   <pre tabindex="0"><code>lea stop --all --forget
 rm -rf ~/.local/bin/lea ~/.local/share/lea-install ~/.local/share/lea ~/.config/lea
-docker image ls &#39;ghcr.io/davidgodefroid/lea*&#39;   <span class="cmt"># then docker image rm the ones listed</span></code></pre>
-  <p class="prose">Installed with Homebrew, <code>brew uninstall lea</code> removes the command; lea&#8217;s data, configuration and images are removed as above.</p>
+docker image ls &#39;ghcr.io/davidgodefroid/lea*&#39;   <span class="cmt"># then docker image rm the ones listed</span>
+docker network rm $(docker network ls -q --filter label=lea.prefix)
+
+<span class="cmt"># Linux, what lea init installed with sudo:</span>
+sudo systemctl disable --now lea-egress-log.service
+sudo nft delete table bridge lea_egress
+sudo rm -f /etc/systemd/system/lea-egress-log.service /etc/lea/egress-log.nft
+sudo apparmor_parser -R /etc/apparmor.d/lea &amp;&amp; sudo rm -f /etc/apparmor.d/lea</code></pre>
+  <p class="prose">Installed with Homebrew, <code>brew uninstall lea</code> removes the command; lea&#8217;s data, configuration and images are removed as above. A source install also leaves the <code>lea:dev</code>, <code>lea-proxy:dev</code> and <code>lea-ctl:dev</code> images, its clone and the Go cache, <code>~/.cache/lea-go</code>.</p>
 </section>
 
     </div>
@@ -200,7 +208,7 @@ docker image ls &#39;ghcr.io/davidgodefroid/lea*&#39;   <span class="cmt"># then
       </nav>
     </div>
     <div class="wrap footer-bottom">
-      <p>Pre-release (v0.15.x). lea is licensed under the <a href="https://github.com/DavidGodefroid/lea/blob/main/LICENSE">Apache License 2.0</a>.</p>
+      <p>Pre-release. lea is licensed under the <a href="https://github.com/DavidGodefroid/lea/blob/main/LICENSE">Apache License 2.0</a>.</p>
       <p>lea is an independent project, not affiliated with Anthropic. Claude and Claude Code are trademarks of Anthropic.</p>
       <p><a href="https://lockfamily.dev">lockfamily.dev</a> · <a href="https://github.com/DavidGodefroid/lockfamily">the family on GitHub</a></p>
     </div>

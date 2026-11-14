@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>How lea works</title>
-  <meta name="description" content="How lea works: one container per projects directory, an egress proxy, the deck, teams of agents, providers and the Locks.">
+  <meta name="description" content="How lea works: one container per projects directory, an egress proxy, lea deck, teams of agents, providers and the Locks.">
   <meta name="color-scheme" content="light dark">
   <meta name="theme-color" content="#f4efe4" media="(prefers-color-scheme: light)">
   <meta name="theme-color" content="#16140f" media="(prefers-color-scheme: dark)">
@@ -12,7 +12,7 @@
   <meta property="og:type" content="website">
   <meta property="og:site_name" content="lea">
   <meta property="og:title" content="How lea works">
-  <meta property="og:description" content="How lea works: one container per projects directory, an egress proxy, the deck, teams of agents, providers and the Locks.">
+  <meta property="og:description" content="How lea works: one container per projects directory, an egress proxy, lea deck, teams of agents, providers and the Locks.">
   <meta property="og:url" content="https://leadeck.dev/how-it-works/">
   <meta property="og:image" content="https://leadeck.dev/assets/og.png">
   <meta property="og:image:type" content="image/png">
@@ -22,7 +22,7 @@
   <meta property="og:locale" content="en_US">
   <meta name="twitter:card" content="summary_large_image">
   <meta name="twitter:title" content="How lea works">
-  <meta name="twitter:description" content="How lea works: one container per projects directory, an egress proxy, the deck, teams of agents, providers and the Locks.">
+  <meta name="twitter:description" content="How lea works: one container per projects directory, an egress proxy, lea deck, teams of agents, providers and the Locks.">
   <meta name="twitter:image" content="https://leadeck.dev/assets/og.png">
   <meta name="twitter:image:alt" content="lea: many agents, none of your machine.">
   <link rel="icon" href="../assets/logo.svg" type="image/svg+xml">
@@ -57,7 +57,7 @@
 <p class="eyebrow">How it works</p>
 <h1>How lea works</h1>
 <div class="prose">
-  <p class="lead">One container per projects directory holds your agents. A proxy beside it is their only way out, and the deck is how you drive them.</p>
+  <p class="lead">One container per projects directory holds your agents. A proxy beside it is their only way out, and lea deck, lea&#8217;s terminal interface, is how you drive them.</p>
 </div>
 
 <section aria-labelledby="container">
@@ -67,6 +67,7 @@
 ┌───────────────────────────────────────────────────────────┐
 │  ~/projects ─────────── read/write ────────────┐          │
 │  ~/.claude (allow-list) ─── read-only ─────────┤          │
+│  ~/.claude/projects/&lt;slug&gt; ─ read/write ───────┤          │
 │                                                ▼          │
 │  ~/.ssh ~/.aws ~/.kube ──╳     ┌─── lea container ───┐    │
 │  Docker socket ──────────╳     │  agent: lead        │    │
@@ -83,7 +84,7 @@
     <figcaption>What the lea container sees of your machine, and what it does not.</figcaption>
   </figure>
   <div class="prose">
-    <p>The container sees the projects directory (read/write) and a read-only allow-list of <code>~/.claude</code>: hooks, skills, agents, commands and the top-level <code>*.md</code> files. <code>settings.json</code> and <code>plugins</code> are lea&#8217;s own copies, never written back.</p>
+    <p>The container sees the projects directory (read/write) and a read-only allow-list of <code>~/.claude</code>: <code>keybindings.json</code>, hooks, skills, mods, dev-mods, output-styles, agents, commands, the top-level <code>*.md</code> files and your status line script. One host directory is mounted read/write: <code>~/.claude/projects/&lt;slug&gt;</code>, the Claude Code transcripts of this projects directory. <code>settings.json</code> and <code>plugins</code> are lea&#8217;s own copies, never written back.</p>
     <p><code>lea config claude</code>, on the host, sets your base settings for Claude Code in lea: the default mode, the allow, ask and deny rules, the model, the environment. They are kept beside <code>lea.conf</code>, never in your <code>~/.claude</code>, and lea&#8217;s own guards stay. A <code>statusLine</code> command in your <code>settings.json</code> draws the agents&#8217; status line, inside the container.</p>
     <p>Each projects directory gets its own container, internal network, agent history and login. Agents run under <code>abduco</code>, so closing the deck does not stop them.</p>
   </div>
@@ -93,20 +94,21 @@
   <h2 id="proxy">The proxy</h2>
   <div class="prose">
     <p>Every request of an agent goes through lea&#8217;s proxy. HTTPS reaches an allowlist of public domains: the forges, the package registries, the model APIs. Anything else is refused, with a first line that names the host and the command that allows it.</p>
-    <p><code>lea egress allow DOMAIN</code>, on the host, adds a domain to the running proxy: no restart, and no agent can run it. Private and link-local addresses, public IP literals and DNS-over-HTTPS resolvers are refused whatever the list says.</p>
+    <p><code>lea egress allow DOMAIN</code>, on the host, adds a domain to the running proxy: no restart, and no agent can run it. Private and link-local addresses, public IP literals and DNS-over-HTTPS resolvers are refused whatever the allowlist says; only the host and port pairs you list in the internal-hosts file (<code>LEA_INTERNAL_HOSTS</code>) reach a private address.</p>
     <p>The proxy is also the agents&#8217; only resolver. Their container gets a DNS address that is never routed, so a lookup cannot carry data out through your host&#8217;s resolver.</p>
     <p>The proxy also holds what the agents must use but not read: lea&#8217;s GitHub token, your providers&#8217; API keys, and the SSH forwarders to the git endpoints you pinned.</p>
   </div>
 </section>
 
 <section aria-labelledby="deck">
-  <h2 id="deck">The deck</h2>
+  <h2 id="deck">lea deck</h2>
   <div class="prose">
+    <p>lea deck is lea&#8217;s interface, not a separate tool: the container, the proxy, the agents and their messages are lea&#8217;s and run with or without it. <code>lea</code> opens it in your terminal, on your machine, outside the container; no agent can drive it.</p>
     <p>One keyboard-first terminal: your agents in a column on the left, the selected agent&#8217;s terminal on the right. The mouse works too.</p>
   </div>
-<div class="table-wrap" role="region" aria-label="The deck&#8217;s main keys" tabindex="0">
+<div class="table-wrap" role="region" aria-label="lea deck&#8217;s main keys" tabindex="0">
 <table>
-<caption>The deck&#8217;s main keys (<kbd>?</kbd> lists them all)</caption>
+<caption>lea deck&#8217;s main keys (<kbd>?</kbd> lists them all)</caption>
 <thead><tr><th scope="col">Key</th><th scope="col">Action</th></tr></thead>
 <tbody>
 <tr><td><kbd>n</kbd></td><td>start a new agent</td></tr>
@@ -125,8 +127,8 @@
 </table>
 </div>
   <div class="prose">
-    <p>The deck comes in seven colour themes, <code>high-contrast</code> and <code>mono</code> among them; <code>LEA_THEME</code> sets one and <code>NO_COLOR</code> gives <code>mono</code>. A red dot needs you, a spinner works, a green dot is done. A sound plays only when an agent needs you. The deck is optional: <code>lea config deck off</code> runs your own tool in the container instead, with the same confinement.</p>
-    <p><code>lea web</code> serves the deck in your browser, on <code>127.0.0.1</code> only: the live board of your agents, their messages, the control tower&#8217;s chat and its questions, new agents, the permissions, spawn and grant requests they wait on (with the one-off and the durable <code>lea allow</code> answer), allowances and the egress allowlist. The link it prints signs one browser in, once; no agent container can reach it.</p>
+    <p>The deck comes in seven colour themes, <code>high-contrast</code> and <code>mono</code> among them; <code>LEA_THEME</code> sets one and <code>NO_COLOR</code> gives <code>mono</code>. A red dot needs you, a spinner works, a green dot is done. A sound plays only when an agent needs you, or when lea pauses one on its budget. The deck is optional: <code>lea config deck off</code> runs your own tool in the container instead, with the same confinement.</p>
+    <p><code>lea web</code> serves lea deck in your browser, on <code>127.0.0.1</code> only: the live board of your agents, their messages, the control tower&#8217;s chat and its questions, new agents, the permissions, spawn and grant requests they wait on (with the one-off and the durable <code>lea allow</code> answer), allowances and the egress allowlist. The link it prints signs one browser in, once; no agent container can reach it.</p>
     <p>Each agent&#8217;s <strong>Terminal</strong> tab shows its terminal live and read-only; browser notifications tell you of new permissions, requests and tower questions while the tab is in the background; folders are the deck&#8217;s own, in both views. From a laptop or a phone, an SSH tunnel (<code>ssh -L</code>) reaches it; <code>lea web --listen</code> is an explicit opt-in to the network that refuses to start without TLS and a lasting token, and never listens where an agent could reach it.</p>
   </div>
 </section>
@@ -152,7 +154,7 @@
   <div class="prose">
     <p>An allowance is a decision you record on the host and lea applies to every agent it covers: merge a pull request, close an issue, push the agent&#8217;s own branch. Each one is pinned to the repository&#8217;s <code>origin</code>, and no agent can record one.</p>
   </div>
-  <pre tabindex="0"><code>lea allow deliver              # push, pull request, merge, on every repository here
+  <pre tabindex="0"><code>lea allow deliver              # push, pull request, merge, delete the branch, on every repository here
 lea allow push --branch 'feat/*' --agent dev-1 --for 2h
 lea allow                      # what you allowed, the time left, the last uses
 lea allow off 1                # take allowance 1 back</code></pre>
@@ -221,7 +223,7 @@ lea allow off 1                # take allowance 1 back</code></pre>
       </nav>
     </div>
     <div class="wrap footer-bottom">
-      <p>Pre-release (v0.15.x). lea is licensed under the <a href="https://github.com/DavidGodefroid/lea/blob/main/LICENSE">Apache License 2.0</a>.</p>
+      <p>Pre-release. lea is licensed under the <a href="https://github.com/DavidGodefroid/lea/blob/main/LICENSE">Apache License 2.0</a>.</p>
       <p>lea is an independent project, not affiliated with Anthropic. Claude and Claude Code are trademarks of Anthropic.</p>
       <p><a href="https://lockfamily.dev">lockfamily.dev</a> · <a href="https://github.com/DavidGodefroid/lockfamily">the family on GitHub</a></p>
     </div>

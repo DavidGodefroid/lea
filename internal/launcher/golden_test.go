@@ -462,8 +462,9 @@ func TestCommandsMatchTheGoldenFiles(t *testing.T) {
 			want: []string{"core [new] [--container] [lea-$ID] [--workdir] [$W/projects] [-r] [lead] [--repo] [shop] [--branch] [feat/x] [--brief] [b.md] [rev]"}},
 		{name: "deck with an old tmux", env: map[string]string{"FAKE_TMUX_VERSION": "tmux 3.1c", "LEA_OS_RELEASE": "$W/os-release"},
 			setup: func(w *world) { os.WriteFile(w.dir+"/os-release", []byte("ID=fedora\n"), 0o644) }, exit: 1,
-			want:   []string{"lea: error: the deck needs tmux 3.2 or later; found 'tmux 3.1c'. Upgrade it with: sudo dnf install tmux, or build a static one with: make -C \"$R\" tmux-build"},
-			absent: []string{"docker", "sudo dnf install tmux]"}},
+			// The root holds no tools/ (as a release archive): no static build is offered.
+			want:   []string{"lea: error: the deck needs tmux 3.2 or later; found 'tmux 3.1c'. Upgrade it with: sudo dnf install tmux"},
+			absent: []string{"docker", "sudo dnf install tmux]", "tmux-build"}},
 		{name: "deck without a usable tmux", env: map[string]string{"LEA_TMUX_BIN": "$W/none"}, exit: 1,
 			want: []string{"LEA_TMUX_BIN=$W/none is not an executable file"}, absent: []string{"docker", "is not installed"}},
 		{name: "stop without a usable tmux", args: []string{"stop"}, env: map[string]string{"LEA_TMUX_BIN": "$W/none"},
