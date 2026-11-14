@@ -293,10 +293,13 @@ profile and state in the bottom border.
   `label (name)`. Labels are unique among the running agents: a clash gets ` 2`, ` 3`…, and a
   rename to a running agent's label is refused. `user`, `lea` and `Control Tower…` are reserved:
   only the user gives them, never a lead's `label` nor the automatic name.
-- **Copy and paste.** Drag to select text in an agent's terminal: releasing the button copies it
-  to your clipboard and flashes "Copied". `ctrl+v` pastes your clipboard's text into the pane that
-  has the keyboard (the agent's input, a shell, the deck). lea reads your clipboard only when you
-  press `ctrl+v` (with `wl-paste`, `xclip` or `pbpaste`); agents never read it.
+- **Copy and paste.** Copying is the agent's own: select text in Claude Code's terminal and it
+  copies it to your clipboard, as it does outside lea. lea makes no selection of its own; in a
+  pane whose program does not take the mouse (a split shell, the scrolled-back history),
+  `shift`+drag lets your terminal select and copy, as in any tmux. `ctrl+v` pastes your
+  clipboard's text into the pane that has the keyboard (the agent's input, a shell, the deck). lea
+  reads your clipboard only when you press `ctrl+v` (with `wl-paste`, `xclip` or `pbpaste`);
+  agents never read it.
 - **Permissions.** When an agent asks for a permission, its row shows the request and the deck
   answers it. Unanswered after `LEA_APPROVAL_TIMEOUT` seconds (60), Claude asks in its own
   terminal as usual; `LEA_APPROVALS=pane` keeps Claude's dialog only.
