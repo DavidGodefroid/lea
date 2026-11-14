@@ -678,7 +678,7 @@ projects directory run.
 
 `LEA_LOCKHTTP_MITM=1` (with `LEA_LOCKHTTP=1`) lets the gate decrypt HTTPS, but for the policy's
 splice hosts, so that it decides on methods, paths and bodies. lea makes a local CA on first use
-through the launcher (`lockhttp ca init`, 90 days, in `~/.local/share/lea/lockhttp/ca/`; `lea
+with `lockhttp ca init` in the gate's verified image (90 days, in `~/.local/share/lea/lockhttp/ca/`; `lea
 doctor` warns a week before it ends: `lockhttp ca init --force --dir <it>`, then `lea stop --all`
 and `lea`). Its key goes to one container only, `lea-lockhttp-signer` (the image's `signer`
 account, no network), through the volume `lea-lockhttp-ca` (key owned by `signer`, 0600); the
@@ -1127,7 +1127,12 @@ agent's environment names; CONNECT keeps TLS end to end.
 - git's hooks, fsmonitor, askpass and pager are off, ssh is `/usr/bin/ssh`, https and ssh are the
   only transports, `~/.gitconfig` is not read; and lea refuses a repository whose own config
   holds a `url.*.insteadOf`, `include`, URL-specific credential helper, `pushurl`, push refspec,
-  mirror, filter, textconv or any `http.*` key.
+  mirror, filter, textconv or any `http.*` key. Two keys pass: `core.hooksPath` (lea's git runs
+  with `core.hooksPath=/dev/null` whatever it says) and `remote.origin.pushurl` when it is the
+  grant's own repository (`https://github.com/OWNER/NAME`, with or without `.git`; no pinned push
+  reads it). Every worktree of a repository shares its `.git/config`, so they all get the same
+  answer. A refusal names the keys it found, or says that `git config` itself failed, with git's
+  message.
 - `gh pr create --body-file F`: `F` is a path relative to the agent's worktree that must resolve
   to a plain file inside it, outside `.git` (lea checks it is a plain file, opens it once and gh
   reads that open file; a quoted heredoc, `--body "$(cat <<'EOF' … EOF)"`, is not covered: write
@@ -1291,6 +1296,20 @@ its patch releases install themselves). Running containers keep their image unti
 `~/.local/share/lea/host/update.log`. A Homebrew install has it off (its formula sets
 `LEA_AUTOUPDATE=0`); turned back on, it only announces a new release, which `lea update` installs
 with brew.
+
+The agents' CLIs, Claude Code and Codex, update themselves too, between lea releases. lea's image
+pins the version its CI verified; in each lea container, a check at its start and then every 6
+hours asks registry.npmjs.org (in the default egress allowlist) for the latest release of each,
+and a newer one is installed in `/lea/cli`, beside the image's, checked (its `--version`), then
+made current with an atomic link swap. The agents started after it run it; a running agent keeps
+its version, which is never removed while a process runs it, and a release older than the
+image's pin is never installed. The check runs as `lea-cli`, a user of its own: the agents read
+`/lea/cli` but cannot write it, so no agent can leave the next ones a CLI of its making, and a
+`/lea/cli` someone else could write is ignored. Claude Code's own updater stays off
+(`DISABLE_UPDATES`). `agents_list` shows the version each Claude agent runs (`cli_version`), and
+`lea-cli-update status` in the container both versions of each CLI; the log is
+`/lea/cli/update.log`. `LEA_CLI_AUTOUPDATE=0` in `~/.config/lea/lea.conf` turns it off for the
+agents started after `lea stop --all`: they run the image's CLIs.
 
 The Locks' clients in lea's image (locksql, lockmq, lockfile, locklog) come from one set of releases,
 `config/locks.lock`: for each Lock, the client's release, the protocol its handshake speaks, the

@@ -174,7 +174,8 @@ jobs:
                    "lea-proxy resolves (Docker's embedded resolver)" 'an external name does not resolve (example.com)' 'no direct DNS to 8.8.8.8:53 over udp' 'no direct DNS to 1.1.1.1:53 over tcp' \
                    "DNS exfiltration attempts sent (isolation.sh checks the decoy's log)" 'nested: an external name does not resolve (example.com)' 'nested: no direct DNS to 8.8.8.8:53 over tcp' \
                    "nested: DNS exfiltration attempts sent (isolation.sh checks the decoy's log)" 'no DNS query from inside lea reached the decoy' \
-                   'settings.json is a copy of the host'"'"'s' '/permissions adds a rule' '/plugin install works' 'marketplace update works' 'managed settings carry lea'"'"'s hooks' 'permission rules are managed only' 'the host'"'"'s permission rules are managed' 'an agent'"'"'s rule is not managed' 'the host'"'"'s rules are not writable' 'managed settings are not writable' 'host ~/.claude settings.json and plugins unchanged'; do
+                   'settings.json is a copy of the host'"'"'s' '/permissions adds a rule' '/plugin install works' 'marketplace update works' 'managed settings carry lea'"'"'s hooks' 'permission rules are managed only' 'the host'"'"'s permission rules are managed' 'an agent'"'"'s rule is not managed' 'the host'"'"'s rules are not writable' 'managed settings are not writable' 'host ~/.claude settings.json and plugins unchanged' \
+                   'the CLI update loop runs as lea-cli' '/lea/cli is not writable by the agents' 'an agent cannot plant a CLI in /lea/cli' 'the CLI update check reached the registry' 'agents start the newest Claude Code'; do
             grep -qxF "ok   $c" isolation.log || { echo "isolation: '$c' did not run" >&2; exit 1; }
           done
   # Without the deck (LEA_DECK=0, #135), on a real engine: lea runs the user's own tool in the

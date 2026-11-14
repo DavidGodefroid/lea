@@ -455,7 +455,7 @@ func Command(req Request, c Caller, g Grant) string {
 		case req.Action == ReleaseTag:
 			script = tagScript(req.Args[2], c.Worktree, g.Pin, c.Proxy)
 		case req.Args[0] == "commit":
-			script = commitScript(req.Args[1:], c.Worktree, c.Proxy)
+			script = commitScript(req.Args[1:], c.Worktree, g.Pin, c.Proxy)
 		case req.Args[0] == "push":
 			script = pushScript(req.Args, c.Worktree, g.Pin, c.Proxy)
 		}
@@ -569,10 +569,43 @@ func refuse(why string) string {
 // configGuard refuses a repository whose config holds a key that would redirect git or run a
 // program: defence in depth, the plumbing and the bare push do not depend on it. It reads the
 // repository's file only (--local: lea's own -c pins are not in it, includes are listed, not
-// followed).
-func configGuard(wt string) string {
-	return shellWords([]string{gitPath, "-C", wt, "config", "--local", "--get-regexp", riskyConfig}) +
-		" >/dev/null 2>&1; s=$?; if [ \"$s\" -ne 1 ]; then " + refuse("the repository git config redirects or runs programs") + "; fi\n"
+// followed; in a linked worktree, the shared .git/config), so every worktree of a repository gets
+// the same decision. Two keys pass (#413): core.hookspath, which every pinned git overrides
+// (core.hooksPath=/dev/null), and remote.origin.pushurl when each value is the grant's own
+// repository (pin), which no pinned push reads. A refusal names the keys, or says git config
+// itself failed (exit 2 or more: an unreadable or broken repository), with git's message. One
+// line: the push tests skip it.
+func configGuard(wt, pin string) string {
+	get := shellWords([]string{gitPath, "-C", wt, "config", "--local", "--name-only", "--get-regexp", riskyConfig})
+	urls := ""
+	if u := pinURL(pin); u != "" {
+		p := caseGlob(u)
+		urls = "|" + p + "|" + p + ".git|" + p + "/"
+	}
+	return "k=$(" + get + " 2>/dev/null); s=$?; " +
+		`if [ "$s" -ge 2 ]; then e=$(` + get + ` 2>&1 >/dev/null); printf '%s\n' "lea: grant not applied: git config failed in the worktree: $e" >&2; exit 1; fi; ` +
+		`bad=$(printf '%s\n' "$k" | while IFS= read -r x; do case "$x" in ""|core.hookspath|remote.origin.pushurl) ;; *) printf ' %s' "$x";; esac; done); ` +
+		"p=$(" + shellWords([]string{gitPath, "-C", wt, "config", "--local", "--get-all", "remote.origin.pushurl"}) + " 2>/dev/null); " +
+		`if [ -n "$p" ]; then bad="$bad$(printf '%s\n' "$p" | while IFS= read -r x; do case "$x" in ""` + urls + `) ;; *) printf ' %s' remote.origin.pushurl;; esac; done)"; fi; ` +
+		`if [ -n "$bad" ]; then printf '%s\n' "lea: grant not applied: the repository git config sets$bad, which redirects git or runs programs" >&2; exit 1; fi` + "\n"
+}
+
+// caseGlob is u as a case pattern that matches it whatever the letters' case (a forge's owner
+// and repository names are), or a pattern that matches nothing when u holds a character a pin's
+// URL never has.
+func caseGlob(u string) string {
+	var b strings.Builder
+	for _, r := range u {
+		switch {
+		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z':
+			b.WriteString("[" + strings.ToLower(string(r)) + strings.ToUpper(string(r)) + "]")
+		case r >= '0' && r <= '9', strings.ContainsRune("._-/:", r):
+			b.WriteRune(r)
+		default:
+			return `""`
+		}
+	}
+	return b.String()
 }
 
 // commitDir is the directory every pinned commit copies the index to, in the worktree's own git
@@ -582,7 +615,7 @@ const commitDir = "lea-commit"
 
 // commitScript commits the index with the messages of args (-m/--message; -q/--quiet) through
 // plumbing.
-func commitScript(args []string, wt, proxy string) string {
+func commitScript(args []string, wt, pin, proxy string) string {
 	var msgs []string
 	for i := 0; i < len(args); i++ {
 		switch args[i] {
@@ -605,7 +638,7 @@ func commitScript(args []string, wt, proxy string) string {
 	// index back re-checks racily clean entries against the work tree, through the clean filters.
 	isolated := shellWords([]string{envPath}) + ` GIT_INDEX_FILE="$dir/index" ` + shellWords([]string{gitPath, "--git-dir"}) +
 		` "$gd" --work-tree "$dir/w" ` + shellWords(pins(proxy))
-	return configGuard(wt) +
+	return configGuard(wt, pin) +
 		"gd=$(" + git + " rev-parse --absolute-git-dir) || exit 1\n" +
 		`dir="$gd/` + commitDir + `"` + "\n" +
 		shellWords([]string{mkdirPath, "-p"}) + ` "$dir" || exit 1` + "\n" +
@@ -681,7 +714,7 @@ func barePush(wt, gh, proxy string) (s, bare, url, check string) {
 	}
 	git := shellWords(gitIn(wt, proxy))
 	bare = shellWords([]string{gitPath, "--git-dir"}) + ` "$repo" ` + shellWords(bp)
-	s = configGuard(wt) +
+	s = configGuard(wt, gh) +
 		"gd=$(" + git + " rev-parse --absolute-git-dir) || exit 1\n" +
 		"common=$(" + git + " rev-parse --path-format=absolute --git-common-dir) || exit 1\n" +
 		`repo="$gd/` + pushRepo + `"` + "\n" +

@@ -3,6 +3,7 @@ package launcher
 import (
 	"net"
 	"os"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -496,23 +497,30 @@ func TestLockHTTPForgetsReleasedNetworks(t *testing.T) {
 	}
 }
 
-// mitmWorld is lockHTTPWorld with LEA_LOCKHTTP_MITM=1 and a launcher whose `ca init --dir D`
-// makes a CA, as the real one does.
+// mitmWorld is lockHTTPWorld with LEA_LOCKHTTP_MITM=1: the fake docker's `run … IMAGE ca init
+// --dir D` makes a CA, as lockhttp's image does.
 func mitmWorld(t *testing.T) (*world, string) {
 	t.Helper()
 	w, root := lockHTTPWorld(t)
-	ca := fakeLockHTTPLauncher("0.5.0", testDigest) +
-		"if [ \"$1 $2 $3\" = \"ca init --dir\" ]; then mkdir -p \"$4\" && echo cert >\"$4/ca.pem\" && echo key >\"$4/ca-key.pem\"; fi\n"
-	if err := os.WriteFile(root+"/usr/local/bin/lockhttp", []byte(ca), 0o755); err != nil {
-		t.Fatal(err)
-	}
 	writeUserConf(t, w, "LEA_LOCKHTTP=1\nLEA_LOCKHTTP_MITM=1\n")
 	return w, root
 }
 
-// MITM (docs/lea.md §3): the CA is made through the launcher; its key reaches the signer's
-// container alone, through a volume a one-off root container fills (owned by signer, 0600); the
-// gate gets the certificate and the signer's socket volume; the agents trust the certificate.
+// caInitRuns are the docker run calls of lockhttp ca init.
+func caInitRuns(w *world) []string {
+	var r []string
+	for _, c := range w.calls() {
+		if strings.HasPrefix(c, "docker [run]") && strings.Contains(c, " [ca] [init] [--dir] ") {
+			r = append(r, c)
+		}
+	}
+	return r
+}
+
+// MITM (docs/lea.md §3): the CA is made by lockhttp ca init in the gate's verified image; its key
+// reaches the signer's container alone, through a volume a one-off root container fills (owned by
+// signer, 0600); the gate gets the certificate and the signer's socket volume; the agents trust
+// the certificate.
 func TestLockHTTPMITM(t *testing.T) {
 	w, _ := mitmWorld(t)
 	if err := w.launcher().ensureProxy(w.proj); err != nil {
@@ -522,9 +530,20 @@ func TestLockHTTPMITM(t *testing.T) {
 	ca := lockhttp.CADir(data)
 	image := "ghcr.io/davidgodefroid/lockhttp@" + testDigest
 	stamp := lockhttp.Hash("cert\n")[:12]
-	// The fake launcher's `ca init --dir` made it.
+	// The image's `ca init --dir` made it, confined, as the user, the directory alone mounted.
 	if b, err := os.ReadFile(ca + "/ca-key.pem"); err != nil || string(b) != "key\n" {
-		t.Errorf("no CA made through the launcher: %q %v", b, err)
+		t.Errorf("no CA made by lockhttp ca init: %q %v", b, err)
+	}
+	if r := caInitRuns(w); len(r) != 1 {
+		t.Errorf("ca init runs: %q", r)
+	} else {
+		for _, want := range []string{"[--network] [none]", "[--user] [" + strconv.Itoa(os.Getuid()) + ":" + strconv.Itoa(os.Getgid()) + "]",
+			"[--cap-drop] [ALL]", "[--read-only]", "[type=bind,src=" + ca + ",dst=" + ca + "]",
+			"[" + image + "] [ca] [init] [--dir] [" + ca + "] [--name] "} {
+			if !strings.Contains(r[0], want) {
+				t.Errorf("ca init lacks %s:\n%s", want, r[0])
+			}
+		}
 	}
 	if b, err := os.ReadFile(lockhttp.GateDir(data) + "/ca.pem"); err != nil || string(b) != "cert\n" {
 		t.Errorf("gate dir ca.pem: %q %v", b, err)
@@ -579,6 +598,47 @@ func TestLockHTTPMITM(t *testing.T) {
 	}
 	if strings.Contains(joined, "ca-key") {
 		t.Fatal("an agent container got the CA key")
+	}
+}
+
+// lockhttp ca init goes through the gate's one check (lockHTTPImage) and never executes the
+// launcher: a user-writable one whose digest cosign does not verify makes no CA and starts no
+// container; a verified one is read, not run, and the CA comes from the image it pins.
+func TestLockHTTPCAInitRefusesATamperedUserLauncher(t *testing.T) {
+	for _, c := range []struct {
+		what   string
+		cosign string
+	}{{"which cosign does not verify as lockhttp's release v0.9.1", "1"}, {"", "0"}} {
+		w, p := userLauncherWorld(t, "0.9.1", testDigest)
+		ran := w.home + "/launcher-ran"
+		script := fakeLockHTTPLauncher("0.9.1", testDigest) +
+			"touch '" + ran + "'\nif [ \"$1 $2 $3\" = \"ca init --dir\" ]; then mkdir -p \"$4\" && echo evil >\"$4/ca.pem\" && echo evil >\"$4/ca-key.pem\"; fi\n"
+		if err := os.WriteFile(p, []byte(script), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		writeUserConf(t, w, "LEA_LOCKHTTP=1\nLEA_LOCKHTTP_MITM=1\n")
+		w.env["FAKE_COSIGN_RC"] = c.cosign
+		err := w.launcher().ensureProxy(w.proj)
+		if _, e := os.Stat(ran); e == nil {
+			t.Errorf("cosign rc %s: lea executed the user-writable launcher", c.cosign)
+		}
+		ca := lockhttp.CADir(w.launcher().Cfg.DataDir())
+		b, _ := os.ReadFile(ca + "/ca.pem")
+		if c.what != "" {
+			if err == nil || !strings.Contains(err.Error(), c.what) || !strings.Contains(err.Error(), p) {
+				t.Errorf("tampered launcher: err = %v", err)
+			}
+			if len(b) != 0 || w.hasCall("docker [run]") {
+				t.Errorf("tampered launcher: a CA (%q) or a container was made:\n%s", b, strings.Join(w.calls(), "\n"))
+			}
+			continue
+		}
+		if err != nil {
+			t.Fatal(err)
+		}
+		if string(b) != "cert\n" || len(caInitRuns(w)) != 1 || !strings.Contains(caInitRuns(w)[0], "[ghcr.io/davidgodefroid/lockhttp@"+testDigest+"] [ca] [init]") {
+			t.Errorf("verified launcher: CA %q, ca init runs %q", b, caInitRuns(w))
+		}
 	}
 }
 

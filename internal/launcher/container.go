@@ -680,6 +680,11 @@ func (l *Launcher) runArgs(proj, pip string) ([]string, error) {
 		"--mount", "type=bind,src=" + st + "/go,dst=/lea/state/go",
 		"--mount", "type=bind,src=" + st + "/kube,dst=" + home + "/.kube/lea,readonly"}
 	a = append(a, podmanStore...)
+	// The agents' CLIs update themselves in the container (image/lea-cli-update) unless the user
+	// turned it off.
+	if l.Cfg.Get("LEA_CLI_AUTOUPDATE") == "0" {
+		a = append(a, "-e", "LEA_CLI_AUTOUPDATE=0")
+	}
 	// The Lock Family's directory (hub config, public keys, routing) read-only, as a Lock's profile directory
 	// (lockArgs):
 	// an agent may read it, never change what the locks and the hub trust.
