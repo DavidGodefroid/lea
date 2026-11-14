@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>How lea works</title>
-  <meta name="description" content="How lea works: one container per projects directory, an egress proxy, the deck, teams of agents, providers and the Locks.">
+  <meta name="description" content="How lea works: one container per projects directory, an egress proxy, lea deck, teams of agents, providers and the Locks.">
   <meta name="color-scheme" content="light dark">
   <meta name="theme-color" content="#f4efe4" media="(prefers-color-scheme: light)">
   <meta name="theme-color" content="#16140f" media="(prefers-color-scheme: dark)">
@@ -12,7 +12,7 @@
   <meta property="og:type" content="website">
   <meta property="og:site_name" content="lea">
   <meta property="og:title" content="How lea works">
-  <meta property="og:description" content="How lea works: one container per projects directory, an egress proxy, the deck, teams of agents, providers and the Locks.">
+  <meta property="og:description" content="How lea works: one container per projects directory, an egress proxy, lea deck, teams of agents, providers and the Locks.">
   <meta property="og:url" content="https://leadeck.dev/how-it-works/">
   <meta property="og:image" content="https://leadeck.dev/assets/og.png">
   <meta property="og:image:type" content="image/png">
@@ -22,7 +22,7 @@
   <meta property="og:locale" content="en_US">
   <meta name="twitter:card" content="summary_large_image">
   <meta name="twitter:title" content="How lea works">
-  <meta name="twitter:description" content="How lea works: one container per projects directory, an egress proxy, the deck, teams of agents, providers and the Locks.">
+  <meta name="twitter:description" content="How lea works: one container per projects directory, an egress proxy, lea deck, teams of agents, providers and the Locks.">
   <meta name="twitter:image" content="https://leadeck.dev/assets/og.png">
   <meta name="twitter:image:alt" content="lea: many agents, none of your machine.">
   <link rel="icon" href="../assets/logo.svg" type="image/svg+xml">
@@ -57,7 +57,7 @@
 <p class="eyebrow">How it works</p>
 <h1>How lea works</h1>
 <div class="prose">
-  <p class="lead">One container per projects directory holds your agents. A proxy beside it is their only way out, and the deck is how you drive them.</p>
+  <p class="lead">One container per projects directory holds your agents. A proxy beside it is their only way out, and lea deck, lea&#8217;s terminal interface, is how you drive them.</p>
 </div>
 
 <section aria-labelledby="container">
@@ -100,13 +100,14 @@
 </section>
 
 <section aria-labelledby="deck">
-  <h2 id="deck">The deck</h2>
+  <h2 id="deck">lea deck</h2>
   <div class="prose">
+    <p>lea deck is lea&#8217;s interface, not a separate tool: the container, the proxy, the agents and their messages are lea&#8217;s and run with or without it. <code>lea</code> opens it in your terminal, on your machine, outside the container; no agent can drive it.</p>
     <p>One keyboard-first terminal: your agents in a column on the left, the selected agent&#8217;s terminal on the right. The mouse works too.</p>
   </div>
-<div class="table-wrap" role="region" aria-label="The deck&#8217;s main keys" tabindex="0">
+<div class="table-wrap" role="region" aria-label="lea deck&#8217;s main keys" tabindex="0">
 <table>
-<caption>The deck&#8217;s main keys (<kbd>?</kbd> lists them all)</caption>
+<caption>lea deck&#8217;s main keys (<kbd>?</kbd> lists them all)</caption>
 <thead><tr><th scope="col">Key</th><th scope="col">Action</th></tr></thead>
 <tbody>
 <tr><td><kbd>n</kbd></td><td>start a new agent</td></tr>
@@ -126,7 +127,7 @@
 </div>
   <div class="prose">
     <p>The deck comes in seven colour themes, <code>high-contrast</code> and <code>mono</code> among them; <code>LEA_THEME</code> sets one and <code>NO_COLOR</code> gives <code>mono</code>. A red dot needs you, a spinner works, a green dot is done. A sound plays only when an agent needs you. The deck is optional: <code>lea config deck off</code> runs your own tool in the container instead, with the same confinement.</p>
-    <p><code>lea web</code> serves the deck in your browser, on <code>127.0.0.1</code> only: the live board of your agents, their messages, the control tower&#8217;s chat and its questions, new agents, the permissions, spawn and grant requests they wait on (with the one-off and the durable <code>lea allow</code> answer), allowances and the egress allowlist. The link it prints signs one browser in, once; no agent container can reach it.</p>
+    <p><code>lea web</code> serves lea deck in your browser, on <code>127.0.0.1</code> only: the live board of your agents, their messages, the control tower&#8217;s chat and its questions, new agents, the permissions, spawn and grant requests they wait on (with the one-off and the durable <code>lea allow</code> answer), allowances and the egress allowlist. The link it prints signs one browser in, once; no agent container can reach it.</p>
     <p>Each agent&#8217;s <strong>Terminal</strong> tab shows its terminal live and read-only; browser notifications tell you of new permissions, requests and tower questions while the tab is in the background; folders are the deck&#8217;s own, in both views. From a laptop or a phone, an SSH tunnel (<code>ssh -L</code>) reaches it; <code>lea web --listen</code> is an explicit opt-in to the network that refuses to start without TLS and a lasting token, and never listens where an agent could reach it.</p>
   </div>
 </section>

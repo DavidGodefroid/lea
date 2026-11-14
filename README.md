@@ -27,7 +27,7 @@ agents get their own container engine (so `make test` and `docker run` work), re
 internet only through an egress proxy that refuses your private network, and never see your SSH
 keys or credentials.
 
-You drive them from **the deck**: a terminal with your agents in a column on the left and the
+You drive them from **lea deck**: a terminal with your agents in a column on the left and the
 selected agent's terminal on the right.
 
 ```
@@ -41,6 +41,19 @@ selected agent's terminal on the right.
 ╰─ n new · m msg · ? keys ────╯│
 ```
 
+### lea and lea deck
+
+- **lea** is the tool: the `lea` command and its host daemon, the container the agents run in,
+  the egress proxy, the providers, roles and the Control Tower, messages between agents,
+  allowances and grants, and the MCP tools agents use to talk to lea.
+- **lea deck** (the deck, for short) is lea's interface: the terminal `lea` opens, its rows, keys,
+  menus and dialogs, and the same deck in your browser with `lea web`. It runs on your machine,
+  outside the container, so no agent can drive it.
+
+Both come in the one `lea` binary. lea works without the deck (`lea config deck off`, see
+[Without the deck](#without-the-deck)); the deck does nothing without lea. leadeck.dev is lea's
+site.
+
 ## Why lea
 
 A coding agent does more when you stop approving every command, and a few agents in parallel do more
@@ -50,7 +63,7 @@ and your network. lea moves the boundary from the prompt to the container.
 - **Isolated by construction.** What an agent can reach is fixed by the container and the proxy,
   not by its good behaviour. A prompt-injected agent with every permission granted still cannot
   read `~/.ssh` or call your intranet.
-- **Many agents, one deck.** States, context use, branches and each agent's own task report at a
+- **Many agents, one screen.** lea deck shows states, context use, branches and each agent's own task report at a
   glance; one key to reach the next agent that needs you.
 - **Your agent CLI, unchanged.** lea runs the real Claude Code or Codex with your subscription
   or API key, or Codex on an endpoint of your own (see [Other providers](#other-providers-codex-ollama-vllm)).
@@ -81,7 +94,7 @@ flowchart LR
   keys -.-x|not mounted| lea
 ```
 
-**Contents:** [Quick start](#quick-start) · [The deck](#the-deck) · [Git and forges](#git-and-forges) ·
+**Contents:** [Quick start](#quick-start) · [lea deck](#lea-deck) · [Git and forges](#git-and-forges) ·
 [Databases](#databases-with-locksql) · [Queues and files](#queues-and-files-with-lockmq-and-lockfile) · [Logs](#logs-with-locklog) · [SSH hosts](#ssh-hosts-with-lockssh) · [Web requests](#web-requests-with-lockhttp) · [Teams of agents](#teams-of-agents) · [Commands](#commands) ·
 [Configure](#configure) · [Safety](#how-lea-keeps-your-machine-safe) · [FAQ](#faq) ·
 [Troubleshooting](#troubleshooting) · [Development](#development)
@@ -202,9 +215,9 @@ The limit: the installer comes from the same GitHub account as the release. The 
 protects against a tampered asset or mirror, and every signature is logged publicly (Rekor), so
 it can be audited; it does not replace trusting that account.
 
-## The deck
+## lea deck
 
-`lea` opens the deck. Each agent is its provider's CLI (Claude Code, Codex) running in the lea
+`lea` opens lea deck, lea's interface. Each agent is its provider's CLI (Claude Code, Codex) running in the lea
 container under `abduco`, so
 closing the deck, or the terminal, does not stop it: the next `lea` reattaches.
 
@@ -314,7 +327,7 @@ profile and state in the bottom border.
   Unanswered after `LEA_APPROVAL_TIMEOUT` seconds (60), Claude asks in its own terminal as usual;
   `LEA_APPROVALS=pane` keeps Claude's dialog only.
 
-### The deck in your browser: lea web
+### lea deck in your browser: lea web
 
 `lea web`, from the lea's projects directory, serves the deck in your browser while it runs
 (ctrl+c stops it):
@@ -1297,7 +1310,7 @@ directory of the projects directory; `--branch B` has it work in its own git wor
 lea                          # the deck, for $LEA_PROJECTS_DIR (unset: the working directory, on the first run)
                              # (LEA_DECK=0: your own tool in the lea container, see Without the deck)
 lea attach [--print] [AGENT] # the tool in the lea container, or an agent's terminal (--print: the command)
-lea web [--open] [--port N]  # the deck in your browser, on 127.0.0.1 (see The deck in your browser)
+lea web [--open] [--port N]  # the deck in your browser, on 127.0.0.1 (see lea deck in your browser)
 lea web --listen ADDR:PORT (--tls-self-signed | --tls-cert F --tls-key F) [--new-token]
                              # on the network, behind TLS and a lasting token (prefer ssh -L)
 lea requests                 # what waits for you; lea approve ID [always], lea deny ID [reason]
@@ -1783,6 +1796,11 @@ it does not remove it.
 **Is lea a replacement for Claude Code or Codex?** No. lea runs the real agent CLI, Claude Code by
 default or Codex, with your own configuration, and gives it a safe place to run and a deck to run
 several at once.
+
+**What is the difference between lea and lea deck?** lea is the tool: the `lea` command, its
+daemon, the container, the proxy, the agents, their messages and allowances. lea deck is its
+interface: the terminal `lea` opens (and `lea web` in a browser). Both come in the one `lea`
+install, and lea runs without the deck (see [lea and lea deck](#lea-and-lea-deck)).
 
 **Which agents does lea run?** Claude Code (the default), OpenAI's Codex CLI, and through Codex any
 OpenAI-compatible endpoint that serves the Responses API: Ollama, vLLM, a server of your own (see

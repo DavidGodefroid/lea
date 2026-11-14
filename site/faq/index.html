@@ -60,7 +60,11 @@
 <div class="faq prose">
 <section aria-labelledby="replace">
   <h2 id="replace">Is lea a replacement for Claude Code or Codex?</h2>
-  <p>No. lea runs the real agent CLI, Claude Code by default or Codex, with your own settings, skills and plugins. It gives it a safe place to run and a deck to run several at once.</p>
+  <p>No. lea runs the real agent CLI, Claude Code by default or Codex, with your own settings, skills and plugins. It gives it a safe place to run, and lea deck to run several at once.</p>
+</section>
+<section aria-labelledby="lea-deck">
+  <h2 id="lea-deck">What is the difference between lea and lea deck?</h2>
+  <p>lea is the tool: the <code>lea</code> command, its daemon, the container, the proxy, the agents, their messages and allowances. lea deck is its interface: the terminal <code>lea</code> opens, with your agents in a column and the selected one&#8217;s terminal beside it (<code>lea web</code> serves it in your browser). Both come in the one <code>lea</code> install, and lea works without the deck: <code>lea config deck off</code>. <a href="../how-it-works/#deck">lea deck</a>.</p>
 </section>
 <section aria-labelledby="agents">
   <h2 id="agents">Which agents does it run?</h2>
@@ -72,7 +76,7 @@
 </section>
 <section aria-labelledby="devcontainer">
   <h2 id="devcontainer">How is it different from a devcontainer?</h2>
-  <p>A devcontainer isolates a toolchain; lea isolates the agent. It adds an egress proxy that refuses private networks, keeps your credentials out, nests its own container engine, audits risky changes on exit, and gives you a deck for many agents.</p>
+  <p>A devcontainer isolates a toolchain; lea isolates the agent. It adds an egress proxy that refuses private networks, keeps your credentials out, nests its own container engine, audits risky changes on exit, and gives you lea deck for many agents.</p>
 </section>
 <section aria-labelledby="code">
   <h2 id="code">Does my code leave my machine?</h2>
