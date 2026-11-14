@@ -223,13 +223,18 @@ func TestDeckMethodsReachTheManager(t *testing.T) {
 	}
 	must("agent_label", map[string]any{"key": "lea-a/x", "label": "auth work"}, nil)
 	must("agent_pause", map[string]any{"key": "lea-a/x", "paused": true}, nil)
+	var sc agents.Screen
+	must("agent_capture", map[string]any{"key": "lea-a/x"}, &sc)
+	if len(sc.Lines) != 1 || sc.Lines[0] != "$ make test" || sc.Width != 80 {
+		t.Fatalf("screen=%+v", sc)
+	}
 	var sh agents.Row
 	must("shell_open", map[string]any{"container": "lea-a"}, &sh)
 	if sh.Kind != agents.KindShell || sh.Key != "shell:lea-a/sh-1" {
 		t.Fatalf("shell=%+v", sh)
 	}
 	wantCalls := []string{"mark-stopped lea-a true", "resume-stopped lea-a", "sweep lea-a", "ensure lea-a /p", "new", "focus lea-a/x true", "stop lea-a/x", "remove-ended lea-a/y", "detach lea-a",
-		"popup lea-a/x true", "watch lea-a 3 5s", "attached lea-a", `label lea-a/x "auth work"`, "paused lea-a/x true", "shell lea-a"}
+		"popup lea-a/x true", "watch lea-a 3 5s", "attached lea-a", `label lea-a/x "auth work"`, "paused lea-a/x true", "capture lea-a/x", "shell lea-a"}
 	if !reflect.DeepEqual(fa.calls, wantCalls) {
 		t.Fatalf("calls=%q", fa.calls)
 	}
@@ -377,4 +382,8 @@ func TestWithoutTheDeckAnImmediateAnswerIsDeliveredAtOnce(t *testing.T) {
 	if r := receive(t, got); r.Verdict != "allow" {
 		t.Fatalf("verdict %+v", r)
 	}
+}
+func (f *fakeAgents) Capture(ctx context.Context, k string) (agents.Screen, error) {
+	f.rec("capture " + k)
+	return agents.Screen{Lines: []string{"$ make test"}, Width: 80, Height: 24}, nil
 }

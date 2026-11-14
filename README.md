@@ -331,6 +331,37 @@ in a light and a dark theme (it follows your system; the ◐ button switches it)
 its keys. See [How lea keeps your machine safe](#how-lea-keeps-your-machine-safe) for what
 protects it.
 
+An agent's **Terminal** tab (`v`) shows its terminal live, as its pane in tmux shows it, colours
+included: read-only, nothing you type there reaches it. The 🔔 button turns on browser
+notifications: while the tab is in the background, each new permission (pN), spawn request (sN),
+grant request (gN) and question from the control tower raises one, and the tab's title counts
+what waits for you. Folders are the deck's own: a folder made, renamed, coloured, folded or
+deleted in the browser (an agent's **Folder** menu, a folder's ⋯) shows in the deck within two
+seconds, and the deck's in the browser.
+
+**From another machine** (a laptop or a phone, lea on a server), forward lea web's port over SSH:
+the page stays on the server's loopback and SSH carries it.
+
+```sh
+ssh -L 8414:127.0.0.1:8414 server     # on your laptop; then, on the server:
+lea web --port 8414                    # and open the printed link on the laptop
+```
+
+Where SSH will not do, `lea web --listen ADDR:PORT` listens on one address of the server, and
+refuses to start without TLS and a lasting token:
+
+```sh
+lea web --listen 192.168.1.20:8443 --tls-self-signed        # a certificate lea makes and keeps
+lea web --listen 192.168.1.20:8443 --tls-cert c.pem --tls-key k.pem
+lea web --listen 192.168.1.20:8443 --tls-self-signed --new-token   # a new token: sign in again
+```
+
+It prints the certificate's SHA-256 fingerprint (check it in the browser before you sign in) and,
+the first time, the token, which it keeps in `~/.local/share/lea/host/web/token` (0600). The page
+asks for the token; each browser that signs in gets its own session, for 7 days or until lea web
+stops. Whoever has the token drives your agents and answers their permissions: keep it as you
+would an SSH key, and prefer the tunnel.
+
 ## Without the deck
 
 The deck is optional. `lea config deck off` (or `sh install.sh --no-deck [--tool CMD]`, or
@@ -1138,6 +1169,8 @@ lea                          # the deck, for $LEA_PROJECTS_DIR (unset: the worki
                              # (LEA_DECK=0: your own tool in the lea container, see Without the deck)
 lea attach [--print] [AGENT] # the tool in the lea container, or an agent's terminal (--print: the command)
 lea web [--open] [--port N]  # the deck in your browser, on 127.0.0.1 (see The deck in your browser)
+lea web --listen ADDR:PORT (--tls-self-signed | --tls-cert F --tls-key F) [--new-token]
+                             # on the network, behind TLS and a lasting token (prefer ssh -L)
 lea requests                 # what waits for you; lea approve ID [always], lea deny ID [reason]
 lea questions [drop ID]      # the control towers' questions to you: the open one, then the queue
 lea hold [--off] [AGENT]     # hold the messages agents send the tower while you answer it; --off releases them
@@ -1311,6 +1344,24 @@ so. Changes apply after `lea init` (endpoints, keys, images, locksql) or `lea st
   there is no CORS, and a strict Content-Security-Policy keeps any other script or origin out
   of the page. To use it from another machine, forward the port over SSH
   (`ssh -L 8414:127.0.0.1:8414 host`, then `lea web --port 8414` on the host).
+- `lea web --listen ADDR:PORT` (#416), the explicit opt-in to the network, refuses to start
+  unless it serves TLS (your certificate and key, or `--tls-self-signed`: an ECDSA P-256
+  certificate lea makes once, keeps 0600 in its host data dir and renews near its end; TLS 1.2 or
+  later, and its fingerprint printed at each start) and has a lasting credential: a 256-bit token
+  kept 0600 in the host data dir, replaced by `--new-token`. The browser signs in by typing it
+  into the page (a POST, never in an address, which history and logs keep: a link with
+  `?token=` is refused on the network); each sign-in gets its own `Secure`, `HttpOnly`,
+  `SameSite=Strict` session cookie, held in memory for 7 days (stopping lea web signs every
+  browser out), and wrong tokens make that source (an IP address, an IPv6 /64) wait longer and
+  longer, up to a minute, without locking anyone else out. It never listens where an agent could
+  reach it: a wildcard address (`0.0.0.0`, `::`), the address of a container bridge (`docker0`,
+  `br-*`, `veth*`, `podman*`, `cni*`…), an address inside a container network's subnet (Docker's,
+  lea's agent networks included) and an address the host does not have are refused, and so is
+  a start when the container networks cannot be listed. It warns on every start.
+- lea web's terminal view reads an agent's pane through the daemon (`agent_capture`, host only:
+  tmux `capture-pane`), and only reads it: no lea code types into an agent's terminal. What the
+  pane shows is drawn as text in the page; its colour escapes are applied, every other escape
+  (links, titles, cursor moves) is dropped, and nothing in it is ever run as markup.
 - The container sees the projects directory, a read-only allow-list of `~/.claude`
   (`keybindings.json`, `hooks`, `skills`, `agents`, `commands`, `output-styles`, the top-level
   `*.md` files), its own writable copies of `settings.json` and `plugins` (never written back:

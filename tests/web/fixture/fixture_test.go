@@ -27,7 +27,8 @@ func TestTheBrowserFlowOverHTTP(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	sock := filepath.Join(dir, "d.sock")
-	bus, err := start(ctx, sock)
+	fa := &fakeAgents{screens: map[string][]string{}, ch: make(chan struct{})}
+	bus, err := start(ctx, sock, fa)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -130,6 +131,35 @@ func TestTheBrowserFlowOverHTTP(t *testing.T) {
 		}
 		return false
 	})
+
+	// Its terminal, read-only, through the real daemon's agent_capture (#416).
+	fa.setScreen(container+"/dev-1", []string{"\x1b[1m$ make test\x1b[0m", "ok  all 12 passed"})
+	tctx, stopTerm := context.WithCancel(ctx)
+	treq, _ := http.NewRequestWithContext(tctx, "GET", base+"/api/terminal?key="+container+"/dev-1", nil)
+	tresp, err := hc.Do(treq)
+	if err != nil || tresp.StatusCode != 200 {
+		t.Fatalf("terminal: %v %v", tresp, err)
+	}
+	screen := make(chan string, 1)
+	go func() {
+		sc := bufio.NewScanner(tresp.Body)
+		for sc.Scan() {
+			if d, ok := strings.CutPrefix(sc.Text(), "data: "); ok && strings.Contains(d, "lines") {
+				screen <- d
+				return
+			}
+		}
+	}()
+	select {
+	case d := <-screen:
+		if !strings.Contains(d, "all 12 passed") || !strings.Contains(d, `\u001b[1m$ make test`) {
+			t.Fatalf("screen %s", d)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("no screen")
+	}
+	stopTerm()
+	tresp.Body.Close()
 
 	// A note, read in its inbox and in its thread.
 	if code, out := post("msg_send", map[string]any{"to": container + "/dev-1", "body": "hello from the browser", "kind": "note"}); code != 200 {
