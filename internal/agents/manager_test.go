@@ -125,8 +125,13 @@ func TestNewSpawnsClaudeUnderAbducoAndShowsIt(t *testing.T) {
 		t.Fatalf("row=%+v", r)
 	}
 	p := s.byAgent("claude-1")
+	a, err := e.st.AgentByKey(C + "/claude-1")
+	if err != nil || len(a.Incarnation) != 32 {
+		t.Fatalf("%+v %v", a, err)
+	}
 	cmd := []string{"docker", "exec", "-it", "-u", "1000:1000", "-e", "TERM=xterm-256color", "-e", "COLORTERM=truecolor",
-		"-e", "FORCE_HYPERLINK=1", "-e", "LEA_AGENT=claude-1", "-e", "LEA_APPROVALS=deck", "-w", "/home/u/p/it's here", C,
+		"-e", "FORCE_HYPERLINK=1", "-e", "LEA_AGENT=claude-1", "-e", "LEA_APPROVALS=deck",
+		"-e", "LEA_AGENT_INCARNATION=" + a.Incarnation, "-w", "/home/u/p/it's here", C,
 		"abduco", "-c", "ag-claude-1", "lea-agent", "run", "claude-1", "--", "--resume"}
 	if p == nil || !reflect.DeepEqual(p.cmd, cmd) {
 		t.Fatalf("pane=%+v", p)
@@ -1328,7 +1333,8 @@ func TestRequesterTokenReachesTheAgent(t *testing.T) {
 			t.Fatalf("%s: %+v %v", n, a, err)
 		}
 		toks[n] = RequesterToken(key, C, n, a.Incarnation)
-		if cmd := strings.Join(term.get(C).byAgent(n).cmd, " "); !strings.Contains(cmd, "-e LEA_AGENT_TOKEN="+toks[n]+" ") {
+		if cmd := strings.Join(term.get(C).byAgent(n).cmd, " "); !strings.Contains(cmd, "-e LEA_AGENT_TOKEN="+toks[n]+" ") ||
+			!strings.Contains(cmd, "-e LEA_AGENT_INCARNATION="+a.Incarnation+" ") {
 			t.Fatalf("%s: cmd=%s", n, cmd)
 		}
 	}

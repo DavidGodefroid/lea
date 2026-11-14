@@ -114,6 +114,12 @@ Fixes:
   escaped slashes in the ref name of `git/refs`, `git/ref` and `git/matching-refs` only, and
   matches the call as its plain form: no call is allowed that the plain form was not. The merge
   grant still deletes only the PR's head, the agent's own branch.
+- A Control Tower resumed in a new container keeps its tower guard (#383). Its mark lived in the
+  container's `/tmp`, so after `lea` started the container again the tower had all its tools
+  until `/lea:control-tower` ran again. The mark now lives in Claude Code's own directory, which
+  lea keeps per projects dir, and is bound to the agent's incarnation (`LEA_AGENT_INCARNATION`,
+  new when an agent is created, kept across its resumes): a resumed tower has its guard on from
+  the first turn, and an agent created later under the same name does not inherit it.
 
 ## v0.15.1 (2026-11-09)
 

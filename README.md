@@ -920,12 +920,15 @@ The tower never does the work itself, not even a `git push`: every request goes 
 plugin enforces it with a hook: once `/lea:control-tower` runs, the session may only use lea's
 team tools (`agents_*`, `msg_*`, `board_read`, `task_update`), ask you questions and run
 `lea inbox --agent --wait`; any other tool (Bash, Edit, Read, git, gh, the web…) is denied with a
-reminder to delegate. `/lea:control-tower off` gives the session its tools back.
+reminder to delegate. `/lea:control-tower off` gives the session its tools back. Tower mode
+belongs to the agent and survives its resumes, in a new container too (`lea` after a stop, a
+usage-limit resume): the guard is on from the first turn, without running the skill again. An
+agent created later under the same name does not inherit it.
 
 A tower runs for hours and its context keeps growing. Type `/lea:clear-ct` to clear it without
 losing the board: the tower writes a short snapshot of what the board cannot give back (its
 ledger, your open questions and decisions, the approvals you gave) to a private file outside any
-repository (`$LEA_TOWER_DIR/<agent>.handoff.md`, by default under `/tmp/lea-tower-<uid>`,
+repository (`$LEA_TOWER_DIR/<agent>.handoff.md`, by default under `~/.claude/lea-tower`,
 rewritten each time), then asks you to type `/clear` (Claude Code does not let a skill clear the
 context itself). After the clear the session is still a tower, with no gap: the hook carries
 tower mode over to the new session, and tells it to load `/lea:control-tower`, read the snapshot,
