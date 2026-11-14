@@ -460,6 +460,18 @@ func TestToolsOnUpJSONReachesCodexAndStamp(t *testing.T) {
 	if off, names = stamp(w); len(names) != 0 || off != bare {
 		t.Errorf("LEA_LOCKLOG=0: servers %v, stamp %q vs %q", names, off, bare)
 	}
+	// A lockssh lock of lox run: Codex gets the lockssh MCP server (lea#325); LEA_LOCKSSH=0 keeps
+	// it out.
+	w = newWorld(t, repoRoot(t))
+	writeUp(t, w, lockUp("web", "lockssh"))
+	ssh, names := stamp(w)
+	if strings.Join(names, ",") != "lockssh" || ssh == bare {
+		t.Errorf("up.json lockssh lock: servers %v, stamp %q vs %q", names, ssh, bare)
+	}
+	writeUserConf(t, w, "LEA_LOCKSSH=0\n")
+	if off, names = stamp(w); len(names) != 0 || off != bare {
+		t.Errorf("LEA_LOCKSSH=0: servers %v, stamp %q vs %q", names, off, bare)
+	}
 }
 
 // Several locks of one tool: one Codex server per lock lea's agents reach (the instances the

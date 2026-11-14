@@ -111,6 +111,71 @@ func TestLockLogWired(t *testing.T) {
 	}
 }
 
+// lockssh (lea#325), as locklog: lox run's socket volume of the lock on /run/lockssh, read-only,
+// the lockssh-clients group (10040) and LEA_LOCKSSH=1 for the entrypoint, and, as locksql's, its
+// profile directory .lockssh read-only (its allowed commands and the auto rules lox run applies:
+// no agent widens them). With two locks, each on /run/lockssh/<instance>; off, no trace of it.
+func TestLockSSHWired(t *testing.T) {
+	w := newWorld(t, repoRoot(t))
+	writeUserConf(t, w, "LEA_LOCKSSH=1\n")
+	writeUp(t, w, lockUp("web", "lockssh"))
+	labels(w, "web", "lockssh", "socket")
+	d := w.proj + "/.lockssh"
+	args := lockArgs(t, w)
+	for _, m := range []string{"LEA_LOCKSSH=1", "10040", "type=volume,src=" + upProjectOf(w) + "_web-run,dst=/run/lockssh,readonly",
+		"type=bind,src=" + d + ",dst=" + d + ",readonly"} {
+		if !contains(args, m) {
+			t.Errorf("missing %q in %v", m, args)
+		}
+	}
+	for _, a := range args {
+		if strings.Contains(a, "/etc/lockssh") || strings.Contains(a, "/home/lockssh") || strings.Contains(a, "lockssh-home") ||
+			strings.HasPrefix(a, "LEA_LOCKSSH_INSTANCES=") {
+			t.Errorf("host or console files, or instances, reach the container: %s", a)
+		}
+	}
+	if strings.Contains(w.errb.String(), "warning") {
+		t.Errorf("warnings: %s", w.errb.String())
+	}
+	if fi, err := os.Lstat(d); err != nil || !fi.IsDir() {
+		t.Fatalf("%s not made: %v", d, err)
+	}
+	// A link in its place is refused: no container starts.
+	if err := os.Remove(d); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(w.home, d); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := w.launcher().runArgs(w.proj, "172.18.0.5"); err == nil || !strings.Contains(err.Error(), "is not a directory") {
+		t.Fatalf("a symbolic link: %v", err)
+	}
+
+	w = newWorld(t, repoRoot(t))
+	writeUserConf(t, w, "LEA_LOCKSSH=1\n")
+	writeUp(t, w, lockUp("web", "lockssh")+","+lockUp("db", "lockssh"))
+	labels(w, "web", "lockssh", "socket")
+	labels(w, "db", "lockssh", "socket")
+	args = lockArgs(t, w)
+	for _, m := range []string{"LEA_LOCKSSH_INSTANCES=db web",
+		"type=volume,src=" + upProjectOf(w) + "_db-run,dst=/run/lockssh/db,readonly",
+		"type=volume,src=" + upProjectOf(w) + "_web-run,dst=/run/lockssh/web,readonly"} {
+		if !contains(args, m) {
+			t.Errorf("missing %q in %v", m, args)
+		}
+	}
+	// Off: no trace of it, though lox run runs a lockssh lock.
+	w = newWorld(t, repoRoot(t))
+	writeUserConf(t, w, "LEA_LOCKSSH=0\n")
+	writeUp(t, w, lockUp("web", "lockssh"))
+	labels(w, "web", "lockssh", "socket")
+	for _, a := range lockArgs(t, w) {
+		if strings.Contains(a, "lockssh") || a == "10040" {
+			t.Errorf("LEA_LOCKSSH=0: %s in the run args", a)
+		}
+	}
+}
+
 // The consoles run hub-attached only, under lox run: a tool that is on, and has no lock of lox run
 // for the projects directory, gets no socket (never the fixed <tool>-run volume of a console of
 // its own launcher), and lea says to add one (`lox add <tool>`).
@@ -153,6 +218,8 @@ func TestLockHostConfig(t *testing.T) {
 		"LEA_LOCKFILE_REF=v0.1.0\n": "sandbox",
 		"LEA_LOCKLOG=yes\n":         "LEA_LOCKLOG must be 1",
 		"LEA_LOCKLOG_REF=main\n":    "LEA_LOCKLOG_REF must be a locklog release",
+		"LEA_LOCKSSH=on\n":          "LEA_LOCKSSH must be 1",
+		"LEA_LOCKSSH_REF=latest\n":  "LEA_LOCKSSH_REF must be a lockssh release",
 	} {
 		w := newWorld(t, repoRoot(t))
 		writeUserConf(t, w, conf)

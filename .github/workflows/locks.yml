@@ -13,6 +13,7 @@ on:
       lockmq: {description: "lockmq release (vX.Y.Z)", required: true}
       lockfile: {description: "lockfile release (vX.Y.Z)", required: true}
       locklog: {description: "locklog release (vX.Y.Z)", required: true}
+      lockssh: {description: "lockssh release (vX.Y.Z)", required: true}
       lockhttp: {description: "lockhttp release (vX.Y.Z)", required: true}
 permissions:
   contents: read
@@ -35,8 +36,9 @@ jobs:
           MQ: ${{ inputs.lockmq }}
           LF: ${{ inputs.lockfile }}
           LL: ${{ inputs.locklog }}
+          LS: ${{ inputs.lockssh }}
           LH: ${{ inputs.lockhttp }}
-        run: tools/locks-bump --lockkit "$KIT" --lox "$LOX" --locksql "$SQL" --lockmq "$MQ" --lockfile "$LF" --locklog "$LL" --lockhttp "$LH"
+        run: tools/locks-bump --lockkit "$KIT" --lox "$LOX" --locksql "$SQL" --lockmq "$MQ" --lockfile "$LF" --locklog "$LL" --lockssh "$LS" --lockhttp "$LH"
       - name: open the pull request
         env:
           GH_TOKEN: ${{ github.token }}

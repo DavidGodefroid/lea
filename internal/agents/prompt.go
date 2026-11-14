@@ -60,7 +60,7 @@ func firstPrompt(a store.Agent, repo, worktree string, brief bool, covered []str
 		" Do not retry, switch mirrors or work around the proxy: tell the user in one line, as \"lea-proxy refused HOST: not in the egress allowlist." +
 		" To allow it, run on the host: lea egress allow HOST (applies live, no restart; there is no one-off form: it stays until lea egress deny HOST).\", and wait; you cannot allow it yourself.")
 	// A lock without a socket (#343): lea knows its state, the agent must not guess a command.
-	b.WriteString(" When a Lock's client (locksql, lockmq, lockfile, locklog) finds no console, call lock_hint and report its hint as is;" +
+	b.WriteString(" When a Lock's client (locksql, lockmq, lockfile, locklog, lockssh) finds no console, call lock_hint and report its hint as is;" +
 		" never tell the user to run lox up or lox approve, or to restart or recreate a lock.")
 	// The deck shows an agent's label, the user may rename it at any time (#84).
 	b.WriteString(" When you mention an agent in text the user reads (task_update, results your lead relays), use its label from agents_list" +

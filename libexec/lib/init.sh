@@ -1,7 +1,7 @@
 # shellcheck shell=sh
 # lea init: launcher link, projects dir, lea's git SSH key (only with LEA_GIT_SSH), Claude
-# configuration copy, images, locksql's profile wizard (with LEA_LOCKSQL=1), lockmq, lockfile and
-# locklog wiring (asked; their consoles run under lox, libexec/lib/lockhost.sh), AppArmor profile. lea init
+# configuration copy, images, locksql's profile wizard (with LEA_LOCKSQL=1), lockmq, lockfile,
+# locklog and lockssh wiring (asked; their consoles run under lox, libexec/lib/lockhost.sh), AppArmor profile. lea init
 # installs and builds no Lock: lox does.
 
 lea_init_apparmor() {
@@ -336,7 +336,7 @@ lea_init() {
   while [ $# -gt 0 ]; do
     _in_a=$1
     case $_in_a in
-      --no-locksql | --locksql | --lockmq | --no-lockmq | --lockfile | --no-lockfile | --locklog | --no-locklog)
+      --no-locksql | --locksql | --lockmq | --no-lockmq | --lockfile | --no-lockfile | --locklog | --no-locklog | --lockssh | --no-lockssh)
         _in_t=${_in_a#--}
         _in_only="$_in_only ${_in_t#no-}" ;;
     esac
@@ -349,13 +349,15 @@ lea_init() {
       --no-lockfile) lea__lockhost_set lockfile 0 ;;
       --locklog) lea__lockhost_set locklog 1 ;;
       --no-locklog) lea__lockhost_set locklog 0 ;;
+      --lockssh) lea__lockhost_set lockssh 1 ;;
+      --no-lockssh) lea__lockhost_set lockssh 0 ;;
       --deck) _in_deck=1 ;;
       --no-deck) _in_deck=0 ;;
       --tool)
         if [ $# -lt 2 ] || [ -z "$2" ]; then lea_die "lea init: --tool needs a command (--tool claude)"; fi
         _in_tool=$2; lea__init_tool "$2"; shift ;;
       --first-run) LEA_INIT_NONINTERACTIVE=1 LEA_FIRST_RUN=1 ;;
-      *) lea_die "usage: lea init [--no-locksql | --locksql] [--lockmq | --no-lockmq] [--lockfile | --no-lockfile] [--locklog | --no-locklog] [--deck | --no-deck [--tool CMD]] [--first-run]" ;;
+      *) lea_die "usage: lea init [--no-locksql | --locksql] [--lockmq | --no-lockmq] [--lockfile | --no-lockfile] [--locklog | --no-locklog] [--lockssh | --no-lockssh] [--deck | --no-deck [--tool CMD]] [--first-run]" ;;
     esac
     shift
   done
@@ -380,6 +382,7 @@ lea_init() {
   if lea__init_wants lockmq; then lea__init_lockhost lockmq; fi
   if lea__init_wants lockfile; then lea__init_lockhost lockfile; fi
   if lea__init_wants locklog; then lea__init_lockhost locklog; fi
+  if lea__init_wants lockssh; then lea__init_lockhost lockssh; fi
   lea__init_deck
   lea_init_apparmor
   if [ -z "${LEA_FIRST_RUN:-}" ]; then lea_log "ready. Run: lea"; fi

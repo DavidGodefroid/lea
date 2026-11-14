@@ -1,17 +1,18 @@
 # shellcheck shell=sh
-# lockmq, lockfile and locklog, lock tools whose console runs in its own container, hub-attached only:
+# lockmq, lockfile, locklog and lockssh, lock tools whose console runs in its own container, hub-attached only:
 # lockhub's `lox run` runs it for the projects directory (lockkit's isolation checks refuse a
 # console in lea's container). lea only lets its agents reach the console's socket: the socket
 # volume of lox run's lock (.lockfamily/up.json) on /run/<tool> and the tool's clients group
 # (internal/launcher/lockhost.go). lea never starts, sees or drives a console, holds none of its
 # credentials, and runs no maintenance on its volumes.
 
-# lea__lockhost_var TOOL: the switch of TOOL (LEA_LOCKMQ, LEA_LOCKFILE, LEA_LOCKLOG).
+# lea__lockhost_var TOOL: the switch of TOOL (LEA_LOCKMQ, LEA_LOCKFILE, LEA_LOCKLOG, LEA_LOCKSSH).
 lea__lockhost_var() {
   case $1 in
     lockmq) printf LEA_LOCKMQ ;;
     lockfile) printf LEA_LOCKFILE ;;
     locklog) printf LEA_LOCKLOG ;;
+    lockssh) printf LEA_LOCKSSH ;;
     *) lea_die "unknown lock tool '$1'" ;;
   esac
 }
@@ -22,10 +23,11 @@ lea__lockhost_get() {
     LEA_LOCKMQ) printf '%s' "${LEA_LOCKMQ:-0}" ;;
     LEA_LOCKFILE) printf '%s' "${LEA_LOCKFILE:-0}" ;;
     LEA_LOCKLOG) printf '%s' "${LEA_LOCKLOG:-0}" ;;
+    LEA_LOCKSSH) printf '%s' "${LEA_LOCKSSH:-0}" ;;
   esac
 }
 
-# lea__tool_on TOOL: whether lea wires TOOL (locksql, lockmq, lockfile, locklog) for the projects directory.
+# lea__tool_on TOOL: whether lea wires TOOL (locksql, lockmq, lockfile, locklog, lockssh) for the projects directory.
 # The launcher decides (Config.ToolsOn) and passes the tools that are on in LEA_TOOLS_ON; lea-sh run
 # without it (no launcher) reads LEA_<TOOL> alone.
 lea__tool_on() {
@@ -46,7 +48,7 @@ lea__tool_by_lock() {
   lea_log "$1 is on for lea while lox run runs a $1 lock here (lea's agents reach it; $(lea__tool_var "$1")=0 in your configuration keeps it off)"
 }
 
-# lea__tool_var TOOL: TOOL's switch, LEA_LOCKSQL, LEA_LOCKMQ, LEA_LOCKFILE or LEA_LOCKLOG.
+# lea__tool_var TOOL: TOOL's switch, LEA_LOCKSQL, LEA_LOCKMQ, LEA_LOCKFILE, LEA_LOCKLOG or LEA_LOCKSSH.
 lea__tool_var() {
   case $1 in locksql) printf LEA_LOCKSQL ;; *) lea__lockhost_var "$1" ;; esac
 }
@@ -54,7 +56,7 @@ lea__tool_var() {
 # lea__lockhost_set TOOL 0|1: the switch, in the user config and in this run.
 lea__lockhost_set() {
   lea_user_config_set "$(lea__lockhost_var "$1")" "$2"
-  case $1 in lockmq) LEA_LOCKMQ=$2 ;; lockfile) LEA_LOCKFILE=$2 ;; locklog) LEA_LOCKLOG=$2 ;; esac
+  case $1 in lockmq) LEA_LOCKMQ=$2 ;; lockfile) LEA_LOCKFILE=$2 ;; locklog) LEA_LOCKLOG=$2 ;; lockssh) LEA_LOCKSSH=$2 ;; esac
 }
 
 # lea__lockhost_what TOOL: what TOOL guards, for the questions.
@@ -63,6 +65,7 @@ lea__lockhost_what() {
     lockmq) printf 'RabbitMQ brokers' ;;
     lockfile) printf 'files on S3, SFTP or a local directory' ;;
     locklog) printf 'logs (files, journald, containers, Loki, Elasticsearch), masked' ;;
+    lockssh) printf 'SSH hosts (allowed commands, output masked)' ;;
   esac
 }
 
@@ -154,11 +157,13 @@ lea__init_lockhost() {
       lea_log "lockfile: with its launcher, in your projects directory, run lockfile profile add --profile NAME --source s3|sftp|local ... (it writes .lockfile/config.toml, which lox run reviews), then, once lox run runs, lockfile plugin install NAME@VERSION" ;;
     locklog)
       lea_log "locklog: lox add locklog NAME, in your projects directory, finds this host's logs and writes the profile (.locklog/config.toml) that lox run reviews, with its mount plan; a remote store (Loki, Elasticsearch) goes in that file by hand (locklog's README, sources)" ;;
+    lockssh)
+      lea_log "lockssh: lox add lockssh NAME, in your projects directory, asks for the host, its login and key, and the commands an agent may run, and writes the profile (.lockssh/config.toml) that lox run reviews; lea's agents get that directory read-only" ;;
   esac
   lea__lockhost_console_hint "$_ih_t"
 }
 
-# lea lockmq | lea lockfile | lea locklog: whether the tool is on, and how its console runs. It never starts a
+# lea lockmq | lea lockfile | lea locklog | lea lockssh: whether the tool is on, and how its console runs. It never starts a
 # console: lox run does.
 lea_lockhost() {
   _lh_t=$1

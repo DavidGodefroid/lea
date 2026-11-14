@@ -394,7 +394,7 @@ func (l *Launcher) dispatch(args []string) error {
 		return err
 	case "init":
 		return l.sh("init", rest...)
-	case "locksql", "lockmq", "lockfile", "locklog":
+	case "locksql", "lockmq", "lockfile", "locklog", "lockssh":
 		l.exportToolsOn()
 		return l.sh(a0, rest...)
 	case "lock":
@@ -496,8 +496,8 @@ func (l *Launcher) dispatch(args []string) error {
 }
 
 // ToolsOnVar names, in lea-sh, the lock tools the launcher wires for the projects directory
-// (ToolsOn), space separated: lea locksql, lea lockmq, lea lockfile, lea locklog and lea
-// doctor take this
+// (ToolsOn), space separated: lea locksql, lea lockmq, lea lockfile, lea locklog, lea lockssh
+// and lea doctor take this
 // decision instead of making their own.
 const ToolsOnVar = "LEA_TOOLS_ON"
 

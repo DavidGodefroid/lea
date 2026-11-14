@@ -93,7 +93,7 @@ func proxy(parent context.Context, sock, agent, method string, timeout time.Dura
 // MCP server from lea (a Codex agent gets one per instance): it calls the clients itself.
 func LockGuidance(get func(string) string) string {
 	var out []string
-	for _, t := range []struct{ tool, env string }{{"locksql", "LEA_LOCKSQL_INSTANCES"}, {"lockmq", "LEA_LOCKMQ_INSTANCES"}, {"lockfile", "LEA_LOCKFILE_INSTANCES"}, {"locklog", "LEA_LOCKLOG_INSTANCES"}} {
+	for _, t := range []struct{ tool, env string }{{"locksql", "LEA_LOCKSQL_INSTANCES"}, {"lockmq", "LEA_LOCKMQ_INSTANCES"}, {"lockfile", "LEA_LOCKFILE_INSTANCES"}, {"locklog", "LEA_LOCKLOG_INSTANCES"}, {"lockssh", "LEA_LOCKSSH_INSTANCES"}} {
 		if names := strings.Fields(get(t.env)); len(names) > 1 {
 			out = append(out, "several "+t.tool+" locks: "+strings.Join(names, " ")+"; pass --instance NAME")
 		}
@@ -191,7 +191,7 @@ func New(sock, agent, version, instructions string) *mcp.Server {
 			return proxy(ctx, sock, agent, "grants_request", short, in), nil, nil
 		})
 	// #343: what lea knows of a lock without a socket, never a guess.
-	mcp.AddTool(s, &mcp.Tool{Name: "lock_hint", Description: "When a Lock's client (locksql, lockmq, lockfile, locklog) finds no console (no socket, no answer): what the user must do, from what lea knows of the lock (whether lox run runs, whether it runs the lock, whether your container mounts it). Report the hint to the user as is, in blocked_on and to your lead; never tell them to run lox up or lox approve, or to restart or recreate a lock."},
+	mcp.AddTool(s, &mcp.Tool{Name: "lock_hint", Description: "When a Lock's client (locksql, lockmq, lockfile, locklog, lockssh) finds no console (no socket, no answer): what the user must do, from what lea knows of the lock (whether lox run runs, whether it runs the lock, whether your container mounts it). Report the hint to the user as is, in blocked_on and to your lead; never tell them to run lox up or lox approve, or to restart or recreate a lock."},
 		func(ctx context.Context, _ *mcp.CallToolRequest, in lockHintIn) (*mcp.CallToolResult, any, error) {
 			return proxy(ctx, sock, agent, "lock_hint", short, in), nil, nil
 		})

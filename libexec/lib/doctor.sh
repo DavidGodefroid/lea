@@ -170,6 +170,7 @@ EOF
   lea__doctor_lockhost lockmq
   lea__doctor_lockhost lockfile
   lea__doctor_lockhost locklog
+  lea__doctor_lockhost lockssh
   lea__doctor_lockhttp || _drc=1
   lea__doctor_hub
   lea__doctor_lox

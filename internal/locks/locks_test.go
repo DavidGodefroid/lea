@@ -44,8 +44,8 @@ func TestShippedSetIsComplete(t *testing.T) {
 }
 
 func TestRegistryWiring(t *testing.T) {
-	want := map[string][2]string{"locksql": {"LEA_LOCKSQL", "10000"}, "lockmq": {"LEA_LOCKMQ", "10010"}, "lockfile": {"LEA_LOCKFILE", "10030"}, "locklog": {"LEA_LOCKLOG", "10050"}}
-	if strings.Join(Names(), " ") != "locksql lockmq lockfile locklog" {
+	want := map[string][2]string{"locksql": {"LEA_LOCKSQL", "10000"}, "lockmq": {"LEA_LOCKMQ", "10010"}, "lockfile": {"LEA_LOCKFILE", "10030"}, "locklog": {"LEA_LOCKLOG", "10050"}, "lockssh": {"LEA_LOCKSSH", "10040"}}
+	if strings.Join(Names(), " ") != "locksql lockmq lockfile locklog lockssh" {
 		t.Fatalf("order %v", Names())
 	}
 	for n, w := range want {
@@ -59,6 +59,11 @@ func TestRegistryWiring(t *testing.T) {
 	}
 	if l, _ := Get("locksql"); l.ProfileDir != ".locksql" {
 		t.Errorf("locksql profile dir %q", l.ProfileDir)
+	}
+	// lockssh's profiles hold its allowed commands and the auto rules lox run applies: the agents
+	// read them, never write them (lea#325).
+	if l, _ := Get("lockssh"); l.ProfileDir != ".lockssh" || l.UID != "10041" {
+		t.Errorf("lockssh: %+v", l)
 	}
 	if _, ok := Get("lockhttp"); ok {
 		t.Error("lockhttp has no client in lea's image")
@@ -78,7 +83,7 @@ func setText(t *testing.T) string {
 func TestParseSetRefuses(t *testing.T) {
 	good := setText(t)
 	for name, edit := range map[string][2]string{
-		"identity of another tag": {"refs/tags/v0.17.0\n", "refs/tags/v0.16.0\n"},
+		"identity of another tag": {"refs/tags/v0.18.1\n", "refs/tags/v0.18.0\n"},
 		"image of another Lock":   {"LOCKS_LOCKMQ_IMAGE=ghcr.io/davidgodefroid/lockmq@", "LOCKS_LOCKMQ_IMAGE=ghcr.io/davidgodefroid/locksql@"},
 		"image by tag":            {"LOCKS_LOCKFILE_IMAGE=ghcr.io/davidgodefroid/lockfile@sha256:", "LOCKS_LOCKFILE_IMAGE=ghcr.io/davidgodefroid/lockfile:0.8.0#"},
 		"no archive":              {"LOCKS_LOCKMQ_SHA256_ARM64=", "LOCKS_LOCKMQ_SHA256_ARM6="},

@@ -17,7 +17,7 @@ import (
 
 // Lock is a Lock whose client is in lea's image: how lea wires its agents to the lock lox runs.
 type Lock struct {
-	// Name is the Lock's type (locksql, lockmq, lockfile, locklog), the client's binary in lea's image
+	// Name is the Lock's type (locksql, lockmq, lockfile, locklog, lockssh), the client's binary in lea's image
 	// (/usr/local/bin/<Name>) and its socket directory there (/run/<Name>).
 	Name string
 	// Switch is the configuration key that turns lea's wiring of it on or off (LEA_LOCKSQL ...).
@@ -59,6 +59,7 @@ var Registry = []Lock{
 	{Name: "lockmq", Switch: "LEA_LOCKMQ", GID: "10010", UID: "10011", What: "RabbitMQ brokers", Hub: true},
 	{Name: "lockfile", Switch: "LEA_LOCKFILE", GID: "10030", UID: "10031", What: "files on S3, SFTP or a local directory", Hub: true},
 	{Name: "locklog", Switch: "LEA_LOCKLOG", GID: "10050", UID: "10051", What: "logs (files, journald, containers, Loki, Elasticsearch)", Hub: true},
+	{Name: "lockssh", Switch: "LEA_LOCKSSH", GID: "10040", UID: "10041", What: "commands on SSH hosts", ProfileDir: ".lockssh", Hub: true},
 }
 
 // Get is the Lock of type name.
@@ -141,9 +142,9 @@ var (
 	digestRe   = regexp.MustCompile(`^sha256:[0-9a-f]{64}$`)
 	sumRe      = regexp.MustCompile(`^[0-9a-f]{64}$`)
 	keyRe      = regexp.MustCompile(`^LOCKS_[A-Z0-9_]+$`)
-	pinKeyRe   = regexp.MustCompile(`^LOCKS_(LOCKSQL|LOCKMQ|LOCKFILE|LOCKLOG|LOCKHTTP)_(VERSION|PROTOCOL|IMAGE|IMAGE_[A-Z0-9]+|IDENTITY|SHA256_AMD64|SHA256_ARM64)$`)
+	pinKeyRe   = regexp.MustCompile(`^LOCKS_(LOCKSQL|LOCKMQ|LOCKFILE|LOCKLOG|LOCKSSH|LOCKHTTP)_(VERSION|PROTOCOL|IMAGE|IMAGE_[A-Z0-9]+|IDENTITY|SHA256_AMD64|SHA256_ARM64)$`)
 	setNameRe  = regexp.MustCompile(`^lockkit-v[0-9]+\.[0-9]+\.[0-9]+$`)
-	pinnedLock = []string{"locksql", "lockmq", "lockfile", "locklog", "lockhttp"}
+	pinnedLock = []string{"locksql", "lockmq", "lockfile", "locklog", "lockssh", "lockhttp"}
 )
 
 // LoadSet reads the set from the file at path.
