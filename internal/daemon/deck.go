@@ -277,6 +277,16 @@ func (d *Daemon) dispatchDeck(ctx context.Context, o Origin, req wire.Request) (
 		snap.LoxRun = d.loxRunState()
 		// Locks lox run runs that this container does not mount: restart lea to use them.
 		snap.LocksAdded = d.locksAdded(ctx, p.Container)
+		// The spend budgets (#424): why lea paused an agent, and the total against its budget.
+		d.mu.Lock()
+		for i := range snap.Agents {
+			snap.Agents[i].Budget = d.budgetLabelLocked(snap.Agents[i].Key)
+		}
+		if _, total, _ := d.budgetLimitsLocked(); total > 0 {
+			t := d.totalSpentLocked()
+			snap.Spend = &agents.SpendView{TotalUSD: t, LimitUSD: total, Reached: t >= total}
+		}
+		d.mu.Unlock()
 		return snap, err
 	}
 	return nil, fmt.Errorf("unknown method %q", req.Method)

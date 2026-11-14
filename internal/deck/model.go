@@ -68,6 +68,8 @@ type Agent struct {
 	// messages wait in it.
 	Held      bool `json:"held,omitempty"`
 	HeldCount int  `json:"held_count,omitempty"`
+	// Budget is why lea paused the agent on a spend budget (agents.Row, #424), the daemon's text.
+	Budget string `json:"budget,omitempty"`
 }
 
 // shownState is the state a row shows (issue #72): green only when nothing is pending. A live
@@ -119,9 +121,19 @@ type Snapshot struct {
 	// LoxRun is "off" when the workspace has locks and no lox run serves their decisions
 	// (agents.Snapshot.LoxRun, #300): the deck says to run it in another terminal.
 	LoxRun string `json:"lox_run,omitempty"`
+	// Spend is the total spend against budget_usd_total while it is on (agents.Snapshot.Spend,
+	// #424): the header shows it.
+	Spend *Spend `json:"spend,omitempty"`
 	// LocksAdded are the locks lox run runs that this container does not mount
 	// (agents.Snapshot.LocksAdded): the deck says to restart lea to use them.
 	LocksAdded []string `json:"locks_added,omitempty"`
+}
+
+// Spend is the total spend against budget_usd_total (agents.SpendView).
+type Spend struct {
+	TotalUSD float64 `json:"total_usd"`
+	LimitUSD float64 `json:"limit_usd"`
+	Reached  bool    `json:"reached,omitempty"`
 }
 
 // Pressure is what the deck shows of the pressure (#132, P2): a short gauge of the container
@@ -260,6 +272,7 @@ type Model struct {
 	pressure      *Pressure     // the container's pressure gauge (Snapshot.Pressure)
 	hubDown       bool          // lea follows the hub but cannot reach it (Snapshot.HubState)
 	loxRunOff     bool          // the workspace has locks and no lox run serves them (Snapshot.LoxRun)
+	spend         *Spend        // the total spend against budget_usd_total (Snapshot.Spend)
 	locksAdded    []string      // locks this container does not mount (Snapshot.LocksAdded)
 	seq           int           // the latest selection; older delayed shows are dropped
 	frame         int           // the working spinner's frame
@@ -556,7 +569,7 @@ func (m *Model) ask(key string) {
 func (m *Model) apply(s Snapshot) bool {
 	before, was := m.shown, m.selected
 	m.version, m.shown, m.sound, m.locks, m.pressure, m.hubDown = s.Version, s.Shown, s.Sound, s.Locks, s.Pressure, s.HubState == "down"
-	m.locksAdded, m.loxRunOff = s.LocksAdded, s.LoxRun == "off"
+	m.locksAdded, m.loxRunOff, m.spend = s.LocksAdded, s.LoxRun == "off", s.Spend
 	for _, a := range s.Agents {
 		if a.Key == s.Shown && a.State == "done" {
 			m.seen[a.Key] = a.Updated
@@ -975,6 +988,8 @@ func (m Model) label(a Agent) string {
 	switch r := rank(a, m.seen); {
 	case isShell(a):
 		return "shell"
+	case a.Paused && a.Budget != "": // paused by lea on a spend budget (#424)
+		return a.Budget
 	case a.Paused:
 		return "paused"
 	case a.State == "blocked" && a.Approval == nil:

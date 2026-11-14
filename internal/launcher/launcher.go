@@ -559,6 +559,8 @@ func (l *Launcher) doctor() error {
 	if cerr := l.claudeDoctor(); cerr != nil && err == nil {
 		err = cerr
 	}
+	// The running agents no spend budget covers (#424): a line only while a daemon answers.
+	_ = l.coreCall("limits", "doctor")
 	if l.coreCall("allow", "--container", l.Cfg.ContainerName(proj), "--projects", proj, "check", "--state", l.Cfg.StateDir()) != nil && err == nil {
 		return exitError{1}
 	}

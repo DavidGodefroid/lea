@@ -197,6 +197,10 @@ type Daemon struct {
 	limitStore  LimitStore
 	limitVals   map[string]limitVal
 	childStarts int
+	// budget is the spend budgets' state (budget.go, #424), loaded on first use.
+	budget *budgetState
+	// budgetWG counts the budget pauses and resumes that run.
+	budgetWG sync.WaitGroup
 }
 
 func New(st *store.Store, runDir string, now func() int64) *Daemon {

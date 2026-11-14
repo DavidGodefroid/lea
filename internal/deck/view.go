@@ -270,13 +270,39 @@ func (m Model) top(w int) string {
 	if l := m.lockLine(); l != "" {
 		count = l + " " + c.dot + " " + count
 	}
+	// The total spend against budget_usd_total while it is on (#424), red once reached; with no
+	// room for both, it takes the place of the count: it may pause every agent.
+	countText := muted.Render(count)
+	if m.spend != nil {
+		t := spendText(m.spend.TotalUSD) + "/" + spendText(m.spend.LimitUSD)
+		st := muted
+		if m.spend.Reached {
+			st = alert
+		}
+		if w-8-tw-lipgloss.Width(count)-lipgloss.Width(t+" "+c.dot+" ") >= 1 {
+			count, countText = t+" "+c.dot+" "+count, st.Render(t)+muted.Render(" "+c.dot+" "+count)
+		} else {
+			count, countText = t, st.Render(t)
+		}
+	}
 	// c.tl+c.h+" " (3) + title + " " + fill + " " + count + " "+c.h+c.tr (3)
 	fill := w - 8 - tw - lipgloss.Width(count)
 	if fill < 1 {
 		return m.frameStyle().Render(c.tl+c.h+" ") + title + m.frameStyle().Render(" "+strings.Repeat(c.h, max(0, w-5-tw))+c.tr)
 	}
 	return m.frameStyle().Render(c.tl+c.h+" ") + title + m.frameStyle().Render(" "+strings.Repeat(c.h, fill)+" ") +
-		muted.Render(count) + m.frameStyle().Render(" "+c.h+c.tr)
+		countText + m.frameStyle().Render(" "+c.h+c.tr)
+}
+
+// spendText is an amount for the header: "$12.40", "$50", "$1.2k" from a thousand.
+func spendText(v float64) string {
+	switch {
+	case v >= 1000:
+		return fmt.Sprintf("$%.1fk", v/1000)
+	case v == float64(int64(v)):
+		return fmt.Sprintf("$%d", int64(v))
+	}
+	return fmt.Sprintf("$%.2f", v)
 }
 
 // lockLine is what the top border says of the Locks' approvals, which lox run decides (#300):
@@ -616,6 +642,9 @@ func (m Model) row(a Agent, inner int, fi int) []string {
 		g, gc = "$", theme.Unknown
 	} else if a.Paused {
 		g, gc = "‖", theme.Muted
+		if a.Budget != "" { // paused by lea on a spend budget (#424): red
+			gc = theme.Blocked
+		}
 		if m.ascii {
 			g = "="
 		}
@@ -630,7 +659,11 @@ func (m Model) row(a Agent, inner int, fi int) []string {
 		bg(plain).Render(" ") +
 		bg(muted).Render(padLeft(ctxText(a.CtxPct), ctxW))
 	detail := fit(m.detail(a, inner-in), inner-in, c)
-	line2 := bg(plain).Render(pad) + bg(muted).Render(padRight(detail, inner-in))
+	dst := muted
+	if a.Paused && a.Budget != "" {
+		dst = alert
+	}
+	line2 := bg(plain).Render(pad) + bg(dst).Render(padRight(detail, inner-in))
 	lines := []string{line1, line2}
 	if ap := a.Approval; ap != nil {
 		warn := "⚠"

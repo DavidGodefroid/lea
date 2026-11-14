@@ -35,6 +35,19 @@ Changes:
   `queue: true` waits and starts once a child ends; `lea board` and `agents_list` show why it
   waits (`queued: max_running 3/3`). A change never stops a running agent. **This caps a busy
   tower at 3 children by default**: `lea limits set max_running 0` turns the cap off.
+- Spend budgets (#424), a kill switch for API billing: two live limits in USD, off by default.
+  `budget_usd_agent` (`LEA_BUDGET_USD_AGENT`) is the most one agent may spend, from the cost its
+  status line reports; `budget_usd_total` (`LEA_BUDGET_USD_TOTAL`) is the most all agents may spend
+  together since `lea limits reset budget_usd_total`, which starts a new period (a session whose
+  cost counter starts again keeps what it spent before). Over a budget lea pauses the agent, or
+  every agent, as it does under pressure: the session and its work are kept, nothing is stopped.
+  The deck's row and `lea board` say why (`budget reached: $12.40 ≥ budget_usd_agent $10`), the
+  alert sound plays and the agent's lead gets one note. While the total is reached, `agents_spawn`
+  is refused, or queued with `queue: true`. Raising a budget, or resetting the total, resumes what
+  lea paused and starts the queued spawns. An agent you resume by hand over a budget is paused
+  again only after `budget_usd_step` (`LEA_BUDGET_USD_STEP`, default 20) percent more of it. An
+  agent of unknown cost is never paused; `lea limits` and `lea doctor` name such agents. The
+  deck's header shows the total against `budget_usd_total` while it is on (red once reached).
 
 - lea no longer copies on select (#419): a drag in an agent's terminal no longer enters tmux's
   copy mode, copies the selection or flashes "Copied". Claude Code copies on select itself, through
