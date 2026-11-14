@@ -468,7 +468,8 @@ func TestClaudeMountsContents(t *testing.T) {
 	}
 }
 
-// LEA_LOCKSQL=0 leaves no trace of locksql in the container: no volume, no group, no variable.
+// LEA_LOCKSQL=0 leaves no trace of locksql in the container: no volume, no group, no variable;
+// only its profile directory, read-only (lea#473).
 func TestRunArgsWithoutLocksql(t *testing.T) {
 	w := newWorld(t, repoRoot(t))
 	writeUserConf(t, w, "LEA_LOCKSQL=0\n")
@@ -476,7 +477,11 @@ func TestRunArgsWithoutLocksql(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	d := w.proj + "/.locksql"
 	for _, a := range args {
+		if a == "type=bind,src="+d+",dst="+d+",readonly" {
+			continue
+		}
 		if strings.Contains(strings.ToLower(normalize(w, a)), "locksql") || a == "10000" {
 			t.Fatalf("locksql in the run args: %s", a)
 		}
@@ -1073,17 +1078,17 @@ func TestRunArgsLocksqlDirReadOnly(t *testing.T) {
 	if _, err := w.launcher().runArgs(w.proj, "172.18.0.5"); err == nil || !strings.Contains(err.Error(), "is not a directory") {
 		t.Fatalf("a file: %v", err)
 	}
-	// Without locksql, no mount and nothing made.
+	// Without locksql, made and mounted read-only all the same (lea#473).
 	if err := os.Remove(d); err != nil {
 		t.Fatal(err)
 	}
 	w.writeConf("lea.conf", "LEA_LOCKSQL=0\n")
 	args, err = w.launcher().runArgs(w.proj, "172.18.0.5")
-	if err != nil || contains(args, ro) {
+	if err != nil || !contains(args, ro) {
 		t.Fatalf("locksql off: %v %q", err, args)
 	}
-	if _, err := os.Lstat(d); !os.IsNotExist(err) {
-		t.Fatalf("locksql off made %s: %v", d, err)
+	if fi, err := os.Lstat(d); err != nil || !fi.IsDir() {
+		t.Fatalf("locksql off did not make %s: %v", d, err)
 	}
 }
 

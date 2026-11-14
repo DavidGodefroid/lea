@@ -1,8 +1,6 @@
 package launcher
 
 import (
-	"errors"
-	"os"
 	"regexp"
 	"strconv"
 
@@ -46,10 +44,10 @@ func lockfileSafe(v string) bool {
 // The consoles run hub-attached only, under lox: without such a lock the agents get no socket of
 // the type, never a fixed volume another console could serve, and lea says to add one (`lox add
 // <type>`).
-// A profile directory is read-only whatever the switch and lox run say (lea#467): with the Lock
-// off, or before `lox add`, an existing one is still mounted read-only (none is made), so no agent
-// stages the profiles or the auto rules lox run reviews later; a link or a file in its place is
-// not mounted, and lea warns.
+// A profile directory is read-only whatever the switch and lox run say (lea#467, lea#473): with
+// the Lock off, or before `lox add`, lea still makes it when missing (empty, as .lockfamily) and
+// mounts it read-only, so no agent creates it and stages the profiles or the auto rules lox run
+// reviews later; a link or a file in its place stops lea, as when the Lock is wired.
 func (l *Launcher) lockArgs(proj string, ups map[string][]lockUpSocket) ([]string, error) {
 	var a []string
 	for _, lk := range locks.Registry {
@@ -57,23 +55,18 @@ func (l *Launcher) lockArgs(proj string, ups map[string][]lockUpSocket) ([]strin
 		on := l.Cfg.toolOn(lk.Switch, up)
 		switch {
 		case on && up && len(v) > 0:
-			args := lockUpArgs(lk.Switch, lk.GID, v)
-			if lk.ProfileDir != "" {
-				d, err := roDir(proj+"/"+lk.ProfileDir, "the "+lk.Name+" console only writes there")
-				if err != nil {
-					return nil, err
-				}
-				args = append(args, roMount(d)...)
-			}
-			a = append(a, args...)
-			continue
+			a = append(a, lockUpArgs(lk.Switch, lk.GID, v)...)
 		case on && !up:
 			l.logf("warning: %s: no such lock yet: `lox add %s` (lea's agents get its socket once lea restarts: lea stop, then lea)", lk.Name, lk.Name)
 		case on:
 			l.logf("warning: %s: lea's agents get no %s socket (see above)", lk.Name, lk.Name)
 		}
 		if lk.ProfileDir != "" {
-			a = append(a, l.existingProfileDir(proj+"/"+lk.ProfileDir, lk.Name)...)
+			d, err := roDir(proj+"/"+lk.ProfileDir, "the "+lk.Name+" console only writes there")
+			if err != nil {
+				return nil, err
+			}
+			a = append(a, roMount(d)...)
 		}
 	}
 	return a, nil
@@ -81,22 +74,4 @@ func (l *Launcher) lockArgs(proj string, ups map[string][]lockUpSocket) ([]strin
 
 func roMount(d string) []string {
 	return []string{"--mount", "type=bind,src=" + d + ",dst=" + d + ",readonly"}
-}
-
-// existingProfileDir is the read-only mount of the profile directory d of a Lock lea does not wire
-// now: d when it is a directory, nothing when it is missing (lea makes none), and a warning for a
-// link or a file in its place, which stays as the projects directory mount gives it.
-func (l *Launcher) existingProfileDir(d, name string) []string {
-	fi, err := os.Lstat(d)
-	switch {
-	case errors.Is(err, os.ErrNotExist):
-		return nil
-	case err == nil && fi.IsDir():
-		return roMount(d)
-	case err == nil:
-		l.logf("warning: %s: %s is not a directory (a symbolic link or a file): lea's agents can rewrite what it holds; remove it", name, d)
-	default:
-		l.logf("warning: %s: %v: lea's agents may rewrite %s", name, err, d)
-	}
-	return nil
 }

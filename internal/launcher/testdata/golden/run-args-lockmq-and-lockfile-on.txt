@@ -90,6 +90,8 @@ LEA_LOCKFILE=1
 10030
 --mount
 type=volume,src=lockfamily-$PROJECT_docs-run,dst=/run/lockfile,readonly
+--mount
+type=bind,src=$W/projects/.locklog,dst=$W/projects/.locklog,readonly
 --cap-drop
 NET_RAW
 --cap-drop
