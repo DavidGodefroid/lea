@@ -253,6 +253,9 @@ func (d *Daemon) grantCheck(o Origin, me string, raw json.RawMessage) (any, erro
 	if err := json.Unmarshal(raw, &p); err != nil {
 		return nil, err
 	}
+	if deny := d.leadGuard(o, me, p.Tool); deny != nil {
+		return deny, nil
+	}
 	if p.Tool == askQuestionTool && o.Container != "" {
 		// One question at a time to the user (#95).
 		if why := d.askGuard(me); why != "" {

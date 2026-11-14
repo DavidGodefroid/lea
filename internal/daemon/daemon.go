@@ -1394,6 +1394,8 @@ func (d *Daemon) dispatchHooks(ctx context.Context, o Origin, me string, req wir
 		return d.grantRequestDecide(req.Params)
 	case "grant_check":
 		return d.grantCheck(o, me, req.Params)
+	case "session_context":
+		return d.sessionContext(o, me, req.Params)
 	case "status_report":
 		return d.statusReport(ctx, o, me, req.Params)
 	case "lock_hint":

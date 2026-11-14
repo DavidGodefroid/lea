@@ -640,3 +640,81 @@ func TestAskUserQuestionResultAnswersTheOpenQuestion(t *testing.T) {
 		t.Fatalf("open = %+v %v, want #2", q, err)
 	}
 }
+
+// A lead calling the built-in sub-agent tool is denied with a reason naming agents_spawn; a dev
+// is not (#409).
+func TestLeadBuiltinAgentToolDenied(t *testing.T) {
+	_, bus, db := startDB(t)
+	st, err := store.Open(db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	for _, a := range []store.NewAgent{
+		{Container: "lea-a", Name: "tower", Profile: "claude", Workdir: "/p", Role: "lead"},
+		{Container: "lea-a", Name: "worker", Profile: "claude", Workdir: "/p", Role: "dev"},
+	} {
+		if _, err := st.Register(a, store.Caps{}, 1); err != nil {
+			t.Fatal(err)
+		}
+	}
+	tower := map[string]string{"LEA_AGENT": "tower"}
+	for _, tool := range []string{"Agent", "Task"} {
+		out := runHook(bus, "PreToolUse", `{"session_id":"s1","tool_name":"`+tool+`","tool_input":{"prompt":"fix the bug"},"cwd":"/p"}`, tower)
+		var r struct {
+			HookSpecificOutput struct{ PermissionDecision, PermissionDecisionReason string }
+		}
+		if err := json.Unmarshal([]byte(out), &r); err != nil || r.HookSpecificOutput.PermissionDecision != "deny" ||
+			!strings.Contains(r.HookSpecificOutput.PermissionDecisionReason, "agents_spawn") {
+			t.Fatalf("lead %s: out=%q", tool, out)
+		}
+	}
+	// Other tools of a lead, and a dev's Agent, take the normal path.
+	if out := runHook(bus, "PreToolUse", `{"session_id":"s1","tool_name":"Read","tool_input":{"file_path":"/p/x"},"cwd":"/p"}`, tower); strings.Contains(out, "deny") {
+		t.Fatalf("lead Read: out=%q", out)
+	}
+	worker := map[string]string{"LEA_AGENT": "worker"}
+	if out := runHook(bus, "PreToolUse", `{"session_id":"s2","tool_name":"Agent","tool_input":{"prompt":"look around"},"cwd":"/p"}`, worker); strings.Contains(out, "deny") {
+		t.Fatalf("dev Agent: out=%q", out)
+	}
+}
+
+// After a compaction a lead's context gets the tower reminder; a dev's does not, nor does a lead's
+// session that starts afresh (#409).
+func TestCompactionRemindsALeadItIsOne(t *testing.T) {
+	_, bus, db := startDB(t)
+	st, err := store.Open(db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	for _, a := range []store.NewAgent{
+		{Container: "lea-a", Name: "tower", Profile: "claude", Workdir: "/p", Role: "lead"},
+		{Container: "lea-a", Name: "worker", Profile: "claude", Workdir: "/p", Role: "dev"},
+	} {
+		if _, err := st.Register(a, store.Caps{}, 1); err != nil {
+			t.Fatal(err)
+		}
+	}
+	tower := map[string]string{"LEA_AGENT": "tower"}
+	if out := runHook(bus, "SessionStart", `{"session_id":"s1","source":"startup"}`, tower); out != "" {
+		t.Fatalf("startup: out=%q", out)
+	}
+	out := runHook(bus, "SessionStart", `{"session_id":"s1","source":"compact"}`, tower)
+	var r struct {
+		HookSpecificOutput struct{ HookEventName, AdditionalContext string }
+	}
+	if err := json.Unmarshal([]byte(out), &r); err != nil || r.HookSpecificOutput.HookEventName != "SessionStart" ||
+		!strings.Contains(r.HookSpecificOutput.AdditionalContext, "you are a lead") ||
+		!strings.Contains(r.HookSpecificOutput.AdditionalContext, "agents_spawn") {
+		t.Fatalf("compact: out=%q", out)
+	}
+	// A nested Claude that inherits the lead's identity is not reminded.
+	if out := runHook(bus, "SessionStart", `{"session_id":"other","source":"compact"}`, tower); out != "" {
+		t.Fatalf("foreign session: out=%q", out)
+	}
+	worker := map[string]string{"LEA_AGENT": "worker"}
+	if out := runHook(bus, "SessionStart", `{"session_id":"s2","source":"compact"}`, worker); out != "" {
+		t.Fatalf("dev compact: out=%q", out)
+	}
+}
