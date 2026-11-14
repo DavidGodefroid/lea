@@ -26,9 +26,10 @@ func TestCaptureReadsTheAgentsPane(t *testing.T) {
 	if !s.logged("capture-pane -p -e -t " + id) {
 		t.Fatalf("log=%q", s.log)
 	}
+	// It only reads: the panes, the pane's geometry, its screen.
 	for _, l := range s.log[before:] {
-		if strings.HasPrefix(l, "send-keys") || strings.HasPrefix(l, "select-pane") {
-			t.Fatalf("capture typed into or focused a pane: %q", l)
+		if !strings.HasPrefix(l, "list-panes") && !strings.HasPrefix(l, "display-message") && !strings.HasPrefix(l, "capture-pane") {
+			t.Fatalf("capture ran %q", l)
 		}
 	}
 	if _, err := e.m.Capture(bg, C+"/nobody"); err == nil {
