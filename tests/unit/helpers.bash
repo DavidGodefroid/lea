@@ -8,6 +8,8 @@ setup_fakes() {
   export XDG_DATA_HOME="$BATS_TEST_TMPDIR/data"
   mkdir -p "$HOME" "$XDG_DATA_HOME"
   export LEA_TMUX_BUILT="$BATS_TEST_TMPDIR/no-built-tmux"
+  # The egress log's installed files (#104): never the host's /etc.
+  export LEA_EGRESS_LOG_NFT="$BATS_TEST_TMPDIR/etc/lea/egress-log.nft" LEA_EGRESS_LOG_UNIT="$BATS_TEST_TMPDIR/etc/systemd/lea-egress-log.service"
   unset LEA_CONFIG LEA_PROJECTS_DIR XDG_CONFIG_HOME LEA_UI LEA_LAUNCHER LEA_TMUX_BIN \
     LEA_GIT_SSH LEA_GIT_KNOWN_HOSTS LEA_GITLAB_SSH LEA_GITLAB_KNOWN_HOSTS LEA_LOCKSQL LEA_LOCKMQ LEA_LOCKFILE LEA_LOCKLOG
 }
