@@ -76,6 +76,10 @@ type Server struct {
 	// browsers in with the persistent token instead of the one-time one.
 	scheme string
 	remote *remoteAuth
+	// terms counts the open terminal streams (terminal.go); captureEvery paces them (0: the
+	// default).
+	terms        terminals
+	captureEvery time.Duration
 	// retry is how long the event stream waits before it asks the daemon again after an error.
 	retry func(ctx context.Context)
 }
@@ -157,7 +161,9 @@ func (s *Server) Handler() http.Handler {
 	})
 	mux.Handle("GET /static/", http.StripPrefix("/static/", files))
 	mux.HandleFunc("POST /api/login", s.login)
+	mux.HandleFunc("POST /api/logout", s.api(s.logout))
 	mux.HandleFunc("GET /api/events", s.api(s.events))
+	mux.HandleFunc("GET /api/terminal", s.api(s.terminal))
 	mux.HandleFunc("POST /api/{method}", s.api(s.method))
 	mux.HandleFunc("/api/", s.api(func(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "no such API")

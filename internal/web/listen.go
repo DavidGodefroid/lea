@@ -233,7 +233,7 @@ func (s *Server) ListenRemote(o RemoteOptions) (net.Listener, Remote, error) {
 	for _, n := range leaf.DNSNames {
 		s.hosts[net.JoinHostPort(n, strconv.Itoa(s.port))] = true
 	}
-	s.remote = &remoteAuth{token: tok, sessions: map[string]time.Time{}, now: time.Now}
+	s.remote = &remoteAuth{token: tok, sessions: map[string]time.Time{}, sources: map[string]*failures{}, now: time.Now}
 	s.scheme = "https"
 	l := tls.NewListener(tl, &tls.Config{Certificates: []tls.Certificate{cert}, MinVersion: tls.VersionTLS12})
 	r := Remote{URL: "https://" + hostport + "/", TokenFile: tokFile, Fingerprint: fingerprint(leaf.Raw), CertFile: certFile}

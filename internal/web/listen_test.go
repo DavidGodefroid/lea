@@ -6,6 +6,7 @@ import (
 	"crypto/x509"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net"
 	"net/http"
@@ -302,6 +303,18 @@ func TestTheNetworkSignsInWithThePersistentToken(t *testing.T) {
 		t.Fatalf("after the wait: %d", resp.StatusCode)
 	}
 
+	// Signing out ends the session.
+	req, _ = http.NewRequest("POST", base+"/api/logout", strings.NewReader("{}"))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Origin", base)
+	req.AddCookie(ses)
+	if resp, err := c.Do(req); err != nil || resp.StatusCode != 200 {
+		t.Fatalf("logout: %v %v", resp, err)
+	}
+	if code := api(ses, base); code != http.StatusUnauthorized {
+		t.Fatalf("API after the sign-out: %d", code)
+	}
+
 	// The next start keeps the token and the certificate; --new-token changes the token.
 	s2 := remoteServer(t, nil)
 	l2, r2, err := s2.ListenRemote(RemoteOptions{Addr: "192.0.2.10:8443", SelfSigned: true, Dir: dir})
@@ -364,5 +377,44 @@ func TestSelfSignedIsRenewedForAnotherAddressOrNearItsEnd(t *testing.T) {
 	d, _ := selfSigned(cf, kf, net.ParseIP("192.0.2.11"), now.Add(340*24*time.Hour))
 	if fp(d) == fp(c) {
 		t.Fatal("kept near its end")
+	}
+}
+
+// One source's wrong tokens lock out only that source, for a while; a session ends after
+// sessionLife.
+func TestSignInBackoffIsPerSourceAndSessionsExpire(t *testing.T) {
+	now := time.Now()
+	a := &remoteAuth{token: strings.Repeat("ab", 32), sessions: map[string]time.Time{}, sources: map[string]*failures{},
+		now: func() time.Time { return now }}
+	for i := 0; i < freeFailures; i++ {
+		a.signIn("198.51.100.9", "wrong")
+	}
+	if _, wait, _ := a.signIn("198.51.100.9", a.token); wait <= 0 {
+		t.Fatal("the guessing source is not slowed down")
+	}
+	ses, wait, err := a.signIn("192.0.2.20", a.token)
+	if err != nil || wait != 0 || ses == "" {
+		t.Fatalf("another source locked out: %q %v %v", ses, wait, err)
+	}
+	now = now.Add(failureMemory + time.Second)
+	if s, wait, _ := a.signIn("198.51.100.9", a.token); wait != 0 || s == "" {
+		t.Fatal("the source's failures never fade")
+	}
+	if !a.valid(ses) {
+		t.Fatal("a fresh session refused")
+	}
+	now = now.Add(sessionLife)
+	if a.valid(ses) {
+		t.Fatal("a session outlives sessionLife")
+	}
+	for i := 0; i < maxSources+10; i++ {
+		a.signIn(fmt.Sprintf("10.%d.%d.1", i/256, i%256), "wrong")
+	}
+	if len(a.sources) > maxSources {
+		t.Fatalf("%d sources remembered", len(a.sources))
+	}
+	r := &http.Request{RemoteAddr: "[2001:db8:1:2:3:4:5:6]:5555"}
+	if got := source(r); got != "2001:db8:1:2::" {
+		t.Fatalf("IPv6 source %q", got)
 	}
 }
