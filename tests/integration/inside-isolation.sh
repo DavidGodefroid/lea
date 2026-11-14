@@ -141,16 +141,17 @@ must   ".lockfamily is still a directory"       test -d "$lf" -a ! -L "$lf"
 # The Locks' profile directories (lea#473): with the Lock off (isolation.sh sets LEA_LOCKSQL=0 and
 # LEA_LOCKLOG=0, and lox runs no lock), lea made each one, empty, and mounts it read-only, so no
 # agent creates it and stages the profiles or the auto rules lox run would review later.
-for n in .locksql .locklog; do
-  pd=$LEA_PROJECTS/$n
-  must   "$n (lock off) is a directory"             test -d "$pd" -a ! -L "$pd"
-  must   "$n (lock off) config.toml write gets EROFS" sh -c 'touch "$1/config.toml" 2>&1 | grep -q "Read-only file system"' sh "$pd"
-  mustnt "$n (lock off) mkdir inside it refused"    mkdir "$pd/profiles"
-  mustnt "$n (lock off) cannot be removed"          rm -rf "$pd"
-  mustnt "$n (lock off) cannot be renamed"          mv "$pd" "$pd-moved"
-  mustnt "$n (lock off) cannot be replaced by a link" sh -c 'ln -sfn /tmp "$1.new" && mv -T "$1.new" "$1"' sh "$pd"
+# (pn, not n: must and mustnt set n.)
+for pn in .locksql .locklog; do
+  pd=$LEA_PROJECTS/$pn
+  must   "$pn (lock off) is a directory"             test -d "$pd" -a ! -L "$pd"
+  must   "$pn (lock off) config.toml write gets EROFS" sh -c 'touch "$1/config.toml" 2>&1 | grep -q "Read-only file system"' sh "$pd"
+  mustnt "$pn (lock off) mkdir inside it refused"    mkdir "$pd/profiles"
+  mustnt "$pn (lock off) cannot be removed"          rm -rf "$pd"
+  mustnt "$pn (lock off) cannot be renamed"          mv "$pd" "$pd-moved"
+  mustnt "$pn (lock off) cannot be replaced by a link" sh -c 'ln -sfn /tmp "$1.new" && mv -T "$1.new" "$1"' sh "$pd"
   rm -f "$pd.new"
-  must   "$n (lock off) is still an empty directory" sh -c 'test -d "$1" -a ! -L "$1" && [ -z "$(ls -A "$1")" ]' sh "$pd"
+  must   "$pn (lock off) is still an empty directory" sh -c 'test -d "$1" -a ! -L "$1" && [ -z "$(ls -A "$1")" ]' sh "$pd"
 done
 # The hub's facade socket (I11): the host's is not visible, nor any lockhub runtime directory nor
 # any facade socket anywhere in the container.
