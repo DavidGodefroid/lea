@@ -567,9 +567,11 @@ jobs:
           if grep '^FAIL' locklog.log; then exit 1; fi
           grep -qx "ok    lea's agent: locklog_count counts the 3 records, masked, with no ticket" locklog.log
           grep -q "^ok    lea's agent: the approved locklog_unmask gives the one clear value" locklog.log
+          grep -q "^ok    lea's agent: its writes to .locklog (config.toml, a new file) are refused" locklog.log
+          grep -qx "ok    lea's container: .locklog bind-mounted read-only over the projects directory" locklog.log
           n=$(grep -c '^ok ' locklog.log)
           echo "$n locklog checks passed"
-          [ "$n" -eq 20 ]
+          [ "$n" -eq 22 ]
   images:
     runs-on: ubuntu-latest
     steps:
