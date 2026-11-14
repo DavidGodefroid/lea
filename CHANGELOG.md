@@ -1,5 +1,26 @@
 # Changelog
 
+## v0.17.1 (2026-11-14)
+
+Security:
+
+- lea's SSH key no longer enters the agent containers (#482). Before, the launcher mounted
+  `<state>/ssh` into every agent container, so an agent could read the private key, not only use
+  it through the ssh-agent socket as documented. The key now lives in a per-projects-dir
+  ssh-agent container, `<container>-ssh`: no network, all capabilities dropped but the four its
+  start needs, read-only root. The launcher loads the key into it, and asks for a passphrase on
+  the terminal if the key has one. The agent container gets only the agent's socket, read-only at
+  `/run/lea/ssh`, and `known_hosts`. Under a virtual machine runtime (Kata) a socket cannot cross
+  into the VM, so lea warns and the agents run without the key. `lea doctor` fails when a running
+  lea container mounts the key or its agents can read a key file. **Rotate lea's SSH key**: remove
+  its public key from your forges, delete `<state>/ssh/id_ed25519*`, run `lea init` and add the
+  new public key, then `lea stop --all` and restart lea.
+
+Docs:
+
+- lea is presented as multi-provider, and lea (the tool) is told apart from lea deck (its
+  interface) (#476, #478, #481).
+
 ## v0.17.0 (2026-11-14)
 
 Features:
