@@ -72,6 +72,9 @@ func TestAgentsSpawnRefusesWhatALeadMayNotGive(t *testing.T) {
 		{"model": "--dangerously-bypass-approvals-and-sandbox", "brief": "x"},
 		{"model": `x" -c y="z`, "brief": "x"},
 		{"model": strings.Repeat("m", 200), "brief": "x"},
+		{"advisor": "--yolo", "brief": "x"},
+		{"advisor": strings.Repeat("m", 200), "brief": "x"},
+		{"profile": "codex", "advisor": "opus", "brief": "x"},
 	} {
 		if err := call(t, e.bus, "boss", "agents_spawn", p, nil); err == nil {
 			t.Fatalf("params %d accepted", i)
@@ -164,6 +167,24 @@ func TestAgentsSpawnOnAnotherProvider(t *testing.T) {
 	}
 	if err := call(t, e.bus, "boss", "agents_spawn", map[string]any{"profile": "codex", "role": "lead", "brief": "x"}, nil); err == nil {
 		t.Fatal("a lead was given through another provider")
+	}
+}
+
+// A lead starts a child on a model with an advisor (#407): both reach the manager and the answer.
+func TestAgentsSpawnWithAdvisor(t *testing.T) {
+	e := start(t)
+	fa := &fakeAgents{}
+	e.d.SetAgents(fa)
+	spawned(t, e, "boss", "lead", "")
+	if err := call(t, e.bus, "boss", "agents_spawn", map[string]any{"model": "sonnet", "advisor": "opus", "brief": "x"}, nil); err != nil {
+		t.Fatal(err)
+	}
+	if fa.req.Model != "sonnet" || fa.req.Advisor != "opus" {
+		t.Fatalf("request=%+v", fa.req)
+	}
+	e.d.SetDefaultProvider("codex")
+	if err := call(t, e.bus, "boss", "agents_spawn", map[string]any{"advisor": "opus", "brief": "x"}, nil); err == nil || !strings.Contains(err.Error(), "no advisor") {
+		t.Fatalf("an advisor on the default Codex provider: %v", err)
 	}
 }
 

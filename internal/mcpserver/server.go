@@ -46,6 +46,7 @@ type spawnIn struct {
 	Role    string `json:"role,omitempty" jsonschema:"dev (default) or reviewer"`
 	Profile string `json:"profile,omitempty" jsonschema:"the provider the agent runs on: claude, codex or another of providers_list (default: the user's default provider)"`
 	Model   string `json:"model,omitempty" jsonschema:"the model to ask the provider for (default: the provider's default)"`
+	Advisor string `json:"advisor,omitempty" jsonschema:"a stronger model the agent consults on demand (Claude Code's advisor tool, e.g. opus next to model sonnet); Claude providers only (default: none)"`
 	Repo    string `json:"repo,omitempty" jsonschema:"a directory directly under the projects directory: the agent starts there"`
 	Branch  string `json:"branch,omitempty" jsonschema:"the git branch the agent works on, in its own worktree"`
 	Brief   string `json:"brief" jsonschema:"what the new agent must do, at most 32 KiB; it is its first message"`
@@ -58,6 +59,7 @@ type requestIn struct {
 	Role    string `json:"role,omitempty" jsonschema:"dev (default) or reviewer"`
 	Profile string `json:"profile,omitempty" jsonschema:"the provider the agent runs on: claude, codex or another of providers_list (default: the user's default provider)"`
 	Model   string `json:"model,omitempty" jsonschema:"the model to ask the provider for (default: the provider's default)"`
+	Advisor string `json:"advisor,omitempty" jsonschema:"a stronger model the agent consults on demand (Claude Code's advisor tool, e.g. opus next to model sonnet); Claude providers only (default: none)"`
 	Repo    string `json:"repo,omitempty" jsonschema:"a directory directly under the projects directory"`
 	Branch  string `json:"branch,omitempty" jsonschema:"the git branch the new agent works on"`
 	Brief   string `json:"brief" jsonschema:"what the new agent must do, at most 32 KiB"`

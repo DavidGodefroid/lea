@@ -4,6 +4,13 @@
 
 Features:
 
+- A lead picks each child's model and advisor (#407). `agents_spawn` and `agents_request_spawn`
+  take an optional `advisor`: with `model: sonnet, advisor: opus` the child runs `claude --model
+  sonnet --advisor opus`, a Sonnet session that consults Opus on demand through Claude Code's
+  advisor tool, and keeps both when it resumes. A provider without an advisor (Codex, an
+  endpoint) refuses it: `provider codex has no advisor`. Without `advisor` the command line is
+  unchanged. `agents_list` shows a child's advisor. The control-tower skill now tells the lead to
+  pick each child's model and advisor by its task.
 - A lead can push its team's branches (#406). Before, a lead was always refused: `pushing to
   anything but the agent's own branch is never allowed`. Once a child stopped, its branch could
   be pushed only from the host. Now, under the existing `push` allowance, a lead may run `git push
