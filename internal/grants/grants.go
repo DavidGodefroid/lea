@@ -158,6 +158,9 @@ type Caller struct {
 	// container (LeaProxy): the container's network is internal, and env -i drops the agent's
 	// HTTPS_PROXY, which lea would not vouch for anyway.
 	Proxy string
+	// Team are the branches of the caller's finished children it may push, as the daemon knows
+	// them (TeamBranch, #406): a lead's only. Empty for any other agent.
+	Team []TeamBranch
 }
 
 // LeaProxy is lea-proxy's forward proxy, as the containers of a lea reach it (the network alias
@@ -298,6 +301,16 @@ func Match(req Request, c Caller, gs []Grant, now int64) (Grant, bool) {
 // before it calls Decide with finished true (false otherwise).
 func Decide(tool string, input json.RawMessage, c Caller, gs []Grant, now int64, finished bool) Decision {
 	d := decide(tool, input, c, gs, now, finished)
+	// A lead pushes its finished children's branches (#406): a push it is denied as itself, it
+	// may run as the child whose worktree it runs in.
+	if other := d.Verdict == Deny && d.Reason == "lea hard deny: "+pushOther; other || d.Verdict == "" {
+		if td, ok := teamPush(tool, input, c, gs, now); ok {
+			return td
+		}
+		if other {
+			d.Reason += teamHint(c)
+		}
+	}
 	if d.Verdict == "" {
 		d.Hint = hint(tool, input, c, gs, now)
 	}
