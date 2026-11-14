@@ -45,6 +45,9 @@ type HubDecided struct {
 	Instance string
 	Decision string // approved or denied
 	Reason   string
+	// Request is the decided ticket as its Lock signed it (lockhub#200), nil from an older hub or
+	// when it names no ticket lea can read: its requester is the agent lea tells (#440).
+	Request *HubTicket
 }
 
 // HubFacade is the hub's host facade: the decisions after a cursor (0: from the start), one
@@ -107,6 +110,7 @@ func (f SocketFacade) Decided(ctx context.Context, since int64) ([]HubDecided, i
 			Seq      int64           `json:"seq"`
 			Ticket   string          `json:"ticket"`
 			Decision json.RawMessage `json:"decision"`
+			Request  json.RawMessage `json:"request"`
 		} `json:"decisions"`
 		Cursor int64 `json:"cursor"`
 	}
@@ -127,7 +131,13 @@ func (f SocketFacade) Decided(ctx context.Context, since int64) ([]HubDecided, i
 		if json.Unmarshal(d.Decision, &dec) != nil || dec.Ticket != d.Ticket {
 			continue // not a decision on that ticket: passed
 		}
-		items = append(items, HubDecided{Seq: d.Seq, Ticket: d.Ticket, Instance: dec.Instance, Decision: dec.Decision, Reason: dec.Reason})
+		it := HubDecided{Seq: d.Seq, Ticket: d.Ticket, Instance: dec.Instance, Decision: dec.Decision, Reason: dec.Reason}
+		if len(d.Request) > 0 {
+			if t, ok := (queueItem{ID: d.Ticket, Instance: dec.Instance, Ticket: d.Request}).ticket(); ok {
+				it.Request = &t
+			}
+		}
+		items = append(items, it)
 	}
 	cursor := out.Cursor
 	if len(out.Decisions) > maxHubItems {
@@ -193,6 +203,7 @@ func (d *Daemon) syncHub(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	d.claimDecided(items)
 	for _, it := range items {
 		if it.Decision != store.DecisionApproved && it.Decision != store.DecisionDenied {
 			continue
@@ -236,6 +247,49 @@ func (d *Daemon) syncHub(ctx context.Context) error {
 		return d.st.SetHubCursor(strconv.FormatInt(cursor, 10))
 	}
 	return nil
+}
+
+// claimDecided claims, for each decision on a ticket no wait names, the wait of the agent its
+// requester claims (#440), as the deck's queue does for a pending ticket (claimHubWait, #261): an
+// auto rule of lox run decides in milliseconds, before any queue lea reads shows the ticket, and
+// an agent whose Lock call registered no wait would never hear the decision. The claim is the
+// requester's word, unverified, as #261's. A ticket some wait names (its agent's own, or one lea
+// claimed or abandoned already) is left as it is: read again, a decision is not told twice.
+func (d *Daemon) claimDecided(items []HubDecided) {
+	var claim []HubDecided
+	for _, it := range items {
+		if it.Request != nil && (it.Decision == store.DecisionApproved || it.Decision == store.DecisionDenied) {
+			claim = append(claim, it)
+		}
+	}
+	if len(claim) == 0 {
+		return
+	}
+	all, err := d.st.Agents()
+	var every []store.HubWait
+	var abandoned map[string]bool
+	if err == nil {
+		every, err = d.st.AllHubWaits()
+	}
+	if err == nil {
+		abandoned, err = d.st.AbandonedHubTickets()
+	}
+	if err != nil {
+		log.Printf("lea daemon: hub decisions: claim: %v", err)
+		return
+	}
+	named := map[string]bool{}
+	for _, w := range every {
+		named[w.Instance+"/"+w.Ticket] = true
+	}
+	for _, it := range claim {
+		k := it.Instance + "/" + it.Ticket
+		if named[k] || abandoned[k] {
+			continue
+		}
+		named[k] = true
+		d.claimHubWait(claimedAgent(all, *it.Request), *it.Request)
+	}
 }
 
 // deliverHubDecisions tells each agent the decisions on its waits it has not had yet, once.

@@ -127,6 +127,14 @@ Changes:
 
 Fixes:
 
+- An agent now hears of a ticket that an auto rule of `lox run` decided (#440, lockhub#200). lea
+  told an agent of a hub decision only when the agent's Lock call had registered a wait, or when
+  the deck's queue showed the ticket pending. An auto rule decides in milliseconds, so an agent
+  that ran its Lock through the shell never got the decision: its `msg_wait` returned nothing.
+  With a hub that serves the decided ticket in `GET /v1/decided` (lockhub#200), lea now claims
+  the wait of the agent the ticket's requester names, as it does from the queue (#261), and tells
+  it `ticket … approved` or `denied`, once. LockHTTP's tickets are not claimed. An older hub
+  keeps the old behaviour.
 - A granted `git commit` runs at once (#393): the pinned commit no longer runs `rm -rf` in its
   `sh -c` script (Claude Code's safety check asked for approval, hook allow or not, and the commit
   timed out). It copies the index to `lea-commit/index` in the worktree's git directory, reused
