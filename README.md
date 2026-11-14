@@ -949,12 +949,15 @@ The tower never does the work itself, not even a `git push`: every request goes 
 plugin enforces it with a hook: once `/lea:control-tower` runs, the session may only use lea's
 team tools (`agents_*`, `msg_*`, `board_read`, `task_update`), ask you questions and run
 `lea inbox --agent --wait`; any other tool (Bash, Edit, Read, git, gh, the web…) is denied with a
-reminder to delegate. `/lea:control-tower off` gives the session its tools back.
+reminder to delegate. `/lea:control-tower off` gives the session its tools back. Tower mode
+belongs to the agent and survives its resumes, in a new container too (`lea` after a stop, a
+usage-limit resume): the guard is on from the first turn, without running the skill again. An
+agent created later under the same name does not inherit it.
 
 A tower runs for hours and its context keeps growing. Type `/lea:clear-ct` to clear it without
 losing the board: the tower writes a short snapshot of what the board cannot give back (its
 ledger, your open questions and decisions, the approvals you gave) to a private file outside any
-repository (`$LEA_TOWER_DIR/<agent>.handoff.md`, by default under `/tmp/lea-tower-<uid>`,
+repository (`$LEA_TOWER_DIR/<agent>.handoff.md`, by default under `~/.claude/lea-tower`,
 rewritten each time), then asks you to type `/clear` (Claude Code does not let a skill clear the
 context itself). After the clear the session is still a tower, with no gap: the hook carries
 tower mode over to the new session, and tells it to load `/lea:control-tower`, read the snapshot,
@@ -1262,7 +1265,7 @@ lea web --listen ADDR:PORT (--tls-self-signed | --tls-cert F --tls-key F) [--new
 lea requests                 # what waits for you; lea approve ID [always], lea deny ID [reason]
 lea questions [drop ID]      # the control towers' questions to you: the open one, then the queue
 lea hold [--off] [AGENT]     # hold the messages agents send the tower while you answer it; --off releases them
-lea limits [set KEY VALUE | reset KEY]  # the live limits (max_running, budget_5h_pct), changed on the running lea at once
+lea limits [set KEY VALUE | reset KEY]  # the live limits (max_running, relay_tokens, budget_5h_pct), changed on the running lea at once
 lea config deck on|off       # the deck, or your own tool (lea config tool CMD...), from the next lea
 lea config claude [KEY ...]  # Claude's base settings for your agents (defaultMode, allow, deny, env...)
 lea new [name] [-- args]     # one more agent (its CLI's arguments after --; -p provider, -m model)
@@ -1383,6 +1386,7 @@ read-only. The screen runs in the deck on the host: agents cannot open or drive 
 | `LEA_STACK_IDLE` | `10` | minutes an agent stays idle before lea stops (not removes) the containers it started in the nested Podman (`0`: never); `lea board` lists what it freed |
 | `LEA_QUESTION_REMIND` | `120` | minutes a control tower's question waits for your answer before the tower asks it again, once, prefixed with `reminder:` (`0`: never) |
 | `LEA_MAX_RUNNING` | `3` | the most children of leads that run at once, host-wide (`0`: no cap); a [live limit](#live-limits): `lea limits set max_running N` applies it without a restart |
+| `LEA_RELAY_TOKENS` | `120000` | the context size, in tokens, at which the control tower relays a child to a fresh agent (`0`: above 50 % of its window); a [live limit](#live-limits): `lea limits set relay_tokens N` applies at the tower's next board check |
 | `LEA_BUDGET_5H_PCT` | `60` | the account's 5-hour usage (%) at or above which new children of leads wait (`0`: off); a [live limit](#live-limits): `lea limits set budget_5h_pct N` |
 | `LEA_HOLD_MAX` | `30` | minutes a pause of an inbox (the deck's `H`, `lea hold`) lasts before lea releases it (`0`: never) |
 | `LEA_AGENT_CPUS` | `4` | each agent's CPU window, the least shared CPUs: the agent, its tools and its nested containers run there, so `nproc`, PHPStan, Go… see that many CPUs (`0`: no window) |
@@ -1782,6 +1786,7 @@ tower can adapt; no agent can set one.
 | Limit | Default | What it caps |
 |---|---|---|
 | `max_running` (`LEA_MAX_RUNNING`) | `3` | the children of leads that run at once, host-wide (`0`: no cap). Your own sessions and the leads do not count. At the cap a lead's `agents_spawn` is refused (`3 children already running (limit max_running 3): retry with queue: true or wait for one to end`), or with `queue: true` waits and starts once a child ends; `lea board` and `agents_list` show why (`queued: max_running 3/3`). A spawn request a lead accepts goes through the same check |
+| `relay_tokens` (`LEA_RELAY_TOKENS`) | `120000` | the context size, in tokens, at which the [control tower](#control-tower) relays a child: it asks the child for `.tower-handoff.md`, stops it and starts a fresh successor on the same branch (`0`: above 50 % of the child's context window). `agents_list` marks the tower's children past it with `relay: true`, falling back on the percent when a child's tokens are unknown (Codex, an older Claude Code). The tower reads it at each board check |
 | `budget_5h_pct` (`LEA_BUDGET_5H_PCT`) | `60` | new children of leads while the account's 5-hour usage is at or above it (`0`: off). The usage comes from the agents' status lines (Claude subscription accounts; an API account reports none, and unknown usage never holds a spawn). Above it a lead's `agents_spawn` is refused (`5h usage 64 % ≥ budget_5h_pct 60: retry with queue: true…`), or with `queue: true` waits and starts once the 5-hour window resets or you raise the value; each lead gets one note per crossing. Running agents are never stopped or paused |
 
 | `budget_usd_agent` (`LEA_BUDGET_USD_AGENT`) | `0` (off) | the most one agent may spend, in USD, as its status line reports it (`cost_usd`). Over it lea pauses that agent |
@@ -1800,6 +1805,16 @@ prints it on its last line (`usage: 5h 42 % (resets Sat 14:05) · 7d 18 %`) and 
 answers it, read-only. Nothing shows before an agent's status line reported it. When your plan
 changes, `lea limits set budget_5h_pct 80` applies at once and starts the spawns that waited if
 the usage is now below it. A queued spawn still waits at most 30 minutes, as under pressure.
+
+### Cost
+
+Every turn of an agent re-reads its whole context (cache reads), so usage grows with
+**concurrent agents × context size × model**: seven children at 200–300 k tokens each burn a
+5-hour subscription window in about two hours. The live limits bound the first two factors:
+`max_running` caps the children that run at once, `relay_tokens` the context a child carries
+before the tower hands its task to a fresh agent. The deck and `agents_list` show each agent's
+context size next to its percent (`182k · 18%`), so a big one is easy to spot. The model is the
+tower's choice per task. On API billing, the spend budgets below cap the bill itself.
 
 ### Spend budgets
 
