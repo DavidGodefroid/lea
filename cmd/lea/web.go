@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"os/signal"
+	"path/filepath"
 	"runtime"
 	"strconv"
 	"syscall"
@@ -17,13 +18,33 @@ import (
 
 const webUsage = "usage: lea web --container NAME [--port N] [--open]"
 
-// openURL opens a URL in the user's browser; a test seam.
-var openURL = func(url string) error {
+// openerCommand opens the local file path in the user's browser. Its command line is readable by
+// every local user (ps, /proc), so it carries a path, never the token (#436).
+func openerCommand(path string) *exec.Cmd {
 	cmd := "xdg-open"
 	if runtime.GOOS == "darwin" {
 		cmd = "open"
 	}
-	return exec.Command(cmd, url).Start()
+	return exec.Command(cmd, path)
+}
+
+// openFile starts the opener; a test seam.
+var openFile = func(path string) error { return openerCommand(path).Start() }
+
+// openBrowser signs the user's browser in without the token in any command line: it writes the
+// server's bootstrap page, which POSTs the token, to a private file (0600, in a 0700 directory of
+// XDG_RUNTIME_DIR or the temporary directory) and opens that file. cleanup removes it.
+func openBrowser(s *web.Server, getenv func(string) string) (cleanup func(), err error) {
+	dir, err := os.MkdirTemp(getenv("XDG_RUNTIME_DIR"), "lea-web-")
+	if err != nil {
+		return func() {}, err
+	}
+	cleanup = func() { os.RemoveAll(dir) }
+	path := filepath.Join(dir, "open.html")
+	if err := os.WriteFile(path, s.BootstrapPage(), 0o600); err != nil {
+		return cleanup, err
+	}
+	return cleanup, openFile(path)
 }
 
 // runWeb is lea web (#414): the deck in the browser, for one lea, on the host's loopback. The
@@ -81,9 +102,11 @@ func runWeb(args []string, stdout, stderr io.Writer) int {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	fmt.Fprintf(stdout, "lea web for %s: %s\n", container, s.URL())
-	fmt.Fprintln(stdout, "The link signs one browser in, once; ctrl+c stops lea web.")
+	fmt.Fprintf(stdout, "The link signs one browser in, once, within %d minutes; ctrl+c stops lea web.\n", int(web.TokenTTL.Minutes()))
 	if open {
-		if err := openURL(s.URL()); err != nil {
+		cleanup, err := openBrowser(s, os.Getenv)
+		defer cleanup()
+		if err != nil {
 			fmt.Fprintln(stderr, "lea web: could not open a browser:", clean(err.Error(), false))
 		}
 	}
