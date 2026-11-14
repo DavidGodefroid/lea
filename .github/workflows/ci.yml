@@ -371,6 +371,26 @@ jobs:
         run: |
           tests/integration/update-brew.sh 2>&1 | tee update-brew.log
           grep -qx 'update-brew: OK' update-brew.log
+  # lea doctor with LEA_LOCKHTTP=1 on a brew-only install of lockhttp (#411): the real launcher of
+  # a release, linked from brew's bin or in ~/.local/bin, its digest checked by the real cosign.
+  lockhttp-brew:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+        with:
+          go-version-file: go.mod
+      - uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+        with:
+          cosign-release: v3.1.3
+      - name: tests/integration/lockhttp-brew.sh
+        shell: bash
+        run: |
+          tests/integration/lockhttp-brew.sh 2>&1 | tee lockhttp-brew.log
+          grep -qx 'lockhttp-brew: OK' lockhttp-brew.log
   # The real Claude Code (the image's pinned version) with lea's hooks on a fake Messages API, and
   # lea's daemon: usage-limit resume, truncated transcripts, and the phase-3 suspend/resume demo
   # (a suspended agent stopped, resumed by its approval or a message). No secret, no real model.

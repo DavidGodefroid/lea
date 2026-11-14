@@ -4,6 +4,15 @@
 
 Features:
 
+- `LEA_LOCKHTTP=1` works with the lockhttp launcher that `brew install
+  davidgodefroid/tap/lockfamily` or lockfamily's `install.sh` installs (#411). lea used to accept
+  only a root-owned `/usr/local/bin/lockhttp`. It now looks there first, then in `~/.local/bin`,
+  then in brew's `bin`. A launcher that is not root-owned in `/usr/local/bin` can be rewritten by
+  your account, so lea runs the image it pins only when that image is the one `config/locks.lock`
+  pins for its release, or when `cosign verify` shows lockhttp's release workflow signed it at
+  the launcher's version tag. If the check fails, lea does not start and `lea doctor` reports it.
+  lea's messages now say to use `brew install davidgodefroid/tap/lockfamily` / `brew upgrade` and
+  `lox run`, not lockhttp's `scripts/install.sh`.
 - `lea web` (#414): the deck in your browser. It serves, on `127.0.0.1` only, a live board of
   the lea's agents (a tree of leads and their agents, with state, status, next step, blocker,
   branch, context use, cost, unread messages), each agent's messages with a box to write to it,
@@ -25,6 +34,17 @@ Features:
   in `lea.conf` turns it off for agents started after `lea stop --all`.
 
 Changes:
+
+- Live limits (#420): `lea limits` shows the limits you can change while agents run, with their
+  value, default and source; `lea limits set KEY VALUE` and `lea limits reset KEY` change one on
+  the running lea, at once, without a restart, and keep it in your file (the next `lea` does not
+  restart the daemon for it). The deck's settings screen lists them in its Limits group and sets
+  them the same way; agents read them with the `limits_get` tool and cannot set them. The first
+  one, `max_running` (`LEA_MAX_RUNNING`, default `3`, `0`: no cap), caps the children of leads
+  that run at once, host-wide: at the cap a lead's `agents_spawn` is refused, or with
+  `queue: true` waits and starts once a child ends; `lea board` and `agents_list` show why it
+  waits (`queued: max_running 3/3`). A change never stops a running agent. **This caps a busy
+  tower at 3 children by default**: `lea limits set max_running 0` turns the cap off.
 
 - lea no longer copies on select (#419): a drag in an agent's terminal no longer enters tmux's
   copy mode, copies the selection or flashes "Copied". Claude Code copies on select itself, through

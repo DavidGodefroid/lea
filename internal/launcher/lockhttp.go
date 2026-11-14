@@ -1,14 +1,17 @@
 package launcher
 
 import (
+	"errors"
 	"io"
 	"os"
+	"os/exec"
 	"regexp"
 	"strings"
 	"syscall"
 	"time"
 
 	"github.com/DavidGodefroid/lea/internal/lockhttp"
+	"github.com/DavidGodefroid/lea/internal/locks"
 )
 
 // LockHTTP (LEA_LOCKHTTP=1): a LockHTTP gate beside the proxy container decides every web request
@@ -18,9 +21,41 @@ import (
 // volume. The agents get a proxy URL with their
 // own token (internal/lockhttp), and the daemon tells the gate who holds which (sources.json).
 
-// lockHTTPLauncher is lockhttp's launcher on the host (scripts/install.sh puts it there, root-owned):
-// lea runs the image it pins.
-func lockHTTPLauncher() string { return lockHostRoot + "/usr/local/bin/lockhttp" }
+// lockHTTPLaunchers are where lockhttp's launcher may be on the host, in the order lea looks:
+// /usr/local/bin (a root-owned, system-wide install), the user's ~/.local/bin (lockfamily's
+// install.sh), then brew's bin (brew install davidgodefroid/tap/lockfamily: HOMEBREW_PREFIX, else
+// brew's default prefixes on macOS and Linux).
+func (l *Launcher) lockHTTPLaunchers() []string {
+	c := []string{lockHostRoot + "/usr/local/bin/lockhttp"}
+	if h := l.Cfg.Get("HOME"); h != "" {
+		c = append(c, h+"/.local/bin/lockhttp")
+	}
+	if p := l.Cfg.Get("HOMEBREW_PREFIX"); p != "" {
+		c = append(c, p+"/bin/lockhttp")
+	}
+	return append(c, lockHostRoot+"/opt/homebrew/bin/lockhttp", lockHostRoot+"/home/linuxbrew/.linuxbrew/bin/lockhttp")
+}
+
+// lockHTTPLauncher is lockhttp's launcher on the host, the first of lockHTTPLaunchers that is a
+// file (or a symbolic link to one, as brew's), else the first of them: lea runs the image it pins.
+func (l *Launcher) lockHTTPLauncher() string {
+	c := l.lockHTTPLaunchers()
+	for _, p := range c {
+		if fi, err := os.Stat(p); err == nil && fi.Mode().IsRegular() {
+			return p
+		}
+	}
+	return c[0]
+}
+
+// lockHTTPInstall is how to install lockhttp's launcher, for lea's messages.
+const lockHTTPInstall = "brew install davidgodefroid/tap/lockfamily (or brew upgrade), then lox run"
+
+// lockHTTPIssuer is the OIDC issuer of the certificates that sign lockhttp's releases.
+const lockHTTPIssuer = "https://token.actions.githubusercontent.com"
+
+// lockHTTPRelease is a launcher_version of a release: X.Y.Z, a pre-release X.Y.Z-rc.1 too.
+var lockHTTPRelease = regexp.MustCompile(`^v?[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+)?$`)
 
 // lockHTTPRegistry is where lockhttp's release images are; the launcher pins one by digest.
 const lockHTTPRegistry = "ghcr.io/davidgodefroid/lockhttp"
@@ -33,13 +68,16 @@ var (
 
 // lockHTTPImage is the gate's image: the one the launcher runs, read from its launcher_version
 // and image_digest lines (docs/docker.md, "Version pinning"): a release by digest, never by a tag;
-// the local image lockhttp for a launcher run from a clone (launcher_version=dev). An error when
-// the launcher is missing, writable by others than root, or pins no digest.
-func lockHTTPImage() (string, error) {
-	p := lockHTTPLauncher()
-	if why := rootOwned(p, false); why != "" {
-		return "", die("LEA_LOCKHTTP=1: %s (install lockhttp's launcher: scripts/install.sh, lockhttp's docs/docker.md)", why)
+// the local image lockhttp for a root-owned launcher run from a clone (launcher_version=dev). An
+// error when there is no launcher, when it pins no digest, or when others than root may write it
+// (the user's, brew's) and its digest is not the one lockhttp's release signed (lockHTTPSigned).
+func (l *Launcher) lockHTTPImage() (string, error) {
+	p := l.lockHTTPLauncher()
+	if fi, err := os.Stat(p); err != nil || !fi.Mode().IsRegular() {
+		return "", die("LEA_LOCKHTTP=1: no lockhttp launcher (%s): %s", strings.Join(l.lockHTTPLaunchers(), ", "), lockHTTPInstall)
 	}
+	// Only /usr/local/bin is root's: the user may replace a file in ~/.local/bin or brew's bin.
+	trusted := p == l.lockHTTPLaunchers()[0] && rootOwned(p, false) == ""
 	f, err := os.Open(p)
 	if err != nil {
 		return "", die("LEA_LOCKHTTP=1: %v", err)
@@ -51,19 +89,58 @@ func lockHTTPImage() (string, error) {
 	head = head[:n]
 	v := lockHTTPVersionLine.FindSubmatch(head)
 	if v == nil {
-		return "", die("LEA_LOCKHTTP=1: %s is not lockhttp's launcher (a v0.1.0 host install?): install the launcher (lockhttp's docs/docker.md)", p)
+		return "", die("LEA_LOCKHTTP=1: %s is not lockhttp's launcher (a v0.1.0 host install?): %s", p, lockHTTPInstall)
 	}
 	if string(v[1]) == "dev" {
+		if !trusted {
+			return "", die("LEA_LOCKHTTP=1: %s runs from a clone (launcher_version=dev) and is not owned and writable by root only: lea runs a clone's local image only from a root-owned /usr/local/bin/lockhttp", p)
+		}
 		return "lockhttp", nil
 	}
 	d := lockHTTPDigestLine.FindSubmatch(head)
 	if d == nil || len(d[1]) == 0 {
-		return "", die("LEA_LOCKHTTP=1: %s pins no image digest (installed with LOCKHTTP_SKIP_COSIGN=1?): install it again with cosign", p)
+		return "", die("LEA_LOCKHTTP=1: %s pins no image digest: %s", p, lockHTTPInstall)
 	}
 	if !lockHTTPDigest.Match(d[1]) {
 		return "", die("LEA_LOCKHTTP=1: %s: invalid image digest '%s'", p, d[1])
 	}
+	if !trusted {
+		if err := l.lockHTTPSigned(p, string(v[1]), string(d[1])); err != nil {
+			return "", err
+		}
+	}
 	return lockHTTPRegistry + "@" + string(d[1]), nil
+}
+
+// lockHTTPSigned is an error unless digest is the image lockhttp's release ver signed. A root-owned
+// launcher is trusted as it is: an agent cannot rewrite it. One that others than root may write
+// (the user's ~/.local/bin, brew's bin) could pin any image, so lea runs its digest only when it
+// is the set's (config/locks.lock, checked with cosign when lea pinned it, at the same release),
+// or when cosign verifies it against lockhttp's release workflow at that very tag, as lox run
+// checks the images it pins.
+func (l *Launcher) lockHTTPSigned(p, ver, digest string) error {
+	v := "v" + strings.TrimPrefix(ver, "v")
+	if !lockHTTPRelease.MatchString(v) {
+		return die("LEA_LOCKHTTP=1: %s names no lockhttp release (launcher_version=%s): %s", p, ver, lockHTTPInstall)
+	}
+	if set, err := l.lockSet(); err == nil {
+		if pin := set.Pins["lockhttp"]; pin.Version == v && locks.Digest(pin.Image) == digest {
+			return nil
+		}
+	}
+	ref := lockHTTPRegistry + "@" + digest
+	msg, err := l.errOutput("cosign", "verify", "--certificate-oidc-issuer", lockHTTPIssuer,
+		"--certificate-identity", locks.Identity("lockhttp", v), ref)
+	if errors.Is(err, exec.ErrNotFound) {
+		return die("LEA_LOCKHTTP=1: cosign not found: brew install cosign (lea checks the image %s pins: others than root may write it)", p)
+	}
+	if err != nil {
+		if msg != "" {
+			msg = " (cosign: " + strings.SplitN(msg, "\n", 2)[0] + ")"
+		}
+		return die("LEA_LOCKHTTP=1: %s pins %s, which cosign does not verify as lockhttp's release %s%s: others than root may write that launcher, and lea runs only a signed image. Reinstall it (brew reinstall davidgodefroid/tap/lockhttp), then lea", p, ref, v, msg)
+	}
+	return nil
 }
 
 // lockHTTPProxyArgs are the docker run arguments of the proxy container under LockHTTP (squid on
@@ -71,7 +148,7 @@ func lockHTTPImage() (string, error) {
 // gate's image; an error when the host is not set up for it: the user asked for LockHTTP, so
 // lea never starts the agents without it.
 func (l *Launcher) lockHTTPProxyArgs() ([]string, string, error) {
-	image, err := lockHTTPImage()
+	image, err := l.lockHTTPImage()
 	if err != nil {
 		return nil, "", err
 	}
@@ -289,7 +366,7 @@ func (l *Launcher) lockHTTPCA() (string, error) {
 		if err := Mkdirs(l.Cfg.DataDir(), lockhttp.Dir(l.Cfg.DataDir())); err != nil {
 			return "", die("%v", err)
 		}
-		if err := l.run(lockHTTPLauncher(), "ca", "init", "--dir", dir); err != nil {
+		if err := l.run(l.lockHTTPLauncher(), "ca", "init", "--dir", dir); err != nil {
 			return "", die("LEA_LOCKHTTP_MITM=1: lockhttp ca init --dir %s failed", dir)
 		}
 	}

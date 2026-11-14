@@ -125,7 +125,7 @@ func (l *Launcher) lockUpGate(proj string) (*gateHub, error) {
 	}
 	// The pinned gate's release: a flag it does not know would stop it (a usage error, again and
 	// again under --restart): hub mode from v0.3.0, the devices from v0.4.0, reveals from v0.5.0.
-	ver := lockHTTPLauncherVersion()
+	ver := l.lockHTTPLauncherVersion()
 	if !lockHTTPAtLeast(ver, "0.3.0") {
 		return warn("the pinned lockhttp " + orUnknown(ver) + " has no hub mode (v0.3.0 or later)")
 	}
@@ -249,8 +249,8 @@ func devicesFile(raw json.RawMessage) ([]byte, error) {
 }
 
 // lockHTTPLauncherVersion is the launcher_version of lockhttp's host launcher, "" when unknown.
-func lockHTTPLauncherVersion() string {
-	f, err := os.Open(lockHTTPLauncher())
+func (l *Launcher) lockHTTPLauncherVersion() string {
+	f, err := os.Open(l.lockHTTPLauncher())
 	if err != nil {
 		return ""
 	}
