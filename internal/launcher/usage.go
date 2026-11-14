@@ -52,7 +52,7 @@ const Usage = `Usage:
   lea hold [--off] [AGENT]    hold the messages agents send the tower (or AGENT) while you answer
                               it; --off releases them (the deck's H; LEA_HOLD_MAX)
   lea limits [set KEY VALUE | reset KEY]
-                              the live limits (max_running): shown, or changed on the running lea
+                              the live limits (max_running, budgets): shown, or changed on the running lea
                               at once, no restart, kept in your file (the deck's settings, ,)
   lea stop [--all] [--forget]
                               stop lea; its agents resume at the next lea (--forget drops them)

@@ -27,6 +27,7 @@ lox [version]
 docker [version] [--format] [{{range .Server.Components}}{{.Name}}={{.Version}}{{"\n"}}{{end}}]
 docker [info] [--format] [{{range .DefaultAddressPools}}{{.Base}} {{.Size}}|{{end}}]
 docker [network] [ls] [-q]
+core [limits] [doctor]
 core [allow] [--container] [lea-$ID] [--projects] [$W/projects] [check] [--state] [$W/data/lea/state]
 -- lea
 -- stdout

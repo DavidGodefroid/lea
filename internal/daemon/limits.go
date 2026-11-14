@@ -113,9 +113,12 @@ func (d *Daemon) capLocked() error {
 }
 
 // capReasonLocked is why a queued spawn waits, as the board and agents_list show it: "queued:
-// max_running 3/3", "queued: under pressure", or "queued: starting" when nothing holds it any
-// more. Callers hold d.mu.
+// max_running 3/3", "queued: budget_usd_total $50/$50", "queued: under pressure", or "queued:
+// starting" when nothing holds it any more. Callers hold d.mu.
 func (d *Daemon) capReasonLocked(container string) string {
+	if why := d.budgetReasonLocked(); why != "" {
+		return why
+	}
 	if max := d.maxRunningLocked(); max > 0 {
 		if n := d.childrenLocked(); n >= max {
 			return fmt.Sprintf("queued: max_running %d/%d", n, max)
@@ -130,10 +133,13 @@ func (d *Daemon) capReasonLocked(container string) string {
 	return "queued: starting"
 }
 
-// admitChildLocked is nil when a child may start in container now: under the max_running cap,
-// then admission (the pressure, the resumes that wait). Nil reserves the start (childStarts):
+// admitChildLocked is nil when a child may start in container now: under budget_usd_total
+// (#424) and the max_running cap, then admission (the pressure, the resumes that wait). Nil reserves the start (childStarts):
 // the caller ends it with endChildStart. Callers hold d.mu.
 func (d *Daemon) admitChildLocked(container string) error {
+	if err := d.budgetGateLocked(); err != nil {
+		return err
+	}
 	if err := d.capLocked(); err != nil {
 		return err
 	}
@@ -162,29 +168,49 @@ type limitView struct {
 	AppliesTo string `json:"applies_to"`
 	// InUse is how much of the limit is taken now (max_running: the children running).
 	InUse *int `json:"in_use,omitempty"`
+	// Spent is what is spent against it now (budget_usd_total: all agents in the period;
+	// budget_usd_agent: the agent that spent the most), read-only.
+	Spent *float64 `json:"spent_usd,omitempty"`
 }
 
 // limitsGet is limits_get: every live key with its value, default and source; for the host and
-// for every agent (read-only).
-func (d *Daemon) limitsGet() (any, error) {
+// for every agent (read-only). An agent sees the spend of its own container's agents only; the
+// total is host-wide.
+func (d *Daemon) limitsGet(container string) (any, error) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	out := make([]limitView, 0, len(limits.Defs))
 	for _, def := range limits.Defs {
-		out = append(out, d.limitViewLocked(def))
+		out = append(out, d.limitViewInLocked(def, container))
 	}
-	return map[string]any{"limits": out}, nil
+	return map[string]any{"limits": out, "budget": d.budgetViewLocked(container)}, nil
 }
 
-func (d *Daemon) limitViewLocked(def limits.Def) limitView {
+func (d *Daemon) limitViewLocked(def limits.Def) limitView { return d.limitViewInLocked(def, "") }
+
+// limitViewInLocked is the key's view, its budget_usd_agent spend over the agents of container
+// ("" every container). Callers hold d.mu.
+func (d *Daemon) limitViewInLocked(def limits.Def, container string) limitView {
 	v, ok := d.limitVals[def.Name]
 	if !ok {
 		v = limitVal{def.Default, "default"}
 	}
 	lv := limitView{Key: def.Name, Env: def.Env, Value: v.value, Default: def.Default, Source: v.source, Help: def.Help, AppliesTo: def.AppliesTo}
-	if def.Name == "max_running" {
+	switch def.Name {
+	case "max_running":
 		n := d.childrenLocked()
 		lv.InUse = &n
+	case "budget_usd_total":
+		t := d.totalSpentLocked()
+		lv.Spent = &t
+	case "budget_usd_agent":
+		top := 0.0
+		for k, s := range d.budgetLocked().Spend {
+			if a, err := d.st.AgentByKey(k); err == nil && budgetLive(a) && (container == "" || a.Container == container) {
+				top = max(top, s.Last)
+			}
+		}
+		lv.Spent = &top
 	}
 	return lv
 }
@@ -192,7 +218,8 @@ func (d *Daemon) limitViewLocked(def limits.Def) limitView {
 // limitsSet is limits_set (host only): it checks the value, writes it to the user configuration
 // (reset: removes it from there), and applies what the configuration now says at once. A raised
 // max_running starts the queued spawns it lets in (one per pressure sample, the first now); a
-// lowered one stops no agent: it holds new spawns until enough children end.
+// lowered one stops no agent: it holds new spawns until enough children end. A spend budget
+// (#424) raised resumes the agents lea paused on it.
 func (d *Daemon) limitsSet(ctx context.Context, raw json.RawMessage) (any, error) {
 	var p struct {
 		Key   string `json:"key"`
@@ -210,6 +237,17 @@ func (d *Daemon) limitsSet(ctx context.Context, raw json.RawMessage) (any, error
 		if err := def.Check(p.Value); err != nil {
 			return nil, err
 		}
+	}
+	// lea limits reset budget_usd_total starts a new period (#424): the value stays.
+	if p.Reset && def.Name == "budget_usd_total" {
+		d.budgetResetPeriod()
+		d.mu.Lock()
+		v := d.limitViewLocked(def)
+		d.mu.Unlock()
+		d.budgetCheck()
+		d.changed()
+		d.startQueued(d.lifetime(ctx))
+		return v, nil
 	}
 	d.mu.Lock()
 	st := d.limitStore
@@ -234,6 +272,8 @@ func (d *Daemon) limitsSet(ctx context.Context, raw json.RawMessage) (any, error
 	d.applyLimitsLocked(vals)
 	v := d.limitViewLocked(def)
 	d.mu.Unlock()
+	// A budget raised resumes what lea paused on it; one lowered pauses what is now over it.
+	d.budgetCheck()
 	d.changed()
 	d.startQueued(d.lifetime(ctx))
 	return v, nil

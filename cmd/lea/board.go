@@ -29,6 +29,8 @@ type boardItem struct {
 	Stack string
 	// Shed says lea paused the agent under pressure (#132, P2), the daemon's text.
 	Shed string `json:"shed"`
+	// Budget says lea paused the agent on a spend budget (#424), the daemon's text.
+	Budget string `json:"budget"`
 }
 
 // stateCell is an item's state as the deck shows it (issue #72), with the subagents it still
@@ -247,6 +249,19 @@ func renderBoard(w io.Writer, b board) {
 			fmt.Fprintln(w)
 			for _, it := range shed {
 				fmt.Fprintf(w, "- %s: %s\n", handle(it), mdCell(it.Shed))
+			}
+		}
+		var budget []boardItem
+		for _, it := range open {
+			if it.Budget != "" {
+				budget = append(budget, it)
+			}
+		}
+		if len(budget) > 0 {
+			fmt.Fprintln(w, "\n### Paused on a spend budget")
+			fmt.Fprintln(w)
+			for _, it := range budget {
+				fmt.Fprintf(w, "- %s: %s\n", handle(it), mdCell(it.Budget))
 			}
 		}
 		if qs := queued[c]; len(qs) > 0 {

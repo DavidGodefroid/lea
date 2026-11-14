@@ -202,6 +202,9 @@ type Row struct {
 	// Held: the user paused the agent's inbox (the deck's H, #95); HeldCount messages wait in it.
 	Held      bool `json:"held,omitempty"`
 	HeldCount int  `json:"held_count,omitempty"`
+	// Budget is why lea paused the agent on a spend budget (#424), the daemon's text, set by
+	// the daemon: "budget reached: $12.40 ≥ budget_usd_agent $10".
+	Budget string `json:"budget,omitempty"`
 }
 
 type Snapshot struct {
@@ -227,6 +230,16 @@ type Snapshot struct {
 	// LocksAdded are the locks lox run runs that the container does not mount (added while it
 	// runs): restart lea to use them. Set by the daemon.
 	LocksAdded []string `json:"locks_added,omitempty"`
+	// Spend is the total spend against budget_usd_total (#424) while it is on, set by the daemon.
+	Spend *SpendView `json:"spend,omitempty"`
+}
+
+// SpendView is what the deck's header shows of the spend: all agents' since the period began,
+// against budget_usd_total; Reached once it is reached.
+type SpendView struct {
+	TotalUSD float64 `json:"total_usd"`
+	LimitUSD float64 `json:"limit_usd"`
+	Reached  bool    `json:"reached,omitempty"`
 }
 
 // PressureView is what the deck shows of the pressure: a short gauge of the container and the
