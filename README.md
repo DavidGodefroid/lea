@@ -627,7 +627,11 @@ Only you change a role (`r` in the deck, `lea role <agent> <role>`, `lea new -r 
 Agents get lea's tools through MCP:
 
 - a lead starts `dev` and `reviewer` agents with `agents_spawn` and stops its own with
-  `agents_stop` (at most 20 children at a time);
+  `agents_stop` (at most 20 children at a time). Claude Code's built-in sub-agent tool (`Agent`)
+  is denied to a lead, with a reason naming `agents_spawn`: its sub-agent would be invisible to
+  lea (not on the board or in the deck, its context untracked, outside the child limits and the
+  host-pressure queue). After a compaction a lead's context is reminded it is a lead and starts
+  work only with `agents_spawn`;
 - any other agent asks a lead with `agents_request_spawn`; without a lead the request comes to
   you (`lea requests`, `lea request accept <id>`, `lea request decline <id> [reason]`);
 - agents message each other (`msg_send`, `msg_reply`); a message waits in the inbox until the

@@ -143,6 +143,18 @@ func Claude(ctx context.Context, event string, stdin io.Reader, stdout io.Writer
 		return
 	}
 	switch event {
+	case "SessionStart":
+		// After a compaction a lead is reminded it is one (#409): the summary may have lost it.
+		if p.Source != "compact" {
+			return
+		}
+		var r struct {
+			Text string `json:"text"`
+		}
+		if c.call(bctx, "session_context", map[string]any{"session_id": p.SessionID, "source": p.Source}, &r) == nil && r.Text != "" {
+			json.NewEncoder(stdout).Encode(map[string]any{"hookSpecificOutput": map[string]any{
+				"hookEventName": "SessionStart", "additionalContext": truncate(r.Text, 1000)}})
+		}
 	case "Stop":
 		var r struct {
 			Block  bool   `json:"block"`

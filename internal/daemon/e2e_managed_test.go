@@ -363,3 +363,37 @@ func TestClaudeManagedSettingsKeepClaudeCodesDefaultMode(t *testing.T) {
 		t.Fatalf("with the host's %s, the agent starts in %q mode", want, got)
 	}
 }
+
+// A lead's call of Claude Code's built-in Agent tool is denied by lea's hook, with a reason naming
+// agents_spawn, and no sub-agent starts (#409): its work would be invisible to lea.
+func TestClaudeLeadBuiltinAgentToolIsDenied(t *testing.T) {
+	e := newClaudeE2E(t)
+	e.setLimited(false)
+	if _, err := e.st.Register(store.NewAgent{Container: "lea-a", Name: "dev", Profile: "claude", Workdir: e.wd, Role: "lead"}, store.Caps{}, 1); err != nil {
+		t.Fatal(err)
+	}
+	in, _ := json.Marshal(map[string]string{"description": "fix it", "prompt": "fix the bug", "subagent_type": "general-purpose"})
+	e.mu.Lock()
+	e.answer = func(body string) (string, string) {
+		if strings.Contains(body, `"tool_result"`) {
+			return "", ""
+		}
+		// Claude Code's sub-agent tool, under its current name or its former one.
+		if !strings.Contains(body, `"Agent"`) && strings.Contains(body, `"Task"`) {
+			return "Task", string(in)
+		}
+		return "Agent", string(in)
+	}
+	e.mu.Unlock()
+	e.run("delegate it")
+	res := e.toolResult("the Agent call's tool result", 0)
+	if i := strings.Index(res, `"tool_result"`); i >= 0 {
+		res = res[i:]
+	}
+	if !strings.Contains(res, "agents_spawn") || !strings.Contains(res, "never with the built-in Agent tool") {
+		t.Fatalf("the Agent call was not denied by lea's hook:\n%.2000s", res)
+	}
+	if ps, _ := e.st.EventPayloads("lea-a/dev", "SubagentStart"); len(ps) != 0 {
+		t.Fatalf("a sub-agent started: %q", ps)
+	}
+}

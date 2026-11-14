@@ -22,6 +22,11 @@ Changes:
   Claude held the mouse. In a pane
   whose program does not take the mouse (a split shell, the scrolled-back history), `shift`+drag
   lets your terminal select, as in any tmux. `ctrl+v` paste and wheel scrolling are unchanged.
+- A lead can no longer bypass the board with Claude Code's built-in `Agent` tool (#409): lea's
+  hook denies it to leads, naming `agents_spawn`, since that sub-agent is invisible to lea (no
+  board, no deck, no context tracking, no child limits). After a compaction lea reminds a lead,
+  in its context, that it is one and starts work only with `agents_spawn`. Devs and reviewers
+  keep the tool.
 
 Fixes:
 
