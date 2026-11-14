@@ -108,6 +108,12 @@ Fixes:
   `sh -c` script (Claude Code's safety check asked for approval, hook allow or not, and the commit
   timed out). It copies the index to `lea-commit/index` in the worktree's git directory, reused
   and overwritten at each commit, beside `lea-push` (#381); nothing is left in `/tmp`.
+- `gh pr merge --delete-branch` deletes the agent's remote branch again (#451). gh escapes the
+  slashes of the ref it deletes (`DELETE …/git/refs/heads%2Ffix%2Fx`), and lea-proxy's forge
+  forwarder answered 400 to any escaped slash, so merged branches piled up. It now accepts
+  escaped slashes in the ref name of `git/refs`, `git/ref` and `git/matching-refs` only, and
+  matches the call as its plain form: no call is allowed that the plain form was not. The merge
+  grant still deletes only the PR's head, the agent's own branch.
 
 ## v0.15.1 (2026-11-09)
 

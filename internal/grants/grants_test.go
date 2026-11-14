@@ -37,6 +37,11 @@ func TestDecideBash(t *testing.T) {
 		{"merge own branch", "gh pr merge feat/73-x --squash", Allow, every},
 		{"merge HEAD delete", "gh pr merge --squash --delete-branch", "", every},
 		{"merge other branch", "gh pr merge feat/other --squash", "", every},
+		// lea-proxy lets gh's encoded ref delete through (#451): the grant still covers only the
+		// caller's own branch.
+		{"merge other branch delete", "gh pr merge feat/other --squash --delete-branch", "", every},
+		{"api delete other ref encoded", "gh api -X DELETE repos/o/lea/git/refs/heads%2Ffeat%2Fother", "", every},
+		{"api delete own ref encoded", "gh api -X DELETE repos/o/lea/git/refs/heads%2Ffeat%2F73-x", "", every},
 		// A numbered PR is merged only once gh says its head is the caller's branch (Command):
 		// deleting that head deletes the caller's own branch (#271).
 		{"merge numbered delete", "gh pr merge 42 --squash --delete-branch", Allow, every},
