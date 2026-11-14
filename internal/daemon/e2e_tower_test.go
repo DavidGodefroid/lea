@@ -245,3 +245,80 @@ func lastBody(bs []string) string {
 	}
 	return bs[len(bs)-1]
 }
+
+// A Control Tower that lea starts again in a new container (#383) resumes its session with the
+// tower guard on from its first turn, without running /lea:control-tower again: the mark lives
+// in Claude Code's own directory (CLAUDE_CONFIG_DIR, kept per projects dir across containers),
+// not in the old container's /tmp, and is bound to the agent's incarnation.
+func TestClaudeTowerResumedInANewContainerKeepsTheGuard(t *testing.T) {
+	e := newClaudeE2E(t)
+	e.setLimited(false)
+	const denied = "control-tower: you are the control tower, you do not act yourself."
+	const second = "second turn after the resume"
+	e.answer = func(body string) (string, string) {
+		results := strings.Count(body, `"tool_result"`)
+		switch {
+		case !strings.Contains(body, second) && results == 0:
+			return "Bash", `{"command":"echo tower-e2e","description":"echo"}`
+		case strings.Contains(body, second) && results == 1:
+			return "Bash", `{"command":"echo tower-e2e-2","description":"echo"}`
+		}
+		return "", ""
+	}
+	plugin, err := filepath.Abs("../../image/claude-plugin")
+	if err != nil {
+		t.Fatal(err)
+	}
+	a, err := e.st.Register(store.NewAgent{Container: "lea-a", Name: "dev", Profile: "claude", Role: "lead"}, store.Caps{}, time.Now().Unix())
+	if err != nil {
+		t.Fatal(err)
+	}
+	tmp1, tmp2 := filepath.Join(e.dir, "tmp1"), filepath.Join(e.dir, "tmp2")
+	for _, d := range []string{tmp1, tmp2} {
+		if err := os.Mkdir(d, 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	base := append(e.env, "LEA_AGENT_INCARNATION="+a.Incarnation)
+	waitBody := func(what string, secs int, ok func(string) bool) string {
+		t.Helper()
+		for end := time.Now().Add(time.Duration(secs) * time.Second); time.Now().Before(end); time.Sleep(200 * time.Millisecond) {
+			e.mu.Lock()
+			for _, b := range e.bodies {
+				if ok(b) {
+					e.mu.Unlock()
+					return b
+				}
+			}
+			e.mu.Unlock()
+		}
+		e.mu.Lock()
+		defer e.mu.Unlock()
+		t.Fatalf("%s: not in %d s; requests=%d last=%.3000s\n%s", what, secs, len(e.bodies), lastBody(e.bodies), e.out.String())
+		return ""
+	}
+
+	e.env = append(base[:len(base):len(base)], "TMPDIR="+tmp1)
+	prompt := agents.TowerCommand + " You are the lea agent dev (role lead), shown to the user as \"" + agents.TowerLabel + "\"."
+	kill := e.run("--plugin-dir", plugin, prompt)
+	waitBody("Bash denied in the first container", 60, func(b string) bool {
+		return !strings.Contains(b, second) && strings.Contains(b, `"tool_result"`) && strings.Contains(b, denied)
+	})
+	a = e.until("the tower's turn ends", 30, func(a store.Agent) bool { return a.State == "idle" && len(a.SessionID) == 36 })
+	kill()
+	if _, err := os.Stat(filepath.Join(e.dir, "cfg", "lea-tower", "dev.tower")); err != nil {
+		t.Fatalf("no tower mark in Claude Code's directory: %v", err)
+	}
+	// The new container: another, empty /tmp; the old one is gone.
+	if err := os.RemoveAll(tmp1); err != nil {
+		t.Fatal(err)
+	}
+	e.env = append(base[:len(base):len(base)], "TMPDIR="+tmp2)
+	e.run("--plugin-dir", plugin, "--resume", a.SessionID, second)
+	b := waitBody("Bash denied on the resumed session's first turn", 60, func(b string) bool {
+		return strings.Contains(b, second) && strings.Count(b, `"tool_result"`) >= 2 && strings.Count(b, denied) >= 2
+	})
+	if !strings.Contains(b, "control-tower: your session was resumed") {
+		t.Errorf("no resume context in the resumed session's request:\n%.3000s", b)
+	}
+}

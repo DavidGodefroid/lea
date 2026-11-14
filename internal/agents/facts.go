@@ -68,7 +68,7 @@ func loadFacts(st *store.Store, container string, now int64) (facts, error) {
 func (f facts) row(r Row) Row {
 	r.Unread, r.ForUser = f.unread[r.Key], f.forUser[r.Key]
 	if u, ok := f.usage[r.Key]; ok {
-		r.CtxPct, r.CostUSD = u.CtxPct, u.CostUSD
+		r.CtxPct, r.CtxTokens, r.CostUSD = u.CtxPct, u.CtxTokens, u.CostUSD
 	}
 	r.Approval = f.approval[r.Key]
 	ts := f.status[r.Key]

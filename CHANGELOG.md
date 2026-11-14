@@ -114,6 +114,16 @@ Changes:
   agent of unknown cost is never paused; `lea limits` and `lea doctor` name such agents. The
   deck's header shows the total against `budget_usd_total` while it is on (red once reached).
 
+- The control tower relays a child at 120k tokens of context (#422), no longer at 50 % of its
+  window (500k on a 1M window, so every turn of a child re-read up to that much). The size is the
+  live limit `relay_tokens` (`LEA_RELAY_TOKENS`, default `120000`, `0`: the old 50 % rule): `lea
+  limits set relay_tokens N` applies at the tower's next board check, with no restart of the
+  tower or its children. The status line now reports the context's size in tokens next to its
+  percent; the deck and `agents_list` show both (`182k · 18%`; the percent alone for Codex or an
+  older Claude Code), and `agents_list` marks a tower's children past `relay_tokens` with
+  `relay: true`. The tower also relays a child between two tasks and always spawns with
+  `queue: true`. The README has a new "Cost" section on what drives usage.
+
 - Approval prompts give the one-off and the durable route (#412): a lead's grant request, in the
   user's message, the `grants_request` note relayed by the lead, `lea requests` and the desktop
   notification, names `lea approve gN` (with `lea requests` to read it), the `lea allow …` command
@@ -168,6 +178,12 @@ Fixes:
   escaped slashes in the ref name of `git/refs`, `git/ref` and `git/matching-refs` only, and
   matches the call as its plain form: no call is allowed that the plain form was not. The merge
   grant still deletes only the PR's head, the agent's own branch.
+- A Control Tower resumed in a new container keeps its tower guard (#383). Its mark lived in the
+  container's `/tmp`, so after `lea` started the container again the tower had all its tools
+  until `/lea:control-tower` ran again. The mark now lives in Claude Code's own directory, which
+  lea keeps per projects dir, and is bound to the agent's incarnation (`LEA_AGENT_INCARNATION`,
+  new when an agent is created, kept across its resumes): a resumed tower has its guard on from
+  the first turn, and an agent created later under the same name does not inherit it.
 - A granted push or commit no longer stops on a repository that only holds `core.hooksPath`
   (overridden by lea's pins) or a `remote.origin.pushurl` to the grant's own repository (#413).
   The refusal used to say "the repository git config redirects or runs programs" whether a key
