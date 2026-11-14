@@ -117,7 +117,8 @@ installed() {
 
 @test "lea doctor counts the packets logged in the last 24 hours" {
   installed
-  export FAKE_SYSTEMCTL_ACTIVE=1
+  # Without sudo -n, journalctl as this user (with sudo -n, as root: the next test).
+  export FAKE_SYSTEMCTL_ACTIVE=1 FAKE_SUDO_RC=1
   export FAKE_JOURNAL='Nov 14 10:00:01 host kernel: lea-egress: IN=lea0123456789ab OUT=eth0 SRC=172.20.0.2 DST=169.254.169.254 PROTO=TCP DPT=80
 Nov 14 10:00:02 host kernel: something else
 Nov 14 10:00:03 host kernel: lea-egress: IN=lea0123456789ab OUT=eth0 SRC=172.20.0.2 DST=1.1.1.1 PROTO=TCP DPT=80'
@@ -137,4 +138,12 @@ Nov 14 10:00:03 host kernel: lea-egress: IN=lea0123456789ab OUT=eth0 SRC=172.20.
   [[ "$output" == *"warn  lea-internal-def egress log: its bridge is not named lea*, so the egress log does not cover it: lea stop --all, docker network rm lea-internal-def, then lea"* ]]
   [[ "$output" != *"lea-internal-abc egress log"* ]]
   [[ "$output" != *"lea-egress egress log"* ]]
+}
+
+@test "lea doctor reads the kernel log with sudo -n when it works" {
+  installed
+  export FAKE_SYSTEMCTL_ACTIVE=1
+  run lea__doctor_egress_log
+  run calls
+  [[ "$output" == *"sudo [-n] [journalctl] [-k] [-q] [--no-pager] [--since] [-24h]"* ]]
 }

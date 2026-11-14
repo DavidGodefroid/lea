@@ -122,7 +122,7 @@ lea_init_egress_log() {
 
 # lea__doctor_egress_log: lea doctor's lines on the egress log: installed, current, loaded (when
 # sudo -n can tell), the internal networks it covers, and the packets it logged in the last 24
-# hours (when this user may read the kernel log). Warnings only: it detects, it does not contain.
+# hours (when this user, or sudo -n, may read the kernel log). Warnings only: it detects, it does not contain.
 lea__doctor_egress_log() {
   if _ed_why=$(lea_egress_log_skip); then lea__ok "egress log: not applicable ($_ed_why)"; return 0; fi
   lea__egress_log_render
@@ -147,7 +147,12 @@ lea__doctor_egress_log() {
     esac
   done
   if command -v journalctl >/dev/null 2>&1; then
-    _ed_n=$(journalctl -k -q --no-pager --since -24h 2>/dev/null | grep -c 'lea-egress: ' || true)
+    # The kernel log needs the adm or systemd-journal group, or root: sudo -n when it works.
+    if sudo -n true 2>/dev/null; then
+      _ed_n=$(sudo -n journalctl -k -q --no-pager --since -24h 2>/dev/null | grep -c 'lea-egress: ' || true)
+    else
+      _ed_n=$(journalctl -k -q --no-pager --since -24h 2>/dev/null | grep -c 'lea-egress: ' || true)
+    fi
     if [ "${_ed_n:-0}" -gt 0 ]; then
       lea__warn "egress log" "$_ed_n packet(s) from an agent network bypassed the proxy in the last 24 hours (journalctl -k -g lea-egress): something got around lea's containment"
     fi

@@ -378,10 +378,25 @@ if [ -n "$egress_since" ]; then
     echo "FAIL a normal session logs no packet bypassing the proxy:"; egress_lines | sed 's/^/     | /'; rc=1
   else echo "ok   a normal session logs no packet bypassing the proxy"; fi
   mac=$(cat "/sys/class/net/$abr/address")
+  # Where the packets go when they are not logged: counters on every hook, read on a failure.
+  printf '%s\n' 'table inet lea_egress_diag {' \
+    ' chain pre { type filter hook prerouting priority -400; policy accept; iifname "lea*" counter; }' \
+    ' chain fwd { type filter hook forward priority -400; policy accept; iifname "lea*" counter; }' \
+    ' chain in { type filter hook input priority -400; policy accept; iifname "lea*" counter; }' '}' |
+    sudo -n "$egress_nft" -f - 2>&1 || true
+  egress_diag() {
+    { echo "--- egress log diagnostics ($abr, MAC $mac):"; cat "$work/egress-run.out"
+      sudo -n "$egress_nft" list table inet lea_egress_diag; sudo -n "$egress_nft" list table inet lea_egress
+      sudo -n sysctl net.ipv4.ip_forward net.ipv4.conf.all.rp_filter "net.ipv4.conf.$abr.rp_filter" "net.ipv4.conf.$abr.forwarding" net.bridge.bridge-nf-call-iptables
+      ip -4 addr show dev "$abr"; ip route get "$dst" 2>&1
+      sudo -n iptables -t raw -S 2>&1 | grep -v '^-P' | head -20; sudo -n iptables -S FORWARD 2>&1 | head -20
+      sudo -n journalctl -k -q --no-pager --since "$egress_since" | tail -5; } 2>&1 | sed 's/^/     | /' >&2
+  }
+  : >"$work/egress-run.out"
   for dst in 169.254.169.254 1.1.1.1; do
     # shellcheck disable=SC2016 # expanded by the inner shell
     if docker run --rm --network "lea-test-internal-$id" --cap-add NET_ADMIN busybox:1.37 sh -c \
-      'ip route add default dev eth0 && ip neigh replace "$1" lladdr "$2" dev eth0 nud permanent && nc -w 3 "$1" 80 </dev/null' sh "$dst" "$mac" >/dev/null 2>&1; then
+      'ip route add default dev eth0 && ip neigh replace "$1" lladdr "$2" dev eth0 nud permanent && ip route && ip neigh && nc -w 3 "$1" 80 </dev/null' sh "$dst" "$mac" >>"$work/egress-run.out" 2>&1; then
       echo "FAIL a connection to $dst:80 that bypasses the proxy is dropped"; rc=1
     else echo "ok   a connection to $dst:80 that bypasses the proxy is dropped"; fi
     i=0
@@ -391,16 +406,14 @@ if [ -n "$egress_since" ]; then
       sleep 1
     done
     if [ "$i" -lt 10 ]; then echo "ok   a connection to $dst:80 that bypasses the proxy is logged (lea-egress)"
-    else echo "FAIL a connection to $dst:80 that bypasses the proxy is logged (lea-egress): nothing in the kernel log within 10 s"; rc=1; fi
+    else echo "FAIL a connection to $dst:80 that bypasses the proxy is logged (lea-egress): nothing in the kernel log within 10 s"; egress_diag; rc=1; fi
   done
+  sudo -n "$egress_nft" delete table inet lea_egress_diag 2>/dev/null || true
+  # lea doctor reads the kernel log with sudo -n, as here.
   "$root/bin/lea" doctor >"$work/doctor.out" 2>&1 || true
-  if [ -n "$(journalctl -k -q --no-pager --since "$egress_since" 2>/dev/null | grep 'lea-egress: ' || true)" ]; then
-    if grep -qE '^warn  egress log: [0-9]+ packet\(s\) from an agent network bypassed the proxy in the last 24 hours' "$work/doctor.out"; then
-      echo "ok   lea doctor counts the packets the egress log logged"
-    else cat "$work/doctor.out" >&2; echo "FAIL lea doctor counts the packets the egress log logged"; rc=1; fi
-  else
-    echo "note: this user cannot read the kernel log (journalctl -k): lea doctor's count of logged packets was not checked"
-  fi
+  if grep -qE '^warn  egress log: [0-9]+ packet\(s\) from an agent network bypassed the proxy in the last 24 hours' "$work/doctor.out"; then
+    echo "ok   lea doctor counts the packets the egress log logged"
+  else cat "$work/doctor.out" >&2; echo "FAIL lea doctor counts the packets the egress log logged"; rc=1; fi
 fi
 # What the agents did to their copies never reached the host (#111).
 if [ "$(host_claude_sum)" = "$host_sum" ]; then echo "ok   host ~/.claude settings.json and plugins unchanged"
