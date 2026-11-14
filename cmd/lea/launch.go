@@ -34,7 +34,8 @@ func launcherCommand(args []string) bool {
 	if args[0] == "new" {
 		return len(args) < 5 || args[1] != "--container" || args[3] != "--workdir"
 	}
-	if args[0] == "allow" { // the launcher names the container, then runs the core form
+	// The launcher names the container of lea allow and lea web, then runs their core form.
+	if args[0] == "allow" || args[0] == "web" {
 		return len(args) < 3 || args[1] != "--container"
 	}
 	if args[0] == "grant" && len(args) > 1 && (args[1] == "add" || args[1] == "ls") {

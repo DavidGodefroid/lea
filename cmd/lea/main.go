@@ -51,6 +51,8 @@ const usage = `usage: lea <command>
   deck --placeholder         the empty slot (run by lea's tmux session)
   deck --thread KEY [--compose]
                              an agent's messages (run in a deck popup)
+  web --container NAME [--port N] [--open]
+                             the deck in the browser, on 127.0.0.1 (the launcher's lea web)
   deck-open --container NAME [--workdir DIR] [--no-default] [--fresh]
                              open a container's deck session (used by the launcher;
                              --fresh: the container was just started)
@@ -112,6 +114,8 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		return runDeck(args[1:], stderr)
 	case "deck-open":
 		return runDeckOpen(args[1:], stderr)
+	case "web":
+		return runWeb(args[1:], stdout, stderr)
 	case "deck-stop":
 		return runDeckStop(args[1:], stderr)
 	case "new":
