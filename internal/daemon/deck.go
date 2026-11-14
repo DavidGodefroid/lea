@@ -58,6 +58,8 @@ type Agents interface {
 	OpenShell(ctx context.Context, container string) (agents.Row, error)
 	// SplitShell opens a shell beside an agent (the deck's split), below it or at its right.
 	SplitShell(ctx context.Context, key string, below bool) (agents.Row, error)
+	// Capture reads what an agent's pane shows (lea web's read-only terminal view, #416).
+	Capture(ctx context.Context, key string) (agents.Screen, error)
 	Changed()
 }
 
@@ -68,7 +70,7 @@ var deckMethods = map[string]bool{
 	"agent_stop": true, "deck_detach": true, "agents_watch": true, "agents_mark_stopped": true,
 	"agents_resume_stopped": true, "agents_sweep_stacks": true,
 	"deck_attached": true, "deck_popup": true, "agent_label": true, "shell_open": true,
-	"shell_split": true, "agent_pause": true,
+	"shell_split": true, "agent_pause": true, "agent_capture": true,
 }
 
 func (d *Daemon) SetAgents(a Agents) {
@@ -219,6 +221,12 @@ func (d *Daemon) dispatchDeck(ctx context.Context, o Origin, req wire.Request) (
 			return nil, err
 		}
 		return ok, a.Popup(ctx, p.Key, p.Compose)
+	case "agent_capture":
+		var p struct{ Key string }
+		if err := json.Unmarshal(req.Params, &p); err != nil {
+			return nil, err
+		}
+		return a.Capture(ctx, p.Key)
 	case "agent_label":
 		var p struct{ Key, Label string }
 		if err := json.Unmarshal(req.Params, &p); err != nil {

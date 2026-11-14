@@ -22,6 +22,18 @@ Features:
   signs one browser in once (a 32-byte token traded for an `HttpOnly`, `SameSite=Strict`
   cookie); foreign `Host` or `Origin` headers are refused, and only a fixed list of the daemon's
   methods, for this lea's agents, is reachable. Phone width, light and dark, keyboard shortcuts.
+- lea web from another machine, agents' terminals, notifications and folders (#416). The README
+  documents the SSH tunnel (`ssh -L`), which stays the way to reach it remotely; `lea web
+  --listen ADDR:PORT` is the explicit opt-in to the network: it refuses to start without TLS
+  (`--tls-cert`/`--tls-key`, or `--tls-self-signed`, a certificate lea keeps and whose SHA-256 it
+  prints) and a lasting 256-bit token (kept 0600, typed into a sign-in page, never in a link;
+  `--new-token` replaces it; per-browser sessions; wrong tokens slow that source down), and
+  refuses wildcards, container bridges and container network subnets. An agent's **Terminal**
+  tab (`v`) shows its pane live and read-only, colours included (a new host-only daemon method,
+  `agent_capture`, reads it with tmux `capture-pane`). The 🔔 button raises browser notifications
+  for new pN, sN, gN and tower questions while the tab is in the background. Folders are the
+  deck's own layout file: made or changed in the browser, they show in the deck (which now reads
+  its layout again every 2 s), and the other way round.
 
 Changes:
 
