@@ -597,7 +597,9 @@ plan); `LEA_LOCKLOG=0` keeps it off, `lea init --locklog` / `--no-locklog` recor
 lea's containers get only the socket volume of `lox run`'s lock on `/run/locklog` (each of
 several on `/run/locklog/<instance>`, `LEA_LOCKLOG_INSTANCES` naming them), read-only, and the
 clients group `locklog-clients` (10050; the console account is 10051, as in locklog's image): no
-log, no key, no audit reaches them. The client is lea's image's (`config/locks.lock`); Codex
+log, no key, no audit reaches them. They see `.locklog` read-only: it holds the profiles and the auto
+rules `lox run` applies, so no agent widens what is decided without you (lea makes it when
+missing, and refuses a symbolic link or a file in its place). The client is lea's image's (`config/locks.lock`); Codex
 agents get it as the `locklog` MCP server; `lea locklog` tells you whether it is on, and
 `lea doctor` compares it with the lock `lox run` runs.
 

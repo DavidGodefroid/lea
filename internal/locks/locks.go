@@ -30,7 +30,8 @@ type Lock struct {
 	// What is what the Lock guards, for lea's messages.
 	What string
 	// ProfileDir is the projects directory's profile directory lea mounts read-only beside the
-	// socket ("" for none): the client reads its profiles there.
+	// socket ("" for none): the client reads its profiles there, and no agent rewrites what lox run
+	// reviews and applies (locklog's auto rules, lea#467).
 	ProfileDir string
 	// Hub reports that the lock runs hub-attached (pending results through the hub, lockkit
 	// v0.9.0): lea's suspend hook waits on its tickets.
@@ -58,7 +59,7 @@ var Registry = []Lock{
 	{Name: "locksql", Switch: "LEA_LOCKSQL", GID: "10000", UID: "10001", What: "SQL databases", ProfileDir: ".locksql", Hub: true},
 	{Name: "lockmq", Switch: "LEA_LOCKMQ", GID: "10010", UID: "10011", What: "RabbitMQ brokers", Hub: true},
 	{Name: "lockfile", Switch: "LEA_LOCKFILE", GID: "10030", UID: "10031", What: "files on S3, SFTP or a local directory", Hub: true},
-	{Name: "locklog", Switch: "LEA_LOCKLOG", GID: "10050", UID: "10051", What: "logs (files, journald, containers, Loki, Elasticsearch)", Hub: true},
+	{Name: "locklog", Switch: "LEA_LOCKLOG", GID: "10050", UID: "10051", What: "logs (files, journald, containers, Loki, Elasticsearch)", ProfileDir: ".locklog", Hub: true},
 }
 
 // Get is the Lock of type name.

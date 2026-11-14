@@ -63,7 +63,8 @@ func TestLockHostWired(t *testing.T) {
 }
 
 // locklog (lea#324), as lockmq and lockfile: lox run's socket volume of the lock on /run/locklog,
-// read-only, the locklog-clients group (10050) and LEA_LOCKLOG=1 for the entrypoint; with two
+// read-only, the locklog-clients group (10050), .locklog read-only (lea#467) and LEA_LOCKLOG=1
+// for the entrypoint; with two
 // locks, each on /run/locklog/<instance> and LEA_LOCKLOG_INSTANCES names them.
 func TestLockLogWired(t *testing.T) {
 	w := newWorld(t, repoRoot(t))
@@ -71,10 +72,35 @@ func TestLockLogWired(t *testing.T) {
 	writeUp(t, w, lockUp("logs", "locklog"))
 	labels(w, "logs", "locklog", "socket")
 	args := lockArgs(t, w)
-	for _, m := range []string{"LEA_LOCKLOG=1", "10050", "type=volume,src=" + upProjectOf(w) + "_logs-run,dst=/run/locklog,readonly"} {
+	d := w.proj + "/.locklog"
+	for _, m := range []string{"LEA_LOCKLOG=1", "10050", "type=volume,src=" + upProjectOf(w) + "_logs-run,dst=/run/locklog,readonly",
+		"type=bind,src=" + d + ",dst=" + d + ",readonly"} {
 		if !contains(args, m) {
 			t.Errorf("missing %q in %v", m, args)
 		}
+	}
+	// .locklog holds the auto rules lox run applies (lea#467): made when missing, a link or a file
+	// in its place refused, as .locksql.
+	if fi, err := os.Lstat(d); err != nil || !fi.IsDir() {
+		t.Fatalf("%s not made: %v", d, err)
+	}
+	if err := os.Remove(d); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(w.home, d); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := w.launcher().runArgs(w.proj, "172.18.0.5"); err == nil || !strings.Contains(err.Error(), "is not a directory") {
+		t.Fatalf("a symbolic link: %v", err)
+	}
+	if err := os.Remove(d); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(d, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := w.launcher().runArgs(w.proj, "172.18.0.5"); err == nil || !strings.Contains(err.Error(), "is not a directory") {
+		t.Fatalf("a file: %v", err)
 	}
 	for _, a := range args {
 		if strings.Contains(a, "/etc/locklog") || strings.Contains(a, "/home/locklog") || strings.Contains(a, "locklog-home") ||

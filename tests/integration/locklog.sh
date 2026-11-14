@@ -14,6 +14,8 @@
 #   - the set's releases: locklog's client archive is the pinned one (its checksums.txt signed by
 #     locklog's release workflow at that tag, cosign), the console runs the set's image by digest,
 #     cosign-verified, as do the hub and lox (lockhub LOCKHUB_VERSION, the set's lox by default);
+#   - .locklog, the profiles and the auto rules lox run applies, is read-only for the agent
+#     (lea#467): its writes there fail with EROFS, and lea's container bind-mounts it read-only;
 #   - lea doctor finds the lock lox runs compatible with lea's locklog client;
 #   - negative control: without the clients group, the kernel refuses the agent the socket.
 # Linux hosts with docker (compose), sudo (the log directory under /var/log, as a host's logs),
@@ -226,6 +228,19 @@ if sys.argv[2:] == ["status-only"]:
     save("plain-status", *call("locklog_status", {}))
     sys.exit(0)
 rng = {"from": "2026-11-06T09:00:00Z", "to": "2026-11-06T11:00:00Z"}
+# lea#467: .locklog holds the auto rules lox run applies: the agent cannot rewrite them, nor add a
+# file beside them (each attempt's errno, to OUT/write.json).
+wr = {}
+for name, mode in (("config.toml", "a"), ("added.toml", "x")):
+    try:
+        with open(os.path.join(".locklog", name), mode) as f:
+            f.write("# lea#467 e2e: an agent's edit\n")
+        wr[name] = 0
+    except OSError as e:
+        wr[name] = e.errno
+with open(os.path.join(out, "write.json"), "w") as f:
+    json.dump(wr, f)
+print("write", wr, flush=True)
 save("status", *call("locklog_status", {}))
 save("count", *call("locklog_count", dict(rng)))
 err, s = call("locklog_search", dict(rng, limit=1))
@@ -389,6 +404,7 @@ mkdir -p "$state"
 printf '{}\n' >"$state/claude.json"
 o=$projects/.e2e/out
 mkdir -p "$o"
+cfg_sum=$(sha256sum <"$projects/.locklog/config.toml")
 LEA_PROJECTS_DIR="$projects" "$root/bin/lea" shell -- python3 -I "$projects/.e2e/agent.py" "$o" </dev/null >"$work/agent.out" 2>&1 &
 agent_pid=$!
 i=0
@@ -398,7 +414,12 @@ until [ -f "$o/ticket" ] || ! kill -0 "$agent_pid" 2>/dev/null; do
   sleep 1
 done
 show() { echo "      $1: $(cut -c1-400 "$o/$1.json" 2>/dev/null)"; }
-for s in status count search unmask1; do show "$s"; done
+for s in write status count search unmask1; do show "$s"; done
+# errno 30: EROFS, the read-only bind mount (not a permission the agent's account could lack).
+if jq -e '.["config.toml"] == 30 and .["added.toml"] == 30' "$o/write.json" >/dev/null 2>&1 &&
+  [ "$(sha256sum <"$projects/.locklog/config.toml")" = "$cfg_sum" ] && [ ! -e "$projects/.locklog/added.toml" ]; then
+  ok "lea's agent: its writes to .locklog (config.toml, a new file) are refused, read-only file system; the profile unchanged"
+else ko "lea's agent: .locklog is writable: $(cat "$o/write.json" 2>/dev/null)"; fi
 if jq -e '[.data[] | select(.profile == "files" and .running == true)] | length == 1' "$o/status.json" >/dev/null 2>&1; then
   ok "lea's agent: locklog_status reaches the running locklog console (profile files)"
 else ko "lea's agent: locklog_status: $(cat "$o/status.json" 2>/dev/null)"; fi
@@ -457,6 +478,11 @@ echo "      $c: $w"
 case " $w " in
   *'"10050"'*" ${p}_logs-run:/run/locklog:false "*) ok "lea's container: --group-add 10050, lox run's socket volume on /run/locklog, read-only" ;;
   *) ko "lea's container lacks the locklog wiring: $w" ;;
+esac
+b=$(docker inspect -f '{{range .Mounts}}{{if eq .Type "bind"}}{{.Source}}:{{.Destination}}:{{.RW}} {{end}}{{end}}' "$c" 2>/dev/null) || b=
+case " $b " in
+  *" $projects/.locklog:$projects/.locklog:false "*) ok "lea's container: .locklog bind-mounted read-only over the projects directory" ;;
+  *) ko "lea's container: no read-only .locklog mount: $b" ;;
 esac
 case $(sed -n 's/^id: //p' "$work/agent.out") in
   *"10050(locklog-clients)"*) ok "the session account (uid $uid) is in locklog-clients" ;;

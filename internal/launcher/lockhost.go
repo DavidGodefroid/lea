@@ -40,7 +40,7 @@ func lockfileSafe(v string) bool {
 // Locks that are on (locks.Registry, in its order): the socket volume of each lock of the type
 // that lox runs for the projects directory (ups, lockup.go) on /run/<name> (each of several on
 // /run/<name>/<instance>, lockUpArgs), read-only, the Lock's clients group, and its profile
-// directory read-only when it has one (locksql's .locksql).
+// directory read-only when it has one (locksql's .locksql, locklog's .locklog).
 // The consoles run hub-attached only, under lox: without such a lock the agents get no socket of
 // the type, never a fixed volume another console could serve, and lea says to add one (`lox add
 // <type>`).

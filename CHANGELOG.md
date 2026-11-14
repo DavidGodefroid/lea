@@ -1,5 +1,16 @@
 # Changelog
 
+## Unreleased
+
+Security:
+
+- lea mounts `.locklog` read-only into its agents, as `.locksql` (#467). It holds locklog's
+  profiles, including the auto rules `lox run` applies; an agent could rewrite them through the
+  projects directory mount and widen what is decided without a human (`unmask` to auto, say),
+  which only a close reading of `lox run`'s next review caught. lea now makes `.locklog` when it
+  is missing and refuses a symbolic link or a file in its place, as for `.locksql`. The locklog
+  client still reads its profiles there.
+
 ## v0.16.0 (2026-11-14)
 
 Features:
