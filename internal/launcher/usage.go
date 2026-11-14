@@ -12,6 +12,8 @@ const Usage = `Usage:
                               (LEA_DECK=0: your own tool, LEA_TOOL, in the lea container instead)
   lea web [--port N] [--open]  the deck in your browser: the board, threads, the control tower,
                               new agents and permissions, on 127.0.0.1 behind a one-time link
+                              (remote: ssh -L; or --listen ADDR:PORT with --tls-self-signed or
+                              --tls-cert F --tls-key F, and a persistent token, --new-token)
   lea attach [--print] [AGENT]
                               run LEA_TOOL in the lea container, or join an agent's terminal;
                               --print: the docker exec command, for an IDE or another terminal
