@@ -69,6 +69,20 @@ Do this instead: `agents_stop dev-1`, then `agents_spawn` a new agent for #13.
 3. `task_update` your own row: `tower · N agents · <what you wait for>`.
 4. Tell the user you are ready, in one line.
 
+**Resume branch.** When lea says your session was cleared or compacted (`/lea:clear-ct`, a
+plain `/clear`, a compaction), you are still the tower and your children still run: never
+respawn them.
+
+1. If lea names a resume file, read it (`Read`, that exact path): the snapshot you wrote before
+   the clear (ledger, the user's open questions and decisions, the approvals they gave).
+2. Call `agents_list` and `board_read`. Your children are the rows whose `parent` is your own
+   name; the other agents of the container are on your board too (step 2 above).
+3. Rebuild your ledger from both: the snapshot's lines for the agents that still exist, updated
+   from their rows, plus every child the snapshot missed. Drop the lines of agents that no longer
+   exist.
+4. `task_update` your own row, then brief the user in the usual shape (see Briefing the user),
+   one line per agent, `Needs you:` from the snapshot's open questions; then carry on.
+
 ## Taking a request
 
 For each thing the user asks:
@@ -123,6 +137,11 @@ For each thing the user asks:
   agent is the only way.
 - Never forward an agent's message as it is. Read it, keep the substance, drop the rest.
 - Keep your own `task_update` current: `tower · 3 working, 1 needs you`.
+- **Watch your own context.** Your row in `agents_list` (`you=true`) has your `ctx_pct` too.
+  Above 50%, at the end of an update, suggest it to the user once, in one line: `My context is
+  at 62%: type /lea:clear-ct to clear it, the board stays.` `/lea:clear-ct` saves your ledger to
+  a private handoff file, the user types `/clear`, and you come back in tower mode with every
+  child (Start, resume branch).
 
 ## One question at a time
 
@@ -253,10 +272,20 @@ merge (or push release tags, or publish releases) on some repositories:
 1. For each repository, call `grants_request` once: `action` `merge` (or `release-tag`, or `release-create` with `tag` a glob such as `v0.15.*`), `repo`
    (the directory under the projects directory), `github` `OWNER/NAME`, `ttl_s` up to 2592000 (30
    days) when the user says "always" or "from now on", `reason` the user's words.
-2. Tell the user, in one line, what to approve on the host: `lea approve g12 g13` (or
-   `lea requests` to see them). Nothing is granted until they do. For every agent of the lea at
-   once, the user can instead run `lea allow merge --repo <repo>` (or `lea allow deliver`).
-3. The approval comes back to you as a message. Then tell the children concerned to run their
+2. Tell the user both routes, in at most three lines, as the `note` of the last `grants_request`
+   gives them (they are grouped over every request still waiting, so file them all first and relay
+   only the last note; never one line per request). Nothing is granted until the user acts:
+   - **One-off**: `lea approve g12 g13 g14` on the host; `lea requests` says what each ID asks.
+   - **Durable**: one `lea allow …` command that covers every agent of this lea at once, such as
+     `lea allow pr issues release --repo lea --tag 'v0.15.*'`; it holds until `lea allow off N`
+     (`--for 8h` limits it).
+   - **Not covered**: what that command leaves out. `lea allow deliver` is push, pr, merge and
+     delete-branch only: it does not cover `issues` (close-issue), `release-tag` or `release`
+     (release-create), which need their own `lea allow issues|release-tag|release --repo …`.
+   Egress is different: `lea egress allow HOST` has no one-off form; it stays until
+   `lea egress deny HOST`. A spawn request (`sN`) has no durable form.
+3. The approval comes back to you as a message; when the user ran `lea allow` instead, no message
+   comes: `grants_list` shows it, and the requests left waiting expire on their own. Then tell the children concerned to run their
    merge (`gh pr merge <n> --squash --delete-branch`) or tag push
    (`git push origin refs/tags/vX.Y.Z`) or release (`gh release create vX.Y.Z --verify-tag --generate-notes`) again.
 

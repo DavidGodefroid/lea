@@ -169,7 +169,13 @@ func grantRequestLines(stdout io.Writer) (int, error) {
 	if err := hostCall("grant_request_list", nil, &gs); err != nil {
 		return 0, err
 	}
+	asks := map[string][]grants.Ask{}
+	var leas []string
 	for _, g := range gs {
+		if asks[g.Container] == nil {
+			leas = append(leas, g.Container)
+		}
+		asks[g.Container] = append(asks[g.Container], grants.Ask{ID: g.ID, Action: g.Action, Repo: g.Repo, Branch: g.Branch, Tag: g.Tag})
 		where := ""
 		if g.Branch != "" && g.Branch != "*" {
 			where = " branch " + oneLine(g.Branch, 128)
@@ -182,6 +188,15 @@ func grantRequestLines(stdout io.Writer) (int, error) {
 			time.Duration(g.TTLS)*time.Second)
 		if g.Reason != "" {
 			fmt.Fprintf(stdout, "    reason: %s\n", oneLine(g.Reason, 200))
+		}
+	}
+	// How to answer them (#412): once, or for every agent of the lea, grouped per lea.
+	for _, c := range leas {
+		for _, l := range grants.Routes(asks[c]) {
+			if len(leas) > 1 {
+				l = oneLine(c, 64) + ": " + l
+			}
+			fmt.Fprintln(stdout, oneLine(l, 1000))
 		}
 	}
 	return len(gs), nil
@@ -219,7 +234,6 @@ func runRequests(stdout, stderr io.Writer) int {
 	defer func() {
 		if ng > 0 {
 			stdout.Write(gb.Bytes())
-			fmt.Fprintln(stdout, "grant requests: lea approve gN [gM...] [--expires 30d], lea deny gN [reason]")
 		}
 	}()
 	for _, a := range as {

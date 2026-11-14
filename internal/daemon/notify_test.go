@@ -72,7 +72,7 @@ func TestASpawnRequestToTheUserCallsThem(t *testing.T) {
 	if err != nil || r.SentTo != "user" {
 		t.Fatalf("r=%+v err=%v", r, err)
 	}
-	want := "lea needs you: kid asks for a reviewer agent: lea approve s1 or lea deny s1 (lea requests)"
+	want := "lea needs you: kid asks for a reviewer agent: lea approve s1 or lea deny s1 (lea requests); no durable form: each spawn request is answered once"
 	if got := waitNotes(notes, 1); len(got) != 1 || got[0] != want {
 		t.Fatalf("notes %q, want %q", got, want)
 	}

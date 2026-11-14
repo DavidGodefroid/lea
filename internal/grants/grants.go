@@ -716,7 +716,8 @@ var semverTag = regexp.MustCompile(`^v(0|[1-9][0-9]{0,8})\.(0|[1-9][0-9]{0,8})\.
 // releaseTagHint follows the hard deny of a tag push no grant covers.
 const releaseTagHint = "A release-tag grant covers exactly: git push origin refs/tags/vX.Y.Z (one new semver tag on a commit of the default branch), " +
 	"run plainly from the root of your own worktree. No grant covers it for you: a lead files grants_request (action release-tag, repo, github), " +
-	"the user approves it on the host (lea approve g<N>), then run it again"
+	"the user approves it on the host (lea approve g<N>, once), or runs lea allow release-tag --repo <repo> there (every agent of the lea, until lea allow off), " +
+	"then run it again"
 
 // releaseTagRequest recognises "git push origin refs/tags/vX.Y.Z", one plain command at the root
 // of the caller's own worktree: the one form a release-tag grant covers.

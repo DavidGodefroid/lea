@@ -310,8 +310,8 @@ profile and state in the bottom border.
 (ctrl+c stops it):
 
 ```sh
-lea web            # prints http://127.0.0.1:PORT/?token=…, a link that signs one browser in, once
-lea web --open     # also opens it in your browser
+lea web            # prints http://127.0.0.1:PORT/?token=…, a link that signs one browser in, once, within 2 minutes
+lea web --open     # also signs your browser in, without the link
 lea web --port 8414
 ```
 
@@ -668,7 +668,11 @@ Only you change a role (`r` in the deck, `lea role <agent> <role>`, `lea new -r 
 Agents get lea's tools through MCP:
 
 - a lead starts `dev` and `reviewer` agents with `agents_spawn` and stops its own with
-  `agents_stop` (at most 20 children at a time);
+  `agents_stop` (at most 20 children at a time). Claude Code's built-in sub-agent tool (`Agent`)
+  is denied to a lead, with a reason naming `agents_spawn`: its sub-agent would be invisible to
+  lea (not on the board or in the deck, its context untracked, outside the child limits and the
+  host-pressure queue). After a compaction a lead's context is reminded it is a lead and starts
+  work only with `agents_spawn`;
 - any other agent asks a lead with `agents_request_spawn`; without a lead the request comes to
   you (`lea requests`, `lea request accept <id>`, `lea request decline <id> [reason]`);
 - agents message each other (`msg_send`, `msg_reply`); a message waits in the inbox until the
@@ -892,6 +896,20 @@ team tools (`agents_*`, `msg_*`, `board_read`, `task_update`), ask you questions
 `lea inbox --agent --wait`; any other tool (Bash, Edit, Read, git, gh, the web…) is denied with a
 reminder to delegate. `/lea:control-tower off` gives the session its tools back.
 
+A tower runs for hours and its context keeps growing. Type `/lea:clear-ct` to clear it without
+losing the board: the tower writes a short snapshot of what the board cannot give back (its
+ledger, your open questions and decisions, the approvals you gave) to a private file outside any
+repository (`$LEA_TOWER_DIR/<agent>.handoff.md`, by default under `/tmp/lea-tower-<uid>`,
+rewritten each time), then asks you to type `/clear` (Claude Code does not let a skill clear the
+context itself). After the clear the session is still a tower, with no gap: the hook carries
+tower mode over to the new session, and tells it to load `/lea:control-tower`, read the snapshot,
+and rebuild its ledger from `agents_list` and `board_read` (its children are the agents whose
+parent it is); your next message, or a child's report, gets one line per agent. Its children
+keep running, none is respawned, and what they send during the clear reaches the new session. A
+plain `/clear` (or a compaction) in a tower comes back the same way, from the board alone. The
+tower suggests `/lea:clear-ct` once its context passes 50%. Outside a tower, `/lea:clear-ct`
+refuses in one line and changes nothing.
+
 Type `/lea:check` (or ask for a status, a "point", a "topo") for the state of the work in
 progress, in at most 10 lines: done since the last check, in progress, left, and what is blocked
 or yours to decide. A tower builds it from the board and the agents' reports, without doing any
@@ -980,6 +998,36 @@ them it fails. It only reads.
 `lea delivery on|off|status` and `lea grant add|ls` still work for this minor release: they are
 translated to `lea allow deliver`, `lea allow off deliver`, `lea allow` and `lea allow <capability>`,
 with a notice. `lea grant add --github X` is refused when X is not the repository's origin.
+
+#### Approving once or for good
+
+Whenever lea asks you to approve something, it gives both routes, in at most three lines (#412):
+
+- **One-off**: `lea approve ID` (or `lea deny ID [reason]`) answers that request only; `lea
+  requests` says what each waiting `pN` (permission), `sN` (spawn) or `gN` (a lead's grant
+  request) asks.
+- **Durable**: the `lea allow …` command that covers the same need for every agent of this lea,
+  until `lea allow off N` (or for `--for`). Grant requests waiting together are grouped into one
+  command: a lead's `pr-create`, `release-create` (tag `v0.15.*`) and `close-issue` on `lea` read
+  as `lea allow pr issues release --repo lea --tag 'v0.15.*'`. The action names a lead files map to
+  the capabilities above: `commit-identity` is `push`, `pr-create` `pr`, `delete-own-branch`
+  `delete-branch`, `close-issue` `issues`, `release-create` `release`; `merge` and `release-tag`
+  keep their names.
+- **Not covered**: what that command leaves out. `deliver` is push, pr, merge and delete-branch
+  only: it does not cover `issues`, `release-tag` or `release`.
+
+```
+g5 lead (lead in lea-myproj) asks for a pr-create grant on repo lea (gh github.com/me/lea) for itself and its children, 8h0m0s
+g6 lead (lead in lea-myproj) asks for a release-create grant on repo lea (gh github.com/me/lea) tag v0.15.* for itself and its children, 8h0m0s
+g7 lead (lead in lea-myproj) asks for a close-issue grant on repo lea (gh github.com/me/lea) for itself and its children, 8h0m0s
+one-off: lea approve g5 g6 g7 (or lea deny gN [reason]); lea requests says what each asks
+durable, for every agent of this lea until lea allow off N (add --for 8h to limit it): lea allow pr issues release --repo lea --tag 'v0.15.*'
+it covers only pr, issues, release on lea, not push, merge, delete-branch, release-tag, nor other repositories
+```
+
+A permission whose dialog offers "always" also names `lea approve pN always`, which allows the
+tool for that agent until lea restarts, and no other agent. A spawn request has no durable form.
+An egress refusal has no one-off form: `lea egress allow HOST` holds until `lea egress deny HOST`.
 
 #### What agents are told
 
@@ -1321,13 +1369,16 @@ so. Changes apply after `lea init` (endpoints, keys, images, locksql) or `lea st
 
 - `lea web` listens on the host's `127.0.0.1` only, which no lea container shares, and acts as
   you through the daemon's host socket, as the deck does: an agent reaches neither. The link it
-  prints carries a random one-time token (32 bytes) that the browser exchanges for an `HttpOnly`,
-  `SameSite=Strict` cookie; every API call needs that cookie, and a request whose `Host` or
-  `Origin` is not `127.0.0.1:PORT` or `localhost:PORT` is refused (another site's page, DNS
+  prints carries a random one-time token (32 bytes), valid for 2 minutes, that the browser
+  exchanges for an `HttpOnly`, `SameSite=Strict` cookie; every API call needs that cookie, and a
+  request whose `Host` or `Origin` is not `127.0.0.1:PORT` or `localhost:PORT` is refused (another site's page, DNS
   rebinding). The API forwards a fixed list of the daemon's methods, for this lea's agents only;
   there is no CORS, and a strict Content-Security-Policy keeps any other script or origin out
-  of the page. To use it from another machine, forward the port over SSH
-  (`ssh -L 8414:127.0.0.1:8414 host`, then `lea web --port 8414` on the host).
+  of the page. `lea web --open` never puts the token in a command line, which any local user can
+  read (`ps`): it writes a page that posts the token to a private file (`0600`, in a `0700`
+  directory of `$XDG_RUNTIME_DIR`, removed when `lea web` stops) and opens that file. A browser
+  that cannot open local files (some snap packages) needs the printed link. To use it from
+  another machine, forward the port over SSH (`ssh -L 8414:127.0.0.1:8414 host`, then `lea web --port 8414` on the host).
 - `lea web --listen ADDR:PORT` (#416), the explicit opt-in to the network, refuses to start
   unless it serves TLS (your certificate and key, or `--tls-self-signed`: an ECDSA P-256
   certificate lea makes once, keeps 0600 in its host data dir and renews near its end; TLS 1.2 or
@@ -1376,7 +1427,7 @@ so. Changes apply after `lea init` (endpoints, keys, images, locksql) or `lea st
   (documentation sites fetched by an agent, another forge, a Fedora mirror outside
   `fedoraproject.org`) is refused. The refusal's first line names the host and the command that
   allows it (`lea-proxy refused deb.debian.org: not in the egress allowlist. To allow it, run on
-  the host: lea egress allow deb.debian.org (applies live, no restart).`). HTTPS clients hide that
+  the host: lea egress allow deb.debian.org (applies live, no restart; there is no one-off form: it stays until lea egress deny deb.debian.org).`). HTTPS clients hide that
   page behind `CONNECT tunnel failed, response 403`: lea's agents are told to recognise it and to
   hand you that command, never to work around the proxy.
 - To allow a domain, run on the host `lea egress allow deb.debian.org` (several at once if you
@@ -1656,9 +1707,44 @@ tower can adapt; no agent can set one.
 |---|---|---|
 | `max_running` (`LEA_MAX_RUNNING`) | `3` | the children of leads that run at once, host-wide (`0`: no cap). Your own sessions and the leads do not count. At the cap a lead's `agents_spawn` is refused (`3 children already running (limit max_running 3): retry with queue: true or wait for one to end`), or with `queue: true` waits and starts once a child ends; `lea board` and `agents_list` show why (`queued: max_running 3/3`). A spawn request a lead accepts goes through the same check |
 
+| `budget_usd_agent` (`LEA_BUDGET_USD_AGENT`) | `0` (off) | the most one agent may spend, in USD, as its status line reports it (`cost_usd`). Over it lea pauses that agent |
+| `budget_usd_total` (`LEA_BUDGET_USD_TOTAL`) | `0` (off) | the most all agents may spend together, in USD, since the last `lea limits reset budget_usd_total`. Over it lea pauses every running agent and holds new spawns: `agents_spawn` is refused (`budget reached: total spend $50.20 ≥ budget_usd_total $50 …`), or queued with `queue: true` (`queued: budget_usd_total $50.20/$50`) |
+| `budget_usd_step` (`LEA_BUDGET_USD_STEP`) | `20` | in percent of a budget: how much more an agent you resume by hand over that budget may spend before lea pauses it again |
+
 A change never stops a running agent: a cap lowered below what runs holds new spawns until
 enough children end; a raised one starts the queued spawns at once, up to the new cap (one per
 pressure sample).
+
+### Spend budgets
+
+On API billing (pay per token), nothing else stops a runaway agent: a loop, a huge context read
+again each turn, or a tower left running overnight. The two budgets are a kill switch:
+
+```sh
+lea limits set budget_usd_agent 10   # no agent spends more than $10
+lea limits set budget_usd_total 50   # all agents together, since the last reset
+lea limits reset budget_usd_total    # a new period: what was spent no longer counts
+```
+
+Over a budget, lea **pauses** the agent (`budget_usd_agent`) or every running agent
+(`budget_usd_total`), the way it does under host pressure: its processes are frozen, its session
+and its work are kept, nothing is stopped. The deck's row turns red and says why
+(`budget reached: $12.40 ≥ budget_usd_agent $10`), `lea board` lists it under "Paused on a spend
+budget", the alert sound plays and the agent's lead gets one note. While `budget_usd_total` is
+on, the deck's header shows the total spent against it (`$12.40/$50`), red once reached.
+
+The total counts each agent's spend since the period began; when an agent's cost counter starts
+again (a new session), what it spent before still counts. It outlives a restart of the daemon.
+`lea limits reset budget_usd_total` starts a new period and keeps the value; `lea limits set
+budget_usd_total 0` turns it off.
+
+To go on: raise the budget (lea resumes what it paused on it and starts the queued spawns), reset
+the total, or resume an agent by hand (`p` in the deck). An agent resumed by hand over a budget is
+paused again only once it spends `budget_usd_step` percent more of that budget, so resuming does
+not loop. An agent whose status line reports no cost (`cost_usd` unknown, as with some providers)
+is never paused: `lea limits` and `lea doctor` name the running agents the budgets do not cover.
+No agent can change a budget (`limits_set` is the host's); `limits_get` shows them, with the
+spend, read-only.
 
 ## Host pressure
 

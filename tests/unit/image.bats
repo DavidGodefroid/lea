@@ -692,6 +692,7 @@ merge_permissions() {
   k="$p/skills/control-tower/SKILL.md"
   [ "$(sed -n 1p "$k")" = --- ]
   grep -q '^name: control-tower$' "$k"
+  grep -q '^name: clear-ct$' "$p/skills/clear-ct/SKILL.md"
   grep -q '^description: Use when ' "$k"
   for t in agents_spawn agents_list board_read msg_inbox msg_reply task_update "lea inbox --agent --wait"; do grep -q "$t" "$k"; done
   grep -q '^COPY image/claude-plugin /usr/local/share/lea/claude-plugin$' "$I/Containerfile"

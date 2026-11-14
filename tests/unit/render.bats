@@ -251,7 +251,7 @@ egress_acl() {
 
 # Clients log a body's first line at most (apt, wget): it is plain text and names the live command.
 @test "each refusal page starts with one plain line naming the host and why" {
-  [ "$(head -n1 "$LEA_ROOT/proxy/errors/ERR_LEA_EGRESS")" = 'lea-proxy refused %H: not in the egress allowlist. To allow it, run on the host: lea egress allow %H (applies live, no restart).' ]
+  [ "$(head -n1 "$LEA_ROOT/proxy/errors/ERR_LEA_EGRESS")" = 'lea-proxy refused %H: not in the egress allowlist. To allow it, run on the host: lea egress allow %H (applies live, no restart; there is no one-off form: it stays until lea egress deny %H).' ]
   for p in ERR_LEA_EGRESS ERR_LEA_DENIED ERR_LEA_DOH ERR_LEA_LITERAL ERR_LEA_PRIVATE; do
     first=$(head -n1 "$LEA_ROOT/proxy/errors/$p")
     [[ "$first" == "lea-proxy refused %H: "* ]]
