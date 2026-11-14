@@ -151,6 +151,9 @@ type Set struct {
 	Capabilities              []string
 	Created, Expires, Revoked int64
 	Grants                    []Grant
+	// Managed is the sha256 of the company's managed configuration the set was recorded under
+	// (#399), "" none.
+	Managed string `json:",omitempty"`
 }
 
 // UntilRevoked says whether s holds until lea allow off revokes it.

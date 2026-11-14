@@ -1457,7 +1457,12 @@ organisation = "ICTools"
 [lea]
 approvals = "deck"                          # LEA_APPROVALS, enforced
 autoupdate = true                           # LEA_AUTOUPDATE=1, enforced
+grant_ttl_max = "7d"                        # no grant lives longer
+standing_grants = false                     # every lea allow needs --for
 egress_allow = ["default", "corp.example"]  # the agents reach these domains at most
+
+[lea.claude_enforced]                       # Claude Code settings of every agent
+defaultMode = "default"
 ```
 
 - `approvals` (`"deck"` or `"pane"`) and `autoupdate = true` set `LEA_APPROVALS` and
@@ -1470,6 +1475,19 @@ egress_allow = ["default", "corp.example"]  # the agents reach these domains at 
   beyond it are ignored with a warning, `lea egress allow` refuses a domain outside it, and
   `lea egress list` shows the list in force. With `egress_allow` set, `LEA_LOCKHTTP=1` is refused
   unless the managed file has a `[lockhttp]` section for the gate.
+- `grant_ttl_max = "7d"` bounds every grant: `lea allow --for` and `lea approve --expires` beyond it
+  are refused, a lead's grant request is shortened to it, and a grant recorded before lives at
+  most that long from its creation. `standing_grants = false` refuses `lea allow` without `--for`,
+  and the allowances already recorded until revoked stop applying (`lea allow` shows them as
+  suspended by company policy); `grant_ttl_max` alone refuses them too. Each allowance and each
+  use of one records the managed file's sha256. If the file stops loading, no grant applies and
+  none is recorded until it is fixed.
+- `[lea.claude_enforced]` sets Claude Code settings in every agent's managed settings, over
+  `lea config claude`, which then refuses to change them: `defaultMode` (not `bypassPermissions`),
+  `model`, `language`, `outputStyle`, `alwaysThinkingEnabled`, and `disableBypassPermissionsMode =
+  "disable"` (lea keeps it so anyway). Any other key, lea's own (hooks, status line) included, is
+  refused. `model` is the agents' default: a lead's choice of a child's model still applies. It
+  applies to lea containers started after the change.
 - `lea config import` refuses a file beyond the managed configuration as a whole, nothing
   written; the deck's settings screen shows the enforced keys as set by company policy.
 - `lea doctor` prints `Managed by <organisation> (sha256:…)` and the active rules, and the deck's

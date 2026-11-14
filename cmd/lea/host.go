@@ -22,9 +22,9 @@ import (
 	"github.com/DavidGodefroid/lea/internal/daemon"
 	"github.com/DavidGodefroid/lea/internal/deck"
 	"github.com/DavidGodefroid/lea/internal/identity"
-	"github.com/DavidGodefroid/lea/internal/managed"
 	"github.com/DavidGodefroid/lea/internal/launcher"
 	"github.com/DavidGodefroid/lea/internal/lockhttp"
+	"github.com/DavidGodefroid/lea/internal/managed"
 	"github.com/DavidGodefroid/lea/internal/roles"
 	"github.com/DavidGodefroid/lea/internal/settings"
 	"github.com/DavidGodefroid/lea/internal/store"
@@ -171,6 +171,8 @@ func runDaemon(stderr io.Writer) int {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	d := daemon.New(st, filepath.Join(host, "run"), func() int64 { return time.Now().Unix() })
+	// Read again at each grant decision: a changed managed file applies at once.
+	d.SetManaged(func() (*managed.Policy, error) { return managed.Load(ctx) })
 	conf := filepath.Join(host, "tmux.conf")
 	if err := tmux.WriteConf(conf, os.Getenv("LEA_TMUX_BIN")); err != nil {
 		fmt.Fprintln(stderr, "lea:", clean(err.Error(), false))
@@ -314,6 +316,7 @@ func runDaemon(stderr io.Writer) int {
 		ProxyToken:      proxyToken,
 		RequesterToken:  requesterToken,
 		ChildDeny:       hostChildDeny(exe),
+		BoundGrants:     d.BoundGrants,
 	})
 	d.SetAgents(m)
 	// Whether lox run serves the workspace's decisions (#300): the deck says to run it when not.

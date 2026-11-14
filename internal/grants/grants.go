@@ -131,6 +131,27 @@ func pinURL(pin string) string {
 	return ""
 }
 
+// Bound is gs within the company's managed bounds (#399): a grant applies at most maxTTL seconds
+// after its creation (0: no bound), and, with noStanding, a grant that holds until revoked no
+// longer applies. A grant recorded before the bounds keeps its row: it stops applying, as if it
+// had expired.
+func Bound(gs []Grant, maxTTL int64, noStanding bool) []Grant {
+	if maxTTL <= 0 && !noStanding {
+		return gs
+	}
+	out := make([]Grant, 0, len(gs))
+	for _, g := range gs {
+		if noStanding && g.Expires == Standing {
+			continue
+		}
+		if maxTTL > 0 && g.Expires-g.Created > maxTTL {
+			g.Expires = g.Created + maxTTL
+		}
+		out = append(out, g)
+	}
+	return out
+}
+
 // Active says whether g still applies at now.
 func (g Grant) Active(now int64) bool {
 	return g.Revoked == 0 && g.Expires > now

@@ -14,6 +14,78 @@ import (
 // start) when the file is refused; resolve applies it to the keys it bounds, and a user value
 // beyond it is ignored with a warning (ManagedWarnings).
 
+func init() { managed.CheckClaude = checkManagedClaude }
+
+// checkManagedClaude validates a claude_enforced key of the managed file: defaultMode, the
+// preferences lea config claude knows, and disableBypassPermissionsMode, which lea already keeps
+// at "disable". Any other key is refused: lea would not know how to enforce it.
+func checkManagedClaude(k string, v any) error {
+	switch {
+	case k == "disableBypassPermissionsMode":
+		if v != "disable" {
+			return fmt.Errorf("can only be \"disable\" (lea keeps it so)")
+		}
+		return nil
+	case k == "defaultMode":
+		s, ok := v.(string)
+		if !ok {
+			return fmt.Errorf("is a permission mode")
+		}
+		return checkClaudeMode(s)
+	case claudePrefs[k] != nil:
+		if k == "alwaysThinkingEnabled" {
+			if _, ok := v.(bool); !ok {
+				return fmt.Errorf("is true or false")
+			}
+			return nil
+		}
+		s, ok := v.(string)
+		if !ok {
+			return fmt.Errorf("is a string")
+		}
+		_, err := claudePrefs[k](s)
+		return err
+	case claudeEnforced[k] != "":
+		return fmt.Errorf("is lea's to keep: %s", claudeEnforced[k])
+	}
+	return fmt.Errorf("is not a setting lea can enforce (defaultMode, %s or disableBypassPermissionsMode)", strings.Join(sortedKeys(claudePrefs), ", "))
+}
+
+// withManagedClaude is c with the managed file's claude_enforced on top: what lea hands the
+// entrypoint. c itself is left as the user wrote it.
+func (c *Config) withManagedClaude(cc *claudeConfig) *claudeConfig {
+	m := c.managed
+	if m == nil || len(m.ClaudeEnforced) == 0 {
+		return cc
+	}
+	out := *cc
+	out.Settings = map[string]any{}
+	for k, v := range cc.Settings {
+		out.Settings[k] = v
+	}
+	for k, v := range m.ClaudeEnforced {
+		switch {
+		case k == "defaultMode":
+			out.DefaultMode = v.(string)
+		case claudePrefs[k] != nil:
+			out.Settings[k] = v
+		}
+	}
+	return &out
+}
+
+// managedClaudeRefuses is the refusal of lea config claude changing key k when the managed file
+// enforces it; nil otherwise.
+func (c *Config) managedClaudeRefuses(k string) error {
+	if c.managed == nil {
+		return nil
+	}
+	if v, ok := c.managed.ClaudeEnforced[k]; ok {
+		return managed.Blocked("claude_enforced."+k, fmt.Sprint(v), "set for every agent")
+	}
+	return nil
+}
+
 // loadManaged reads the machine's managed file; tests replace it.
 var loadManaged = func() (*managed.Policy, error) { return managed.Load(context.Background()) }
 

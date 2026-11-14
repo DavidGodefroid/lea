@@ -14,6 +14,12 @@ import (
 
 const grantCols = `id, set_id, container, action, repo, branch, agent, github, created, expires, revoked, tag`
 
+// managedColumns: the sha256 of the company's managed configuration (#399) a grant set was
+// recorded, or a grant used, under; "" none. An older lea ignores it.
+var managedColumns = [][2]string{
+	{"managed", "TEXT NOT NULL DEFAULT ''"},
+}
+
 // grantColumns are the grants columns added after it was created. An older lea ignores set_id.
 var grantColumns = [][2]string{
 	{"set_id", "INTEGER NOT NULL DEFAULT 0"},
@@ -98,8 +104,8 @@ func insertSet(x execer, s grants.Set) (int64, error) {
 	for i, c := range caps {
 		names[i] = c.Name
 	}
-	res, err := x.Exec(`INSERT INTO grant_sets(container, capabilities, created, expires) VALUES(?,?,?,?)`,
-		s.Container, strings.Join(names, " "), s.Created, s.Expires)
+	res, err := x.Exec(`INSERT INTO grant_sets(container, capabilities, created, expires, managed) VALUES(?,?,?,?,?)`,
+		s.Container, strings.Join(names, " "), s.Created, s.Expires, s.Managed)
 	if err != nil {
 		return 0, err
 	}
@@ -117,12 +123,16 @@ func insertGrant(x execer, g grants.Grant) (grants.Grant, error) {
 }
 
 // AddGrant records a grant as a set of one and returns it with its id and its set's.
-func (s *Store) AddGrant(g grants.Grant) (grants.Grant, error) {
+func (s *Store) AddGrant(g grants.Grant) (grants.Grant, error) { return s.AddManagedGrant(g, "") }
+
+// AddManagedGrant is AddGrant under the company's managed configuration of fingerprint managed
+// (#399; "" none), which its set records.
+func (s *Store) AddManagedGrant(g grants.Grant, managed string) (grants.Grant, error) {
 	c, ok := grants.CapabilityOf(g.Action)
 	if !ok {
 		return grants.Grant{}, errors.New("store: unknown action " + g.Action)
 	}
-	set, err := s.AddGrantSet(grants.Set{Container: g.Container, Capabilities: []string{c.Name}, Created: g.Created, Expires: g.Expires}, []grants.Grant{g})
+	set, err := s.AddGrantSet(grants.Set{Container: g.Container, Capabilities: []string{c.Name}, Created: g.Created, Expires: g.Expires, Managed: managed}, []grants.Grant{g})
 	if err != nil {
 		return grants.Grant{}, err
 	}
@@ -265,7 +275,7 @@ func (s *Store) queryGrants(q string, args ...any) ([]grants.Grant, error) {
 // GrantSets returns the sets of container that apply at now, oldest first, each with all its
 // rows (revoked ones too).
 func (s *Store) GrantSets(container string, now int64) ([]grants.Set, error) {
-	rows, err := s.db.Query(`SELECT id, container, capabilities, created, expires, revoked FROM grant_sets
+	rows, err := s.db.Query(`SELECT id, container, capabilities, created, expires, revoked, managed FROM grant_sets
 		WHERE container=? AND revoked=0 AND expires>? ORDER BY id`, container, now)
 	if err != nil {
 		return nil, err
@@ -274,7 +284,7 @@ func (s *Store) GrantSets(container string, now int64) ([]grants.Set, error) {
 	for rows.Next() {
 		var x grants.Set
 		var caps string
-		if err := rows.Scan(&x.ID, &x.Container, &caps, &x.Created, &x.Expires, &x.Revoked); err != nil {
+		if err := rows.Scan(&x.ID, &x.Container, &caps, &x.Created, &x.Expires, &x.Revoked, &x.Managed); err != nil {
 			rows.Close()
 			return nil, err
 		}
@@ -360,19 +370,22 @@ type GrantUse struct {
 	ID, Grant, Set        int64
 	Agent, Action, Target string
 	At                    int64
+	// Managed is the sha256 of the company's managed configuration the call was allowed under
+	// (#399), "" none.
+	Managed string `json:",omitempty"`
 }
 
 // AddGrantUse audits one call a grant allowed.
 func (s *Store) AddGrantUse(u GrantUse) error {
-	_, err := s.db.Exec(`INSERT INTO grant_uses(grant_id, agent, action, target, at) VALUES(?,?,?,?,?)`,
-		u.Grant, u.Agent, u.Action, u.Target, u.At)
+	_, err := s.db.Exec(`INSERT INTO grant_uses(grant_id, agent, action, target, at, managed) VALUES(?,?,?,?,?,?)`,
+		u.Grant, u.Agent, u.Action, u.Target, u.At, u.Managed)
 	return err
 }
 
 // GrantUses returns the last limit uses of the grants of container ("" every container), newest
 // first.
 func (s *Store) GrantUses(container string, limit int) ([]GrantUse, error) {
-	rows, err := s.db.Query(`SELECT u.id, u.grant_id, COALESCE(g.set_id, 0), u.agent, u.action, u.target, u.at
+	rows, err := s.db.Query(`SELECT u.id, u.grant_id, COALESCE(g.set_id, 0), u.agent, u.action, u.target, u.at, u.managed
 		FROM grant_uses u LEFT JOIN grants g ON g.id=u.grant_id
 		WHERE ?='' OR g.container=? ORDER BY u.id DESC LIMIT ?`, container, container, limit)
 	if err != nil {
@@ -382,7 +395,7 @@ func (s *Store) GrantUses(container string, limit int) ([]GrantUse, error) {
 	out := []GrantUse{}
 	for rows.Next() {
 		var u GrantUse
-		if err := rows.Scan(&u.ID, &u.Grant, &u.Set, &u.Agent, &u.Action, &u.Target, &u.At); err != nil {
+		if err := rows.Scan(&u.ID, &u.Grant, &u.Set, &u.Agent, &u.Action, &u.Target, &u.At, &u.Managed); err != nil {
 			return nil, err
 		}
 		out = append(out, u)

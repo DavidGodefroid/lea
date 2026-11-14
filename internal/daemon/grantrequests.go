@@ -52,6 +52,10 @@ func (d *Daemon) grantsRequest(ctx context.Context, o Origin, me string, raw jso
 	if err != nil {
 		return nil, err
 	}
+	// The company's grant_ttl_max (#399) clamps what a lead asks for.
+	if ttl, _, err = d.grantTTL(ttl, false, false); err != nil {
+		return nil, err
+	}
 	if len(p.Reason) > maxReason {
 		return nil, fmt.Errorf("reason is %d bytes, limit %d", len(p.Reason), maxReason)
 	}
@@ -183,12 +187,18 @@ func (d *Daemon) grantRequestDecide(raw json.RawMessage) (any, error) {
 		if err != nil {
 			return nil, err
 		}
+		// The company's grant_ttl_max (#399): the user's --expires beyond it is refused, the
+		// lead's own life clamped.
+		ttl, fp, err := d.grantTTL(ttl, p.TTLS != 0, false)
+		if err != nil {
+			return nil, err
+		}
 		a, err := d.st.AgentByKey(r.Requester)
 		if err != nil || a.State == "done" {
 			return nil, fmt.Errorf("grant request g%d: its lead %s is gone", r.ID, shortName(r.Requester))
 		}
 		gp.Agent = r.Requester
-		g, err := d.recordGrant(gp, ttl)
+		g, err := d.recordGrant(gp, ttl, fp)
 		if err != nil {
 			return nil, err
 		}

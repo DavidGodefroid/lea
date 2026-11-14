@@ -19,6 +19,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/DavidGodefroid/lea/internal/bus"
+	"github.com/DavidGodefroid/lea/internal/managed"
 	"github.com/DavidGodefroid/lea/internal/providers"
 	"github.com/DavidGodefroid/lea/internal/store"
 	"github.com/DavidGodefroid/lea/internal/wire"
@@ -52,8 +53,10 @@ type Daemon struct {
 	attached map[string]string
 	// grantProxy names the proxy of an agent's pinned calls (SetGrantProxy); nil: grants.LeaProxy.
 	grantProxy func(container, agent string) string
-	notify     map[string]chan struct{}
-	verdicts   map[int64]chan string
+	// managedLoad reads the company's managed configuration (SetManaged, #399); nil: none.
+	managedLoad func() (*managed.Policy, error)
+	notify      map[string]chan struct{}
+	verdicts    map[int64]chan string
 	// asks: the asks in flight, by asker (one each); in memory, a restart ends them.
 	asks map[string]pendingAsk
 
