@@ -14,6 +14,15 @@ Features:
   lea's messages now say to use `brew install davidgodefroid/tap/lockfamily` / `brew upgrade` and
   `lox run`, not lockhttp's `scripts/install.sh`.
 
+Changes:
+
+- lea no longer copies on select (#419): a drag in an agent's terminal no longer enters tmux's
+  copy mode, copies the selection or flashes "Copied". Claude Code copies on select itself, through
+  the same clipboard bridge: a copy worked and looked one way or the other depending on whether
+  Claude held the mouse. In a pane
+  whose program does not take the mouse (a split shell, the scrolled-back history), `shift`+drag
+  lets your terminal select, as in any tmux. `ctrl+v` paste and wheel scrolling are unchanged.
+
 ## v0.15.1 (2026-11-09)
 
 Fixes:
