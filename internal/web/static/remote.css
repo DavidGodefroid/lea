@@ -1,0 +1,8 @@
+/* lea web #416: the sign-in page on the network, the terminal view, folders. */
+body.signin { display: grid; place-items: center; min-height: 100%; padding: 16px; }
+.signin-card { width: 100%; max-width: 420px; background: var(--strip); border: 1px solid var(--line); border-radius: 8px; padding: 20px; box-shadow: var(--shadow); }
+.signin-card h1 { font-size: 1.2rem; margin: 12px 0 8px; }
+.signin-card p { color: var(--ink-2); overflow-wrap: anywhere; }
+.signin-card form { display: grid; gap: 8px; }
+.signin-card input { font: inherit; padding: 8px; border: 1px solid var(--line); border-radius: 6px; background: var(--strip-2); color: var(--ink); width: 100%; }
+.signin-error { color: var(--blocked); margin: 0; }

@@ -25,6 +25,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/DavidGodefroid/lea/internal/client"
 	"github.com/DavidGodefroid/lea/internal/wire"
@@ -71,6 +72,10 @@ type Server struct {
 	// and localhost:port, set by Listen.
 	hosts map[string]bool
 	port  int
+	// scheme is http on the loopback, https on the network (ListenRemote), where remote signs
+	// browsers in with the persistent token instead of the one-time one.
+	scheme string
+	remote *remoteAuth
 	// retry is how long the event stream waits before it asks the daemon again after an error.
 	retry func(ctx context.Context)
 }
@@ -85,7 +90,7 @@ func New(call Caller, container string) (*Server, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &Server{call: call, container: container, token: tok, session: ses, hosts: map[string]bool{}, retry: sleepRetry}, nil
+	return &Server{call: call, container: container, token: tok, session: ses, hosts: map[string]bool{}, scheme: "http", retry: sleepRetry}, nil
 }
 
 func randomHex(n int) (string, error) {
@@ -122,7 +127,8 @@ func (s *Server) URL() string {
 
 // Serve serves l until ctx ends.
 func (s *Server) Serve(ctx context.Context, l net.Listener) error {
-	hs := &http.Server{Handler: s.Handler(), BaseContext: func(net.Listener) context.Context { return ctx }}
+	hs := &http.Server{Handler: s.Handler(), BaseContext: func(net.Listener) context.Context { return ctx },
+		ReadHeaderTimeout: 10 * time.Second}
 	go func() { <-ctx.Done(); hs.Close() }()
 	err := hs.Serve(l)
 	if errors.Is(err, http.ErrServerClosed) {
@@ -141,9 +147,16 @@ func (s *Server) Handler() http.Handler {
 			s.exchange(w, r)
 			return
 		}
+		if s.remote != nil && !s.signedIn(r) {
+			r2 := r.Clone(r.Context())
+			r2.URL.Path = "/login.html"
+			files.ServeHTTP(w, r2)
+			return
+		}
 		files.ServeHTTP(w, r)
 	})
 	mux.Handle("GET /static/", http.StripPrefix("/static/", files))
+	mux.HandleFunc("POST /api/login", s.login)
 	mux.HandleFunc("GET /api/events", s.api(s.events))
 	mux.HandleFunc("POST /api/{method}", s.api(s.method))
 	mux.HandleFunc("/api/", s.api(func(w http.ResponseWriter, r *http.Request) {
@@ -163,6 +176,9 @@ func (s *Server) guard(next http.Handler) http.Handler {
 		h.Set("Referrer-Policy", "no-referrer")
 		h.Set("Cross-Origin-Opener-Policy", "same-origin")
 		h.Set("Cross-Origin-Resource-Policy", "same-origin")
+		if s.remote != nil {
+			h.Set("Strict-Transport-Security", "max-age=31536000")
+		}
 		if !s.hosts[r.Host] {
 			writeError(w, http.StatusForbidden, "foreign Host")
 			return
@@ -179,8 +195,7 @@ func (s *Server) api(next http.HandlerFunc) http.HandlerFunc {
 			writeError(w, http.StatusForbidden, "foreign Origin")
 			return
 		}
-		c, err := r.Cookie(cookieName)
-		if err != nil || subtle.ConstantTimeCompare([]byte(c.Value), []byte(s.session)) != 1 {
+		if !s.signedIn(r) {
 			writeError(w, http.StatusUnauthorized, "open the URL lea web printed")
 			return
 		}
@@ -188,12 +203,25 @@ func (s *Server) api(next http.HandlerFunc) http.HandlerFunc {
 	}
 }
 
+// signedIn reports whether r carries a session cookie: the one the one-time token bought on the
+// loopback, one the persistent token bought on the network.
+func (s *Server) signedIn(r *http.Request) bool {
+	c, err := r.Cookie(cookieName)
+	if err != nil {
+		return false
+	}
+	if s.remote != nil {
+		return s.remote.valid(c.Value)
+	}
+	return subtle.ConstantTimeCompare([]byte(c.Value), []byte(s.session)) == 1
+}
+
 // sameOrigin: a browser sends Origin on every POST and on any cross-origin request, and
 // Sec-Fetch-Site on all of them: either one naming another site refuses the request. A POST
 // without Origin is refused too (no browser sends one; a script outside it has no cookie).
 func (s *Server) sameOrigin(r *http.Request) bool {
 	if o := r.Header.Get("Origin"); o != "" {
-		host, ok := strings.CutPrefix(o, "http://")
+		host, ok := strings.CutPrefix(o, s.scheme+"://")
 		if !ok || !s.hosts[host] || host != r.Host {
 			return false
 		}
@@ -210,6 +238,14 @@ func (s *Server) sameOrigin(r *http.Request) bool {
 // exchange trades the one-time token for the session cookie, once, and sends the browser to the
 // page without the token in its address.
 func (s *Server) exchange(w http.ResponseWriter, r *http.Request) {
+	if s.remote != nil {
+		// On the network the token never travels in an address: history and logs keep those.
+		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+		w.Header().Set("Cache-Control", "no-store")
+		w.WriteHeader(http.StatusBadRequest)
+		fmt.Fprintln(w, "lea web on the network takes no token in its address: open it without one and type the token into its sign-in page.")
+		return
+	}
 	tok := r.URL.Query().Get("token")
 	s.mu.Lock()
 	ok := !s.tokenUsed && subtle.ConstantTimeCompare([]byte(tok), []byte(s.token)) == 1
