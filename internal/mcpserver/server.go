@@ -46,18 +46,20 @@ type spawnIn struct {
 	Role    string `json:"role,omitempty" jsonschema:"dev (default) or reviewer"`
 	Profile string `json:"profile,omitempty" jsonschema:"the provider the agent runs on: claude, codex or another of providers_list (default: the user's default provider)"`
 	Model   string `json:"model,omitempty" jsonschema:"the model to ask the provider for (default: the provider's default)"`
+	Advisor string `json:"advisor,omitempty" jsonschema:"a stronger model the agent consults on demand (Claude Code's advisor tool, e.g. opus next to model sonnet); Claude providers only (default: none)"`
 	Repo    string `json:"repo,omitempty" jsonschema:"a directory directly under the projects directory: the agent starts there"`
 	Branch  string `json:"branch,omitempty" jsonschema:"the git branch the agent works on, in its own worktree"`
 	Brief   string `json:"brief" jsonschema:"what the new agent must do, at most 32 KiB; it is its first message"`
 	Label   string `json:"label,omitempty" jsonschema:"the name the user sees in the deck, at most 24 characters: <repo>#<issue> and 2-3 words when there is an issue (lea#350 spawn reuse), else 3-4 words of the task; never user, lea or Control Tower; default: named after the brief"`
 	For     string `json:"for,omitempty" jsonschema:"answers a spawn request: #<request id>, or the requester's name (its oldest pending request)"`
-	Queue   bool   `json:"queue,omitempty" jsonschema:"when the host is under pressure or max_running children already run (limits_get), queue the spawn and start it once lea lets it in (you get a message) instead of refusing it"`
+	Queue   bool   `json:"queue,omitempty" jsonschema:"when the host is under pressure, max_running children already run or the 5-hour usage is at or above budget_5h_pct (limits_get), queue the spawn and start it once lea lets it in (you get a message) instead of refusing it"`
 }
 
 type requestIn struct {
 	Role    string `json:"role,omitempty" jsonschema:"dev (default) or reviewer"`
 	Profile string `json:"profile,omitempty" jsonschema:"the provider the agent runs on: claude, codex or another of providers_list (default: the user's default provider)"`
 	Model   string `json:"model,omitempty" jsonschema:"the model to ask the provider for (default: the provider's default)"`
+	Advisor string `json:"advisor,omitempty" jsonschema:"a stronger model the agent consults on demand (Claude Code's advisor tool, e.g. opus next to model sonnet); Claude providers only (default: none)"`
 	Repo    string `json:"repo,omitempty" jsonschema:"a directory directly under the projects directory"`
 	Branch  string `json:"branch,omitempty" jsonschema:"the git branch the new agent works on"`
 	Brief   string `json:"brief" jsonschema:"what the new agent must do, at most 32 KiB"`
@@ -106,7 +108,7 @@ func LockGuidance(get func(string) string) string {
 func New(sock, agent, version, instructions string) *mcp.Server {
 	s := mcp.NewServer(&mcp.Implementation{Name: "lea", Version: version}, &mcp.ServerOptions{Instructions: instructions})
 	const short = 10 * time.Second
-	mcp.AddTool(s, &mcp.Tool{Name: "agents_list", Description: "List the agents of this lea: name, label (the name the user sees in the deck, your container only), role, profile, state, parent, branch, ctx_pct (percent of its context window used, when known; your container only); you=true is you. Never their screens."},
+	mcp.AddTool(s, &mcp.Tool{Name: "agents_list", Description: "List the agents of this lea: name, label (the name the user sees in the deck, your container only), role, profile, state, parent, branch, ctx_pct (percent of its context window used) and ctx_tokens (its context size in tokens), when known, your container only; cli_version (the version of its CLI, when known; your container only); relay=true marks your own child whose context passed the live relay_tokens (limits_get); you=true is you. Never their screens."},
 		func(ctx context.Context, _ *mcp.CallToolRequest, in empty) (*mcp.CallToolResult, any, error) {
 			return proxy(ctx, sock, agent, "agents_list", short, in), nil, nil
 		})
@@ -114,7 +116,7 @@ func New(sock, agent, version, instructions string) *mcp.Server {
 		func(ctx context.Context, _ *mcp.CallToolRequest, in empty) (*mcp.CallToolResult, any, error) {
 			return proxy(ctx, sock, agent, "providers_list", short, in), nil, nil
 		})
-	mcp.AddTool(s, &mcp.Tool{Name: "limits_get", Description: "Read lea's live limits, which the user changes while agents run (read-only: no agent sets them): each key's value, default, source and what it applies to; max_running caps the children of leads that run at once, host-wide (in_use: how many run). A spawn at the cap is refused, or queued with queue: true."},
+	mcp.AddTool(s, &mcp.Tool{Name: "limits_get", Description: "Read lea's live limits, which the user changes while agents run (read-only: no agent sets them): each key's value, default, source and what it applies to; max_running caps the children of leads that run at once, host-wide (in_use: how many run); budget_5h_pct holds new spawns while the account's 5-hour usage is at or above it (in_use: that usage). A spawn they hold is refused, or queued with queue: true. relay_tokens is the context size at which a control tower relays a child (0: above 50% of its window). usage is the account's 5-hour and 7-day usage, once an agent's status line reported it (subscription accounts)."},
 		func(ctx context.Context, _ *mcp.CallToolRequest, in empty) (*mcp.CallToolResult, any, error) {
 			return proxy(ctx, sock, agent, "limits_get", short, in), nil, nil
 		})

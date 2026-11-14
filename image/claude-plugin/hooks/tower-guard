@@ -7,18 +7,33 @@
 #            "/lea:clear-ct" gets the tower ready for a /clear (skill clear-ct, #410).
 #   tool:    when the guard is on, denies every tool outside the allowed list below.
 #   session: a SessionStart that clears or compacts a tower's session carries tower mode over to
-#            the new session id and tells the model to resume its board (#410).
+#            the new session id and tells the model to resume its board (#410); one that resumes
+#            it (lea starting the agent again, in a new container too) turns the guard back on
+#            before the first turn (#383).
 set -u
 in=$(cat)
 sid=$(printf '%s' "$in" | jq -r '.session_id // empty' 2>/dev/null) || exit 0
 case $sid in '' | *[!A-Za-z0-9_-]*) exit 0 ;; esac
-dir=${LEA_TOWER_DIR:-${TMPDIR:-/tmp}/lea-tower-$(id -u)}
+# The marks live in Claude Code's own directory, which lea keeps per projects dir across its
+# containers (#383): a tower that lea starts again in a new container is still one. /tmp only
+# when there is no home at all.
+if [ -n "${LEA_TOWER_DIR:-}" ]; then
+  dir=$LEA_TOWER_DIR
+elif [ -n "${CLAUDE_CONFIG_DIR:-}" ] || [ -n "${HOME:-}" ]; then
+  dir=${CLAUDE_CONFIG_DIR:-$HOME/.claude}/lea-tower
+else
+  dir=${TMPDIR:-/tmp}/lea-tower-$(id -u)
+fi
 mark=$dir/$sid
-# The agent's own files survive a session id change: <agent>.tower holds its tower session's id,
-# <agent>.handoff.md the snapshot /lea:clear-ct writes, renamed <agent>.resume.md for the next
-# session to read. No lea agent identity, no carry-over (a session id has no dot: no clash).
+# The agent's own files survive a session id change: <agent>.tower holds its tower session's id
+# and the agent's incarnation, <agent>.handoff.md the snapshot /lea:clear-ct writes, renamed
+# <agent>.resume.md for the next session to read. No lea agent identity, no carry-over (a session
+# id has no dot: no clash). LEA_AGENT_INCARNATION is new each time lea registers the agent and
+# kept across its resumes: an agent created again under the same name is not the old tower.
 agent=${LEA_AGENT:-}
 case $agent in *[!A-Za-z0-9_.-]* | .*) agent= ;; esac
+inc=${LEA_AGENT_INCARNATION:-}
+case $inc in *[!0-9a-f]*) inc= ;; esac
 if [ -n "$agent" ]; then
   tower=$dir/$agent.tower handoff=$dir/$agent.handoff.md resume=$dir/$agent.resume.md
 else
@@ -28,10 +43,18 @@ fi
 on() {
   (umask 077 && mkdir -p "$dir" && : >"$mark") || return
   if [ -n "$tower" ]; then
-    old=$(cat "$tower" 2>/dev/null) || old=
+    old=$(sed -n 1p "$tower" 2>/dev/null) || old=
     case $old in '' | "$sid" | *[!A-Za-z0-9_-]*) ;; *) rm -f "$dir/$old" ;; esac
-    (umask 077 && printf '%s\n' "$sid" >"$tower")
+    (umask 077 && printf '%s\n%s\n' "$sid" "$inc" >"$tower")
   fi
+}
+# ours: this agent's tower file belongs to its own incarnation. Another one's (the name reused
+# after the agent was removed) is dropped with its snapshots.
+ours() {
+  [ -n "$tower" ] && [ -f "$tower" ] || return 1
+  [ "$(sed -n 2p "$tower")" = "$inc" ] && return 0
+  rm -f "$tower" "$handoff" "$resume"
+  return 1
 }
 off() {
   rm -f "$mark"
@@ -80,12 +103,15 @@ prompt)
   context UserPromptSubmit "$lang"
   ;;
 session)
-  # Only a clear or a compaction of this agent's tower session: a new session (startup) or a
-  # resumed one starts as it is.
+  # A clear, a compaction or a resume of this agent's tower session: a new session (startup)
+  # starts as it is.
   src=$(printf '%s' "$in" | jq -r '.source // empty')
-  case $src in clear | compact) ;; *) exit 0 ;; esac
-  [ -n "$tower" ] && [ -f "$tower" ] || exit 0
+  case $src in clear | compact | resume) ;; *) exit 0 ;; esac
+  ours || exit 0
   on
+  if [ "$src" = resume ]; then
+    context SessionStart "control-tower: your session was resumed, and you are still the user's control tower: tower mode is on (only the team's tools). Call agents_list and board_read before you brief the user: the agents may have changed while you were stopped."
+  fi
   read=""
   if [ -f "$handoff" ]; then
     mv -f "$handoff" "$resume"

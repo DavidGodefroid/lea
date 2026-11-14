@@ -11,9 +11,77 @@ Features:
   `lockssh-clients` group (10040), and the profile directory `.lockssh` read-only, so no agent
   widens its allow list or auto rules. Its client is in lea's image and Codex agents get it as
   the `lockssh` MCP server. `lea lockssh`, `lea init --lockssh` and `lea doctor` cover it. The
-  set (`config/locks.lock`) moves to lox v0.11.0, the first with the lockssh type, and the
-  releases it runs: locksql v0.18.1, lockmq v0.9.0, lockfile v0.9.1, locklog v0.3.0, lockhttp
-  v0.9.1, with lockssh v0.3.0.
+  set (`config/locks.lock`) moves to lockkit v0.20.0 and lox v0.12.0, and the releases it runs:
+  locksql v0.20.0, lockmq v0.10.0, lockfile v0.10.0, locklog v0.4.0, lockhttp v0.11.0, with
+  lockssh v0.3.0.
+- lea logs packets that get past its proxy (#104). lea's agents have no route but their own
+  network, so they reach nothing but the proxy. If something gets around that (a container with
+  `NET_ADMIN` on an agent network, a misconfigured network), the packet it sends past the proxy,
+  for example a direct connection to `1.1.1.1` or `169.254.169.254`, is still dropped. Before, it
+  was dropped silently. Now it is logged in the kernel log, rate-limited, with the agent
+  network's address and the destination: `journalctl -k -g lea-egress`. On Linux hosts with a
+  rootful Docker, `nft` and systemd, `lea init` installs an nftables table of lea's own, `bridge
+  lea_egress`, and `lea-egress-log.service`, which loads it at boot. This takes `sudo` once, as the
+  AppArmor profile does; the first `lea` leaves it to `lea init` when `sudo` would prompt. Internal
+  networks now get a bridge named `lea` plus 12 hex digits so that one rule covers them all.
+  `lea doctor` checks the log and names any internal network it does not cover. It also warns,
+  with a count, when packets were logged in the last 24 hours.
+- lea applies the `[lea]` section of the company's managed configuration,
+  `/etc/lockfamily/managed.toml` (#399, first part). `approvals` and `autoupdate = true` enforce
+  `LEA_APPROVALS` and `LEA_AUTOUPDATE`; `egress_allow` bounds the agents' egress allowlist (your
+  `LEA_EGRESS_ALLOW` within it, `lea egress allow` refused outside it). `lea config import`
+  refuses a file beyond it, `lea doctor` prints `Managed by <organisation> (sha256:…)` and the
+  rules, the deck's header names the organisation. A managed file that is badly owned, invalid or
+  has a `[lea]` key lea does not know stops lea and its daemon from starting. No file: nothing
+  changes.
+- The managed `[lea]` section bounds the grants (#399, second part). `grant_ttl_max` refuses
+  `lea allow --for` and `lea approve --expires` beyond it, shortens a lead's grant request to it,
+  and ends a grant recorded before once it is that old. `standing_grants = false` refuses `lea
+  allow` without `--for` and suspends the allowances recorded until revoked. Each allowance and
+  each use records the managed file's sha256; a managed file that stops loading ends every grant.
+- `[lea.claude_enforced]` in the managed configuration sets Claude Code settings in every agent
+  (#399, third part): `defaultMode`, `model`, `language`, `outputStyle`, `alwaysThinkingEnabled`,
+  `disableBypassPermissionsMode = "disable"`. `lea config claude` refuses to change them and shows
+  them as company policy; any other key is refused.
+
+Changes:
+
+- Usage budget (#421): the deck's top border shows the account's 5-hour and 7-day usage
+  (`5h 42% (14:05) · 7d 18%`), as the agents' status lines report it (subscription accounts),
+  amber at or above the new live limit `budget_5h_pct` (`LEA_BUDGET_5H_PCT`, default `60`, `0`:
+  off); `lea limits` and `limits_get` show it too. Above the budget a lead's `agents_spawn` is
+  refused, or with `queue: true` waits and starts once the 5-hour window resets or you raise the
+  value (`lea limits set budget_5h_pct 80`, at once); each lead gets one note per crossing.
+  Running agents are never stopped or paused, and unknown usage never holds a spawn. **This holds
+  new spawns above 60 % of the 5-hour window by default**: `lea limits set budget_5h_pct 0` turns
+  it off.
+
+Security:
+
+- lea mounts `.locklog` read-only into its agents, as `.locksql` (#467). It holds locklog's
+  profiles, including the auto rules `lox run` applies; an agent could rewrite them through the
+  projects directory mount and widen what is decided without a human (`unmask` to auto, say),
+  which only a close reading of `lox run`'s next review caught. lea now makes `.locklog` when it
+  is missing and refuses a symbolic link or a file in its place, as for `.locksql`. The locklog
+  client still reads its profiles there.
+- A Lock's profile directory (`.locksql`, `.locklog`) is read-only for the agents whatever the
+  switch and `lox run` say (#467). Before, it was mounted read-only only while the Lock was on and
+  `lox run` ran its lock: with `LEA_LOCKSQL=0`, or before `lox add`, an agent could stage
+  profiles or auto rules that `lox run` would review later. An existing directory is now always
+  mounted read-only; lea makes none for a Lock it does not wire, and warns about a symbolic link
+  or a file in its place instead of refusing to start.
+
+## v0.16.0 (2026-11-14)
+
+Features:
+
+- A lead picks each child's model and advisor (#407). `agents_spawn` and `agents_request_spawn`
+  take an optional `advisor`: with `model: sonnet, advisor: opus` the child runs `claude --model
+  sonnet --advisor opus`, a Sonnet session that consults Opus on demand through Claude Code's
+  advisor tool, and keeps both when it resumes. A provider without an advisor (Codex, an
+  endpoint) refuses it: `provider codex has no advisor`. Without `advisor` the command line is
+  unchanged. `agents_list` shows a child's advisor. The control-tower skill now tells the lead to
+  pick each child's model and advisor by its task.
 - A lead can push its team's branches (#406). Before, a lead was always refused: `pushing to
   anything but the agent's own branch is never allowed`. Once a child stopped, its branch could
   be pushed only from the host. Now, under the existing `push` allowance, a lead may run `git push
@@ -41,6 +109,16 @@ Features:
   `SameSite=Strict` cookie); `--open` hands the browser a private local page that posts the
   token, so it is never in a command line (#436); foreign `Host` or `Origin` headers are
   refused, and only a fixed list of the daemon's methods, for this lea's agents, is reachable. Phone width, light and dark, keyboard shortcuts.
+- The agents' CLIs update themselves (#418): in each lea container, a check at its start and
+  then every 6 hours installs a newer Claude Code or Codex from registry.npmjs.org (already in the
+  default egress allowlist) in `/lea/cli`, beside the image's pinned version, checks its
+  `--version`, and makes it current with an atomic link swap. Agents started afterwards run it; a
+  running agent keeps its version, which is not removed while a process runs it, and a release
+  older than the image's pin is never installed. The check runs as `lea-cli` (uid 10090), which
+  the agents cannot become: they read `/lea/cli` but cannot write it, and a `/lea/cli` writable by
+  anyone else is ignored. `agents_list` shows each Claude agent's `cli_version`;
+  `lea-cli-update status` in a container shows both versions of each CLI. `LEA_CLI_AUTOUPDATE=0`
+  in `lea.conf` turns it off for agents started after `lea stop --all`.
 - lea web from another machine, agents' terminals, notifications and folders (#416). The README
   documents the SSH tunnel (`ssh -L`), which stays the way to reach it remotely; `lea web
   --listen ADDR:PORT` is the explicit opt-in to the network: it refuses to start without TLS
@@ -67,6 +145,9 @@ Features:
 
 Changes:
 
+- `LEA_ADMIT_CPU_PSI` defaults to 70 instead of 40 (#408): on a busy but healthy host cpu PSI
+  sits above 40 % routinely, so spawns were refused or queued far too often. Shedding
+  (`LEA_SHED_CPU_PSI`, 80) is unchanged.
 - Live limits (#420): `lea limits` shows the limits you can change while agents run, with their
   value, default and source; `lea limits set KEY VALUE` and `lea limits reset KEY` change one on
   the running lea, at once, without a restart, and keep it in your file (the next `lea` does not
@@ -90,6 +171,16 @@ Changes:
   again only after `budget_usd_step` (`LEA_BUDGET_USD_STEP`, default 20) percent more of it. An
   agent of unknown cost is never paused; `lea limits` and `lea doctor` name such agents. The
   deck's header shows the total against `budget_usd_total` while it is on (red once reached).
+
+- The control tower relays a child at 120k tokens of context (#422), no longer at 50 % of its
+  window (500k on a 1M window, so every turn of a child re-read up to that much). The size is the
+  live limit `relay_tokens` (`LEA_RELAY_TOKENS`, default `120000`, `0`: the old 50 % rule): `lea
+  limits set relay_tokens N` applies at the tower's next board check, with no restart of the
+  tower or its children. The status line now reports the context's size in tokens next to its
+  percent; the deck and `agents_list` show both (`182k · 18%`; the percent alone for Codex or an
+  older Claude Code), and `agents_list` marks a tower's children past `relay_tokens` with
+  `relay: true`. The tower also relays a child between two tasks and always spawns with
+  `queue: true`. The README has a new "Cost" section on what drives usage.
 
 - Approval prompts give the one-off and the durable route (#412): a lead's grant request, in the
   user's message, the `grants_request` note relayed by the lead, `lea requests` and the desktop
@@ -127,6 +218,14 @@ Changes:
 
 Fixes:
 
+- An agent now hears of a ticket that an auto rule of `lox run` decided (#440, lockhub#200). lea
+  told an agent of a hub decision only when the agent's Lock call had registered a wait, or when
+  the deck's queue showed the ticket pending. An auto rule decides in milliseconds, so an agent
+  that ran its Lock through the shell never got the decision: its `msg_wait` returned nothing.
+  With a hub that serves the decided ticket in `GET /v1/decided` (lockhub#200), lea now claims
+  the wait of the agent the ticket's requester names, as it does from the queue (#261), and tells
+  it `ticket … approved` or `denied`, once. LockHTTP's tickets are not claimed. An older hub
+  keeps the old behaviour.
 - A granted `git commit` runs at once (#393): the pinned commit no longer runs `rm -rf` in its
   `sh -c` script (Claude Code's safety check asked for approval, hook allow or not, and the commit
   timed out). It copies the index to `lea-commit/index` in the worktree's git directory, reused
@@ -137,6 +236,12 @@ Fixes:
   escaped slashes in the ref name of `git/refs`, `git/ref` and `git/matching-refs` only, and
   matches the call as its plain form: no call is allowed that the plain form was not. The merge
   grant still deletes only the PR's head, the agent's own branch.
+- A Control Tower resumed in a new container keeps its tower guard (#383). Its mark lived in the
+  container's `/tmp`, so after `lea` started the container again the tower had all its tools
+  until `/lea:control-tower` ran again. The mark now lives in Claude Code's own directory, which
+  lea keeps per projects dir, and is bound to the agent's incarnation (`LEA_AGENT_INCARNATION`,
+  new when an agent is created, kept across its resumes): a resumed tower has its guard on from
+  the first turn, and an agent created later under the same name does not inherit it.
 - A granted push or commit no longer stops on a repository that only holds `core.hooksPath`
   (overridden by lea's pins) or a `remote.origin.pushurl` to the grant's own repository (#413).
   The refusal used to say "the repository git config redirects or runs programs" whether a key

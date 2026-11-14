@@ -295,6 +295,8 @@ func (d *Daemon) dispatchDeck(ctx context.Context, o Origin, req wire.Request) (
 			snap.Spend = &agents.SpendView{TotalUSD: t, LimitUSD: total, Reached: t >= total}
 		}
 		d.mu.Unlock()
+		// The account's usage and the budget (#421): the deck's top border.
+		snap.Usage = d.usageView()
 		return snap, err
 	}
 	return nil, fmt.Errorf("unknown method %q", req.Method)

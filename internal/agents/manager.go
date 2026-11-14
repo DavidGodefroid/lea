@@ -23,6 +23,7 @@ import (
 	"time"
 
 	"github.com/DavidGodefroid/lea/internal/bus"
+	"github.com/DavidGodefroid/lea/internal/grants"
 	"github.com/DavidGodefroid/lea/internal/providers"
 	"github.com/DavidGodefroid/lea/internal/roles"
 	"github.com/DavidGodefroid/lea/internal/store"
@@ -136,6 +137,8 @@ type Config struct {
 	// how long the deck has before the agent's dialog takes over.
 	Approvals       string
 	ApprovalTimeout int
+	// BoundGrants keeps the grants within the company's managed bounds (#399); nil: all.
+	BoundGrants func([]grants.Grant) []grants.Grant
 	// Providers is the registry of the providers an agent may be started on, read at each spawn
 	// and restart (the user's providers file may change); nil: the built-in ones.
 	// DefaultProvider and DefaultModel (LEA_PROVIDER, LEA_MODEL) apply to an agent started
@@ -163,8 +166,10 @@ type Row struct {
 	Kind    string `json:"kind,omitempty"`
 	Label   string `json:"label,omitempty"`
 	Profile string `json:"profile"`
-	// Model is the model the agent was started with, "" for its CLI's default.
+	// Model is the model the agent was started with, "" for its CLI's default; Advisor the model
+	// its CLI consults as advisor, "" for none (#407).
 	Model   string `json:"model,omitempty"`
+	Advisor string `json:"advisor,omitempty"`
 	State   string `json:"state"`
 	Workdir string `json:"workdir"`
 	Updated int64  `json:"updated"`
@@ -181,10 +186,11 @@ type Row struct {
 	// Unread counts the messages waiting for the agent; ForUser the unread ones it sent the user.
 	Unread  int `json:"unread"`
 	ForUser int `json:"for_user"`
-	// CtxPct and CostUSD come from the agent's status line; -1 is unknown.
-	CtxPct   int       `json:"ctx_pct"`
-	CostUSD  float64   `json:"cost_usd"`
-	Approval *Approval `json:"approval,omitempty"`
+	// CtxPct, CtxTokens and CostUSD come from the agent's status line; -1 is unknown.
+	CtxPct    int       `json:"ctx_pct"`
+	CtxTokens int       `json:"ctx_tokens"`
+	CostUSD   float64   `json:"cost_usd"`
+	Approval  *Approval `json:"approval,omitempty"`
 	// Paused: the user froze the agent (the deck's p); State is what it was doing.
 	Paused bool `json:"paused,omitempty"`
 	// Subagents counts the subagents the agent still runs (its Subagent hooks): an idle agent
@@ -236,6 +242,9 @@ type Snapshot struct {
 	LocksAdded []string `json:"locks_added,omitempty"`
 	// Spend is the total spend against budget_usd_total (#424) while it is on, set by the daemon.
 	Spend *SpendView `json:"spend,omitempty"`
+	// Usage is the account's 5-hour and 7-day usage (#421), set by the daemon; nil while no
+	// agent's status line reported it (or an API account, which has none).
+	Usage *UsageView `json:"usage,omitempty"`
 }
 
 // SpendView is what the deck's header shows of the spend: all agents' since the period began,
@@ -244,6 +253,22 @@ type SpendView struct {
 	TotalUSD float64 `json:"total_usd"`
 	LimitUSD float64 `json:"limit_usd"`
 	Reached  bool    `json:"reached,omitempty"`
+}
+
+// UsageView is the account's usage as the deck shows it (#421): each window known, the
+// budget_5h_pct value (0: off) and whether the 5-hour usage is at or above it (new spawns wait).
+type UsageView struct {
+	FiveHour *UsageWindow `json:"five_hour,omitempty"`
+	SevenDay *UsageWindow `json:"seven_day,omitempty"`
+	Budget   int          `json:"budget"`
+	Over     bool         `json:"over,omitempty"`
+}
+
+// UsageWindow is one rate-limit window: its used share (0 to 100) and when it resets (unix
+// seconds, 0 when unknown).
+type UsageWindow struct {
+	Pct      int   `json:"pct"`
+	ResetsAt int64 `json:"resets_at,omitempty"`
 }
 
 // PressureView is what the deck shows of the pressure: a short gauge of the container and the
@@ -265,10 +290,11 @@ type LockView struct {
 
 type NewRequest struct {
 	Container, Workdir, Profile, Name string
-	// Model is the model to ask the provider for ("" for the default).
-	Model string
-	Args  []string
-	Focus bool
+	// Model is the model to ask the provider for ("" for the default). Advisor is the model a
+	// Claude Code agent consults on demand (--advisor, "" for none, #407): Codex has none.
+	Model, Advisor string
+	Args           []string
+	Focus          bool
 	// Role (roles.Default when empty), Parent (the spawning lead's key), Repo (a directory of the
 	// projects directory: the agent starts there) and Branch are recorded on the agent.
 	Role, Parent, Repo, Branch string
@@ -412,13 +438,13 @@ func (m *Manager) snapshot(container string, v int64) (Snapshot, error) {
 }
 
 func rowOf(a store.Agent) Row {
-	return Row{Key: a.Key, Name: a.Name, Label: a.Label, Profile: a.Profile, Model: a.Model, State: a.State, Workdir: a.Workdir, Updated: a.Updated,
-		Created: a.Created, Role: a.Role, Parent: a.Parent, Repo: a.Repo, Branch: a.Branch, CtxPct: -1, CostUSD: -1, Paused: a.Paused, Held: a.HoldSince > 0,
+	return Row{Key: a.Key, Name: a.Name, Label: a.Label, Profile: a.Profile, Model: a.Model, Advisor: a.Advisor, State: a.State, Workdir: a.Workdir, Updated: a.Updated,
+		Created: a.Created, Role: a.Role, Parent: a.Parent, Repo: a.Repo, Branch: a.Branch, CtxPct: -1, CtxTokens: -1, CostUSD: -1, Paused: a.Paused, Held: a.HoldSince > 0,
 		LimitUntil: a.LimitUntil, Woken: a.Woken}
 }
 
 func shellRow(container, name string) Row {
-	return Row{Key: ShellKey(container, name), Name: name, Kind: KindShell, State: "running", CtxPct: -1, CostUSD: -1}
+	return Row{Key: ShellKey(container, name), Name: name, Kind: KindShell, State: "running", CtxPct: -1, CtxTokens: -1, CostUSD: -1}
 }
 
 // ShellKey is the key of a shell's row: never an agent's key, whose container part has no ':'.
@@ -476,6 +502,11 @@ func (m *Manager) paneCmd(container string, a store.Agent, args []string, attach
 	}
 	if m.cfg.RequesterToken != nil && !attach {
 		cmd = append(cmd, "-e", "LEA_AGENT_TOKEN="+m.cfg.RequesterToken(container, a.Name, a.Incarnation))
+	}
+	// The incarnation (no secret: the token is keyed by the host's key): the tower guard keeps a
+	// tower's mark for its resumes, never for an agent created again under its name (#383).
+	if a.Incarnation != "" && !attach {
+		cmd = append(cmd, "-e", "LEA_AGENT_INCARNATION="+a.Incarnation)
 	}
 	if m.cfg.ChildDeny != nil && a.Parent != "" && !attach {
 		plugins, mcp := m.cfg.ChildDeny()
@@ -1774,6 +1805,9 @@ func (m *Manager) New(ctx context.Context, r NewRequest) (Row, error) {
 	if err != nil {
 		return Row{}, err
 	}
+	if err := prov.CheckAdvisor(r.Advisor); err != nil {
+		return Row{}, err
+	}
 	r.Profile, r.Model = prov.Name, model
 	if r.Role == "" {
 		r.Role = roles.Default
@@ -1898,7 +1932,7 @@ func (m *Manager) New(ctx context.Context, r NewRequest) (Row, error) {
 	if r.Parent != "" {
 		caps.MaxChildren = roles.MaxChildren
 	}
-	a, err := m.cfg.Store.Register(store.NewAgent{Container: r.Container, Name: r.Name, Profile: r.Profile, Model: r.Model, Workdir: r.Workdir,
+	a, err := m.cfg.Store.Register(store.NewAgent{Container: r.Container, Name: r.Name, Profile: r.Profile, Model: r.Model, Advisor: r.Advisor, Workdir: r.Workdir,
 		Role: r.Role, Parent: r.Parent, Repo: r.Repo, Branch: r.Branch, Live: slices.Contains(live, r.Name)}, caps, m.cfg.Now())
 	if err != nil {
 		return Row{}, err
@@ -2666,6 +2700,9 @@ func (m *Manager) covered(a store.Agent) []string {
 	gs, err := m.cfg.Store.ActiveGrants(a.Container, m.cfg.Now())
 	if err != nil {
 		return nil
+	}
+	if m.cfg.BoundGrants != nil {
+		gs = m.cfg.BoundGrants(gs)
 	}
 	lineage := []string{a.Key}
 	for p := a.Parent; p != "" && len(lineage) < 32 && !slices.Contains(lineage, p); {

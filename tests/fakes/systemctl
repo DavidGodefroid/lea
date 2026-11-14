@@ -1,0 +1,4 @@
+#!/bin/sh
+# Fake systemctl: records the call; is-active succeeds only with FAKE_SYSTEMCTL_ACTIVE=1.
+{ printf 'systemctl'; for a in "$@"; do printf ' [%s]' "$a"; done; printf '\n'; } >>"${FAKE_LOG:?}"
+case $1 in is-active) [ "${FAKE_SYSTEMCTL_ACTIVE:-0}" = 1 ] ;; *) exit 0 ;; esac

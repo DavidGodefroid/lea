@@ -19,6 +19,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/DavidGodefroid/lea/internal/bus"
+	"github.com/DavidGodefroid/lea/internal/managed"
 	"github.com/DavidGodefroid/lea/internal/providers"
 	"github.com/DavidGodefroid/lea/internal/store"
 	"github.com/DavidGodefroid/lea/internal/wire"
@@ -52,8 +53,10 @@ type Daemon struct {
 	attached map[string]string
 	// grantProxy names the proxy of an agent's pinned calls (SetGrantProxy); nil: grants.LeaProxy.
 	grantProxy func(container, agent string) string
-	notify     map[string]chan struct{}
-	verdicts   map[int64]chan string
+	// managedLoad reads the company's managed configuration (SetManaged, #399); nil: none.
+	managedLoad func() (*managed.Policy, error)
+	notify      map[string]chan struct{}
+	verdicts    map[int64]chan string
 	// asks: the asks in flight, by asker (one each); in memory, a restart ends them.
 	asks map[string]pendingAsk
 
@@ -78,6 +81,8 @@ type Daemon struct {
 	agents  Agents
 	// statusPaths: the last status-line key paths recorded per agent.
 	statusPaths map[string]string
+	// cliVersions: the version of its CLI each agent's status line last reported.
+	cliVersions map[string]string
 	// life is the daemon's lifetime: the context of the host API's Serve. Bus sockets bound
 	// through the API (container_attach) live as long as it, not as long as the request.
 	life context.Context
@@ -201,6 +206,10 @@ type Daemon struct {
 	budget *budgetState
 	// budgetWG counts the budget pauses and resumes that run.
 	budgetWG sync.WaitGroup
+	// Usage budget (usage.go, #421): the account's latest usage of each window ("5h", "7d")
+	// and whether the 5-hour one is at or above budget_5h_pct (its crossings note the leads).
+	account   map[string]acctWindow
+	usageOver bool
 }
 
 func New(st *store.Store, runDir string, now func() int64) *Daemon {
@@ -210,7 +219,7 @@ func New(st *store.Store, runDir string, now func() int64) *Daemon {
 	}
 	return &Daemon{subs: map[string]*subagents{}, subTTL: subagentTTL, afterFunc: time.AfterFunc, st: st, lim: bus.Default, now: now, runDir: runDir,
 		attached: map[string]string{}, notify: map[string]chan struct{}{},
-		verdicts: map[int64]chan string{}, asks: map[string]pendingAsk{}, blocks: map[string]int{}, stopped: map[string]bool{}, rewakes: map[string]int{}, rewoken: map[string][]int64{}, woken: map[string]bool{}, keyMu: map[string]*sync.Mutex{}, statusPaths: map[string]string{}, named: map[string]bool{}, rang: map[string]time.Time{}, notified: map[string]time.Time{},
+		verdicts: map[int64]chan string{}, asks: map[string]pendingAsk{}, blocks: map[string]int{}, stopped: map[string]bool{}, rewakes: map[string]int{}, rewoken: map[string][]int64{}, woken: map[string]bool{}, keyMu: map[string]*sync.Mutex{}, statusPaths: map[string]string{}, cliVersions: map[string]string{}, named: map[string]bool{}, rang: map[string]time.Time{}, notified: map[string]time.Time{},
 		resumeDelay: DefaultResumeDelay, questionRemind: DefaultQuestionRemind, holdMax: DefaultHoldMax, leaPrompts: map[string]int64{}, windows: map[string][]limitWindow{}, limitJobs: map[string]string{},
 		stackIdle: DefaultStackIdle, parkTimers: map[string]*time.Timer{}, parked: map[string]string{},
 		keepalive: DefaultKeepalive, keepTimers: map[string]*time.Timer{}, resumeFails: map[string]resumeFail{}, resuming: map[string]bool{},
@@ -518,6 +527,7 @@ type agentView struct {
 	Role    string `json:"role,omitempty"`
 	Profile string `json:"profile,omitempty"`
 	Model   string `json:"model,omitempty"`
+	Advisor string `json:"advisor,omitempty"`
 	Parent  string `json:"parent,omitempty"`
 	Repo    string `json:"repo,omitempty"`
 	Branch  string `json:"branch,omitempty"`
@@ -525,9 +535,18 @@ type agentView struct {
 	// CtxPct is the percent of its context window the agent's status line last reported; absent
 	// while unknown.
 	CtxPct *int `json:"ctx_pct,omitempty"`
+	// CtxTokens is its context size in tokens, from the same report; absent while unknown (an
+	// older Claude Code, Codex).
+	CtxTokens *int `json:"ctx_tokens,omitempty"`
+	// Relay marks a child of the caller whose context passed the live relay_tokens (#422): its
+	// tower relays it to a fresh agent.
+	Relay bool `json:"relay,omitempty"`
 	// Subagents counts the subagents the agent still runs (its Subagent hooks), for display.
-	Subagents int  `json:"subagents,omitempty"`
-	You       bool `json:"you,omitempty"`
+	Subagents int `json:"subagents,omitempty"`
+	// CLIVersion is the version of the CLI the agent runs, as its status line last reported it
+	// (Claude Code); absent while unknown.
+	CLIVersion string `json:"cli_version,omitempty"`
+	You        bool   `json:"you,omitempty"`
 }
 
 // agentsList lists the agents (spec §6.1: name, role, profile, state, branch; never screen
@@ -538,6 +557,7 @@ func (d *Daemon) agentsList(o Origin, me string) ([]agentView, error) {
 	if err != nil {
 		return nil, err
 	}
+	relayAt := d.relayTokens()
 	usages := map[string]map[string]store.Usage{}
 	subs := map[string]map[string]int{}
 	out := []agentView{}
@@ -554,6 +574,10 @@ func (d *Daemon) agentsList(o Origin, me string) ([]agentView, error) {
 			if p := u[a.Key].CtxPct; p >= 0 {
 				v.CtxPct = &p
 			}
+			if n := u[a.Key].CtxTokens; n >= 0 {
+				v.CtxTokens = &n
+			}
+			v.Relay = me != "" && a.Parent == me && relayDue(u[a.Key], relayAt)
 			n, ok := subs[a.Container]
 			if !ok {
 				if n, err = d.st.Subagents(a.Container); err != nil {
@@ -562,9 +586,12 @@ func (d *Daemon) agentsList(o Origin, me string) ([]agentView, error) {
 				subs[a.Container] = n
 			}
 			v.Subagents = n[a.Key]
+			d.mu.Lock()
+			v.CLIVersion = d.cliVersions[a.Key]
+			d.mu.Unlock()
 		}
 		if a.Profile != "" {
-			v.Role, v.Profile, v.Model, v.Repo, v.Branch = a.Role, a.Profile, a.Model, a.Repo, a.Branch
+			v.Role, v.Profile, v.Model, v.Advisor, v.Repo, v.Branch = a.Role, a.Profile, a.Model, a.Advisor, a.Repo, a.Branch
 			v.Label = agentLabel(a, o.Container)
 			if a.Parent != "" {
 				v.Parent = shortName(a.Parent)

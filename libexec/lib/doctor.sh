@@ -91,6 +91,7 @@ lea_doctor() {
     fi
   done
   if [ "$_dnets" -eq 0 ]; then lea__ok "internal networks: none (each lea creates its own at start)"; fi
+  lea__doctor_egress_log
 
   # The running lea containers' limits (#132): one started by an older lea, or before a limit
   # changed, gets them at the next lea in its projects directory. The Go launcher hands over the

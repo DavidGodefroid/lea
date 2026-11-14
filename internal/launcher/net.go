@@ -153,7 +153,7 @@ func (l *Launcher) ensureNetworks(id string) error {
 	why := l.isolatedUnavailable()
 	if why == "" {
 		msg, err := l.errOutput("docker", "network", "create", "--label", "lea.prefix="+l.prefix(), "--label", "lea.id="+id, "--internal",
-			"-o", "com.docker.network.bridge.gateway_mode_ipv4=isolated", inet)
+			"-o", "com.docker.network.bridge.gateway_mode_ipv4=isolated", "-o", "com.docker.network.bridge.name="+bridgeName(inet), inet)
 		if err == nil {
 			info, _ := l.output(false, "docker", "network", "inspect", "-f", networkFormat, inet)
 			_, _, nid, bridge := parseNetwork(info)
@@ -174,6 +174,15 @@ func (l *Launcher) ensureNetworks(id string) error {
 		return networkCreateError(inet, msg, err)
 	}
 	return nil
+}
+
+// bridgeName is the host interface of the internal network inet: lea plus 12 hex digits of its
+// name's digest, 15 characters (IFNAMSIZ). lea init's nftables table lea_egress logs what comes
+// from an interface named lea* and bypasses the proxy (#104), so every agent network matches
+// one rule that never changes, without root at each start.
+func bridgeName(inet string) string {
+	sum := sha256.Sum256([]byte(inet))
+	return "lea" + hex.EncodeToString(sum[:])[:12]
 }
 
 // dockerMessage is Docker's stderr without its "Error response from daemon: " prefix, or a
@@ -315,7 +324,7 @@ func (l *Launcher) proxyRules(confine []string) string {
 func (l *Launcher) ensureProxy(proj string) error {
 	image := l.Cfg.Get("LEA_PROXY_IMAGE")
 	confine, dropped := l.proxyConfinement(image)
-	name, allow, rules := l.prefix()+"-proxy", l.Cfg.Get("LEA_EGRESS_ALLOW"), l.proxyRules(confine)
+	name, allow, rules := l.prefix()+"-proxy", l.Cfg.EgressAllow(), l.proxyRules(confine)
 	fw, err := l.forwarder(proj)
 	if err != nil {
 		return err

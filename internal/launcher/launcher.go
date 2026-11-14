@@ -388,6 +388,10 @@ func (l *Launcher) dispatch(args []string) error {
 	for _, w := range l.Cfg.IgnoredEnv() {
 		l.logf("warning: %s", w)
 	}
+	// The user's values the company's managed file overrides (#399).
+	for _, w := range l.Cfg.ManagedWarnings() {
+		l.logf("warning: %s", w)
+	}
 	switch a0 {
 	case "-h", "--help", "help":
 		_, err := l.Stdout.Write([]byte(Usage))
@@ -541,6 +545,8 @@ func (l *Launcher) doctor() error {
 	err := l.sh("doctor")
 	// Docker's free address pools: none left and lea cannot create its network (#397).
 	l.doctorAddressPools()
+	// The company's managed configuration (#399).
+	l.managedDoctor()
 	proj, perr := l.projectsDir()
 	if perr != nil {
 		return err

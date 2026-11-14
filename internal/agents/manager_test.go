@@ -120,13 +120,18 @@ func TestNewSpawnsClaudeUnderAbducoAndShowsIt(t *testing.T) {
 	s := e.ensure(t, "/home/u/p/it's here")
 	r := e.spawn(t, "", "--resume")
 	want := Row{Key: C + "/claude-1", Name: "claude-1", Profile: "claude", State: "unknown", Workdir: "/home/u/p/it's here", Updated: 1000,
-		Created: 1000, Role: "dev", CtxPct: -1, CostUSD: -1}
+		Created: 1000, Role: "dev", CtxPct: -1, CtxTokens: -1, CostUSD: -1}
 	if !reflect.DeepEqual(r, want) {
 		t.Fatalf("row=%+v", r)
 	}
 	p := s.byAgent("claude-1")
+	a, err := e.st.AgentByKey(C + "/claude-1")
+	if err != nil || len(a.Incarnation) != 32 {
+		t.Fatalf("%+v %v", a, err)
+	}
 	cmd := []string{"docker", "exec", "-it", "-u", "1000:1000", "-e", "TERM=xterm-256color", "-e", "COLORTERM=truecolor",
-		"-e", "FORCE_HYPERLINK=1", "-e", "LEA_AGENT=claude-1", "-e", "LEA_APPROVALS=deck", "-w", "/home/u/p/it's here", C,
+		"-e", "FORCE_HYPERLINK=1", "-e", "LEA_AGENT=claude-1", "-e", "LEA_APPROVALS=deck",
+		"-e", "LEA_AGENT_INCARNATION=" + a.Incarnation, "-w", "/home/u/p/it's here", C,
 		"abduco", "-c", "ag-claude-1", "lea-agent", "run", "claude-1", "--", "--resume"}
 	if p == nil || !reflect.DeepEqual(p.cmd, cmd) {
 		t.Fatalf("pane=%+v", p)
@@ -1328,7 +1333,8 @@ func TestRequesterTokenReachesTheAgent(t *testing.T) {
 			t.Fatalf("%s: %+v %v", n, a, err)
 		}
 		toks[n] = RequesterToken(key, C, n, a.Incarnation)
-		if cmd := strings.Join(term.get(C).byAgent(n).cmd, " "); !strings.Contains(cmd, "-e LEA_AGENT_TOKEN="+toks[n]+" ") {
+		if cmd := strings.Join(term.get(C).byAgent(n).cmd, " "); !strings.Contains(cmd, "-e LEA_AGENT_TOKEN="+toks[n]+" ") ||
+			!strings.Contains(cmd, "-e LEA_AGENT_INCARNATION="+a.Incarnation+" ") {
 			t.Fatalf("%s: cmd=%s", n, cmd)
 		}
 	}
@@ -1908,6 +1914,55 @@ func TestRemoveEndedRefusesAnAgentThatRunsAgain(t *testing.T) {
 	}
 	if err := e.m.RemoveEnded(bg, ShellKey(C, "sh-1")); err == nil {
 		t.Fatal("RemoveEnded took a shell's key")
+	}
+}
+
+// A Claude agent started with a model and an advisor runs claude --model <model> --advisor
+// <advisor>, and resumes with both (#407); without an advisor its command line is unchanged. A
+// provider without an advisor (Codex) refuses one, before anything is registered.
+func TestAgentWithAdvisorRunsClaudeWithIt(t *testing.T) {
+	e := newEnv(t)
+	e.ensure(t, "/p")
+	r, err := e.m.New(bg, NewRequest{Container: C, Name: "dev-1", Model: "sonnet", Advisor: "opus", Brief: "do it", Hidden: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r.Model != "sonnet" || r.Advisor != "opus" {
+		t.Fatalf("row=%+v", r)
+	}
+	if _, err := e.m.New(bg, NewRequest{Container: C, Name: "dev-2", Model: "sonnet", Brief: "do it", Hidden: true}); err != nil {
+		t.Fatal(err)
+	}
+	s := e.term.get(C)
+	got := agentArgs(t, s, "dev-1")
+	if len(got) != 5 || !reflect.DeepEqual(got[:4], []string{"--model", "sonnet", "--advisor", "opus"}) || !strings.Contains(got[4], "Your brief is waiting") {
+		t.Fatalf("dev-1 runs %q", got)
+	}
+	got = agentArgs(t, s, "dev-2")
+	if len(got) != 3 || !reflect.DeepEqual(got[:2], []string{"--model", "sonnet"}) || slices.Contains(got, "--advisor") {
+		t.Fatalf("dev-2 runs %q", got)
+	}
+	e.st.SetState(C+"/dev-1", "idle", sid1, 1001)
+	if err := e.m.MarkStopped(bg, C, false); err != nil {
+		t.Fatal(err)
+	}
+	re := e.restarted(t)
+	if err := re.m.ResumeStopped(bg, C); err != nil {
+		t.Fatal(err)
+	}
+	if got := agentArgs(t, re.term.get(C), "dev-1"); !reflect.DeepEqual(got, []string{"--resume", sid1, "--model", "sonnet", "--advisor", "opus"}) {
+		t.Fatalf("dev-1 resumed with %q", got)
+	}
+	for _, nr := range []NewRequest{
+		{Container: C, Name: "cx", Profile: "codex", Advisor: "opus", Brief: "do it", Hidden: true},
+		{Container: C, Name: "dev-3", Advisor: "--yolo", Brief: "do it", Hidden: true},
+	} {
+		if _, err := re.m.New(bg, nr); err == nil {
+			t.Fatalf("%+v accepted", nr)
+		}
+		if _, err := re.st.AgentByKey(C + "/" + nr.Name); err == nil {
+			t.Fatalf("%s registered", nr.Name)
+		}
 	}
 }
 

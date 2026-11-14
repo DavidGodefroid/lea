@@ -60,6 +60,11 @@ func TestRegistryWiring(t *testing.T) {
 	if l, _ := Get("locksql"); l.ProfileDir != ".locksql" {
 		t.Errorf("locksql profile dir %q", l.ProfileDir)
 	}
+	// locklog's profiles hold the auto rules lox run applies: the agents read them, never write
+	// them (lea#467).
+	if l, _ := Get("locklog"); l.ProfileDir != ".locklog" {
+		t.Errorf("locklog profile dir %q", l.ProfileDir)
+	}
 	// lockssh's profiles hold its allowed commands and the auto rules lox run applies: the agents
 	// read them, never write them (lea#325).
 	if l, _ := Get("lockssh"); l.ProfileDir != ".lockssh" || l.UID != "10041" {
@@ -83,7 +88,7 @@ func setText(t *testing.T) string {
 func TestParseSetRefuses(t *testing.T) {
 	good := setText(t)
 	for name, edit := range map[string][2]string{
-		"identity of another tag": {"refs/tags/v0.18.1\n", "refs/tags/v0.18.0\n"},
+		"identity of another tag": {"locksql/.github/workflows/release.yml@refs/tags/v0.20.0\n", "locksql/.github/workflows/release.yml@refs/tags/v0.19.0\n"},
 		"image of another Lock":   {"LOCKS_LOCKMQ_IMAGE=ghcr.io/davidgodefroid/lockmq@", "LOCKS_LOCKMQ_IMAGE=ghcr.io/davidgodefroid/locksql@"},
 		"image by tag":            {"LOCKS_LOCKFILE_IMAGE=ghcr.io/davidgodefroid/lockfile@sha256:", "LOCKS_LOCKFILE_IMAGE=ghcr.io/davidgodefroid/lockfile:0.8.0#"},
 		"no archive":              {"LOCKS_LOCKMQ_SHA256_ARM64=", "LOCKS_LOCKMQ_SHA256_ARM6="},

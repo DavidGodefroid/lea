@@ -320,7 +320,8 @@ func (l *Launcher) hostPermissionsFile(src, priv, sbase string) ([]string, error
 	if err != nil {
 		return nil, die("%v", err)
 	}
-	if err := WriteFile(sbase, p, claudeHanded(hostPermissions(src), c)); err != nil {
+	// The company's claude_enforced (#399) on top of the user's.
+	if err := WriteFile(sbase, p, claudeHanded(hostPermissions(src), l.Cfg.withManagedClaude(c))); err != nil {
 		return nil, die("%v", err)
 	}
 	// Readable by the container's root under every runtime and engine (a user namespace, a VM).

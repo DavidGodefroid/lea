@@ -273,6 +273,18 @@ func (l *Launcher) configImport(o importOpts) error {
 	if err != nil {
 		return err
 	}
+	// The company's managed file (#399): an import beyond it is refused as a whole.
+	var refused []string
+	for _, c := range keys {
+		if c.set {
+			if err := l.Cfg.managedRefusesKey(c.key, c.new); err != nil {
+				refused = append(refused, c.key+"="+c.new+": "+err.Error())
+			}
+		}
+	}
+	if len(refused) > 0 {
+		return die("import refused, nothing written: %s", strings.Join(refused, "; "))
+	}
 	// Every file the import may write, changed or not: a symbolic link there is refused even when
 	// this run has nothing to change, so that the next one does not find it.
 	userPath := l.Cfg.UserConfigFile(l.Cwd)

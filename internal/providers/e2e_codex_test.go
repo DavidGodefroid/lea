@@ -168,7 +168,7 @@ func codexE2E(t *testing.T, plant bool) {
 	}
 	// The test reaches the forwarder on its own address, not lea-proxy:4400: the user's -c
 	// comes after lea's and wins.
-	argv, err := p.Argv("dev-1", wd, "qwen3-coder", "", []string{"-c", `model_providers.lea-llm.base_url="` + kp.URL + `/llm"`}, "say hi")
+	argv, err := p.Argv("dev-1", wd, "qwen3-coder", "", "", []string{"-c", `model_providers.lea-llm.base_url="` + kp.URL + `/llm"`}, "say hi")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -373,7 +373,7 @@ func TestCodexLockCallOutlivesTheDefaultToolTimeout(t *testing.T) {
 	// fake one; the timeout stays lea's.
 	user := []string{"-c", `model_providers.lea-llm.base_url="` + kp.URL + `/llm"`,
 		"-c", `mcp_servers.locksql.command="python3"`, "-c", `mcp_servers.locksql.args=["-I","` + fake + `","` + strconv.Itoa(wait) + `"]`}
-	argv, err := p.Argv("dev-1", wd, "qwen3-coder", "", user, "query the database")
+	argv, err := p.Argv("dev-1", wd, "qwen3-coder", "", "", user, "query the database")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -492,7 +492,7 @@ func TestCodexPassesTheAgentIdentityToALockServer(t *testing.T) {
 	// test is about) and the server at the fake client; its env_vars stays lea's.
 	user := []string{"-c", `model_providers.lea-llm.base_url="` + up.URL + `/v1"`,
 		"-c", `mcp_servers.locksql-orders.command="python3"`, "-c", `mcp_servers.locksql-orders.args=["-I","` + fake + `","` + seen + `"]`}
-	argv, err := p.Argv("dev-1", wd, "qwen3-coder", "", user, "say hi")
+	argv, err := p.Argv("dev-1", wd, "qwen3-coder", "", "", user, "say hi")
 	if err != nil {
 		t.Fatal(err)
 	}

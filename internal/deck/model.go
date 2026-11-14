@@ -26,26 +26,27 @@ const maxLabel = 24
 // Agent is one row: an agent, or a shell (Kind KindShell). Label is the user's display name for
 // an agent ("" when none): the row shows it instead of Name.
 type Agent struct {
-	Key      string    `json:"key"`
-	Name     string    `json:"name"`
-	Kind     string    `json:"kind,omitempty"`
-	Label    string    `json:"label,omitempty"`
-	Profile  string    `json:"profile"`
-	Model    string    `json:"model,omitempty"`
-	State    string    `json:"state"`
-	Workdir  string    `json:"workdir"`
-	Updated  int64     `json:"updated"`
-	Created  int64     `json:"created,omitempty"`
-	Role     string    `json:"role"`
-	Parent   string    `json:"parent"`
-	Repo     string    `json:"repo"`
-	Branch   string    `json:"branch"`
-	Status   string    `json:"status"`
-	Unread   int       `json:"unread"`
-	ForUser  int       `json:"for_user"`
-	CtxPct   int       `json:"ctx_pct"`
-	CostUSD  float64   `json:"cost_usd"`
-	Approval *Approval `json:"approval,omitempty"`
+	Key       string    `json:"key"`
+	Name      string    `json:"name"`
+	Kind      string    `json:"kind,omitempty"`
+	Label     string    `json:"label,omitempty"`
+	Profile   string    `json:"profile"`
+	Model     string    `json:"model,omitempty"`
+	State     string    `json:"state"`
+	Workdir   string    `json:"workdir"`
+	Updated   int64     `json:"updated"`
+	Created   int64     `json:"created,omitempty"`
+	Role      string    `json:"role"`
+	Parent    string    `json:"parent"`
+	Repo      string    `json:"repo"`
+	Branch    string    `json:"branch"`
+	Status    string    `json:"status"`
+	Unread    int       `json:"unread"`
+	ForUser   int       `json:"for_user"`
+	CtxPct    int       `json:"ctx_pct"`
+	CtxTokens int       `json:"ctx_tokens"`
+	CostUSD   float64   `json:"cost_usd"`
+	Approval  *Approval `json:"approval,omitempty"`
 	// Paused: the user froze the agent (p); it continues where it stopped on resume.
 	Paused bool `json:"paused,omitempty"`
 	// Subagents counts the subagents the agent still runs (agents.Row.Subagents).
@@ -127,6 +128,24 @@ type Snapshot struct {
 	// LocksAdded are the locks lox run runs that this container does not mount
 	// (agents.Snapshot.LocksAdded): the deck says to restart lea to use them.
 	LocksAdded []string `json:"locks_added,omitempty"`
+	// Usage is the account's 5-hour and 7-day usage (agents.Snapshot.Usage, #421), nil while
+	// unknown: the top border shows it, amber at or above budget_5h_pct.
+	Usage *Usage `json:"usage,omitempty"`
+}
+
+// Usage is the account's usage (agents.UsageView): each window known, the budget_5h_pct value
+// (0: off) and whether new spawns wait for the 5-hour usage to fall.
+type Usage struct {
+	FiveHour *UsageWindow `json:"five_hour,omitempty"`
+	SevenDay *UsageWindow `json:"seven_day,omitempty"`
+	Budget   int          `json:"budget"`
+	Over     bool         `json:"over,omitempty"`
+}
+
+// UsageWindow is one window's used share (0 to 100) and when it resets (unix seconds, 0 unknown).
+type UsageWindow struct {
+	Pct      int   `json:"pct"`
+	ResetsAt int64 `json:"resets_at,omitempty"`
 }
 
 // Spend is the total spend against budget_usd_total (agents.SpendView).
@@ -268,8 +287,10 @@ type Model struct {
 	notice        func() string // the update notice (WithNotice)
 	noticeText    string        // its latest text, shown while there is no status
 	sound         string        // the daemon's sound switch (Snapshot.Sound)
+	org           string        // the organisation of the company's managed configuration (#399), "" none
 	locks         []LockState   // each Lock's approvals state (Snapshot.Locks)
 	pressure      *Pressure     // the container's pressure gauge (Snapshot.Pressure)
+	usage         *Usage        // the account's usage and budget (Snapshot.Usage, #421)
 	hubDown       bool          // lea follows the hub but cannot reach it (Snapshot.HubState)
 	loxRunOff     bool          // the workspace has locks and no lox run serves them (Snapshot.LoxRun)
 	spend         *Spend        // the total spend against budget_usd_total (Snapshot.Spend)
@@ -337,6 +358,13 @@ const (
 	introFrames = 5 * introStep
 	waveStep    = 3
 )
+
+// WithOrganisation shows org, the organisation whose managed configuration lea runs under (#399),
+// in the header.
+func (m Model) WithOrganisation(org string) Model {
+	m.org = org
+	return m
+}
 
 // WithIntro plays the logo's start animation (the deck run by lea; tests see the logo still).
 func (m Model) WithIntro() Model {
@@ -572,6 +600,7 @@ func (m *Model) ask(key string) {
 func (m *Model) apply(s Snapshot) bool {
 	before, was := m.shown, m.selected
 	m.version, m.shown, m.sound, m.locks, m.pressure, m.hubDown = s.Version, s.Shown, s.Sound, s.Locks, s.Pressure, s.HubState == "down"
+	m.usage = s.Usage
 	m.locksAdded, m.loxRunOff, m.spend = s.LocksAdded, s.LoxRun == "off", s.Spend
 	for _, a := range s.Agents {
 		if a.Key == s.Shown && a.State == "done" {

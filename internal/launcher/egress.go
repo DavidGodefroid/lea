@@ -180,6 +180,9 @@ func (l *Launcher) egressChange(allow bool, domains []string) error {
 			return die("%v", err)
 		}
 		if allow {
+			if err := l.Cfg.managedEgressRefuses(d); err != nil {
+				return die("%v", err)
+			}
 			n, added, err := egressWith(next, d)
 			if err != nil {
 				return die("%v", err)
@@ -229,7 +232,7 @@ func (l *Launcher) egressLive(v string) error {
 		l.logf("%s is not running: the next lea starts it with this list", name)
 		return nil
 	}
-	if err := l.egressApplyLive(name, v); err != nil {
+	if err := l.egressApplyLive(name, l.Cfg.egressEffective(v)); err != nil {
 		return die("%v; the list is saved: lea stop --all, then lea, starts the proxy with it", err)
 	}
 	l.logf("applied live to %s: no proxy or agent restart", name)
@@ -260,8 +263,13 @@ func (l *Launcher) egressLiveValue(name string) (string, bool) {
 
 // egressList is lea egress list: each domain the agents may reach and why.
 func (l *Launcher) egressList() error {
-	v := l.Cfg.Get("LEA_EGRESS_ALLOW")
+	v := l.Cfg.EgressAllow()
 	w := l.Stdout
+	src := "LEA_EGRESS_ALLOW"
+	if m := l.Cfg.Managed(); m != nil && m.EgressAllow != nil {
+		src = "LEA_EGRESS_ALLOW within lea.egress_allow"
+		fmt.Fprintf(w, "%s: the agents reach %s = %s at most\n", m.Describe(), "lea.egress_allow", strings.Join(m.EgressAllow, ","))
+	}
 	if l.Cfg.LockHTTP() {
 		fmt.Fprintln(w, "LEA_LOCKHTTP=1: the LockHTTP gate decides the agents' web destinations (LEA_EGRESS_ALLOW is not used)")
 		return nil
@@ -276,7 +284,7 @@ func (l *Launcher) egressList() error {
 				}
 				continue
 			}
-			fmt.Fprintf(w, "%-28s LEA_EGRESS_ALLOW\n", n)
+			fmt.Fprintf(w, "%-28s %s\n", n, src)
 		}
 		for _, d := range egressAlways {
 			fmt.Fprintf(w, "%-28s always (the model APIs)\n", d)
@@ -378,7 +386,7 @@ func (l *Launcher) EgressRefused(since string) ([]EgressHost, error) {
 		return nil, die("could not read the logs of %s", name)
 	}
 	rs := parseEgressRefusals(log)
-	v := l.Cfg.Get("LEA_EGRESS_ALLOW")
+	v := l.Cfg.EgressAllow()
 	who := map[string]string{}
 	if len(rs) > 0 {
 		who = l.containersByIP()

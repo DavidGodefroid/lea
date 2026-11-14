@@ -32,6 +32,13 @@ type allowView struct {
 	LastUse map[string]int64 `json:"last_use"`
 	Pins    map[string]string
 	Now     int64
+	// Managed are the company's managed bounds on grants (#399), empty without a managed file.
+	Managed struct {
+		Describe   string
+		MaxTTLS    int64 `json:"max_ttl_s"`
+		NoStanding bool  `json:"no_standing"`
+		Error      string
+	}
 }
 
 // runAllow is the core form of lea allow (lea allow --container NAME --projects DIR [ARGS]),
@@ -404,6 +411,12 @@ func allowShow(container string, log bool, stdout, stderr io.Writer) int {
 		writeUses(stdout, v.Uses)
 		return 0
 	}
+	switch {
+	case v.Managed.Error != "":
+		fmt.Fprintf(stdout, "no allowance applies: %s\n", oneLine(v.Managed.Error, 400))
+	case v.Managed.Describe != "":
+		fmt.Fprintf(stdout, "%s: its bounds apply to these allowances\n", oneLine(v.Managed.Describe, 200))
+	}
 	if len(v.Sets) == 0 {
 		fmt.Fprintf(stdout, "no allowance: agents of %s ask as usual (lea allow deliver lets them push, open and merge their own PRs; not issues, release-tag or release)\n", oneLine(container, 64))
 		return 0
@@ -432,7 +445,18 @@ func allowShow(container string, log bool, stdout, stderr io.Writer) int {
 			where = []string{"every agent"}
 		}
 		until := "revoked"
-		if !s.UntilRevoked() {
+		end := s.Expires
+		if m := v.Managed.MaxTTLS; m > 0 && end-s.Created > m {
+			end = s.Created + m
+		}
+		switch {
+		case s.UntilRevoked() && v.Managed.NoStanding:
+			until = "suspended by company policy (lea.standing_grants = false)"
+		case end <= v.Now:
+			until = "ended by company policy (lea.grant_ttl_max)"
+		case end != s.Expires:
+			until = stamp(end) + " (" + left(end-v.Now) + " left, lea.grant_ttl_max)"
+		case !s.UntilRevoked():
 			until = stamp(s.Expires) + " (" + left(s.Expires-v.Now) + " left)"
 		}
 		fmt.Fprintf(tw, "#%d\t%s\t%s\t%s\t%s\n", s.ID, grants.Short(s.ActiveCapabilities(v.Now)), strings.Join(where, ", "), until,

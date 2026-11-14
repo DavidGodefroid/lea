@@ -1,7 +1,8 @@
 # shellcheck shell=sh
 # lea init: launcher link, projects dir, lea's git SSH key (only with LEA_GIT_SSH), Claude
 # configuration copy, images, locksql's profile wizard (with LEA_LOCKSQL=1), lockmq, lockfile,
-# locklog and lockssh wiring (asked; their consoles run under lox, libexec/lib/lockhost.sh), AppArmor profile. lea init
+# locklog and lockssh wiring (asked; their consoles run under lox, libexec/lib/lockhost.sh),
+# AppArmor profile, egress log (libexec/lib/egresslog.sh). lea init
 # installs and builds no Lock: lox does.
 
 lea_init_apparmor() {
@@ -385,6 +386,7 @@ lea_init() {
   if lea__init_wants lockssh; then lea__init_lockhost lockssh; fi
   lea__init_deck
   lea_init_apparmor
+  lea_init_egress_log
   if [ -z "${LEA_FIRST_RUN:-}" ]; then lea_log "ready. Run: lea"; fi
   umask "$_in_um"
 }

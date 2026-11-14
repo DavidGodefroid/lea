@@ -32,6 +32,10 @@ var Defs = []Def{
 		Help:      "the most children of leads that run at once, host-wide (0: no cap); your own sessions and the leads do not count",
 		AppliesTo: "new spawns: a spawn at the cap waits (queue: true) or is refused; running agents are never stopped",
 		Check:     count("max_running", 0, 100)},
+	{Name: "relay_tokens", Env: "LEA_RELAY_TOKENS", Default: "120000",
+		Help:      "the context size, in tokens, at which a control tower relays a child to a fresh agent (0: above 50% of its context window)",
+		AppliesTo: "the tower's next board check (agents_list relay: true); running agents are never stopped",
+		Check:     count("relay_tokens", 0, 10000000)},
 	{Name: "budget_usd_agent", Env: "LEA_BUDGET_USD_AGENT", Default: "0",
 		Help:      "the most one agent may spend, in USD, as its status line reports it (0: off); an agent of unknown cost is never paused",
 		AppliesTo: "running agents: one over it is paused (kept, not stopped) until you raise it or resume it",
@@ -44,6 +48,10 @@ var Defs = []Def{
 		Help:      "how much more an agent you resume over a budget may spend before lea pauses it again, in percent of that budget",
 		AppliesTo: "agents you resume over a budget",
 		Check:     count("budget_usd_step", 1, 100)},
+	{Name: "budget_5h_pct", Env: "LEA_BUDGET_5H_PCT", Default: "60",
+		Help:      "the account's 5-hour usage (%) above which new children of leads are held (0: off); subscription only, unknown usage never holds",
+		AppliesTo: "new spawns: above it a spawn waits (queue: true) or is refused, and starts once usage falls or the value rises; running agents are never stopped",
+		Check:     count("budget_5h_pct", 0, 100)},
 }
 
 // Lookup is the live key named name (max_running) or its configuration key (LEA_MAX_RUNNING).

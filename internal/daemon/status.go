@@ -21,6 +21,9 @@ const (
 	maxPathEvents = 20
 )
 
+// cliVersion is a release version of an agent's CLI ("2.1.323").
+var cliVersion = regexp.MustCompile(`^[0-9]{1,6}\.[0-9]{1,6}\.[0-9]{1,6}$`)
+
 // statusReport stores an agent's context % and cost from its status line, and records the key
 // paths of Claude's status-line JSON whenever they change, so the field names can be checked.
 // Only agents report: the user has no status line. The answer names the locks lox run runs that
@@ -30,15 +33,20 @@ func (d *Daemon) statusReport(ctx context.Context, o Origin, me string, raw json
 		return nil, errors.New("status_report: agents only")
 	}
 	var p struct {
-		CtxPct  int      `json:"ctx_pct"`
-		CostUSD float64  `json:"cost_usd"`
-		Paths   []string `json:"paths"`
-		Limits  []struct {
+		CtxPct int `json:"ctx_pct"`
+		// CtxTokens is the context size in tokens (#422); a status line that does not send it
+		// (an older lea) leaves it unknown.
+		CtxTokens int      `json:"ctx_tokens"`
+		CostUSD   float64  `json:"cost_usd"`
+		Paths     []string `json:"paths"`
+		Version   string   `json:"version"`
+		Limits    []struct {
 			Window   string `json:"window"`
 			Pct      int    `json:"pct"`
 			ResetsAt int64  `json:"resets_at"`
 		} `json:"limits"`
 	}
+	p.CtxTokens = -1
 	if err := json.Unmarshal(raw, &p); err != nil {
 		return nil, err
 	}
@@ -46,6 +54,7 @@ func (d *Daemon) statusReport(ctx context.Context, o Origin, me string, raw json
 		return nil, errors.New("at most 2 limits")
 	}
 	var ws []limitWindow
+	acct := map[string]acctWindow{}
 	for _, l := range p.Limits {
 		if l.Window != "5h" && l.Window != "7d" {
 			return nil, errors.New(`limit window must be "5h" or "7d"`)
@@ -57,9 +66,13 @@ func (d *Daemon) statusReport(ctx context.Context, o Origin, me string, raw json
 			return nil, errors.New("limit resets_at must be unix seconds")
 		}
 		ws = append(ws, limitWindow{pct: l.Pct, resetsAt: l.ResetsAt})
+		acct[l.Window] = acctWindow{pct: l.Pct, resetsAt: l.ResetsAt}
 	}
 	if p.CtxPct < -1 || p.CtxPct > 100 {
 		return nil, errors.New("ctx_pct must be -1 (unknown) or 0 to 100")
+	}
+	if p.CtxTokens < -1 || p.CtxTokens >= 1e8 {
+		return nil, errors.New("ctx_tokens must be -1 (unknown) or 0 to 1e8")
 	}
 	if p.CostUSD != -1 && (p.CostUSD < 0 || p.CostUSD >= 1e6) {
 		return nil, errors.New("cost_usd must be -1 (unknown) or 0 to 1e6")
@@ -72,9 +85,26 @@ func (d *Daemon) statusReport(ctx context.Context, o Origin, me string, raw json
 			return nil, fmt.Errorf("invalid path %q", s)
 		}
 	}
+	if p.Version != "" && !cliVersion.MatchString(p.Version) {
+		return nil, errors.New("version must be a release version (X.Y.Z)")
+	}
 	d.recordLimits(me, ws)
+	// The account's usage (#421): every agent reports the same account; the newest report wins.
+	if d.recordAccount(acct) {
+		d.changed()
+		d.usageEval(d.lifetime(ctx))
+	}
+	if p.Version != "" {
+		d.mu.Lock()
+		was := d.cliVersions[me]
+		d.cliVersions[me] = p.Version
+		d.mu.Unlock()
+		if was != p.Version {
+			d.changed()
+		}
+	}
 	cost := math.Round(p.CostUSD*100) / 100
-	changed, err := d.st.SetUsage(me, store.Usage{CtxPct: p.CtxPct, CostUSD: cost})
+	changed, err := d.st.SetUsage(me, store.Usage{CtxPct: p.CtxPct, CtxTokens: p.CtxTokens, CostUSD: cost})
 	if err != nil {
 		return nil, err
 	}

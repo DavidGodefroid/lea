@@ -6,6 +6,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/charmbracelet/lipgloss"
 )
@@ -266,6 +267,10 @@ func (m Model) top(w int) string {
 	if m.sound == "off" {
 		count = "muted " + c.dot + " " + count
 	}
+	// The company's managed configuration (#399), while there is room for it.
+	if m.org != "" && w-8-tw-lipgloss.Width(count)-lipgloss.Width(m.org+" "+c.dot+" ") >= 1 {
+		count = m.org + " " + c.dot + " " + count
+	}
 	// The requests waiting for lox run, or a console that is down.
 	if l := m.lockLine(); l != "" {
 		count = l + " " + c.dot + " " + count
@@ -285,13 +290,66 @@ func (m Model) top(w int) string {
 			count, countText = t, st.Render(t)
 		}
 	}
-	// c.tl+c.h+" " (3) + title + " " + fill + " " + count + " "+c.h+c.tr (3)
-	fill := w - 8 - tw - lipgloss.Width(count)
-	if fill < 1 {
-		return m.frameStyle().Render(c.tl+c.h+" ") + title + m.frameStyle().Render(" "+strings.Repeat(c.h, max(0, w-5-tw))+c.tr)
+	// The account's usage (#421) leads, the longest form that fits: with the 5-hour reset time
+	// and the count, then without the reset time, then the same without the count, then the
+	// 5-hour usage alone. Amber at or above budget_5h_pct: new spawns wait.
+	type form struct{ usage, count string }
+	forms := []form{{"", count}}
+	if u5 := m.usageText(true, true); u5 != "" {
+		short := m.usageText(false, true)
+		forms = []form{{u5, count}, {short, count}, {u5, ""}, {short, ""}, {m.usageText(false, false), ""}, {"", count}}
 	}
-	return m.frameStyle().Render(c.tl+c.h+" ") + title + m.frameStyle().Render(" "+strings.Repeat(c.h, fill)+" ") +
-		countText + m.frameStyle().Render(" "+c.h+c.tr)
+	for _, f := range forms {
+		text := f.count
+		if f.usage != "" && f.count != "" {
+			text = f.usage + " " + c.dot + " " + f.count
+		} else if f.usage != "" {
+			text = f.usage
+		}
+		// c.tl+c.h+" " (3) + title + " " + fill + " " + text + " "+c.h+c.tr (3)
+		fill := w - 8 - tw - lipgloss.Width(text)
+		if fill < 1 || text == "" {
+			continue
+		}
+		right := countText
+		if f.usage != "" {
+			right = m.usageStyle().Render(f.usage)
+			if f.count != "" {
+				right += muted.Render(" "+c.dot+" ") + countText
+			}
+		}
+		return m.frameStyle().Render(c.tl+c.h+" ") + title + m.frameStyle().Render(" "+strings.Repeat(c.h, fill)+" ") +
+			right + m.frameStyle().Render(" "+c.h+c.tr)
+	}
+	return m.frameStyle().Render(c.tl+c.h+" ") + title + m.frameStyle().Render(" "+strings.Repeat(c.h, max(0, w-5-tw))+c.tr)
+}
+
+// usageStyle is the usage's style in the top border: amber at or above budget_5h_pct (new
+// spawns wait), muted below.
+func (m Model) usageStyle() lipgloss.Style {
+	if m.usage != nil && m.usage.Over {
+		return lipgloss.NewStyle().Foreground(theme.Working)
+	}
+	return muted
+}
+
+// usageText is the account's usage for the top border (#421): "5h 42% (14:05) · 7d 18%", the
+// reset time only with reset, the 7-day window only with week; "" while the 5-hour usage is
+// unknown.
+func (m Model) usageText(reset, week bool) string {
+	if m.usage == nil || m.usage.FiveHour == nil {
+		return ""
+	}
+	c := m.cs()
+	u := m.usage.FiveHour
+	s := fmt.Sprintf("5h %d%%", min(100, max(0, u.Pct)))
+	if reset && u.ResetsAt > 0 {
+		s += " (" + time.Unix(u.ResetsAt, 0).Format("15:04") + ")"
+	}
+	if w := m.usage.SevenDay; week && w != nil {
+		s += fmt.Sprintf(" %s 7d %d%%", c.dot, min(100, max(0, w.Pct)))
+	}
+	return s
 }
 
 // spendText is an amount for the header: "$12.40", "$50", "$1.2k" from a thousand.
@@ -634,7 +692,8 @@ func (m Model) row(a Agent, inner int, fi int) []string {
 	if sel {
 		mark = c.mark
 	}
-	const profW, ctxW = 6, 4
+	const profW = 6
+	ctxW := m.ctxWidth()
 	in := lipgloss.Width(pad)                      // where the detail starts
 	nameW := inner - in - (1 + profW) - (1 + ctxW) // mark, gap, glyph, space
 	g, gc := stateMark(shownState(a), a.Updated, m.now().Unix(), m.frame, m.ascii)
@@ -657,7 +716,7 @@ func (m Model) row(a Agent, inner int, fi int) []string {
 		bg(plain).Render(" ") +
 		bg(muted).Render(padLeft(fit(a.Profile, profW, c), profW)) +
 		bg(plain).Render(" ") +
-		bg(muted).Render(padLeft(ctxText(a.CtxPct), ctxW))
+		bg(muted).Render(padLeft(ctxText(a.CtxPct, a.CtxTokens), ctxW))
 	detail := fit(m.detail(a, inner-in), inner-in, c)
 	dst := muted
 	if a.Paused && a.Budget != "" {
@@ -778,12 +837,36 @@ func (m Model) shortStatus(a Agent) string {
 // with one would pass for a label of lea's, so the agent's text loses them at its start.
 const leaGlyphs = " \t◆●◐○⚠✉❓⏸↳⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"
 
-// ctxText is a context percentage ("42%"), empty when unknown.
-func ctxText(p int) string {
-	if p < 0 || p > 100 {
-		return ""
+// ctxText is an agent's context: its size and percentage ("182k · 18%", #422), the percentage
+// alone ("42%") while its size is unknown, empty when both are.
+func ctxText(p, tokens int) string {
+	pct := ""
+	if p >= 0 && p <= 100 {
+		pct = fmt.Sprintf("%d%%", p)
 	}
-	return fmt.Sprintf("%d%%", p)
+	if tokens <= 0 {
+		return pct
+	}
+	n := fmt.Sprint(tokens)
+	switch {
+	case tokens >= 999_500:
+		n = strings.TrimSuffix(fmt.Sprintf("%.1f", float64(tokens)/1e6), ".0") + "M"
+	case tokens >= 1000:
+		n = fmt.Sprintf("%dk", (tokens+500)/1000)
+	}
+	if pct == "" {
+		return n
+	}
+	return n + " · " + pct
+}
+
+// ctxWidth is the context column's width: the widest of the agents' (at least "100%").
+func (m Model) ctxWidth() int {
+	w := 4
+	for _, a := range m.agents {
+		w = max(w, lipgloss.Width(ctxText(a.CtxPct, a.CtxTokens)))
+	}
+	return w
 }
 
 // shortPath is the last two components of a directory: enough to tell projects apart.
