@@ -19,9 +19,10 @@ Features:
   rename, pause, hold, role and stop, a form to start an agent or a Control Tower, the tower's
   chat with its questions, and the permissions agents wait on, with Allow, Deny and Always. While
   a browser shows it, permission prompts wait for it as for the deck in tmux. The printed link
-  signs one browser in once (a 32-byte token traded for an `HttpOnly`, `SameSite=Strict`
-  cookie); foreign `Host` or `Origin` headers are refused, and only a fixed list of the daemon's
-  methods, for this lea's agents, is reachable. Phone width, light and dark, keyboard shortcuts.
+  signs one browser in once, within 2 minutes (a 32-byte token traded for an `HttpOnly`,
+  `SameSite=Strict` cookie); `--open` hands the browser a private local page that posts the
+  token, so it is never in a command line (#436); foreign `Host` or `Origin` headers are
+  refused, and only a fixed list of the daemon's methods, for this lea's agents, is reachable. Phone width, light and dark, keyboard shortcuts.
 - lea web from another machine, agents' terminals, notifications and folders (#416). The README
   documents the SSH tunnel (`ssh -L`), which stays the way to reach it remotely; `lea web
   --listen ADDR:PORT` is the explicit opt-in to the network: it refuses to start without TLS
@@ -47,6 +48,19 @@ Changes:
   `queue: true` waits and starts once a child ends; `lea board` and `agents_list` show why it
   waits (`queued: max_running 3/3`). A change never stops a running agent. **This caps a busy
   tower at 3 children by default**: `lea limits set max_running 0` turns the cap off.
+- Spend budgets (#424), a kill switch for API billing: two live limits in USD, off by default.
+  `budget_usd_agent` (`LEA_BUDGET_USD_AGENT`) is the most one agent may spend, from the cost its
+  status line reports; `budget_usd_total` (`LEA_BUDGET_USD_TOTAL`) is the most all agents may spend
+  together since `lea limits reset budget_usd_total`, which starts a new period (a session whose
+  cost counter starts again keeps what it spent before). Over a budget lea pauses the agent, or
+  every agent, as it does under pressure: the session and its work are kept, nothing is stopped.
+  The deck's row and `lea board` say why (`budget reached: $12.40 ≥ budget_usd_agent $10`), the
+  alert sound plays and the agent's lead gets one note. While the total is reached, `agents_spawn`
+  is refused, or queued with `queue: true`. Raising a budget, or resetting the total, resumes what
+  lea paused and starts the queued spawns. An agent you resume by hand over a budget is paused
+  again only after `budget_usd_step` (`LEA_BUDGET_USD_STEP`, default 20) percent more of it. An
+  agent of unknown cost is never paused; `lea limits` and `lea doctor` name such agents. The
+  deck's header shows the total against `budget_usd_total` while it is on (red once reached).
 
 - The control tower relays a child at 120k tokens of context (#422), no longer at 50 % of its
   window (500k on a 1M window, so every turn of a child re-read up to that much). The size is the
@@ -58,12 +72,34 @@ Changes:
   `relay: true`. The tower also relays a child between two tasks and always spawns with
   `queue: true`. The README has a new "Cost" section on what drives usage.
 
+- Approval prompts give the one-off and the durable route (#412): a lead's grant request, in the
+  user's message, the `grants_request` note relayed by the lead, `lea requests` and the desktop
+  notification, names `lea approve gN` (with `lea requests` to read it), the `lea allow …` command
+  that covers every agent of the lea at once until `lea allow off N`, and what that command leaves
+  out, in at most three lines. Requests waiting together are grouped into one command
+  (`lea allow pr issues release --repo lea --tag 'v0.15.*'`), the action-to-capability mapping read
+  from lea's capability table only. `deliver` prompts say it does not cover issues, release-tag or
+  release. A permission notification names `lea approve pN always` when the dialog offers it; egress
+  refusals say there is no one-off approval and that `lea egress deny HOST` undoes `lea egress allow`.
+  The control-tower skill relays both routes instead of only `lea approve`.
 - lea no longer copies on select (#419): a drag in an agent's terminal no longer enters tmux's
   copy mode, copies the selection or flashes "Copied". Claude Code copies on select itself, through
   the same clipboard bridge: a copy worked and looked one way or the other depending on whether
   Claude held the mouse. In a pane
   whose program does not take the mouse (a split shell, the scrolled-back history), `shift`+drag
   lets your terminal select, as in any tmux. `ctrl+v` paste and wheel scrolling are unchanged.
+- A lead can no longer bypass the board with Claude Code's built-in `Agent` tool (#409): lea's
+  hook denies it to leads, naming `agents_spawn`, since that sub-agent is invisible to lea (no
+  board, no deck, no context tracking, no child limits). After a compaction lea reminds a lead,
+  in its context, that it is one and starts work only with `agents_spawn`. Devs and reviewers
+  keep the tool.
+
+- `/lea:clear-ct` clears a control tower's context and resumes its board (#410): the tower saves
+  a short private snapshot (ledger, open questions, approvals given), you type `/clear`, and the
+  new session is still a tower, with no window where it may act itself; it reads the snapshot,
+  rebuilds its ledger from `agents_list` and `board_read` and briefs you, its children untouched.
+  A plain `/clear` or a compaction in a tower used to drop tower mode in silence: it now comes
+  back the same way. Outside a tower, `/lea:clear-ct` refuses in one line.
 
 Fixes:
 

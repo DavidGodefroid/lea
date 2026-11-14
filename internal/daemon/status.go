@@ -80,10 +80,16 @@ func (d *Daemon) statusReport(ctx context.Context, o Origin, me string, raw json
 		}
 	}
 	d.recordLimits(me, ws)
-	changed, err := d.st.SetUsage(me, store.Usage{CtxPct: p.CtxPct, CtxTokens: p.CtxTokens, CostUSD: math.Round(p.CostUSD*100) / 100})
+	cost := math.Round(p.CostUSD*100) / 100
+	changed, err := d.st.SetUsage(me, store.Usage{CtxPct: p.CtxPct, CtxTokens: p.CtxTokens, CostUSD: cost})
 	if err != nil {
 		return nil, err
 	}
+	// The spend budgets (#424): the period's spend, then a pause if one is crossed.
+	d.mu.Lock()
+	d.observeCostLocked(me, cost)
+	d.mu.Unlock()
+	d.budgetCheck()
 	if changed {
 		d.changed()
 	}
