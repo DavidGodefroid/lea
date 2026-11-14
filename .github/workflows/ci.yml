@@ -427,6 +427,7 @@ jobs:
           grep -q -- '^--- PASS: TestClaudeWithoutTheDeckAnApprovalIsAnsweredWithLeaApprove ' claude-e2e.log
           grep -q -- '^--- PASS: TestClaudeNestedSessionDoesNotEndTheAgent ' claude-e2e.log
           grep -q -- '^--- PASS: TestClaudeTowerFirstPromptTurnsTheGuardOn ' claude-e2e.log
+          grep -q -- '^--- PASS: TestClaudeTowerClearCtResumesTheBoard ' claude-e2e.log
           grep -q -- '^--- PASS: TestClaudeGrantedCommitRunsWithoutAsking ' claude-e2e.log
           grep -q -- '^--- PASS: TestClaudeLeadBuiltinAgentToolIsDenied ' claude-e2e.log
           n=$(grep -c -- '^--- PASS: TestClaude' claude-e2e.log)

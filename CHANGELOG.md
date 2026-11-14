@@ -84,6 +84,13 @@ Changes:
   in its context, that it is one and starts work only with `agents_spawn`. Devs and reviewers
   keep the tool.
 
+- `/lea:clear-ct` clears a control tower's context and resumes its board (#410): the tower saves
+  a short private snapshot (ledger, open questions, approvals given), you type `/clear`, and the
+  new session is still a tower, with no window where it may act itself; it reads the snapshot,
+  rebuilds its ledger from `agents_list` and `board_read` and briefs you, its children untouched.
+  A plain `/clear` or a compaction in a tower used to drop tower mode in silence: it now comes
+  back the same way. Outside a tower, `/lea:clear-ct` refuses in one line.
+
 Fixes:
 
 - A granted `git commit` runs at once (#393): the pinned commit no longer runs `rm -rf` in its
