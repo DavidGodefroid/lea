@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"regexp"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -182,7 +183,7 @@ func (l *Launcher) lockHTTPProxyArgs() ([]string, string, error) {
 	a := []string{"-e", "LEA_LOCKHTTP=1", "-e", "LEA_KEYPROXY_TOKEN=" + lockhttp.KeyproxyToken(key),
 		"--mount", "type=bind,src=" + gate + ",dst=/etc/lockhttp-gate,readonly"}
 	if l.Cfg.LockHTTPMITM() {
-		ca, err := l.lockHTTPCA()
+		ca, err := l.lockHTTPCA(image)
 		if err != nil {
 			return nil, "", err
 		}
@@ -353,21 +354,42 @@ func (l *Launcher) lockHTTPAgentEnv(container, pip string) (proxy string, nested
 		lockhttp.Token(key, container, lockhttp.NestedAgent), nil
 }
 
-// lockHTTPCA is the MITM CA's directory, made on first use through lockhttp's launcher (lockhttp
-// ca init: P-256, 90 days, files owned by the user). lea never rotates it by itself: lea doctor
-// warns a week before it ends (lockhttp ca init --force --dir <it> rotates it; then lea stop
-// --all, and lea).
-func (l *Launcher) lockHTTPCA() (string, error) {
+// lockHTTPCA is the MITM CA's directory, made on first use by lockhttp ca init (P-256, 90 days,
+// files owned by the user) in image, the gate's image lockHTTPImage verified. lea never executes
+// the launcher itself: others than root may write it, and only the image it pins is checked. It
+// runs the image as the launcher's ca command does (confined, the user's uid, the directory
+// mounted at its own path). lea never rotates the CA by itself: lea doctor warns a week before it
+// ends (lockhttp ca init --force --dir <it> rotates it; then lea stop --all, and lea).
+func (l *Launcher) lockHTTPCA(image string) (string, error) {
 	dir := lockhttp.CADir(l.Cfg.DataDir())
 	if err := noComma(dir); err != nil {
 		return "", err
 	}
 	if !isRegular(dir+"/ca.pem") || !isRegular(dir+"/ca-key.pem") {
-		if err := Mkdirs(l.Cfg.DataDir(), lockhttp.Dir(l.Cfg.DataDir())); err != nil {
+		if err := Mkdirs(l.Cfg.DataDir(), lockhttp.Dir(l.Cfg.DataDir()), dir); err != nil {
 			return "", die("%v", err)
 		}
-		if err := l.run(l.lockHTTPLauncher(), "ca", "init", "--dir", dir); err != nil {
-			return "", die("LEA_LOCKHTTP_MITM=1: lockhttp ca init --dir %s failed", dir)
+		if err := os.Chmod(dir, 0o700); err != nil {
+			return "", die("%v", err)
+		}
+		// The CA is named after this machine, not the throwaway container.
+		name, _ := os.Hostname()
+		if name == "" {
+			name = "lea"
+		}
+		a := []string{"run", "--rm", "--network", "none"}
+		// Rootless Podman maps the container's uids to subuids: only --userns keep-id makes the
+		// files the user's on the host.
+		if out, _ := l.output(false, "docker", "system", "info", "--format", "{{.Host.Security.Rootless}}"); strings.TrimSpace(out) == "true" {
+			a = append(a, "--userns", "keep-id")
+		}
+		a = append(a, "--user", strconv.Itoa(os.Getuid())+":"+strconv.Itoa(os.Getgid()),
+			"--cap-drop", "ALL", "--security-opt", "no-new-privileges", "--read-only",
+			"--tmpfs", "/tmp:rw,nosuid,nodev,noexec,size=64m", "--pids-limit", "256", "--memory", "1g",
+			"--mount", "type=bind,src="+dir+",dst="+dir,
+			image, "ca", "init", "--dir", dir, "--name", name)
+		if err := l.run("docker", a...); err != nil {
+			return "", die("LEA_LOCKHTTP_MITM=1: lockhttp ca init --dir %s failed (image %s)", dir, image)
 		}
 	}
 	if !isRegular(dir+"/ca.pem") || !isRegular(dir+"/ca-key.pem") {

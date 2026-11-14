@@ -652,7 +652,7 @@ projects directory run.
 
 `LEA_LOCKHTTP_MITM=1` (with `LEA_LOCKHTTP=1`) lets the gate decrypt HTTPS, but for the policy's
 splice hosts, so that it decides on methods, paths and bodies. lea makes a local CA on first use
-through the launcher (`lockhttp ca init`, 90 days, in `~/.local/share/lea/lockhttp/ca/`; `lea
+with `lockhttp ca init` in the gate's verified image (90 days, in `~/.local/share/lea/lockhttp/ca/`; `lea
 doctor` warns a week before it ends: `lockhttp ca init --force --dir <it>`, then `lea stop --all`
 and `lea`). Its key goes to one container only, `lea-lockhttp-signer` (the image's `signer`
 account, no network), through the volume `lea-lockhttp-ca` (key owned by `signer`, 0600); the
