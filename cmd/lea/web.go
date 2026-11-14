@@ -21,13 +21,33 @@ import (
 const webUsage = "usage: lea web --container NAME [--port N] [--open] " +
 	"[--listen ADDR:PORT (--tls-self-signed | --tls-cert FILE --tls-key FILE) [--new-token]]"
 
-// openURL opens a URL in the user's browser; a test seam.
-var openURL = func(url string) error {
+// openerCommand opens target, a local file or a URL without a token, in the user's browser. Its
+// command line is readable by every local user (ps, /proc), so it never carries the token (#436).
+func openerCommand(target string) *exec.Cmd {
 	cmd := "xdg-open"
 	if runtime.GOOS == "darwin" {
 		cmd = "open"
 	}
-	return exec.Command(cmd, url).Start()
+	return exec.Command(cmd, target)
+}
+
+// openFile starts the opener; a test seam.
+var openFile = func(target string) error { return openerCommand(target).Start() }
+
+// openBrowser signs the user's browser in without the token in any command line: it writes the
+// server's bootstrap page, which POSTs the token, to a private file (0600, in a 0700 directory of
+// XDG_RUNTIME_DIR or the temporary directory) and opens that file. cleanup removes it.
+func openBrowser(s *web.Server, getenv func(string) string) (cleanup func(), err error) {
+	dir, err := os.MkdirTemp(getenv("XDG_RUNTIME_DIR"), "lea-web-")
+	if err != nil {
+		return func() {}, err
+	}
+	cleanup = func() { os.RemoveAll(dir) }
+	path := filepath.Join(dir, "open.html")
+	if err := os.WriteFile(path, s.BootstrapPage(), 0o600); err != nil {
+		return cleanup, err
+	}
+	return cleanup, openFile(path)
 }
 
 // runWeb is lea web (#414): the deck in the browser, for one lea, on the host's loopback. The
@@ -128,12 +148,21 @@ func runWeb(args []string, stdout, stderr io.Writer) int {
 		}
 		url = s.URL()
 		fmt.Fprintf(stdout, "lea web for %s: %s\n", container, url)
-		fmt.Fprintln(stdout, "The link signs one browser in, once; ctrl+c stops lea web.")
+		fmt.Fprintf(stdout, "The link signs one browser in, once, within %d minutes; ctrl+c stops lea web.\n", int(web.TokenTTL.Minutes()))
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	if open {
-		if err := openURL(url); err != nil {
+		// On the network the URL carries no token; on the loopback the bootstrap file does.
+		cleanup := func() {}
+		var err error
+		if ro.Addr != "" {
+			err = openFile(url)
+		} else {
+			cleanup, err = openBrowser(s, os.Getenv)
+		}
+		defer cleanup()
+		if err != nil {
 			fmt.Fprintln(stderr, "lea web: could not open a browser:", clean(err.Error(), false))
 		}
 	}

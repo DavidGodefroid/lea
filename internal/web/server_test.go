@@ -304,6 +304,69 @@ func TestTheTokenIsExchangedOnceForAStrictHttpOnlyCookie(t *testing.T) {
 	}
 }
 
+func TestAnUnusedTokenExpires(t *testing.T) {
+	ts := newTestServer(t)
+	at := time.Now().Add(TokenTTL + time.Second)
+	ts.s.now = func() time.Time { return at }
+	resp, err := noRedirect().Get(ts.s.URL())
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusUnauthorized || len(resp.Cookies()) != 0 {
+		t.Fatalf("an expired token: %d %v", resp.StatusCode, resp.Cookies())
+	}
+	if TokenTTL > 5*time.Minute {
+		t.Fatalf("the token lives %v", TokenTTL)
+	}
+}
+
+// postLogin POSTs the form of the bootstrap page, as a browser does from a local file.
+func (ts *testServer) postLogin(t *testing.T, tok string) *http.Response {
+	t.Helper()
+	req, _ := http.NewRequest("POST", ts.url+"/login", strings.NewReader("token="+tok))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("Origin", "null")
+	req.Header.Set("Sec-Fetch-Site", "cross-site")
+	resp, err := noRedirect().Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	return resp
+}
+
+func TestTheBootstrapPagePostsTheTokenOnce(t *testing.T) {
+	ts := newTestServer(t)
+	tok := ts.s.token
+	page := string(ts.s.BootstrapPage())
+	if !strings.Contains(page, `action="`+ts.url+`/login"`) || !strings.Contains(page, `value="`+tok+`"`) || !strings.Contains(page, `method="post"`) {
+		t.Fatalf("bootstrap page %s", page)
+	}
+	if resp := ts.postLogin(t, strings.Repeat("a", 64)); resp.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("a wrong token: %d", resp.StatusCode)
+	}
+	resp := ts.postLogin(t, tok)
+	if resp.StatusCode != http.StatusSeeOther || resp.Header.Get("Location") != "/" {
+		t.Fatalf("login: %d %q", resp.StatusCode, resp.Header.Get("Location"))
+	}
+	var c *http.Cookie
+	for _, k := range resp.Cookies() {
+		if k.Name == cookieName {
+			c = k
+		}
+	}
+	if c == nil || c.Value != ts.s.session {
+		t.Fatalf("cookies %v", resp.Cookies())
+	}
+	if resp := ts.postLogin(t, tok); resp.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("the token worked twice: %d", resp.StatusCode)
+	}
+	if code, _ := ts.post(t, "providers_list", map[string]any{}, c, nil); code != http.StatusOK {
+		t.Fatalf("with the cookie: %d", code)
+	}
+}
+
 func TestForeignHostOrOriginIsRefusedEvenWithTheCookie(t *testing.T) {
 	ts := newTestServer(t)
 	c := ts.login(t)
