@@ -21,6 +21,9 @@ const (
 	maxPathEvents = 20
 )
 
+// cliVersion is a release version of an agent's CLI ("2.1.323").
+var cliVersion = regexp.MustCompile(`^[0-9]{1,6}\.[0-9]{1,6}\.[0-9]{1,6}$`)
+
 // statusReport stores an agent's context % and cost from its status line, and records the key
 // paths of Claude's status-line JSON whenever they change, so the field names can be checked.
 // Only agents report: the user has no status line. The answer names the locks lox run runs that
@@ -33,6 +36,7 @@ func (d *Daemon) statusReport(ctx context.Context, o Origin, me string, raw json
 		CtxPct  int      `json:"ctx_pct"`
 		CostUSD float64  `json:"cost_usd"`
 		Paths   []string `json:"paths"`
+		Version string   `json:"version"`
 		Limits  []struct {
 			Window   string `json:"window"`
 			Pct      int    `json:"pct"`
@@ -72,7 +76,19 @@ func (d *Daemon) statusReport(ctx context.Context, o Origin, me string, raw json
 			return nil, fmt.Errorf("invalid path %q", s)
 		}
 	}
+	if p.Version != "" && !cliVersion.MatchString(p.Version) {
+		return nil, errors.New("version must be a release version (X.Y.Z)")
+	}
 	d.recordLimits(me, ws)
+	if p.Version != "" {
+		d.mu.Lock()
+		was := d.cliVersions[me]
+		d.cliVersions[me] = p.Version
+		d.mu.Unlock()
+		if was != p.Version {
+			d.changed()
+		}
+	}
 	changed, err := d.st.SetUsage(me, store.Usage{CtxPct: p.CtxPct, CostUSD: math.Round(p.CostUSD*100) / 100})
 	if err != nil {
 		return nil, err

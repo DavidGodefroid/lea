@@ -320,6 +320,11 @@ func (c *Config) resolve(root string) error {
 		return fmt.Errorf("LEA_AUTOUPDATE must be 1 (check for a new release every day) or 0, not '%s'", au)
 	}
 	c.final["LEA_AUTOUPDATE"] = au
+	cu := nonEmpty(c.Get("LEA_CLI_AUTOUPDATE"), "1")
+	if cu != "0" && cu != "1" {
+		return fmt.Errorf("LEA_CLI_AUTOUPDATE must be 1 (the agents' CLIs update themselves) or 0, not '%s'", cu)
+	}
+	c.final["LEA_CLI_AUTOUPDATE"] = cu
 	if sk := c.Get("LEA_AUTOUPDATE_SKIP"); sk != "" && !releaseVersion.MatchString(sk) {
 		return fmt.Errorf("LEA_AUTOUPDATE_SKIP must be empty or a release version (vX.Y.Z, set by lea rollback), not '%s'", sk)
 	}

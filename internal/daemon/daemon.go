@@ -78,6 +78,8 @@ type Daemon struct {
 	agents  Agents
 	// statusPaths: the last status-line key paths recorded per agent.
 	statusPaths map[string]string
+	// cliVersions: the version of its CLI each agent's status line last reported.
+	cliVersions map[string]string
 	// life is the daemon's lifetime: the context of the host API's Serve. Bus sockets bound
 	// through the API (container_attach) live as long as it, not as long as the request.
 	life context.Context
@@ -206,7 +208,7 @@ func New(st *store.Store, runDir string, now func() int64) *Daemon {
 	}
 	return &Daemon{subs: map[string]*subagents{}, subTTL: subagentTTL, afterFunc: time.AfterFunc, st: st, lim: bus.Default, now: now, runDir: runDir,
 		attached: map[string]string{}, notify: map[string]chan struct{}{},
-		verdicts: map[int64]chan string{}, asks: map[string]pendingAsk{}, blocks: map[string]int{}, stopped: map[string]bool{}, rewakes: map[string]int{}, rewoken: map[string][]int64{}, woken: map[string]bool{}, keyMu: map[string]*sync.Mutex{}, statusPaths: map[string]string{}, named: map[string]bool{}, rang: map[string]time.Time{}, notified: map[string]time.Time{},
+		verdicts: map[int64]chan string{}, asks: map[string]pendingAsk{}, blocks: map[string]int{}, stopped: map[string]bool{}, rewakes: map[string]int{}, rewoken: map[string][]int64{}, woken: map[string]bool{}, keyMu: map[string]*sync.Mutex{}, statusPaths: map[string]string{}, cliVersions: map[string]string{}, named: map[string]bool{}, rang: map[string]time.Time{}, notified: map[string]time.Time{},
 		resumeDelay: DefaultResumeDelay, questionRemind: DefaultQuestionRemind, holdMax: DefaultHoldMax, leaPrompts: map[string]int64{}, windows: map[string][]limitWindow{}, limitJobs: map[string]string{},
 		stackIdle: DefaultStackIdle, parkTimers: map[string]*time.Timer{}, parked: map[string]string{},
 		keepalive: DefaultKeepalive, keepTimers: map[string]*time.Timer{}, resumeFails: map[string]resumeFail{}, resuming: map[string]bool{},
@@ -520,8 +522,11 @@ type agentView struct {
 	// while unknown.
 	CtxPct *int `json:"ctx_pct,omitempty"`
 	// Subagents counts the subagents the agent still runs (its Subagent hooks), for display.
-	Subagents int  `json:"subagents,omitempty"`
-	You       bool `json:"you,omitempty"`
+	Subagents int `json:"subagents,omitempty"`
+	// CLIVersion is the version of the CLI the agent runs, as its status line last reported it
+	// (Claude Code); absent while unknown.
+	CLIVersion string `json:"cli_version,omitempty"`
+	You        bool   `json:"you,omitempty"`
 }
 
 // agentsList lists the agents (spec §6.1: name, role, profile, state, branch; never screen
@@ -556,6 +561,9 @@ func (d *Daemon) agentsList(o Origin, me string) ([]agentView, error) {
 				subs[a.Container] = n
 			}
 			v.Subagents = n[a.Key]
+			d.mu.Lock()
+			v.CLIVersion = d.cliVersions[a.Key]
+			d.mu.Unlock()
 		}
 		if a.Profile != "" {
 			v.Role, v.Profile, v.Model, v.Repo, v.Branch = a.Role, a.Profile, a.Model, a.Repo, a.Branch

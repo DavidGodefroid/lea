@@ -23,12 +23,14 @@ import (
 
 // Report is what the status line tells the daemon: context use and cost (-1 when unknown), the
 // account's rate-limit windows (numbers only: auto-resume waits for their reset, issue #20), and
-// the key paths of the JSON Claude sent, never their values.
+// the key paths of the JSON Claude sent, never their values, and the version of Claude Code
+// (empty when unknown): the agents' CLIs update themselves (image/lea-cli-update).
 type Report struct {
 	CtxPct  int      `json:"ctx_pct"`
 	CostUSD float64  `json:"cost_usd"`
 	Limits  []Limit  `json:"limits,omitempty"`
 	Paths   []string `json:"paths"`
+	Version string   `json:"version,omitempty"`
 }
 
 // Limit is one rate-limit window: "5h" or "7d", its used share (0 to 100) and when it resets
@@ -43,6 +45,9 @@ const (
 	maxPaths = 64
 	maxDepth = 3
 )
+
+// cliVersion is a release version as Claude Code reports its own ("2.1.323").
+var cliVersion = regexp.MustCompile(`^[0-9]{1,6}\.[0-9]{1,6}\.[0-9]{1,6}$`)
 
 // keyName is a key lea may report: a plain identifier. Other keys are left out of Paths.
 var keyName = regexp.MustCompile(`^[A-Za-z0-9_]{1,40}$`)
@@ -174,6 +179,9 @@ func parse(doc map[string]any) Report {
 	}
 	if c, ok := num(doc, "cost", "total_cost_usd"); ok && c >= 0 && c < 1e6 {
 		r.CostUSD = math.Round(c*100) / 100
+	}
+	if v, ok := doc["version"].(string); ok && cliVersion.MatchString(v) {
+		r.Version = v
 	}
 	return r
 }

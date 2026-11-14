@@ -312,3 +312,19 @@ func TestStatusLineSaysStartLoxRun(t *testing.T) {
 		t.Fatalf("out=%q", got)
 	}
 }
+
+// Claude Code's version goes to the daemon (agents_list's cli_version): a release version only.
+func TestRunReportsTheCLIVersion(t *testing.T) {
+	for in, want := range map[string]string{
+		`{"version":"2.1.323"}`:         "2.1.323",
+		`{"version":"2.1.323; rm"}`:     "",
+		`{"version":"latest"}`:          "",
+		`{"version":2}`:                 "",
+		`{"model":{"version":"1.2.3"}}`: "",
+	} {
+		_, got := run(t, in)
+		if len(got) != 1 || got[0].Version != want {
+			t.Errorf("%s: reports=%+v, want version %q", in, got, want)
+		}
+	}
+}

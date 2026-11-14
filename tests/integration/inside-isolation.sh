@@ -196,6 +196,17 @@ must   "managed settings are root's"             test "$(stat -c %u "$m")" = 0
 mustnt "managed settings are not writable"       touch "$m"
 mustnt "managed settings cannot be replaced"     sh -c 'echo "{}" >"$1.new" && mv "$1.new" "$1"' sh "$m"
 mustnt "no managed-settings.d drop-in"           mkdir /etc/claude-code/managed-settings.d
+# The agents' CLIs update themselves (image/lea-cli-update): lea-cli checks registry.npmjs.org
+# through the proxy and installs a newer release in /lea/cli, which the agents cannot write (a
+# CLI of an agent's making there would skip lea's managed hooks for the next agents).
+must   "the CLI update loop runs as lea-cli"     sh -c 'pgrep -u 10090 -f "lea-cli-update loop" >/dev/null'
+mustnt "/lea/cli is not writable by the agents"  touch /lea/cli/lea-isolation
+mustnt "an agent cannot plant a CLI in /lea/cli" sh -c 'mkdir -p /lea/cli/claude/9.9.9/bin'
+n=0
+while [ ! -s /lea/cli/claude/checked ] && [ "$n" -lt 300 ]; do sleep 2; n=$((n + 2)); done
+echo "info lea-cli-update: $(head -n 1 /lea/cli/claude/checked 2>/dev/null || echo 'no check yet')"
+must   "the CLI update check reached the registry" sh -c 'grep -Eq "is the latest|-> [0-9.]+ \(new agents run it\)" /lea/cli/claude/checked'
+must   "agents start the newest Claude Code"     sh -c 'b=$(lea-cli-update path claude) && v=$(npm view @anthropic-ai/claude-code version) && "$b" --version | grep -qF "$v (Claude Code)"'
 if [ -n "${HOST_CRED_SHA:-}" ]; then
   mustnt "host Claude credentials not visible"  test "$(sha_of "$HOME/.claude/.credentials.json")" = "$HOST_CRED_SHA"
 fi
