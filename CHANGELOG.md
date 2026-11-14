@@ -36,6 +36,17 @@ Features:
   deck's own layout file: made or changed in the browser, they show in the deck (which now reads
   its layout again every 2 s), and the other way round.
 
+- `lea web` takes the other decisions (#415): spawn requests (`sN`) with Accept and Decline;
+  grant requests (`gN`) grouped, with Approve, Deny and Approve all, and in three lines the
+  one-off answer, the one `lea allow` command that covers them all (with `lea allow off N` to
+  undo it) and what it leaves out; the control tower's open question with a box to answer it and
+  its queue; an Allowances screen to list, add (pins read on the host and confirmed, as `lea
+  allow` does) and revoke allowances; an Egress screen with the hosts lea-proxy refused, and
+  Allow/Deny applied live as `lea egress allow|deny HOST`. A new host-only daemon method,
+  `question_answer`, gives the tower the answer as the user's message and opens the next
+  question; `grants.Advise` builds the one-off / durable / not-covered text from the capability
+  table for every prompt (#412).
+
 Changes:
 
 - Live limits (#420): `lea limits` shows the limits you can change while agents run, with their
@@ -78,6 +89,18 @@ Changes:
   Claude held the mouse. In a pane
   whose program does not take the mouse (a split shell, the scrolled-back history), `shift`+drag
   lets your terminal select, as in any tmux. `ctrl+v` paste and wheel scrolling are unchanged.
+- A lead can no longer bypass the board with Claude Code's built-in `Agent` tool (#409): lea's
+  hook denies it to leads, naming `agents_spawn`, since that sub-agent is invisible to lea (no
+  board, no deck, no context tracking, no child limits). After a compaction lea reminds a lead,
+  in its context, that it is one and starts work only with `agents_spawn`. Devs and reviewers
+  keep the tool.
+
+- `/lea:clear-ct` clears a control tower's context and resumes its board (#410): the tower saves
+  a short private snapshot (ledger, open questions, approvals given), you type `/clear`, and the
+  new session is still a tower, with no window where it may act itself; it reads the snapshot,
+  rebuilds its ledger from `agents_list` and `board_read` and briefs you, its children untouched.
+  A plain `/clear` or a compaction in a tower used to drop tower mode in silence: it now comes
+  back the same way. Outside a tower, `/lea:clear-ct` refuses in one line.
 
 Fixes:
 

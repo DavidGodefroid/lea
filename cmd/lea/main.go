@@ -51,7 +51,7 @@ const usage = `usage: lea <command>
   deck --placeholder         the empty slot (run by lea's tmux session)
   deck --thread KEY [--compose]
                              an agent's messages (run in a deck popup)
-  web --container NAME [--port N] [--open]
+  web --container NAME [--projects DIR] [--port N] [--open]
       [--listen ADDR:PORT (--tls-self-signed | --tls-cert F --tls-key F) [--new-token]]
                              the deck in the browser, on 127.0.0.1 (the launcher's lea web);
                              --listen: on the network, behind TLS and a persistent token
