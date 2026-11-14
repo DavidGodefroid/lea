@@ -1,5 +1,19 @@
 # Changelog
 
+## Unreleased
+
+Features:
+
+- `lea web` (#414): the deck in your browser. It serves, on `127.0.0.1` only, a live board of
+  the lea's agents (a tree of leads and their agents, with state, status, next step, blocker,
+  branch, context use, cost, unread messages), each agent's messages with a box to write to it,
+  rename, pause, hold, role and stop, a form to start an agent or a Control Tower, the tower's
+  chat with its questions, and the permissions agents wait on, with Allow, Deny and Always. While
+  a browser shows it, permission prompts wait for it as for the deck in tmux. The printed link
+  signs one browser in once (a 32-byte token traded for an `HttpOnly`, `SameSite=Strict`
+  cookie); foreign `Host` or `Origin` headers are refused, and only a fixed list of the daemon's
+  methods, for this lea's agents, is reachable. Phone width, light and dark, keyboard shortcuts.
+
 ## v0.15.1 (2026-11-09)
 
 Fixes:
