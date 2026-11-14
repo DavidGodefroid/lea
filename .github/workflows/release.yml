@@ -77,6 +77,23 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: gh release create "$GITHUB_REF_NAME" dist/*.tar.gz dist/checksums.txt dist/checksums.txt.sigstore.json dist/install.sh --title "lea $GITHUB_REF_NAME" --generate-notes
 
+  # Asks lockfamily to rebuild lockfamily.dev/docs with this release's
+  # CHANGELOG. docs-dispatch.yml's release trigger does not fire here: a
+  # release created with GITHUB_TOKEN starts no workflow. Needs the secret
+  # LOCKFAMILY_DOCS_TOKEN (lockfamily#39); without it the step is skipped.
+  docs:
+    name: docs site
+    needs: release
+    runs-on: ubuntu-latest
+    permissions: {}
+    steps:
+      - name: dispatch to lockfamily
+        env:
+          GH_TOKEN: ${{ secrets.LOCKFAMILY_DOCS_TOKEN }}
+        run: |
+          if [ -z "$GH_TOKEN" ]; then echo "::notice::LOCKFAMILY_DOCS_TOKEN not set"; exit 0; fi
+          gh api repos/DavidGodefroid/lockfamily/dispatches -f event_type=docs
+
   # Asks the Homebrew tap (DavidGodefroid/homebrew-tap) to bump the lea
   # formula to this release, once the archives are published and signed: the
   # tap's bump workflow verifies them with cosign before rewriting the

@@ -190,6 +190,8 @@ type Daemon struct {
 	leaPrompts     map[string]int64 // until when (unix seconds) the next prompt is lea's
 	// holdMax is how long the user's pause of an inbox lasts before lea releases it (hold.go).
 	holdMax time.Duration
+	// webDecks counts, per container, the lea web clients attached as a deck (webdeck.go, #414).
+	webDecks map[string]int
 }
 
 func New(st *store.Store, runDir string, now func() int64) *Daemon {
@@ -203,7 +205,8 @@ func New(st *store.Store, runDir string, now func() int64) *Daemon {
 		resumeDelay: DefaultResumeDelay, questionRemind: DefaultQuestionRemind, holdMax: DefaultHoldMax, leaPrompts: map[string]int64{}, windows: map[string][]limitWindow{}, limitJobs: map[string]string{},
 		stackIdle: DefaultStackIdle, parkTimers: map[string]*time.Timer{}, parked: map[string]string{},
 		keepalive: DefaultKeepalive, keepTimers: map[string]*time.Timer{}, resumeFails: map[string]resumeFail{}, resuming: map[string]bool{},
-		heavy: map[string]*heavyPool{}, heavySlots: DefaultHeavySlots(runtime.NumCPU(), DefaultHeavyWorkers), heavyWorkers: DefaultHeavyWorkers}
+		heavy: map[string]*heavyPool{}, heavySlots: DefaultHeavySlots(runtime.NumCPU(), DefaultHeavyWorkers), heavyWorkers: DefaultHeavyWorkers,
+		webDecks: map[string]int{}}
 }
 
 func (d *Daemon) Serve(ctx context.Context, l net.Listener, o Origin) {
@@ -360,7 +363,7 @@ func (d *Daemon) dispatch(ctx context.Context, o Origin, req wire.Request) (any,
 		req.Method == "thread_list" || req.Method == "agent_role" || req.Method == "request_list" || req.Method == "request_decide" || req.Method == "board_list" ||
 		req.Method == "sound" || req.Method == "allow_set" || req.Method == "allow_off" || req.Method == "allow_list" ||
 		req.Method == "grant_revoke" || req.Method == "grant_request_list" || req.Method == "grant_request_decide" ||
-		req.Method == "question_list" || req.Method == "question_drop" || req.Method == "agent_hold" {
+		req.Method == "question_list" || req.Method == "question_drop" || req.Method == "agent_hold" || req.Method == "deck_web_attach" {
 		if o.Container != "" {
 			return nil, fmt.Errorf("%s: host only", req.Method)
 		}
@@ -474,6 +477,8 @@ func (d *Daemon) dispatch(ctx context.Context, o Origin, req wire.Request) (any,
 		return d.questionDrop(req.Params)
 	case "agent_hold":
 		return d.agentHold(req.Params)
+	case "deck_web_attach":
+		return d.webAttach(ctx, req.Params)
 	case "container_attach":
 		var p struct{ Name string }
 		if err := json.Unmarshal(req.Params, &p); err != nil {

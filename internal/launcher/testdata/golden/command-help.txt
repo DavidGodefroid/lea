@@ -12,6 +12,8 @@ Usage:
   lea                         open the deck: your agents on the left, the selected one on the right
                               (keys: j/k select, enter focus, ctrl+space back, n new, x stop, q quit)
                               (LEA_DECK=0: your own tool, LEA_TOOL, in the lea container instead)
+  lea web [--port N] [--open]  the deck in your browser: the board, threads, the control tower,
+                              new agents and permissions, on 127.0.0.1 behind a one-time link
   lea attach [--print] [AGENT]
                               run LEA_TOOL in the lea container, or join an agent's terminal;
                               --print: the docker exec command, for an IDE or another terminal
