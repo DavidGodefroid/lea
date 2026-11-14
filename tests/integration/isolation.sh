@@ -380,9 +380,9 @@ if [ -n "$egress_since" ]; then
   mac=$(cat "/sys/class/net/$abr/address")
   # Where the packets go when they are not logged: counters on every hook, read on a failure.
   printf '%s\n' 'table inet lea_egress_diag {' \
-    ' chain pre { type filter hook prerouting priority -400; policy accept; iifname "lea*" counter; }' \
-    ' chain fwd { type filter hook forward priority -400; policy accept; iifname "lea*" counter; }' \
-    ' chain in { type filter hook input priority -400; policy accept; iifname "lea*" counter; }' '}' |
+    ' chain diag_pre { type filter hook prerouting priority -400; policy accept; iifname "lea*" counter; }' \
+    ' chain diag_fwd { type filter hook forward priority -400; policy accept; iifname "lea*" counter; }' \
+    ' chain diag_in { type filter hook input priority -400; policy accept; iifname "lea*" counter; }' '}' |
     sudo -n "$egress_nft" -f - 2>&1 || true
   egress_diag() {
     { echo "--- egress log diagnostics ($abr, MAC $mac):"; cat "$work/egress-run.out"
@@ -396,7 +396,7 @@ if [ -n "$egress_since" ]; then
   for dst in 169.254.169.254 1.1.1.1; do
     # shellcheck disable=SC2016 # expanded by the inner shell
     if docker run --rm --network "lea-test-internal-$id" --cap-add NET_ADMIN busybox:1.37 sh -c \
-      'ip route add default dev eth0 && ip neigh replace "$1" lladdr "$2" dev eth0 nud permanent && ip route && ip neigh && nc -w 3 "$1" 80 </dev/null' sh "$dst" "$mac" >>"$work/egress-run.out" 2>&1; then
+      'ip route add default dev eth0 && ip neigh add "$1" lladdr "$2" dev eth0 nud permanent && ip route && ip neigh && nc -w 3 "$1" 80 </dev/null' sh "$dst" "$mac" >>"$work/egress-run.out" 2>&1; then
       echo "FAIL a connection to $dst:80 that bypasses the proxy is dropped"; rc=1
     else echo "ok   a connection to $dst:80 that bypasses the proxy is dropped"; fi
     i=0
