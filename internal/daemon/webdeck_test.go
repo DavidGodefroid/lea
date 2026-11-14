@@ -104,3 +104,17 @@ func TestDeckWebAttachIsHostOnlyAndChecksTheContainer(t *testing.T) {
 		}
 	}
 }
+
+// Every decision lea web forwards (#415) is the user's: no agent reaches it from its bus socket,
+// not even a lead.
+func TestWebDecisionMethodsAreHostOnly(t *testing.T) {
+	e := start(t)
+	spawned(t, e, "tower", "lead", "")
+	for _, m := range []string{"request_list", "request_decide", "grant_request_list", "grant_request_decide", "allow_list",
+		"allow_set", "allow_off", "question_list", "question_answer", "approval_list", "approval_decide"} {
+		err := call(t, e.bus, "tower", m, map[string]any{"id": 1, "container": "lea-a", "verdict": "approve", "text": "yes"}, nil)
+		if err == nil || !strings.Contains(err.Error(), "host only") {
+			t.Errorf("%s from a container: err=%v", m, err)
+		}
+	}
+}

@@ -173,3 +173,25 @@ func TestUserQuestionsPersist(t *testing.T) {
 		t.Fatalf("after restart: %+v %v", qs, err)
 	}
 }
+
+// lea web answers a question by its id (#415): only the open one, once; the head of the queue
+// opens.
+func TestUserQuestionsAnswerByID(t *testing.T) {
+	s := open(t)
+	const tw = "lea-a/claude-1"
+	q1 := ask(t, s, tw, "one", PriorityNormal, 10)
+	q2 := ask(t, s, tw, "two", PriorityNormal, 11)
+	if _, _, err := s.AnswerQuestionByID(q2.ID, 12); !errors.Is(err, ErrDecided) {
+		t.Fatalf("a queued question answered: %v", err)
+	}
+	if _, _, err := s.AnswerQuestionByID(99, 12); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("no question: %v", err)
+	}
+	a, next, err := s.AnswerQuestionByID(q1.ID, 13)
+	if err != nil || a.ID != q1.ID || a.State != QuestionAnswered || next.ID != q2.ID || next.State != QuestionOpen {
+		t.Fatalf("answer = %+v %+v %v", a, next, err)
+	}
+	if _, _, err := s.AnswerQuestionByID(q1.ID, 14); !errors.Is(err, ErrDecided) {
+		t.Fatalf("answered twice: %v", err)
+	}
+}
