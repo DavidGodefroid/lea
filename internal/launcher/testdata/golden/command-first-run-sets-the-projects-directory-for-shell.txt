@@ -20,6 +20,7 @@ docker [exec] [-i] [-u] [$UID:$GID] [-e] [TERM=xterm-256color] [-w] [$W/projects
 docker [exec] [-u] [$UID:$GID] [lea-$ID] [lea-agent] [ls]
 lea-sh [scan-finish] [$W/projects]
 docker [stop] [lea-$ID]
+docker [stop] [lea-$ID-ssh]
 docker [network] [disconnect] [-f] [lea-internal-$ID] [lea-proxy]
 docker [network] [rm] [lea-internal-$ID]
 tmux [-L] [lea] [-f] [$W/data/lea/host/tmux.conf] [list-sessions]

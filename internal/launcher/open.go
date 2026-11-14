@@ -70,6 +70,7 @@ func (l *Launcher) up(proj string) (*upState, error) {
 		u.fresh = "--fresh"
 	} else {
 		l.checkRuntime(u.name)
+		l.sshAgentEnsure(proj)
 	}
 	_ = l.busAttach(proj)
 	held = false
@@ -121,6 +122,7 @@ func (l *Launcher) endSession(proj string) {
 	if n, err := l.sessionCount(id); err == nil && n == 0 && !l.agentsLive(proj) {
 		_ = l.sh("scan-finish", proj)
 		_ = l.quiet("docker", "stop", l.Cfg.ContainerName(proj))
+		l.sshAgentStop(proj)
 		// Best effort: a lock that times out skips the release.
 		if l.lock("global") == nil {
 			l.releaseNetwork(id)
@@ -236,6 +238,7 @@ func (l *Launcher) stop(args []string) error {
 		_ = l.tmuxClient(s, "kill-session", "-t", "="+name)
 	}
 	_ = l.quiet("docker", "stop", name)
+	l.sshAgentStop(proj)
 	if err := l.clipboardStop(false); err != nil {
 		return err
 	}

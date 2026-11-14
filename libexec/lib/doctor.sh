@@ -150,6 +150,8 @@ EOF
 
   lea__doctor_managed || _drc=1
 
+  lea__doctor_ssh_key "$_dds" || _drc=1
+
   lea__doctor_runtime || _drc=1
   lea__doctor_pressure
 
@@ -208,6 +210,34 @@ lea__doctor_dns() {
     fi
   done
   return "$_ddrc"
+}
+
+# lea__doctor_ssh_key STATE: lea's SSH key never reaches an agent: no running lea container mounts
+# STATE/ssh or a key file of it, and the agent's uid reads no key where an older lea put it. Its
+# ssh-agent container holds the key; the agents reach its socket only. Fails closed: a container
+# docker cannot inspect is a FAIL; a read check that cannot run, a warning.
+lea__doctor_ssh_key() {
+  _dkrc=0
+  for _dctr in $(docker ps --filter "label=lea.prefix=$LEA_PREFIX" --filter label=lea.role=session --format '{{.Names}}' 2>/dev/null || true); do
+    if ! _dkm=$(docker container inspect -f '{{range .Mounts}}{{.Source}}|{{end}}' "$_dctr" 2>/dev/null); then
+      lea__fail "$_dctr SSH key" "docker cannot inspect its mounts: run lea stop, then lea"; _dkrc=1; continue
+    fi
+    case "|$_dkm" in
+      *"|$1/ssh|"*|*"|$1/ssh/id_"*)
+        lea__fail "$_dctr SSH key" "mounts lea's SSH key directory: its agents can read the private key; run lea stop, then lea (this lea keeps it in its ssh-agent container), and rotate the key (remove it from your forges, delete $1/ssh/id_ed25519*, lea init)"; _dkrc=1; continue ;;
+    esac
+    # As the agents' uid, where an older lea mounted the key and where its ssh-agent container does.
+    # shellcheck disable=SC2016 # expanded in the container
+    if ! _dkr=$(docker exec -u "$(id -u):$(id -g)" "$_dctr" sh -c 'for f in /lea/state/ssh/id_ed25519 /lea/ssh-key/id_ed25519; do if [ -r "$f" ]; then echo "lea-key-readable $f"; fi; done; echo lea-key-checked' 2>/dev/null) \
+       || ! printf '%s\n' "$_dkr" | grep -qx lea-key-checked; then
+      lea__warn "$_dctr SSH key" "not mounted, but the read check did not run in the container"
+    elif _dkf=$(printf '%s\n' "$_dkr" | sed -n 's/^lea-key-readable //p' | tr '\n' ' ') && [ -n "$_dkf" ]; then
+      lea__fail "$_dctr SSH key" "its agents can read ${_dkf% }: run lea stop, then lea, and rotate the key (remove it from your forges, delete $1/ssh/id_ed25519*, lea init)"; _dkrc=1
+    else
+      lea__ok "$_dctr SSH key: not readable by its agents (ssh-agent socket only)"
+    fi
+  done
+  return "$_dkrc"
 }
 
 lea__doctor_managed() {
@@ -544,5 +574,5 @@ lea__doctor_secrets() {
   if [ "$_dsn" -eq 0 ]; then lea__ok "agent-readable credentials: none"; fi
   if [ -s "$(dirname "$1")/proxy/forge/github.com" ]; then _dsg="the GitHub token (in the proxy, lea github status)"
   else _dsg="no GitHub token (lea github login keeps one in the proxy)"; fi
-  lea__ok "not agent-readable: $_dsg, provider API keys (proxy), lea's SSH key (ssh-agent socket only)"
+  lea__ok "not agent-readable: $_dsg, provider API keys (proxy), lea's SSH key (in its ssh-agent container: the agents reach its socket only)"
 }

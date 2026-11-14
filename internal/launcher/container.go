@@ -445,6 +445,7 @@ func (l *Launcher) restartForLimits(proj, pip string) error {
 	l.deckStop(name, false)
 	_ = l.sh("scan-finish", proj)
 	_ = l.quiet("docker", "stop", name)
+	l.sshAgentStop(proj)
 	if p := l.limitsRefused(name); SafePath(l.Cfg.DataDir(), p) == nil {
 		os.Remove(p)
 	}
@@ -672,7 +673,6 @@ func (l *Launcher) runArgs(proj, pip string) ([]string, error) {
 		"-e", "KUBECONFIG=" + home + "/.kube/lea/config",
 		"-e", "LEA_GIT_SSH=" + git,
 		"--mount", "type=bind,src=" + proj + ",dst=" + proj,
-		"--mount", "type=bind,src=" + st + "/ssh,dst=/lea/state/ssh,readonly",
 		"--mount", "type=bind,src=" + st + "/git,dst=/lea/state/git",
 		"--mount", "type=bind,src=" + st + "/gh,dst=/lea/state/gh",
 		"--mount", "type=bind,src=" + st + "/glab-cli,dst=/lea/state/glab-cli",
@@ -680,6 +680,8 @@ func (l *Launcher) runArgs(proj, pip string) ([]string, error) {
 		"--mount", "type=bind,src=" + st + "/go,dst=/lea/state/go",
 		"--mount", "type=bind,src=" + st + "/kube,dst=" + home + "/.kube/lea,readonly"}
 	a = append(a, podmanStore...)
+	// lea's SSH key stays in the ssh-agent container (sshagent.go): its socket only.
+	a = append(a, l.sshAgentArgs(proj)...)
 	// The agents' CLIs update themselves in the container (image/lea-cli-update) unless the user
 	// turned it off.
 	if l.Cfg.Get("LEA_CLI_AUTOUPDATE") == "0" {
@@ -819,6 +821,9 @@ func (l *Launcher) containerStart(proj, pip string) error {
 		return die("the start snapshot failed (above): lea doctor checks the setup")
 	}
 	_ = l.quiet("docker", "rm", "-f", name)
+	// The runtime runArgs checked: its error is not new here.
+	_, vm, _ := l.agentRuntime()
+	l.sshAgentStart(proj, vm)
 	if err := l.run("docker", append([]string{"run"}, args...)...); err != nil {
 		if l.isInterrupted() {
 			return errInterrupted

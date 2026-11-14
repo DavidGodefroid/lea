@@ -13,6 +13,12 @@ setup() { setup_fakes; load_lea; I="$LEA_ROOT/image"; }
   grep -q 'SSH_AUTH_SOCK=/run/lea/ssh-agent.sock' "$I/containers.conf.tmpl"
 }
 
+@test "the agent container reaches lea's ssh-agent socket and never loads lea's SSH key itself" {
+  grep -qx 'ln -s /run/lea/ssh/agent.sock /run/lea/ssh-agent.sock' "$I/user-init"
+  run grep -nE 'ssh-agent -a|ssh-add|id_ed25519|/lea/state/ssh/id_' "$I/user-init" "$I/lea-session" "$I/entrypoint" "$I/lea-agent"
+  [ "$status" -eq 1 ]
+}
+
 @test "managed settings: telemetry through the proxy, lea attribute, updates off, prompts redacted" {
   m="$I/managed-settings.json"
   [ "$(jq -r .env.CLAUDE_CODE_ENABLE_TELEMETRY "$m")" = 1 ]

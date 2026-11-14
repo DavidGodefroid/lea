@@ -264,7 +264,7 @@ func TestRunArgsContents(t *testing.T) {
 		"NO_PROXY=localhost,127.0.0.1,::1,lea-proxy,172.18.0.5", "LEA_PROXY_IP=172.18.0.5",
 		"DOCKER_HOST=unix:///run/user/" + uid + "/podman/podman.sock",
 		"type=bind,src=" + w.proj + ",dst=" + w.proj, "type=volume,src=lea-podman-" + w.id() + ",dst=/lea/podman",
-		"type=bind,src=" + st + "/ssh,dst=/lea/state/ssh,readonly", "type=bind,src=" + st + "/git,dst=/lea/state/git",
+		"type=volume,src=lea-ssh-" + w.id() + ",dst=/run/lea/ssh,readonly", "type=bind,src=" + st + "/git,dst=/lea/state/git",
 		"type=bind,src=" + st + "/gh,dst=/lea/state/gh",
 		"type=bind,src=" + st + "/glab-cli,dst=/lea/state/glab-cli", "type=bind,src=" + st + "/containers,dst=/lea/state/containers",
 		"type=bind,src=" + st + "/go,dst=/lea/state/go",
@@ -288,7 +288,7 @@ func TestRunArgsContents(t *testing.T) {
 			t.Errorf("argument %q", a)
 		}
 		for _, bad := range []string{"--net=host", "--network=host", "--ipc", "--privileged", "docker.sock", "--userns", "--uts",
-			"src=" + st + ",", "dst=/lea/state,", "src=" + st + "/clipboard,", "dst=" + w.home + "/.kube/config", "apparmor=lea"} {
+			"src=" + st + ",", "dst=/lea/state,", "src=" + st + "/clipboard,", "src=" + st + "/ssh,", "id_ed25519", "dst=" + w.home + "/.kube/config", "apparmor=lea"} {
 			if strings.Contains(a, bad) {
 				t.Errorf("%q in %q", bad, a)
 			}
