@@ -43,4 +43,16 @@ if [ -n "$out" ]; then printf '%s\n' "$out"; fi
 eval "err=\${FAKE_DOCKER_ERR_$key:-}"
 # shellcheck disable=SC2154
 if [ "$rc" != 0 ] && [ -n "$err" ]; then printf '%s\n' "$err" >&2; fi
+# `run … IMAGE ca init --dir D`: makes a CA in D (cert, key), as lockhttp's image does.
+if [ "$1" = run ] && [ "$rc" = 0 ]; then
+  ca=
+  for a in "$@"; do
+    case "$ca" in
+    ca) [ "$a" = init ] && ca=init || ca= ;;
+    init) [ "$a" = --dir ] && ca=dir || ca= ;;
+    dir) mkdir -p "$a" && echo cert >"$a/ca.pem" && echo key >"$a/ca-key.pem"; break ;;
+    *) [ "$a" = ca ] && ca=ca ;;
+    esac
+  done
+fi
 exit "$rc"

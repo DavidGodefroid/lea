@@ -46,6 +46,7 @@ type spawnIn struct {
 	Role    string `json:"role,omitempty" jsonschema:"dev (default) or reviewer"`
 	Profile string `json:"profile,omitempty" jsonschema:"the provider the agent runs on: claude, codex or another of providers_list (default: the user's default provider)"`
 	Model   string `json:"model,omitempty" jsonschema:"the model to ask the provider for (default: the provider's default)"`
+	Advisor string `json:"advisor,omitempty" jsonschema:"a stronger model the agent consults on demand (Claude Code's advisor tool, e.g. opus next to model sonnet); Claude providers only (default: none)"`
 	Repo    string `json:"repo,omitempty" jsonschema:"a directory directly under the projects directory: the agent starts there"`
 	Branch  string `json:"branch,omitempty" jsonschema:"the git branch the agent works on, in its own worktree"`
 	Brief   string `json:"brief" jsonschema:"what the new agent must do, at most 32 KiB; it is its first message"`
@@ -58,6 +59,7 @@ type requestIn struct {
 	Role    string `json:"role,omitempty" jsonschema:"dev (default) or reviewer"`
 	Profile string `json:"profile,omitempty" jsonschema:"the provider the agent runs on: claude, codex or another of providers_list (default: the user's default provider)"`
 	Model   string `json:"model,omitempty" jsonschema:"the model to ask the provider for (default: the provider's default)"`
+	Advisor string `json:"advisor,omitempty" jsonschema:"a stronger model the agent consults on demand (Claude Code's advisor tool, e.g. opus next to model sonnet); Claude providers only (default: none)"`
 	Repo    string `json:"repo,omitempty" jsonschema:"a directory directly under the projects directory"`
 	Branch  string `json:"branch,omitempty" jsonschema:"the git branch the new agent works on"`
 	Brief   string `json:"brief" jsonschema:"what the new agent must do, at most 32 KiB"`
@@ -106,7 +108,7 @@ func LockGuidance(get func(string) string) string {
 func New(sock, agent, version, instructions string) *mcp.Server {
 	s := mcp.NewServer(&mcp.Implementation{Name: "lea", Version: version}, &mcp.ServerOptions{Instructions: instructions})
 	const short = 10 * time.Second
-	mcp.AddTool(s, &mcp.Tool{Name: "agents_list", Description: "List the agents of this lea: name, label (the name the user sees in the deck, your container only), role, profile, state, parent, branch, ctx_pct (percent of its context window used, when known; your container only); you=true is you. Never their screens."},
+	mcp.AddTool(s, &mcp.Tool{Name: "agents_list", Description: "List the agents of this lea: name, label (the name the user sees in the deck, your container only), role, profile, state, parent, branch, ctx_pct (percent of its context window used, when known; your container only), cli_version (the version of its CLI, when known; your container only); you=true is you. Never their screens."},
 		func(ctx context.Context, _ *mcp.CallToolRequest, in empty) (*mcp.CallToolResult, any, error) {
 			return proxy(ctx, sock, agent, "agents_list", short, in), nil, nil
 		})

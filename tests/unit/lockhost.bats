@@ -233,7 +233,7 @@ launcher() {
 }
 
 @test "the entrypoint refuses a session whose uid or gid is a lock console's id in the image" {
-  for ids in "10011 4243" "4242 10030" "10001 4243" "4242 10010" "10031 4243" "4242 10000" "10051 4243" "4242 10050"; do
+  for ids in "10011 4243" "4242 10030" "10001 4243" "4242 10010" "10031 4243" "4242 10000" "10051 4243" "4242 10050" "10090 4243" "4242 10090"; do
     set -- $ids
     run env LEA_UID="$1" LEA_GID="$2" LEA_USER=u HOME="$BATS_TEST_TMPDIR" LEA_PROXY_IP=10.0.0.2 sh "$LEA_ROOT/image/entrypoint" true
     [ "$status" -ne 0 ]

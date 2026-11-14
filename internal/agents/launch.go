@@ -17,7 +17,7 @@ func (m *Manager) registry() (*providers.Registry, error) {
 // --cli, left out for Claude Code), then the CLI's own arguments: the provider's flags, the model,
 // the user's arguments, then the session to resume or else the first prompt (providers.Argv).
 func launchArgs(prov providers.Provider, a store.Agent, session string, user []string, prompt string) ([]string, error) {
-	argv, err := prov.Argv(a.Name, a.Workdir, a.Model, session, user, prompt)
+	argv, err := prov.Argv(a.Name, a.Workdir, a.Model, a.Advisor, session, user, prompt)
 	if err != nil {
 		return nil, err
 	}
