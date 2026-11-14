@@ -1127,7 +1127,12 @@ agent's environment names; CONNECT keeps TLS end to end.
 - git's hooks, fsmonitor, askpass and pager are off, ssh is `/usr/bin/ssh`, https and ssh are the
   only transports, `~/.gitconfig` is not read; and lea refuses a repository whose own config
   holds a `url.*.insteadOf`, `include`, URL-specific credential helper, `pushurl`, push refspec,
-  mirror, filter, textconv or any `http.*` key.
+  mirror, filter, textconv or any `http.*` key. Two keys pass: `core.hooksPath` (lea's git runs
+  with `core.hooksPath=/dev/null` whatever it says) and `remote.origin.pushurl` when it is the
+  grant's own repository (`https://github.com/OWNER/NAME`, with or without `.git`; no pinned push
+  reads it). Every worktree of a repository shares its `.git/config`, so they all get the same
+  answer. A refusal names the keys it found, or says that `git config` itself failed, with git's
+  message.
 - `gh pr create --body-file F`: `F` is a path relative to the agent's worktree that must resolve
   to a plain file inside it, outside `.git` (lea checks it is a plain file, opens it once and gh
   reads that open file; a quoted heredoc, `--body "$(cat <<'EOF' … EOF)"`, is not covered: write
