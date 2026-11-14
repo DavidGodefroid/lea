@@ -192,6 +192,11 @@ type Daemon struct {
 	holdMax time.Duration
 	// webDecks counts, per container, the lea web clients attached as a deck (webdeck.go, #414).
 	webDecks map[string]int
+	// Live limits (limits.go, #420): where they persist (nil: nowhere, lea's defaults), each
+	// key's value and source, and the children whose start passed the max_running cap and runs.
+	limitStore  LimitStore
+	limitVals   map[string]limitVal
+	childStarts int
 }
 
 func New(st *store.Store, runDir string, now func() int64) *Daemon {
@@ -363,7 +368,8 @@ func (d *Daemon) dispatch(ctx context.Context, o Origin, req wire.Request) (any,
 		req.Method == "thread_list" || req.Method == "agent_role" || req.Method == "request_list" || req.Method == "request_decide" || req.Method == "board_list" ||
 		req.Method == "sound" || req.Method == "allow_set" || req.Method == "allow_off" || req.Method == "allow_list" ||
 		req.Method == "grant_revoke" || req.Method == "grant_request_list" || req.Method == "grant_request_decide" ||
-		req.Method == "question_list" || req.Method == "question_drop" || req.Method == "agent_hold" || req.Method == "deck_web_attach" {
+		req.Method == "question_list" || req.Method == "question_drop" || req.Method == "agent_hold" || req.Method == "deck_web_attach" ||
+		req.Method == "limits_set" {
 		if o.Container != "" {
 			return nil, fmt.Errorf("%s: host only", req.Method)
 		}
@@ -381,6 +387,10 @@ func (d *Daemon) dispatch(ctx context.Context, o Origin, req wire.Request) (any,
 		return d.agentsList(o, me)
 	case "providers_list":
 		return d.providersList()
+	case "limits_get":
+		return d.limitsGet()
+	case "limits_set":
+		return d.limitsSet(ctx, req.Params)
 	case "msg_send":
 		var p struct {
 			To, Body, Kind string
@@ -562,6 +572,11 @@ func (d *Daemon) agentsList(o Origin, me string) ([]agentView, error) {
 			}
 		}
 		out = append(out, v)
+	}
+	// A spawn that waits shows as a row of its own, with why (#420): "queued: max_running 3/3".
+	for _, q := range d.queuedViews(o.Container) {
+		out = append(out, agentView{Name: fmt.Sprintf("queued #%d", q.ID), State: "queued", Role: q.Role,
+			Label: safeLabel(q.Label), Parent: q.Lead, Task: q.Reason, Updated: q.Since})
 	}
 	return out, nil
 }
