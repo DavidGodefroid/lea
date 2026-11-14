@@ -1,5 +1,5 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 640" width="1200" height="640" role="img" aria-label="lea: Claude Code agents side by side in an isolated container; the internet is reachable through a proxy, your SSH keys and private network are not.">
-<title>lea: Claude Code agents, side by side, isolated from your machine</title>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 640" width="1200" height="640" role="img" aria-label="lea: coding agents (here Claude Code) side by side in an isolated container; the internet is reachable through a proxy, your SSH keys and private network are not.">
+<title>lea: coding agents, side by side, isolated from your machine</title>
 <style>@keyframes k1{0.00%{stroke:#313244} 43.33%{stroke:#313244} 44.58%{stroke:#f38ba8} 56.67%{stroke:#f38ba8} 61.67%{stroke:#313244} 100.00%{stroke:#313244}}
 .k1{animation:k1 12.0s linear infinite}
 @keyframes k2{0.00%{opacity:0} 44.17%{opacity:0} 46.25%{opacity:1} 60.83%{opacity:1} 62.92%{opacity:0} 100.00%{opacity:0}}
@@ -124,7 +124,7 @@
 <circle r="7" cx="0" cy="0" fill="#a6e3a1" class="k30"/>
 <circle r="7" cx="0" cy="0" fill="#f38ba8" class="k31"/>
 <circle r="7" cx="0" cy="0" fill="#f38ba8" class="k32"/>
-<text x="600.0" y="598" class="k33" font-family="Inter,'Segoe UI',system-ui,-apple-system,Helvetica,Arial,sans-serif" font-size="26" fill="#cdd6f4" font-weight="650" text-anchor="middle" xml:space="preserve">Claude Code agents, side by side.</text>
+<text x="600.0" y="598" class="k33" font-family="Inter,'Segoe UI',system-ui,-apple-system,Helvetica,Arial,sans-serif" font-size="26" fill="#cdd6f4" font-weight="650" text-anchor="middle" xml:space="preserve">Coding agents, side by side.</text>
 <text x="600.0" y="598" class="k34" font-family="Inter,'Segoe UI',system-ui,-apple-system,Helvetica,Arial,sans-serif" font-size="26" fill="#cdd6f4" font-weight="650" text-anchor="middle" xml:space="preserve">The internet: yes, through lea's proxy.</text>
 <text x="600.0" y="598" class="k35" font-family="Inter,'Segoe UI',system-ui,-apple-system,Helvetica,Arial,sans-serif" font-size="26" fill="#cdd6f4" font-weight="650" text-anchor="middle" xml:space="preserve">Your keys and your network: no.</text>
 <text x="600.0" y="598" class="k36" font-family="Inter,'Segoe UI',system-ui,-apple-system,Helvetica,Arial,sans-serif" font-size="26" fill="#cdd6f4" font-weight="650" text-anchor="middle" xml:space="preserve">You answer every agent from one deck.</text>
