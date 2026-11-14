@@ -310,8 +310,8 @@ profile and state in the bottom border.
 (ctrl+c stops it):
 
 ```sh
-lea web            # prints http://127.0.0.1:PORT/?token=…, a link that signs one browser in, once
-lea web --open     # also opens it in your browser
+lea web            # prints http://127.0.0.1:PORT/?token=…, a link that signs one browser in, once, within 2 minutes
+lea web --open     # also signs your browser in, without the link
 lea web --port 8414
 ```
 
@@ -1333,17 +1333,20 @@ so. Changes apply after `lea init` (endpoints, keys, images, locksql) or `lea st
 
 - `lea web` listens on the host's `127.0.0.1` only, which no lea container shares, and acts as
   you through the daemon's host socket, as the deck does: an agent reaches neither. The link it
-  prints carries a random one-time token (32 bytes) that the browser exchanges for an `HttpOnly`,
-  `SameSite=Strict` cookie; every API call needs that cookie, and a request whose `Host` or
-  `Origin` is not `127.0.0.1:PORT` or `localhost:PORT` is refused (another site's page, DNS
+  prints carries a random one-time token (32 bytes), valid for 2 minutes, that the browser
+  exchanges for an `HttpOnly`, `SameSite=Strict` cookie; every API call needs that cookie, and a
+  request whose `Host` or `Origin` is not `127.0.0.1:PORT` or `localhost:PORT` is refused (another site's page, DNS
   rebinding). The API forwards a fixed list of the daemon's methods, for this lea's agents only
   (a request, grant request or question is answered only when the daemon lists it for one of
   them; allowances are always this lea's); the daemon methods behind requests, grants,
   allowances and questions (`question_answer` among them) are host-only, refused on any agent's
   bus socket, and `lea allow` and `lea egress` from the page run on the host itself;
   there is no CORS, and a strict Content-Security-Policy keeps any other script or origin out
-  of the page. To use it from another machine, forward the port over SSH
-  (`ssh -L 8414:127.0.0.1:8414 host`, then `lea web --port 8414` on the host).
+  of the page. `lea web --open` never puts the token in a command line, which any local user can
+  read (`ps`): it writes a page that posts the token to a private file (`0600`, in a `0700`
+  directory of `$XDG_RUNTIME_DIR`, removed when `lea web` stops) and opens that file. A browser
+  that cannot open local files (some snap packages) needs the printed link. To use it from
+  another machine, forward the port over SSH (`ssh -L 8414:127.0.0.1:8414 host`, then `lea web --port 8414` on the host).
 - `lea web --listen ADDR:PORT` (#416), the explicit opt-in to the network, refuses to start
   unless it serves TLS (your certificate and key, or `--tls-self-signed`: an ECDSA P-256
   certificate lea makes once, keeps 0600 in its host data dir and renews near its end; TLS 1.2 or
@@ -1672,9 +1675,44 @@ tower can adapt; no agent can set one.
 |---|---|---|
 | `max_running` (`LEA_MAX_RUNNING`) | `3` | the children of leads that run at once, host-wide (`0`: no cap). Your own sessions and the leads do not count. At the cap a lead's `agents_spawn` is refused (`3 children already running (limit max_running 3): retry with queue: true or wait for one to end`), or with `queue: true` waits and starts once a child ends; `lea board` and `agents_list` show why (`queued: max_running 3/3`). A spawn request a lead accepts goes through the same check |
 
+| `budget_usd_agent` (`LEA_BUDGET_USD_AGENT`) | `0` (off) | the most one agent may spend, in USD, as its status line reports it (`cost_usd`). Over it lea pauses that agent |
+| `budget_usd_total` (`LEA_BUDGET_USD_TOTAL`) | `0` (off) | the most all agents may spend together, in USD, since the last `lea limits reset budget_usd_total`. Over it lea pauses every running agent and holds new spawns: `agents_spawn` is refused (`budget reached: total spend $50.20 ≥ budget_usd_total $50 …`), or queued with `queue: true` (`queued: budget_usd_total $50.20/$50`) |
+| `budget_usd_step` (`LEA_BUDGET_USD_STEP`) | `20` | in percent of a budget: how much more an agent you resume by hand over that budget may spend before lea pauses it again |
+
 A change never stops a running agent: a cap lowered below what runs holds new spawns until
 enough children end; a raised one starts the queued spawns at once, up to the new cap (one per
 pressure sample).
+
+### Spend budgets
+
+On API billing (pay per token), nothing else stops a runaway agent: a loop, a huge context read
+again each turn, or a tower left running overnight. The two budgets are a kill switch:
+
+```sh
+lea limits set budget_usd_agent 10   # no agent spends more than $10
+lea limits set budget_usd_total 50   # all agents together, since the last reset
+lea limits reset budget_usd_total    # a new period: what was spent no longer counts
+```
+
+Over a budget, lea **pauses** the agent (`budget_usd_agent`) or every running agent
+(`budget_usd_total`), the way it does under host pressure: its processes are frozen, its session
+and its work are kept, nothing is stopped. The deck's row turns red and says why
+(`budget reached: $12.40 ≥ budget_usd_agent $10`), `lea board` lists it under "Paused on a spend
+budget", the alert sound plays and the agent's lead gets one note. While `budget_usd_total` is
+on, the deck's header shows the total spent against it (`$12.40/$50`), red once reached.
+
+The total counts each agent's spend since the period began; when an agent's cost counter starts
+again (a new session), what it spent before still counts. It outlives a restart of the daemon.
+`lea limits reset budget_usd_total` starts a new period and keeps the value; `lea limits set
+budget_usd_total 0` turns it off.
+
+To go on: raise the budget (lea resumes what it paused on it and starts the queued spawns), reset
+the total, or resume an agent by hand (`p` in the deck). An agent resumed by hand over a budget is
+paused again only once it spends `budget_usd_step` percent more of that budget, so resuming does
+not loop. An agent whose status line reports no cost (`cost_usd` unknown, as with some providers)
+is never paused: `lea limits` and `lea doctor` name the running agents the budgets do not cover.
+No agent can change a budget (`limits_set` is the host's); `limits_get` shows them, with the
+spend, read-only.
 
 ## Host pressure
 

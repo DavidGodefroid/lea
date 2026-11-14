@@ -113,6 +113,9 @@ type boardItem struct {
 	// Shed says lea paused the agent under pressure (#132, P2), the daemon's text, until it
 	// resumes it.
 	Shed string `json:"shed,omitempty"`
+	// Budget says lea paused the agent on a spend budget (#424), the daemon's text, until it
+	// resumes.
+	Budget string `json:"budget,omitempty"`
 }
 
 type boardView struct {
@@ -191,10 +194,13 @@ func (d *Daemon) boardList(raw json.RawMessage) (boardView, error) {
 	for k, v := range d.parked {
 		parked[k] = v
 	}
-	shed := map[string]string{}
+	shed, budget := map[string]string{}, map[string]string{}
 	for _, t := range ts {
 		if l := d.shedLabelLocked(t.Agent); l != "" {
 			shed[t.Agent] = l
+		}
+		if l := d.budgetLabelLocked(t.Agent); l != "" {
+			budget[t.Agent] = l
 		}
 	}
 	d.mu.Unlock()
@@ -216,6 +222,7 @@ func (d *Daemon) boardList(raw json.RawMessage) (boardView, error) {
 			}
 			it.Stack = parked[t.Agent]
 			it.Shed = shed[t.Agent]
+			it.Budget = budget[t.Agent]
 		}
 		out.Items = append(out.Items, it)
 	}

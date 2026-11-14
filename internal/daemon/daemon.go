@@ -197,6 +197,10 @@ type Daemon struct {
 	limitStore  LimitStore
 	limitVals   map[string]limitVal
 	childStarts int
+	// budget is the spend budgets' state (budget.go, #424), loaded on first use.
+	budget *budgetState
+	// budgetWG counts the budget pauses and resumes that run.
+	budgetWG sync.WaitGroup
 }
 
 func New(st *store.Store, runDir string, now func() int64) *Daemon {
@@ -388,7 +392,7 @@ func (d *Daemon) dispatch(ctx context.Context, o Origin, req wire.Request) (any,
 	case "providers_list":
 		return d.providersList()
 	case "limits_get":
-		return d.limitsGet()
+		return d.limitsGet(o.Container)
 	case "limits_set":
 		return d.limitsSet(ctx, req.Params)
 	case "msg_send":
