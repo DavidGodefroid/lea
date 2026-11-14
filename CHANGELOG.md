@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+Features:
+
+- lea applies the `[lea]` section of the company's managed configuration,
+  `/etc/lockfamily/managed.toml` (#399, first part). `approvals` and `autoupdate = true` enforce
+  `LEA_APPROVALS` and `LEA_AUTOUPDATE`; `egress_allow` bounds the agents' egress allowlist (your
+  `LEA_EGRESS_ALLOW` within it, `lea egress allow` refused outside it). `lea config import`
+  refuses a file beyond it, `lea doctor` prints `Managed by <organisation> (sha256:…)` and the
+  rules, the deck's header names the organisation. A managed file that is badly owned, invalid or
+  has a `[lea]` key lea does not know stops lea and its daemon from starting. No file: nothing
+  changes.
+
 Security:
 
 - lea mounts `.locklog` read-only into its agents, as `.locksql` (#467). It holds locklog's
@@ -117,6 +128,16 @@ Changes:
   again only after `budget_usd_step` (`LEA_BUDGET_USD_STEP`, default 20) percent more of it. An
   agent of unknown cost is never paused; `lea limits` and `lea doctor` name such agents. The
   deck's header shows the total against `budget_usd_total` while it is on (red once reached).
+
+- The control tower relays a child at 120k tokens of context (#422), no longer at 50 % of its
+  window (500k on a 1M window, so every turn of a child re-read up to that much). The size is the
+  live limit `relay_tokens` (`LEA_RELAY_TOKENS`, default `120000`, `0`: the old 50 % rule): `lea
+  limits set relay_tokens N` applies at the tower's next board check, with no restart of the
+  tower or its children. The status line now reports the context's size in tokens next to its
+  percent; the deck and `agents_list` show both (`182k · 18%`; the percent alone for Codex or an
+  older Claude Code), and `agents_list` marks a tower's children past `relay_tokens` with
+  `relay: true`. The tower also relays a child between two tasks and always spawns with
+  `queue: true`. The README has a new "Cost" section on what drives usage.
 
 - Approval prompts give the one-off and the durable route (#412): a lead's grant request, in the
   user's message, the `grants_request` note relayed by the lead, `lea requests` and the desktop

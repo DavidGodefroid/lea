@@ -22,6 +22,7 @@ import (
 	"github.com/DavidGodefroid/lea/internal/daemon"
 	"github.com/DavidGodefroid/lea/internal/deck"
 	"github.com/DavidGodefroid/lea/internal/identity"
+	"github.com/DavidGodefroid/lea/internal/managed"
 	"github.com/DavidGodefroid/lea/internal/launcher"
 	"github.com/DavidGodefroid/lea/internal/lockhttp"
 	"github.com/DavidGodefroid/lea/internal/roles"
@@ -135,6 +136,11 @@ func oneLine(s string, max int) string {
 }
 
 func runDaemon(stderr io.Writer) int {
+	// The company's managed file (#399): refused, the daemon does not start (fail closed).
+	if _, err := managed.Load(context.Background()); err != nil {
+		fmt.Fprintln(stderr, "lea:", clean(err.Error(), false))
+		return 1
+	}
 	host := identity.HostDir(os.Getenv)
 	if err := ensureHostDir(host); err != nil {
 		fmt.Fprintln(stderr, "lea:", clean(err.Error(), false))

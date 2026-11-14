@@ -120,7 +120,7 @@ func TestNewSpawnsClaudeUnderAbducoAndShowsIt(t *testing.T) {
 	s := e.ensure(t, "/home/u/p/it's here")
 	r := e.spawn(t, "", "--resume")
 	want := Row{Key: C + "/claude-1", Name: "claude-1", Profile: "claude", State: "unknown", Workdir: "/home/u/p/it's here", Updated: 1000,
-		Created: 1000, Role: "dev", CtxPct: -1, CostUSD: -1}
+		Created: 1000, Role: "dev", CtxPct: -1, CtxTokens: -1, CostUSD: -1}
 	if !reflect.DeepEqual(r, want) {
 		t.Fatalf("row=%+v", r)
 	}
