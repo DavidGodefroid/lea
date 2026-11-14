@@ -18,6 +18,7 @@ import (
 	"strings"
 
 	"github.com/DavidGodefroid/lea/internal/locks"
+	"github.com/DavidGodefroid/lea/internal/managed"
 	"github.com/DavidGodefroid/lea/internal/providers"
 )
 
@@ -50,6 +51,10 @@ type Config struct {
 	final    map[string]string // resolved keys
 	extra    []string          // keys exported by the launcher at run time (LEA_TMUX_BIN)
 	defaults string            // path of config/lea.conf: an assignment from it is a default, not the user's
+	// managed is the company's managed policy (#399), nil without a managed file; managedWarn the
+	// user's values it overrides.
+	managed     *managed.Policy
+	managedWarn []string
 }
 
 // Get is the value the shell would see for key after lea_load_config: a resolved key, else the
@@ -158,6 +163,15 @@ func LoadConfig(getenv func(string) string, root, cwd string) (*Config, error) {
 			return nil, err
 		}
 	}
+	// The company's managed file (#399) wins over both files; refused, lea refuses to start.
+	m, err := loadManaged()
+	if err != nil {
+		return nil, err
+	}
+	c.managed = m
+	// The deck's header names the organisation (LEA_MANAGED_ORG); the managed file's own, never
+	// the environment's.
+	c.Export(ManagedOrgVar, managedOrg(m))
 	if err := c.resolve(root); err != nil {
 		return nil, err
 	}
@@ -328,7 +342,7 @@ func (c *Config) resolve(root string) error {
 	if sk := c.Get("LEA_AUTOUPDATE_SKIP"); sk != "" && !releaseVersion.MatchString(sk) {
 		return fmt.Errorf("LEA_AUTOUPDATE_SKIP must be empty or a release version (vX.Y.Z, set by lea rollback), not '%s'", sk)
 	}
-	return nil
+	return c.resolveManaged()
 }
 
 // Resource limits of the lea container: a share of Docker's memory (N%) or a docker size, a

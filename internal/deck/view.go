@@ -267,6 +267,10 @@ func (m Model) top(w int) string {
 	if m.sound == "off" {
 		count = "muted " + c.dot + " " + count
 	}
+	// The company's managed configuration (#399), while there is room for it.
+	if m.org != "" && w-8-tw-lipgloss.Width(count)-lipgloss.Width(m.org+" "+c.dot+" ") >= 1 {
+		count = m.org + " " + c.dot + " " + count
+	}
 	// The requests waiting for lox run, or a console that is down.
 	if l := m.lockLine(); l != "" {
 		count = l + " " + c.dot + " " + count

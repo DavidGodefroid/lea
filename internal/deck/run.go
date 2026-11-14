@@ -15,7 +15,8 @@ import (
 func Run(api API, container string, ascii bool, notice func() string, st SettingsStore, off string, layout LayoutStore) error {
 	drv := tmuxWidthDrive(os.Getenv)
 	m := New(api, container, ascii, time.Now).WithIntro().WithNotice(notice).WithSettings(st, off).WithLayout(layout).WithLayoutWatch().
-		WithWidthDrive(drv.apply, drv.window, drv.read).WithThemeDrive(tmuxThemeDrive(os.Getenv))
+		WithWidthDrive(drv.apply, drv.window, drv.read).WithThemeDrive(tmuxThemeDrive(os.Getenv)).
+		WithOrganisation(os.Getenv("LEA_MANAGED_ORG"))
 	m = m.restoreWidth()
 	if m.applyFrame != nil {
 		if err := m.applyFrame(current); err != nil && m.status == "" {
