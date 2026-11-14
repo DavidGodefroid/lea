@@ -1,0 +1,6 @@
+status 2
+-- calls
+
+-- lea
+lea: error: lea web names no --container: run it from the lea's projects directory (or set LEA_PROJECTS_DIR)
+-- stdout

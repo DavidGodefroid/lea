@@ -60,7 +60,7 @@ func (r *Registry) Resolve(provider, model, defProvider, defModel string) (Provi
 // agents: they keep Codex's prompt, as a Claude agent keeps its own (a grant may answer it).
 var (
 	LeaApprovedTools = []string{"agents_list", "agents_request_spawn", "ask", "board_read", "grants_list", "grants_request",
-		"lease_acquire", "lease_release", "lock_hint", "msg_inbox", "msg_reply", "msg_send", "msg_wait",
+		"lease_acquire", "lease_release", "limits_get", "lock_hint", "msg_inbox", "msg_reply", "msg_send", "msg_wait",
 		"providers_list", "task_update", "user_ask"}
 	LeaPromptedTools = []string{"agents_spawn", "agents_stop"}
 )

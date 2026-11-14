@@ -225,6 +225,9 @@ func runDaemon(stderr io.Writer) int {
 	d.SetHoldMax(launcher.HoldMaxSetting(os.Getenv))
 	go d.RunHoldExpiry(ctx)
 	d.SetHeavy(launcher.HeavySettings(os.Getenv))
+	// The live limits (#420): read from the files now, changed later by limits_set, which writes
+	// the user configuration. No stamp records them: changing one never restarts the daemon.
+	daemonLimits(d, exe, stderr)
 	// Same pattern for the admission thresholds (#132, P2): the daemon samples the host and each
 	// lea container, and refuses or queues new agents under pressure.
 	_ = os.Remove(filepath.Join(host, "daemon.admit"))

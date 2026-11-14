@@ -165,6 +165,9 @@ type API interface {
 	SplitShell(ctx context.Context, key string, below bool) (Agent, error)
 	// SetSound switches the daemon's sounds and answers the new state.
 	SetSound(ctx context.Context, on bool) (string, error)
+	// SetLimit sets a live limit on the running daemon (limits_set, #420), which applies it at
+	// once and writes it to the user configuration.
+	SetLimit(ctx context.Context, key, value string) error
 	// SetHeld pauses an agent's inbox (the deck's H) or releases it.
 	SetHeld(ctx context.Context, key string, held bool) error
 	// Questions lists the control towers' questions to the user; DropQuestion drops a queued one.

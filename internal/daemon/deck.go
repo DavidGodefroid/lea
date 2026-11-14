@@ -282,14 +282,15 @@ func (d *Daemon) dispatchDeck(ctx context.Context, o Origin, req wire.Request) (
 	return nil, fmt.Errorf("unknown method %q", req.Method)
 }
 
-// deckAttached reports whether someone can answer an approval in the container's deck. Without
+// deckAttached reports whether someone can answer an approval in the container's deck (or in a
+// lea web client attached as one, webdeck.go). Without
 // an agent manager (phase 0 daemons, tests) the host CLI answers, as before, and so it does
 // without the deck (LEA_DECK=0, #135): lea requests, lea approve, lea deny.
 func (d *Daemon) deckAttached(ctx context.Context, container string) bool {
 	d.mu.Lock()
 	a, noDeck := d.agents, d.noDeck
 	d.mu.Unlock()
-	if a == nil || noDeck {
+	if a == nil || noDeck || d.webAttached(container) {
 		return true
 	}
 	ok, err := a.Attached(ctx, container)
