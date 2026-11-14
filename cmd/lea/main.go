@@ -12,6 +12,7 @@ import (
 
 	"github.com/DavidGodefroid/lea/internal/hook"
 	"github.com/DavidGodefroid/lea/internal/identity"
+	"github.com/DavidGodefroid/lea/internal/launcher"
 	"github.com/DavidGodefroid/lea/internal/mcpserver"
 	"github.com/DavidGodefroid/lea/internal/statusline"
 	"github.com/DavidGodefroid/lea/internal/transcript"
@@ -78,6 +79,8 @@ const usage = `usage: lea <command>
                              file (reset: back to the environment or lea's default)
   hook claude <event>        Claude Code hook (inside lea)
   repair-transcript <id>     cut a session's transcript after its last valid line before a resume (inside lea)
+  child-settings <file>      lea's settings for a lead's child, with LEA_CHILD_PLUGINS and LEA_CHILD_MCP
+                             denied (lea-session, inside lea)
   lock-hello --uid UID [--protocol N] DIR [SOCKET...]
                              the hello handshake of lock console sockets of DIR, served by
                              UID, as JSON (lea doctor runs it in lea's image)
@@ -147,6 +150,19 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		return 0
 	case "repair-transcript":
 		return runRepairTranscript(args[1:], stderr, os.Getenv)
+	case "child-settings":
+		// A lead's child's --settings (#423), printed for lea-session.
+		if len(args) != 2 {
+			fmt.Fprintln(stderr, "usage: lea child-settings SETTINGS_FILE")
+			return 2
+		}
+		b, err := launcher.RunChildSettings(args[1], os.Getenv)
+		if err != nil {
+			fmt.Fprintln(stderr, "lea child-settings:", err)
+			return 1
+		}
+		fmt.Fprintf(stdout, "%s\n", b)
+		return 0
 	case "mcp":
 		s := mcpserver.New(identity.BusSock(os.Getenv), identity.Agent(os.Getenv), version, mcpserver.LockGuidance(os.Getenv))
 		if err := s.Run(context.Background(), &mcp.StdioTransport{}); err != nil {
