@@ -230,6 +230,31 @@ func TestForgeWithoutATokenGoesOutAnonymous(t *testing.T) {
 	}
 }
 
+// gh pr merge --delete-branch deletes the head with its ref's slashes escaped (#451): the call goes
+// through as gh sent it, like the plain form; escaped slashes elsewhere stay refused.
+func TestForgeRefDelete(t *testing.T) {
+	r := newForgeRig(t)
+	writeKey(t, r.keyDir, GitHubTokenFile, testToken)
+	for _, p := range []string{"/repos/o/r/git/refs/heads%2Ffix%2F409-x", "/repos/o/r/git/refs/heads/fix/409-x"} {
+		code, _, body := r.send(t, "DELETE", "api.github.com", p, nil)
+		if code != 200 || body != "DELETE "+p {
+			t.Errorf("DELETE %s: %d %q", p, code, body)
+		}
+		if req, _, _ := r.last(t); req.Header.Get("Authorization") != "Bearer "+testToken {
+			t.Errorf("DELETE %s: Authorization %q", p, req.Header.Get("Authorization"))
+		}
+	}
+	n := r.count()
+	for _, p := range []string{"/repos/o/r/git%2Frefs%2Fheads%2Fx", "/repos/o/r/keys%2Fx", "/repos/o/r/git/refs/heads%2F..%2F..%2Fkeys"} {
+		if code, _, _ := r.send(t, "DELETE", "api.github.com", p, nil); code != http.StatusBadRequest {
+			t.Errorf("DELETE %s: %d, want 400", p, code)
+		}
+	}
+	if r.count() != n {
+		t.Error("a refused ref delete reached the upstream")
+	}
+}
+
 func TestForgeRefusals(t *testing.T) {
 	r := newForgeRig(t)
 	writeKey(t, r.keyDir, GitHubTokenFile, testToken)

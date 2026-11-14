@@ -110,6 +110,11 @@ var forgeMethods = map[string]bool{http.MethodGet: true, http.MethodHead: true, 
 // or a ";", valid escapes, no empty segment (the root "/" aside), no "." or ".." segment, and no
 // escaped slash or backslash. It returns the path's segments, decoded and lower-cased: the route
 // forgeRoute matches is the one GitHub serves.
+// One exception: the ref name of repos/{owner}/{repo}/git/refs|ref|matching-refs/<ref> may hold
+// escaped slashes, as gh sends it (DELETE …/git/refs/heads%2Ffix%2Fx for gh pr merge
+// --delete-branch, #451). That ref is split at them into segments, each checked as above, so the
+// route matched is the one of the plain form …/git/refs/heads/fix/x: the escapes stay in the ref
+// name, after the segments forgeRoute decides on.
 func forgePath(p string) ([]string, bool) {
 	if !strings.HasPrefix(p, "/") {
 		return nil, false
@@ -125,12 +130,34 @@ func forgePath(p string) ([]string, bool) {
 	var segs []string
 	for _, s := range strings.Split(p[1:], "/") {
 		d, err := url.PathUnescape(s)
-		if err != nil || d == "" || d == "." || d == ".." || strings.ContainsAny(d, "/\\;") {
+		if err != nil {
 			return nil, false
 		}
-		segs = append(segs, strings.ToLower(d))
+		parts := []string{d}
+		if refName(segs) {
+			parts = strings.Split(d, "/")
+		}
+		for _, d := range parts {
+			if d == "" || d == "." || d == ".." || strings.ContainsAny(d, "/\\;") {
+				return nil, false
+			}
+			segs = append(segs, strings.ToLower(d))
+		}
 	}
 	return segs, true
+}
+
+// refName reports whether the segment after segs is in the ref name of a git refs route:
+// segs start with repos/{owner}/{repo}/git/refs, git/ref or git/matching-refs.
+func refName(segs []string) bool {
+	if len(segs) < 5 || segs[0] != "repos" || segs[3] != "git" {
+		return false
+	}
+	switch segs[4] {
+	case "refs", "ref", "matching-refs":
+		return true
+	}
+	return false
 }
 
 // Forge is the forge forwarder's handler. keyDir holds the token (GitHubTokenFile), read at every
