@@ -13,6 +13,7 @@ import (
 	"strconv"
 	"syscall"
 
+	"github.com/DavidGodefroid/lea/internal/deck"
 	"github.com/DavidGodefroid/lea/internal/identity"
 	"github.com/DavidGodefroid/lea/internal/web"
 )
@@ -95,6 +96,9 @@ func runWeb(args []string, stdout, stderr io.Writer) int {
 	if err != nil {
 		fmt.Fprintln(stderr, "lea web:", clean(err.Error(), false))
 		return 1
+	}
+	if p, ok := deck.LayoutPath(identity.HostDir(os.Getenv), container); ok {
+		s.SetLayoutPath(p)
 	}
 	var l net.Listener
 	url := ""

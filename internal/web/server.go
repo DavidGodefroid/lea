@@ -80,6 +80,10 @@ type Server struct {
 	// default).
 	terms        terminals
 	captureEvery time.Duration
+	// layoutPath is the deck's layout file of this lea (folders.go), foldersEvery how often the
+	// folder stream reads it (0: the default).
+	layoutPath   string
+	foldersEvery time.Duration
 	// retry is how long the event stream waits before it asks the daemon again after an error.
 	retry func(ctx context.Context)
 }
@@ -164,6 +168,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/logout", s.api(s.logout))
 	mux.HandleFunc("GET /api/events", s.api(s.events))
 	mux.HandleFunc("GET /api/terminal", s.api(s.terminal))
+	mux.HandleFunc("GET /api/folders", s.api(s.folders))
 	mux.HandleFunc("POST /api/{method}", s.api(s.method))
 	mux.HandleFunc("/api/", s.api(func(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "no such API")
