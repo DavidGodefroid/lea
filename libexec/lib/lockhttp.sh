@@ -29,25 +29,74 @@ lea__lockhttp_older() {
   return 1
 }
 
-# lea__lockhttp_image: the gate's image as lea's launcher runs it (internal/launcher/lockhttp.go):
-# the release image by the digest lockhttp's launcher pins, or the local image lockhttp for a
-# launcher run from a clone. On failure, prints why and returns 1.
-lea__lockhttp_image() {
-  if ! _lhi_b=$(lea__lockhost_bin lockhttp); then
-    printf '%s' "no root-owned launcher in /usr/local/bin: install it (lockhttp's scripts/install.sh, docs/docker.md)"; return 1
+# lea__lockhttp_launcher: lockhttp's launcher on the host, as lea's launcher finds it
+# (lockHTTPLaunchers, internal/launcher/lockhttp.go): the first file (or link to one, as brew's)
+# of /usr/local/bin/lockhttp, ~/.local/bin/lockhttp (lockfamily's install.sh), then brew's
+# bin/lockhttp (HOMEBREW_PREFIX, else /opt/homebrew, /home/linuxbrew/.linuxbrew); nothing without.
+lea__lockhttp_launcher() {
+  _ll_r=$(lea__lockhost_root)
+  for _ll_b in "$_ll_r/usr/local/bin/lockhttp" ${HOME:+"$HOME/.local/bin/lockhttp"} \
+    ${HOMEBREW_PREFIX:+"$HOMEBREW_PREFIX/bin/lockhttp"} "$_ll_r/opt/homebrew/bin/lockhttp" \
+    "$_ll_r/home/linuxbrew/.linuxbrew/bin/lockhttp"; do
+    if [ -f "$_ll_b" ]; then printf '%s' "$_ll_b"; return 0; fi
+  done
+  return 1
+}
+
+# LEA_LOCKHTTP_INSTALL: how to install lockhttp's launcher, for lea's messages.
+LEA_LOCKHTTP_INSTALL="brew install davidgodefroid/tap/lockfamily (or brew upgrade), then lox run"
+
+# lea__lockhttp_signed BIN VERSION DIGEST: DIGEST is the image lockhttp's release VERSION signed, as
+# lockHTTPSigned (internal/launcher/lockhttp.go) decides for a launcher others than root may write:
+# the set's pin (config/locks.lock) at that release, else cosign's verify against lockhttp's
+# release workflow at that very tag. On failure, prints why and returns 1.
+lea__lockhttp_signed() {
+  _ls_v=v${2#v}
+  if ! printf '%s\n' "$_ls_v" | grep -Eqx 'v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+)?'; then
+    printf '%s' "$1 names no lockhttp release (launcher_version=$2): $LEA_LOCKHTTP_INSTALL"; return 1
   fi
+  _ls_pin=$(sed -n 's/^LOCKS_LOCKHTTP_IMAGE=//p' "${LEA_ROOT:-.}/config/locks.lock" 2>/dev/null | tail -n 1)
+  if [ "$_ls_v" = "$LEA_LOCKHTTP_RELEASE" ] && [ "${_ls_pin#*@}" = "$3" ]; then return 0; fi
+  if ! command -v cosign >/dev/null 2>&1; then
+    printf '%s' "cosign not found: brew install cosign (lea checks the image $1 pins: others than root may write it)"; return 1
+  fi
+  _ls_ref=ghcr.io/davidgodefroid/lockhttp@$3
+  if ! cosign verify --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+    --certificate-identity "https://github.com/DavidGodefroid/lockhttp/.github/workflows/release.yml@refs/tags/$_ls_v" \
+    "$_ls_ref" >/dev/null 2>&1; then
+    printf '%s' "$1 pins $_ls_ref, which cosign does not verify as lockhttp's release $_ls_v: others than root may write that launcher, and lea runs only a signed image. Reinstall it (brew reinstall davidgodefroid/tap/lockhttp), then lea"; return 1
+  fi
+}
+
+# lea__lockhttp_image: the gate's image as lea's launcher runs it (internal/launcher/lockhttp.go):
+# the release image by the digest lockhttp's launcher pins, checked by lea__lockhttp_signed unless
+# the launcher is root-owned in /usr/local/bin, or the local image lockhttp for such a launcher run
+# from a clone. On failure, prints why and returns 1.
+lea__lockhttp_image() {
+  if ! _lhi_b=$(lea__lockhttp_launcher); then
+    printf '%s' "no lockhttp launcher (in /usr/local/bin, ~/.local/bin or brew's bin): $LEA_LOCKHTTP_INSTALL"; return 1
+  fi
+  # Only /usr/local/bin is root's: the user may replace a file in ~/.local/bin or brew's bin.
+  _lhi_t=
+  if [ "$(lea__lockhost_bin lockhttp)" = "$_lhi_b" ]; then _lhi_t=1; fi
   _lhi_v=$(lea__lockhttp_version "$_lhi_b")
   _lhi_d=$(head -c 65536 "$_lhi_b" | sed -n 's/^image_digest=//p' | head -n 1)
   if [ -z "$_lhi_v" ]; then
-    printf '%s' "$_lhi_b is not lockhttp's launcher (a v0.1.0 host install?): install the launcher (docs/docker.md)"; return 1
+    printf '%s' "$_lhi_b is not lockhttp's launcher (a v0.1.0 host install?): $LEA_LOCKHTTP_INSTALL"; return 1
   fi
-  if [ "$_lhi_v" = dev ]; then printf lockhttp; return 0; fi
+  if [ "$_lhi_v" = dev ]; then
+    if [ -z "$_lhi_t" ]; then
+      printf '%s' "$_lhi_b runs from a clone (launcher_version=dev) and is not owned and writable by root only: lea runs a clone's local image only from a root-owned /usr/local/bin/lockhttp"; return 1
+    fi
+    printf lockhttp; return 0
+  fi
   if [ -z "$_lhi_d" ]; then
-    printf '%s' "$_lhi_b pins no image digest (installed with LOCKHTTP_SKIP_COSIGN=1?): install it again with cosign"; return 1
+    printf '%s' "$_lhi_b pins no image digest: $LEA_LOCKHTTP_INSTALL"; return 1
   fi
   if ! printf '%s\n' "$_lhi_d" | grep -qx 'sha256:[0-9a-f]\{64\}'; then
     printf '%s' "$_lhi_b: invalid image digest"; return 1
   fi
+  if [ -z "$_lhi_t" ] && ! lea__lockhttp_signed "$_lhi_b" "$_lhi_v" "$_lhi_d"; then return 1; fi
   printf 'ghcr.io/davidgodefroid/lockhttp@%s' "$_lhi_d"
 }
 
@@ -99,9 +148,9 @@ lea__doctor_lockhttp() {
   else lea__fail "lockhttp launcher" "$_dh_img"; _dh_img=; _dh_rc=1; fi
   # The launcher's release, but for a clone's (dev).
   _dh_v=
-  if _dh_b=$(lea__lockhost_bin lockhttp); then _dh_v=$(lea__lockhttp_version "$_dh_b"); fi
+  if _dh_b=$(lea__lockhttp_launcher); then _dh_v=$(lea__lockhttp_version "$_dh_b"); fi
   if [ -n "$_dh_v" ] && lea__lockhttp_older "$_dh_v"; then
-    lea__warn "lockhttp launcher" "v${_dh_v#v}, older than $LEA_LOCKHTTP_RELEASE, the release lea pins (lea leaves out the gate's features it lacks): LOCKHTTP_VERSION=$LEA_LOCKHTTP_RELEASE sh install.sh (lockhttp's docs/docker.md)"
+    lea__warn "lockhttp launcher" "v${_dh_v#v}, older than $LEA_LOCKHTTP_RELEASE, the release lea pins (lea leaves out the gate's features it lacks): brew upgrade davidgodefroid/tap/lockfamily, then lox run, lea stop --all and lea"
   fi
   if [ -z "${LEA_GIT_SSH:-}" ]; then lea__ok "LockHTTP: no SSH forwarder (LEA_GIT_SSH empty)"
   else lea__fail "LockHTTP" "LEA_GIT_SSH is set: its forwarders would bypass the gate"; _dh_rc=1; fi

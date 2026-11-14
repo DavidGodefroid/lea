@@ -148,9 +148,13 @@ func (d *Daemon) agentsSpawn(ctx context.Context, o Origin, me string, raw json.
 		}
 		req = &r
 	}
+	// The max_running cap (#420), then the pressure: a spawn they hold is refused, or queued.
 	d.mu.Lock()
-	admit := d.admitLocked(o.Container)
+	admit := d.admitChildLocked(o.Container)
 	d.mu.Unlock()
+	if admit == nil {
+		defer d.endChildStart()
+	}
 	if admit != nil && !p.Queue {
 		return nil, fmt.Errorf("agents_spawn: %w", admit)
 	}
@@ -177,7 +181,7 @@ func (d *Daemon) agentsSpawn(ctx context.Context, o Origin, me string, raw json.
 		}
 		d.changed()
 		return map[string]any{"queued": id, "reason": admit.Error(),
-			"note": fmt.Sprintf("queued: it starts once the pressure falls (you get a message), or is dropped after %s", queuedSpawnTTL)}, nil
+			"note": fmt.Sprintf("queued: it starts once lea lets it in (you get a message), or is dropped after %s", queuedSpawnTTL)}, nil
 	}
 	row, err := d.startSpawn(ctx, a, me, nr, req)
 	if err != nil {

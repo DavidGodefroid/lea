@@ -20,7 +20,7 @@ var coreCommands = map[string]bool{
 	"version": true, "daemon": true, "agents": true, "msg": true, "inbox": true, "approvals": true, "approve": true, "deny": true,
 	"attach-container": true, "role": true, "requests": true, "request": true, "board": true, "sound": true, "grant": true, "deck": true,
 	"deck-open": true, "deck-stop": true, "hook": true, "mcp": true, "statusline": true, "acp-probe": true, "launcher-check": true, "heavy": true,
-	"repair-transcript": true, "forge-relay": true, "lock-hello": true, "questions": true, "hold": true,
+	"repair-transcript": true, "forge-relay": true, "lock-hello": true, "questions": true, "hold": true, "limits": true,
 }
 
 // launcherCommand reports whether args are a launcher command. `new --container NAME --workdir
@@ -34,7 +34,8 @@ func launcherCommand(args []string) bool {
 	if args[0] == "new" {
 		return len(args) < 5 || args[1] != "--container" || args[3] != "--workdir"
 	}
-	if args[0] == "allow" { // the launcher names the container, then runs the core form
+	// The launcher names the container of lea allow and lea web, then runs their core form.
+	if args[0] == "allow" || args[0] == "web" {
 		return len(args) < 3 || args[1] != "--container"
 	}
 	if args[0] == "grant" && len(args) > 1 && (args[1] == "add" || args[1] == "ls") {

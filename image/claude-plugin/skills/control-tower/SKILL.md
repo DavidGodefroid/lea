@@ -100,7 +100,9 @@ For each thing the user asks:
    `repo` it works in, a `branch` named after the task (`fix/…`, `feat/…`) so it gets its own
    worktree, and a `label`, the name the user sees in the deck (at most 24 characters):
    `<repo>#<issue> <2-3 words>` when there is an issue (`lea#350 spawn reuse`), else 3-4 words of
-   the task. At most 20 children: when full, queue the task and say so.
+   the task. At most 20 children: when full, queue the task and say so. lea also caps the
+   children that run at once, host-wide (`limits_get`: `max_running`, which the user changes
+   live): at the cap pass `queue: true`, and the spawn starts when a child ends.
 5. Write a self-contained brief (the agent knows nothing else):
    - the goal and the acceptance criteria, in the user's words when they gave them;
    - the repo, the branch, what not to touch;
