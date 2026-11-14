@@ -480,6 +480,11 @@ func (m *Manager) paneCmd(container string, a store.Agent, args []string, attach
 	if m.cfg.RequesterToken != nil && !attach {
 		cmd = append(cmd, "-e", "LEA_AGENT_TOKEN="+m.cfg.RequesterToken(container, a.Name, a.Incarnation))
 	}
+	// The incarnation (no secret: the token is keyed by the host's key): the tower guard keeps a
+	// tower's mark for its resumes, never for an agent created again under its name (#383).
+	if a.Incarnation != "" && !attach {
+		cmd = append(cmd, "-e", "LEA_AGENT_INCARNATION="+a.Incarnation)
+	}
 	if m.cfg.ChildDeny != nil && a.Parent != "" && !attach {
 		plugins, mcp := m.cfg.ChildDeny()
 		if plugins != "" {

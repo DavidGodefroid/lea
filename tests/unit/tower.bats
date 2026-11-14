@@ -160,9 +160,9 @@ tool_as() {
   if [ -z "$out" ]; then echo allow; else printf '%s' "$out" | jq -r .hookSpecificOutput.permissionDecision; fi
 }
 
-@test "the plugin runs the tower guard on a SessionStart that clears or compacts (#410)" {
+@test "the plugin runs the tower guard on a SessionStart that clears, compacts or resumes (#410, #383)" {
   h="$P/hooks/hooks.json"
-  [ "$(jq -r '.hooks.SessionStart[0].matcher' "$h")" = 'clear|compact' ]
+  [ "$(jq -r '.hooks.SessionStart[0].matcher' "$h")" = 'clear|compact|resume' ]
   [ "$(jq -r '.hooks.SessionStart[0].hooks[0].command' "$h")" = 'sh "${CLAUDE_PLUGIN_ROOT}/hooks/tower-guard" session' ]
 }
 
@@ -181,7 +181,7 @@ tool_as() {
   [ "$(tool_as s2 tower mcp__lea__agents_list)" = allow ]
   # The old session's marker is gone: the tower lives in the new one.
   [ ! -e "$LEA_TOWER_DIR/s1" ]
-  [ "$(cat "$LEA_TOWER_DIR/tower.tower")" = s2 ]
+  [ "$(sed -n 1p "$LEA_TOWER_DIR/tower.tower")" = s2 ]
   # A compaction keeps the session id and the mode.
   out=$(as s2 tower session '{"source":"compact"}')
   printf '%s' "$out" | jq -r .hookSpecificOutput.additionalContext | grep -qF 'compacted'
@@ -196,8 +196,8 @@ tool_as() {
   as s1 tower prompt '{"prompt":"/lea:control-tower"}' >/dev/null
   [ -z "$(as s3 plain session '{"source":"clear"}')" ]
   [ "$(tool_as s3 plain Edit)" = allow ]
-  # A new or a resumed session does not take tower mode over, nor does one without an identity.
-  for src in startup resume; do [ -z "$(as s4 tower session "$(jq -n --arg s "$src" '{source: $s}')")" ]; done
+  # A new session does not take tower mode over, nor does one without an identity.
+  [ -z "$(as s4 tower session '{"source":"startup"}')" ]
   [ -z "$(jq -n '{session_id: "s5", source: "clear"}' | env -u LEA_AGENT sh "$G" session)" ]
   [ "$(tool_as s4 tower Edit)" = allow ]
 }
@@ -265,4 +265,66 @@ tool_as() {
   grep -qF '**Resume branch.**' "$t"
   grep -qF 'whose `parent` is your own' "$t"
   grep -qF 'type /lea:clear-ct' "$t"
+}
+
+# #383: the marks live in Claude Code's own directory (kept by lea per projects dir across its
+# containers), bound to the agent's incarnation (LEA_AGENT_INCARNATION).
+@test "the marks live in Claude Code's directory, not in /tmp (#383)" {
+  unset LEA_TOWER_DIR CLAUDE_CONFIG_DIR
+  export HOME="$BATS_TEST_TMPDIR/home" TMPDIR="$BATS_TEST_TMPDIR/tmp1"
+  mkdir -p "$HOME" "$TMPDIR"
+  as s1 tower prompt '{"prompt":"/lea:control-tower"}' >/dev/null
+  [ -e "$HOME/.claude/lea-tower/s1" ] && [ -e "$HOME/.claude/lea-tower/tower.tower" ]
+  [ -z "$(ls -A "$TMPDIR")" ]
+  export CLAUDE_CONFIG_DIR="$BATS_TEST_TMPDIR/cfg"
+  as s2 tower prompt '{"prompt":"/lea:control-tower"}' >/dev/null
+  [ -e "$CLAUDE_CONFIG_DIR/lea-tower/s2" ]
+}
+
+@test "a resumed tower has its guard on from the first turn, in a new container too (#383)" {
+  unset LEA_TOWER_DIR CLAUDE_CONFIG_DIR
+  export HOME="$BATS_TEST_TMPDIR/home" LEA_AGENT_INCARNATION=0a1b
+  mkdir -p "$HOME"
+  as s1 tower prompt '{"prompt":"/lea:control-tower"}' >/dev/null
+  [ "$(sed -n 2p "$HOME/.claude/lea-tower/tower.tower")" = 0a1b ]
+  # A new container: its /tmp is empty, Claude Code's directory is the same one.
+  export TMPDIR="$BATS_TEST_TMPDIR/tmp2"
+  mkdir -p "$TMPDIR"
+  # The resumed session keeps its id: the guard is on before any hook of the new container.
+  [ "$(tool_as s1 tower Edit)" = deny ]
+  out=$(as s1 tower session '{"source":"resume"}')
+  c=$(printf '%s' "$out" | jq -r .hookSpecificOutput.additionalContext)
+  printf '%s' "$c" | grep -qF 'your session was resumed'
+  printf '%s' "$c" | grep -qF 'tower mode is on'
+  printf '%s' "$c" | grep -qF 'agents_list and board_read'
+  # A resume under a new session id carries the mode over, as a clear does.
+  as s7 tower session '{"source":"resume"}' >/dev/null
+  for t in Bash Edit Write; do [ "$(tool_as s7 tower "$t" '{"command":"git push"}')" = deny ]; done
+  [ "$(tool_as s7 tower mcp__lea__board_read)" = allow ]
+  [ ! -e "$HOME/.claude/lea-tower/s1" ]
+  [ "$(sed -n 1p "$HOME/.claude/lea-tower/tower.tower")" = s7 ]
+}
+
+@test "another agent, or a new one under the tower's name, does not inherit the mark (#383)" {
+  export LEA_AGENT_INCARNATION=0a1b
+  as s1 tower prompt '{"prompt":"/lea:control-tower"}' >/dev/null
+  echo snap >"$LEA_TOWER_DIR/tower.resume.md"
+  # Another agent of the container.
+  [ -z "$(as s2 other session '{"source":"resume"}')" ]
+  [ "$(tool_as s2 other Edit)" = allow ]
+  # The name reused after the tower was removed: another incarnation, a new session.
+  export LEA_AGENT_INCARNATION=ffee
+  for src in resume clear compact; do
+    [ -z "$(as s3 tower session "$(jq -n --arg s "$src" '{source: $s}')")" ]
+  done
+  [ "$(tool_as s3 tower Edit)" = allow ]
+  # The old tower's files are dropped: a later resume of the old incarnation finds none.
+  [ ! -e "$LEA_TOWER_DIR/tower.tower" ] && [ ! -e "$LEA_TOWER_DIR/tower.resume.md" ]
+  export LEA_AGENT_INCARNATION=0a1b
+  [ -z "$(as s4 tower session '{"source":"resume"}')" ]
+  # The new agent's own tower is its own.
+  export LEA_AGENT_INCARNATION=ffee
+  as s5 tower prompt '{"prompt":"/lea:control-tower"}' >/dev/null
+  [ -n "$(as s6 tower session '{"source":"resume"}')" ]
+  [ "$(tool_as s6 tower Edit)" = deny ]
 }
