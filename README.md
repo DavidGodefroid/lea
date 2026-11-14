@@ -997,6 +997,16 @@ lea allow off 12                   # allowance #12; or a capability (lea allow o
 | `release-tag` | `git push origin refs/tags/vX.Y.Z` (a new semver tag on a commit of the default branch, see below) |
 | `release` | `gh release create <tag> --verify-tag [--title T] [--notes-file F \| --generate-notes] [--prerelease] [--latest]`, for tags `--tag GLOB` matches (see below) |
 
+A lead may also push its team's branches (#406). It can push branch B when B is the recorded
+branch of one of its own direct children, that child is idle, done or stopped, no other live
+agent of the lea works on B, and B is not the default branch. The lead runs `git push [-u]
+origin B` from that child's worktree root (`.lea/worktrees/<repo>/<child>`). The child's `push`
+allowance has to cover it: same repository, `--branch` glob and `--agent`. lea pins the push
+exactly as it pins the child's own. A lead still cannot commit, delete, merge or open a PR for a
+child's branch, cannot push another lead's child's branch, and cannot push tags (`release-tag`
+covers tags). When a lead is refused a push, the refusal lists the branches it may push and the
+worktree to run each from.
+
 `deliver` is `push pr merge delete-branch`. The container is always this projects directory's lea
 (`LEA_PROJECTS_DIR=~/other lea allow …` for another one). Every capability but stop-finished is
 pinned to each repository's `origin`, read from its `.git/config` (as a file: no git runs on the
