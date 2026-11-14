@@ -7,12 +7,13 @@ import (
 	"testing"
 
 	"github.com/DavidGodefroid/lea/internal/lockhttp"
+	"github.com/DavidGodefroid/lea/internal/locks"
 )
 
 // testDigest is the image digest the fake launcher pins.
 const testDigest = "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
 
-// fakeLockHTTPLauncher is the head of lockhttp's launcher (scripts/lockhttp) as install.sh writes it.
+// fakeLockHTTPLauncher is the head of lockhttp's launcher (scripts/lockhttp) as its release stamps it.
 func fakeLockHTTPLauncher(version, digest string) string {
 	return "#!/bin/sh\n# lockhttp: the launcher.\nset -eu\n\nlauncher_version=" + version + "\nimage_digest=" + digest +
 		"\n\nrepo=\"DavidGodefroid/lockhttp\"\nregistry=\"ghcr.io/davidgodefroid/lockhttp\"\n"
@@ -32,7 +33,7 @@ func lockHostWorld(t *testing.T) string {
 	return root
 }
 
-// lockHTTPWorld adds what lockhttp's install.sh leaves to lockHostWorld (its launcher, root-owned
+// lockHTTPWorld adds a system-wide install of lockhttp's launcher to lockHostWorld (root-owned
 // in /usr/local/bin, pinning testDigest) and what lox run leaves: the lockhttp lock web of the
 // projects directory (hubUp). The gate runs hub-attached only.
 func lockHTTPWorld(t *testing.T) (*world, string) {
@@ -259,22 +260,183 @@ func TestLockHTTPDevLauncherRunsTheLocalImage(t *testing.T) {
 	}
 }
 
+// userLauncherWorld is lockHTTPWorld with lockhttp's launcher where brew or lockfamily's install.sh puts
+// it, ~/.local/bin, owned by the user, of release version pinning digest, and none in
+// /usr/local/bin.
+func userLauncherWorld(t *testing.T, version, digest string) (*world, string) {
+	t.Helper()
+	w, root := lockHTTPWorld(t)
+	if err := os.Remove(root + "/usr/local/bin/lockhttp"); err != nil {
+		t.Fatal(err)
+	}
+	p := w.home + "/.local/bin/lockhttp"
+	if err := os.MkdirAll(w.home+"/.local/bin", 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(p, []byte(fakeLockHTTPLauncher(version, digest)), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	return w, p
+}
+
+// cosignCalls are the cosign calls of the fake log.
+func cosignCalls(w *world) []string {
+	var r []string
+	for _, c := range w.calls() {
+		if strings.HasPrefix(c, "cosign ") {
+			r = append(r, c)
+		}
+	}
+	return r
+}
+
+// A launcher others than root may write (brew's, lockfamily's install.sh's in ~/.local/bin): lea
+// runs the image it pins once cosign verifies it against lockhttp's release workflow at its tag.
+func TestLockHTTPBrewLauncher(t *testing.T) {
+	w, _ := userLauncherWorld(t, "0.9.1", testDigest)
+	if err := w.launcher().ensureProxy(w.proj); err != nil {
+		t.Fatal(err)
+	}
+	image := "ghcr.io/davidgodefroid/lockhttp@" + testDigest
+	if r := gateRuns(w); len(r) != 1 || !strings.Contains(r[0], "[lea.lockhttp-image="+image+"]") {
+		t.Fatalf("brew launcher:\n%s", strings.Join(w.calls(), "\n"))
+	}
+	want := "cosign [verify] [--certificate-oidc-issuer] [https://token.actions.githubusercontent.com] " +
+		"[--certificate-identity] [https://github.com/DavidGodefroid/lockhttp/.github/workflows/release.yml@refs/tags/v0.9.1] [" + image + "]"
+	if c := cosignCalls(w); len(c) == 0 || c[0] != want {
+		t.Fatalf("cosign calls: %q, want %q", c, want)
+	}
+}
+
+// The set's lockhttp (config/locks.lock, checked with cosign when lea pinned it) needs no cosign.
+func TestLockHTTPBrewLauncherOfTheSet(t *testing.T) {
+	w0 := newWorld(t, repoRoot(t))
+	set, err := w0.launcher().lockSet()
+	if err != nil {
+		t.Fatal(err)
+	}
+	pin := set.Pins["lockhttp"]
+	w, _ := userLauncherWorld(t, strings.TrimPrefix(pin.Version, "v"), locks.Digest(pin.Image))
+	w.env["FAKE_COSIGN_RC"] = "1"
+	if err := w.launcher().ensureProxy(w.proj); err != nil {
+		t.Fatal(err)
+	}
+	if len(gateRuns(w)) != 1 || len(cosignCalls(w)) != 0 {
+		t.Fatalf("the set's launcher:\n%s", strings.Join(w.calls(), "\n"))
+	}
+	// The set's digest under another release is not the set's.
+	w, _ = userLauncherWorld(t, "0.9.1", locks.Digest(pin.Image))
+	w.env["FAKE_COSIGN_RC"] = "1"
+	if err := w.launcher().ensureProxy(w.proj); err == nil || len(cosignCalls(w)) == 0 {
+		t.Fatalf("the set's digest under another release: err = %v", err)
+	}
+}
+
+// A user-writable launcher whose digest was swapped (cosign does not verify it), one of a clone
+// (launcher_version=dev, the local image), or one lea cannot check without
+// cosign, is refused: no container starts.
+func TestLockHTTPRefusesATamperedUserLauncher(t *testing.T) {
+	for what, c := range map[string]struct {
+		version string
+		env     map[string]string
+	}{
+		"which cosign does not verify as lockhttp's release v0.9.1": {"0.9.1", map[string]string{"FAKE_COSIGN_RC": "1"}},
+		"runs from a clone": {"dev", nil},
+		"cosign not found":  {"0.9.1", map[string]string{"PATH": ""}},
+	} {
+		w, p := userLauncherWorld(t, c.version, testDigest)
+		for k, v := range c.env {
+			if k == "PATH" {
+				v = noCosignPath(t)
+			}
+			w.env[k] = v
+		}
+		err := w.launcher().ensureProxy(w.proj)
+		if err == nil || !strings.Contains(err.Error(), what) || !strings.Contains(err.Error(), p) {
+			t.Errorf("%s: err = %v", what, err)
+		}
+		if w.hasCall("docker [run]") {
+			t.Errorf("%s: a container was started", what)
+		}
+	}
+}
+
+// noCosignPath is the test world's PATH without cosign: its fakes but that one.
+func noCosignPath(t *testing.T) string {
+	t.Helper()
+	d := t.TempDir()
+	fakes, err := os.ReadDir(repoRoot(t) + "/tests/fakes")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, f := range fakes {
+		if f.Name() != "cosign" {
+			if err := os.Symlink(repoRoot(t)+"/tests/fakes/"+f.Name(), d+"/"+f.Name()); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	return d + ":/usr/bin:/bin"
+}
+
+// The launcher lea runs: /usr/local/bin's first, then ~/.local/bin, then brew's bin (a link into
+// its Cellar, under HOMEBREW_PREFIX, else brew's default prefixes).
+func TestLockHTTPLauncherOrder(t *testing.T) {
+	w, root := lockHTTPWorld(t)
+	home := w.home + "/.local/bin/lockhttp"
+	os.MkdirAll(w.home+"/.local/bin", 0o755)
+	os.WriteFile(home, []byte(fakeLockHTTPLauncher("0.9.1", testDigest)), 0o755)
+	if p := w.launcher().lockHTTPLauncher(); p != root+"/usr/local/bin/lockhttp" {
+		t.Errorf("with /usr/local/bin's: %s", p)
+	}
+	os.Remove(root + "/usr/local/bin/lockhttp")
+	if p := w.launcher().lockHTTPLauncher(); p != home {
+		t.Errorf("with ~/.local/bin's: %s", p)
+	}
+	os.Remove(home)
+	cellar := root + "/brew/Cellar/lockhttp/0.9.1/bin/lockhttp"
+	os.MkdirAll(root+"/brew/Cellar/lockhttp/0.9.1/bin", 0o755)
+	os.MkdirAll(root+"/brew/bin", 0o755)
+	os.WriteFile(cellar, []byte(fakeLockHTTPLauncher("0.9.1", testDigest)), 0o755)
+	os.Symlink(cellar, root+"/brew/bin/lockhttp")
+	w.env["HOMEBREW_PREFIX"] = root + "/brew"
+	if p := w.launcher().lockHTTPLauncher(); p != root+"/brew/bin/lockhttp" {
+		t.Errorf("with HOMEBREW_PREFIX's: %s", p)
+	}
+	if err := w.launcher().ensureProxy(w.proj); err != nil || len(gateRuns(w)) != 1 {
+		t.Fatalf("brew's linked launcher: %v\n%s", err, strings.Join(w.calls(), "\n"))
+	}
+	delete(w.env, "HOMEBREW_PREFIX")
+	for _, prefix := range []string{"/opt/homebrew", "/home/linuxbrew/.linuxbrew"} {
+		os.MkdirAll(root+prefix+"/bin", 0o755)
+		os.Symlink(cellar, root+prefix+"/bin/lockhttp")
+		if p := w.launcher().lockHTTPLauncher(); p != root+prefix+"/bin/lockhttp" {
+			t.Errorf("with %s's: %s", prefix, p)
+		}
+		os.Remove(root + prefix + "/bin/lockhttp")
+	}
+}
+
 func TestLockHTTPRefusesAnUnsetHost(t *testing.T) {
-	for what, undo := range map[string]func(root string){
-		"is absent":        func(r string) { os.Remove(r + "/usr/local/bin/lockhttp") },
-		"writable by root": func(r string) { os.Chmod(r+"/usr/local/bin/lockhttp", 0o777) },
-		"no image digest": func(r string) {
+	for what, undo := range map[string]func(root string, w *world){
+		"no lockhttp launcher": func(r string, _ *world) { os.Remove(r + "/usr/local/bin/lockhttp") },
+		// Writable by others than root: its digest is checked, and this one does not verify.
+		"which cosign does not verify": func(r string, w *world) {
+			os.Chmod(r+"/usr/local/bin/lockhttp", 0o777)
+			w.env["FAKE_COSIGN_RC"] = "1"
+		},
+		"no image digest": func(r string, _ *world) {
 			os.WriteFile(r+"/usr/local/bin/lockhttp", []byte(fakeLockHTTPLauncher("0.2.0", "")), 0o755)
 		},
-		"not lockhttp's launcher": func(r string) {
+		"not lockhttp's launcher": func(r string, _ *world) {
 			os.WriteFile(r+"/usr/local/bin/lockhttp", []byte("\x7fELF\x02\x01\x01 a v0.1.0 host binary"), 0o755)
 		},
-		"image digest": func(r string) {
+		"image digest": func(r string, _ *world) {
 			os.WriteFile(r+"/usr/local/bin/lockhttp", []byte(fakeLockHTTPLauncher("0.2.0", "sha256:$(id)")), 0o755)
 		},
 	} {
 		w, root := lockHTTPWorld(t)
-		undo(root)
+		undo(root, w)
 		err := w.launcher().ensureProxy(w.proj)
 		if err == nil || !strings.Contains(err.Error(), strings.TrimSpace(what)) || !strings.Contains(err.Error(), "LEA_LOCKHTTP=1") {
 			t.Errorf("%s: err = %v", what, err)

@@ -523,9 +523,19 @@ a paired phone), about the rest.
 It is **off** by default (`LEA_LOCKHTTP=0`): lea then behaves as before.
 
 LockHTTP runs in Docker only (`docs/docker.md` in the lockhttp repository). To turn it on,
-install the launcher of the lockhttp release lea pins, v0.7.0 (`LOCKHTTP_VERSION=v0.7.0 sh
-install.sh` with lockhttp's `scripts/install.sh`, which checks the release's signatures and
-pins its image by digest; `lea doctor` warns about an older one), add a lockhttp lock to your
+install lockhttp's launcher with the Lock Family (`brew install davidgodefroid/tap/lockfamily`,
+or lockfamily's `install.sh`; `brew upgrade` updates it, and `lea doctor` warns about one older
+than the release lea pins, v0.8.0). The launcher pins its release image by digest, and lea runs
+that image as the gate. lea looks for the launcher in `/usr/local/bin`, then `~/.local/bin`, then
+brew's `bin` (`$HOMEBREW_PREFIX`, else `/opt/homebrew` or `/home/linuxbrew/.linuxbrew`), and
+uses the first it finds. A launcher owned and writable by root only in `/usr/local/bin` is
+trusted as it is. Anything else may be rewritten by your own account, so lea does not trust the
+digest written in it: it runs it only when it is the image `config/locks.lock` pins for that
+release (checked with cosign when lea pinned it), or when `cosign verify` proves it is the image
+lockhttp's release workflow signed at the launcher's `launcher_version` tag. That check needs
+cosign on the `PATH` (the lockfamily formula installs it) and the registry on each start. A
+launcher whose digest does not verify, or one of a clone (`launcher_version=dev`, the local image)
+outside `/usr/local/bin`, is refused, and so is the start. Then add a lockhttp lock to your
 projects directory (`lox add lockhttp <name>`, which applies at once and starts the hub and the lockhttp
 console; its policy in `.lockhttp/config.toml`, which
 `lockhttp profile add --trusted "<your LEA_EGRESS_ALLOW>"` writes). Then set
