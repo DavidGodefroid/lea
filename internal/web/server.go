@@ -19,6 +19,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"html"
 	"io/fs"
 	"net"
 	"net/http"
@@ -36,6 +37,8 @@ var staticFS embed.FS
 
 const (
 	cookieName = "lea_web"
+	// TokenTTL is how long the one-time token signs a browser in, unused (#436).
+	TokenTTL = 2 * time.Minute
 	// maxBody caps an API request's body: a message is at most 64 KiB, escaped JSON a few times that.
 	maxBody = 512 << 10
 	csp     = "default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; " +
@@ -68,6 +71,9 @@ type Server struct {
 	token, session string
 	mu             sync.Mutex
 	tokenUsed      bool
+	// expires ends the token unused; now is the clock, a seam for the tests.
+	expires time.Time
+	now     func() time.Time
 	// hosts are the Host headers (and origins, with http://) this server answers: 127.0.0.1:port
 	// and localhost:port, set by Listen.
 	hosts map[string]bool
@@ -98,7 +104,8 @@ func New(call Caller, container string) (*Server, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &Server{call: call, container: container, token: tok, session: ses, hosts: map[string]bool{}, scheme: "http", retry: sleepRetry}, nil
+	return &Server{call: call, container: container, token: tok, session: ses, hosts: map[string]bool{}, scheme: "http", retry: sleepRetry,
+		expires: time.Now().Add(TokenTTL), now: time.Now}, nil
 }
 
 func randomHex(n int) (string, error) {
@@ -133,6 +140,19 @@ func (s *Server) URL() string {
 	return "http://127.0.0.1:" + strconv.Itoa(s.port) + "/?token=" + s.token
 }
 
+// BootstrapPage is a page that signs the browser in by POSTing the token to /login: lea web --open
+// opens it as a private local file, so the token is never in a command line (#436) nor in the
+// browser's history.
+func (s *Server) BootstrapPage() []byte {
+	action := "http://127.0.0.1:" + strconv.Itoa(s.port) + "/login"
+	return []byte(`<!doctype html>
+<meta charset="utf-8"><meta name="referrer" content="no-referrer"><title>lea web</title>
+<form method="post" action="` + html.EscapeString(action) + `"><input type="hidden" name="token" value="` + html.EscapeString(s.token) + `">
+<noscript><button>Open lea web</button></noscript></form>
+<script>document.forms[0].submit()</script>
+`)
+}
+
 // Serve serves l until ctx ends.
 func (s *Server) Serve(ctx context.Context, l net.Listener) error {
 	hs := &http.Server{Handler: s.Handler(), BaseContext: func(net.Listener) context.Context { return ctx },
@@ -152,7 +172,7 @@ func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /{$}", func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Query().Has("token") {
-			s.exchange(w, r)
+			s.exchange(w, r, r.URL.Query().Get("token"))
 			return
 		}
 		if s.remote != nil && !s.signedIn(r) {
@@ -162,6 +182,11 @@ func (s *Server) Handler() http.Handler {
 			return
 		}
 		files.ServeHTTP(w, r)
+	})
+	// The bootstrap page is a local file: its Origin is null, and the token alone signs in.
+	mux.HandleFunc("POST /login", func(w http.ResponseWriter, r *http.Request) {
+		r.Body = http.MaxBytesReader(w, r.Body, 4<<10)
+		s.exchange(w, r, r.PostFormValue("token"))
 	})
 	mux.Handle("GET /static/", http.StripPrefix("/static/", files))
 	mux.HandleFunc("POST /api/login", s.login)
@@ -246,9 +271,9 @@ func (s *Server) sameOrigin(r *http.Request) bool {
 	return false
 }
 
-// exchange trades the one-time token for the session cookie, once, and sends the browser to the
-// page without the token in its address.
-func (s *Server) exchange(w http.ResponseWriter, r *http.Request) {
+// exchange trades the one-time token for the session cookie, once and before it expires, and
+// sends the browser to the page without the token in its address.
+func (s *Server) exchange(w http.ResponseWriter, r *http.Request, tok string) {
 	if s.remote != nil {
 		// On the network the token never travels in an address: history and logs keep those.
 		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
@@ -257,9 +282,8 @@ func (s *Server) exchange(w http.ResponseWriter, r *http.Request) {
 		fmt.Fprintln(w, "lea web on the network takes no token in its address: open it without one and type the token into its sign-in page.")
 		return
 	}
-	tok := r.URL.Query().Get("token")
 	s.mu.Lock()
-	ok := !s.tokenUsed && subtle.ConstantTimeCompare([]byte(tok), []byte(s.token)) == 1
+	ok := !s.tokenUsed && s.now().Before(s.expires) && subtle.ConstantTimeCompare([]byte(tok), []byte(s.token)) == 1
 	if ok {
 		s.tokenUsed = true
 	}
@@ -267,7 +291,7 @@ func (s *Server) exchange(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 		w.WriteHeader(http.StatusUnauthorized)
-		fmt.Fprintln(w, "This link was already used or is not lea web's: start lea web again for a new one.")
+		fmt.Fprintln(w, "This link was already used, has expired or is not lea web's: start lea web again for a new one.")
 		return
 	}
 	http.SetCookie(w, &http.Cookie{Name: cookieName, Value: s.session, Path: "/", HttpOnly: true, SameSite: http.SameSiteStrictMode})

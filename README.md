@@ -310,8 +310,8 @@ profile and state in the bottom border.
 (ctrl+c stops it):
 
 ```sh
-lea web            # prints http://127.0.0.1:PORT/?token=…, a link that signs one browser in, once
-lea web --open     # also opens it in your browser
+lea web            # prints http://127.0.0.1:PORT/?token=…, a link that signs one browser in, once, within 2 minutes
+lea web --open     # also signs your browser in, without the link
 lea web --port 8414
 ```
 
@@ -1307,13 +1307,16 @@ so. Changes apply after `lea init` (endpoints, keys, images, locksql) or `lea st
 
 - `lea web` listens on the host's `127.0.0.1` only, which no lea container shares, and acts as
   you through the daemon's host socket, as the deck does: an agent reaches neither. The link it
-  prints carries a random one-time token (32 bytes) that the browser exchanges for an `HttpOnly`,
-  `SameSite=Strict` cookie; every API call needs that cookie, and a request whose `Host` or
-  `Origin` is not `127.0.0.1:PORT` or `localhost:PORT` is refused (another site's page, DNS
+  prints carries a random one-time token (32 bytes), valid for 2 minutes, that the browser
+  exchanges for an `HttpOnly`, `SameSite=Strict` cookie; every API call needs that cookie, and a
+  request whose `Host` or `Origin` is not `127.0.0.1:PORT` or `localhost:PORT` is refused (another site's page, DNS
   rebinding). The API forwards a fixed list of the daemon's methods, for this lea's agents only;
   there is no CORS, and a strict Content-Security-Policy keeps any other script or origin out
-  of the page. To use it from another machine, forward the port over SSH
-  (`ssh -L 8414:127.0.0.1:8414 host`, then `lea web --port 8414` on the host).
+  of the page. `lea web --open` never puts the token in a command line, which any local user can
+  read (`ps`): it writes a page that posts the token to a private file (`0600`, in a `0700`
+  directory of `$XDG_RUNTIME_DIR`, removed when `lea web` stops) and opens that file. A browser
+  that cannot open local files (some snap packages) needs the printed link. To use it from
+  another machine, forward the port over SSH (`ssh -L 8414:127.0.0.1:8414 host`, then `lea web --port 8414` on the host).
 - `lea web --listen ADDR:PORT` (#416), the explicit opt-in to the network, refuses to start
   unless it serves TLS (your certificate and key, or `--tls-self-signed`: an ECDSA P-256
   certificate lea makes once, keeps 0600 in its host data dir and renews near its end; TLS 1.2 or

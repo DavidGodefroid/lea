@@ -19,9 +19,10 @@ Features:
   rename, pause, hold, role and stop, a form to start an agent or a Control Tower, the tower's
   chat with its questions, and the permissions agents wait on, with Allow, Deny and Always. While
   a browser shows it, permission prompts wait for it as for the deck in tmux. The printed link
-  signs one browser in once (a 32-byte token traded for an `HttpOnly`, `SameSite=Strict`
-  cookie); foreign `Host` or `Origin` headers are refused, and only a fixed list of the daemon's
-  methods, for this lea's agents, is reachable. Phone width, light and dark, keyboard shortcuts.
+  signs one browser in once, within 2 minutes (a 32-byte token traded for an `HttpOnly`,
+  `SameSite=Strict` cookie); `--open` hands the browser a private local page that posts the
+  token, so it is never in a command line (#436); foreign `Host` or `Origin` headers are
+  refused, and only a fixed list of the daemon's methods, for this lea's agents, is reachable. Phone width, light and dark, keyboard shortcuts.
 - lea web from another machine, agents' terminals, notifications and folders (#416). The README
   documents the SSH tunnel (`ssh -L`), which stays the way to reach it remotely; `lea web
   --listen ADDR:PORT` is the explicit opt-in to the network: it refuses to start without TLS
