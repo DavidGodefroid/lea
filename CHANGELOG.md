@@ -12,6 +12,11 @@ Features:
   rules, the deck's header names the organisation. A managed file that is badly owned, invalid or
   has a `[lea]` key lea does not know stops lea and its daemon from starting. No file: nothing
   changes.
+
+## v0.16.0 (2026-11-14)
+
+Features:
+
 - A lead picks each child's model and advisor (#407). `agents_spawn` and `agents_request_spawn`
   take an optional `advisor`: with `model: sonnet, advisor: opus` the child runs `claude --model
   sonnet --advisor opus`, a Sonnet session that consults Opus on demand through Claude Code's
@@ -82,6 +87,9 @@ Features:
 
 Changes:
 
+- `LEA_ADMIT_CPU_PSI` defaults to 70 instead of 40 (#408): on a busy but healthy host cpu PSI
+  sits above 40 % routinely, so spawns were refused or queued far too often. Shedding
+  (`LEA_SHED_CPU_PSI`, 80) is unchanged.
 - Live limits (#420): `lea limits` shows the limits you can change while agents run, with their
   value, default and source; `lea limits set KEY VALUE` and `lea limits reset KEY` change one on
   the running lea, at once, without a restart, and keep it in your file (the next `lea` does not
