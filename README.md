@@ -950,6 +950,36 @@ them it fails. It only reads.
 translated to `lea allow deliver`, `lea allow off deliver`, `lea allow` and `lea allow <capability>`,
 with a notice. `lea grant add --github X` is refused when X is not the repository's origin.
 
+#### Approving once or for good
+
+Whenever lea asks you to approve something, it gives both routes, in at most three lines (#412):
+
+- **One-off**: `lea approve ID` (or `lea deny ID [reason]`) answers that request only; `lea
+  requests` says what each waiting `pN` (permission), `sN` (spawn) or `gN` (a lead's grant
+  request) asks.
+- **Durable**: the `lea allow …` command that covers the same need for every agent of this lea,
+  until `lea allow off N` (or for `--for`). Grant requests waiting together are grouped into one
+  command: a lead's `pr-create`, `release-create` (tag `v0.15.*`) and `close-issue` on `lea` read
+  as `lea allow pr issues release --repo lea --tag 'v0.15.*'`. The action names a lead files map to
+  the capabilities above: `commit-identity` is `push`, `pr-create` `pr`, `delete-own-branch`
+  `delete-branch`, `close-issue` `issues`, `release-create` `release`; `merge` and `release-tag`
+  keep their names.
+- **Not covered**: what that command leaves out. `deliver` is push, pr, merge and delete-branch
+  only: it does not cover `issues`, `release-tag` or `release`.
+
+```
+g5 lead (lead in lea-myproj) asks for a pr-create grant on repo lea (gh github.com/me/lea) for itself and its children, 8h0m0s
+g6 lead (lead in lea-myproj) asks for a release-create grant on repo lea (gh github.com/me/lea) tag v0.15.* for itself and its children, 8h0m0s
+g7 lead (lead in lea-myproj) asks for a close-issue grant on repo lea (gh github.com/me/lea) for itself and its children, 8h0m0s
+one-off: lea approve g5 g6 g7 (or lea deny gN [reason]); lea requests says what each asks
+durable, for every agent of this lea until lea allow off N (add --for 8h to limit it): lea allow pr issues release --repo lea --tag 'v0.15.*'
+it covers only pr, issues, release on lea, not push, merge, delete-branch, release-tag, nor other repositories
+```
+
+A permission whose dialog offers "always" also names `lea approve pN always`, which allows the
+tool for that agent until lea restarts, and no other agent. A spawn request has no durable form.
+An egress refusal has no one-off form: `lea egress allow HOST` holds until `lea egress deny HOST`.
+
 #### What agents are told
 
 Each agent on a branch is told in its first prompt the forms lea runs without asking for what
@@ -1311,7 +1341,7 @@ so. Changes apply after `lea init` (endpoints, keys, images, locksql) or `lea st
   (documentation sites fetched by an agent, another forge, a Fedora mirror outside
   `fedoraproject.org`) is refused. The refusal's first line names the host and the command that
   allows it (`lea-proxy refused deb.debian.org: not in the egress allowlist. To allow it, run on
-  the host: lea egress allow deb.debian.org (applies live, no restart).`). HTTPS clients hide that
+  the host: lea egress allow deb.debian.org (applies live, no restart; there is no one-off form: it stays until lea egress deny deb.debian.org).`). HTTPS clients hide that
   page behind `CONNECT tunnel failed, response 403`: lea's agents are told to recognise it and to
   hand you that command, never to work around the proxy.
 - To allow a domain, run on the host `lea egress allow deb.debian.org` (several at once if you

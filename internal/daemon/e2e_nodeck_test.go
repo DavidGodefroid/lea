@@ -48,7 +48,7 @@ func TestClaudeWithoutTheDeckAnApprovalIsAnsweredWithLeaApprove(t *testing.T) {
 	// The image's managed settings make default the permission mode (no auto mode).
 	e.run("--permission-mode", "default", "touch it")
 
-	re := regexp.MustCompile(`^lea needs you: dev asks to use Bash: lea approve p([0-9]+) or lea deny p[0-9]+ \(lea requests\)$`)
+	re := regexp.MustCompile(`^lea needs you: dev asks to use Bash: lea approve p([0-9]+) \(once\) or lea deny p[0-9]+; lea requests says what it asks`)
 	var id string
 	for end := time.Now().Add(60 * time.Second); id == "" && time.Now().Before(end); time.Sleep(100 * time.Millisecond) {
 		mu.Lock()

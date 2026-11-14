@@ -320,7 +320,7 @@ func TestWithoutTheDeckAnApprovalWaitsForLeaApprove(t *testing.T) {
 	e, notes, _ := noDeckEnv(t)
 	got := ask(t, e, 3, false)
 	p := waitPending(t, e)
-	want := "lea needs you: dev asks to use Bash: lea approve p" + strconv.FormatInt(p.ID, 10) + " or lea deny p" + strconv.FormatInt(p.ID, 10) + " (lea requests)"
+	want := "lea needs you: dev asks to use Bash: lea approve p" + strconv.FormatInt(p.ID, 10) + " (once) or lea deny p" + strconv.FormatInt(p.ID, 10) + "; lea requests says what it asks"
 	if n := waitNotes(notes, 1); len(n) != 1 || n[0] != want {
 		t.Fatalf("notes %q, want %q", n, want)
 	}
@@ -330,6 +330,24 @@ func TestWithoutTheDeckAnApprovalWaitsForLeaApprove(t *testing.T) {
 	if r := receive(t, got); r.Verdict != "allow" || r.ID != p.ID {
 		t.Fatalf("verdict %+v", r)
 	}
+}
+
+// A permission whose dialog offers "always" names that durable answer too, and what it leaves out
+// (#412).
+func TestWithoutTheDeckAnAlwaysApprovalNamesBothAnswers(t *testing.T) {
+	e, notes, _ := noDeckEnv(t)
+	got := ask(t, e, 3, true)
+	p := waitPending(t, e)
+	id := strconv.FormatInt(p.ID, 10)
+	want := "lea needs you: dev asks to use Bash: lea approve p" + id + " (once) or lea deny p" + id + "; lea requests says what it asks" +
+		"; lea approve p" + id + " always also allows it for this agent until lea restarts; it covers no other agent"
+	if n := waitNotes(notes, 1); len(n) != 1 || n[0] != want {
+		t.Fatalf("notes %q, want %q", n, want)
+	}
+	if err := call(t, e.api, "", "approval_decide", map[string]any{"id": p.ID, "verdict": "always"}, nil); err != nil {
+		t.Fatal(err)
+	}
+	receive(t, got)
 }
 
 // Without the deck, an answer given the instant the notification shows (a fast lea approve) is

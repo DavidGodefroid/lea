@@ -36,6 +36,16 @@ Changes:
   waits (`queued: max_running 3/3`). A change never stops a running agent. **This caps a busy
   tower at 3 children by default**: `lea limits set max_running 0` turns the cap off.
 
+- Approval prompts give the one-off and the durable route (#412): a lead's grant request, in the
+  user's message, the `grants_request` note relayed by the lead, `lea requests` and the desktop
+  notification, names `lea approve gN` (with `lea requests` to read it), the `lea allow …` command
+  that covers every agent of the lea at once until `lea allow off N`, and what that command leaves
+  out, in at most three lines. Requests waiting together are grouped into one command
+  (`lea allow pr issues release --repo lea --tag 'v0.15.*'`), the action-to-capability mapping read
+  from lea's capability table only. `deliver` prompts say it does not cover issues, release-tag or
+  release. A permission notification names `lea approve pN always` when the dialog offers it; egress
+  refusals say there is no one-off approval and that `lea egress deny HOST` undoes `lea egress allow`.
+  The control-tower skill relays both routes instead of only `lea approve`.
 - lea no longer copies on select (#419): a drag in an agent's terminal no longer enters tmux's
   copy mode, copies the selection or flashes "Copied". Claude Code copies on select itself, through
   the same clipboard bridge: a copy worked and looked one way or the other depending on whether

@@ -97,7 +97,8 @@ func TestGrantRequestReachesTheLeadsChildren(t *testing.T) {
 	}
 	rc, out, e := runEnv(t, host, "requests")
 	if rc != 0 || !strings.Contains(out, "g1 lead (lead in lea-a) asks for a merge grant on repo fixture (gh github.com/o/fixture)") ||
-		!strings.Contains(out, "reason: the user: you may merge on fixture") || !strings.Contains(out, "lea approve gN") {
+		!strings.Contains(out, "reason: the user: you may merge on fixture") || !strings.Contains(out, "one-off: lea approve g1 or lea deny g1") ||
+		!strings.Contains(out, "lea allow merge --repo fixture") {
 		t.Fatalf("requests rc=%d out=%q err=%q", rc, out, e)
 	}
 	// The user was told, in their inbox.

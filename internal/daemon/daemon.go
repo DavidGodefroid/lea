@@ -1267,7 +1267,12 @@ func (d *Daemon) dispatchHooks(ctx context.Context, o Origin, me string, req wir
 		d.mu.Unlock()
 		d.changed()
 		// Without the deck the user answers on the host (#135): a notification says so.
-		d.desktop(fmt.Sprintf("%s#p%d", me, id), fmt.Sprintf("%s asks to use %s: lea approve p%d or lea deny p%d (lea requests)", shortName(me), capTool(p.Tool), id, id))
+		// The one-off answer, and the durable one when the dialog offers it (#412).
+		ask := fmt.Sprintf("%s asks to use %s: lea approve p%d (once) or lea deny p%d; lea requests says what it asks", shortName(me), capTool(p.Tool), id, id)
+		if p.Always {
+			ask += fmt.Sprintf("; lea approve p%d always also allows it for this agent until lea restarts; it covers no other agent", id)
+		}
+		d.desktop(fmt.Sprintf("%s#p%d", me, id), ask)
 		timer := after(time.Duration(p.TimeoutS)*time.Second, func() { close(timedOut) })
 		defer timer.Stop()
 		v := ""

@@ -405,7 +405,7 @@ func allowShow(container string, log bool, stdout, stderr io.Writer) int {
 		return 0
 	}
 	if len(v.Sets) == 0 {
-		fmt.Fprintf(stdout, "no allowance: agents of %s ask as usual (lea allow deliver lets them push, open and merge their own PRs)\n", oneLine(container, 64))
+		fmt.Fprintf(stdout, "no allowance: agents of %s ask as usual (lea allow deliver lets them push, open and merge their own PRs; not issues, release-tag or release)\n", oneLine(container, 64))
 		return 0
 	}
 	tw := tabwriter.NewWriter(stdout, 0, 0, 2, ' ', 0)
