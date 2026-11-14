@@ -529,7 +529,8 @@ directory has no database profile yet, it walks you through a first one with the
 lea's image (the release of `config/locks.lock`; engine, host, TLS, where the password comes from;
 never the password). `lox run` reviews that profile (`.locksql` in your projects directory) and copies it into
 the lock; the agents see `.locksql` read-only, even with `LEA_LOCKSQL=0` or before `lox add
-locksql` when it exists. Vault profiles wait for lox run to pass Vault to the
+locksql`: lea makes it, empty, when missing, so no agent creates it, and refuses a symbolic link
+or a file in its place. Vault profiles wait for lox run to pass Vault to the
 console (lockhub#45). lea puts no `locksql` command on the host (it removes the link older releases
 made).
 
@@ -603,9 +604,8 @@ several on `/run/locklog/<instance>`, `LEA_LOCKLOG_INSTANCES` naming them), read
 clients group `locklog-clients` (10050; the console account is 10051, as in locklog's image): no
 log, no key, no audit reaches them. They see `.locklog` read-only: it holds the profiles and the auto
 rules `lox run` applies, so no agent widens what is decided without you (lea makes it when
-missing, and refuses a symbolic link or a file in its place). An existing `.locklog` stays
-read-only with `LEA_LOCKLOG=0` and before `lox add locklog`; lea then makes none, and only warns
-about a link or a file. The client is lea's image's (`config/locks.lock`); Codex
+missing, and refuses a symbolic link or a file in its place), with `LEA_LOCKLOG=0` and before
+`lox add locklog` too: no agent creates it to stage a profile. The client is lea's image's (`config/locks.lock`); Codex
 agents get it as the `locklog` MCP server; `lea locklog` tells you whether it is on, and
 `lea doctor` compares it with the lock `lox run` runs.
 

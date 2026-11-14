@@ -28,6 +28,8 @@ cat >"$work/lea.conf" <<CONF
 LEA_PREFIX=lea-test
 LEA_IMAGE=$image
 LEA_PROXY_IMAGE=lea-proxy:dev
+LEA_LOCKSQL=0
+LEA_LOCKLOG=0
 CONF
 runtime=${LEA_TEST_RUNTIME:-}
 case $runtime in *[!A-Za-z0-9._-]*) echo "isolation: LEA_TEST_RUNTIME '$runtime' is not a runtime name" >&2; exit 2 ;; esac
@@ -366,6 +368,12 @@ dns_leaks() { for d in lea-canary-dns lea-canary-dns-host; do docker logs "$d" 2
 if [ -n "$(dns_leaks)" ]; then
   echo "FAIL no DNS query from inside lea reached the decoy:"; dns_leaks | sed 's/^/     | /'; rc=1
 else echo "ok   no DNS query from inside lea reached the decoy"; fi
+# The Locks' profile directories (lea#473): lea made them for the Locks it does not wire, and no
+# agent staged anything in them.
+for n in .locksql .locklog; do
+  if [ -d "$projects/$n" ] && [ ! -L "$projects/$n" ] && [ -z "$(ls -A "$projects/$n")" ]; then echo "ok   host: $n made by lea, still empty"
+  else echo "FAIL host: $n made by lea, still empty"; find "$projects/$n" -maxdepth 1 2>&1 | sed 's/^/     | /'; rc=1; fi
+done
 # #104: a normal session (the checks inside lea: the Claude API, GitHub, nested containers) logs
 # no packet bypassing the proxy. A container on the agents' network with NET_ADMIN, which routes
 # around the proxy through the bridge (a default route, the bridge's MAC in its ARP table), has its
