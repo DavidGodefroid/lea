@@ -86,7 +86,8 @@ COPY image/claude-plugin /usr/local/share/lea/claude-plugin
 COPY image/forge-gh/config.yml /usr/local/share/lea/forge-gh/config.yml
 COPY image/entrypoint image/user-init /usr/local/libexec/lea/
 COPY image/lea-crun image/managed-check /usr/local/libexec/lea/
-COPY image/lea-session image/lea-agent image/lea-cli-update image/wl-copy /usr/local/bin/
+COPY image/lea-session image/lea-agent image/wl-copy /usr/local/bin/
+COPY image/lea-cli-update /usr/local/bin/
 COPY image/go-cross /usr/local/bin/
 COPY --from=go /usr/local/go /usr/local/go
 COPY --from=go-tools /out/ /usr/local/bin/

@@ -14,7 +14,7 @@ done
 # asking.
 for id in 10000 10001 10010 10011 10030 10031 10050 10051 10090; do
   if [ "$LEA_UID" -eq "$id" ] || [ "$LEA_GID" -eq "$id" ]; then
-    echo "lea: refusing to run the session as uid $LEA_UID / gid $LEA_GID: a lock console's or lea-cli's id in lea's image" >&2; exit 1
+    echo "lea: refusing to run the session as uid $LEA_UID / gid $LEA_GID: a lock console's id or lea-cli's in lea's image" >&2; exit 1
   fi
 done
 # A name useradd accepts everywhere: ^[a-z_][a-z0-9_-]*$, at most 32 characters.
