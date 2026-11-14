@@ -12,6 +12,10 @@ docker [image] [inspect] [lea-proxy:dev]
 tmux [-V]
 docker [inspect] [-f] [{{.State.Running}}] [lea-proxy]
 docker [network] [ls] [--filter] [label=lea.prefix=lea] [--format] [{{.Name}}]
+docker [info] [--format] [{{.OperatingSystem}} {{json .SecurityOptions}}]
+docker [network] [ls] [--filter] [label=lea.prefix=lea] [--format] [{{.Name}}]
+sudo [-n] [true]
+sudo [-n] [journalctl] [-k] [-q] [--no-pager] [--since] [-24h]
 docker [ps] [--filter] [label=lea.prefix=lea] [--filter] [label=lea.role=session] [--format] [{{.Names}}]
 docker [info] [--format] [{{.Host.Security.Rootless}} {{.Host.CgroupControllers}}]
 docker [ps] [--filter] [label=lea.prefix=lea] [--filter] [label=lea.role=session] [--format] [{{.Names}}]
@@ -42,6 +46,7 @@ ok    image lea-proxy:dev
 ok    tmux (tmux 3.4, host)
 ok    proxy running
 ok    internal networks: none (each lea creates its own at start)
+warn  egress log: not installed: packets that bypass the proxy go unnoticed; run lea init (needs sudo once)
 ok    managed settings (image): confirmed
 ok    agent runtime: the engine default (LEA_RUNTIME empty; runsc or kata adds a second kernel: README)
 warn  pressure stall information (PSI): $W/proc/pressure is not readable (a kernel without PSI, or booted with psi=0): admission and shedding see memory and load only

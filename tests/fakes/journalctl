@@ -1,0 +1,4 @@
+#!/bin/sh
+# Fake journalctl: prints FAKE_JOURNAL (the kernel log lines).
+{ printf 'journalctl'; for a in "$@"; do printf ' [%s]' "$a"; done; printf '\n'; } >>"${FAKE_LOG:?}"
+[ -z "${FAKE_JOURNAL:-}" ] || printf '%s\n' "$FAKE_JOURNAL"

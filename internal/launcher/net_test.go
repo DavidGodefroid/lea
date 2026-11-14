@@ -15,6 +15,24 @@ func TestInternalNetworkMustBeInternal(t *testing.T) {
 	}
 }
 
+// #104: the internal network's bridge is named lea plus 12 hex digits of the network's name, so
+// lea_egress's one nftables rule (iifname "lea*") covers every agent network, and two prefixes on
+// one projects dir get two names.
+func TestInternalNetworkBridgeName(t *testing.T) {
+	w := newWorld(t, repoRoot(t))
+	w.env["FAKE_DOCKER_SEQ_NETWORK_INSPECT"] = "0 1"
+	if err := w.launcher().ensureNetworks("abc"); err != nil {
+		t.Fatal(err)
+	}
+	b := bridgeName("lea-internal-abc")
+	if len(b) != 15 || !strings.HasPrefix(b, "lea") || strings.Trim(b[3:], "0123456789abcdef") != "" || b == bridgeName("lea-test-internal-abc") {
+		t.Fatalf("bridgeName = %q", b)
+	}
+	if !w.hasCall("docker [network] [create] [--label] [lea.prefix=lea] [--label] [lea.id=abc] [--internal] [-o] [com.docker.network.bridge.gateway_mode_ipv4=isolated] [-o] [com.docker.network.bridge.name=" + b + "] [lea-internal-abc]") {
+		t.Fatalf("calls:\n%s", strings.Join(w.calls(), "\n"))
+	}
+}
+
 // #105: Docker refusing gateway_mode_ipv4=isolated stops lea before the plain network, and so
 // before any container, is created.
 func TestInternalNetworkFailsClosedWithoutIsolatedGatewayMode(t *testing.T) {
@@ -161,7 +179,7 @@ func TestInternalNetworkRefusesAnEngineWithoutIsolatedGateway(t *testing.T) {
 	w := newWorld(t, repoRoot(t))
 	w.env["FAKE_DOCKER_RC_NETWORK_INSPECT"] = "1"
 	w.env[engineFormat] = "Engine=28.0.0"
-	if err := w.launcher().ensureNetworks("abc"); err != nil || !w.hasCall("[com.docker.network.bridge.gateway_mode_ipv4=isolated] [lea-internal-abc]") {
+	if err := w.launcher().ensureNetworks("abc"); err != nil || !w.hasCall("[com.docker.network.bridge.gateway_mode_ipv4=isolated] [-o] [com.docker.network.bridge.name="+bridgeName("lea-internal-abc")+"] [lea-internal-abc]") {
 		t.Fatalf("Docker 28.0: %v\n%s", err, strings.Join(w.calls(), "\n"))
 	}
 }
@@ -221,7 +239,7 @@ func TestEachProjectsDirGetsItsOwnInternalNetwork(t *testing.T) {
 	}
 	calls := strings.Join(w.calls(), "\n")
 	for _, want := range []string{"docker [network] [create] [--label] [lea.prefix=lea] [lea-egress]",
-		"[--internal] [-o] [com.docker.network.bridge.gateway_mode_ipv4=isolated] [lea-internal-abc]", "[lea-internal-def]"} {
+		"[--internal] [-o] [com.docker.network.bridge.gateway_mode_ipv4=isolated] [-o] [com.docker.network.bridge.name=" + bridgeName("lea-internal-abc") + "] [lea-internal-abc]", "[lea-internal-def]"} {
 		if !strings.Contains(calls, want) {
 			t.Errorf("missing %q", want)
 		}
@@ -350,7 +368,7 @@ func TestHostAddressOnTheBridgeIsRefused(t *testing.T) {
 				!strings.Contains(err.Error(), "LEA_ALLOW_GATEWAY=1") {
 				t.Fatalf("%s (created %v): err = %v", c.name, created, err)
 			}
-			if created != w.hasCall("[--internal] [-o] [com.docker.network.bridge.gateway_mode_ipv4=isolated] [lea-internal-abc]") {
+			if created != w.hasCall("[--internal] [-o] [com.docker.network.bridge.gateway_mode_ipv4=isolated] [-o] [com.docker.network.bridge.name="+bridgeName("lea-internal-abc")+"] [lea-internal-abc]") {
 				t.Fatalf("%s (created %v): calls:\n%s", c.name, created, strings.Join(w.calls(), "\n"))
 			}
 			w.env["LEA_ALLOW_GATEWAY"] = "1"

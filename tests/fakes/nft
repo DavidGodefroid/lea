@@ -1,0 +1,4 @@
+#!/bin/sh
+# Fake nft: records the call; FAKE_NFT_RC makes it fail.
+{ printf 'nft'; for a in "$@"; do printf ' [%s]' "$a"; done; printf '\n'; } >>"${FAKE_LOG:?}"
+exit "${FAKE_NFT_RC:-0}"
