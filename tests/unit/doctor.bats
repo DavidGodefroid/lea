@@ -439,7 +439,7 @@ host_minimums() {
   run lea_doctor
   [[ "$output" == *"ok    pressure stall information (PSI)"* ]]
   [[ "$output" == *"ok    lea-abc pressure readable (cgroup /user.slice/libpod-abc.scope)"* ]]
-  [[ "$output" == *"ok    admission: cpu PSI 40%, memory 85% of the limit, memory PSI 10%, io PSI 40%, load 2 per CPU (0: off)"* ]]
+  [[ "$output" == *"ok    admission: cpu PSI 70%, memory 85% of the limit, memory PSI 10%, io PSI 40%, load 2 per CPU (0: off)"* ]]
   [[ "$output" == *"ok    shedding: after 30 s at memory 95% (LEA_SHED_*)"* ]]
   rm "$LEA_DOCTOR_PROC/pressure/cpu" "$LEA_DOCTOR_PROC/4242/cgroup"
   LEA_SHED_MEM_PCT=80 run lea_doctor

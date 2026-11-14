@@ -1179,7 +1179,7 @@ read-only. The screen runs in the deck on the host: agents cannot open or drive 
 | `LEA_HOLD_MAX` | `30` | minutes a pause of an inbox (the deck's `H`, `lea hold`) lasts before lea releases it (`0`: never) |
 | `LEA_AGENT_CPUS` | `4` | each agent's CPU window, the least shared CPUs: the agent, its tools and its nested containers run there, so `nproc`, PHPStan, Go… see that many CPUs (`0`: no window) |
 | `LEA_HEAVY_SLOTS`, `LEA_HEAVY_WORKERS` | `0` (¾ of the CPUs ÷ workers), `4` | heavy jobs (`lea heavy -- <command>`): how many run at once per container, and the CPUs and workers each gets |
-| `LEA_ADMIT_CPU_PSI`, `LEA_ADMIT_MEM_PCT`, `LEA_ADMIT_MEM_PSI`, `LEA_ADMIT_IO_PSI`, `LEA_ADMIT_LOAD` | `40`, `85`, `10`, `40`, `2` | [host pressure](#host-pressure) above which new agents wait: PSI in percent, memory in percent of the lea container's limit (the host's from 90 %), the host's load per CPU (`0`: that one off) |
+| `LEA_ADMIT_CPU_PSI`, `LEA_ADMIT_MEM_PCT`, `LEA_ADMIT_MEM_PSI`, `LEA_ADMIT_IO_PSI`, `LEA_ADMIT_LOAD` | `70`, `85`, `10`, `40`, `2` | [host pressure](#host-pressure) above which new agents wait: PSI in percent, memory in percent of the lea container's limit (the host's from 90 %), the host's load per CPU (`0`: that one off) |
 | `LEA_SHED_MEM_PCT`, `LEA_SHED_MEM_PSI`, `LEA_SHED_CPU_PSI`, `LEA_SHED_AFTER`, `LEA_SHED_RESUME` | `95`, `30`, `80`, `30`, `60` | [host pressure](#host-pressure) that pauses the lowest-priority agent once it lasts `LEA_SHED_AFTER` seconds (`0`: never), resumed after `LEA_SHED_RESUME` seconds of calm |
 | `LEA_SOUND`, `LEA_AUTONAME` | on | the deck's sounds, automatic names (`0`: off) |
 | `LEA_SOUND_ATTENTION` | freedesktop sound | the file of the sound lea plays when it needs you (`0`: off) |
@@ -1522,7 +1522,7 @@ kernel drops first left out), and the host's load. It reads `/proc` and the cont
 found from its process, so it works the same with Docker and rootless Podman.
 
 Above a threshold a lead's `agents_spawn` is refused with the reason, for example
-`under pressure (container cpu PSI 63% > 40%, memory 92% of 24.0 GiB > 85%); 14 agents run, 2 heavy
+`under pressure (container cpu PSI 76% > 70%, memory 92% of 24.0 GiB > 85%); 14 agents run, 2 heavy
 slots busy`. With `queue: true` the spawn waits instead, up to 30 minutes, and the lead gets a
 message when it starts; one calm sample starts one queued agent at most. The queue lives in the
 daemon's memory: a daemon restart drops it without a message. `agents_request_spawn` is not

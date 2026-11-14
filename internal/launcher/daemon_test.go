@@ -380,9 +380,9 @@ func TestAdmitSettings(t *testing.T) {
 		env  map[string]string
 		want string
 	}{
-		{nil, "40 85 10 40 2 95 30 80 30 60"},
+		{nil, "70 85 10 40 2 95 30 80 30 60"},
 		{map[string]string{"LEA_ADMIT_CPU_PSI": "0", "LEA_ADMIT_MEM_PCT": "90", "LEA_ADMIT_MEM_PSI": "2.5", "LEA_ADMIT_IO_PSI": "0", "LEA_ADMIT_LOAD": "1.5", "LEA_SHED_AFTER": "0", "LEA_SHED_RESUME": "120"}, "0 90 2.5 0 1.5 95 30 80 0 120"},
-		{map[string]string{"LEA_ADMIT_CPU_PSI": "101", "LEA_ADMIT_MEM_PCT": "-1", "LEA_ADMIT_MEM_PSI": "x", "LEA_ADMIT_LOAD": "65", "LEA_SHED_AFTER": "3601"}, "40 85 10 40 2 95 30 80 30 60"},
+		{map[string]string{"LEA_ADMIT_CPU_PSI": "101", "LEA_ADMIT_MEM_PCT": "-1", "LEA_ADMIT_MEM_PSI": "x", "LEA_ADMIT_LOAD": "65", "LEA_SHED_AFTER": "3601"}, "70 85 10 40 2 95 30 80 30 60"},
 	} {
 		get := func(k string) string { return c.env[k] }
 		if got := DaemonAdmitStamp(get); got != c.want {
