@@ -1486,6 +1486,11 @@ make test-pressure    # host resources on the real engine (ENGINE=podman for roo
 A tag `vX.Y.Z` publishes a release: the archives for Linux and macOS (amd64, arm64), their
 checksums, and the images on `ghcr.io/davidgodefroid`.
 
+Docs are published at [lockfamily.dev/docs](https://lockfamily.dev/docs/) from this repo's
+Markdown. Adding a file under `docs/`, or renaming or removing a README H2 section, needs a
+matching change to [lockfamily's `docs-site/nav.toml`](https://github.com/DavidGodefroid/lockfamily/blob/main/docs-site/nav.toml):
+open a lockfamily PR, or the nightly docs build fails.
+
 ## CPUs
 
 Test suites, static analysis and builds start one worker per CPU they see. lea gives each agent a
