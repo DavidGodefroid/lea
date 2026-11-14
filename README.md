@@ -304,6 +304,33 @@ profile and state in the bottom border.
   answers it. Unanswered after `LEA_APPROVAL_TIMEOUT` seconds (60), Claude asks in its own
   terminal as usual; `LEA_APPROVALS=pane` keeps Claude's dialog only.
 
+### The deck in your browser: lea web
+
+`lea web`, from the lea's projects directory, serves the deck in your browser while it runs
+(ctrl+c stops it):
+
+```sh
+lea web            # prints http://127.0.0.1:PORT/?token=…, a link that signs one browser in, once
+lea web --open     # also opens it in your browser
+lea web --port 8414
+```
+
+The page shows the lea's agents as a tree, each lead with the agents it started, and for each
+one its state, its own report on its task (status, next step, and in red what blocks it), its
+branch, context use, cost, unread messages and whether it is paused or its inbox held. It updates
+live, with no reload. Click an agent (or `j`/`k`, then `enter`) to read its messages and write
+to it (`m`; ctrl+enter sends), rename it (`e`), pause it (`p`), hold its inbox (`h`), change its
+role or stop it (`x`, confirmed). **New agent** (`n`) starts one on a provider, in a repository,
+with a role, a label and a brief; `N` starts a Control Tower. **Tower** (`t`) opens the control
+tower's chat: what you write there is a request to it, and its open and queued questions to you
+show above it. A permission an agent asks for shows at the top of the page with **Allow**,
+**Deny** and, when offered, **Always** (`a`, `d`, `A` answer the first one). While a browser
+shows the page, permission prompts wait for it as they do for the deck in tmux; once it is
+closed, the agent's own dialog asks at once, as without a deck. The page works at phone width,
+in a light and a dark theme (it follows your system; the ◐ button switches it), and `?` lists
+its keys. See [How lea keeps your machine safe](#how-lea-keeps-your-machine-safe) for what
+protects it.
+
 ## Without the deck
 
 The deck is optional. `lea config deck off` (or `sh install.sh --no-deck [--tool CMD]`, or
@@ -1070,6 +1097,7 @@ directory of the projects directory; `--branch B` has it work in its own git wor
 lea                          # the deck, for $LEA_PROJECTS_DIR (unset: the working directory, on the first run)
                              # (LEA_DECK=0: your own tool in the lea container, see Without the deck)
 lea attach [--print] [AGENT] # the tool in the lea container, or an agent's terminal (--print: the command)
+lea web [--open] [--port N]  # the deck in your browser, on 127.0.0.1 (see The deck in your browser)
 lea requests                 # what waits for you; lea approve ID [always], lea deny ID [reason]
 lea questions [drop ID]      # the control towers' questions to you: the open one, then the queue
 lea hold [--off] [AGENT]     # hold the messages agents send the tower while you answer it; --off releases them
@@ -1231,6 +1259,15 @@ so. Changes apply after `lea init` (endpoints, keys, images, locksql) or `lea st
 
 ## How lea keeps your machine safe
 
+- `lea web` listens on the host's `127.0.0.1` only, which no lea container shares, and acts as
+  you through the daemon's host socket, as the deck does: an agent reaches neither. The link it
+  prints carries a random one-time token (32 bytes) that the browser exchanges for an `HttpOnly`,
+  `SameSite=Strict` cookie; every API call needs that cookie, and a request whose `Host` or
+  `Origin` is not `127.0.0.1:PORT` or `localhost:PORT` is refused (another site's page, DNS
+  rebinding). The API forwards a fixed list of the daemon's methods, for this lea's agents only;
+  there is no CORS, and a strict Content-Security-Policy keeps any other script or origin out
+  of the page. To use it from another machine, forward the port over SSH
+  (`ssh -L 8414:127.0.0.1:8414 host`, then `lea web --port 8414` on the host).
 - The container sees the projects directory, a read-only allow-list of `~/.claude`
   (`keybindings.json`, `hooks`, `skills`, `agents`, `commands`, `output-styles`, the top-level
   `*.md` files), its own writable copies of `settings.json` and `plugins` (never written back:

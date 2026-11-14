@@ -1,0 +1,96 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light dark">
+<title>lea web</title>
+<link rel="icon" href="data:,">
+<link rel="stylesheet" href="/static/app.css">
+<script src="/static/app.js" defer></script>
+</head>
+<body>
+<header class="bar">
+  <div class="brand"><span class="mark" aria-hidden="true"></span><span>lea</span><span id="lea-name" class="lea-name"></span></div>
+  <span id="link" class="link" role="status" aria-live="polite">connecting…</span>
+  <nav class="actions">
+    <button type="button" id="btn-tower" class="ghost" title="Talk to the control tower (t)">Tower</button>
+    <button type="button" id="btn-new" class="primary" title="Start an agent (n)">New agent</button>
+    <button type="button" id="btn-theme" class="ghost icon" title="Light or dark theme" aria-label="Switch theme">◐</button>
+    <button type="button" id="btn-help" class="ghost icon" title="Keyboard shortcuts (?)" aria-label="Keyboard shortcuts">?</button>
+  </nav>
+</header>
+<section id="prompts" class="prompts" aria-live="assertive" aria-label="Permissions waiting for you"></section>
+<main class="layout">
+  <section class="rack" aria-label="Agents">
+    <ol id="strips" class="strips" role="listbox" aria-label="Agents"></ol>
+    <p id="empty" class="empty" hidden>No agent runs in this lea yet. Start one with <kbd>n</kbd>, or a control tower that runs the team for you.</p>
+  </section>
+  <section id="detail" class="detail" aria-label="Agent" hidden>
+    <header class="detail-head">
+      <button type="button" id="btn-back" class="ghost back" aria-label="Back to the agents">‹</button>
+      <div class="who"><h2 id="d-title"></h2><p id="d-sub" class="sub"></p></div>
+    </header>
+    <div id="d-task" class="task"></div>
+    <div id="d-questions" class="questions" hidden></div>
+    <div class="tools" id="d-tools">
+      <button type="button" data-act="rename" title="Rename (e)">Rename</button>
+      <button type="button" data-act="pause" title="Pause or resume (p)">Pause</button>
+      <button type="button" data-act="hold" title="Hold or release its inbox (h)">Hold inbox</button>
+      <label class="role">Role <select id="d-role"><option>lead</option><option>dev</option><option>reviewer</option></select></label>
+      <button type="button" data-act="stop" class="danger" title="Stop (x)">Stop</button>
+    </div>
+    <ol id="thread" class="thread" aria-live="polite"></ol>
+    <form id="compose" class="compose">
+      <textarea id="msg" rows="2" placeholder="Write to this agent" aria-label="Message"></textarea>
+      <button type="submit" class="primary">Send</button>
+    </form>
+  </section>
+</main>
+<dialog id="dlg-new" class="dlg">
+  <form method="dialog" id="form-new">
+    <h2 id="new-title">Start an agent</h2>
+    <label>Provider <select name="profile" id="new-profile"></select></label>
+    <label>Role <select name="role"><option value="dev">dev</option><option value="reviewer">reviewer</option><option value="lead">lead</option></select></label>
+    <label>Repository <input name="repo" placeholder="the repository's folder in your projects" autocomplete="off"></label>
+    <label>Branch <input name="branch" placeholder="optional" autocomplete="off"></label>
+    <label>Label <input name="label" maxlength="24" placeholder="how the board names it" autocomplete="off"></label>
+    <label>Brief <textarea name="brief" rows="4" placeholder="What it should do: its first message"></textarea></label>
+    <p class="err" id="new-err" role="alert"></p>
+    <div class="row"><button value="cancel" formnovalidate>Cancel</button><button value="ok" class="primary" id="new-ok">Start</button></div>
+  </form>
+</dialog>
+<dialog id="dlg-confirm" class="dlg">
+  <form method="dialog">
+    <h2 id="confirm-title"></h2>
+    <p id="confirm-text"></p>
+    <div class="row"><button value="cancel">Cancel</button><button value="ok" class="danger" id="confirm-ok">Stop</button></div>
+  </form>
+</dialog>
+<dialog id="dlg-rename" class="dlg">
+  <form method="dialog">
+    <h2>Rename</h2>
+    <label>Label <input id="rename-input" maxlength="24" autocomplete="off"></label>
+    <p class="hint">Empty clears the label.</p>
+    <div class="row"><button value="cancel" formnovalidate>Cancel</button><button value="ok" class="primary">Rename</button></div>
+  </form>
+</dialog>
+<dialog id="dlg-help" class="dlg">
+  <form method="dialog">
+    <h2>Keyboard</h2>
+    <dl class="keys">
+      <dt><kbd>j</kbd> <kbd>k</kbd></dt><dd>next, previous agent</dd>
+      <dt><kbd>Enter</kbd></dt><dd>open its thread</dd>
+      <dt><kbd>m</kbd></dt><dd>write to it</dd>
+      <dt><kbd>e</kbd> <kbd>p</kbd> <kbd>h</kbd> <kbd>x</kbd></dt><dd>rename, pause, hold its inbox, stop</dd>
+      <dt><kbd>n</kbd> <kbd>N</kbd></dt><dd>start an agent, a control tower</dd>
+      <dt><kbd>t</kbd></dt><dd>talk to the control tower</dd>
+      <dt><kbd>a</kbd> <kbd>d</kbd> <kbd>A</kbd></dt><dd>allow, deny, always allow the first permission</dd>
+      <dt><kbd>Esc</kbd></dt><dd>close</dd>
+    </dl>
+    <div class="row"><button value="ok" class="primary">Close</button></div>
+  </form>
+</dialog>
+<div id="toast" class="toast" role="status" aria-live="polite" hidden></div>
+</body>
+</html>
