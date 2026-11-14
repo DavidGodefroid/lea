@@ -5,7 +5,7 @@
   </picture>
 </p>
 
-<h3 align="center">Many Claude Code agents. None of your machine.</h3>
+<h3 align="center">Many agents. None of your machine.</h3>
 
 <p align="center"><a href="https://leadeck.dev"><strong>leadeck.dev</strong></a></p>
 
@@ -16,11 +16,13 @@
   <img alt="platforms" src="https://img.shields.io/badge/Linux%20%C2%B7%20macOS%20%C2%B7%20WSL2-cdd6f4?labelColor=1e1e2e">
 </p>
 
-<p align="center"><img src="assets/demo.svg" alt="Three Claude Code agents work in the lea container. One pushes to github.com through the proxy; its attempts to read ~/.ssh and to reach 192.168.1.10 are blocked. Another asks for a permission, answered from the deck." width="900"></p>
+<p align="center"><img src="assets/demo.svg" alt="Three agents (here Claude Code) work in the lea container. One pushes to github.com through the proxy; its attempts to read ~/.ssh and to reach 192.168.1.10 are blocked. Another asks for a permission, answered from the deck." width="900"></p>
 
-lea starts Claude Code in a container that sees one directory of your projects (read/write), a
-read-only allow-list of your `~/.claude` configuration (its own copy of your settings and
-plugins, never written back), and nothing else of your machine. The
+lea runs your coding agents side by side in a container: Claude Code by default, OpenAI's Codex
+CLI, or a model of your own (Ollama, vLLM, any OpenAI-compatible endpoint) through Codex. The
+container sees one directory of your projects (read/write), a read-only allow-list of your
+`~/.claude` configuration for Claude Code (its own copy of your settings and plugins, never
+written back), and nothing else of your machine. The
 agents get their own container engine (so `make test` and `docker run` work), reach the
 internet only through an egress proxy that refuses your private network, and never see your SSH
 keys or credentials.
@@ -41,7 +43,7 @@ selected agent's terminal on the right.
 
 ## Why lea
 
-Claude Code does more when you stop approving every command, and a few agents in parallel do more
+A coding agent does more when you stop approving every command, and a few agents in parallel do more
 than one. Both are risky on your workstation: an agent runs as you, with your keys, your tokens
 and your network. lea moves the boundary from the prompt to the container.
 
@@ -50,9 +52,10 @@ and your network. lea moves the boundary from the prompt to the container.
   read `~/.ssh` or call your intranet.
 - **Many agents, one deck.** States, context use, branches and each agent's own task report at a
   glance; one key to reach the next agent that needs you.
-- **Your Claude Code, unchanged.** Your settings, permission rules, skills, plugins, hooks and
-  agents. `/plugin install` works inside lea, on lea's own copy: nothing reaches your host. lea
-  runs the real Claude Code with your subscription or API key.
+- **Your agent CLI, unchanged.** lea runs the real Claude Code or Codex with your subscription
+  or API key, or Codex on an endpoint of your own (see [Other providers](#other-providers-codex-ollama-vllm)).
+  For Claude Code, your settings, permission rules, skills, plugins, hooks and agents come along:
+  `/plugin install` works inside lea, on lea's own copy, and nothing reaches your host.
 - **Local and open.** No account, no server, no forge lock-in. Apache 2.0.
 
 ```mermaid
@@ -70,7 +73,7 @@ flowchart LR
     end
     proxy["egress proxy"]
   end
-  net["Internet: GitHub, npm, Claude API …"]
+  net["Internet: GitHub, npm, model APIs …"]
   proj <-->|read/write| lea
   cfg -->|read-only| lea
   lea --> proxy -->|HTTPS, pinned SSH| net
@@ -140,8 +143,9 @@ The installer checks the requirements, downloads the release for your platform a
 checksum and the release's signature (see [Verify a release](#verify-a-release)), links
 `~/.local/bin/lea`, then runs `lea init`, which asks for your projects directory and pulls the
 images. The first agent is a Control Tower (see [Control tower](#control-tower)); in it, run
-`/login` once (Claude Code's own login, kept per projects directory). Press `n` for another
-agent, `N` for another Control Tower.
+`/login` once (Claude Code's own login, kept per projects directory; the Control Tower runs on
+Claude Code). Press `n` for another agent, `P` for one on another provider, `N` for another
+Control Tower.
 
 ### Requirements
 
@@ -151,7 +155,8 @@ agent, `N` for another Control Tower.
 - On macOS, tmux 3.2 or later (`brew install tmux`); the Linux release brings its own. Without
   the deck (`--no-deck`), only `lea new` needs it.
 - `curl`, `tar`, `ssh-keygen`.
-- A Claude subscription or API key for Claude Code.
+- A subscription or API key for your agent: Claude Code (the default, and needed for the Control
+  Tower), Codex, or an OpenAI-compatible endpoint of your own run through Codex.
 
 lea never runs `sudo` itself, except in `lea init` on Linux hosts, and only when what it
 installs changed: lea's AppArmor profile where Docker uses AppArmor, and lea's
@@ -199,7 +204,8 @@ it can be audited; it does not replace trusting that account.
 
 ## The deck
 
-`lea` opens the deck. Each agent is Claude Code running in the lea container under `abduco`, so
+`lea` opens the deck. Each agent is its provider's CLI (Claude Code, Codex) running in the lea
+container under `abduco`, so
 closing the deck, or the terminal, does not stop it: the next `lea` reattaches.
 
 | Key | Action |
@@ -246,7 +252,7 @@ profile and state in the bottom border.
   been quiet for 30 minutes, a grey `‖` is paused (`p`: lea freezes the
   agent's processes, tool calls included, until you resume it), a lavender `◷` stopped on its
   usage limit (see below). Agents stay in the order you started them.
-- **Usage limits.** When Claude Code stops on its provider's usage limit, the row shows `◷` and
+- **Usage limits.** When a Claude Code agent stops on its provider's usage limit, the row shows `◷` and
   `usage limit, resumes 15:02`: lea resumes the agent at that time, the limit's reset (from the
   status line's 5-hour and 7-day windows) plus `LEA_RESUME_DELAY` seconds (60) and a few seconds
   of jitter, or after a backoff (5 minutes, doubling, at most an hour) when no reset time is
@@ -304,8 +310,9 @@ profile and state in the bottom border.
   reads your clipboard only when you press `ctrl+v` (with `wl-paste`, `xclip` or `pbpaste`);
   agents never read it.
 - **Permissions.** When an agent asks for a permission, its row shows the request and the deck
-  answers it. Unanswered after `LEA_APPROVAL_TIMEOUT` seconds (60), Claude asks in its own
-  terminal as usual; `LEA_APPROVALS=pane` keeps Claude's dialog only.
+  answers it (Claude Code agents: lea does not see Codex's dialogs, which stay in its pane).
+  Unanswered after `LEA_APPROVAL_TIMEOUT` seconds (60), Claude asks in its own terminal as usual;
+  `LEA_APPROVALS=pane` keeps Claude's dialog only.
 
 ### The deck in your browser: lea web
 
@@ -764,7 +771,7 @@ server with the Responses API).
 
 - `LEA_PROVIDER` and `LEA_MODEL` in `~/.config/lea/lea.conf` are the default provider and model
   (an agent started without one: the deck's `n`, a lead's `agents_spawn`).
-- `lea new -p codex -m gpt-5.1-codex`, the deck's `N` (then the provider's digit), or a lead's
+- `lea new -p codex -m gpt-5.1-codex`, the deck's `P` (then the provider's digit), or a lead's
   `agents_spawn` with `profile` and `model` start an agent on another one; `providers_list`
   tells an agent which exist. The deck shows each agent's provider and model.
 - A lead's `agents_spawn` (and `agents_request_spawn`) also takes an `advisor` for an agent on
@@ -815,7 +822,7 @@ vllm      https://vllm.example.com/v1         key=/home/me/.config/lea/keys/vllm
 
 ### Plugins and permissions in lea
 
-Each projects directory's container has its own writable copy of your `~/.claude/settings.json`
+This section is about Claude Code agents. Each projects directory's container has its own writable copy of your `~/.claude/settings.json`
 and `~/.claude/plugins`, made from yours on the host when it first starts. Inside lea,
 `/plugin install`, `/plugin marketplace add` and the marketplaces' auto-update work as on the
 host, on that copy, for every agent of that projects directory. Permission rules are the exception:
@@ -934,7 +941,7 @@ its output instead (#374):
 
 ### Control tower
 
-lea brings its own Claude Code plugin, `lea`, loaded in every agent (from the image, for the
+lea brings its own Claude Code plugin, `lea`, loaded in every Claude Code agent (from the image, for the
 session only: nothing is installed in your `~/.claude`). Its skill `/lea:control-tower` turns a
 lead into your control tower: you talk to it only, it splits your requests into tasks, starts
 `dev` and `reviewer` agents with self-contained briefs, answers their questions when it can, and
@@ -1773,8 +1780,15 @@ it does not remove it.
 
 ## FAQ
 
-**Is lea a replacement for Claude Code?** No. lea runs the real Claude Code, with your own
-configuration, and gives it a safe place to run and a deck to run several at once.
+**Is lea a replacement for Claude Code or Codex?** No. lea runs the real agent CLI, Claude Code by
+default or Codex, with your own configuration, and gives it a safe place to run and a deck to run
+several at once.
+
+**Which agents does lea run?** Claude Code (the default), OpenAI's Codex CLI, and through Codex any
+OpenAI-compatible endpoint that serves the Responses API: Ollama, vLLM, a server of your own (see
+[Other providers](#other-providers-codex-ollama-vllm)). Without the deck, `lea` runs any command
+you give it (see [Without the deck](#without-the-deck)). The Control Tower and lea's plugin run on
+Claude Code only.
 
 **Why not `--dangerously-skip-permissions` on the host?** On the host that flag hands an agent
 everything your user can reach. In lea an agent can go just as fast, but what it can reach is fixed
@@ -1784,7 +1798,8 @@ by the container and the proxy.
 agent: an egress proxy that refuses private networks, no credentials, a nested container engine, an
 audit of risky changes on exit, and a deck for many agents.
 
-**Does my code leave my machine?** Only the way Claude Code already sends it, to the Claude API. lea
+**Does my code leave my machine?** Only the way your agent already sends it, to its model's API
+(the Claude API for Claude Code, OpenAI's for Codex, your own endpoint for a local model). lea
 has no server and no account, and sends no telemetry of its own; Claude Code's usage metrics go
 nowhere unless you set `LEA_OTEL_UPSTREAM`.
 

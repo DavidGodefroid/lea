@@ -192,7 +192,7 @@ body.append(f'<circle {pkt} fill="{C["red"]}" class="{move(4.6, 5.2, 590, 220, 3
 body.append(f'<circle {pkt} fill="{C["red"]}" class="{move(7.0, 7.6, 590, 300, 300, 407)}"/>')
 
 # Captions.
-caps = [(0.0, 2.9, "Claude Code agents, side by side."),
+caps = [(0.0, 2.9, "Coding agents, side by side."),
         (2.9, 4.9, "The internet: yes, through lea's proxy."),
         (4.9, 8.8, "Your keys and your network: no."),
         (8.8, 11.4, "You answer every agent from one deck.")]
@@ -201,9 +201,9 @@ for t0, t1, s in caps:
                      family=SANS, anchor="middle"))
 
 print(f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {W} {H}" width="{W}" height="{H}" '
-      f'role="img" aria-label="lea: Claude Code agents side by side in an isolated container; '
+      f'role="img" aria-label="lea: coding agents (here Claude Code) side by side in an isolated container; '
       f'the internet is reachable through a proxy, your SSH keys and private network are not.">')
-print("<title>lea: Claude Code agents, side by side, isolated from your machine</title>")
+print("<title>lea: coding agents, side by side, isolated from your machine</title>")
 print("<style>" + "\n".join(css) +
       "\n@media (prefers-reduced-motion: reduce){*{animation-delay:-5.6s!important;animation-play-state:paused!important}}</style>")
 print("\n".join(body))
