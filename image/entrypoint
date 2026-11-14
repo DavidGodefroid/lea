@@ -12,9 +12,9 @@ done
 # The ids of the locks' accounts and clients groups in the image (locksql, lockmq, lockfile,
 # locklog): a session with one of them would be that console account, or in that group without
 # asking.
-for id in 10000 10001 10010 10011 10030 10031 10050 10051; do
+for id in 10000 10001 10010 10011 10030 10031 10050 10051 10090; do
   if [ "$LEA_UID" -eq "$id" ] || [ "$LEA_GID" -eq "$id" ]; then
-    echo "lea: refusing to run the session as uid $LEA_UID / gid $LEA_GID: a lock console's id in lea's image" >&2; exit 1
+    echo "lea: refusing to run the session as uid $LEA_UID / gid $LEA_GID: a lock console's id or lea-cli's in lea's image" >&2; exit 1
   fi
 done
 # A name useradd accepts everywhere: ^[a-z_][a-z0-9_-]*$, at most 32 characters.
@@ -148,6 +148,15 @@ install -d -m 0755 -o 65534 -g 65534 /run/lea-forge
 if [ -x /usr/local/bin/lea ]; then
   setpriv --reuid 65534 --regid 65534 --clear-groups --no-new-privs \
     /usr/local/bin/lea forge-relay /run/lea-forge/gh.sock "$LEA_PROXY_IP:4401" </dev/null &
+fi
+
+# The agents' CLIs update themselves (lea-cli-update): as lea-cli, whose /lea/cli the developer
+# reads but cannot write, through lea's proxy (registry.npmjs.org is in the default allowlist).
+# LEA_CLI_AUTOUPDATE=0: the agents run the image's CLIs.
+if [ "${LEA_CLI_AUTOUPDATE:-1}" != 0 ]; then
+  install -d -m 0755 -o 10090 -g 10090 /lea/cli
+  HOME=/lea/cli setpriv --reuid 10090 --regid 10090 --clear-groups --no-new-privs \
+    sh -c 'exec /usr/local/bin/lea-cli-update loop >>/lea/cli/update.log 2>&1' </dev/null &
 fi
 
 exec setpriv --reuid "$LEA_UID" --regid "$LEA_GID" --init-groups /usr/local/libexec/lea/user-init

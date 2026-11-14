@@ -31,6 +31,16 @@ Features:
   `SameSite=Strict` cookie); `--open` hands the browser a private local page that posts the
   token, so it is never in a command line (#436); foreign `Host` or `Origin` headers are
   refused, and only a fixed list of the daemon's methods, for this lea's agents, is reachable. Phone width, light and dark, keyboard shortcuts.
+- The agents' CLIs update themselves (#418): in each lea container, a check at its start and
+  then every 6 hours installs a newer Claude Code or Codex from registry.npmjs.org (already in the
+  default egress allowlist) in `/lea/cli`, beside the image's pinned version, checks its
+  `--version`, and makes it current with an atomic link swap. Agents started afterwards run it; a
+  running agent keeps its version, which is not removed while a process runs it, and a release
+  older than the image's pin is never installed. The check runs as `lea-cli` (uid 10090), which
+  the agents cannot become: they read `/lea/cli` but cannot write it, and a `/lea/cli` writable by
+  anyone else is ignored. `agents_list` shows each Claude agent's `cli_version`;
+  `lea-cli-update status` in a container shows both versions of each CLI. `LEA_CLI_AUTOUPDATE=0`
+  in `lea.conf` turns it off for agents started after `lea stop --all`.
 - lea web from another machine, agents' terminals, notifications and folders (#416). The README
   documents the SSH tunnel (`ssh -L`), which stays the way to reach it remotely; `lea web
   --listen ADDR:PORT` is the explicit opt-in to the network: it refuses to start without TLS
