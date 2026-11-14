@@ -1,8 +1,62 @@
-/* lea web #416: the sign-in page on the network, the terminal view, folders. */
+/* lea web #416: the sign-in page on the network, an agent's terminal, notifications, folders. */
+
+/* Sign-in (on the network) */
 body.signin { display: grid; place-items: center; min-height: 100%; padding: 16px; }
 .signin-card { width: 100%; max-width: 420px; background: var(--strip); border: 1px solid var(--line); border-radius: 8px; padding: 20px; box-shadow: var(--shadow); }
 .signin-card h1 { font-size: 1.2rem; margin: 12px 0 8px; }
 .signin-card p { color: var(--ink-2); overflow-wrap: anywhere; }
 .signin-card form { display: grid; gap: 8px; }
-.signin-card input { font: inherit; padding: 8px; border: 1px solid var(--line); border-radius: 6px; background: var(--strip-2); color: var(--ink); width: 100%; }
+.signin-card input { padding: 8px; border: 1px solid var(--line); border-radius: 6px; background: var(--strip-2); width: 100%; }
 .signin-error { color: var(--blocked); margin: 0; }
+
+/* The notification bell */
+#btn-notify { opacity: 0.55; }
+#btn-notify.on { opacity: 1; }
+
+/* The detail's tabs: messages or terminal */
+.tabs { display: flex; gap: 4px; padding: 8px 14px 0; border-bottom: 1px solid var(--line); }
+.tabs [role="tab"] { border: 0; border-bottom: 2px solid transparent; border-radius: 0; background: transparent; padding: 6px 10px; color: var(--ink-2); }
+.tabs [role="tab"][aria-selected="true"] { color: var(--ink); border-bottom-color: var(--tower); font-weight: 600; }
+
+/* The terminal: always dark, as a terminal is; read-only. */
+.termbox { flex: 1; min-height: 160px; display: flex; flex-direction: column; padding: 6px 14px 10px; gap: 4px; }
+.termbox .sub { margin: 0; font-size: 12px; color: var(--ink-2); }
+.termbox[hidden] { display: none; }
+.term {
+  --t-fg: #d6dde3; --t-bg: #0f151b;
+  flex: 1; margin: 0; overflow: auto; background: var(--t-bg); color: var(--t-fg); border-radius: 6px; padding: 8px 10px;
+  font: 12.5px/1.3 ui-monospace, "SF Mono", Menlo, Consolas, "DejaVu Sans Mono", monospace; white-space: pre; min-height: 160px; max-height: 70vh;
+}
+.term .t-line { min-height: 1.3em; }
+.t-bold { font-weight: 700; }
+.t-dim { opacity: 0.65; }
+.t-it { font-style: italic; }
+.t-u { text-decoration: underline; }
+.t-s { text-decoration: line-through; }
+.t-inv { color: var(--t-bg); background: var(--t-fg); }
+.t-f0 { color: #000000; } .t-f1 { color: #cd3131; } .t-f2 { color: #0dbc79; } .t-f3 { color: #e5e510; }
+.t-f4 { color: #2472c8; } .t-f5 { color: #bc3fbc; } .t-f6 { color: #11a8cd; } .t-f7 { color: #e5e5e5; }
+.t-f8 { color: #666666; } .t-f9 { color: #f14c4c; } .t-f10 { color: #23d18b; } .t-f11 { color: #f5f543; }
+.t-f12 { color: #3b8eea; } .t-f13 { color: #d670d6; } .t-f14 { color: #29b8db; } .t-f15 { color: #ffffff; }
+.t-b0 { background: #000000; } .t-b1 { background: #cd3131; } .t-b2 { background: #0dbc79; } .t-b3 { background: #e5e510; }
+.t-b4 { background: #2472c8; } .t-b5 { background: #bc3fbc; } .t-b6 { background: #11a8cd; } .t-b7 { background: #e5e5e5; }
+.t-b8 { background: #666666; } .t-b9 { background: #f14c4c; } .t-b10 { background: #23d18b; } .t-b11 { background: #f5f543; }
+.t-b12 { background: #3b8eea; } .t-b13 { background: #d670d6; } .t-b14 { background: #29b8db; } .t-b15 { background: #ffffff; }
+
+/* Folders: a header row above their strips, in the deck's colours. */
+.folder {
+  --fc: var(--line);
+  display: flex; align-items: center; gap: 6px; padding: 4px 6px; margin-top: 6px;
+  border-left: 4px solid var(--fc); border-radius: 4px; background: var(--strip-2); font-weight: 650; min-width: 0;
+}
+.folder .fold { border: 0; background: transparent; padding: 0 6px; width: 28px; }
+.folder .fname { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.folder .fcount { font-size: 12px; color: var(--ink-2); font-weight: 600; }
+.folder .fedit { padding: 0 8px; }
+.folder.folded { opacity: 0.85; }
+.fc-pink { --fc: #ea76cb; } .fc-mauve { --fc: #8839ef; } .fc-peach { --fc: #fe640b; } .fc-yellow { --fc: #df8e1d; }
+.fc-teal { --fc: #179299; } .fc-sky { --fc: #04a5e5; } .fc-blue { --fc: #1e66f5; } .fc-lavender { --fc: #7287fd; }
+
+@media (max-width: 760px) {
+  .term { font-size: 11px; max-height: none; }
+}
