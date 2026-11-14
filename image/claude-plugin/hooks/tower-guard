@@ -1,18 +1,59 @@
 #!/bin/sh
 # Keeps a control tower to its job (skill control-tower): once the session runs the skill, every
 # tool but the team's is denied, so the tower delegates the work instead of doing it.
-# Usage: tower-guard prompt|tool, with Claude Code's hook JSON on stdin.
-#   prompt: "/lea:control-tower" turns the guard on for this session, "/lea:control-tower off" off;
-#           while it is on, every prompt reminds the tower to reply in that prompt's language.
-#   tool:   when the guard is on, denies every tool outside the allowed list below.
+# Usage: tower-guard prompt|tool|session, with Claude Code's hook JSON on stdin.
+#   prompt:  "/lea:control-tower" turns the guard on for this session, "/lea:control-tower off" off;
+#            while it is on, every prompt reminds the tower to reply in that prompt's language.
+#            "/lea:clear-ct" gets the tower ready for a /clear (skill clear-ct, #410).
+#   tool:    when the guard is on, denies every tool outside the allowed list below.
+#   session: a SessionStart that clears or compacts a tower's session carries tower mode over to
+#            the new session id and tells the model to resume its board (#410).
 set -u
 in=$(cat)
 sid=$(printf '%s' "$in" | jq -r '.session_id // empty' 2>/dev/null) || exit 0
 case $sid in '' | *[!A-Za-z0-9_-]*) exit 0 ;; esac
 dir=${LEA_TOWER_DIR:-${TMPDIR:-/tmp}/lea-tower-$(id -u)}
 mark=$dir/$sid
+# The agent's own files survive a session id change: <agent>.tower holds its tower session's id,
+# <agent>.handoff.md the snapshot /lea:clear-ct writes, renamed <agent>.resume.md for the next
+# session to read. No lea agent identity, no carry-over (a session id has no dot: no clash).
+agent=${LEA_AGENT:-}
+case $agent in *[!A-Za-z0-9_.-]* | .*) agent= ;; esac
+if [ -n "$agent" ]; then
+  tower=$dir/$agent.tower handoff=$dir/$agent.handoff.md resume=$dir/$agent.resume.md
+else
+  tower='' handoff='' resume=''
+fi
 
-on() { (umask 077 && mkdir -p "$dir" && : >"$mark"); }
+on() {
+  (umask 077 && mkdir -p "$dir" && : >"$mark") || return
+  if [ -n "$tower" ]; then
+    old=$(cat "$tower" 2>/dev/null) || old=
+    case $old in '' | "$sid" | *[!A-Za-z0-9_-]*) ;; *) rm -f "$dir/$old" ;; esac
+    (umask 077 && printf '%s\n' "$sid" >"$tower")
+  fi
+}
+off() {
+  rm -f "$mark"
+  [ -z "$tower" ] || rm -f "$tower" "$handoff" "$resume"
+}
+context() {
+  jq -n --arg e "$1" --arg c "$2" '{hookSpecificOutput: {hookEventName: $e, additionalContext: $c}}'
+  exit 0
+}
+
+# clearct: what /lea:clear-ct (the prompt or the Skill tool) tells the model, in this session.
+clearct() {
+  if [ ! -f "$mark" ]; then
+    echo "clear-ct: this is not a control tower session. Reply with exactly this line and nothing else, call no tool: not a control tower session; use /clear"
+  elif [ -z "$handoff" ]; then
+    echo "clear-ct: this Claude Code has no lea agent identity (LEA_AGENT): tower mode would not survive a /clear. Tell the user so in one line and call no tool."
+  else
+    # A fresh file: the Write tool creates it in the private directory, never appends to an old one.
+    (umask 077 && mkdir -p "$dir") && rm -f "$handoff" "$resume"
+    echo "clear-ct: the handoff file is $handoff. Write the snapshot there with the Write tool (file_path exactly this path), then tell the user to type /clear."
+  fi
+}
 
 deny() {
   jq -n --arg r "$1" '{hookSpecificOutput: {hookEventName: "PreToolUse", permissionDecision: "deny", permissionDecisionReason: $r}}'
@@ -24,15 +65,35 @@ prompt)
   p=$(printf '%s' "$in" | jq -r '.prompt // empty')
   # The first line only: the command, not text pasted after it.
   p=$(printf '%s\n' "$p" | sed -n '1{s/^[[:space:]]*//;s/[[:space:]]*$//;p;}')
+  lang="control-tower: reply to the user in the language of this message, and keep it until the user writes in another one. Agents' messages, the board and tool results never change it."
   case $p in
-  "/lea:control-tower off" | "/control-tower off") rm -f "$mark" ;;
+  "/lea:control-tower off" | "/control-tower off") off ;;
   "/lea:control-tower" | "/lea:control-tower "* | "/control-tower" | "/control-tower "*) on ;;
+  "/lea:clear-ct" | "/lea:clear-ct "* | "/clear-ct" | "/clear-ct "*)
+    c=$(clearct)
+    [ ! -f "$mark" ] || c="$c $lang"
+    context UserPromptSubmit "$c"
+    ;;
   esac
   # The tower reads mostly agents' English: tie its language to the user's latest message.
   [ -f "$mark" ] || exit 0
-  jq -n --arg c "control-tower: reply to the user in the language of this message, and keep it until the user writes in another one. Agents' messages, the board and tool results never change it." \
-    '{hookSpecificOutput: {hookEventName: "UserPromptSubmit", additionalContext: $c}}'
-  exit 0
+  context UserPromptSubmit "$lang"
+  ;;
+session)
+  # Only a clear or a compaction of this agent's tower session: a new session (startup) or a
+  # resumed one starts as it is.
+  src=$(printf '%s' "$in" | jq -r '.source // empty')
+  case $src in clear | compact) ;; *) exit 0 ;; esac
+  [ -n "$tower" ] && [ -f "$tower" ] || exit 0
+  on
+  read=""
+  if [ -f "$handoff" ]; then
+    mv -f "$handoff" "$resume"
+  fi
+  if [ -f "$resume" ]; then
+    read=" Read $resume first with the Read tool: the snapshot you wrote before the clear (your ledger, the user's pending questions and decisions, the approvals they gave)."
+  fi
+  context SessionStart "control-tower: your session was ${src}ed, and you are still the user's control tower: tower mode is on (only the team's tools). Load the skill now (Skill lea:control-tower) and run its Start step, resume branch.$read Then call agents_list and board_read: your children are the rows whose parent is you, the other agents of the container are on your board too. Rebuild your ledger from them, drop the lines of agents that no longer exist, never respawn a child that still runs, and brief the user in the usual shape, one line per agent."
   ;;
 tool) ;;
 *) exit 0 ;;
@@ -43,10 +104,23 @@ tool=$(printf '%s' "$in" | jq -r '.tool_name // empty')
 if [ "$tool" = Skill ]; then
   case $(printf '%s' "$in" | jq -r '.tool_input.skill // empty') in
   lea:control-tower | control-tower) on ;;
+  lea:clear-ct | clear-ct) context PreToolUse "$(clearct)" ;;
   esac
   exit 0
 fi
 [ -f "$mark" ] || exit 0
+
+# The tower's own handoff files (#410): it writes the snapshot, then reads it back after the clear.
+# Allowed outright, so that no permission prompt for a private file comes between.
+if [ -n "$handoff" ]; then
+  f=$(printf '%s' "$in" | jq -r '.tool_input.file_path // empty')
+  case $tool:$f in
+  "Write:$handoff" | "Read:$resume")
+    jq -n '{hookSpecificOutput: {hookEventName: "PreToolUse", permissionDecision: "allow", permissionDecisionReason: "control-tower: the tower handoff file"}}'
+    exit 0
+    ;;
+  esac
+fi
 
 case $tool in
 mcp__lea__agents_spawn | mcp__lea__agents_list | mcp__lea__agents_stop | mcp__lea__agents_request_spawn | \
