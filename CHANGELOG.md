@@ -4,6 +4,14 @@
 
 Features:
 
+- A lead can push its team's branches (#406). Before, a lead was always refused: `pushing to
+  anything but the agent's own branch is never allowed`. Once a child stopped, its branch could
+  be pushed only from the host. Now, under the existing `push` allowance, a lead may run `git push
+  [-u] origin B` from a child's worktree root when B is that direct child's recorded branch, the
+  child is idle, done or stopped, no other live agent works on B, and B is not the default branch.
+  lea pins the push as it pins the child's own. Nothing else widens: no commit, delete, merge or
+  PR for a child's branch, no other lead's children, no tags. A refused lead is told which
+  branches it may push and from where.
 - `LEA_LOCKHTTP=1` works with the lockhttp launcher that `brew install
   davidgodefroid/tap/lockfamily` or lockfamily's `install.sh` installs (#411). lea used to accept
   only a root-owned `/usr/local/bin/lockhttp`. It now looks there first, then in `~/.local/bin`,
