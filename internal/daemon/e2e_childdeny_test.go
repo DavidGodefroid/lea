@@ -151,10 +151,22 @@ func TestClaudeChildDenyListLeavesOutHostPluginsAndMCPServers(t *testing.T) {
 			}
 		}
 	}
-	if got := sees("dev"); !got["FOOSKILLPROBE"] || !got["GMAILPROBE"] || !got["LOCKSQLPROBE"] || !got["BROWSERPROBE"] {
+	// Claude Code connects the MCP servers while the session starts: a first request sent before
+	// they answered offers none. The kept servers show it: such a run is run again.
+	seesOnceReady := func(agent string, env ...string) map[string]bool {
+		t.Helper()
+		var got map[string]bool
+		for i := 0; i < 5; i++ {
+			if got = sees(agent, env...); got["BROWSERPROBE"] && got["LOCKSQLPROBE"] {
+				break
+			}
+		}
+		return got
+	}
+	if got := seesOnceReady("dev"); !got["FOOSKILLPROBE"] || !got["GMAILPROBE"] || !got["LOCKSQLPROBE"] || !got["BROWSERPROBE"] {
 		t.Fatalf("the lead does not see the host's plugin and servers: %v", got)
 	}
-	got := sees("kid", "LEA_CHILD_PLUGINS=foo", "LEA_CHILD_MCP=gmail,locksql")
+	got := seesOnceReady("kid", "LEA_CHILD_PLUGINS=foo", "LEA_CHILD_MCP=gmail,locksql")
 	if got["FOOSKILLPROBE"] || got["GMAILPROBE"] {
 		t.Fatalf("the child sees a denied plugin or server: %v", got)
 	}
