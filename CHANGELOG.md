@@ -1,6 +1,6 @@
 # Changelog
 
-## v0.16.0 (2026-11-14)
+## Unreleased
 
 Features:
 
@@ -16,6 +16,11 @@ Features:
   networks now get a bridge named `lea` plus 12 hex digits so that one rule covers them all.
   `lea doctor` checks the log and names any internal network it does not cover. It also warns,
   with a count, when packets were logged in the last 24 hours.
+
+## v0.16.0 (2026-11-14)
+
+Features:
+
 - A lead picks each child's model and advisor (#407). `agents_spawn` and `agents_request_spawn`
   take an optional `advisor`: with `model: sonnet, advisor: opus` the child runs `claude --model
   sonnet --advisor opus`, a Sonnet session that consults Opus on demand through Claude Code's
