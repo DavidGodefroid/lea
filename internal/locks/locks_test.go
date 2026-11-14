@@ -60,6 +60,11 @@ func TestRegistryWiring(t *testing.T) {
 	if l, _ := Get("locksql"); l.ProfileDir != ".locksql" {
 		t.Errorf("locksql profile dir %q", l.ProfileDir)
 	}
+	// locklog's profiles hold the auto rules lox run applies: the agents read them, never write
+	// them (lea#467).
+	if l, _ := Get("locklog"); l.ProfileDir != ".locklog" {
+		t.Errorf("locklog profile dir %q", l.ProfileDir)
+	}
 	if _, ok := Get("lockhttp"); ok {
 		t.Error("lockhttp has no client in lea's image")
 	}
