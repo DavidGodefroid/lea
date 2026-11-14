@@ -161,7 +161,8 @@ jobs:
         run: |
           make test-isolation 2>&1 | tee isolation.log
           if grep -E '^FAIL |^note: ' isolation.log; then echo "an isolation check failed or was skipped" >&2; exit 1; fi
-          for c in '.lockfamily write gets EROFS' 'host facade socket not visible' 'no facade socket in the container' 'sibling lea unreachable directly' 'host port unreachable via host IP' 'public HTTPS works through the proxy' 'nested HTTP between containers is direct' \
+          for c in '.lockfamily write gets EROFS' '.locksql (lock off) config.toml write gets EROFS' '.locklog (lock off) config.toml write gets EROFS' \
+                   '.locklog (lock off) mkdir inside it refused' '.locklog (lock off) is still an empty directory' 'host: .locklog made by lea, still empty' 'host: .locksql made by lea, still empty' 'host facade socket not visible' 'no facade socket in the container' 'sibling lea unreachable directly' 'host port unreachable via host IP' 'public HTTPS works through the proxy' 'nested HTTP between containers is direct' \
                    'the GitHub token moved to the proxy' 'the GitHub token left the agents'"'"' state' 'no GitHub token readable in /lea/state or ~' \
                    'no copy of the GitHub token readable' 'the GitHub relay runs as nobody' 'gh api works with the token added by the proxy' \
                    "git reaches github.com through the proxy's forwarder" 'gh run view --log follows the redirect to its own host' \

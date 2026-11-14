@@ -125,12 +125,16 @@ func TestLockLogWired(t *testing.T) {
 			t.Errorf("missing %q in %v", m, args)
 		}
 	}
-	// Off: no trace of it, though lox run runs a locklog lock.
+	// Off: no trace of it but .locklog read-only (lea#473), though lox run runs a locklog lock.
 	w = newWorld(t, repoRoot(t))
 	writeUserConf(t, w, "LEA_LOCKLOG=0\n")
 	writeUp(t, w, lockUp("logs", "locklog"))
 	labels(w, "logs", "locklog", "socket")
+	d = w.proj + "/.locklog"
 	for _, a := range lockArgs(t, w) {
+		if a == "type=bind,src="+d+",dst="+d+",readonly" {
+			continue
+		}
 		if strings.Contains(a, "locklog") || a == "10050" {
 			t.Errorf("LEA_LOCKLOG=0: %s in the run args", a)
 		}
@@ -195,16 +199,19 @@ func TestLockSSHWired(t *testing.T) {
 	writeUserConf(t, w, "LEA_LOCKSSH=0\n")
 	writeUp(t, w, lockUp("web", "lockssh"))
 	labels(w, "web", "lockssh", "socket")
+	// Only its profile directory, made empty and read-only (lea#473).
+	ro := "type=bind,src=" + w.proj + "/.lockssh,dst=" + w.proj + "/.lockssh,readonly"
 	for _, a := range lockArgs(t, w) {
-		if strings.Contains(a, "lockssh") || a == "10040" {
+		if (strings.Contains(a, "lockssh") && a != ro) || a == "10040" {
 			t.Errorf("LEA_LOCKSSH=0: %s in the run args", a)
 		}
 	}
 }
 
-// A profile directory is read-only whatever the switch and lox run say (lea#467): an existing
-// .locklog, .locksql or .lockssh is mounted read-only with the Lock off, and before `lox add` (on, no lock
-// yet); a missing one is not made; a link or a file in its place is not mounted, with a warning.
+// A profile directory is read-only whatever the switch and lox run say (lea#467, lea#473): with
+// the Lock off, and before `lox add` (on, no lock yet), .locklog, .locksql and .lockssh are made when
+// missing and mounted read-only, so no agent creates them; an existing one is mounted as is; a
+// link or a file in its place stops lea, as when the Lock is wired.
 func TestProfileDirReadOnlyUnwired(t *testing.T) {
 	ro := func(w *world, name string) string {
 		d := w.proj + "/" + name
@@ -228,20 +235,26 @@ func TestProfileDirReadOnlyUnwired(t *testing.T) {
 		}
 		args := lockArgs(t, w)
 		for _, n := range []string{".locksql", ".locklog", ".lockssh"} {
-			if contains(args, ro(w, n)) {
-				t.Errorf("%s: %s mounted though missing", c.name, n)
+			if !contains(args, ro(w, n)) {
+				t.Errorf("%s: missing %q in %v", c.name, ro(w, n), args)
 			}
-			if _, err := os.Lstat(w.proj + "/" + n); err == nil {
-				t.Errorf("%s: %s made", c.name, n)
+			fi, err := os.Lstat(w.proj + "/" + n)
+			if err != nil || !fi.IsDir() {
+				t.Errorf("%s: %s not made: %v %v", c.name, n, fi, err)
 			}
-			if err := os.MkdirAll(w.proj+"/"+n, 0o755); err != nil {
-				t.Fatal(err)
+			if ents, _ := os.ReadDir(w.proj + "/" + n); len(ents) != 0 {
+				t.Errorf("%s: %s not empty: %v", c.name, n, ents)
 			}
+			must(t, os.WriteFile(w.proj+"/"+n+"/config.toml", []byte("x"), 0o600))
 		}
+		// An existing one, with what the user wrote, is mounted as is.
 		args = lockArgs(t, w)
 		for _, n := range []string{".locksql", ".locklog", ".lockssh"} {
 			if !contains(args, ro(w, n)) {
 				t.Errorf("%s: missing %q in %v", c.name, ro(w, n), args)
+			}
+			if b, err := os.ReadFile(w.proj + "/" + n + "/config.toml"); err != nil || string(b) != "x" {
+				t.Errorf("%s: %s/config.toml changed: %q %v", c.name, n, b, err)
 			}
 		}
 		if strings.Contains(w.errb.String(), "is not a directory") {
@@ -256,22 +269,24 @@ func TestProfileDirReadOnlyUnwired(t *testing.T) {
 			}
 		}
 	}
-	// A link or a file in its place: not mounted, a warning, and lea still starts.
-	w := newWorld(t, repoRoot(t))
-	writeUserConf(t, w, "LEA_LOCKLOG=0\n")
-	if err := os.Symlink(w.home, w.proj+"/.locklog"); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(w.proj+"/.locksql", nil, 0o600); err != nil {
-		t.Fatal(err)
-	}
-	args := lockArgs(t, w)
-	for _, n := range []string{".locksql", ".locklog"} {
-		if contains(args, ro(w, n)) {
-			t.Errorf("%s mounted though not a directory", n)
-		}
-		if !strings.Contains(w.errb.String(), w.proj+"/"+n+" is not a directory (a symbolic link or a file): lea's agents can rewrite what it holds; remove it") {
-			t.Errorf("no warning for %s: %s", n, w.errb.String())
+	// A link or a file in its place, the Lock off: lea refuses to start and leaves it.
+	for _, n := range []string{".locksql", ".locklog", ".lockssh"} {
+		for _, link := range []bool{true, false} {
+			w := newWorld(t, repoRoot(t))
+			writeUserConf(t, w, "LEA_LOCKSQL=0\nLEA_LOCKLOG=0\nLEA_LOCKSSH=0\n")
+			d := w.proj + "/" + n
+			if link {
+				must(t, os.Symlink(w.home, d))
+			} else {
+				must(t, os.WriteFile(d, nil, 0o600))
+			}
+			_, err := w.launcher().runArgs(w.proj, "172.18.0.5")
+			if err == nil || !strings.Contains(err.Error(), d+" is not a directory (a symbolic link or a file)") {
+				t.Errorf("%s (link %v): %v", n, link, err)
+			}
+			if fi, err := os.Lstat(d); err != nil || fi.IsDir() {
+				t.Errorf("%s (link %v) changed: %v %v", n, link, fi, err)
+			}
 		}
 	}
 }

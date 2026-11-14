@@ -78,6 +78,10 @@ LEA_LOCKSQL=1
 type=volume,src=lockfamily-$PROJECT_crm-run,dst=/run/locksql,readonly
 --mount
 type=bind,src=$W/projects/.locksql,dst=$W/projects/.locksql,readonly
+--mount
+type=bind,src=$W/projects/.locklog,dst=$W/projects/.locklog,readonly
+--mount
+type=bind,src=$W/projects/.lockssh,dst=$W/projects/.lockssh,readonly
 --cap-drop
 NET_RAW
 --cap-drop
