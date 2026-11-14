@@ -163,8 +163,10 @@ type Row struct {
 	Kind    string `json:"kind,omitempty"`
 	Label   string `json:"label,omitempty"`
 	Profile string `json:"profile"`
-	// Model is the model the agent was started with, "" for its CLI's default.
+	// Model is the model the agent was started with, "" for its CLI's default; Advisor the model
+	// its CLI consults as advisor, "" for none (#407).
 	Model   string `json:"model,omitempty"`
+	Advisor string `json:"advisor,omitempty"`
 	State   string `json:"state"`
 	Workdir string `json:"workdir"`
 	Updated int64  `json:"updated"`
@@ -265,10 +267,11 @@ type LockView struct {
 
 type NewRequest struct {
 	Container, Workdir, Profile, Name string
-	// Model is the model to ask the provider for ("" for the default).
-	Model string
-	Args  []string
-	Focus bool
+	// Model is the model to ask the provider for ("" for the default). Advisor is the model a
+	// Claude Code agent consults on demand (--advisor, "" for none, #407): Codex has none.
+	Model, Advisor string
+	Args           []string
+	Focus          bool
 	// Role (roles.Default when empty), Parent (the spawning lead's key), Repo (a directory of the
 	// projects directory: the agent starts there) and Branch are recorded on the agent.
 	Role, Parent, Repo, Branch string
@@ -412,7 +415,7 @@ func (m *Manager) snapshot(container string, v int64) (Snapshot, error) {
 }
 
 func rowOf(a store.Agent) Row {
-	return Row{Key: a.Key, Name: a.Name, Label: a.Label, Profile: a.Profile, Model: a.Model, State: a.State, Workdir: a.Workdir, Updated: a.Updated,
+	return Row{Key: a.Key, Name: a.Name, Label: a.Label, Profile: a.Profile, Model: a.Model, Advisor: a.Advisor, State: a.State, Workdir: a.Workdir, Updated: a.Updated,
 		Created: a.Created, Role: a.Role, Parent: a.Parent, Repo: a.Repo, Branch: a.Branch, CtxPct: -1, CostUSD: -1, Paused: a.Paused, Held: a.HoldSince > 0,
 		LimitUntil: a.LimitUntil, Woken: a.Woken}
 }
@@ -1774,6 +1777,9 @@ func (m *Manager) New(ctx context.Context, r NewRequest) (Row, error) {
 	if err != nil {
 		return Row{}, err
 	}
+	if err := prov.CheckAdvisor(r.Advisor); err != nil {
+		return Row{}, err
+	}
 	r.Profile, r.Model = prov.Name, model
 	if r.Role == "" {
 		r.Role = roles.Default
@@ -1898,7 +1904,7 @@ func (m *Manager) New(ctx context.Context, r NewRequest) (Row, error) {
 	if r.Parent != "" {
 		caps.MaxChildren = roles.MaxChildren
 	}
-	a, err := m.cfg.Store.Register(store.NewAgent{Container: r.Container, Name: r.Name, Profile: r.Profile, Model: r.Model, Workdir: r.Workdir,
+	a, err := m.cfg.Store.Register(store.NewAgent{Container: r.Container, Name: r.Name, Profile: r.Profile, Model: r.Model, Advisor: r.Advisor, Workdir: r.Workdir,
 		Role: r.Role, Parent: r.Parent, Repo: r.Repo, Branch: r.Branch, Live: slices.Contains(live, r.Name)}, caps, m.cfg.Now())
 	if err != nil {
 		return Row{}, err

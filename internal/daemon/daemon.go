@@ -518,6 +518,7 @@ type agentView struct {
 	Role    string `json:"role,omitempty"`
 	Profile string `json:"profile,omitempty"`
 	Model   string `json:"model,omitempty"`
+	Advisor string `json:"advisor,omitempty"`
 	Parent  string `json:"parent,omitempty"`
 	Repo    string `json:"repo,omitempty"`
 	Branch  string `json:"branch,omitempty"`
@@ -564,7 +565,7 @@ func (d *Daemon) agentsList(o Origin, me string) ([]agentView, error) {
 			v.Subagents = n[a.Key]
 		}
 		if a.Profile != "" {
-			v.Role, v.Profile, v.Model, v.Repo, v.Branch = a.Role, a.Profile, a.Model, a.Repo, a.Branch
+			v.Role, v.Profile, v.Model, v.Advisor, v.Repo, v.Branch = a.Role, a.Profile, a.Model, a.Advisor, a.Repo, a.Branch
 			v.Label = agentLabel(a, o.Container)
 			if a.Parent != "" {
 				v.Parent = shortName(a.Parent)

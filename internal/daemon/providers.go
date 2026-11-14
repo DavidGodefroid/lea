@@ -24,24 +24,43 @@ func (d *Daemon) registry() (*providers.Registry, error) {
 	return f()
 }
 
-// checkProvider checks what an agent names: "" (the default) or a provider of the registry, and
-// "" or a model id. The errors never echo an overlong or unsafe value.
-func (d *Daemon) checkProvider(provider, model string) error {
+// checkProvider checks what an agent names: "" (the default) or a provider of the registry, "" or
+// a model id, and "" or an advisor the provider takes (Claude Code only, #407). The errors never
+// echo an overlong or unsafe value.
+func (d *Daemon) checkProvider(provider, model, advisor string) error {
 	if len(model) > providers.MaxModelLen {
 		return fmt.Errorf("model is %d bytes, limit %d", len(model), providers.MaxModelLen)
 	}
 	if err := providers.CheckModel(model); err != nil {
 		return err
 	}
-	if provider == "" {
+	if len(advisor) > providers.MaxModelLen {
+		return fmt.Errorf("advisor is %d bytes, limit %d", len(advisor), providers.MaxModelLen)
+	}
+	if err := providers.CheckModel(advisor); err != nil {
+		return fmt.Errorf("advisor: %w", err)
+	}
+	if provider == "" && advisor == "" {
 		return nil
 	}
 	reg, err := d.registry()
 	if err != nil {
 		return err
 	}
-	_, err = reg.Get(provider)
-	return err
+	name := provider
+	if name == "" {
+		d.mu.Lock()
+		name = d.defProvider
+		d.mu.Unlock()
+	}
+	if name == "" {
+		name = providers.Default
+	}
+	p, err := reg.Get(name)
+	if err != nil {
+		return err
+	}
+	return p.CheckAdvisor(advisor)
 }
 
 // SetDefaultProvider records the configuration's default provider (LEA_PROVIDER) for providers_list.
