@@ -295,6 +295,26 @@ func TestForgePathCanonical(t *testing.T) {
 	if segs, ok := forgePath("/Repos/O/R/contents/a%20b"); !ok || strings.Join(segs, "|") != "repos|o|r|contents|a b" {
 		t.Errorf("forgePath: %q %v", segs, ok)
 	}
+	// gh's ref delete of gh pr merge --delete-branch (#451): the encoded ref name is split, so it
+	// canonicalises to the plain form's segments.
+	for _, p := range []string{"/repos/o/r/git/refs/heads%2Ffix%2F409-x", "/repos/o/r/git/refs/heads/fix%2f409-x", "/repos/o/r/git/refs/heads/fix/409-x"} {
+		if segs, ok := forgePath(p); !ok || strings.Join(segs, "|") != "repos|o|r|git|refs|heads|fix|409-x" {
+			t.Errorf("forgePath(%q): %q %v", p, segs, ok)
+		}
+	}
+	if segs, ok := forgePath("/repos/o/r/git/matching-refs/heads%2Ffix"); !ok || strings.Join(segs, "|") != "repos|o|r|git|matching-refs|heads|fix" {
+		t.Errorf("forgePath(matching-refs): %q %v", segs, ok)
+	}
+	// Escaped slashes stay refused anywhere else, and the ref's parts are checked like segments.
+	for _, p := range []string{"/repos/o/r/git%2Frefs/heads", "/repos/o/r/git/refs%2Fheads%2Fx", "/repos/o%2Fr/git/refs/heads/x",
+		"/repos/o/r/git/trees/a%2Fb", "/repos/o/r/contents/a%2Fb", "/repos/o/r/issues%2F..%2Fkeys",
+		"/repos/o/r/git/refs/heads%2F..%2F..%2Fkeys", "/repos/o/r/git/refs/heads%2F%2Fx", "/repos/o/r/git/refs/heads%2F",
+		"/repos/o/r/git/refs/heads%2F.%2Fx", "/repos/o/r/git/refs/heads%2Fa%5Cb", "/repos/o/r/git/refs/heads%2Fa%3Bb",
+		"/x/y/z/git/refs/a%2Fb"} {
+		if segs, ok := forgePath(p); ok {
+			t.Errorf("forgePath(%q) accepted: %q", p, segs)
+		}
+	}
 	if segs, ok := forgePath("/"); !ok || len(segs) != 1 || segs[0] != "" {
 		t.Errorf("forgePath(/): %q %v", segs, ok)
 	}

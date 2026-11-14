@@ -197,11 +197,11 @@ func (d *Daemon) grantCaller(o Origin, me, cwd string) (grants.Caller, error) {
 	if c.OwnWorktree {
 		c.Worktree = strings.TrimSuffix(cwd, "/")
 	}
+	as, err := d.st.Agents()
+	if err != nil {
+		return grants.Caller{}, err
+	}
 	if c.Branch != "" {
-		as, err := d.st.Agents()
-		if err != nil {
-			return grants.Caller{}, err
-		}
 		for _, x := range as {
 			if x.Key != me && x.Container == o.Container && x.Repo == a.Repo && x.Branch == a.Branch && x.State != "done" {
 				c.Branch = ""
@@ -209,6 +209,7 @@ func (d *Daemon) grantCaller(o Origin, me, cwd string) (grants.Caller, error) {
 			}
 		}
 	}
+	c.Team = teamBranches(as, o.Container, me)
 	for p := a.Parent; p != "" && len(c.Lineage) < maxLineage && !contains(c.Lineage, p); {
 		c.Lineage = append(c.Lineage, p)
 		pa, err := d.st.AgentByKey(p)
@@ -218,6 +219,31 @@ func (d *Daemon) grantCaller(o Origin, me, cwd string) (grants.Caller, error) {
 		p = pa.Parent
 	}
 	return c, nil
+}
+
+// teamBranches are the branches lead may push for its team (#406): the recorded branch of each
+// of its direct children whose turn is over (idle) or whose process ended (done, stopped), on
+// which no other agent of the lea still works. Never a grandchild's, another lead's child's or a
+// protected branch.
+func teamBranches(as []store.Agent, container, lead string) []grants.TeamBranch {
+	var out []grants.TeamBranch
+	for _, x := range as {
+		if x.Parent != lead || x.Container != container || x.Repo == "" || !grants.BranchName(x.Branch) || grants.Protected(x.Branch) ||
+			(x.State != "idle" && x.State != "done" && x.State != "stopped") {
+			continue
+		}
+		owned := false
+		for _, y := range as {
+			if y.Key != x.Key && y.Container == container && y.Repo == x.Repo && y.Branch == x.Branch && y.State != "done" {
+				owned = true
+				break
+			}
+		}
+		if !owned {
+			out = append(out, grants.TeamBranch{Key: x.Key, Name: x.Name, Repo: x.Repo, Branch: x.Branch})
+		}
+	}
+	return out
 }
 
 // finishedChild says whether name is one of me's children whose turn is over (idle) or whose
