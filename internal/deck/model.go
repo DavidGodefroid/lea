@@ -291,6 +291,7 @@ type Model struct {
 	widthDelay    time.Duration      // how long the width must hold still before it is read (widthSettle when 0)
 	layout        Layout             // the folders (folders.go)
 	store         LayoutStore        // where the layout persists, nil when nowhere
+	layoutWatch   bool               // the store is read again for lea web's changes (layoutwatch.go)
 	ticking       bool               // a frame tick is pending
 	width, height int
 }
@@ -332,9 +333,9 @@ func (m Model) WithIntro() Model {
 
 func (m Model) Init() tea.Cmd {
 	if m.intro > 0 {
-		return tea.Batch(m.watch(), tea.Tick(frameDelay, func(time.Time) tea.Msg { return frameMsg{} }))
+		return tea.Batch(m.watch(), tea.Tick(frameDelay, func(time.Time) tea.Msg { return frameMsg{} }), m.readLayout())
 	}
-	return m.watch()
+	return tea.Batch(m.watch(), m.readLayout())
 }
 
 // working reports whether an agent works: the spinner and the logo's wave then move.
@@ -425,6 +426,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, tea.Batch(m.watch(), anim)
 	case allowedMsg:
 		return m.takeAllowed(msg), nil
+	case layoutMsg:
+		return m.takeLayout(msg)
 	case frameMsg:
 		m.ticking = false
 		m.frame++

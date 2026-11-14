@@ -30,6 +30,8 @@ type fpane struct {
 	remainOff bool
 	// remainFormat is the pane's own remain-on-exit-format ("": the global one).
 	remainFormat string
+	// screen is what capture-pane prints of the pane.
+	screen []string
 }
 
 type fakeSession struct {
@@ -273,11 +275,23 @@ func (f *fakeSession) Run(ctx context.Context, args ...string) ([]string, error)
 		}
 		f.opts[args[3]] = args[4]
 		return nil, nil
-	case "display-message": // display-message -p -t =SESSION: FORMAT
+	case "display-message": // display-message -p -t =SESSION: FORMAT, or -t PANE (its geometry)
+		if t := flag("-t"); strings.HasPrefix(t, "%") {
+			if _, err := must(t); err != nil {
+				return nil, err
+			}
+			return []string{"80 24 5 2"}, nil
+		}
 		if err := sessionTarget(flag("-t")); err != nil {
 			return nil, err
 		}
 		return []string{f.expand(args[len(args)-1])}, nil
+	case "capture-pane": // capture-pane -p -e -t PANE
+		p, err := must(flag("-t"))
+		if err != nil {
+			return nil, err
+		}
+		return append([]string(nil), p.screen...), nil
 	case "split-window":
 		t, err := must(flag("-t"))
 		if err != nil {

@@ -15,6 +15,10 @@ const ui = {
   providers: null,
 };
 
+// hooks let remote.js (#416) add to the views: what each new state, an opened agent or a closed
+// one does; the board's order and strips (folders); more keys.
+const hooks = { state: [], detail: [], close: [], order: null, strips: null, keys: {} };
+
 function el(tag, attrs, ...kids) {
   const e = document.createElement(tag);
   for (const [k, v] of Object.entries(attrs || {})) {
@@ -115,16 +119,18 @@ function render() {
   $('lea-name').textContent = st.container;
   const agents = ((st.snapshot && st.snapshot.agents) || []).filter((a) => a.kind !== 'shell');
   ui.rows = tree(agents);
+  if (hooks.order) ui.rows = hooks.order(ui.rows);
   if (!row(ui.selected)) ui.selected = ui.rows.length ? ui.rows[0].key : '';
   renderStrips();
   renderPrompts();
+  for (const h of hooks.state) h(st);
   if (ui.open && !row(ui.open)) closeDetail();
   if (ui.open) renderDetail();
 }
 
 function renderStrips() {
   const list = $('strips');
-  list.replaceChildren(...ui.rows.map(strip));
+  list.replaceChildren(...(hooks.strips ? hooks.strips(ui.rows) : ui.rows.map(strip)));
   $('empty').hidden = ui.rows.length > 0;
 }
 
@@ -191,6 +197,7 @@ function openDetail(key) {
 function closeDetail() {
   ui.open = '';
   $('detail').hidden = true;
+  for (const h of hooks.close) h();
 }
 
 function renderDetail() {
@@ -219,6 +226,7 @@ function renderDetail() {
   $('d-role').disabled = ended;
   $('msg').placeholder = towerMode ? 'Ask the control tower' : 'Write to ' + (a.label || a.name);
   $('compose').dataset.kind = towerMode ? 'request' : 'note';
+  for (const h of hooks.detail) h(a);
   if (ui.threadFor !== a.key || ui.threadAt !== ui.state.version) loadThread(a.key, ui.state.version);
 }
 
@@ -413,7 +421,7 @@ document.addEventListener('keydown', (ev) => {
     d: () => first && act('Denied', 'approval_decide', { id: first.id, verdict: 'deny' }).catch(() => {}),
     A: () => first && first.always && act('Allowed', 'approval_decide', { id: first.id, verdict: 'always' }).catch(() => {}),
   };
-  const f = keys[ev.key];
+  const f = keys[ev.key] || hooks.keys[ev.key];
   if (f) { ev.preventDefault(); f(); }
 });
 

@@ -15,6 +15,7 @@ test-site:
 test-web:
 	go build -o build/lea ./cmd/lea && go build -o build/lea-web-fixture ./tests/web/fixture
 	node tests/web/e2e.mjs
+	node tests/web/e2e-416.mjs
 test-lockhost:
 	tests/integration/lockhost.sh
 # The phase-0 exit demo with real consoles (tests/integration/phase0.sh); needs make build, build/lea, cosign.
