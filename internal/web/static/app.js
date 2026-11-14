@@ -124,6 +124,7 @@ function render() {
   renderStrips();
   renderPrompts();
   for (const h of hooks.state) h(st);
+  if (typeof renderDecisions === 'function') renderDecisions();
   if (ui.open && !row(ui.open)) closeDetail();
   if (ui.open) renderDetail();
 }
@@ -217,7 +218,7 @@ function renderDetail() {
   qbox.hidden = qs.length === 0;
   qbox.replaceChildren(el('h3', { text: qs.length === 1 ? 'It asks you' : `It asks you ${qs.length} questions` }),
     el('ol', {}, ...qs.map((q) => el('li', { class: q.state === 'open' ? 'open' : '', text: q.body + (q.state === 'open' ? '' : ' (queued)') }))),
-    el('p', { class: 'sub', text: 'Answer in a message below.' }));
+    el('p', { class: 'sub', text: qs.some((q) => q.state === 'open') ? 'Answer the open one in the panel above the board.' : 'Answer in a message below.' }));
   const ended = a.state === 'done' || a.state === 'stopped';
   for (const b of $('d-tools').querySelectorAll('button')) b.disabled = ended && b.dataset.act !== 'rename';
   $('d-tools').querySelector('[data-act=pause]').textContent = a.paused ? 'Resume' : 'Pause';
@@ -417,6 +418,8 @@ document.addEventListener('keydown', (ev) => {
     m: () => { if (!ui.open && ui.selected) openDetail(ui.selected); $('msg').focus(); },
     e: () => tool('rename'), p: () => tool('pause'), h: () => tool('hold'), x: () => tool('stop'),
     n: newAgent, N: newTower, t: talkToTower, '?': () => $('dlg-help').showModal(),
+    g: () => typeof openAllowances === 'function' && openAllowances(),
+    w: () => typeof openEgress === 'function' && openEgress(),
     a: () => first && act('Allowed', 'approval_decide', { id: first.id, verdict: 'allow' }).catch(() => {}),
     d: () => first && act('Denied', 'approval_decide', { id: first.id, verdict: 'deny' }).catch(() => {}),
     A: () => first && first.always && act('Allowed', 'approval_decide', { id: first.id, verdict: 'always' }).catch(() => {}),
