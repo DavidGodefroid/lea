@@ -71,7 +71,7 @@ case $page in *LEA_EGRESS_ALLOW*) echo "ok   allowlist: the refusal page names L
   *) echo "FAIL allowlist: refusal page: $page"; fail=1 ;; esac
 # A refused plain HTTP request carries the live command in its body's first line (apt and wget log it).
 first=$(printf '%s\n' "$page" | head -n1)
-if [ "$first" = "lea-proxy refused other.test: not in the egress allowlist. To allow it, run on the host: lea egress allow other.test (applies live, no restart)." ]; then
+if [ "$first" = "lea-proxy refused other.test: not in the egress allowlist. To allow it, run on the host: lea egress allow other.test (applies live, no restart; there is no one-off form: it stays until lea egress deny other.test)." ]; then
   echo "ok   allowlist: the refusal's first line names lea egress allow"
 else echo "FAIL allowlist: refusal first line: $first"; fail=1; fi
 # lea egress denied reads the refusal's error name from the access log.

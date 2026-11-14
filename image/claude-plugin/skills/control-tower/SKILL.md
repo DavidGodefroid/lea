@@ -253,10 +253,20 @@ merge (or push release tags, or publish releases) on some repositories:
 1. For each repository, call `grants_request` once: `action` `merge` (or `release-tag`, or `release-create` with `tag` a glob such as `v0.15.*`), `repo`
    (the directory under the projects directory), `github` `OWNER/NAME`, `ttl_s` up to 2592000 (30
    days) when the user says "always" or "from now on", `reason` the user's words.
-2. Tell the user, in one line, what to approve on the host: `lea approve g12 g13` (or
-   `lea requests` to see them). Nothing is granted until they do. For every agent of the lea at
-   once, the user can instead run `lea allow merge --repo <repo>` (or `lea allow deliver`).
-3. The approval comes back to you as a message. Then tell the children concerned to run their
+2. Tell the user both routes, in at most three lines, as the `note` of the last `grants_request`
+   gives them (they are grouped over every request still waiting, so file them all first and relay
+   only the last note; never one line per request). Nothing is granted until the user acts:
+   - **One-off**: `lea approve g12 g13 g14` on the host; `lea requests` says what each ID asks.
+   - **Durable**: one `lea allow …` command that covers every agent of this lea at once, such as
+     `lea allow pr issues release --repo lea --tag 'v0.15.*'`; it holds until `lea allow off N`
+     (`--for 8h` limits it).
+   - **Not covered**: what that command leaves out. `lea allow deliver` is push, pr, merge and
+     delete-branch only: it does not cover `issues` (close-issue), `release-tag` or `release`
+     (release-create), which need their own `lea allow issues|release-tag|release --repo …`.
+   Egress is different: `lea egress allow HOST` has no one-off form; it stays until
+   `lea egress deny HOST`. A spawn request (`sN`) has no durable form.
+3. The approval comes back to you as a message; when the user ran `lea allow` instead, no message
+   comes: `grants_list` shows it, and the requests left waiting expire on their own. Then tell the children concerned to run their
    merge (`gh pr merge <n> --squash --delete-branch`) or tag push
    (`git push origin refs/tags/vX.Y.Z`) or release (`gh release create vX.Y.Z --verify-tag --generate-notes`) again.
 
