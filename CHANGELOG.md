@@ -13,7 +13,7 @@ Features:
   the `lockssh` MCP server. `lea lockssh`, `lea init --lockssh` and `lea doctor` cover it. The
   set (`config/locks.lock`) moves to lox v0.11.0, the first with the lockssh type, and the
   releases it runs: locksql v0.18.1, lockmq v0.9.0, lockfile v0.9.1, locklog v0.3.0, lockhttp
-  v0.9.1 and lockssh.
+  v0.9.1, with lockssh v0.3.0.
 - A lead can push its team's branches (#406). Before, a lead was always refused: `pushing to
   anything but the agent's own branch is never allowed`. Once a child stopped, its branch could
   be pushed only from the host. Now, under the existing `push` allowance, a lead may run `git push
