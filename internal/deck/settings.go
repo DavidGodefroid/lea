@@ -2,6 +2,7 @@ package deck
 
 import (
 	"context"
+	"errors"
 	"strconv"
 	"strings"
 
@@ -18,7 +19,8 @@ import (
 // opens a field), esc, q or , close it. A change is written to the user configuration at once and
 // applied live when the setting allows it (the sounds); the status says when it applies
 // otherwise. The deck reads and writes the file itself, on the host: no daemon method reaches
-// the settings, so an agent can neither open nor drive this screen.
+// the settings, so an agent can neither open nor drive this screen. The live limits (Limits,
+// #420) go through the daemon's host-only limits_set instead, so the running daemon applies them.
 
 // SettingsStore is where the screen reads and writes the settings (settings.Store).
 type SettingsStore interface {
@@ -127,7 +129,7 @@ func (m *Model) typeSetting(r rune) {
 
 // saveSetting writes value for s, reads the settings back and applies a live one.
 func (m Model) saveSetting(s settings.Setting, value string) (tea.Model, tea.Cmd) {
-	if err := m.settings.Set(s.Key, value); err != nil {
+	if err := m.writeSetting(s, value); err != nil {
 		m.status = oneLine(err.Error())
 		return m, nil
 	}
@@ -164,6 +166,24 @@ func (m Model) saveSetting(s settings.Setting, value string) (tea.Model, tea.Cmd
 		}
 	}
 	return m, nil
+}
+
+// writeSetting writes value for s: a live limit through the running daemon (limits_set, #420),
+// which applies it at once and writes the user configuration itself; any other setting in the
+// file.
+func (m Model) writeSetting(s settings.Setting, value string) error {
+	if s.Limit == "" {
+		return m.settings.Set(s.Key, value)
+	}
+	if m.api == nil {
+		return errors.New(s.Name + ": no lea daemon to apply it")
+	}
+	if err := s.Check(value); err != nil {
+		return err
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), callTimeout)
+	defer cancel()
+	return m.api.SetLimit(ctx, s.Limit, value)
 }
 
 // settingValue is how the screen shows a value.

@@ -153,3 +153,8 @@ func (c Client) SetSound(ctx context.Context, on bool) (string, error) {
 	err := c.call(ctx, "sound", map[string]any{"on": on}, &r)
 	return r.Sound, err
 }
+
+// SetLimit sets a live limit on the running daemon (the settings screen's Limits, #420).
+func (c Client) SetLimit(ctx context.Context, key, value string) error {
+	return c.call(ctx, "limits_set", map[string]any{"key": key, "value": value}, nil)
+}

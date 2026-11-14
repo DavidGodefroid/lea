@@ -208,6 +208,11 @@ func TestQuestionMarkShowsTheKeysAndAnyKeyClosesThem(t *testing.T) {
 	}
 }
 
+func (f *fakeAPI) SetLimit(ctx context.Context, key, value string) error {
+	f.rec(fmt.Sprintf("limit %s %s", key, value))
+	return f.err
+}
+
 func (f *fakeAPI) SetSound(ctx context.Context, on bool) (string, error) {
 	f.rec(fmt.Sprintf("sound %v", on))
 	if f.err != nil {

@@ -706,6 +706,11 @@ func TestCommandsMatchTheGoldenFiles(t *testing.T) {
 			want: []string{"core [allow] [--container] [lea-$ID] [--projects] [$W/projects] [deliver] [--repo] [api] [--yes] [0123456789abcdef]"}},
 		{name: "allow with a container", args: []string{"allow", "merge", "--container", "lea-x"}, exit: 2,
 			want: []string{"lea: error: lea allow names no --container or --projects"}, absent: []string{"core [allow]"}},
+		// lea web (#414): the core form, with this projects dir's container.
+		{name: "web", args: []string{"web", "--port", "8414", "--open"},
+			want: []string{"core [web] [--container] [lea-$ID] [--port] [8414] [--open]"}},
+		{name: "web with a container", args: []string{"web", "--container", "lea-x"}, exit: 2,
+			want: []string{"lea: error: lea web names no --container"}, absent: []string{"core [web]"}},
 		// lea delivery and lea grant add|ls are aliases (#319): translated, with a notice.
 		{name: "delivery on", args: []string{"delivery", "on"},
 			want: []string{"core [allow] [--container] [lea-$ID] [--projects] [$W/projects] [deliver]", "lea: note: lea delivery on is now lea allow deliver"}},

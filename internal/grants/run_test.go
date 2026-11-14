@@ -26,7 +26,7 @@ shopt -s expand_aliases
 `
 
 func needTools(t *testing.T) {
-	for _, p := range []string{gitPath, envPath, shPath, mktempPath, rmPath, "/bin/bash"} {
+	for _, p := range []string{gitPath, envPath, shPath, mkdirPath, cpPath, "/bin/bash"} {
 		if _, err := os.Stat(p); err != nil {
 			t.Skipf("%s: %v", p, err)
 		}
@@ -100,6 +100,67 @@ func TestPinnedCommitIgnoresTheAgentsShell(t *testing.T) {
 	}
 	if out, _ := exec.Command(gitPath, "-C", wt, "diff", "--cached", "--name-only").Output(); len(out) != 0 {
 		t.Fatalf("index differs from the commit: %s", out)
+	}
+}
+
+// TestPinnedCommitRunsNoRm: the script a granted commit runs holds no rm, so Claude Code runs the
+// rewritten command instead of refusing it (#393); it reuses one directory in the git directory,
+// holding the index copy only, and refuses one an agent changed.
+func TestPinnedCommitRunsNoRm(t *testing.T) {
+	root, wt, run := fixture(t)
+	c, g := pinnedCaller(root, wt)
+	commit := Command(Request{Prog: "git", Args: []string{"commit", "-m", "x"}}, c, g)
+	if commit == "" || rmWord.MatchString(commit) {
+		t.Fatalf("the commit script runs rm (or is empty): %s", commit)
+	}
+	for i := 0; i < 2; i++ {
+		if err := os.WriteFile(filepath.Join(wt, "a"), []byte{byte('c' + i), '\n'}, 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if out, err := exec.Command(gitPath, "-C", wt, "add", "a").CombinedOutput(); err != nil {
+			t.Fatalf("add: %v %s", err, out)
+		}
+		if out, err := run(root, commit); err != nil || !strings.Contains(out, "[lea grant] committed") {
+			t.Fatalf("pinned commit %d: %v %s", i, err, out)
+		}
+		if out, _ := exec.Command(gitPath, "-C", wt, "show", "HEAD:a").Output(); string(out) != string([]byte{byte('c' + i), '\n'}) {
+			t.Fatalf("commit %d: a = %q", i, out)
+		}
+	}
+	notPwned(t, root)
+	dir := filepath.Join(wt, ".git", commitDir)
+	if ents, err := os.ReadDir(dir); err != nil || len(ents) != 1 || ents[0].Name() != "index" {
+		t.Fatalf("commit directory holds %v (%v), want the index copy only", ents, err)
+	}
+	for _, plant := range []func() error{
+		func() error { return os.Mkdir(filepath.Join(dir, "w"), 0o755) },
+		func() error { return os.WriteFile(filepath.Join(dir, "index.lock"), nil, 0o644) },
+		func() error {
+			os.Remove(filepath.Join(dir, "index"))
+			return os.Symlink(filepath.Join(root, "elsewhere"), filepath.Join(dir, "index"))
+		},
+		func() error {
+			if err := os.Rename(dir, dir+".x"); err != nil {
+				return err
+			}
+			return os.Symlink(commitDir+".x", dir)
+		},
+	} {
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := plant(); err != nil {
+			t.Fatal(err)
+		}
+		if out, err := run(root, commit); err == nil || !strings.Contains(out, "the commit directory was changed") {
+			t.Fatalf("commit ran in a changed directory: %v %s", err, out)
+		}
+		if _, err := os.Lstat(filepath.Join(root, "elsewhere")); err == nil {
+			t.Fatal("the index copy followed a link")
+		}
+		os.Remove(dir)
+		os.RemoveAll(dir + ".x")
+		os.RemoveAll(dir)
 	}
 }
 

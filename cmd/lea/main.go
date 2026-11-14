@@ -51,6 +51,10 @@ const usage = `usage: lea <command>
   deck --placeholder         the empty slot (run by lea's tmux session)
   deck --thread KEY [--compose]
                              an agent's messages (run in a deck popup)
+  web --container NAME [--port N] [--open]
+      [--listen ADDR:PORT (--tls-self-signed | --tls-cert F --tls-key F) [--new-token]]
+                             the deck in the browser, on 127.0.0.1 (the launcher's lea web);
+                             --listen: on the network, behind TLS and a persistent token
   deck-open --container NAME [--workdir DIR] [--no-default] [--fresh]
                              open a container's deck session (used by the launcher;
                              --fresh: the container was just started)
@@ -68,6 +72,10 @@ const usage = `usage: lea <command>
                              lea allow for a lea and its projects directory (used by the
                              launcher; lea allow --help)
   sound [on|off]             show or switch lea's sounds (until the daemon restarts)
+  limits [get [KEY]]         the live limits: value, default, where it comes from
+  limits set KEY VALUE | limits reset KEY
+                             change a live limit on the running lea, at once, kept in your
+                             file (reset: back to the environment or lea's default)
   hook claude <event>        Claude Code hook (inside lea)
   repair-transcript <id>     cut a session's transcript after its last valid line before a resume (inside lea)
   lock-hello --uid UID [--protocol N] DIR [SOCKET...]
@@ -100,12 +108,16 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		return runQuestions(args[1:], stdout, stderr)
 	case "hold":
 		return runHold(args[1:], stdout, stderr)
+	case "limits":
+		return runLimits(args[1:], stdout, stderr)
 	case "heavy":
 		return runHeavy(args[1:], stdin, stdout, stderr)
 	case "deck":
 		return runDeck(args[1:], stderr)
 	case "deck-open":
 		return runDeckOpen(args[1:], stderr)
+	case "web":
+		return runWeb(args[1:], stdout, stderr)
 	case "deck-stop":
 		return runDeckStop(args[1:], stderr)
 	case "new":

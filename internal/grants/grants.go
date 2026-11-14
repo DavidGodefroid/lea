@@ -454,11 +454,9 @@ func Command(req Request, c Caller, g Grant) string {
 }
 
 const (
-	shPath     = "/bin/sh"
-	mktempPath = "/usr/bin/mktemp"
-	rmPath     = "/bin/rm"
-	mkdirPath  = "/bin/mkdir"
-	cpPath     = "/bin/cp"
+	shPath    = "/bin/sh"
+	mkdirPath = "/bin/mkdir"
+	cpPath    = "/bin/cp"
 )
 
 // forgeGHConfig is the gh config dir of every pinned gh call (issue #103): the image's, root's,
@@ -564,6 +562,11 @@ func configGuard(wt string) string {
 		" >/dev/null 2>&1; s=$?; if [ \"$s\" -ne 1 ]; then " + refuse("the repository git config redirects or runs programs") + "; fi\n"
 }
 
+// commitDir is the directory every pinned commit copies the index to, in the worktree's own git
+// directory: a fixed path, reused, so the script deletes nothing (Claude Code refuses a shell -c
+// script that runs rm: #393, as #381 for the push). It holds the copy of the last commit's index.
+const commitDir = "lea-commit"
+
 // commitScript commits the index with the messages of args (-m/--message; -q/--quiet) through
 // plumbing.
 func commitScript(args []string, wt, proxy string) string {
@@ -585,15 +588,19 @@ func commitScript(args []string, wt, proxy string) string {
 		return ""
 	}
 	git := shellWords(gitIn(wt, proxy))
-	// write-tree runs on a copy of the index against an empty work tree: writing the index back
-	// re-checks racily clean entries against the work tree, through the clean filters.
-	isolated := shellWords([]string{envPath}) + ` GIT_INDEX_FILE="$tmp/index" ` + shellWords([]string{gitPath, "--git-dir"}) +
-		` "$gd" --work-tree "$tmp/w" ` + shellWords(pins(proxy))
+	// write-tree runs on a copy of the index against a work tree that does not exist: writing the
+	// index back re-checks racily clean entries against the work tree, through the clean filters.
+	isolated := shellWords([]string{envPath}) + ` GIT_INDEX_FILE="$dir/index" ` + shellWords([]string{gitPath, "--git-dir"}) +
+		` "$gd" --work-tree "$dir/w" ` + shellWords(pins(proxy))
 	return configGuard(wt) +
 		"gd=$(" + git + " rev-parse --absolute-git-dir) || exit 1\n" +
-		"tmp=$(" + shellWords([]string{mktempPath, "-d"}) + ") || exit 1\n" +
-		"trap " + shellWords([]string{rmPath + ` -rf "$tmp"`}) + " EXIT\n" +
-		shellWords([]string{mkdirPath}) + ` "$tmp/w" && ` + shellWords([]string{cpPath}) + ` "$gd/index" "$tmp/index" || exit 1` + "\n" +
+		`dir="$gd/` + commitDir + `"` + "\n" +
+		shellWords([]string{mkdirPath, "-p"}) + ` "$dir" || exit 1` + "\n" +
+		// Left there before the call: a link would send the copy elsewhere, a work tree would hand
+		// files to the clean filters, a lock would stop write-tree.
+		`if [ -L "$dir" ] || [ -L "$dir/index" ] || [ -L "$dir/index.lock" ] || [ -e "$dir/index.lock" ] || [ -L "$dir/w" ] || [ -e "$dir/w" ]; then ` +
+		refuse("the commit directory was changed") + "; fi\n" +
+		shellWords([]string{cpPath}) + ` "$gd/index" "$dir/index" || exit 1` + "\n" +
 		"tree=$(" + isolated + " write-tree) || exit 1\n" +
 		"parent=$(" + git + " rev-parse --verify HEAD) || exit 1\n" +
 		"new=$(" + git + ` commit-tree "$tree" -p "$parent" ` + shellWords(msgs) + ") || exit 1\n" +

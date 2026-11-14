@@ -48,6 +48,16 @@ if [ -n "${HOST_IP:-}" ]; then
   mustnt "host port unreachable via host IP"    curl -s --max-time 5 --noproxy '*' "http://$HOST_IP:18080/"
   mustnt "host port refused by the proxy (host IP)" curl -sf --max-time 5 "http://$HOST_IP:18080/"
 fi
+# lea web (#414) listens on the host's loopback only.
+if [ -n "${WEB_PORT:-}" ]; then
+  mustnt "lea web unreachable on the container's loopback" curl -s --max-time 5 --noproxy '*' "http://127.0.0.1:$WEB_PORT/"
+  mustnt "lea web unreachable via the bridge"   curl -s --max-time 5 --noproxy '*' "http://$GW_IP:$WEB_PORT/"
+  mustnt "lea web refused by the proxy (bridge)" curl -sf --max-time 5 "http://$GW_IP:$WEB_PORT/"
+  if [ -n "${HOST_IP:-}" ]; then
+    mustnt "lea web unreachable via host IP"    curl -s --max-time 5 --noproxy '*' "http://$HOST_IP:$WEB_PORT/"
+    mustnt "lea web refused by the proxy (host IP)" curl -sf --max-time 5 "http://$HOST_IP:$WEB_PORT/"
+  fi
+fi
 if [ -n "${SIBLING_IP:-}" ]; then
   mustnt "sibling lea unreachable directly"    curl -s --max-time 5 --noproxy '*' "http://$SIBLING_IP:8765/"
   mustnt "sibling lea refused by the proxy"    curl -sf --max-time 5 "http://$SIBLING_IP:8765/"

@@ -172,7 +172,7 @@ func (d *Daemon) queueSpawn(lead string, nr agents.NewRequest, req *store.SpawnR
 }
 
 // takeQueuedLocked drops the queued spawns that waited queuedSpawnTTL and takes the first one the
-// pressure now lets through, nil when none, or a resume the pressure lets through before any
+// max_running cap and the pressure now let through, nil when none, or a resume the pressure lets through before any
 // spawn. Callers hold d.mu.
 func (d *Daemon) takeQueuedLocked() (resume *queuedResume, start *queuedSpawn, dropped []*queuedSpawn) {
 	resume = d.takeResumeLocked()
@@ -181,8 +181,8 @@ func (d *Daemon) takeQueuedLocked() (resume *queuedResume, start *queuedSpawn, d
 		switch {
 		case time.Since(s.at) > queuedSpawnTTL:
 			dropped = append(dropped, s)
-		case start == nil && resume == nil && d.admitLocked(s.nr.Container) == nil:
-			start = s
+		case start == nil && resume == nil && d.admitChildLocked(s.nr.Container) == nil:
+			start = s // its start is reserved: startOne ends it
 		default:
 			keep = append(keep, s)
 		}
@@ -210,7 +210,7 @@ func (d *Daemon) startQueued(ctx context.Context) {
 	d.mu.Unlock()
 	for _, s := range dropped {
 		// A spawn request it answered stays pending: the lead may accept it again.
-		d.post("user", s.lead, "result", fmt.Sprintf("[status: fail] queued spawn #%d dropped: the pressure did not fall within %s. Retry later or stop an agent.", s.id, queuedSpawnTTL), 0)
+		d.post("user", s.lead, "result", fmt.Sprintf("[status: fail] queued spawn #%d dropped: lea did not let it in within %s (pressure or max_running). Retry later or stop an agent.", s.id, queuedSpawnTTL), 0)
 	}
 	if q == nil && r == nil {
 		return
@@ -225,6 +225,7 @@ func (d *Daemon) startQueued(ctx context.Context) {
 			d.startResume(a, r)
 			return
 		}
+		defer d.endChildStart()
 		d.startOne(ctx, a, q)
 	}()
 }

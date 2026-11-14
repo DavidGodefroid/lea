@@ -65,6 +65,7 @@ made_settings=''; made_plugins=''
 # A stand-in for the Lock Family hub's facade socket (I11): the host daemon is pointed at it, and
 # no agent may see it (lea follows the hub by default). Outside the projects dir, as lockhub's is.
 facade_dir="$work/run/lockhub"; facade="$facade_dir/facade.sock"; facade_pid=
+web_pid=
 export LEA_HUB_SOCKET="$facade"
 
 # hold DIR: a background lea session on DIR, serving HTTP on port 8765 inside its container,
@@ -103,6 +104,7 @@ wait_for() {
 cleanup() {
   release_holders
   if [ -n "$facade_pid" ]; then kill "$facade_pid" 2>/dev/null || true; fi
+  if [ -n "$web_pid" ]; then kill "$web_pid" 2>/dev/null || true; fi
   docker rm -f lea-canary lea-canary-dns lea-canary-dns-host >/dev/null 2>&1 || true
   docker network rm lea-canary-net >/dev/null 2>&1 || true
   "$root/bin/lea" stop --all >/dev/null 2>&1 || true
@@ -319,8 +321,18 @@ else echo "FAIL no forge-migrated marker: a token planted in the state could rep
 # The proxy lea started is confined (#102): capabilities, no-new-privileges, read-only root,
 # limits, no root process but PID 1.
 "$root/tests/proxy/check-confined.sh" lea-test-proxy || rc=1
+# lea web (#414) listens on the host's loopback: no agent may reach it. Positive control: it
+# answers on the host.
+LEA_PROJECTS_DIR="$projects" "$root/bin/lea" web --port 18414 >"$work/web.out" 2>&1 &
+web_pid=$!
+i=0
+until [ "$(curl -s -o /dev/null -w '%{http_code}' --max-time 2 http://127.0.0.1:18414/ 2>/dev/null)" = 200 ]; do
+  i=$((i + 1))
+  if [ "$i" -ge 20 ]; then cat "$work/web.out" >&2; echo "isolation: lea web does not answer on 127.0.0.1:18414 (positive control failed)" >&2; exit 1; fi
+  sleep 1
+done
 echo "isolation: the checks inside lea"
-LEA_PROJECTS_DIR="$projects" timeout 900 "$root/bin/lea" shell -- env FORGE_NEEDLE="$forge_needle" FORGE_EXPECT="$forge_expect" CANARY_IP="$canary_ip" GW_IP="$gw_ip" HOST_IP="$host_ip" \
+LEA_PROJECTS_DIR="$projects" timeout 900 "$root/bin/lea" shell -- env FORGE_NEEDLE="$forge_needle" FORGE_EXPECT="$forge_expect" CANARY_IP="$canary_ip" GW_IP="$gw_ip" HOST_IP="$host_ip" WEB_PORT=18414 \
   SIBLING_IP="$sibling_ip" DECOY_DNS_IP="$dns_ip" DNS_MARK="$dns_mark" HOST_KERNEL="$(uname -r)" SECOND_KERNEL="${runtime:+1}" HOST_FACADE="$facade" HOST_CRED_SHA="$cred_sha" HOST_HIST_SHA="$hist_sha" \
   HOST_SETTINGS_SHA="$settings_sha" HOST_ALLOW_RULE="$host_rule" LEA_IT_MARKET="$mk" CONFIG_CLAUDE=1 sh "$projects/inside-isolation.sh" || rc=$?
 # No lookup made inside lea or its nested containers reached either decoy (#98): only the positive

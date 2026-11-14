@@ -14,7 +14,7 @@ import (
 // row, no button held, shows its whole name (hover.go).
 func Run(api API, container string, ascii bool, notice func() string, st SettingsStore, off string, layout LayoutStore) error {
 	drv := tmuxWidthDrive(os.Getenv)
-	m := New(api, container, ascii, time.Now).WithIntro().WithNotice(notice).WithSettings(st, off).WithLayout(layout).
+	m := New(api, container, ascii, time.Now).WithIntro().WithNotice(notice).WithSettings(st, off).WithLayout(layout).WithLayoutWatch().
 		WithWidthDrive(drv.apply, drv.window, drv.read).WithThemeDrive(tmuxThemeDrive(os.Getenv))
 	m = m.restoreWidth()
 	if m.applyFrame != nil {

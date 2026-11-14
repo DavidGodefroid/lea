@@ -10,6 +10,10 @@ const Usage = `Usage:
   lea                         open the deck: your agents on the left, the selected one on the right
                               (keys: j/k select, enter focus, ctrl+space back, n new, x stop, q quit)
                               (LEA_DECK=0: your own tool, LEA_TOOL, in the lea container instead)
+  lea web [--port N] [--open]  the deck in your browser: the board, threads, the control tower,
+                              new agents and permissions, on 127.0.0.1 behind a one-time link
+                              (remote: ssh -L; or --listen ADDR:PORT with --tls-self-signed or
+                              --tls-cert F --tls-key F, and a persistent token, --new-token)
   lea attach [--print] [AGENT]
                               run LEA_TOOL in the lea container, or join an agent's terminal;
                               --print: the docker exec command, for an IDE or another terminal
@@ -47,6 +51,9 @@ const Usage = `Usage:
                               (one at a time); drop removes a queued one
   lea hold [--off] [AGENT]    hold the messages agents send the tower (or AGENT) while you answer
                               it; --off releases them (the deck's H; LEA_HOLD_MAX)
+  lea limits [set KEY VALUE | reset KEY]
+                              the live limits (max_running): shown, or changed on the running lea
+                              at once, no restart, kept in your file (the deck's settings, ,)
   lea stop [--all] [--forget]
                               stop lea; its agents resume at the next lea (--forget drops them)
   lea config export [--output FILE] [--include-personal]
