@@ -2,6 +2,29 @@
 
 ## Unreleased
 
+Features:
+
+- `lea web` (#414): the deck in your browser. It serves, on `127.0.0.1` only, a live board of
+  the lea's agents (a tree of leads and their agents, with state, status, next step, blocker,
+  branch, context use, cost, unread messages), each agent's messages with a box to write to it,
+  rename, pause, hold, role and stop, a form to start an agent or a Control Tower, the tower's
+  chat with its questions, and the permissions agents wait on, with Allow, Deny and Always. While
+  a browser shows it, permission prompts wait for it as for the deck in tmux. The printed link
+  signs one browser in once (a 32-byte token traded for an `HttpOnly`, `SameSite=Strict`
+  cookie); foreign `Host` or `Origin` headers are refused, and only a fixed list of the daemon's
+  methods, for this lea's agents, is reachable. Phone width, light and dark, keyboard shortcuts.
+
+Changes:
+
+- lea no longer copies on select (#419): a drag in an agent's terminal no longer enters tmux's
+  copy mode, copies the selection or flashes "Copied". Claude Code copies on select itself, through
+  the same clipboard bridge: a copy worked and looked one way or the other depending on whether
+  Claude held the mouse. In a pane
+  whose program does not take the mouse (a split shell, the scrolled-back history), `shift`+drag
+  lets your terminal select, as in any tmux. `ctrl+v` paste and wheel scrolling are unchanged.
+
+Fixes:
+
 - A granted `git commit` runs at once (#393): the pinned commit no longer runs `rm -rf` in its
   `sh -c` script (Claude Code's safety check asked for approval, hook allow or not, and the commit
   timed out). It copies the index to `lea-commit/index` in the worktree's git directory, reused

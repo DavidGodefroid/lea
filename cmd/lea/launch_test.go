@@ -101,7 +101,7 @@ func TestCoreCommandsMatchTheSwitch(t *testing.T) {
 		t.Fatalf("found only %d case labels in run: %v", len(cases), cases)
 	}
 	for c := range cases {
-		if c == "new" || c == "allow" {
+		if c == "new" || c == "allow" || c == "web" {
 			continue
 		}
 		if !coreCommands[c] {
@@ -128,6 +128,10 @@ func TestCoreCommandsMatchTheSwitch(t *testing.T) {
 	if !cases["allow"] || coreCommands["allow"] || !launcherCommand([]string{"allow", "deliver"}) || !launcherCommand([]string{"allow"}) ||
 		launcherCommand([]string{"allow", "--container", "lea-a", "--projects", "/p", "deliver"}) {
 		t.Error("allow: the user's form goes to the launcher, the core form (--container) to the core")
+	}
+	if !cases["web"] || coreCommands["web"] || !launcherCommand([]string{"web"}) || !launcherCommand([]string{"web", "--open"}) ||
+		launcherCommand([]string{"web", "--container", "lea-a"}) || launcherCommand([]string{"web", "--container", "lea-a", "--port", "8414"}) {
+		t.Error("web: the user's form goes to the launcher, the core form (--container) to the core")
 	}
 	// lea delivery and lea grant add|ls are aliases of lea allow (#319): the launcher translates
 	// them; the core keeps no delivery, and lea grant's other verbs.

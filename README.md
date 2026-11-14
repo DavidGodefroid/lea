@@ -293,13 +293,43 @@ profile and state in the bottom border.
   `label (name)`. Labels are unique among the running agents: a clash gets ` 2`, ` 3`…, and a
   rename to a running agent's label is refused. `user`, `lea` and `Control Tower…` are reserved:
   only the user gives them, never a lead's `label` nor the automatic name.
-- **Copy and paste.** Drag to select text in an agent's terminal: releasing the button copies it
-  to your clipboard and flashes "Copied". `ctrl+v` pastes your clipboard's text into the pane that
-  has the keyboard (the agent's input, a shell, the deck). lea reads your clipboard only when you
-  press `ctrl+v` (with `wl-paste`, `xclip` or `pbpaste`); agents never read it.
+- **Copy and paste.** Copying is the agent's own: select text in Claude Code's terminal and it
+  copies it to your clipboard, as it does outside lea. lea makes no selection of its own; in a
+  pane whose program does not take the mouse (a split shell, the scrolled-back history),
+  `shift`+drag lets your terminal select and copy, as in any tmux. `ctrl+v` pastes your
+  clipboard's text into the pane that has the keyboard (the agent's input, a shell, the deck). lea
+  reads your clipboard only when you press `ctrl+v` (with `wl-paste`, `xclip` or `pbpaste`);
+  agents never read it.
 - **Permissions.** When an agent asks for a permission, its row shows the request and the deck
   answers it. Unanswered after `LEA_APPROVAL_TIMEOUT` seconds (60), Claude asks in its own
   terminal as usual; `LEA_APPROVALS=pane` keeps Claude's dialog only.
+
+### The deck in your browser: lea web
+
+`lea web`, from the lea's projects directory, serves the deck in your browser while it runs
+(ctrl+c stops it):
+
+```sh
+lea web            # prints http://127.0.0.1:PORT/?token=…, a link that signs one browser in, once
+lea web --open     # also opens it in your browser
+lea web --port 8414
+```
+
+The page shows the lea's agents as a tree, each lead with the agents it started, and for each
+one its state, its own report on its task (status, next step, and in red what blocks it), its
+branch, context use, cost, unread messages and whether it is paused or its inbox held. It updates
+live, with no reload. Click an agent (or `j`/`k`, then `enter`) to read its messages and write
+to it (`m`; ctrl+enter sends), rename it (`e`), pause it (`p`), hold its inbox (`h`), change its
+role or stop it (`x`, confirmed). **New agent** (`n`) starts one on a provider, in a repository,
+with a role, a label and a brief; `N` starts a Control Tower. **Tower** (`t`) opens the control
+tower's chat: what you write there is a request to it, and its open and queued questions to you
+show above it. A permission an agent asks for shows at the top of the page with **Allow**,
+**Deny** and, when offered, **Always** (`a`, `d`, `A` answer the first one). While a browser
+shows the page, permission prompts wait for it as they do for the deck in tmux; once it is
+closed, the agent's own dialog asks at once, as without a deck. The page works at phone width,
+in a light and a dark theme (it follows your system; the ◐ button switches it), and `?` lists
+its keys. See [How lea keeps your machine safe](#how-lea-keeps-your-machine-safe) for what
+protects it.
 
 ## Without the deck
 
@@ -1067,6 +1097,7 @@ directory of the projects directory; `--branch B` has it work in its own git wor
 lea                          # the deck, for $LEA_PROJECTS_DIR (unset: the working directory, on the first run)
                              # (LEA_DECK=0: your own tool in the lea container, see Without the deck)
 lea attach [--print] [AGENT] # the tool in the lea container, or an agent's terminal (--print: the command)
+lea web [--open] [--port N]  # the deck in your browser, on 127.0.0.1 (see The deck in your browser)
 lea requests                 # what waits for you; lea approve ID [always], lea deny ID [reason]
 lea questions [drop ID]      # the control towers' questions to you: the open one, then the queue
 lea hold [--off] [AGENT]     # hold the messages agents send the tower while you answer it; --off releases them
@@ -1176,7 +1207,7 @@ read-only. The screen runs in the deck on the host: agents cannot open or drive 
 | `LEA_HOLD_MAX` | `30` | minutes a pause of an inbox (the deck's `H`, `lea hold`) lasts before lea releases it (`0`: never) |
 | `LEA_AGENT_CPUS` | `4` | each agent's CPU window, the least shared CPUs: the agent, its tools and its nested containers run there, so `nproc`, PHPStan, Go… see that many CPUs (`0`: no window) |
 | `LEA_HEAVY_SLOTS`, `LEA_HEAVY_WORKERS` | `0` (¾ of the CPUs ÷ workers), `4` | heavy jobs (`lea heavy -- <command>`): how many run at once per container, and the CPUs and workers each gets |
-| `LEA_ADMIT_CPU_PSI`, `LEA_ADMIT_MEM_PCT`, `LEA_ADMIT_MEM_PSI`, `LEA_ADMIT_IO_PSI`, `LEA_ADMIT_LOAD` | `40`, `85`, `10`, `40`, `2` | [host pressure](#host-pressure) above which new agents wait: PSI in percent, memory in percent of the lea container's limit (the host's from 90 %), the host's load per CPU (`0`: that one off) |
+| `LEA_ADMIT_CPU_PSI`, `LEA_ADMIT_MEM_PCT`, `LEA_ADMIT_MEM_PSI`, `LEA_ADMIT_IO_PSI`, `LEA_ADMIT_LOAD` | `70`, `85`, `10`, `40`, `2` | [host pressure](#host-pressure) above which new agents wait: PSI in percent, memory in percent of the lea container's limit (the host's from 90 %), the host's load per CPU (`0`: that one off) |
 | `LEA_SHED_MEM_PCT`, `LEA_SHED_MEM_PSI`, `LEA_SHED_CPU_PSI`, `LEA_SHED_AFTER`, `LEA_SHED_RESUME` | `95`, `30`, `80`, `30`, `60` | [host pressure](#host-pressure) that pauses the lowest-priority agent once it lasts `LEA_SHED_AFTER` seconds (`0`: never), resumed after `LEA_SHED_RESUME` seconds of calm |
 | `LEA_SOUND`, `LEA_AUTONAME` | on | the deck's sounds, automatic names (`0`: off) |
 | `LEA_SOUND_ATTENTION` | freedesktop sound | the file of the sound lea plays when it needs you (`0`: off) |
@@ -1228,6 +1259,15 @@ so. Changes apply after `lea init` (endpoints, keys, images, locksql) or `lea st
 
 ## How lea keeps your machine safe
 
+- `lea web` listens on the host's `127.0.0.1` only, which no lea container shares, and acts as
+  you through the daemon's host socket, as the deck does: an agent reaches neither. The link it
+  prints carries a random one-time token (32 bytes) that the browser exchanges for an `HttpOnly`,
+  `SameSite=Strict` cookie; every API call needs that cookie, and a request whose `Host` or
+  `Origin` is not `127.0.0.1:PORT` or `localhost:PORT` is refused (another site's page, DNS
+  rebinding). The API forwards a fixed list of the daemon's methods, for this lea's agents only;
+  there is no CORS, and a strict Content-Security-Policy keeps any other script or origin out
+  of the page. To use it from another machine, forward the port over SSH
+  (`ssh -L 8414:127.0.0.1:8414 host`, then `lea web --port 8414` on the host).
 - The container sees the projects directory, a read-only allow-list of `~/.claude`
   (`keybindings.json`, `hooks`, `skills`, `agents`, `commands`, `output-styles`, the top-level
   `*.md` files), its own writable copies of `settings.json` and `plugins` (never written back:
@@ -1483,6 +1523,11 @@ make test-pressure    # host resources on the real engine (ENGINE=podman for roo
 A tag `vX.Y.Z` publishes a release: the archives for Linux and macOS (amd64, arm64), their
 checksums, and the images on `ghcr.io/davidgodefroid`.
 
+Docs are published at [lockfamily.dev/docs](https://lockfamily.dev/docs/) from this repo's
+Markdown. Adding a file under `docs/`, or renaming or removing a README H2 section, needs a
+matching change to [lockfamily's `docs-site/nav.toml`](https://github.com/DavidGodefroid/lockfamily/blob/main/docs-site/nav.toml):
+open a lockfamily PR, or the nightly docs build fails.
+
 ## CPUs
 
 Test suites, static analysis and builds start one worker per CPU they see. lea gives each agent a
@@ -1519,7 +1564,7 @@ kernel drops first left out), and the host's load. It reads `/proc` and the cont
 found from its process, so it works the same with Docker and rootless Podman.
 
 Above a threshold a lead's `agents_spawn` is refused with the reason, for example
-`under pressure (container cpu PSI 63% > 40%, memory 92% of 24.0 GiB > 85%); 14 agents run, 2 heavy
+`under pressure (container cpu PSI 76% > 70%, memory 92% of 24.0 GiB > 85%); 14 agents run, 2 heavy
 slots busy`. With `queue: true` the spawn waits instead, up to 30 minutes, and the lead gets a
 message when it starts; one calm sample starts one queued agent at most. The queue lives in the
 daemon's memory: a daemon restart drops it without a message. `agents_request_spawn` is not

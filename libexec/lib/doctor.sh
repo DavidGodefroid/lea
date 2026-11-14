@@ -444,7 +444,7 @@ lea__doctor_pressure() {
     fi
   done
   _dnum() { case $1 in '' | *[!0-9.]* | *.*.*) echo "$2" ;; *) echo "$1" ;; esac; }
-  _dac=$(_dnum "${LEA_ADMIT_CPU_PSI:-}" 40); _dam=$(_dnum "${LEA_ADMIT_MEM_PCT:-}" 85); _dap=$(_dnum "${LEA_ADMIT_MEM_PSI:-}" 10)
+  _dac=$(_dnum "${LEA_ADMIT_CPU_PSI:-}" 70); _dam=$(_dnum "${LEA_ADMIT_MEM_PCT:-}" 85); _dap=$(_dnum "${LEA_ADMIT_MEM_PSI:-}" 10)
   _dai=$(_dnum "${LEA_ADMIT_IO_PSI:-}" 40); _dal=$(_dnum "${LEA_ADMIT_LOAD:-}" 2)
   _dsm=$(_dnum "${LEA_SHED_MEM_PCT:-}" 95); _dsa=$(_dnum "${LEA_SHED_AFTER:-}" 30)
   if awk -v a="$_dac" -v b="$_dam" -v c="$_dap" -v d="$_dai" -v e="$_dal" 'BEGIN { exit !(a + b + c + d + e == 0) }'; then

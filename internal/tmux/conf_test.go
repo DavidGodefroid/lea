@@ -25,7 +25,7 @@ func TestConfReadsTheDeckWidthFromTheOption(t *testing.T) {
 	}
 	for _, want := range []string{
 		"bind-key -n MouseDrag1Border if-shell -F '#{&&:#{@lea_deck},#{" + BorderPressOption + "}}' 'resize-pane -M'",
-		"bind-key -n MouseDragEnd1Border set -su " + DragOption + " \\; if-shell -F '#{&&:#{@lea_deck},#{" + BorderPressOption + "}}' 'run-shell",
+		"bind-key -n MouseDragEnd1Border if-shell -F '#{&&:#{@lea_deck},#{" + BorderPressOption + "}}' 'run-shell",
 		"set -s @lea_deck_width " + strconv.Itoa(DeckWidth),
 	} {
 		if !strings.Contains(c, want) {
@@ -59,7 +59,7 @@ func TestConfArmsTheBorderDragOnlyOnAPressOnTheBorder(t *testing.T) {
 		"MouseDown1Border":    "bind-key -n MouseDown1Border if-shell -F '#{@lea_deck}' 'set -s " + BorderPressOption + " 1'",
 		"MouseDrag1Border":    "bind-key -n MouseDrag1Border if-shell -F '" + armed + "' 'resize-pane -M'",
 		"MouseDown1Pane":      "bind-key -n MouseDown1Pane " + clear + " \\; ",
-		"MouseDragEnd1Pane":   "bind-key -n MouseDragEnd1Pane set -su " + DragOption + " \\; " + clear + " \\; ",
+		"MouseDragEnd1Pane":   "bind-key -n MouseDragEnd1Pane " + clear + " \\; ",
 		"MouseDragEnd1Border": "if-shell -F '" + armed + "' 'run-shell",
 	} {
 		if !strings.Contains(lines[key], want) {
@@ -147,22 +147,15 @@ func TestConfRunsLeasOwnTmuxNotThePATHs(t *testing.T) {
 		}
 		if strings.Contains(l, "-S ") {
 			runs++
-			// The edge scroll's loop names lea's tmux once, as $t, and runs every tmux as "$t".
-			if strings.Contains(l, "lea-drag-scroll=") {
-				if !strings.Contains(l, `t=\"`+bin+`\";`) || strings.Count(l, " -S ") != strings.Count(l, `\"\$t\" -S `) {
-					t.Errorf("the edge scroll does not run every tmux as %s: %s", bin, l)
-				}
-				continue
-			}
 			if !regexp.MustCompile(`\\+"` + regexp.QuoteMeta(bin) + `\\+" -S`).MatchString(l) {
 				t.Errorf("a run-shell does not run %s: %s", bin, l)
 			}
 		}
 	}
-	if runs != 3 {
-		t.Errorf("%d run-shell lines start a tmux, want 3 (the drag's release, the resize hook, the edge scroll)", runs)
+	if runs != 2 {
+		t.Errorf("%d run-shell lines start a tmux, want 2 (the drag's release, the resize hook)", runs)
 	}
-	for _, l := range []string{"MouseDragEnd1Border", "set-hook -g window-resized", "command-alias[100]"} {
+	for _, l := range []string{"MouseDragEnd1Border", "set-hook -g window-resized"} {
 		if !strings.Contains(c, l) {
 			t.Errorf("the configuration lacks %s", l)
 		}
@@ -201,17 +194,21 @@ func TestConfBin(t *testing.T) {
 	}
 }
 
-// A drag in the history held at a pane's edge scrolls on (#280): every way a drag starts in the
-// history (the root table's copy mode, the copy tables' selection) runs lea-drag-scroll, an alias
-// quoted for tmux's double quotes; every release ends it, and the root table's still forwards the
-// release (-M) to the program under the pointer.
-func TestConfDragsScrollAtTheEdges(t *testing.T) {
+// lea makes no selection of its own (#419): Claude Code copies on select. A drag goes to a
+// program that asked for the mouse or to the deck, and nothing else: no copy mode, no copy into
+// the clipboard bridge, no "Copied" popup, no edge-scroll alias; an upgrade drops the alias and
+// the drag counters an older lea left on the server. The root release still reaches the program.
+func TestConfHasNoCopyOnSelect(t *testing.T) {
 	c := Conf()
-	var alias string
 	lines := map[string]string{}
 	for _, l := range strings.Split(c, "\n") {
-		if v, ok := strings.CutPrefix(l, `set -s command-alias[100] "lea-drag-scroll=`); ok {
-			alias = v
+		if strings.HasPrefix(l, "#") {
+			continue
+		}
+		for _, bad := range []string{"copy-pipe", "begin-selection", "display-popup", "Copied", "clipboard/copy", "lea-drag-scroll", "@lea_drag"} {
+			if strings.Contains(l, bad) && !strings.HasPrefix(l, "set -squ ") {
+				t.Errorf("the configuration still holds %q: %s", bad, l)
+			}
 		}
 		switch f := strings.Fields(l); {
 		case len(f) > 3 && f[0] == "bind-key" && f[1] == "-n":
@@ -220,45 +217,25 @@ func TestConfDragsScrollAtTheEdges(t *testing.T) {
 			lines[f[2]+" "+f[3]] = l
 		}
 	}
-	if !strings.HasSuffix(alias, `"`) {
-		t.Fatalf("no lea-drag-scroll alias, or not on one line: %q", alias)
-	}
-	alias = strings.TrimSuffix(alias, `"`)
-	// Inside tmux's double quotes every $ and " is escaped: tmux would expand $i and end the
-	// string.
-	if regexp.MustCompile(`(^|[^\\])(\\\\)*[$"]`).MatchString(alias) {
-		t.Errorf("an unescaped $ or \" in the alias: %s", alias)
-	}
-	unq := strings.NewReplacer(`\\`, `\`, `\"`, `"`, `\$`, `$`).Replace(alias)
-	for _, want := range []string{
-		"set -sF " + DragCountOption + " '#{e|+:0#{" + DragCountOption + "},1}' ; set -sF " + DragOption + " '#{" + DragCountOption + "}' ; run-shell -b '",
-		`k="#{` + DragOption + `}"`,
-		// It stops on its own: out of the history, its drag ended or replaced, the history's end
-		// reached that way (a second on: a release lost on the bar above the pane), ten minutes.
-		`"##{pane_in_mode} ##{copy_cursor_y} ##{pane_height} ##{` + DragOption + `} ##{scroll_position} ##{history_size}"`,
-		`[ "$1" = 1 ] && [ "$4" = "$k" ] || exit 0`, `[ $i -lt 12000 ]`,
-		`if [ "$2" = 0 ]; then c=cursor-up; f=$(($5 >= $6)); elif [ "$2" = $(($3 - 1)) ]; then c=cursor-down; f=$(($5 == 0));`,
-		`if [ $f = 1 ]; then e=$((e + 1)); [ $e -lt 20 ] || exit 0; continue; fi; e=0;`,
-		` -X -t "$p" -N $m $c; done; exit 0'`,
-	} {
-		if !strings.Contains(unq, want) {
-			t.Errorf("the edge scroll lacks %q:\n%s", want, unq)
-		}
-	}
-	for key, want := range map[string]string{
-		"-n MouseDrag1Pane":              `'copy-mode -H -M ; lea-drag-scroll'"`,
-		"copy-mode MouseDrag1Pane":       `begin-selection \; lea-drag-scroll`,
-		"copy-mode-vi MouseDrag1Pane":    `begin-selection \; lea-drag-scroll`,
-		"-n MouseDragEnd1Pane":           `bind-key -n MouseDragEnd1Pane set -su ` + DragOption + ` \; `,
-		"-n MouseDragEnd1Border":         `bind-key -n MouseDragEnd1Border set -su ` + DragOption + ` \; `,
-		"copy-mode MouseDragEnd1Pane":    `MouseDragEnd1Pane set -su ` + DragOption + ` \; `,
-		"copy-mode-vi MouseDragEnd1Pane": `MouseDragEnd1Pane set -su ` + DragOption + ` \; `,
-	} {
-		if !strings.Contains(lines[key], want) {
-			t.Errorf("%s = %q, want %q in it", key, lines[key], want)
-		}
+	// Forwarded (-M) to a program that asked for the mouse or to the deck, and nothing else.
+	if l, want := lines["-n MouseDrag1Pane"], "bind-key -n MouseDrag1Pane if-shell -F '#{||:#{mouse_any_flag},#{==:#{@lea_role},deck}}' '"; !strings.HasPrefix(l, want) || !strings.HasSuffix(l, " -M'") || strings.Count(l, "'") != 4 {
+		t.Errorf("MouseDrag1Pane = %q, want it forwarded only under %q", l, want)
 	}
 	if l := lines["-n MouseDragEnd1Pane"]; !strings.HasSuffix(l, " -M") {
 		t.Errorf("the root table's release no longer reaches the program under the pointer: %q", l)
+	}
+	for _, k := range []string{"copy-mode MouseDrag1Pane", "copy-mode MouseDragEnd1Pane", "copy-mode-vi MouseDrag1Pane", "copy-mode-vi MouseDragEnd1Pane"} {
+		if l, ok := lines[k]; ok {
+			t.Errorf("%s is bound: %q", k, l)
+		}
+	}
+	// Only the wheel enters the history.
+	if n := strings.Count(c, "'copy-mode "); n != 1 || !strings.Contains(lines["-n WheelUpPane"], "'copy-mode -H -e'") {
+		t.Errorf("%d ways into copy mode, want the wheel's alone", n)
+	}
+	for _, want := range []string{"set -squ command-alias[100]\n", "set -squ @lea_drag\n", "set -squ @lea_drag_n\n"} {
+		if !strings.Contains(c, want) {
+			t.Errorf("an upgrade does not drop %q", strings.TrimSpace(want))
+		}
 	}
 }
