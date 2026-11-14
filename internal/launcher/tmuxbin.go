@@ -90,13 +90,21 @@ func (l *Launcher) tmuxInstallHint() string {
 	return "install tmux " + TmuxMin + " or later with your package manager"
 }
 
-func (l *Launcher) tmuxBuildHint() string { return fmt.Sprintf(`make -C "%s" tmux-build`, l.Root) }
+// tmuxBuildHint is lea_tmux_build_hint: ", or build a static one with: make … tmux-build", only on
+// Linux from a source checkout (the build is a static Linux binary; release archives ship no
+// Makefile, and the Linux ones already hold build/tmux).
+func (l *Launcher) tmuxBuildHint() string {
+	if runtime.GOOS == "darwin" || !isRegular(l.Root+"/tools/tmux/Containerfile") {
+		return ""
+	}
+	return fmt.Sprintf(`, or build a static one with: make -C "%s" tmux-build`, l.Root)
+}
 
 func (l *Launcher) tmuxMissing() string {
 	if b := l.Cfg.Get("LEA_TMUX_BIN"); b != "" {
 		return fmt.Sprintf("LEA_TMUX_BIN=%s is not an executable file. Unset it, or point it at tmux %s or later", b, TmuxMin)
 	}
-	return fmt.Sprintf("tmux is not installed. Install it with: %s, or build a static one with: %s", l.tmuxInstallHint(), l.tmuxBuildHint())
+	return fmt.Sprintf("tmux is not installed. Install it with: %s%s", l.tmuxInstallHint(), l.tmuxBuildHint())
 }
 
 // tmuxPin is lea_tmux_pin: best effort; a daemon started next drives the same tmux.
@@ -114,7 +122,7 @@ func (l *Launcher) tmuxCheck() error {
 	}
 	v := l.tmuxV(b)
 	if !TmuxVersionOK(v) {
-		return die("the deck needs tmux %s or later; found '%s'. Upgrade it with: %s, or build a static one with: %s",
+		return die("the deck needs tmux %s or later; found '%s'. Upgrade it with: %s%s",
 			TmuxMin, nonEmpty(v, "unknown"), l.tmuxInstallHint(), l.tmuxBuildHint())
 	}
 	l.Cfg.Export("LEA_TMUX_BIN", b)

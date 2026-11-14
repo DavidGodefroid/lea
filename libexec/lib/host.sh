@@ -441,8 +441,12 @@ lea_tmux_install_hint() {
   printf 'install tmux %s or later with your package manager\n' "$LEA_TMUX_MIN"
 }
 
-# lea_tmux_build_hint: the alternative to a package: lea's own static build (never sudo).
-lea_tmux_build_hint() { printf 'make -C "%s" tmux-build' "$LEA_ROOT"; }
+# lea_tmux_build_hint: the alternative to a package: lea's own static build (never sudo), only on
+# Linux from a source checkout (a static Linux binary; release archives ship no Makefile).
+lea_tmux_build_hint() {
+  [ "$(uname -s 2>/dev/null)" != Darwin ] && [ -f "$LEA_ROOT/tools/tmux/Containerfile" ] || return 0
+  printf ', or build a static one with: make -C "%s" tmux-build' "$LEA_ROOT"
+}
 
 # lea_tmux_built: where `make tmux-build` puts lea's own tmux (LEA_TMUX_BUILT overrides, for tests).
 lea_tmux_built() { printf '%s\n' "${LEA_TMUX_BUILT:-$LEA_ROOT/build/tmux}"; }
@@ -480,7 +484,7 @@ lea_tmux_missing() {
   if [ -n "${LEA_TMUX_BIN:-}" ]; then
     printf 'LEA_TMUX_BIN=%s is not an executable file. Unset it, or point it at tmux %s or later' "$LEA_TMUX_BIN" "$LEA_TMUX_MIN"
   else
-    printf 'tmux is not installed. Install it with: %s, or build a static one with: %s' "$(lea_tmux_install_hint)" "$(lea_tmux_build_hint)"
+    printf 'tmux is not installed. Install it with: %s%s' "$(lea_tmux_install_hint)" "$(lea_tmux_build_hint)"
   fi
 }
 

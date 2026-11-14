@@ -24,7 +24,7 @@ Usage:
                               providers: claude, codex and those of ~/.config/lea/providers)
   lea role <agent> <role>     change an agent's role (only you can)
   lea allow [log]             what agents of this lea may do without asking, and their last
-                              uses (log: every use)
+                              uses (log: the last 200 uses)
   lea allow CAPABILITY... [--repo R]... [--branch GLOB] [--agent NAME] [--for 2h] [--gitlab HOST]...
                               let agents of this lea act without asking: push, pr, merge,
                               delete-branch, issues, stop-finished, release-tag, release
@@ -70,8 +70,8 @@ Usage:
                               deny, additionalDirectories, env, model...), each with its source;
                               kept in lea's configuration, from the next lea container
   lea update [--deps ask|all|none]
-                              the latest lea, then each newer locksql release (lockmq,
-                              lockfile, locklog, lockssh: their launchers update themselves)
-                              (asked one by one; all or none without asking; signatures checked)
+                              the latest lea (signatures checked) and its images, with the
+                              Lock clients of config/locks.lock; the locks themselves are lox's
+                              (--deps is kept for compatibility and installs nothing)
   lea rollback                back to the previous version; the background update skips this one
   lea doctor
