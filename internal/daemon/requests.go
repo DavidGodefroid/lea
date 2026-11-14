@@ -30,6 +30,7 @@ type requestParams struct {
 	Role    string `json:"role"`
 	Profile string `json:"profile"`
 	Model   string `json:"model"`
+	Advisor string `json:"advisor"`
 	Repo    string `json:"repo"`
 	Branch  string `json:"branch"`
 	Brief   string `json:"brief"`
@@ -69,7 +70,7 @@ func (d *Daemon) requestSpawn(o Origin, me string, raw json.RawMessage) (any, er
 	}
 	// The provider and model are checked now and again, in full, when the request is accepted
 	// (the providers file may have changed meanwhile); "" stays "": the default at that time.
-	if err := d.checkProvider(p.Profile, p.Model); err != nil {
+	if err := d.checkProvider(p.Profile, p.Model, p.Advisor); err != nil {
 		return nil, err
 	}
 	if err := agents.CheckRepo(p.Repo); err != nil {
@@ -94,7 +95,7 @@ func (d *Daemon) requestSpawn(o Origin, me string, raw json.RawMessage) (any, er
 		return nil, err
 	}
 	lead := d.routeRequest(caller)
-	r := store.SpawnRequest{Container: o.Container, Requester: me, Lead: lead, Role: p.Role, Profile: p.Profile, Model: p.Model,
+	r := store.SpawnRequest{Container: o.Container, Requester: me, Lead: lead, Role: p.Role, Profile: p.Profile, Model: p.Model, Advisor: p.Advisor,
 		Repo: p.Repo, Branch: p.Branch, Brief: p.Brief, Reason: p.Reason, Label: p.Label}
 	added, err := d.st.AddSpawnRequest(r, func(id int64) string { return requestBody(id, r, caller.Name) },
 		maxPendingRequests, requestTTL, d.now())
@@ -147,6 +148,9 @@ func requestBody(id int64, r store.SpawnRequest, requester string) string {
 	fmt.Fprintf(&b, "Spawn request #%d from %s: a %s agent (profile %s", id, requester, r.Role, prov)
 	if r.Model != "" {
 		fmt.Fprintf(&b, ", model %s", r.Model)
+	}
+	if r.Advisor != "" {
+		fmt.Fprintf(&b, ", advisor %s", r.Advisor)
 	}
 	if r.Repo != "" {
 		fmt.Fprintf(&b, ", repo %s", r.Repo)
@@ -315,7 +319,7 @@ func (d *Daemon) requestDecide(ctx context.Context, raw json.RawMessage) (any, e
 		}
 		// The brief stays the requester's words: wrapped as untrusted content from that agent,
 		// whatever the user saw of it when accepting.
-		row, err := d.newAgent(ctx, a, agents.NewRequest{Container: r.Container, Profile: r.Profile, Model: r.Model, Role: r.Role, Repo: r.Repo,
+		row, err := d.newAgent(ctx, a, agents.NewRequest{Container: r.Container, Profile: r.Profile, Model: r.Model, Advisor: r.Advisor, Role: r.Role, Repo: r.Repo,
 			Branch: r.Branch, Brief: r.Brief, BriefFrom: r.Requester, BriefReplyTo: r.Message, Label: r.Label})
 		if err != nil {
 			d.reopenRequest(r.ID)

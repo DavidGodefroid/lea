@@ -1,9 +1,16 @@
 # Changelog
 
-## Unreleased
+## v0.16.0 (2026-11-14)
 
 Features:
 
+- A lead picks each child's model and advisor (#407). `agents_spawn` and `agents_request_spawn`
+  take an optional `advisor`: with `model: sonnet, advisor: opus` the child runs `claude --model
+  sonnet --advisor opus`, a Sonnet session that consults Opus on demand through Claude Code's
+  advisor tool, and keeps both when it resumes. A provider without an advisor (Codex, an
+  endpoint) refuses it: `provider codex has no advisor`. Without `advisor` the command line is
+  unchanged. `agents_list` shows a child's advisor. The control-tower skill now tells the lead to
+  pick each child's model and advisor by its task.
 - A lead can push its team's branches (#406). Before, a lead was always refused: `pushing to
   anything but the agent's own branch is never allowed`. Once a child stopped, its branch could
   be pushed only from the host. Now, under the existing `push` allowance, a lead may run `git push
@@ -67,6 +74,9 @@ Features:
 
 Changes:
 
+- `LEA_ADMIT_CPU_PSI` defaults to 70 instead of 40 (#408): on a busy but healthy host cpu PSI
+  sits above 40 % routinely, so spawns were refused or queued far too often. Shedding
+  (`LEA_SHED_CPU_PSI`, 80) is unchanged.
 - Live limits (#420): `lea limits` shows the limits you can change while agents run, with their
   value, default and source; `lea limits set KEY VALUE` and `lea limits reset KEY` change one on
   the running lea, at once, without a restart, and keep it in your file (the next `lea` does not
@@ -137,6 +147,14 @@ Changes:
 
 Fixes:
 
+- An agent now hears of a ticket that an auto rule of `lox run` decided (#440, lockhub#200). lea
+  told an agent of a hub decision only when the agent's Lock call had registered a wait, or when
+  the deck's queue showed the ticket pending. An auto rule decides in milliseconds, so an agent
+  that ran its Lock through the shell never got the decision: its `msg_wait` returned nothing.
+  With a hub that serves the decided ticket in `GET /v1/decided` (lockhub#200), lea now claims
+  the wait of the agent the ticket's requester names, as it does from the queue (#261), and tells
+  it `ticket … approved` or `denied`, once. LockHTTP's tickets are not claimed. An older hub
+  keeps the old behaviour.
 - A granted `git commit` runs at once (#393): the pinned commit no longer runs `rm -rf` in its
   `sh -c` script (Claude Code's safety check asked for approval, hook allow or not, and the commit
   timed out). It copies the index to `lea-commit/index` in the worktree's git directory, reused

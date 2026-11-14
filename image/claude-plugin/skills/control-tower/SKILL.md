@@ -104,6 +104,11 @@ For each thing the user asks:
    children that run at once, host-wide (`limits_get`: `max_running`, which the user changes
    live), and holds spawns while the account's usage is high: always pass `queue: true`, so a
    held spawn waits and starts once lea lets it in (you get a message) instead of failing.
+   Pick each child's `model` and `advisor` for its task, and pass them: a routine task (a small
+   fix, docs, a mechanical change, a review of a short diff) runs on `model: sonnet`; a task that
+   needs judgment (a design choice, a subtle bug, a wide refactor) gets `advisor: opus` next to
+   it, a stronger model the child consults on demand (Claude children only); the hardest ones run
+   on `model: opus`. The user's own choice of model wins.
 5. Write a self-contained brief (the agent knows nothing else):
    - the goal and the acceptance criteria, in the user's words when they gave them;
    - the repo, the branch, what not to touch;

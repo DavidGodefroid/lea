@@ -65,8 +65,24 @@ var (
 	LeaPromptedTools = []string{"agents_spawn", "agents_stop"}
 )
 
+// CheckAdvisor accepts "" (no advisor) or, for a provider on Claude Code, a model id: Claude
+// Code's server-side advisor tool (--advisor, #407), which the session consults on demand. Codex
+// has none.
+func (p Provider) CheckAdvisor(advisor string) error {
+	if advisor == "" {
+		return nil
+	}
+	if err := CheckModel(advisor); err != nil {
+		return fmt.Errorf("advisor: %w", err)
+	}
+	if p.CLI != Claude {
+		return fmt.Errorf("provider %s has no advisor: an advisor is for an agent on Claude Code (profile claude); leave advisor out", p.Name)
+	}
+	return nil
+}
+
 // Argv is what an agent's CLI runs with, after `lea-agent run <agent> --cli <CLI> --`: the
-// provider's own flags, model, the user's arguments (lea new -- ...), then the session to resume
+// provider's own flags, model and advisor (Claude Code only, CheckAdvisor), the user's arguments (lea new -- ...), then the session to resume
 // (a UUID, else nothing) or else the first prompt. Every value lea puts into a Codex -c option is
 // its own (the agent's checked name, the provider's checked name, fixed strings): the model goes
 // in as a separate argument, never into TOML.
@@ -76,11 +92,14 @@ var (
 // in a parked pane, and it never loads a project configuration (.codex/) an agent could have
 // written there: with one present, Codex asks again, in the pane. A directory whose name holds a
 // quote or a backslash is left out (Codex asks).
-func (p Provider) Argv(agent, workdir, model, session string, user []string, prompt string) ([]string, error) {
+func (p Provider) Argv(agent, workdir, model, advisor, session string, user []string, prompt string) ([]string, error) {
 	if !agentRe.MatchString(agent) {
 		return nil, errors.New("invalid agent name")
 	}
 	if err := CheckModel(model); err != nil {
+		return nil, err
+	}
+	if err := p.CheckAdvisor(advisor); err != nil {
 		return nil, err
 	}
 	if session != "" && !ValidSession(session) {
@@ -94,6 +113,9 @@ func (p Provider) Argv(agent, workdir, model, session string, user []string, pro
 		}
 		if model != "" {
 			a = append(a, "--model", model)
+		}
+		if advisor != "" {
+			a = append(a, "--advisor", advisor)
 		}
 	case Codex:
 		if session != "" {

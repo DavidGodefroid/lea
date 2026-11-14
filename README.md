@@ -736,6 +736,12 @@ server with the Responses API).
 - `lea new -p codex -m gpt-5.1-codex`, the deck's `N` (then the provider's digit), or a lead's
   `agents_spawn` with `profile` and `model` start an agent on another one; `providers_list`
   tells an agent which exist. The deck shows each agent's provider and model.
+- A lead's `agents_spawn` (and `agents_request_spawn`) also takes an `advisor` for an agent on
+  Claude Code: `model: sonnet, advisor: opus` starts `claude --model sonnet --advisor opus`, a
+  Sonnet session that consults Opus on demand through Claude Code's advisor tool. The child keeps
+  it when it resumes. Another provider refuses it (`provider codex has no advisor`). Claude Code
+  offers the tool only to accounts it enables it for; the control tower picks each child's model
+  and advisor by its task.
 - Codex keeps its own login per projects directory, like Claude Code: run `codex login` (or
   `/login`) in the first Codex agent. It runs with its own sandbox (`workspace-write`) and asks
   for anything else in its pane; lea's MCP tools reach it, and its turn's end makes it idle in the

@@ -20,7 +20,7 @@ type SpawnRequest struct {
 	ID                                         int64
 	Container, Requester, Lead                 string
 	Role, Profile, Repo, Branch, Brief, Reason string
-	Model                                      string
+	Model, Advisor                             string
 	Message                                    int64
 	State, Agent                               string
 	At, Decided                                int64
@@ -28,12 +28,12 @@ type SpawnRequest struct {
 	Label string
 }
 
-const requestCols = `id, container, requester, lead, role, profile, repo, branch, brief, reason, message, state, agent, at, decided, model, label`
+const requestCols = `id, container, requester, lead, role, profile, repo, branch, brief, reason, message, state, agent, at, decided, model, label, advisor`
 
 func scanRequest(sc interface{ Scan(...any) error }) (SpawnRequest, error) {
 	var r SpawnRequest
 	err := sc.Scan(&r.ID, &r.Container, &r.Requester, &r.Lead, &r.Role, &r.Profile, &r.Repo, &r.Branch, &r.Brief, &r.Reason,
-		&r.Message, &r.State, &r.Agent, &r.At, &r.Decided, &r.Model, &r.Label)
+		&r.Message, &r.State, &r.Agent, &r.At, &r.Decided, &r.Model, &r.Label, &r.Advisor)
 	if errors.Is(err, sql.ErrNoRows) {
 		return SpawnRequest{}, ErrNotFound
 	}
@@ -77,8 +77,8 @@ func (s *Store) AddSpawnRequest(r SpawnRequest, body func(id int64) string, maxP
 	if n > 0 {
 		return SpawnRequest{}, fmt.Errorf("%w: this brief was declined; change it, or ask the user", ErrDeclined)
 	}
-	res, err := tx.Exec(`INSERT INTO spawn_requests(container, requester, lead, role, profile, repo, branch, brief, brief_hash, reason, at, model, label)
-		VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)`, r.Container, r.Requester, r.Lead, r.Role, r.Profile, r.Repo, r.Branch, r.Brief, h, r.Reason, now, r.Model, r.Label)
+	res, err := tx.Exec(`INSERT INTO spawn_requests(container, requester, lead, role, profile, repo, branch, brief, brief_hash, reason, at, model, label, advisor)
+		VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, r.Container, r.Requester, r.Lead, r.Role, r.Profile, r.Repo, r.Branch, r.Brief, h, r.Reason, now, r.Model, r.Label, r.Advisor)
 	if err != nil {
 		return SpawnRequest{}, err
 	}
