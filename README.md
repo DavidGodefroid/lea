@@ -331,6 +331,32 @@ in a light and a dark theme (it follows your system; the ◐ button switches it)
 its keys. See [How lea keeps your machine safe](#how-lea-keeps-your-machine-safe) for what
 protects it.
 
+The other decisions `lea requests`, `lea approve`, `lea allow` and `lea egress` take on the host
+show on the page too:
+
+- **Spawn requests** (`sN`, an agent asks for another when no lead runs): **Accept** or
+  **Decline**, as `lea approve sN` / `lea deny sN`. They have no durable form.
+- **Grant requests** (`gN`, a lead asks for a grant for itself and its children): grouped in one
+  card, each with the capability it maps to, **Approve** / **Deny** each or **Approve all**, as
+  `lea approve gN` / `lea deny gN`. Under them, in three lines built from lea's capability table:
+  the one-off answer, the one `lea allow` command that covers them all for every agent of the lea
+  (and `lea allow off N` to undo it), and what that command does not cover. **Allow durably…**
+  opens the allowances screen with that command filled in.
+- **The control tower's questions**: its open question shows with a box to answer it, and the
+  queue behind it. The tower gets your answer as your message, with lea's note that the question
+  is answered (and to whom to relay it); the next question opens, as after a prompt in its
+  terminal.
+- **Allowances** (`g`): what agents of this lea may do without asking, each with **Revoke**
+  (`lea allow off N`), and a form to add one: capabilities or the `deliver` preset, repositories
+  (empty: every one with a forge origin), branches, one agent, release tags, a duration.
+  **Preview** reads each repository's origin on the host, as `lea allow` does, and flags a pin
+  you have not recorded yet (agents can rewrite `.git/config`); **Record** records exactly the
+  pins you saw.
+- **Egress** (`w`): the hosts lea-proxy refused in the last 24 hours, who asked, and **Allow**
+  for each; a host field with **Allow** and **Deny**, the same as `lea egress allow|deny HOST`,
+  applied live. There is no one-off egress approval: an allowed host stays allowed until you deny
+  it.
+
 An agent's **Terminal** tab (`v`) shows its terminal live, as its pane in tmux shows it, colours
 included: read-only, nothing you type there reaches it. The 🔔 button turns on browser
 notifications: while the tab is in the background, each new permission (pN), spawn request (sN),
@@ -826,6 +852,29 @@ permission. The agents of one container share one user, so they are one trust do
 that names another agent of its container in `LEA_AGENT` is still guarded by the same hard denies
 and the container's grants.
 
+### Lean children
+
+Every agent of a projects directory shares its copy of your plugins and MCP servers, so a lead's
+child loads the skill listing of every plugin and the tool listing of every server you have, even
+those that have nothing to do with its repository, and re-reads them on each of its turns. Two
+keys of `~/.config/lea/lea.conf` leave them out of the children (dev and reviewer agents a lead
+spawns):
+
+```sh
+LEA_CHILD_PLUGINS='my-plugin,other-plugin@my-marketplace' # plugins: a name (every marketplace) or name@marketplace
+LEA_CHILD_MCP='claude.ai Gmail,my-server'                # MCP servers, by the name /mcp lists
+```
+
+- **Children only.** Leads (a control tower) and the sessions you start yourself keep
+  everything. Empty keys (the default) change nothing.
+- **Read at each spawn.** The daemon reads the keys when a lead's child starts: an edit applies
+  to the next child without a restart, and a running child keeps what it started with.
+- **Your copy is untouched.** A child gets lea's `--settings` with those plugins disabled
+  (`enabledPlugins`) and those servers denied (`deniedMcpServers`); the container's
+  `settings.json` and `plugins` stay as they are for every other agent.
+- **lea's own are kept.** lea's plugin and MCP server, and the Locks' clients (`locksql`,
+  `lockmq`, `lockfile`, `locklog` and their instances), are never left out, whatever the keys say.
+
 ### Your own status line
 
 lea draws the agents' status line itself (`lea statusline`: model, context and 5-hour/7-day
@@ -970,6 +1019,16 @@ lea allow off 12                   # allowance #12; or a capability (lea allow o
 | `stop-finished` | `agents_stop` on an idle or ended child |
 | `release-tag` | `git push origin refs/tags/vX.Y.Z` (a new semver tag on a commit of the default branch, see below) |
 | `release` | `gh release create <tag> --verify-tag [--title T] [--notes-file F \| --generate-notes] [--prerelease] [--latest]`, for tags `--tag GLOB` matches (see below) |
+
+A lead may also push its team's branches (#406). It can push branch B when B is the recorded
+branch of one of its own direct children, that child is idle, done or stopped, no other live
+agent of the lea works on B, and B is not the default branch. The lead runs `git push [-u]
+origin B` from that child's worktree root (`.lea/worktrees/<repo>/<child>`). The child's `push`
+allowance has to cover it: same repository, `--branch` glob and `--agent`. lea pins the push
+exactly as it pins the child's own. A lead still cannot commit, delete, merge or open a PR for a
+child's branch, cannot push another lead's child's branch, and cannot push tags (`release-tag`
+covers tags). When a lead is refused a push, the refusal lists the branches it may push and the
+worktree to run each from.
 
 `deliver` is `push pr merge delete-branch`. The container is always this projects directory's lea
 (`LEA_PROJECTS_DIR=~/other lea allow …` for another one). Every capability but stop-finished is
@@ -1294,6 +1353,7 @@ read-only. The screen runs in the deck on the host: agents cannot open or drive 
 | `LEA_APPROVALS`, `LEA_APPROVAL_TIMEOUT` | `deck`, `60` | who answers permission requests |
 | `LEA_PROVIDER`, `LEA_MODEL` | `claude`, empty | the default provider and model of a new agent ([providers](#other-providers-codex-ollama-vllm)) |
 | `LEA_PROVIDERS` | `~/.config/lea/providers` | your OpenAI-compatible endpoints and their key files |
+| `LEA_CHILD_PLUGINS`, `LEA_CHILD_MCP` | empty | [lean children](#lean-children): the host plugins and MCP servers a lead's children start without, comma separated; read at each spawn |
 | `LEA_AUTO_RESUME`, `LEA_RESUME_DELAY` | on, `60` | resume agents stopped on a usage limit, so many seconds after its reset (`0`: off) |
 | `LEA_STACK_IDLE` | `10` | minutes an agent stays idle before lea stops (not removes) the containers it started in the nested Podman (`0`: never); `lea board` lists what it freed |
 | `LEA_QUESTION_REMIND` | `120` | minutes a control tower's question waits for your answer before the tower asks it again, once, prefixed with `reminder:` (`0`: never) |
@@ -1359,7 +1419,11 @@ so. Changes apply after `lea init` (endpoints, keys, images, locksql) or `lea st
   prints carries a random one-time token (32 bytes), valid for 2 minutes, that the browser
   exchanges for an `HttpOnly`, `SameSite=Strict` cookie; every API call needs that cookie, and a
   request whose `Host` or `Origin` is not `127.0.0.1:PORT` or `localhost:PORT` is refused (another site's page, DNS
-  rebinding). The API forwards a fixed list of the daemon's methods, for this lea's agents only;
+  rebinding). The API forwards a fixed list of the daemon's methods, for this lea's agents only
+  (a request, grant request or question is answered only when the daemon lists it for one of
+  them; allowances are always this lea's); the daemon methods behind requests, grants,
+  allowances and questions (`question_answer` among them) are host-only, refused on any agent's
+  bus socket, and `lea allow` and `lea egress` from the page run on the host itself;
   there is no CORS, and a strict Content-Security-Policy keeps any other script or origin out
   of the page. `lea web --open` never puts the token in a command line, which any local user can
   read (`ps`): it writes a page that posts the token to a private file (`0600`, in a `0700`

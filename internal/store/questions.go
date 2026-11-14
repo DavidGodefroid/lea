@@ -175,19 +175,41 @@ func promote(tx *sql.Tx, agent string, now int64) (UserQuestion, error) {
 // queue. It returns the answered question and the one now open (ID 0: none); ErrNotFound when
 // agent had no open question.
 func (s *Store) AnswerQuestion(agent string, now int64) (answered, next UserQuestion, err error) {
+	return s.answer(now, `agent=? AND state=?`, agent, QuestionOpen)
+}
+
+// AnswerQuestionByID is AnswerQuestion for question id (lea web answers it, #415): ErrNotFound
+// when there is no question id, ErrDecided when it is not the open one (queued or closed).
+func (s *Store) AnswerQuestionByID(id, now int64) (answered, next UserQuestion, err error) {
+	q, err := s.GetQuestion(id)
+	if err != nil {
+		return
+	}
+	if q.State != QuestionOpen {
+		return q, UserQuestion{}, ErrDecided
+	}
+	answered, next, err = s.answer(now, `id=? AND state=?`, id, QuestionOpen)
+	if errors.Is(err, ErrNotFound) {
+		err = ErrDecided // answered meanwhile
+	}
+	return
+}
+
+// answer closes the open question where selects, and opens the head of its tower's queue.
+func (s *Store) answer(now int64, where string, args ...any) (answered, next UserQuestion, err error) {
 	tx, err := s.db.Begin()
 	if err != nil {
 		return
 	}
 	defer tx.Rollback()
-	if answered, err = question(tx, `agent=? AND state=?`, agent, QuestionOpen); err != nil {
+	if answered, err = question(tx, where, args...); err != nil {
 		return
 	}
 	if _, err = tx.Exec(`UPDATE user_questions SET state=?, answered_at=? WHERE id=?`, QuestionAnswered, now, answered.ID); err != nil {
 		return
 	}
 	answered.State, answered.AnsweredAt = QuestionAnswered, now
-	if next, err = promote(tx, agent, now); err != nil {
+	if next, err = promote(tx, answered.Agent, now); err != nil {
 		return
 	}
 	err = tx.Commit()

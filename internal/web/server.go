@@ -92,6 +92,8 @@ type Server struct {
 	foldersEvery time.Duration
 	// retry is how long the event stream waits before it asks the daemon again after an error.
 	retry func(ctx context.Context)
+	// host is lea allow's and lea egress's part on the host (SetHost); nil without the launcher.
+	host Host
 }
 
 // New prepares a server for container that talks to the daemon through call.

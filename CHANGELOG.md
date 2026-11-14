@@ -4,6 +4,14 @@
 
 Features:
 
+- A lead can push its team's branches (#406). Before, a lead was always refused: `pushing to
+  anything but the agent's own branch is never allowed`. Once a child stopped, its branch could
+  be pushed only from the host. Now, under the existing `push` allowance, a lead may run `git push
+  [-u] origin B` from a child's worktree root when B is that direct child's recorded branch, the
+  child is idle, done or stopped, no other live agent works on B, and B is not the default branch.
+  lea pins the push as it pins the child's own. Nothing else widens: no commit, delete, merge or
+  PR for a child's branch, no other lead's children, no tags. A refused lead is told which
+  branches it may push and from where.
 - `LEA_LOCKHTTP=1` works with the lockhttp launcher that `brew install
   davidgodefroid/tap/lockfamily` or lockfamily's `install.sh` installs (#411). lea used to accept
   only a root-owned `/usr/local/bin/lockhttp`. It now looks there first, then in `~/.local/bin`,
@@ -35,6 +43,17 @@ Features:
   for new pN, sN, gN and tower questions while the tab is in the background. Folders are the
   deck's own layout file: made or changed in the browser, they show in the deck (which now reads
   its layout again every 2 s), and the other way round.
+
+- `lea web` takes the other decisions (#415): spawn requests (`sN`) with Accept and Decline;
+  grant requests (`gN`) grouped, with Approve, Deny and Approve all, and in three lines the
+  one-off answer, the one `lea allow` command that covers them all (with `lea allow off N` to
+  undo it) and what it leaves out; the control tower's open question with a box to answer it and
+  its queue; an Allowances screen to list, add (pins read on the host and confirmed, as `lea
+  allow` does) and revoke allowances; an Egress screen with the hosts lea-proxy refused, and
+  Allow/Deny applied live as `lea egress allow|deny HOST`. A new host-only daemon method,
+  `question_answer`, gives the tower the answer as the user's message and opens the next
+  question; `grants.Advise` builds the one-off / durable / not-covered text from the capability
+  table for every prompt (#412).
 
 Changes:
 
@@ -82,6 +101,11 @@ Changes:
   release. A permission notification names `lea approve pN always` when the dialog offers it; egress
   refusals say there is no one-off approval and that `lea egress deny HOST` undoes `lea egress allow`.
   The control-tower skill relays both routes instead of only `lea approve`.
+- Lean children (#423): `LEA_CHILD_PLUGINS` and `LEA_CHILD_MCP` list the host plugins and MCP
+  servers a lead's children start without (a child loaded every plugin's skill listing and every
+  server's tools, about half its starting context). Leads and your own sessions keep everything;
+  lea's plugin and MCP server and the Locks' clients are always kept. Read at each spawn: an edit
+  applies to the next child, without a restart.
 - lea no longer copies on select (#419): a drag in an agent's terminal no longer enters tmux's
   copy mode, copies the selection or flashes "Copied". Claude Code copies on select itself, through
   the same clipboard bridge: a copy worked and looked one way or the other depending on whether
@@ -107,6 +131,12 @@ Fixes:
   `sh -c` script (Claude Code's safety check asked for approval, hook allow or not, and the commit
   timed out). It copies the index to `lea-commit/index` in the worktree's git directory, reused
   and overwritten at each commit, beside `lea-push` (#381); nothing is left in `/tmp`.
+- `gh pr merge --delete-branch` deletes the agent's remote branch again (#451). gh escapes the
+  slashes of the ref it deletes (`DELETE …/git/refs/heads%2Ffix%2Fx`), and lea-proxy's forge
+  forwarder answered 400 to any escaped slash, so merged branches piled up. It now accepts
+  escaped slashes in the ref name of `git/refs`, `git/ref` and `git/matching-refs` only, and
+  matches the call as its plain form: no call is allowed that the plain form was not. The merge
+  grant still deletes only the PR's head, the agent's own branch.
 
 ## v0.15.1 (2026-11-09)
 

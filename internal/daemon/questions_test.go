@@ -374,3 +374,48 @@ func TestQuestionListAndDrop(t *testing.T) {
 		t.Fatalf("a dropped question opened: %q", text)
 	}
 }
+
+// lea web answers the tower's open question (#415): the tower gets the answer as the user's
+// request, then lea's note that the question is answered and which one opens; a queued question
+// is not answered, and no agent reaches the method.
+func TestQuestionAnswerFromTheWeb(t *testing.T) {
+	e := start(t)
+	tw := spawned(t, e, "tower", "lead", "")
+	spawned(t, e, "l1", "dev", tw)
+	q1 := userAsk(t, e, "tower", map[string]any{"question": "deploy?", "from": "l1"})
+	q2 := userAsk(t, e, "tower", map[string]any{"question": "merge?"})
+	if err := call(t, e.bus, "tower", "question_answer", map[string]any{"id": q1.ID, "text": "yes"}, nil); err == nil ||
+		!strings.Contains(err.Error(), "host only") {
+		t.Fatalf("an agent answered a question: %v", err)
+	}
+	for _, p := range []map[string]any{{"id": q2.ID, "text": "no"}, {"id": 99, "text": "no"}, {"id": q1.ID, "text": "  "}} {
+		if err := call(t, e.api, "", "question_answer", p, nil); err == nil {
+			t.Fatalf("answered %v", p)
+		}
+	}
+	var r struct {
+		Answered questionView `json:"answered"`
+		Open     questionView `json:"open"`
+	}
+	if err := call(t, e.api, "", "question_answer", map[string]any{"id": q1.ID, "text": "yes, deploy"}, &r); err != nil {
+		t.Fatal(err)
+	}
+	if r.Answered.ID != q1.ID || r.Answered.State != "answered" || r.Open.ID != q2.ID || r.Open.State != "open" {
+		t.Fatalf("answer = %+v", r)
+	}
+	ms := inboxOf(t, e, "tower")
+	if len(ms) != 2 || ms[0].From != "user" || ms[0].Kind != "request" || !strings.Contains(ms[0].Text, "yes, deploy") ||
+		!strings.Contains(ms[1].Text, "question #1 is answered") || !strings.Contains(ms[1].Text, "Relay the answer to lea-a/l1") ||
+		!strings.Contains(ms[1].Text, "Question #2 is now open") || !strings.Contains(ms[1].Text, "merge?") {
+		t.Fatalf("tower inbox = %+v", ms)
+	}
+	if err := call(t, e.api, "", "question_answer", map[string]any{"id": q1.ID, "text": "again"}, nil); err == nil ||
+		!strings.Contains(err.Error(), "only the open question") {
+		t.Fatalf("answered twice: %v", err)
+	}
+	// The next prompt in the terminal answers the question that opened, not the one already answered.
+	turnEnds(t, e, "tower")
+	if text := prompt(t, e, "tower", false); !strings.Contains(text, "question #2 is answered") {
+		t.Fatalf("next prompt: %q", text)
+	}
+}
