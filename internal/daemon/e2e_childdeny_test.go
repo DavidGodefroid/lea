@@ -6,6 +6,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"syscall"
 	"testing"
 	"time"
@@ -100,17 +101,42 @@ func TestClaudeChildDenyListLeavesOutHostPluginsAndMCPServers(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// sees runs lea-session as lea-agent does (agent, extra environment) and gives the probes
-	// its model's first request offers.
+	// sees runs lea-session as lea-agent does (agent, extra environment) and gives the probes the
+	// model's requests offer. Claude Code connects the MCP servers while the session starts, and
+	// its first request may go out before they answered: until a request offers every probe of
+	// ready, the fake model calls Read (a missing file), which brings another request; once one
+	// does, it calls Read once more a second later, so a slower server shows too, then answers.
 	session, err := filepath.Abs("../../image/lea-session")
 	if err != nil {
 		t.Fatal(err)
 	}
-	sees := func(agent string, env ...string) map[string]bool {
+	isTurn := func(body string) bool { return strings.Contains(body, `"hi"`) && strings.Contains(body, `"Bash"`) }
+	probes := []string{"FOOSKILLPROBE", "GMAILPROBE", "LOCKSQLPROBE", "BROWSERPROBE"}
+	read := `{"file_path":"` + filepath.Join(e.wd, "no-such-file") + `"}`
+	sees := func(agent string, ready []string, env ...string) map[string]bool {
 		t.Helper()
+		var settled, answered atomic.Bool
 		e.mu.Lock()
 		e.bodies = nil
+		e.answer = func(body string) (string, string) {
+			if !isTurn(body) {
+				return "", ""
+			}
+			for _, p := range ready {
+				if !strings.Contains(body, p) {
+					time.Sleep(300 * time.Millisecond)
+					return "Read", read
+				}
+			}
+			if settled.CompareAndSwap(false, true) {
+				time.Sleep(time.Second)
+				return "Read", read
+			}
+			answered.Store(true)
+			return "", ""
+		}
 		e.mu.Unlock()
+		defer func() { e.mu.Lock(); e.answer = nil; e.mu.Unlock() }()
 		c := exec.Command("python3", "-I", "-c", claudePty, "90", "sh", session, "hi")
 		c.Dir = e.wd
 		c.Env = append(append(append([]string{}, e.env...), "LEA_AGENT="+agent, "LEA_BIN="+e.lea, "LEA_CLAUDE_SETTINGS="+e.sf,
@@ -121,52 +147,33 @@ func TestClaudeChildDenyListLeavesOutHostPluginsAndMCPServers(t *testing.T) {
 		if err := c.Start(); err != nil {
 			t.Fatal(err)
 		}
-		// The model's first request is all this needs.
 		defer func() { syscall.Kill(-c.Process.Pid, syscall.SIGKILL); c.Wait() }()
 		for end := time.Now().Add(90 * time.Second); ; time.Sleep(200 * time.Millisecond) {
 			e.mu.Lock()
 			got := map[string]bool{}
-			seen := false
+			turns := 0
 			for _, body := range e.bodies {
-				if !strings.Contains(body, `"hi"`) || !strings.Contains(body, `"Bash"`) {
+				if !isTurn(body) {
 					continue // Claude's own side requests
 				}
-				seen = true
-				for _, p := range []string{"FOOSKILLPROBE", "GMAILPROBE", "LOCKSQLPROBE", "BROWSERPROBE"} {
+				turns++
+				for _, p := range probes {
 					got[p] = got[p] || strings.Contains(body, p)
 				}
 			}
 			e.mu.Unlock()
-			if seen {
+			if answered.Load() {
 				return got
 			}
 			if time.Now().After(end) {
-				e.mu.Lock()
-				var heads []string
-				for _, b := range e.bodies {
-					heads = append(heads, b[:min(len(b), 300)])
-				}
-				e.mu.Unlock()
-				t.Fatalf("lea-session for %s: no request of the model in 90 s: %q\n%s", agent, heads, out.String())
+				t.Fatalf("lea-session for %s: no settled turn in 90 s (%d requests, probes %v)\n%s", agent, turns, got, out.String())
 			}
 		}
 	}
-	// Claude Code connects the MCP servers while the session starts: a first request sent before
-	// they answered offers none. The kept servers show it: such a run is run again.
-	seesOnceReady := func(agent string, env ...string) map[string]bool {
-		t.Helper()
-		var got map[string]bool
-		for i := 0; i < 5; i++ {
-			if got = sees(agent, env...); got["BROWSERPROBE"] && got["LOCKSQLPROBE"] {
-				break
-			}
-		}
-		return got
-	}
-	if got := seesOnceReady("dev"); !got["FOOSKILLPROBE"] || !got["GMAILPROBE"] || !got["LOCKSQLPROBE"] || !got["BROWSERPROBE"] {
+	if got := sees("dev", []string{"BROWSERPROBE", "LOCKSQLPROBE", "GMAILPROBE"}); !got["FOOSKILLPROBE"] || !got["GMAILPROBE"] || !got["LOCKSQLPROBE"] || !got["BROWSERPROBE"] {
 		t.Fatalf("the lead does not see the host's plugin and servers: %v", got)
 	}
-	got := seesOnceReady("kid", "LEA_CHILD_PLUGINS=foo", "LEA_CHILD_MCP=gmail,locksql")
+	got := sees("kid", []string{"BROWSERPROBE", "LOCKSQLPROBE"}, "LEA_CHILD_PLUGINS=foo", "LEA_CHILD_MCP=gmail,locksql")
 	if got["FOOSKILLPROBE"] || got["GMAILPROBE"] {
 		t.Fatalf("the child sees a denied plugin or server: %v", got)
 	}
