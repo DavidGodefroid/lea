@@ -32,6 +32,10 @@ var Defs = []Def{
 		Help:      "the most children of leads that run at once, host-wide (0: no cap); your own sessions and the leads do not count",
 		AppliesTo: "new spawns: a spawn at the cap waits (queue: true) or is refused; running agents are never stopped",
 		Check:     count("max_running", 0, 100)},
+	{Name: "relay_tokens", Env: "LEA_RELAY_TOKENS", Default: "120000",
+		Help:      "the context size, in tokens, at which a control tower relays a child to a fresh agent (0: above 50% of its context window)",
+		AppliesTo: "the tower's next board check (agents_list relay: true); running agents are never stopped",
+		Check:     count("relay_tokens", 0, 10000000)},
 }
 
 // Lookup is the live key named name (max_running) or its configuration key (LEA_MAX_RUNNING).

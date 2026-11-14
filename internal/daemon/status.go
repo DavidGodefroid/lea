@@ -30,15 +30,19 @@ func (d *Daemon) statusReport(ctx context.Context, o Origin, me string, raw json
 		return nil, errors.New("status_report: agents only")
 	}
 	var p struct {
-		CtxPct  int      `json:"ctx_pct"`
-		CostUSD float64  `json:"cost_usd"`
-		Paths   []string `json:"paths"`
-		Limits  []struct {
+		CtxPct int `json:"ctx_pct"`
+		// CtxTokens is the context size in tokens (#422); a status line that does not send it
+		// (an older lea) leaves it unknown.
+		CtxTokens int      `json:"ctx_tokens"`
+		CostUSD   float64  `json:"cost_usd"`
+		Paths     []string `json:"paths"`
+		Limits    []struct {
 			Window   string `json:"window"`
 			Pct      int    `json:"pct"`
 			ResetsAt int64  `json:"resets_at"`
 		} `json:"limits"`
 	}
+	p.CtxTokens = -1
 	if err := json.Unmarshal(raw, &p); err != nil {
 		return nil, err
 	}
@@ -61,6 +65,9 @@ func (d *Daemon) statusReport(ctx context.Context, o Origin, me string, raw json
 	if p.CtxPct < -1 || p.CtxPct > 100 {
 		return nil, errors.New("ctx_pct must be -1 (unknown) or 0 to 100")
 	}
+	if p.CtxTokens < -1 || p.CtxTokens >= 1e8 {
+		return nil, errors.New("ctx_tokens must be -1 (unknown) or 0 to 1e8")
+	}
 	if p.CostUSD != -1 && (p.CostUSD < 0 || p.CostUSD >= 1e6) {
 		return nil, errors.New("cost_usd must be -1 (unknown) or 0 to 1e6")
 	}
@@ -73,7 +80,7 @@ func (d *Daemon) statusReport(ctx context.Context, o Origin, me string, raw json
 		}
 	}
 	d.recordLimits(me, ws)
-	changed, err := d.st.SetUsage(me, store.Usage{CtxPct: p.CtxPct, CostUSD: math.Round(p.CostUSD*100) / 100})
+	changed, err := d.st.SetUsage(me, store.Usage{CtxPct: p.CtxPct, CtxTokens: p.CtxTokens, CostUSD: math.Round(p.CostUSD*100) / 100})
 	if err != nil {
 		return nil, err
 	}

@@ -55,7 +55,7 @@ func TestRunReportsContextCostAndPathNames(t *testing.T) {
 	if out != "Opus · ctx ▓▓▓░░░░░ 42%" {
 		t.Fatalf("out=%q", out)
 	}
-	want := Report{CtxPct: 42, CostUSD: 1.23, Paths: []string{"context_window.context_window_size",
+	want := Report{CtxPct: 42, CtxTokens: -1, CostUSD: 1.23, Paths: []string{"context_window.context_window_size",
 		"context_window.used_percentage", "cost.total_cost_usd", "list[]", "model.display_name", "session_id",
 		"workspace.current_dir"}}
 	if !reflect.DeepEqual(got, []Report{want}) {
@@ -69,7 +69,18 @@ func TestRunReportsContextCostAndPathNames(t *testing.T) {
 func TestRunComputesContextFromTokens(t *testing.T) {
 	_, got := run(t, `{"context_window":{"context_window_size":200000,"current_usage":{"input_tokens":50000,
 	  "cache_read_input_tokens":30000,"cache_creation_input_tokens":20000}}}`)
-	if len(got) != 1 || got[0].CtxPct != 50 || got[0].CostUSD != -1 {
+	if len(got) != 1 || got[0].CtxPct != 50 || got[0].CtxTokens != 100000 || got[0].CostUSD != -1 {
+		t.Fatalf("reports=%+v", got)
+	}
+	// Claude's own percent wins; the tokens still come from the last request (#422).
+	_, got = run(t, `{"context_window":{"used_percentage":18,"context_window_size":1000000,"current_usage":{"input_tokens":2000,
+	  "cache_read_input_tokens":180000}}}`)
+	if len(got) != 1 || got[0].CtxPct != 18 || got[0].CtxTokens != 182000 {
+		t.Fatalf("reports=%+v", got)
+	}
+	// Without the tokens (an older Claude Code), only the percent is known.
+	_, got = run(t, `{"context_window":{"used_percentage":18,"context_window_size":1000000}}`)
+	if len(got) != 1 || got[0].CtxPct != 18 || got[0].CtxTokens != -1 {
 		t.Fatalf("reports=%+v", got)
 	}
 }
@@ -156,10 +167,10 @@ func TestPostReachesTheDaemon(t *testing.T) {
 	}
 	pctx, pcancel := context.WithTimeout(ctx, 2*time.Second)
 	defer pcancel()
-	if ans, err := Post(pctx, bus, "dev", Report{CtxPct: 7, CostUSD: 0.5, Paths: []string{"cost.total_cost_usd"}}); err != nil || len(ans.LocksAdded) != 0 || ans.LoxRun != "" {
+	if ans, err := Post(pctx, bus, "dev", Report{CtxPct: 7, CtxTokens: 14000, CostUSD: 0.5, Paths: []string{"cost.total_cost_usd"}}); err != nil || len(ans.LocksAdded) != 0 || ans.LoxRun != "" {
 		t.Fatalf("answer %+v, err %v", ans, err)
 	}
-	if u, _ := st.Usages("lea-a"); u["lea-a/dev"] != (store.Usage{CtxPct: 7, CostUSD: 0.5}) {
+	if u, _ := st.Usages("lea-a"); u["lea-a/dev"] != (store.Usage{CtxPct: 7, CtxTokens: 14000, CostUSD: 0.5}) {
 		t.Fatalf("usages=%+v", u)
 	}
 	if ans, err := Post(pctx, bus, "", Report{}); err != nil || ans.LocksAdded != nil || ans.LoxRun != "" {

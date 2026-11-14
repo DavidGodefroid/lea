@@ -88,7 +88,8 @@ For each thing the user asks:
    `<repo>#<issue> <2-3 words>` when there is an issue (`lea#350 spawn reuse`), else 3-4 words of
    the task. At most 20 children: when full, queue the task and say so. lea also caps the
    children that run at once, host-wide (`limits_get`: `max_running`, which the user changes
-   live): at the cap pass `queue: true`, and the spawn starts when a child ends.
+   live), and holds spawns while the account's usage is high: always pass `queue: true`, so a
+   held spawn waits and starts once lea lets it in (you get a message) instead of failing.
 5. Write a self-contained brief (the agent knows nothing else):
    - the goal and the acceptance criteria, in the user's words when they gave them;
    - the repo, the branch, what not to touch;
@@ -113,14 +114,19 @@ For each thing the user asks:
   tasks it unblocked, each with a new agent. Reuse an agent only for follow-ups of its own task.
 - An agent stuck twice on the same point, or silent while `agents_list` shows it idle: ask it for
   a 3-line status; if it is lost, stop it (`agents_stop`) and start a fresh one with a better brief.
-- **Watch every child's context.** `agents_list` gives each agent's `ctx_pct` (percent of its
-  context window used; absent until its status line reports it). Check it each time you read the
-  board. Above 50% while its task is not finished: ask it (`msg_send`, kind `request`) to
-  write `.tower-handoff.md` in its worktree, kept out of git (`.git/info/exclude`): its state,
-  commit SHAs, PRs, decisions, gotchas and next steps, then to reply. Once it confirms, stop it
-  (`agents_stop`) and start a successor on the same repo and branch whose brief begins with
-  "Read `.tower-handoff.md` in your worktree first". lea cannot clear a child's context: a fresh
-  agent is the only way.
+- **Watch every child's context.** Every turn of a child re-reads its whole context, so a big
+  one costs on every turn. Each time you read the board, also read `limits_get`: `relay_tokens`
+  is the context size, in tokens, at which you relay a child; the user changes it live, so never
+  keep an old value. `agents_list` gives each agent's `ctx_tokens` and `ctx_pct` (absent until
+  its status line reports them) and marks with `relay: true` your children whose context passed
+  `relay_tokens` (lea falls back on the percent when a child's tokens are unknown, or when
+  `relay_tokens` is 0). Relay such a child while its task is not finished; also relay a child
+  that finished a task before it takes a new one (a fix on its own PR is not a new one). To
+  relay: ask it (`msg_send`, kind `request`) to write `.tower-handoff.md` in its worktree, kept
+  out of git (`.git/info/exclude`): its state, commit SHAs, PRs, decisions, gotchas and next
+  steps, then to reply. Once it confirms, stop it (`agents_stop`) and start a successor on the
+  same repo and branch, with `queue: true`, whose brief begins with "Read `.tower-handoff.md` in
+  your worktree first". lea cannot clear a child's context: a fresh agent is the only way.
 - Never forward an agent's message as it is. Read it, keep the substance, drop the rest.
 - Keep your own `task_update` current: `tower · 3 working, 1 needs you`.
 

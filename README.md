@@ -1111,7 +1111,7 @@ lea web [--open] [--port N]  # the deck in your browser, on 127.0.0.1 (see The d
 lea requests                 # what waits for you; lea approve ID [always], lea deny ID [reason]
 lea questions [drop ID]      # the control towers' questions to you: the open one, then the queue
 lea hold [--off] [AGENT]     # hold the messages agents send the tower while you answer it; --off releases them
-lea limits [set KEY VALUE | reset KEY]  # the live limits (max_running), changed on the running lea at once
+lea limits [set KEY VALUE | reset KEY]  # the live limits (max_running, relay_tokens), changed on the running lea at once
 lea config deck on|off       # the deck, or your own tool (lea config tool CMD...), from the next lea
 lea config claude [KEY ...]  # Claude's base settings for your agents (defaultMode, allow, deny, env...)
 lea new [name] [-- args]     # one more agent (its CLI's arguments after --; -p provider, -m model)
@@ -1217,6 +1217,7 @@ read-only. The screen runs in the deck on the host: agents cannot open or drive 
 | `LEA_STACK_IDLE` | `10` | minutes an agent stays idle before lea stops (not removes) the containers it started in the nested Podman (`0`: never); `lea board` lists what it freed |
 | `LEA_QUESTION_REMIND` | `120` | minutes a control tower's question waits for your answer before the tower asks it again, once, prefixed with `reminder:` (`0`: never) |
 | `LEA_MAX_RUNNING` | `3` | the most children of leads that run at once, host-wide (`0`: no cap); a [live limit](#live-limits): `lea limits set max_running N` applies it without a restart |
+| `LEA_RELAY_TOKENS` | `120000` | the context size, in tokens, at which the control tower relays a child to a fresh agent (`0`: above 50 % of its window); a [live limit](#live-limits): `lea limits set relay_tokens N` applies at the tower's next board check |
 | `LEA_HOLD_MAX` | `30` | minutes a pause of an inbox (the deck's `H`, `lea hold`) lasts before lea releases it (`0`: never) |
 | `LEA_AGENT_CPUS` | `4` | each agent's CPU window, the least shared CPUs: the agent, its tools and its nested containers run there, so `nproc`, PHPStan, Go… see that many CPUs (`0`: no window) |
 | `LEA_HEAVY_SLOTS`, `LEA_HEAVY_WORKERS` | `0` (¾ of the CPUs ÷ workers), `4` | heavy jobs (`lea heavy -- <command>`): how many run at once per container, and the CPUs and workers each gets |
@@ -1590,10 +1591,21 @@ tower can adapt; no agent can set one.
 | Limit | Default | What it caps |
 |---|---|---|
 | `max_running` (`LEA_MAX_RUNNING`) | `3` | the children of leads that run at once, host-wide (`0`: no cap). Your own sessions and the leads do not count. At the cap a lead's `agents_spawn` is refused (`3 children already running (limit max_running 3): retry with queue: true or wait for one to end`), or with `queue: true` waits and starts once a child ends; `lea board` and `agents_list` show why (`queued: max_running 3/3`). A spawn request a lead accepts goes through the same check |
+| `relay_tokens` (`LEA_RELAY_TOKENS`) | `120000` | the context size, in tokens, at which the [control tower](#control-tower) relays a child: it asks the child for `.tower-handoff.md`, stops it and starts a fresh successor on the same branch (`0`: above 50 % of the child's context window). `agents_list` marks the tower's children past it with `relay: true`, falling back on the percent when a child's tokens are unknown (Codex, an older Claude Code). The tower reads it at each board check |
 
 A change never stops a running agent: a cap lowered below what runs holds new spawns until
 enough children end; a raised one starts the queued spawns at once, up to the new cap (one per
 pressure sample).
+
+### Cost
+
+Every turn of an agent re-reads its whole context (cache reads), so usage grows with
+**concurrent agents × context size × model**: seven children at 200–300 k tokens each burn a
+5-hour subscription window in about two hours. The live limits bound the first two factors:
+`max_running` caps the children that run at once, `relay_tokens` the context a child carries
+before the tower hands its task to a fresh agent. The deck and `agents_list` show each agent's
+context size next to its percent (`182k · 18%`), so a big one is easy to spot. The model is the
+tower's choice per task.
 
 ## Host pressure
 

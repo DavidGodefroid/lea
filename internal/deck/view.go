@@ -608,7 +608,8 @@ func (m Model) row(a Agent, inner int, fi int) []string {
 	if sel {
 		mark = c.mark
 	}
-	const profW, ctxW = 6, 4
+	const profW = 6
+	ctxW := m.ctxWidth()
 	in := lipgloss.Width(pad)                      // where the detail starts
 	nameW := inner - in - (1 + profW) - (1 + ctxW) // mark, gap, glyph, space
 	g, gc := stateMark(shownState(a), a.Updated, m.now().Unix(), m.frame, m.ascii)
@@ -628,7 +629,7 @@ func (m Model) row(a Agent, inner int, fi int) []string {
 		bg(plain).Render(" ") +
 		bg(muted).Render(padLeft(fit(a.Profile, profW, c), profW)) +
 		bg(plain).Render(" ") +
-		bg(muted).Render(padLeft(ctxText(a.CtxPct), ctxW))
+		bg(muted).Render(padLeft(ctxText(a.CtxPct, a.CtxTokens), ctxW))
 	detail := fit(m.detail(a, inner-in), inner-in, c)
 	line2 := bg(plain).Render(pad) + bg(muted).Render(padRight(detail, inner-in))
 	lines := []string{line1, line2}
@@ -745,12 +746,36 @@ func (m Model) shortStatus(a Agent) string {
 // with one would pass for a label of lea's, so the agent's text loses them at its start.
 const leaGlyphs = " \t◆●◐○⚠✉❓⏸↳⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"
 
-// ctxText is a context percentage ("42%"), empty when unknown.
-func ctxText(p int) string {
-	if p < 0 || p > 100 {
-		return ""
+// ctxText is an agent's context: its size and percentage ("182k · 18%", #422), the percentage
+// alone ("42%") while its size is unknown, empty when both are.
+func ctxText(p, tokens int) string {
+	pct := ""
+	if p >= 0 && p <= 100 {
+		pct = fmt.Sprintf("%d%%", p)
 	}
-	return fmt.Sprintf("%d%%", p)
+	if tokens <= 0 {
+		return pct
+	}
+	n := fmt.Sprint(tokens)
+	switch {
+	case tokens >= 999_500:
+		n = strings.TrimSuffix(fmt.Sprintf("%.1f", float64(tokens)/1e6), ".0") + "M"
+	case tokens >= 1000:
+		n = fmt.Sprintf("%dk", (tokens+500)/1000)
+	}
+	if pct == "" {
+		return n
+	}
+	return n + " · " + pct
+}
+
+// ctxWidth is the context column's width: the widest of the agents' (at least "100%").
+func (m Model) ctxWidth() int {
+	w := 4
+	for _, a := range m.agents {
+		w = max(w, lipgloss.Width(ctxText(a.CtxPct, a.CtxTokens)))
+	}
+	return w
 }
 
 // shortPath is the last two components of a directory: enough to tell projects apart.

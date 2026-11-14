@@ -123,6 +123,16 @@ tool() {
   grep -q 'prefixed with `reminder:`' "$k"
 }
 
+@test "the skill relays a child on the live relay_tokens and spawns with queue: true (#422)" {
+  k="$P/skills/control-tower/SKILL.md"
+  grep -qF 'read `limits_get`: `relay_tokens`' "$k"
+  grep -qF '`ctx_tokens`' "$k"
+  grep -qF '`relay: true`' "$k"
+  grep -qF 'always pass `queue: true`' "$k"
+  grep -qF 'also relay a child' "$k"
+  ! grep -qE 'Above 50%|50 ?%' "$k"
+}
+
 @test "the skill replies in the language of the user's latest message (#396)" {
   k="$P/skills/control-tower/SKILL.md"
   grep -q '^## Language$' "$k"

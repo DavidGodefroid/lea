@@ -9,6 +9,7 @@ import (
 
 	"github.com/DavidGodefroid/lea/internal/limits"
 	"github.com/DavidGodefroid/lea/internal/roles"
+	"github.com/DavidGodefroid/lea/internal/store"
 )
 
 // Live limits (#420, #404): the user tightens or loosens them on a running lea (lea limits set,
@@ -79,6 +80,25 @@ func (d *Daemon) limitLocked(def limits.Def) string {
 func (d *Daemon) maxRunningLocked() int {
 	def, _ := limits.Lookup("max_running")
 	return def.Int(d.limitLocked(def))
+}
+
+// relayTokens is the live relay_tokens (#422): the context size at which a tower relays a child,
+// 0 for the 50% rule.
+func (d *Daemon) relayTokens() int {
+	def, _ := limits.Lookup("relay_tokens")
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	return def.Int(d.limitLocked(def))
+}
+
+// relayDue says whether a child with usage u is due for a relay at the relay_tokens at: its
+// context tokens reached at, or, when at is 0 or its tokens are unknown, its context passed 50%
+// of its window.
+func relayDue(u store.Usage, at int) bool {
+	if at > 0 && u.CtxTokens >= 0 {
+		return u.CtxTokens >= at
+	}
+	return u.CtxPct > 50
 }
 
 // childrenLocked counts what max_running caps: the children of leads that run, host-wide (not

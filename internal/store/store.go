@@ -190,6 +190,7 @@ var agentColumns = [][2]string{
 	{"incarnation", "TEXT NOT NULL DEFAULT ''"},
 	{"woken", "INTEGER NOT NULL DEFAULT 0"},
 	{"hold_since", "INTEGER NOT NULL DEFAULT 0"},
+	{"ctx_tokens", "INTEGER NOT NULL DEFAULT -1"},
 }
 
 // requestColumns are the spawn_requests columns added after it was created.
@@ -463,7 +464,7 @@ func (s *Store) Register(n NewAgent, c Caps, now int64) (Agent, error) {
 			return Agent{}, err
 		}
 		_, err = tx.Exec(`UPDATE agents SET profile=?, workdir=?, created=?, updated=?, state='unknown', session_id='',
-			ctx_pct=-1, cost_usd=-1, role=?, parent=?, repo=?, branch=?, task_id=0, label='', args='', prompt='', paused=0, subagents=0, limit_until=0, limit_tries=0, woken=0, hold_since=0, model=?, incarnation=? WHERE key=?`,
+			ctx_pct=-1, ctx_tokens=-1, cost_usd=-1, role=?, parent=?, repo=?, branch=?, task_id=0, label='', args='', prompt='', paused=0, subagents=0, limit_until=0, limit_tries=0, woken=0, hold_since=0, model=?, incarnation=? WHERE key=?`,
 			n.Profile, n.Workdir, now, now, n.Role, n.Parent, n.Repo, n.Branch, n.Model, inc, key)
 	} else {
 		_, err = tx.Exec(`INSERT INTO agents(key, container, name, profile, workdir, created, updated, role, parent, repo, branch, model, incarnation)
@@ -771,18 +772,20 @@ func (s *Store) ForgetAgent(key string) error {
 	return tx.Commit()
 }
 
-// Usage is an agent's latest context use (percent) and cost (USD), -1 when unknown. It lives in
-// the agents table (ctx_pct, cost_usd) but not in Agent: only the status line writes it.
+// Usage is an agent's latest context use (percent and tokens) and cost (USD), -1 when unknown.
+// It lives in the agents table (ctx_pct, ctx_tokens, cost_usd) but not in Agent: only the status
+// line writes it.
 type Usage struct {
-	CtxPct  int     `json:"ctx_pct"`
-	CostUSD float64 `json:"cost_usd"`
+	CtxPct    int     `json:"ctx_pct"`
+	CtxTokens int     `json:"ctx_tokens"`
+	CostUSD   float64 `json:"cost_usd"`
 }
 
 // SetUsage records an agent's usage and reports whether it changed (an unknown key changes
 // nothing).
 func (s *Store) SetUsage(key string, u Usage) (bool, error) {
-	res, err := s.db.Exec(`UPDATE agents SET ctx_pct=?, cost_usd=? WHERE key=? AND (ctx_pct<>? OR cost_usd<>?)`,
-		u.CtxPct, u.CostUSD, key, u.CtxPct, u.CostUSD)
+	res, err := s.db.Exec(`UPDATE agents SET ctx_pct=?, ctx_tokens=?, cost_usd=? WHERE key=? AND (ctx_pct<>? OR ctx_tokens<>? OR cost_usd<>?)`,
+		u.CtxPct, u.CtxTokens, u.CostUSD, key, u.CtxPct, u.CtxTokens, u.CostUSD)
 	if err != nil {
 		return false, err
 	}
@@ -792,7 +795,7 @@ func (s *Store) SetUsage(key string, u Usage) (bool, error) {
 
 // Usages returns the usage of every agent of a container, by key.
 func (s *Store) Usages(container string) (map[string]Usage, error) {
-	rows, err := s.db.Query(`SELECT key, ctx_pct, cost_usd FROM agents WHERE container=?`, container)
+	rows, err := s.db.Query(`SELECT key, ctx_pct, ctx_tokens, cost_usd FROM agents WHERE container=?`, container)
 	if err != nil {
 		return nil, err
 	}
@@ -801,7 +804,7 @@ func (s *Store) Usages(container string) (map[string]Usage, error) {
 	for rows.Next() {
 		var k string
 		var u Usage
-		if err := rows.Scan(&k, &u.CtxPct, &u.CostUSD); err != nil {
+		if err := rows.Scan(&k, &u.CtxPct, &u.CtxTokens, &u.CostUSD); err != nil {
 			return nil, err
 		}
 		out[k] = u

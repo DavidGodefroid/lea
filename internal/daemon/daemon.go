@@ -519,6 +519,12 @@ type agentView struct {
 	// CtxPct is the percent of its context window the agent's status line last reported; absent
 	// while unknown.
 	CtxPct *int `json:"ctx_pct,omitempty"`
+	// CtxTokens is its context size in tokens, from the same report; absent while unknown (an
+	// older Claude Code, Codex).
+	CtxTokens *int `json:"ctx_tokens,omitempty"`
+	// Relay marks a child of the caller whose context passed the live relay_tokens (#422): its
+	// tower relays it to a fresh agent.
+	Relay bool `json:"relay,omitempty"`
 	// Subagents counts the subagents the agent still runs (its Subagent hooks), for display.
 	Subagents int  `json:"subagents,omitempty"`
 	You       bool `json:"you,omitempty"`
@@ -532,6 +538,7 @@ func (d *Daemon) agentsList(o Origin, me string) ([]agentView, error) {
 	if err != nil {
 		return nil, err
 	}
+	relayAt := d.relayTokens()
 	usages := map[string]map[string]store.Usage{}
 	subs := map[string]map[string]int{}
 	out := []agentView{}
@@ -548,6 +555,10 @@ func (d *Daemon) agentsList(o Origin, me string) ([]agentView, error) {
 			if p := u[a.Key].CtxPct; p >= 0 {
 				v.CtxPct = &p
 			}
+			if n := u[a.Key].CtxTokens; n >= 0 {
+				v.CtxTokens = &n
+			}
+			v.Relay = me != "" && a.Parent == me && relayDue(u[a.Key], relayAt)
 			n, ok := subs[a.Container]
 			if !ok {
 				if n, err = d.st.Subagents(a.Container); err != nil {

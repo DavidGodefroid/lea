@@ -275,6 +275,31 @@ func TestViewKeepsWidthWithWideCombiningAndBidi(t *testing.T) {
 	}
 }
 
+// The row shows the context's size next to its percentage once the status line reports it
+// (#422); the column widens to the widest.
+func TestViewShowsContextTokens(t *testing.T) {
+	for _, tc := range []struct {
+		pct, tokens int
+		want        string
+	}{
+		{18, 182000, "182k · 18%"}, {42, -1, "42%"}, {-1, 950, "950"}, {-1, -1, ""}, {100, 1000000, "1M · 100%"},
+		{25, 1250000, "1.2M · 25%"}, {99, 999600, "1M · 99%"}, {7, 0, "7%"},
+	} {
+		if got := ctxText(tc.pct, tc.tokens); got != tc.want {
+			t.Errorf("ctxText(%d, %d)=%q, want %q", tc.pct, tc.tokens, got, tc.want)
+		}
+	}
+	a := ag("a", "idle", clock.Unix())
+	a.CtxPct, a.CtxTokens = 18, 182000
+	b := ag("b", "idle", clock.Unix())
+	b.CtxPct, b.CtxTokens = 5, -1
+	m := sized(loaded(t, &fakeAPI{}, "lea-a/a", a, b), 40, 8)
+	ls := viewLines(m)
+	if !strings.HasSuffix(ls[1], " claude 182k · 18%│") || !strings.HasSuffix(ls[3], " claude         5%│") {
+		t.Fatalf("rows %q / %q", ls[1], ls[3])
+	}
+}
+
 // The row shows the context; neither the cost nor the unread count is shown.
 func TestViewShowsContextNotUnreadNorCost(t *testing.T) {
 	a := ag("a", "idle", clock.Unix())

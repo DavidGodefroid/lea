@@ -21,14 +21,15 @@ import (
 	"github.com/DavidGodefroid/lea/internal/wire"
 )
 
-// Report is what the status line tells the daemon: context use and cost (-1 when unknown), the
-// account's rate-limit windows (numbers only: auto-resume waits for their reset, issue #20), and
-// the key paths of the JSON Claude sent, never their values.
+// Report is what the status line tells the daemon: context use (percent and tokens) and cost (-1
+// when unknown), the account's rate-limit windows (numbers only: auto-resume waits for their
+// reset, issue #20), and the key paths of the JSON Claude sent, never their values.
 type Report struct {
-	CtxPct  int      `json:"ctx_pct"`
-	CostUSD float64  `json:"cost_usd"`
-	Limits  []Limit  `json:"limits,omitempty"`
-	Paths   []string `json:"paths"`
+	CtxPct    int      `json:"ctx_pct"`
+	CtxTokens int      `json:"ctx_tokens"`
+	CostUSD   float64  `json:"cost_usd"`
+	Limits    []Limit  `json:"limits,omitempty"`
+	Paths     []string `json:"paths"`
 }
 
 // Limit is one rate-limit window: "5h" or "7d", its used share (0 to 100) and when it resets
@@ -59,6 +60,9 @@ type Answer struct {
 	Held            bool `json:"held"`
 	HeldCount       int  `json:"held_count"`
 }
+
+// maxCtxTokens bounds a context size in tokens: a larger one is unknown (the daemon refuses it).
+const maxCtxTokens = 100_000_000
 
 // loxRunOff is what the line says while no lox run serves the workspace's locks.
 const loxRunOff = " · no lox run: start it in the projects directory"
@@ -158,19 +162,21 @@ func Post(ctx context.Context, sock, agent string, r Report) (Answer, error) {
 // (phase 0 V2): each candidate is tried in turn, and a missing, non-numeric or out-of-range value
 // is unknown (-1).
 func parse(doc map[string]any) Report {
-	r := Report{CtxPct: -1, CostUSD: -1, Paths: paths(doc)}
+	r := Report{CtxPct: -1, CtxTokens: -1, CostUSD: -1, Paths: paths(doc)}
+	// The context in tokens is what the last request sent: its input, written and read cache.
+	used, seen := 0.0, false
+	for _, k := range []string{"input_tokens", "cache_creation_input_tokens", "cache_read_input_tokens"} {
+		if n, ok := num(doc, "context_window", "current_usage", k); ok && n >= 0 {
+			used, seen = used+n, true
+		}
+	}
+	if seen && used < maxCtxTokens {
+		r.CtxTokens = int(math.Round(used))
+	}
 	if p, ok := num(doc, "context_window", "used_percentage"); ok && p >= 0 && p <= 100 {
 		r.CtxPct = int(math.Round(p))
-	} else if size, ok := num(doc, "context_window", "context_window_size"); ok && size > 0 {
-		used, seen := 0.0, false
-		for _, k := range []string{"input_tokens", "cache_creation_input_tokens", "cache_read_input_tokens"} {
-			if n, ok := num(doc, "context_window", "current_usage", k); ok && n >= 0 {
-				used, seen = used+n, true
-			}
-		}
-		if seen {
-			r.CtxPct = int(math.Min(100, math.Round(used/size*100)))
-		}
+	} else if size, ok := num(doc, "context_window", "context_window_size"); ok && size > 0 && seen {
+		r.CtxPct = int(math.Min(100, math.Round(used/size*100)))
 	}
 	if c, ok := num(doc, "cost", "total_cost_usd"); ok && c >= 0 && c < 1e6 {
 		r.CostUSD = math.Round(c*100) / 100
