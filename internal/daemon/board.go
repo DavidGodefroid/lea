@@ -122,6 +122,34 @@ type boardView struct {
 	Heavy []heavyView `json:"heavy"`
 	// Pressure is the host's gauge, then each container's (#132, P2), none without a recent sample.
 	Pressure []Gauge `json:"pressure,omitempty"`
+	// Queued is the spawns that wait to start, each with why (#420): "queued: max_running 3/3".
+	Queued []queuedView `json:"queued,omitempty"`
+}
+
+// queuedView is a queued spawn as the board and agents_list show it. Label is the lead's text.
+type queuedView struct {
+	ID        int64  `json:"id"`
+	Container string `json:"container"`
+	Lead      string `json:"lead"`
+	Role      string `json:"role"`
+	Label     string `json:"label,omitempty"`
+	Reason    string `json:"reason"`
+	Since     int64  `json:"since"`
+}
+
+// queuedViews is the spawns queued in container ("" every container), oldest first.
+func (d *Daemon) queuedViews(container string) []queuedView {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	var out []queuedView
+	for _, q := range d.spawnQueue {
+		if container != "" && q.nr.Container != container {
+			continue
+		}
+		out = append(out, queuedView{ID: q.id, Container: q.nr.Container, Lead: shortName(q.lead), Role: q.nr.Role,
+			Label: q.nr.Label, Reason: d.capReasonLocked(q.nr.Container), Since: q.at.Unix()})
+	}
+	return out
 }
 
 // boardList is the board (spec A13; host only): every open task with its agent, then the last
@@ -203,6 +231,7 @@ func (d *Daemon) boardList(raw json.RawMessage) (boardView, error) {
 	}
 	out.Heavy = d.heavyBoard(p.Container)
 	out.Pressure = d.gauges(p.Container)
+	out.Queued = d.queuedViews(p.Container)
 	return out, nil
 }
 
@@ -238,6 +267,9 @@ func (d *Daemon) boardRead(o Origin) (boardView, error) {
 	}
 	for i := range b.Leases {
 		mark(&b.Leases[i].Glob)
+	}
+	for i := range b.Queued {
+		b.Queued[i].Label = safeLabel(b.Queued[i].Label)
 	}
 	// A heavy job's label is its agent's text.
 	for i := range b.Heavy {

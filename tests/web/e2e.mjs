@@ -213,8 +213,8 @@ async function main() {
     check('the lead is told of both', (JSON.stringify(tin2).match(/approved by the user/g) || []).length === 2, tin2);
 
     // The tower's questions: the open one is answered from the page; the next one opens.
-    await op({ op: 'ask', agent: tname, question: 'deploy to prod?' });
-    await op({ op: 'ask', agent: tname, question: 'merge the docs?' });
+    await op({ op: 'question', agent: tname, question: 'deploy to prod?' });
+    await op({ op: 'question', agent: tname, question: 'merge the docs?' });
     ms = await until(`(document.querySelector('.card.question .body') || {}).textContent === 'deploy to prod?' &&
       (document.querySelector('.card.question summary') || {}).textContent === '1 more question waits'`);
     check('the tower\'s open question appears with its queue', ms >= 0, ms);

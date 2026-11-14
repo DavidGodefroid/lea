@@ -130,7 +130,7 @@ func (f *fakeDaemon) last(method string) map[string]any {
 	return nil
 }
 
-// nth is the parameters of the n-th call (from 0) of method, nil when there is none yet.
+// nth is the params of the n-th call of method (0 first), nil when there were fewer.
 func (f *fakeDaemon) nth(method string, n int) map[string]any {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -513,6 +513,7 @@ func TestTheEventStreamPushesEachChangeAndAttachesAsADeck(t *testing.T) {
 	if st.Version != 1 || st.Container != "lea-a" || len(st.Tasks) != 1 || len(st.Approvals) != 1 || len(st.Questions) != 0 {
 		t.Fatalf("state %+v", st)
 	}
+	// The stream asks again as soon as it sent an event: look at the watches in their order.
 	if p := ts.d.nth("agents_watch", 0); p["container"] != "lea-a" || p["since"] != float64(-1) {
 		t.Fatalf("first watch %v", p)
 	}

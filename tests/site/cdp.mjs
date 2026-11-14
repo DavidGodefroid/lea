@@ -27,11 +27,34 @@ export async function launch() {
   const profile = mkdtempSync(join(tmpdir(), 'lea-site-chrome-'));
   const proc = spawn(bin, ['--headless=new', '--remote-debugging-port=0', '--user-data-dir=' + profile,
     '--no-first-run', '--no-default-browser-check', '--disable-gpu', '--hide-scrollbars', 'about:blank'],
-  { stdio: 'ignore' });
+  { stdio: ['ignore', 'ignore', 'pipe'] });
+  // Chrome's stderr, its last 4 KiB, to say why a start failed.
+  let stderr = '';
+  proc.stderr.setEncoding('utf8');
+  proc.stderr.on('data', (d) => { stderr = (stderr + d).slice(-4096); });
+  let exit = null;
+  const exited = new Promise((ok) => proc.once('exit', (code, signal) => { exit = signal || code; ok(); }));
+  // A cold start on a CI runner took more than the 10 s once waited (#434): wait up to 60 s
+  // (CHROME_START_TIMEOUT_MS) for Chrome to write its port, and stop at once if it exits. A
+  // failed start kills Chrome, which otherwise kept the run alive until the 5-minute watchdog.
   const portFile = join(profile, 'DevToolsActivePort');
-  for (let i = 0; i < 100 && !existsSync(portFile); i++) await sleep(100);
-  const [port, path] = readFileSync(portFile, 'utf8').split('\n');
-  const exited = new Promise((ok) => proc.once('exit', ok));
+  const deadline = Date.now() + Number(process.env.CHROME_START_TIMEOUT_MS || 60000);
+  let port, path;
+  while (exit === null && Date.now() < deadline) {
+    if (existsSync(portFile)) {
+      // Chrome writes two lines, the port then the browser's path: wait for both.
+      [port, path] = readFileSync(portFile, 'utf8').split('\n');
+      if (port && path) break;
+    }
+    await sleep(100);
+  }
+  if (!(port && path)) {
+    const why = exit !== null ? `Chrome exited (${exit})` : 'Chrome wrote no DevToolsActivePort in time';
+    proc.kill('SIGKILL');
+    await Promise.race([exited, sleep(5000, null, { ref: false })]);
+    try { rmSync(profile, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 }); } catch {}
+    throw new Error(`${why}: ${bin}\n--- Chrome stderr ---\n${stderr.trim() || '(empty)'}`);
+  }
   return {
     ws: `ws://127.0.0.1:${port}${path}`,
     // Chrome still writes its profile for a moment after the kill: removing it before Chrome
@@ -40,7 +63,7 @@ export async function launch() {
     // it with retries; a profile left in the temporary directory fails nothing.
     close: async () => {
       proc.kill();
-      await Promise.race([exited, sleep(5000)]);
+      await Promise.race([exited, sleep(5000, null, { ref: false })]);
       try { rmSync(profile, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 }); } catch {}
     },
   };

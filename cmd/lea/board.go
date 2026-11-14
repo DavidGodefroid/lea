@@ -58,6 +58,15 @@ type board struct {
 	Heavy []boardHeavy `json:"heavy"`
 	// Pressure is the host's gauge, then each container's (#132, P2).
 	Pressure []boardGauge `json:"pressure"`
+	// Queued is the spawns that wait to start, with why (#420).
+	Queued []boardQueued `json:"queued"`
+}
+
+// boardQueued is one queued spawn: the daemon's reason, the lead's label.
+type boardQueued struct {
+	ID                                   int64
+	Container, Lead, Role, Label, Reason string
+	Since                                int64
 }
 
 // boardGauge is one scope's pressure (daemon.Gauge): the daemon's text and numbers only.
@@ -154,7 +163,7 @@ func renderBoard(w io.Writer, b board) {
 			gauges[g.Scope] = g
 		}
 	}
-	if len(b.Items) == 0 && len(b.Leases) == 0 && len(b.Heavy) == 0 {
+	if len(b.Items) == 0 && len(b.Leases) == 0 && len(b.Heavy) == 0 && len(b.Queued) == 0 {
 		fmt.Fprintln(w, "\nNo tasks yet.")
 		return
 	}
@@ -178,6 +187,11 @@ func renderBoard(w io.Writer, b board) {
 	for _, h := range b.Heavy {
 		add(h.Container)
 		heavy[h.Container] = h
+	}
+	queued := map[string][]boardQueued{}
+	for _, q := range b.Queued {
+		add(q.Container)
+		queued[q.Container] = append(queued[q.Container], q)
 	}
 	sort.Strings(cs)
 	for _, c := range cs {
@@ -233,6 +247,17 @@ func renderBoard(w io.Writer, b board) {
 			fmt.Fprintln(w)
 			for _, it := range shed {
 				fmt.Fprintf(w, "- %s: %s\n", handle(it), mdCell(it.Shed))
+			}
+		}
+		if qs := queued[c]; len(qs) > 0 {
+			fmt.Fprintln(w, "\n### Queued spawns")
+			fmt.Fprintln(w)
+			for _, q := range qs {
+				who := mdCell(q.Role)
+				if q.Label != "" {
+					who = mdCell(q.Label) + " (" + who + ")"
+				}
+				fmt.Fprintf(w, "- #%d %s for %s: %s (since %s)\n", q.ID, who, mdCell(q.Lead), mdCell(q.Reason), stamp(q.Since))
 			}
 		}
 		if h, ok := heavy[c]; ok {

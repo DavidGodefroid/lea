@@ -195,3 +195,6 @@ func TestClientThreadAndSend(t *testing.T) {
 		t.Fatalf("label=%q err=%v", l, err)
 	}
 }
+func (r *recAgents) Capture(ctx context.Context, k string) (agents.Screen, error) {
+	return agents.Screen{}, nil
+}

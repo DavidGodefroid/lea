@@ -2080,6 +2080,66 @@ func (m *Manager) Focus(ctx context.Context, key string, focus bool) error {
 	return nil
 }
 
+// Screen is what an agent's pane shows (#416): its visible lines with their SGR colour escapes
+// (tmux capture-pane -e), its size and its cursor. Read-only: Capture never types into the pane.
+type Screen struct {
+	Lines   []string `json:"lines"`
+	Width   int      `json:"width"`
+	Height  int      `json:"height"`
+	CursorX int      `json:"cursor_x"`
+	CursorY int      `json:"cursor_y"`
+}
+
+// Capture reads what the pane of an agent lea spawned shows now, for lea web's terminal view.
+func (m *Manager) Capture(ctx context.Context, key string) (Screen, error) {
+	if _, _, ok := parseShellKey(key); ok {
+		return Screen{}, errors.New("a shell's terminal is not shown")
+	}
+	a, err := m.spawned(key)
+	if err != nil {
+		return Screen{}, err
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	s, err := m.session(ctx, a.Container)
+	if err != nil {
+		return Screen{}, err
+	}
+	ps, err := listPanes(ctx, s, a.Container)
+	if err != nil {
+		return Screen{}, err
+	}
+	p, ok := byAgent(ps, a.Name)
+	if !ok {
+		return Screen{}, fmt.Errorf("agent %s has no terminal", a.Name)
+	}
+	return capturePane(ctx, s, p.ID)
+}
+
+// capturePane reads pane id's screen: its size and cursor, then its visible lines.
+func capturePane(ctx context.Context, s Session, id string) (Screen, error) {
+	geo, err := s.Run(ctx, "display-message", "-p", "-t", id, "#{pane_width} #{pane_height} #{cursor_x} #{cursor_y}")
+	if err != nil {
+		return Screen{}, err
+	}
+	var sc Screen
+	if len(geo) != 1 {
+		return Screen{}, fmt.Errorf("unexpected display-message output %q", geo)
+	}
+	if _, err := fmt.Sscanf(geo[0], "%d %d %d %d", &sc.Width, &sc.Height, &sc.CursorX, &sc.CursorY); err != nil {
+		return Screen{}, fmt.Errorf("unexpected display-message output %q", geo[0])
+	}
+	lines, err := s.Run(ctx, "capture-pane", "-p", "-e", "-t", id)
+	if err != nil {
+		return Screen{}, err
+	}
+	sc.Lines = lines
+	if sc.Lines == nil {
+		sc.Lines = []string{}
+	}
+	return sc, nil
+}
+
 // Stop ends the agent's process, removes its pane and forgets it. A shell's key ends the shell.
 func (m *Manager) Stop(ctx context.Context, key string) error {
 	if c, n, ok := parseShellKey(key); ok {

@@ -11,10 +11,11 @@
 //	                                                    the agent asks a permission; once
 //	                                                    answered: {"event":"verdict",…}
 //	{"op":"inbox","agent":"dev-1"}                      the agent reads its messages
+//	{"op":"screen","agent":"dev-1","lines":["…"]}       what the agent's terminal shows (#416)
+//	{"op":"question","agent":"lead-1","question":"…"}   a lead asks the user (user_ask, #416)
 //	{"op":"grants","agent":"lead","action":"merge","repo":"lea","github":"o/lea","tag":""}
-//	                                                    a lead files a grant request (gN)
-//	{"op":"ask","agent":"tower","question":"…"}         a tower asks the user (user_ask)
-//	{"op":"request","agent":"dev-1","role":"reviewer"}  an agent asks for another (sN)
+//	                                                    a lead files a grant request (gN, #415)
+//	{"op":"request","agent":"dev-1","role":"reviewer"}  an agent asks for another (sN, #415)
 //
 // It prints {"event":"ready"} once it serves.
 package main
@@ -56,7 +57,8 @@ func main() {
 		fmt.Fprintln(os.Stderr, "fixture: set LEA_DAEMON_SOCK")
 		os.Exit(2)
 	}
-	bus, err := start(context.Background(), sock)
+	fa := &fakeAgents{screens: map[string][]string{}, ch: make(chan struct{})}
+	bus, err := start(context.Background(), sock, fa)
 	if err != nil {
 		fail(err)
 	}
@@ -66,6 +68,7 @@ func main() {
 		var c struct {
 			Op, Name, Role, Agent, Status, Next, Tool, Command string
 			Action, Repo, GitHub, Tag, Question                string
+			Lines                                              []string
 		}
 		if err := json.Unmarshal(in.Bytes(), &c); err != nil {
 			say(map[string]string{"event": "done", "error": err.Error()})
@@ -79,11 +82,13 @@ func main() {
 			err = call(bus, c.Agent, "task_update", map[string]any{"status_text": c.Status, "next": c.Next}, &res)
 		case "inbox":
 			err = call(bus, c.Agent, "msg_inbox", nil, &res)
+		case "question":
+			err = call(bus, c.Agent, "user_ask", map[string]any{"question": c.Question}, &res)
+		case "screen":
+			fa.setScreen(container+"/"+c.Agent, c.Lines)
 		case "grants":
 			err = call(bus, c.Agent, "grants_request", map[string]any{"action": c.Action, "repo": c.Repo, "github": c.GitHub,
 				"tag": c.Tag, "reason": "the user said ship it"}, &res)
-		case "ask":
-			err = call(bus, c.Agent, "user_ask", map[string]any{"question": c.Question}, &res)
 		case "request":
 			err = call(bus, c.Agent, "agents_request_spawn", map[string]any{"role": c.Role, "brief": "review the web UI", "reason": "a second pair of eyes"}, &res)
 		case "approve":
@@ -103,7 +108,7 @@ func main() {
 
 // start serves the daemon on sock, its store next to it, until ctx ends, and returns the bus
 // socket of the container.
-func start(ctx context.Context, sock string) (string, error) {
+func start(ctx context.Context, sock string, fa *fakeAgents) (string, error) {
 	dir := filepath.Dir(sock)
 	st, err := store.Open(filepath.Join(dir, "lea.db"))
 	if err != nil {
@@ -111,7 +116,8 @@ func start(ctx context.Context, sock string) (string, error) {
 	}
 	now := func() int64 { return time.Now().Unix() }
 	d := daemon.New(st, filepath.Join(dir, "run"), now)
-	d.SetAgents(&fakeAgents{st: st, now: now, ch: make(chan struct{})})
+	fa.st, fa.now = st, now
+	d.SetAgents(fa)
 	l, err := daemon.Listen(sock)
 	if err != nil {
 		return "", err
@@ -146,6 +152,24 @@ type fakeAgents struct {
 	mu  sync.Mutex
 	ver int64
 	ch  chan struct{} // closed at each change
+	// screens is what each agent's terminal shows (op screen); an agent without one has none.
+	screens map[string][]string
+}
+
+func (f *fakeAgents) setScreen(key string, lines []string) {
+	f.mu.Lock()
+	f.screens[key] = lines
+	f.mu.Unlock()
+}
+
+func (f *fakeAgents) Capture(ctx context.Context, key string) (agents.Screen, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	lines, ok := f.screens[key]
+	if !ok {
+		return agents.Screen{}, fmt.Errorf("agent %s has no terminal", key)
+	}
+	return agents.Screen{Lines: lines, Width: 80, Height: 24}, nil
 }
 
 func (f *fakeAgents) Changed() {

@@ -54,7 +54,7 @@ func hubUp(t *testing.T, w *world, lock, facades, devices string) {
 	t.Helper()
 	// A launcher of a release with every flag lea passes (TestLockHTTPGateFollowsThePinnedRelease
 	// tries others).
-	if err := os.WriteFile(lockHTTPLauncher(), []byte(fakeLockHTTPLauncher("0.5.0", testDigest)), 0o755); err != nil {
+	if err := os.WriteFile(lockHostRoot+"/usr/local/bin/lockhttp", []byte(fakeLockHTTPLauncher("0.5.0", testDigest)), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	d := w.proj + "/.lockfamily"
