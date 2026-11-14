@@ -347,7 +347,7 @@ else echo "ok   no DNS query from inside lea reached the decoy"; fi
 # agent staged anything in them.
 for n in .locksql .locklog; do
   if [ -d "$projects/$n" ] && [ ! -L "$projects/$n" ] && [ -z "$(ls -A "$projects/$n")" ]; then echo "ok   host: $n made by lea, still empty"
-  else echo "FAIL host: $n made by lea, still empty"; ls -la "$projects/$n" 2>&1 | sed 's/^/     | /'; rc=1; fi
+  else echo "FAIL host: $n made by lea, still empty"; find "$projects/$n" -maxdepth 1 2>&1 | sed 's/^/     | /'; rc=1; fi
 done
 # What the agents did to their copies never reached the host (#111).
 if [ "$(host_claude_sum)" = "$host_sum" ]; then echo "ok   host ~/.claude settings.json and plugins unchanged"
