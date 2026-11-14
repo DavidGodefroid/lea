@@ -1,5 +1,18 @@
 # Changelog
 
+## Unreleased
+
+Features:
+
+- lea applies the `[lea]` section of the company's managed configuration,
+  `/etc/lockfamily/managed.toml` (#399, first part). `approvals` and `autoupdate = true` enforce
+  `LEA_APPROVALS` and `LEA_AUTOUPDATE`; `egress_allow` bounds the agents' egress allowlist (your
+  `LEA_EGRESS_ALLOW` within it, `lea egress allow` refused outside it). `lea config import`
+  refuses a file beyond it, `lea doctor` prints `Managed by <organisation> (sha256:…)` and the
+  rules, the deck's header names the organisation. A managed file that is badly owned, invalid or
+  has a `[lea]` key lea does not know stops lea and its daemon from starting. No file: nothing
+  changes.
+
 ## v0.16.0 (2026-11-14)
 
 Features:

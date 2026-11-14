@@ -1440,6 +1440,44 @@ and refused through a symbolic link. A key the environment sets beats the file: 
 so. Changes apply after `lea init` (endpoints, keys, images, locksql) or `lea stop --all`
 (approvals, egress), as it reminds you.
 
+### Company policy: managed.toml
+
+A company can set rules for lea on every workstation with the Lock Family's managed
+configuration: one file, `/etc/lockfamily/managed.toml` on Linux and
+`/Library/Application Support/lockfamily/managed.toml` on macOS, deployed by the administrator
+(MDM, Ansible, a package) and owned by root ([lockfamily.dev/docs/managed](https://lockfamily.dev/docs/managed/)).
+Its `[lea]` section is read after your `lea.conf` and wins over it: you may tighten what it
+allows, never loosen it.
+
+```toml
+version = 1
+organisation = "ICTools"
+
+[lea]
+approvals = "deck"                          # LEA_APPROVALS, enforced
+autoupdate = true                           # LEA_AUTOUPDATE=1, enforced
+egress_allow = ["default", "corp.example"]  # the agents reach these domains at most
+```
+
+- `approvals` (`"deck"` or `"pane"`) and `autoupdate = true` set `LEA_APPROVALS` and
+  `LEA_AUTOUPDATE`; your own value, in a file or the environment, is ignored with a warning that
+  cites the managed key. Every release lea installs is checked with cosign anyway: there is no
+  way to turn that off.
+- `egress_allow` bounds the egress allowlist: the agents reach the domains of your
+  `LEA_EGRESS_ALLOW` that it covers (each domain covers its subdomains, `default` is lea's
+  default list), and the model API (anthropic.com, claude.ai, claude.com) always. Your entries
+  beyond it are ignored with a warning, `lea egress allow` refuses a domain outside it, and
+  `lea egress list` shows the list in force. With `egress_allow` set, `LEA_LOCKHTTP=1` is refused
+  unless the managed file has a `[lockhttp]` section for the gate.
+- `lea config import` refuses a file beyond the managed configuration as a whole, nothing
+  written; the deck's settings screen shows the enforced keys as set by company policy.
+- `lea doctor` prints `Managed by <organisation> (sha256:…)` and the active rules, and the deck's
+  header shows the organisation.
+
+Fail closed: a managed file that is badly owned (not root's, or writable by others), invalid, not
+signed when it must be, or with a `[lea]` key this lea does not know, stops lea and its daemon from
+starting; it is never ignored. Without the file, lea runs on your configuration alone.
+
 ## How lea keeps your machine safe
 
 - `lea web` listens on the host's `127.0.0.1` only, which no lea container shares, and acts as

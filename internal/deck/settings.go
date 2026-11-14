@@ -201,7 +201,7 @@ func settingValue(s settings.Setting) string {
 
 // sourceText says where a value comes from.
 var sourceText = map[string]string{settings.SourceDefault: "default", settings.SourceFile: "your file",
-	settings.SourceEnvironment: "environment"}
+	settings.SourceEnvironment: "environment", settings.SourceManaged: "company policy"}
 
 // settingsLines are the screen's lines, inner cells wide, room lines at most (0: no limit): the
 // title, then the groups, scrolled so that the selected setting and its details show.
