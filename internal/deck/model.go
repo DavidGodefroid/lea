@@ -122,6 +122,24 @@ type Snapshot struct {
 	// LocksAdded are the locks lox run runs that this container does not mount
 	// (agents.Snapshot.LocksAdded): the deck says to restart lea to use them.
 	LocksAdded []string `json:"locks_added,omitempty"`
+	// Usage is the account's 5-hour and 7-day usage (agents.Snapshot.Usage, #421), nil while
+	// unknown: the top border shows it, amber at or above budget_5h_pct.
+	Usage *Usage `json:"usage,omitempty"`
+}
+
+// Usage is the account's usage (agents.UsageView): each window known, the budget_5h_pct value
+// (0: off) and whether new spawns wait for the 5-hour usage to fall.
+type Usage struct {
+	FiveHour *UsageWindow `json:"five_hour,omitempty"`
+	SevenDay *UsageWindow `json:"seven_day,omitempty"`
+	Budget   int          `json:"budget"`
+	Over     bool         `json:"over,omitempty"`
+}
+
+// UsageWindow is one window's used share (0 to 100) and when it resets (unix seconds, 0 unknown).
+type UsageWindow struct {
+	Pct      int   `json:"pct"`
+	ResetsAt int64 `json:"resets_at,omitempty"`
 }
 
 // Pressure is what the deck shows of the pressure (#132, P2): a short gauge of the container
@@ -258,6 +276,7 @@ type Model struct {
 	sound         string        // the daemon's sound switch (Snapshot.Sound)
 	locks         []LockState   // each Lock's approvals state (Snapshot.Locks)
 	pressure      *Pressure     // the container's pressure gauge (Snapshot.Pressure)
+	usage         *Usage        // the account's usage and budget (Snapshot.Usage, #421)
 	hubDown       bool          // lea follows the hub but cannot reach it (Snapshot.HubState)
 	loxRunOff     bool          // the workspace has locks and no lox run serves them (Snapshot.LoxRun)
 	locksAdded    []string      // locks this container does not mount (Snapshot.LocksAdded)
@@ -556,6 +575,7 @@ func (m *Model) ask(key string) {
 func (m *Model) apply(s Snapshot) bool {
 	before, was := m.shown, m.selected
 	m.version, m.shown, m.sound, m.locks, m.pressure, m.hubDown = s.Version, s.Shown, s.Sound, s.Locks, s.Pressure, s.HubState == "down"
+	m.usage = s.Usage
 	m.locksAdded, m.loxRunOff = s.LocksAdded, s.LoxRun == "off"
 	for _, a := range s.Agents {
 		if a.Key == s.Shown && a.State == "done" {

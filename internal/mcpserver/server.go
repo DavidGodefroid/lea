@@ -51,7 +51,7 @@ type spawnIn struct {
 	Brief   string `json:"brief" jsonschema:"what the new agent must do, at most 32 KiB; it is its first message"`
 	Label   string `json:"label,omitempty" jsonschema:"the name the user sees in the deck, at most 24 characters: <repo>#<issue> and 2-3 words when there is an issue (lea#350 spawn reuse), else 3-4 words of the task; never user, lea or Control Tower; default: named after the brief"`
 	For     string `json:"for,omitempty" jsonschema:"answers a spawn request: #<request id>, or the requester's name (its oldest pending request)"`
-	Queue   bool   `json:"queue,omitempty" jsonschema:"when the host is under pressure or max_running children already run (limits_get), queue the spawn and start it once lea lets it in (you get a message) instead of refusing it"`
+	Queue   bool   `json:"queue,omitempty" jsonschema:"when the host is under pressure, max_running children already run or the 5-hour usage is at or above budget_5h_pct (limits_get), queue the spawn and start it once lea lets it in (you get a message) instead of refusing it"`
 }
 
 type requestIn struct {
@@ -114,7 +114,7 @@ func New(sock, agent, version, instructions string) *mcp.Server {
 		func(ctx context.Context, _ *mcp.CallToolRequest, in empty) (*mcp.CallToolResult, any, error) {
 			return proxy(ctx, sock, agent, "providers_list", short, in), nil, nil
 		})
-	mcp.AddTool(s, &mcp.Tool{Name: "limits_get", Description: "Read lea's live limits, which the user changes while agents run (read-only: no agent sets them): each key's value, default, source and what it applies to; max_running caps the children of leads that run at once, host-wide (in_use: how many run). A spawn at the cap is refused, or queued with queue: true."},
+	mcp.AddTool(s, &mcp.Tool{Name: "limits_get", Description: "Read lea's live limits, which the user changes while agents run (read-only: no agent sets them): each key's value, default, source and what it applies to; max_running caps the children of leads that run at once, host-wide (in_use: how many run); budget_5h_pct holds new spawns while the account's 5-hour usage is at or above it (in_use: that usage). A spawn they hold is refused, or queued with queue: true. usage is the account's 5-hour and 7-day usage, once an agent's status line reported it (subscription accounts)."},
 		func(ctx context.Context, _ *mcp.CallToolRequest, in empty) (*mcp.CallToolResult, any, error) {
 			return proxy(ctx, sock, agent, "limits_get", short, in), nil, nil
 		})

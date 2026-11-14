@@ -88,7 +88,7 @@ func TestLimitsSetChecksAndGetAnswers(t *testing.T) {
 		params map[string]any
 		want   string
 	}{
-		{map[string]any{"key": "max_spawns", "value": "2"}, `"max_spawns" is not a live limit (one of: max_running)`},
+		{map[string]any{"key": "max_spawns", "value": "2"}, `"max_spawns" is not a live limit (one of: max_running, budget_5h_pct)`},
 		{map[string]any{"key": "max_running", "value": "two"}, `max_running is a whole number from 0 to 100, not "two"`},
 		{map[string]any{"key": "max_running", "value": "101"}, "from 0 to 100"},
 		{map[string]any{"key": "max_running", "value": "-1"}, "from 0 to 100"},
