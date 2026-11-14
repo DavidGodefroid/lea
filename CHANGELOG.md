@@ -4,6 +4,15 @@
 
 Features:
 
+- `LEA_LOCKHTTP=1` works with the lockhttp launcher that `brew install
+  davidgodefroid/tap/lockfamily` or lockfamily's `install.sh` installs (#411). lea used to accept
+  only a root-owned `/usr/local/bin/lockhttp`. It now looks there first, then in `~/.local/bin`,
+  then in brew's `bin`. A launcher that is not root-owned in `/usr/local/bin` can be rewritten by
+  your account, so lea runs the image it pins only when that image is the one `config/locks.lock`
+  pins for its release, or when `cosign verify` shows lockhttp's release workflow signed it at
+  the launcher's version tag. If the check fails, lea does not start and `lea doctor` reports it.
+  lea's messages now say to use `brew install davidgodefroid/tap/lockfamily` / `brew upgrade` and
+  `lox run`, not lockhttp's `scripts/install.sh`.
 - `lea web` (#414): the deck in your browser. It serves, on `127.0.0.1` only, a live board of
   the lea's agents (a tree of leads and their agents, with state, status, next step, blocker,
   branch, context use, cost, unread messages), each agent's messages with a box to write to it,

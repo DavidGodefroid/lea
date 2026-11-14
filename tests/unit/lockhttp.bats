@@ -9,6 +9,7 @@ setup() {
   D=sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
   launcher 0.7.0 "$D"
   export LEA_LOCKHTTP=1 LEA_GIT_SSH= LEA_PREFIX=lea
+  unset HOMEBREW_PREFIX FAKE_COSIGN_RC
   export FAKE_DOCKER_OUT_INSPECT__F=true
   export FAKE_DOCKER_OUT_INSPECT__F_AT_LEA_LOCKHTTP_GATE="true|ghcr.io/davidgodefroid/lockhttp@$D|gate|lockfamily-1a2b3c4d_web-run/var/lib/docker/volumes/lockfamily-1a2b3c4d_web-run/_data>/run/lockhttp;lockfamily-1a2b3c4d_web-gate/var/lib/docker/volumes/lockfamily-1a2b3c4d_web-gate/_data>/lockhttp-home;/home/u/.local/share/lea/lockhttp/gate>/etc/lockhttp-gate;"
   export FAKE_DOCKER_OUT_EXEC_LEA_PROXY_AT__LTN='tcp        0      0 127.0.0.1:3128          0.0.0.0:*               LISTEN
@@ -17,10 +18,13 @@ tcp        0      0 :::3130                 :::*                    LISTEN'
   printf '{"version":1,"console":"up","pending":0}\n' >"$S/status.json"
 }
 
-# launcher VERSION DIGEST: lockhttp's launcher as install.sh writes it.
+# launcher VERSION DIGEST [PATH]: lockhttp's launcher as its release stamps it, at PATH (default:
+# a system-wide install, root-owned in /usr/local/bin).
 launcher() {
-  printf '#!/bin/sh\nset -eu\n\nlauncher_version=%s\nimage_digest=%s\n' "$1" "$2" >"$R/usr/local/bin/lockhttp"
-  chmod 0755 "$R/usr/local/bin/lockhttp"
+  _p=${3:-$R/usr/local/bin/lockhttp}
+  mkdir -p "${_p%/*}"
+  printf '#!/bin/sh\nset -eu\n\nlauncher_version=%s\nimage_digest=%s\n' "$1" "$2" >"$_p"
+  chmod 0755 "$_p"
 }
 
 @test "a launcher older than the release lea pins is a warning, not a failure; the pin or later, or a clone's, says nothing" {
@@ -31,7 +35,7 @@ launcher() {
     launcher "$v" "$D"
     run lea__doctor_lockhttp
     [ "$status" -eq 0 ]
-    [[ "$output" == *"warn  lockhttp launcher: v$v, older than v0.8.0, the release lea pins"*"LOCKHTTP_VERSION=v0.8.0 sh install.sh"* ]]
+    [[ "$output" == *"warn  lockhttp launcher: v$v, older than v0.8.0, the release lea pins"*"brew upgrade davidgodefroid/tap/lockfamily, then lox run"* ]]
     [[ "$output" != *FAIL* ]]
   done
   for v in 0.8.0 0.8.1 1.0.0 0.9.0-rc.1 0.8.0+build v0.8.0; do
@@ -96,9 +100,73 @@ launcher() {
   printf '\177ELF a host binary\n' >"$R/usr/local/bin/lockhttp"
   run lea__doctor_lockhttp
   [[ "$output" == *"FAIL  lockhttp launcher: "*"is not lockhttp's launcher"* ]]
-  chmod 0777 "$R/usr/local/bin/lockhttp"
+  rm "$R/usr/local/bin/lockhttp"
   run lea__doctor_lockhttp
-  [[ "$output" == *"FAIL  lockhttp launcher: no root-owned launcher"* ]]
+  [[ "$output" == *"FAIL  lockhttp launcher: no lockhttp launcher (in /usr/local/bin, ~/.local/bin or brew's bin): brew install davidgodefroid/tap/lockfamily (or brew upgrade), then lox run"* ]]
+}
+
+@test "a launcher others than root may write in /usr/local/bin is checked with cosign like the user's" {
+  chmod 0777 "$R/usr/local/bin/lockhttp"
+  FAKE_COSIGN_RC=1 run lea__doctor_lockhttp
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"FAIL  lockhttp launcher: $R/usr/local/bin/lockhttp pins ghcr.io/davidgodefroid/lockhttp@$D, which cosign does not verify as lockhttp's release v0.7.0"* ]]
+  run lea__doctor_lockhttp
+  [[ "$output" == *"ok    lockhttp launcher (gate image ghcr.io/davidgodefroid/lockhttp@$D)"* ]]
+}
+
+@test "a brew or lockfamily launcher (~/.local/bin, brew's bin) runs the image cosign verifies for its release" {
+  rm "$R/usr/local/bin/lockhttp"
+  launcher 0.9.1 "$D" "$HOME/.local/bin/lockhttp"
+  run lea__doctor_lockhttp
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"ok    lockhttp launcher (gate image ghcr.io/davidgodefroid/lockhttp@$D)"* ]]
+  grep -qF "cosign [verify] [--certificate-oidc-issuer] [https://token.actions.githubusercontent.com] [--certificate-identity] [https://github.com/DavidGodefroid/lockhttp/.github/workflows/release.yml@refs/tags/v0.9.1] [ghcr.io/davidgodefroid/lockhttp@$D]" "$FAKE_LOG"
+  # brew's: a link into its Cellar, under HOMEBREW_PREFIX, else brew's default prefixes.
+  rm "$HOME/.local/bin/lockhttp"
+  launcher 0.9.1 "$D" "$R/brew/Cellar/lockhttp/0.9.1/bin/lockhttp"
+  for pre in "$R/brew" "$R/opt/homebrew" "$R/home/linuxbrew/.linuxbrew"; do
+    mkdir -p "$pre/bin"; ln -sf "$R/brew/Cellar/lockhttp/0.9.1/bin/lockhttp" "$pre/bin/lockhttp"
+    if [ "$pre" = "$R/brew" ]; then export HOMEBREW_PREFIX="$R/brew"; fi
+    [ "$(lea__lockhttp_launcher)" = "$pre/bin/lockhttp" ]
+    run lea__doctor_lockhttp
+    [ "$status" -eq 0 ]
+    rm "$pre/bin/lockhttp"; unset HOMEBREW_PREFIX
+  done
+}
+
+@test "/usr/local/bin's launcher comes first, then ~/.local/bin's" {
+  launcher 0.9.1 "$D" "$HOME/.local/bin/lockhttp"
+  [ "$(lea__lockhttp_launcher)" = "$R/usr/local/bin/lockhttp" ]
+  rm "$R/usr/local/bin/lockhttp"
+  [ "$(lea__lockhttp_launcher)" = "$HOME/.local/bin/lockhttp" ]
+}
+
+@test "the set's lockhttp in ~/.local/bin needs no cosign" {
+  rm "$R/usr/local/bin/lockhttp"
+  pin=$(sed -n 's/^LOCKS_LOCKHTTP_IMAGE=//p' "$LEA_ROOT/config/locks.lock")
+  launcher "${LEA_LOCKHTTP_RELEASE#v}" "${pin#*@}" "$HOME/.local/bin/lockhttp"
+  FAKE_COSIGN_RC=1 run lea__doctor_lockhttp
+  [[ "$output" == *"ok    lockhttp launcher (gate image $pin)"* ]]
+  ! grep -q '^cosign' "$FAKE_LOG"
+}
+
+@test "a user-writable launcher whose digest was tampered with, of a clone, or without cosign is refused" {
+  rm "$R/usr/local/bin/lockhttp"
+  B=$HOME/.local/bin/lockhttp
+  launcher 0.9.1 "$D" "$B"
+  FAKE_COSIGN_RC=1 run lea__doctor_lockhttp
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"FAIL  lockhttp launcher: $B pins ghcr.io/davidgodefroid/lockhttp@$D, which cosign does not verify as lockhttp's release v0.9.1"*"brew reinstall davidgodefroid/tap/lockhttp"* ]]
+  [[ "$output" != *"LockHTTP gate runs the pinned image"* ]]
+  launcher dev "" "$B"
+  run lea__doctor_lockhttp
+  [[ "$output" == *"FAIL  lockhttp launcher: $B runs from a clone (launcher_version=dev) and is not owned and writable by root only"* ]]
+  launcher 0.9.1 "$D" "$B"
+  d=$BATS_TEST_TMPDIR/nocosign; mkdir -p "$d"
+  for f in "$LEA_ROOT"/tests/fakes/*; do [ "${f##*/}" = cosign ] || ln -sf "$f" "$d/"; done
+  if PATH="$d:/usr/bin:/bin" command -v cosign >/dev/null 2>&1; then skip "cosign is installed in the test image"; fi
+  PATH="$d:/usr/bin:/bin" run lea__doctor_lockhttp
+  [[ "$output" == *"FAIL  lockhttp launcher: cosign not found: brew install cosign"* ]]
 }
 
 @test "a gate of another image, user or mounts, a silent gate, squid on every address and a down console are reported" {
