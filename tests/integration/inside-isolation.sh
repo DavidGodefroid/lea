@@ -164,6 +164,9 @@ if [ -n "${XDG_RUNTIME_DIR:-}" ]; then
 fi
 must   "no facade socket in the container"      sh -c '[ -z "$(find / \( -path /proc -o -path /sys -o -path /dev \) -prune -o -name facade.sock -print 2>/dev/null)" ]'
 mustnt "host ~/.ssh absent"                     test -e "$HOME/.ssh"
+# lea's SSH key stays in its ssh-agent container: neither its directory nor a key file here.
+mustnt "lea's SSH key directory absent"         test -e /lea/state/ssh/id_ed25519
+mustnt "lea's ssh-agent key mount absent"       test -e /lea/ssh-key
 mustnt "host ~/.docker absent"                  test -e "$HOME/.docker"
 mustnt "host ~/.config/glab-cli absent"         test -e "$HOME/.config/glab-cli"
 mustnt "host kubeconfig absent"                 test -e "$HOME/.kube/config"

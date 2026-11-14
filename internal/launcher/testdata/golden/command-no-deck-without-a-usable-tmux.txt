@@ -19,6 +19,7 @@ core [attach-container] [lea-$ID]
 docker [exec] [-i] [-u] [$UID:$GID] [-e] [TERM=xterm-256color] [-w] [$W/projects] [lea-$ID] [lea-session] [--claude]
 docker [exec] [-u] [$UID:$GID] [lea-$ID] [lea-agent] [ls]
 docker [stop] [lea-$ID]
+docker [stop] [lea-$ID-ssh]
 docker [network] [disconnect] [-f] [lea-internal-$ID] [lea-proxy]
 docker [network] [rm] [lea-internal-$ID]
 -- lea

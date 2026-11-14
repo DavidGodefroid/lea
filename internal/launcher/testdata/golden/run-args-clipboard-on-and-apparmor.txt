@@ -53,8 +53,6 @@ LEA_GIT_SSH=
 --mount
 type=bind,src=$W/projects,dst=$W/projects
 --mount
-type=bind,src=$W/data/lea/state/ssh,dst=/lea/state/ssh,readonly
---mount
 type=bind,src=$W/data/lea/state/git,dst=/lea/state/git
 --mount
 type=bind,src=$W/data/lea/state/gh,dst=/lea/state/gh
@@ -68,6 +66,8 @@ type=bind,src=$W/data/lea/state/go,dst=/lea/state/go
 type=bind,src=$W/data/lea/state/kube,dst=$W/home/.kube/lea,readonly
 --mount
 type=volume,src=lea-podman-$ID,dst=/lea/podman
+--mount
+type=volume,src=lea-ssh-$ID,dst=/run/lea/ssh,readonly
 --mount
 type=bind,src=$W/projects/.lockfamily,dst=$W/projects/.lockfamily,readonly
 -e

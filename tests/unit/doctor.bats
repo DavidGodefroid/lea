@@ -469,6 +469,37 @@ host_minimums() {
   [[ "$output" != *"warn  approval hub"* ]]
 }
 
+@test "SSH key: a running lea container that mounts it or lets its agents read it is a failure" {
+  export FAKE_DOCKER_OUT_PS___FILTER=lea-abc
+  export FAKE_DOCKER_OUT_EXEC__U=lea-key-checked
+  run lea_doctor
+  [[ "$output" == *"ok    lea-abc SSH key: not readable by its agents (ssh-agent socket only)"* ]]
+  grep -q -- "\[exec\] \[-u\] \[$(id -u):$(id -g)\] \[lea-abc\] \[sh\] \[-c\] \[.*/lea/state/ssh/id_ed25519" "$FAKE_LOG"
+  # The key directory mounted (an older lea): its agents read the private key.
+  export FAKE_DOCKER_OUT_CONTAINER_INSPECT="/p|$S/ssh|$S/git|"
+  run lea_doctor
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"FAIL  lea-abc SSH key: mounts lea's SSH key directory"*"rotate the key"* ]]
+  export FAKE_DOCKER_OUT_CONTAINER_INSPECT="/p|$S/ssh/id_ed25519|"
+  run lea_doctor
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"FAIL  lea-abc SSH key: mounts lea's SSH key directory"* ]]
+  # Not mounted, yet readable where the agents look.
+  export FAKE_DOCKER_OUT_CONTAINER_INSPECT="/p|$S/git|"
+  export FAKE_DOCKER_OUT_EXEC__U=$'lea-key-readable /lea/state/ssh/id_ed25519\nlea-key-checked'
+  run lea_doctor
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"FAIL  lea-abc SSH key: its agents can read /lea/state/ssh/id_ed25519: run lea stop"* ]]
+  # The check cannot run: a warning; docker cannot inspect the container: a failure.
+  export FAKE_DOCKER_OUT_EXEC__U=other FAKE_DOCKER_RC_EXEC__U=126
+  run lea_doctor
+  [[ "$output" == *"warn  lea-abc SSH key: not mounted, but the read check did not run in the container"* ]]
+  export FAKE_DOCKER_RC_CONTAINER_INSPECT=1
+  run lea_doctor
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"FAIL  lea-abc SSH key: docker cannot inspect its mounts"* ]]
+}
+
 @test "managed settings: lea's hooks confirmed in the image and in each running lea container (#111)" {
   export FAKE_DOCKER_OUT_RUN___RM="lea's hooks in /etc/claude-code/managed-settings.json, Claude Code 2.1.296"
   export FAKE_DOCKER_OUT_PS___FILTER=lea-abc

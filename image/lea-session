@@ -1,11 +1,8 @@
 #!/bin/sh
-# One lea session: loads lea's git SSH key into the agent if there is one, then runs a shell / command with --shell, Codex with --codex, or Claude Code with lea's hook settings: with
-# --claude (a deck agent, lea-agent run) and by default.
+# One lea session: runs a shell / command with --shell, Codex with --codex, or Claude Code with lea's hook settings: with
+# --claude (a deck agent, lea-agent run) and by default. lea's git SSH key is in lea's ssh-agent
+# container, loaded by the launcher: the session only reaches its socket.
 set -eu
-key=/lea/state/ssh/id_ed25519
-if [ -f "$key" ] && ! ssh-add -l >/dev/null 2>&1; then
-  ssh-add "$key" || echo "lea: the lea SSH key is not loaded; run ssh-add $key" >&2
-fi
 if [ "${1:-}" = --shell ]; then
   shift
   if [ $# -gt 0 ]; then exec "$@"; fi

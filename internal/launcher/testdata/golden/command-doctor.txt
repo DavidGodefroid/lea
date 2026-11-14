@@ -23,6 +23,7 @@ docker [ps] [--filter] [label=lea.prefix=lea] [--filter] [label=lea.role=session
 docker [image] [inspect] [lea:dev]
 docker [run] [--rm] [--pull] [never] [--network] [none] [--entrypoint] [/usr/local/libexec/lea/managed-check] [lea:dev]
 docker [ps] [--filter] [label=lea.prefix=lea] [--filter] [label=lea.role=session] [--format] [{{.Names}}]
+docker [ps] [--filter] [label=lea.prefix=lea] [--filter] [label=lea.role=session] [--format] [{{.Names}}]
 docker [info] [--format] [{{.DefaultRuntime}}]
 docker [info] [--format] [{{range $k, $v := .Runtimes}}{{$k}} {{end}}]
 docker [ps] [--filter] [label=lea.prefix=lea] [--filter] [label=lea.role=session] [--format] [{{.Names}}]
@@ -58,7 +59,7 @@ ok    lockhttp: off (agents' web egress through lea-proxy's allowlist; to turn i
 warn  approval hub: LEA_HUB=1 but no facade socket to read (set LEA_HUB_SOCKET, or XDG_RUNTIME_DIR): agents are not suspended on a Lock call that waits for the hub (LEA_HUB=0 to silence this)
 ok    lox 0.12.1
 ok    agent-readable credentials: none
-ok    not agent-readable: no GitHub token (lea github login keeps one in the proxy), provider API keys (proxy), lea's SSH key (ssh-agent socket only)
+ok    not agent-readable: no GitHub token (lea github login keeps one in the proxy), provider API keys (proxy), lea's SSH key (in its ssh-agent container: the agents reach its socket only)
 warn  kubernetes token: none (optional): lea kube refresh
 ok    Docker address pools: 31 of 31 free (Docker's default pools)
 ok    Lock clients: one set, lockkit-v0.20.0: locksql v0.20.0, lockmq v0.10.0, lockfile v0.10.0, locklog v0.4.0, lockssh v0.3.0, lockhttp v0.12.0, lox v0.12.1

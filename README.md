@@ -1830,7 +1830,7 @@ read it. `lea doctor` lists what is there, by path (never a value):
 | GitLab and other forges (`glab auth login`, git's store) | `/lea/state/glab-cli/config.yml`, `/lea/state/git/credentials` | yes |
 | Container registry logins (`podman login`) | `/lea/state/containers/auth.json` | yes |
 | Kubernetes | `~/.kube/lea/config` | yes, read-only: a `view` token of `lea kube refresh`, 8 h |
-| lea's SSH key (`LEA_GIT_SSH`) | `/lea/state/ssh` (read-only) | no: usable through the ssh-agent socket only |
+| lea's SSH key (`LEA_GIT_SSH`) | none: its ssh-agent container's (`<container>-ssh`, no network); the agents get the agent's socket, `/run/lea/ssh/agent.sock` | no: usable through the ssh-agent socket only (not under a virtual machine runtime, where a socket cannot cross into the VM) |
 | Provider API keys (`~/.config/lea/providers`) | none: the proxy's | no; usable through the key forwarder |
 
 Claude Code has no way, today, to take a short-lived token or one a proxy adds: its refresh token

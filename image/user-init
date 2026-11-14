@@ -1,9 +1,11 @@
 #!/bin/sh
-# Runs as the developer: ssh-agent, rootless Podman service, nested networks; then holds the container.
+# Runs as the developer: ssh-agent socket, rootless Podman service, nested networks; then holds the container.
 set -eu
 : "${XDG_RUNTIME_DIR:?}"
 rm -f /run/lea/ready /run/lea/ssh-agent.sock
-ssh-agent -a /run/lea/ssh-agent.sock >/dev/null
+# lea's ssh-agent runs in its own container, the only one with lea's SSH key: this one gets its
+# socket (/run/lea/ssh, read-only), never the key.
+ln -s /run/lea/ssh/agent.sock /run/lea/ssh-agent.sock
 mkdir -p "$XDG_RUNTIME_DIR/podman"
 podman info --format '{{.Host.Security.Rootless}}' | grep -qx true
 podman system service --time=0 "unix://$XDG_RUNTIME_DIR/podman/podman.sock" &
