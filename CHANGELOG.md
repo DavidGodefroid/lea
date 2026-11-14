@@ -88,6 +88,18 @@ Changes:
   Claude held the mouse. In a pane
   whose program does not take the mouse (a split shell, the scrolled-back history), `shift`+drag
   lets your terminal select, as in any tmux. `ctrl+v` paste and wheel scrolling are unchanged.
+- A lead can no longer bypass the board with Claude Code's built-in `Agent` tool (#409): lea's
+  hook denies it to leads, naming `agents_spawn`, since that sub-agent is invisible to lea (no
+  board, no deck, no context tracking, no child limits). After a compaction lea reminds a lead,
+  in its context, that it is one and starts work only with `agents_spawn`. Devs and reviewers
+  keep the tool.
+
+- `/lea:clear-ct` clears a control tower's context and resumes its board (#410): the tower saves
+  a short private snapshot (ledger, open questions, approvals given), you type `/clear`, and the
+  new session is still a tower, with no window where it may act itself; it reads the snapshot,
+  rebuilds its ledger from `agents_list` and `board_read` and briefs you, its children untouched.
+  A plain `/clear` or a compaction in a tower used to drop tower mode in silence: it now comes
+  back the same way. Outside a tower, `/lea:clear-ct` refuses in one line.
 
 Fixes:
 

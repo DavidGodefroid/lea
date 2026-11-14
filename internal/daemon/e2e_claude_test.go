@@ -56,6 +56,7 @@ type claudeE2E struct {
 	mu      sync.Mutex
 	limited bool
 	bodies  []string
+	calls   int
 	claude  string
 	lea     string // the core binary, built from this tree
 	wd      string
@@ -118,6 +119,9 @@ func newClaudeE2E(t *testing.T) *claudeE2E {
 		e.mu.Lock()
 		tool, input := e.toolUse, "{}"
 		answer := e.answer
+		// Each call has its own id: Claude Code refuses a conversation that repeats one.
+		e.calls++
+		id := fmt.Sprintf("toolu_e2e%d", e.calls)
 		e.mu.Unlock()
 		if answer != nil {
 			tool, input = answer(string(b))
@@ -128,7 +132,7 @@ func newClaudeE2E(t *testing.T) *claudeE2E {
 			in, _ := json.Marshal(input)
 			for _, ev := range []string{
 				`{"type":"message_start","message":{"id":"msg_t","type":"message","role":"assistant","model":"claude-e2e","content":[],"stop_reason":null,"stop_sequence":null,"usage":{"input_tokens":1,"output_tokens":1}}}`,
-				`{"type":"content_block_start","index":0,"content_block":{"type":"tool_use","id":"toolu_e2e1","name":"` + tool + `","input":{}}}`,
+				`{"type":"content_block_start","index":0,"content_block":{"type":"tool_use","id":"` + id + `","name":"` + tool + `","input":{}}}`,
 				`{"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":` + string(in) + `}}`,
 				`{"type":"content_block_stop","index":0}`,
 				`{"type":"message_delta","delta":{"stop_reason":"tool_use","stop_sequence":null},"usage":{"output_tokens":2}}`,

@@ -668,7 +668,11 @@ Only you change a role (`r` in the deck, `lea role <agent> <role>`, `lea new -r 
 Agents get lea's tools through MCP:
 
 - a lead starts `dev` and `reviewer` agents with `agents_spawn` and stops its own with
-  `agents_stop` (at most 20 children at a time);
+  `agents_stop` (at most 20 children at a time). Claude Code's built-in sub-agent tool (`Agent`)
+  is denied to a lead, with a reason naming `agents_spawn`: its sub-agent would be invisible to
+  lea (not on the board or in the deck, its context untracked, outside the child limits and the
+  host-pressure queue). After a compaction a lead's context is reminded it is a lead and starts
+  work only with `agents_spawn`;
 - any other agent asks a lead with `agents_request_spawn`; without a lead the request comes to
   you (`lea requests`, `lea request accept <id>`, `lea request decline <id> [reason]`);
 - agents message each other (`msg_send`, `msg_reply`); a message waits in the inbox until the
@@ -891,6 +895,20 @@ plugin enforces it with a hook: once `/lea:control-tower` runs, the session may 
 team tools (`agents_*`, `msg_*`, `board_read`, `task_update`), ask you questions and run
 `lea inbox --agent --wait`; any other tool (Bash, Edit, Read, git, gh, the web…) is denied with a
 reminder to delegate. `/lea:control-tower off` gives the session its tools back.
+
+A tower runs for hours and its context keeps growing. Type `/lea:clear-ct` to clear it without
+losing the board: the tower writes a short snapshot of what the board cannot give back (its
+ledger, your open questions and decisions, the approvals you gave) to a private file outside any
+repository (`$LEA_TOWER_DIR/<agent>.handoff.md`, by default under `/tmp/lea-tower-<uid>`,
+rewritten each time), then asks you to type `/clear` (Claude Code does not let a skill clear the
+context itself). After the clear the session is still a tower, with no gap: the hook carries
+tower mode over to the new session, and tells it to load `/lea:control-tower`, read the snapshot,
+and rebuild its ledger from `agents_list` and `board_read` (its children are the agents whose
+parent it is); your next message, or a child's report, gets one line per agent. Its children
+keep running, none is respawned, and what they send during the clear reaches the new session. A
+plain `/clear` (or a compaction) in a tower comes back the same way, from the board alone. The
+tower suggests `/lea:clear-ct` once its context passes 50%. Outside a tower, `/lea:clear-ct`
+refuses in one line and changes nothing.
 
 Type `/lea:check` (or ask for a status, a "point", a "topo") for the state of the work in
 progress, in at most 10 lines: done since the last check, in progress, left, and what is blocked
