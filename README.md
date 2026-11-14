@@ -1144,7 +1144,7 @@ lea web --listen ADDR:PORT (--tls-self-signed | --tls-cert F --tls-key F) [--new
 lea requests                 # what waits for you; lea approve ID [always], lea deny ID [reason]
 lea questions [drop ID]      # the control towers' questions to you: the open one, then the queue
 lea hold [--off] [AGENT]     # hold the messages agents send the tower while you answer it; --off releases them
-lea limits [set KEY VALUE | reset KEY]  # the live limits (max_running), changed on the running lea at once
+lea limits [set KEY VALUE | reset KEY]  # the live limits (max_running, budget_5h_pct), changed on the running lea at once
 lea config deck on|off       # the deck, or your own tool (lea config tool CMD...), from the next lea
 lea config claude [KEY ...]  # Claude's base settings for your agents (defaultMode, allow, deny, env...)
 lea new [name] [-- args]     # one more agent (its CLI's arguments after --; -p provider, -m model)
@@ -1250,6 +1250,7 @@ read-only. The screen runs in the deck on the host: agents cannot open or drive 
 | `LEA_STACK_IDLE` | `10` | minutes an agent stays idle before lea stops (not removes) the containers it started in the nested Podman (`0`: never); `lea board` lists what it freed |
 | `LEA_QUESTION_REMIND` | `120` | minutes a control tower's question waits for your answer before the tower asks it again, once, prefixed with `reminder:` (`0`: never) |
 | `LEA_MAX_RUNNING` | `3` | the most children of leads that run at once, host-wide (`0`: no cap); a [live limit](#live-limits): `lea limits set max_running N` applies it without a restart |
+| `LEA_BUDGET_5H_PCT` | `60` | the account's 5-hour usage (%) at or above which new children of leads wait (`0`: off); a [live limit](#live-limits): `lea limits set budget_5h_pct N` |
 | `LEA_HOLD_MAX` | `30` | minutes a pause of an inbox (the deck's `H`, `lea hold`) lasts before lea releases it (`0`: never) |
 | `LEA_AGENT_CPUS` | `4` | each agent's CPU window, the least shared CPUs: the agent, its tools and its nested containers run there, so `nproc`, PHPStan, Go… see that many CPUs (`0`: no window) |
 | `LEA_HEAVY_SLOTS`, `LEA_HEAVY_WORKERS` | `0` (¾ of the CPUs ÷ workers), `4` | heavy jobs (`lea heavy -- <command>`): how many run at once per container, and the CPUs and workers each gets |
@@ -1641,10 +1642,18 @@ tower can adapt; no agent can set one.
 | Limit | Default | What it caps |
 |---|---|---|
 | `max_running` (`LEA_MAX_RUNNING`) | `3` | the children of leads that run at once, host-wide (`0`: no cap). Your own sessions and the leads do not count. At the cap a lead's `agents_spawn` is refused (`3 children already running (limit max_running 3): retry with queue: true or wait for one to end`), or with `queue: true` waits and starts once a child ends; `lea board` and `agents_list` show why (`queued: max_running 3/3`). A spawn request a lead accepts goes through the same check |
+| `budget_5h_pct` (`LEA_BUDGET_5H_PCT`) | `60` | new children of leads while the account's 5-hour usage is at or above it (`0`: off). The usage comes from the agents' status lines (Claude subscription accounts; an API account reports none, and unknown usage never holds a spawn). Above it a lead's `agents_spawn` is refused (`5h usage 64 % ≥ budget_5h_pct 60: retry with queue: true…`), or with `queue: true` waits and starts once the 5-hour window resets or you raise the value; each lead gets one note per crossing. Running agents are never stopped or paused |
 
 A change never stops a running agent: a cap lowered below what runs holds new spawns until
 enough children end; a raised one starts the queued spawns at once, up to the new cap (one per
 pressure sample).
+
+The account's usage shows at the top of the deck (`5h 42% (14:05) · 7d 18%`, with the 5-hour
+window's reset time when there is room), amber once it reaches `budget_5h_pct`; `lea limits`
+prints it on its last line (`usage: 5h 42 % (resets Sat 14:05) · 7d 18 %`) and `limits_get`
+answers it, read-only. Nothing shows before an agent's status line reported it. When your plan
+changes, `lea limits set budget_5h_pct 80` applies at once and starts the spawns that waited if
+the usage is now below it. A queued spawn still waits at most 30 minutes, as under pressure.
 
 ## Host pressure
 

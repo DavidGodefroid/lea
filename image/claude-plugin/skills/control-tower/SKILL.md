@@ -88,7 +88,9 @@ For each thing the user asks:
    `<repo>#<issue> <2-3 words>` when there is an issue (`lea#350 spawn reuse`), else 3-4 words of
    the task. At most 20 children: when full, queue the task and say so. lea also caps the
    children that run at once, host-wide (`limits_get`: `max_running`, which the user changes
-   live): at the cap pass `queue: true`, and the spawn starts when a child ends.
+   live): at the cap pass `queue: true`, and the spawn starts when a child ends. Above the
+   account's 5-hour usage budget (`budget_5h_pct`) new spawns wait the same way until the window
+   resets or the user raises it: running agents go on, so keep them working and tell the user.
 5. Write a self-contained brief (the agent knows nothing else):
    - the goal and the acceptance criteria, in the user's words when they gave them;
    - the repo, the branch, what not to touch;

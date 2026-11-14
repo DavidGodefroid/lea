@@ -6,6 +6,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/charmbracelet/lipgloss"
 )
@@ -270,13 +271,66 @@ func (m Model) top(w int) string {
 	if l := m.lockLine(); l != "" {
 		count = l + " " + c.dot + " " + count
 	}
-	// c.tl+c.h+" " (3) + title + " " + fill + " " + count + " "+c.h+c.tr (3)
-	fill := w - 8 - tw - lipgloss.Width(count)
-	if fill < 1 {
-		return m.frameStyle().Render(c.tl+c.h+" ") + title + m.frameStyle().Render(" "+strings.Repeat(c.h, max(0, w-5-tw))+c.tr)
+	// The account's usage (#421) leads, the longest form that fits: with the 5-hour reset time
+	// and the count, then without the reset time, then the same without the count, then the
+	// 5-hour usage alone. Amber at or above budget_5h_pct: new spawns wait.
+	type form struct{ usage, count string }
+	forms := []form{{"", count}}
+	if u5 := m.usageText(true, true); u5 != "" {
+		short := m.usageText(false, true)
+		forms = []form{{u5, count}, {short, count}, {u5, ""}, {short, ""}, {m.usageText(false, false), ""}, {"", count}}
 	}
-	return m.frameStyle().Render(c.tl+c.h+" ") + title + m.frameStyle().Render(" "+strings.Repeat(c.h, fill)+" ") +
-		muted.Render(count) + m.frameStyle().Render(" "+c.h+c.tr)
+	for _, f := range forms {
+		text := f.count
+		if f.usage != "" && f.count != "" {
+			text = f.usage + " " + c.dot + " " + f.count
+		} else if f.usage != "" {
+			text = f.usage
+		}
+		// c.tl+c.h+" " (3) + title + " " + fill + " " + text + " "+c.h+c.tr (3)
+		fill := w - 8 - tw - lipgloss.Width(text)
+		if fill < 1 || text == "" {
+			continue
+		}
+		right := muted.Render(text)
+		if f.usage != "" {
+			right = m.usageStyle().Render(f.usage)
+			if f.count != "" {
+				right += muted.Render(" " + c.dot + " " + f.count)
+			}
+		}
+		return m.frameStyle().Render(c.tl+c.h+" ") + title + m.frameStyle().Render(" "+strings.Repeat(c.h, fill)+" ") +
+			right + m.frameStyle().Render(" "+c.h+c.tr)
+	}
+	return m.frameStyle().Render(c.tl+c.h+" ") + title + m.frameStyle().Render(" "+strings.Repeat(c.h, max(0, w-5-tw))+c.tr)
+}
+
+// usageStyle is the usage's style in the top border: amber at or above budget_5h_pct (new
+// spawns wait), muted below.
+func (m Model) usageStyle() lipgloss.Style {
+	if m.usage != nil && m.usage.Over {
+		return lipgloss.NewStyle().Foreground(theme.Working)
+	}
+	return muted
+}
+
+// usageText is the account's usage for the top border (#421): "5h 42% (14:05) · 7d 18%", the
+// reset time only with reset, the 7-day window only with week; "" while the 5-hour usage is
+// unknown.
+func (m Model) usageText(reset, week bool) string {
+	if m.usage == nil || m.usage.FiveHour == nil {
+		return ""
+	}
+	c := m.cs()
+	u := m.usage.FiveHour
+	s := fmt.Sprintf("5h %d%%", min(100, max(0, u.Pct)))
+	if reset && u.ResetsAt > 0 {
+		s += " (" + time.Unix(u.ResetsAt, 0).Format("15:04") + ")"
+	}
+	if w := m.usage.SevenDay; week && w != nil {
+		s += fmt.Sprintf(" %s 7d %d%%", c.dot, min(100, max(0, w.Pct)))
+	}
+	return s
 }
 
 // lockLine is what the top border says of the Locks' approvals, which lox run decides (#300):

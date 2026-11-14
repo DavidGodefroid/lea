@@ -285,6 +285,8 @@ func (d *Daemon) dispatchDeck(ctx context.Context, o Origin, req wire.Request) (
 		snap.LoxRun = d.loxRunState()
 		// Locks lox run runs that this container does not mount: restart lea to use them.
 		snap.LocksAdded = d.locksAdded(ctx, p.Container)
+		// The account's usage and the budget (#421): the deck's top border.
+		snap.Usage = d.usageView()
 		return snap, err
 	}
 	return nil, fmt.Errorf("unknown method %q", req.Method)

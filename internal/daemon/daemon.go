@@ -197,6 +197,10 @@ type Daemon struct {
 	limitStore  LimitStore
 	limitVals   map[string]limitVal
 	childStarts int
+	// Usage budget (budget.go, #421): the account's latest usage of each window ("5h", "7d")
+	// and whether the 5-hour one is at or above budget_5h_pct (its crossings note the leads).
+	account    map[string]acctWindow
+	budgetOver bool
 }
 
 func New(st *store.Store, runDir string, now func() int64) *Daemon {

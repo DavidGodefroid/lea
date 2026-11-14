@@ -74,6 +74,8 @@ func (d *Daemon) samplePressure(ctx context.Context) {
 	if src == nil {
 		return
 	}
+	// A 5-hour window that reset since the last report lets the spawns its budget held start.
+	d.budgetEval(ctx)
 	host, scopes := src.Sample(ctx, cs)
 	d.mu.Lock()
 	before := d.gaugesLocked()
@@ -210,7 +212,7 @@ func (d *Daemon) startQueued(ctx context.Context) {
 	d.mu.Unlock()
 	for _, s := range dropped {
 		// A spawn request it answered stays pending: the lead may accept it again.
-		d.post("user", s.lead, "result", fmt.Sprintf("[status: fail] queued spawn #%d dropped: lea did not let it in within %s (pressure or max_running). Retry later or stop an agent.", s.id, queuedSpawnTTL), 0)
+		d.post("user", s.lead, "result", fmt.Sprintf("[status: fail] queued spawn #%d dropped: lea did not let it in within %s (pressure, max_running or budget_5h_pct). Retry later or stop an agent.", s.id, queuedSpawnTTL), 0)
 	}
 	if q == nil && r == nil {
 		return

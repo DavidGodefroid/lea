@@ -121,6 +121,9 @@ func (d *Daemon) capReasonLocked(container string) string {
 			return fmt.Sprintf("queued: max_running %d/%d", n, max)
 		}
 	}
+	if why := d.budgetWhyLocked(); why != "" {
+		return "queued: " + why
+	}
 	if why := d.overLocked(container); why != "" {
 		return "queued: under pressure (" + why + ")"
 	}
@@ -135,6 +138,9 @@ func (d *Daemon) capReasonLocked(container string) string {
 // the caller ends it with endChildStart. Callers hold d.mu.
 func (d *Daemon) admitChildLocked(container string) error {
 	if err := d.capLocked(); err != nil {
+		return err
+	}
+	if err := d.budgetLocked(); err != nil {
 		return err
 	}
 	if err := d.admitLocked(container); err != nil {
@@ -160,7 +166,8 @@ type limitView struct {
 	Source    string `json:"source"`
 	Help      string `json:"help"`
 	AppliesTo string `json:"applies_to"`
-	// InUse is how much of the limit is taken now (max_running: the children running).
+	// InUse is how much of the limit is taken now (max_running: the children running;
+	// budget_5h_pct: the account's 5-hour usage, when known).
 	InUse *int `json:"in_use,omitempty"`
 }
 
@@ -173,7 +180,12 @@ func (d *Daemon) limitsGet() (any, error) {
 	for _, def := range limits.Defs {
 		out = append(out, d.limitViewLocked(def))
 	}
-	return map[string]any{"limits": out}, nil
+	// The account's usage (#421), read-only; none while unknown.
+	usage := d.usageViewLocked()
+	if usage == nil {
+		return map[string]any{"limits": out}, nil
+	}
+	return map[string]any{"limits": out, "usage": usage}, nil
 }
 
 func (d *Daemon) limitViewLocked(def limits.Def) limitView {
@@ -185,6 +197,9 @@ func (d *Daemon) limitViewLocked(def limits.Def) limitView {
 	if def.Name == "max_running" {
 		n := d.childrenLocked()
 		lv.InUse = &n
+	}
+	if w, ok := d.usageLocked("5h"); ok && def.Name == "budget_5h_pct" {
+		lv.InUse = &w.pct
 	}
 	return lv
 }
@@ -235,6 +250,8 @@ func (d *Daemon) limitsSet(ctx context.Context, raw json.RawMessage) (any, error
 	v := d.limitViewLocked(def)
 	d.mu.Unlock()
 	d.changed()
+	// A lowered budget notes the leads when usage is now above it; a raised one drains the queue.
+	d.budgetEval(d.lifetime(ctx))
 	d.startQueued(d.lifetime(ctx))
 	return v, nil
 }
