@@ -13,6 +13,18 @@ Features:
   has a `[lea]` key lea does not know stops lea and its daemon from starting. No file: nothing
   changes.
 
+Changes:
+
+- Usage budget (#421): the deck's top border shows the account's 5-hour and 7-day usage
+  (`5h 42% (14:05) · 7d 18%`), as the agents' status lines report it (subscription accounts),
+  amber at or above the new live limit `budget_5h_pct` (`LEA_BUDGET_5H_PCT`, default `60`, `0`:
+  off); `lea limits` and `limits_get` show it too. Above the budget a lead's `agents_spawn` is
+  refused, or with `queue: true` waits and starts once the 5-hour window resets or you raise the
+  value (`lea limits set budget_5h_pct 80`, at once); each lead gets one note per crossing.
+  Running agents are never stopped or paused, and unknown usage never holds a spawn. **This holds
+  new spawns above 60 % of the 5-hour window by default**: `lea limits set budget_5h_pct 0` turns
+  it off.
+
 ## v0.16.0 (2026-11-14)
 
 Features:

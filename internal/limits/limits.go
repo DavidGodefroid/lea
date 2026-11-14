@@ -48,6 +48,10 @@ var Defs = []Def{
 		Help:      "how much more an agent you resume over a budget may spend before lea pauses it again, in percent of that budget",
 		AppliesTo: "agents you resume over a budget",
 		Check:     count("budget_usd_step", 1, 100)},
+	{Name: "budget_5h_pct", Env: "LEA_BUDGET_5H_PCT", Default: "60",
+		Help:      "the account's 5-hour usage (%) above which new children of leads are held (0: off); subscription only, unknown usage never holds",
+		AppliesTo: "new spawns: above it a spawn waits (queue: true) or is refused, and starts once usage falls or the value rises; running agents are never stopped",
+		Check:     count("budget_5h_pct", 0, 100)},
 }
 
 // Lookup is the live key named name (max_running) or its configuration key (LEA_MAX_RUNNING).

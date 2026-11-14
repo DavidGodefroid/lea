@@ -7,7 +7,9 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 
+	"github.com/DavidGodefroid/lea/internal/agents"
 	"github.com/DavidGodefroid/lea/internal/daemon"
 	"github.com/DavidGodefroid/lea/internal/settings"
 )
@@ -45,6 +47,7 @@ func runLimits(args []string, stdout, stderr io.Writer) int {
 		var r struct {
 			Limits []limitRow
 			Budget *limitsBudget
+			Usage  *agents.UsageView
 		}
 		if err := hostCall("limits_get", nil, &r); err != nil {
 			fmt.Fprintln(stderr, "lea:", clean(err.Error(), false))
@@ -68,6 +71,9 @@ func runLimits(args []string, stdout, stderr io.Writer) int {
 		}
 		if key == "" && r.Budget != nil {
 			printBudget(stdout, *r.Budget)
+		}
+		if key == "" {
+			printUsage(stdout, r.Usage)
 		}
 		return 0
 	case args[0] == "set" && len(args) == 3:
@@ -146,6 +152,34 @@ func limitsDoctor(stdout io.Writer) int {
 		fmt.Fprintf(stdout, "ok    spend budgets: every running agent reports its cost ($%.2f spent)\n", r.Budget.Total)
 	}
 	return 0
+}
+
+// printUsage prints the account's usage (#421), read-only: "usage: 5h 64 % (resets 14:05) · 7d
+// 18 %, new spawns held (budget_5h_pct 60)"; "usage: unknown" before any agent reported it.
+func printUsage(w io.Writer, u *agents.UsageView) {
+	if u == nil || (u.FiveHour == nil && u.SevenDay == nil) {
+		fmt.Fprintln(w, "usage: unknown (no agent's status line reported it yet, or an API account)")
+		return
+	}
+	var parts []string
+	for _, x := range []struct {
+		label string
+		w     *agents.UsageWindow
+	}{{"5h", u.FiveHour}, {"7d", u.SevenDay}} {
+		if x.w == nil {
+			continue
+		}
+		p := fmt.Sprintf("%s %d %%", x.label, x.w.Pct)
+		if x.w.ResetsAt > 0 {
+			p += " (resets " + time.Unix(x.w.ResetsAt, 0).Format("Mon 15:04") + ")"
+		}
+		parts = append(parts, p)
+	}
+	line := "usage: " + strings.Join(parts, " · ")
+	if u.Over {
+		line += fmt.Sprintf(", new spawns held (budget_5h_pct %d)", u.Budget)
+	}
+	fmt.Fprintln(w, line)
 }
 
 // limitStore is the daemon's daemon.LimitStore: the live limits in the settings of the lea

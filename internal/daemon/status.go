@@ -54,6 +54,7 @@ func (d *Daemon) statusReport(ctx context.Context, o Origin, me string, raw json
 		return nil, errors.New("at most 2 limits")
 	}
 	var ws []limitWindow
+	acct := map[string]acctWindow{}
 	for _, l := range p.Limits {
 		if l.Window != "5h" && l.Window != "7d" {
 			return nil, errors.New(`limit window must be "5h" or "7d"`)
@@ -65,6 +66,7 @@ func (d *Daemon) statusReport(ctx context.Context, o Origin, me string, raw json
 			return nil, errors.New("limit resets_at must be unix seconds")
 		}
 		ws = append(ws, limitWindow{pct: l.Pct, resetsAt: l.ResetsAt})
+		acct[l.Window] = acctWindow{pct: l.Pct, resetsAt: l.ResetsAt}
 	}
 	if p.CtxPct < -1 || p.CtxPct > 100 {
 		return nil, errors.New("ctx_pct must be -1 (unknown) or 0 to 100")
@@ -87,6 +89,11 @@ func (d *Daemon) statusReport(ctx context.Context, o Origin, me string, raw json
 		return nil, errors.New("version must be a release version (X.Y.Z)")
 	}
 	d.recordLimits(me, ws)
+	// The account's usage (#421): every agent reports the same account; the newest report wins.
+	if d.recordAccount(acct) {
+		d.changed()
+		d.usageEval(d.lifetime(ctx))
+	}
 	if p.Version != "" {
 		d.mu.Lock()
 		was := d.cliVersions[me]

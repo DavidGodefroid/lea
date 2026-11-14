@@ -203,6 +203,10 @@ type Daemon struct {
 	budget *budgetState
 	// budgetWG counts the budget pauses and resumes that run.
 	budgetWG sync.WaitGroup
+	// Usage budget (usage.go, #421): the account's latest usage of each window ("5h", "7d")
+	// and whether the 5-hour one is at or above budget_5h_pct (its crossings note the leads).
+	account   map[string]acctWindow
+	usageOver bool
 }
 
 func New(st *store.Store, runDir string, now func() int64) *Daemon {

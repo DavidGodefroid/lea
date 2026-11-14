@@ -144,6 +144,9 @@ func (d *Daemon) capReasonLocked(container string) string {
 			return fmt.Sprintf("queued: max_running %d/%d", n, max)
 		}
 	}
+	if why := d.usageWhyLocked(); why != "" {
+		return "queued: " + why
+	}
 	if why := d.overLocked(container); why != "" {
 		return "queued: under pressure (" + why + ")"
 	}
@@ -161,6 +164,9 @@ func (d *Daemon) admitChildLocked(container string) error {
 		return err
 	}
 	if err := d.capLocked(); err != nil {
+		return err
+	}
+	if err := d.usageBudgetLocked(); err != nil {
 		return err
 	}
 	if err := d.admitLocked(container); err != nil {
@@ -186,7 +192,8 @@ type limitView struct {
 	Source    string `json:"source"`
 	Help      string `json:"help"`
 	AppliesTo string `json:"applies_to"`
-	// InUse is how much of the limit is taken now (max_running: the children running).
+	// InUse is how much of the limit is taken now (max_running: the children running;
+	// budget_5h_pct: the account's 5-hour usage, when known).
 	InUse *int `json:"in_use,omitempty"`
 	// Spent is what is spent against it now (budget_usd_total: all agents in the period;
 	// budget_usd_agent: the agent that spent the most), read-only.
@@ -203,7 +210,12 @@ func (d *Daemon) limitsGet(container string) (any, error) {
 	for _, def := range limits.Defs {
 		out = append(out, d.limitViewInLocked(def, container))
 	}
-	return map[string]any{"limits": out, "budget": d.budgetViewLocked(container)}, nil
+	// The account's usage (#421), read-only; none while unknown.
+	res := map[string]any{"limits": out, "budget": d.budgetViewLocked(container)}
+	if usage := d.usageViewLocked(); usage != nil {
+		res["usage"] = usage
+	}
+	return res, nil
 }
 
 func (d *Daemon) limitViewLocked(def limits.Def) limitView { return d.limitViewInLocked(def, "") }
@@ -231,6 +243,9 @@ func (d *Daemon) limitViewInLocked(def limits.Def, container string) limitView {
 			}
 		}
 		lv.Spent = &top
+	}
+	if w, ok := d.usageLocked("5h"); ok && def.Name == "budget_5h_pct" {
+		lv.InUse = &w.pct
 	}
 	return lv
 }
@@ -295,6 +310,8 @@ func (d *Daemon) limitsSet(ctx context.Context, raw json.RawMessage) (any, error
 	// A budget raised resumes what lea paused on it; one lowered pauses what is now over it.
 	d.budgetCheck()
 	d.changed()
+	// A lowered budget notes the leads when usage is now above it; a raised one drains the queue.
+	d.usageEval(d.lifetime(ctx))
 	d.startQueued(d.lifetime(ctx))
 	return v, nil
 }

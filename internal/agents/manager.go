@@ -239,6 +239,9 @@ type Snapshot struct {
 	LocksAdded []string `json:"locks_added,omitempty"`
 	// Spend is the total spend against budget_usd_total (#424) while it is on, set by the daemon.
 	Spend *SpendView `json:"spend,omitempty"`
+	// Usage is the account's 5-hour and 7-day usage (#421), set by the daemon; nil while no
+	// agent's status line reported it (or an API account, which has none).
+	Usage *UsageView `json:"usage,omitempty"`
 }
 
 // SpendView is what the deck's header shows of the spend: all agents' since the period began,
@@ -247,6 +250,22 @@ type SpendView struct {
 	TotalUSD float64 `json:"total_usd"`
 	LimitUSD float64 `json:"limit_usd"`
 	Reached  bool    `json:"reached,omitempty"`
+}
+
+// UsageView is the account's usage as the deck shows it (#421): each window known, the
+// budget_5h_pct value (0: off) and whether the 5-hour usage is at or above it (new spawns wait).
+type UsageView struct {
+	FiveHour *UsageWindow `json:"five_hour,omitempty"`
+	SevenDay *UsageWindow `json:"seven_day,omitempty"`
+	Budget   int          `json:"budget"`
+	Over     bool         `json:"over,omitempty"`
+}
+
+// UsageWindow is one rate-limit window: its used share (0 to 100) and when it resets (unix
+// seconds, 0 when unknown).
+type UsageWindow struct {
+	Pct      int   `json:"pct"`
+	ResetsAt int64 `json:"resets_at,omitempty"`
 }
 
 // PressureView is what the deck shows of the pressure: a short gauge of the container and the
