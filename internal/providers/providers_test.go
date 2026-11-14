@@ -216,19 +216,39 @@ func TestCheckModel(t *testing.T) {
 
 func TestArgvClaude(t *testing.T) {
 	p, _ := Builtin().Get(Claude)
-	got, err := p.Argv("dev-1", "/p", "opus", "", []string{"--debug"}, "go")
+	got, err := p.Argv("dev-1", "/p", "opus", "", "", []string{"--debug"}, "go")
 	if err != nil || !reflect.DeepEqual(got, []string{"--model", "opus", "--debug", "go"}) {
 		t.Fatalf("%q %v", got, err)
 	}
 	const s = "0e5f7c2a-1b2c-4d5e-8f90-1234567890ab"
-	got, _ = p.Argv("dev-1", "/p", "", s, nil, "go")
+	got, _ = p.Argv("dev-1", "/p", "", "", s, nil, "go")
 	if !reflect.DeepEqual(got, []string{"--resume", s}) {
 		t.Fatalf("%q", got)
 	}
 	// A session that is not a UUID never reaches the command line: the prompt does.
-	got, _ = p.Argv("dev-1", "/p", "", "--dangerously-skip-permissions", nil, "go")
+	got, _ = p.Argv("dev-1", "/p", "", "", "--dangerously-skip-permissions", nil, "go")
 	if !reflect.DeepEqual(got, []string{"go"}) {
 		t.Fatalf("%q", got)
+	}
+}
+
+// An advisor goes next to the model on Claude Code's command line (#407); Codex has none, and an
+// advisor that could pass for a flag never reaches the command line.
+func TestArgvAdvisor(t *testing.T) {
+	p, _ := Builtin().Get(Claude)
+	got, err := p.Argv("dev-1", "/p", "sonnet", "opus", "", nil, "go")
+	if err != nil || !reflect.DeepEqual(got, []string{"--model", "sonnet", "--advisor", "opus", "go"}) {
+		t.Fatalf("%q %v", got, err)
+	}
+	if _, err := p.Argv("dev-1", "/p", "sonnet", "--yolo", "", nil, "go"); err == nil {
+		t.Fatal("a flag passed as advisor")
+	}
+	c, _ := Builtin().Get(Codex)
+	if _, err := c.Argv("dev-1", "/p", "", "opus", "", nil, "go"); err == nil || !strings.Contains(err.Error(), "no advisor") {
+		t.Fatalf("codex took an advisor: %v", err)
+	}
+	if err := c.CheckAdvisor(""); err != nil {
+		t.Fatal(err)
 	}
 }
 
@@ -239,7 +259,7 @@ func TestArgvCodexLockServers(t *testing.T) {
 	r := Builtin()
 	r.SetLocks([]Lock{{Name: "locksql", TimeoutSec: 1500}, {Name: "lockfile", TimeoutSec: 900}, {Name: "evil\"x", TimeoutSec: 60}, {Name: "lockmq", TimeoutSec: 0}})
 	p, _ := r.Get(Codex)
-	got, err := p.Argv("dev-1", "/p", "", "", nil, "go")
+	got, err := p.Argv("dev-1", "/p", "", "", "", nil, "go")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -256,12 +276,12 @@ func TestArgvCodexLockServers(t *testing.T) {
 		t.Errorf("a Lock left out reached the argv: %s", j)
 	}
 	c, _ := r.Get(Claude)
-	if got, _ := c.Argv("dev-1", "/p", "", "", nil, "go"); strings.Contains(strings.Join(got, " "), "mcp_servers") {
+	if got, _ := c.Argv("dev-1", "/p", "", "", "", nil, "go"); strings.Contains(strings.Join(got, " "), "mcp_servers") {
 		t.Errorf("claude: %q", got)
 	}
 	r.SetLocks(nil)
 	p, _ = r.Get(Codex)
-	if got, _ := p.Argv("dev-1", "/p", "", "", nil, "go"); strings.Contains(strings.Join(got, " "), "locksql") {
+	if got, _ := p.Argv("dev-1", "/p", "", "", "", nil, "go"); strings.Contains(strings.Join(got, " "), "locksql") {
 		t.Errorf("no Lock: %q", got)
 	}
 }
@@ -273,7 +293,7 @@ func TestArgvCodexLockServerPerInstance(t *testing.T) {
 	r.SetLocks([]Lock{{Name: "locksql", Instance: "orders", TimeoutSec: 1500}, {Name: "locksql", Instance: "stock", TimeoutSec: 1500},
 		{Name: "locksql", Instance: "../x", TimeoutSec: 1500}, {Name: "lockmq", Instance: "Bad", TimeoutSec: 1500}})
 	p, _ := r.Get(Codex)
-	got, err := p.Argv("dev-1", "/p", "", "", nil, "go")
+	got, err := p.Argv("dev-1", "/p", "", "", "", nil, "go")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -293,7 +313,7 @@ func TestArgvCodexLockServerPerInstance(t *testing.T) {
 
 func TestArgvCodex(t *testing.T) {
 	p, _ := Builtin().Get(Codex)
-	got, err := p.Argv("dev-1", "/home/u/projects", "gpt-5.1-codex", "", nil, "read your brief")
+	got, err := p.Argv("dev-1", "/home/u/projects", "gpt-5.1-codex", "", "", nil, "read your brief")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -314,30 +334,30 @@ func TestArgvCodex(t *testing.T) {
 		t.Fatalf("got  %q\nwant %q", got, want)
 	}
 	const s = "0e5f7c2a-1b2c-4d5e-8f90-1234567890ab"
-	got, _ = p.Argv("dev-1", "/p", "", s, nil, "read your brief")
+	got, _ = p.Argv("dev-1", "/p", "", "", s, nil, "read your brief")
 	if got[0] != "resume" || got[1] != s || got[len(got)-1] == "read your brief" {
 		t.Fatalf("%q", got)
 	}
 	// A directory that cannot be a quoted TOML key is never trusted by lea.
 	for _, wd := range []string{`/p/a"b`, `/p/a\b`, "/p/../q", "relative"} {
-		got, _ = p.Argv("dev-1", wd, "", "", nil, "")
+		got, _ = p.Argv("dev-1", wd, "", "", "", nil, "")
 		for _, a := range got {
 			if strings.HasPrefix(a, "projects.") {
 				t.Errorf("%q trusted: %q", wd, a)
 			}
 		}
 	}
-	if _, err := p.Argv("Bad Name", "/p", "", "", nil, ""); err == nil {
+	if _, err := p.Argv("Bad Name", "/p", "", "", "", nil, ""); err == nil {
 		t.Error("an invalid agent name reached a -c option")
 	}
-	if _, err := p.Argv("dev-1", "/p", `x" -c y="z`, "", nil, ""); err == nil {
+	if _, err := p.Argv("dev-1", "/p", `x" -c y="z`, "", "", nil, ""); err == nil {
 		t.Error("an unsafe model was accepted")
 	}
 }
 
 func TestArgvEndpoint(t *testing.T) {
 	p := Provider{Name: "ollama-lan", CLI: Codex, Endpoint: &Endpoint{}}
-	got, err := p.Argv("dev-1", "/p", "qwen3", "", nil, "")
+	got, err := p.Argv("dev-1", "/p", "qwen3", "", "", nil, "")
 	if err != nil {
 		t.Fatal(err)
 	}

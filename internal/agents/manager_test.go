@@ -1917,6 +1917,55 @@ func TestRemoveEndedRefusesAnAgentThatRunsAgain(t *testing.T) {
 	}
 }
 
+// A Claude agent started with a model and an advisor runs claude --model <model> --advisor
+// <advisor>, and resumes with both (#407); without an advisor its command line is unchanged. A
+// provider without an advisor (Codex) refuses one, before anything is registered.
+func TestAgentWithAdvisorRunsClaudeWithIt(t *testing.T) {
+	e := newEnv(t)
+	e.ensure(t, "/p")
+	r, err := e.m.New(bg, NewRequest{Container: C, Name: "dev-1", Model: "sonnet", Advisor: "opus", Brief: "do it", Hidden: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r.Model != "sonnet" || r.Advisor != "opus" {
+		t.Fatalf("row=%+v", r)
+	}
+	if _, err := e.m.New(bg, NewRequest{Container: C, Name: "dev-2", Model: "sonnet", Brief: "do it", Hidden: true}); err != nil {
+		t.Fatal(err)
+	}
+	s := e.term.get(C)
+	got := agentArgs(t, s, "dev-1")
+	if len(got) != 5 || !reflect.DeepEqual(got[:4], []string{"--model", "sonnet", "--advisor", "opus"}) || !strings.Contains(got[4], "Your brief is waiting") {
+		t.Fatalf("dev-1 runs %q", got)
+	}
+	got = agentArgs(t, s, "dev-2")
+	if len(got) != 3 || !reflect.DeepEqual(got[:2], []string{"--model", "sonnet"}) || slices.Contains(got, "--advisor") {
+		t.Fatalf("dev-2 runs %q", got)
+	}
+	e.st.SetState(C+"/dev-1", "idle", sid1, 1001)
+	if err := e.m.MarkStopped(bg, C, false); err != nil {
+		t.Fatal(err)
+	}
+	re := e.restarted(t)
+	if err := re.m.ResumeStopped(bg, C); err != nil {
+		t.Fatal(err)
+	}
+	if got := agentArgs(t, re.term.get(C), "dev-1"); !reflect.DeepEqual(got, []string{"--resume", sid1, "--model", "sonnet", "--advisor", "opus"}) {
+		t.Fatalf("dev-1 resumed with %q", got)
+	}
+	for _, nr := range []NewRequest{
+		{Container: C, Name: "cx", Profile: "codex", Advisor: "opus", Brief: "do it", Hidden: true},
+		{Container: C, Name: "dev-3", Advisor: "--yolo", Brief: "do it", Hidden: true},
+	} {
+		if _, err := re.m.New(bg, nr); err == nil {
+			t.Fatalf("%+v accepted", nr)
+		}
+		if _, err := re.st.AgentByKey(C + "/" + nr.Name); err == nil {
+			t.Fatalf("%s registered", nr.Name)
+		}
+	}
+}
+
 // codexArgs are what follows lea-agent run <name> --cli codex in an agent's pane.
 func codexArgs(t *testing.T, s *fakeSession, name string) []string {
 	t.Helper()

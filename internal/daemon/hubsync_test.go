@@ -39,11 +39,21 @@ type fakeHub struct {
 	asked             []string
 }
 
-type fakeDecision struct{ ticket, instance, decision, reason string }
+// fakeDecision is one decision of GET /v1/decided; request, when set, is its item's request (the
+// decided ticket, lockhub#200).
+type fakeDecision struct {
+	ticket, instance, decision, reason string
+	request                            map[string]any
+}
 
 func (h *fakeHub) decide(ticket, instance, decision, reason string) {
+	h.decideRequested(ticket, instance, decision, reason, nil)
+}
+
+// decideRequested is a decision whose item carries the decided ticket, as lockhub#200 serves it.
+func (h *fakeHub) decideRequested(ticket, instance, decision, reason string, request map[string]any) {
 	h.mu.Lock()
-	h.items = append(h.items, fakeDecision{ticket, instance, decision, reason})
+	h.items = append(h.items, fakeDecision{ticket, instance, decision, reason, request})
 	h.mu.Unlock()
 	h.setState(instance, ticket, decision)
 }
@@ -123,6 +133,7 @@ func (h *fakeHub) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		Seq      int64          `json:"seq"`
 		Ticket   string         `json:"ticket"`
 		Decision map[string]any `json:"decision"`
+		Request  map[string]any `json:"request,omitempty"`
 	}
 	out := struct {
 		Decisions []item `json:"decisions"`
@@ -136,7 +147,7 @@ func (h *fakeHub) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		out.Decisions = append(out.Decisions, item{Seq: seq, Ticket: d.ticket, Decision: map[string]any{
 			"v": 1, "ticket": d.ticket, "instance": d.instance, "key_id": "ed25519:k", "plan_hash": "sha256:p",
 			"decision": d.decision, "reason": d.reason, "approver": map[string]string{"id": "uid:1000", "display": "me"},
-			"facade": "tty", "at": "2026-10-29T22:00:00Z", "nonce": "n", "hub_key_id": "ed25519:h", "sig": "s"}})
+			"facade": "tty", "at": "2026-10-29T22:00:00Z", "nonce": "n", "hub_key_id": "ed25519:h", "sig": "s"}, Request: d.request})
 		out.Cursor = seq
 	}
 	json.NewEncoder(w).Encode(out)

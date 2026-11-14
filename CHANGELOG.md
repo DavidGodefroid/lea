@@ -4,6 +4,13 @@
 
 Features:
 
+- A lead picks each child's model and advisor (#407). `agents_spawn` and `agents_request_spawn`
+  take an optional `advisor`: with `model: sonnet, advisor: opus` the child runs `claude --model
+  sonnet --advisor opus`, a Sonnet session that consults Opus on demand through Claude Code's
+  advisor tool, and keeps both when it resumes. A provider without an advisor (Codex, an
+  endpoint) refuses it: `provider codex has no advisor`. Without `advisor` the command line is
+  unchanged. `agents_list` shows a child's advisor. The control-tower skill now tells the lead to
+  pick each child's model and advisor by its task.
 - A lead can push its team's branches (#406). Before, a lead was always refused: `pushing to
   anything but the agent's own branch is never allowed`. Once a child stopped, its branch could
   be pushed only from the host. Now, under the existing `push` allowance, a lead may run `git push
@@ -31,6 +38,16 @@ Features:
   `SameSite=Strict` cookie); `--open` hands the browser a private local page that posts the
   token, so it is never in a command line (#436); foreign `Host` or `Origin` headers are
   refused, and only a fixed list of the daemon's methods, for this lea's agents, is reachable. Phone width, light and dark, keyboard shortcuts.
+- The agents' CLIs update themselves (#418): in each lea container, a check at its start and
+  then every 6 hours installs a newer Claude Code or Codex from registry.npmjs.org (already in the
+  default egress allowlist) in `/lea/cli`, beside the image's pinned version, checks its
+  `--version`, and makes it current with an atomic link swap. Agents started afterwards run it; a
+  running agent keeps its version, which is not removed while a process runs it, and a release
+  older than the image's pin is never installed. The check runs as `lea-cli` (uid 10090), which
+  the agents cannot become: they read `/lea/cli` but cannot write it, and a `/lea/cli` writable by
+  anyone else is ignored. `agents_list` shows each Claude agent's `cli_version`;
+  `lea-cli-update status` in a container shows both versions of each CLI. `LEA_CLI_AUTOUPDATE=0`
+  in `lea.conf` turns it off for agents started after `lea stop --all`.
 - lea web from another machine, agents' terminals, notifications and folders (#416). The README
   documents the SSH tunnel (`ssh -L`), which stays the way to reach it remotely; `lea web
   --listen ADDR:PORT` is the explicit opt-in to the network: it refuses to start without TLS
@@ -117,6 +134,14 @@ Changes:
 
 Fixes:
 
+- An agent now hears of a ticket that an auto rule of `lox run` decided (#440, lockhub#200). lea
+  told an agent of a hub decision only when the agent's Lock call had registered a wait, or when
+  the deck's queue showed the ticket pending. An auto rule decides in milliseconds, so an agent
+  that ran its Lock through the shell never got the decision: its `msg_wait` returned nothing.
+  With a hub that serves the decided ticket in `GET /v1/decided` (lockhub#200), lea now claims
+  the wait of the agent the ticket's requester names, as it does from the queue (#261), and tells
+  it `ticket … approved` or `denied`, once. LockHTTP's tickets are not claimed. An older hub
+  keeps the old behaviour.
 - A granted `git commit` runs at once (#393): the pinned commit no longer runs `rm -rf` in its
   `sh -c` script (Claude Code's safety check asked for approval, hook allow or not, and the commit
   timed out). It copies the index to `lea-commit/index` in the worktree's git directory, reused
@@ -133,6 +158,19 @@ Fixes:
   lea keeps per projects dir, and is bound to the agent's incarnation (`LEA_AGENT_INCARNATION`,
   new when an agent is created, kept across its resumes): a resumed tower has its guard on from
   the first turn, and an agent created later under the same name does not inherit it.
+- A granted push or commit no longer stops on a repository that only holds `core.hooksPath`
+  (overridden by lea's pins) or a `remote.origin.pushurl` to the grant's own repository (#413).
+  The refusal used to say "the repository git config redirects or runs programs" whether a key
+  matched or `git config` itself failed, so agents could not tell why. It now names the keys
+  (`… sets filter.x.clean, which redirects git or runs programs`) or says `git config failed in
+  the worktree: <git's message>`. Every other key it refused is still refused.
+
+Security:
+
+- `LEA_LOCKHTTP_MITM=1` makes its CA (`lockhttp ca init`) through the same check as the gate
+  (#450): lea no longer executes lockhttp's launcher. It runs `ca init` in the image the launcher
+  pins, once that image passed the check above (root-owned launcher, `config/locks.lock` pin or
+  `cosign verify`), confined, as your user, with only the CA directory mounted.
 
 ## v0.15.1 (2026-11-09)
 

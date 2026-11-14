@@ -63,6 +63,7 @@ RUN case "$TARGETARCH" in \
  && groupadd -g 10010 lockmq-clients && useradd -r -u 10011 -U -M -s /sbin/nologin lockmq \
  && groupadd -g 10030 lockfile-clients && useradd -r -u 10031 -U -M -s /sbin/nologin lockfile \
  && groupadd -g 10050 locklog-clients && useradd -r -u 10051 -U -M -s /sbin/nologin locklog \
+ && groupadd -g 10090 lea-cli && useradd -r -u 10090 -g 10090 -M -d /lea/cli -s /sbin/nologin lea-cli \
  && for t in locksql lockmq lockfile locklog; do \
       install -d -m 0755 -o root -g root /etc/$t \
       && printf '%s\n' "service_user = \"$t\"" "client_group = \"$t-clients\"" "socket_dir   = \"/run/$t\"" 'x11          = "refuse"' > /etc/$t/system.toml \
@@ -86,15 +87,18 @@ COPY image/forge-gh/config.yml /usr/local/share/lea/forge-gh/config.yml
 COPY image/entrypoint image/user-init /usr/local/libexec/lea/
 COPY image/lea-crun image/managed-check /usr/local/libexec/lea/
 COPY image/lea-session image/lea-agent image/wl-copy /usr/local/bin/
+COPY image/lea-cli-update /usr/local/bin/
 COPY image/go-cross /usr/local/bin/
 COPY --from=go /usr/local/go /usr/local/go
 COPY --from=go-tools /out/ /usr/local/bin/
-# The Claude Code version lea's CI verified the managed settings with (managed-check).
+# The Claude Code version lea's CI verified the managed settings with (managed-check), and the
+# pins lea-cli-update only ever moves forward from.
 RUN sed -i "s/@LEA_VERSION@/${LEA_VERSION}/" /etc/claude-code/managed-settings.json /usr/local/share/lea/managed-settings.json /usr/local/share/lea/claude-settings.json \
  && echo "${CLAUDE_CODE_VERSION}" >/usr/local/share/lea/claude-code-version \
- && chmod 0644 /etc/claude-code/managed-settings.json /usr/local/share/lea/managed-settings.json /usr/local/share/lea/claude-settings.json /usr/local/share/lea/claude-code-version \
+ && echo "${CODEX_VERSION}" >/usr/local/share/lea/codex-version \
+ && chmod 0644 /etc/claude-code/managed-settings.json /usr/local/share/lea/managed-settings.json /usr/local/share/lea/claude-settings.json /usr/local/share/lea/claude-code-version /usr/local/share/lea/codex-version \
  && chmod -R u=rwX,go=rX /usr/local/share/lea/claude-plugin /usr/local/share/lea/forge-gh \
- && chmod 0755 /usr/local/libexec/lea/entrypoint /usr/local/libexec/lea/user-init /usr/local/libexec/lea/lea-crun /usr/local/libexec/lea/managed-check /usr/local/bin/lea-session /usr/local/bin/lea-agent /usr/local/bin/wl-copy /usr/local/bin/go-cross
+ && chmod 0755 /usr/local/libexec/lea/entrypoint /usr/local/libexec/lea/user-init /usr/local/libexec/lea/lea-crun /usr/local/libexec/lea/managed-check /usr/local/bin/lea-session /usr/local/bin/lea-agent /usr/local/bin/lea-cli-update /usr/local/bin/wl-copy /usr/local/bin/go-cross
 # No way back to root once the entrypoint has dropped to the developer (#100): sudo is not in the
 # image and no file is setuid or setgid. newuidmap and newgidmap keep their file capabilities
 # (cap_setuid, cap_setgid): the rootless Podman maps its sub-ids with them, which is also why lea

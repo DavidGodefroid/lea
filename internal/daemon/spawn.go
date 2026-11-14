@@ -67,6 +67,7 @@ type spawnParams struct {
 	Role    string `json:"role"`
 	Profile string `json:"profile"`
 	Model   string `json:"model"`
+	Advisor string `json:"advisor"`
 	Repo    string `json:"repo"`
 	Branch  string `json:"branch"`
 	Brief   string `json:"brief"`
@@ -127,7 +128,7 @@ func (d *Daemon) agentsSpawn(ctx context.Context, o Origin, me string, raw json.
 	if err := roles.CanGive(cr, p.Role); err != nil {
 		return nil, err
 	}
-	if err := d.checkProvider(p.Profile, p.Model); err != nil {
+	if err := d.checkProvider(p.Profile, p.Model, p.Advisor); err != nil {
 		return nil, err
 	}
 	if err := checkBrief(p.Brief, true); err != nil {
@@ -161,9 +162,9 @@ func (d *Daemon) agentsSpawn(ctx context.Context, o Origin, me string, raw json.
 	if err := d.rates.allow("agents_spawn", me, d.now()); err != nil {
 		return nil, err
 	}
-	if req != nil && p.Profile == "" && p.Model == "" {
+	if req != nil && p.Profile == "" && p.Model == "" && p.Advisor == "" {
 		// The provider the requester asked for, unless the lead names one.
-		p.Profile, p.Model = req.Profile, req.Model
+		p.Profile, p.Model, p.Advisor = req.Profile, req.Model, req.Advisor
 	}
 	if req != nil && p.Label == "" {
 		p.Label = req.Label
@@ -172,7 +173,7 @@ func (d *Daemon) agentsSpawn(ctx context.Context, o Origin, me string, raw json.
 		// Where the requester asked the agent to work, unless the lead names it (#364).
 		p.Repo, p.Branch = req.Repo, req.Branch
 	}
-	nr := agents.NewRequest{Container: o.Container, Profile: p.Profile, Model: p.Model, Role: p.Role, Parent: me,
+	nr := agents.NewRequest{Container: o.Container, Profile: p.Profile, Model: p.Model, Advisor: p.Advisor, Role: p.Role, Parent: me,
 		Repo: p.Repo, Branch: p.Branch, Brief: p.Brief, BriefFrom: me, Label: p.Label, NamePrefix: p.Role, Hidden: true}
 	if admit != nil {
 		id, err := d.queueSpawn(me, nr, req)
@@ -191,6 +192,9 @@ func (d *Daemon) agentsSpawn(ctx context.Context, o Origin, me string, raw json.
 	out := map[string]string{"name": row.Name, "key": row.Key, "role": row.Role, "provider": row.Profile, "model": row.Model}
 	if row.Label != "" {
 		out["label"] = row.Label
+	}
+	if row.Advisor != "" {
+		out["advisor"] = row.Advisor
 	}
 	return out, nil
 }

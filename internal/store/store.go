@@ -141,8 +141,9 @@ type Agent struct {
 	Key, Container, Name, SessionID, State string
 	Updated                                int64
 	Profile, Workdir                       string
-	// Model is the model the agent was started with ("" for its CLI's default).
-	Model                      string
+	// Model is the model the agent was started with ("" for its CLI's default); Advisor the
+	// model its CLI consults as advisor ("" for none, #407).
+	Model, Advisor             string
 	Created                    int64
 	Role, Parent, Repo, Branch string
 	TaskID                     int64
@@ -190,12 +191,14 @@ var agentColumns = [][2]string{
 	{"incarnation", "TEXT NOT NULL DEFAULT ''"},
 	{"woken", "INTEGER NOT NULL DEFAULT 0"},
 	{"hold_since", "INTEGER NOT NULL DEFAULT 0"},
+	{"advisor", "TEXT NOT NULL DEFAULT ''"},
 }
 
 // requestColumns are the spawn_requests columns added after it was created.
 var requestColumns = [][2]string{
 	{"model", "TEXT NOT NULL DEFAULT ''"},
 	{"label", "TEXT NOT NULL DEFAULT ''"},
+	{"advisor", "TEXT NOT NULL DEFAULT ''"},
 }
 
 // approvalColumns are the approvals columns added after phase 0.
@@ -314,13 +317,13 @@ func (s *Store) SetHookState(key, state, sessionID string, now int64) (bool, err
 	return s.setState(key, state, sessionID, now, ` AND state<>'stopped'`)
 }
 
-const agentCols = `key, container, name, session_id, state, updated, profile, workdir, created, role, parent, repo, branch, task_id, label, args, prompt, paused, model, limit_until, limit_tries, incarnation, woken, hold_since`
+const agentCols = `key, container, name, session_id, state, updated, profile, workdir, created, role, parent, repo, branch, task_id, label, args, prompt, paused, model, limit_until, limit_tries, incarnation, woken, hold_since, advisor`
 
 func scanAgent(sc interface{ Scan(...any) error }) (Agent, error) {
 	var a Agent
 	var args string
 	err := sc.Scan(&a.Key, &a.Container, &a.Name, &a.SessionID, &a.State, &a.Updated, &a.Profile, &a.Workdir, &a.Created,
-		&a.Role, &a.Parent, &a.Repo, &a.Branch, &a.TaskID, &a.Label, &args, &a.Prompt, &a.Paused, &a.Model, &a.LimitUntil, &a.LimitTries, &a.Incarnation, &a.Woken, &a.HoldSince)
+		&a.Role, &a.Parent, &a.Repo, &a.Branch, &a.TaskID, &a.Label, &args, &a.Prompt, &a.Paused, &a.Model, &a.LimitUntil, &a.LimitTries, &a.Incarnation, &a.Woken, &a.HoldSince, &a.Advisor)
 	if err == nil && args != "" {
 		err = json.Unmarshal([]byte(args), &a.Args)
 	}
@@ -387,7 +390,7 @@ func (s *Store) AgentByKey(key string) (Agent, error) {
 type NewAgent struct {
 	Container, Name, Profile, Workdir string
 	Role, Parent, Repo, Branch        string
-	Model                             string
+	Model, Advisor                    string
 	// Live says the caller found a process of this name still running in the container (#350):
 	// its row is never reused, even when it says done.
 	Live bool
@@ -463,11 +466,11 @@ func (s *Store) Register(n NewAgent, c Caps, now int64) (Agent, error) {
 			return Agent{}, err
 		}
 		_, err = tx.Exec(`UPDATE agents SET profile=?, workdir=?, created=?, updated=?, state='unknown', session_id='',
-			ctx_pct=-1, cost_usd=-1, role=?, parent=?, repo=?, branch=?, task_id=0, label='', args='', prompt='', paused=0, subagents=0, limit_until=0, limit_tries=0, woken=0, hold_since=0, model=?, incarnation=? WHERE key=?`,
-			n.Profile, n.Workdir, now, now, n.Role, n.Parent, n.Repo, n.Branch, n.Model, inc, key)
+			ctx_pct=-1, cost_usd=-1, role=?, parent=?, repo=?, branch=?, task_id=0, label='', args='', prompt='', paused=0, subagents=0, limit_until=0, limit_tries=0, woken=0, hold_since=0, model=?, advisor=?, incarnation=? WHERE key=?`,
+			n.Profile, n.Workdir, now, now, n.Role, n.Parent, n.Repo, n.Branch, n.Model, n.Advisor, inc, key)
 	} else {
-		_, err = tx.Exec(`INSERT INTO agents(key, container, name, profile, workdir, created, updated, role, parent, repo, branch, model, incarnation)
-			VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)`, key, n.Container, n.Name, n.Profile, n.Workdir, now, now, n.Role, n.Parent, n.Repo, n.Branch, n.Model, inc)
+		_, err = tx.Exec(`INSERT INTO agents(key, container, name, profile, workdir, created, updated, role, parent, repo, branch, model, advisor, incarnation)
+			VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, key, n.Container, n.Name, n.Profile, n.Workdir, now, now, n.Role, n.Parent, n.Repo, n.Branch, n.Model, n.Advisor, inc)
 	}
 	if err != nil {
 		return Agent{}, err
@@ -475,7 +478,7 @@ func (s *Store) Register(n NewAgent, c Caps, now int64) (Agent, error) {
 	if err := tx.Commit(); err != nil {
 		return Agent{}, err
 	}
-	return Agent{Key: key, Container: n.Container, Name: n.Name, State: "unknown", Updated: now, Profile: n.Profile, Model: n.Model,
+	return Agent{Key: key, Container: n.Container, Name: n.Name, State: "unknown", Updated: now, Profile: n.Profile, Model: n.Model, Advisor: n.Advisor,
 		Workdir: n.Workdir, Created: now, Role: n.Role, Parent: n.Parent, Repo: n.Repo, Branch: n.Branch, Incarnation: inc}, nil
 }
 
