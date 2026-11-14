@@ -9,8 +9,8 @@ Features:
   `NET_ADMIN` on an agent network, a misconfigured network), the packet it sends past the proxy,
   for example a direct connection to `1.1.1.1` or `169.254.169.254`, is still dropped. Before, it
   was dropped silently. Now it is logged in the kernel log, rate-limited, with the agent
-  network's bridge and the destination: `journalctl -k -g lea-egress`. On Linux hosts with a
-  rootful Docker, `nft` and systemd, `lea init` installs an nftables table of lea's own, `inet
+  network's address and the destination: `journalctl -k -g lea-egress`. On Linux hosts with a
+  rootful Docker, `nft` and systemd, `lea init` installs an nftables table of lea's own, `bridge
   lea_egress`, and `lea-egress-log.service`, which loads it at boot. This takes `sudo` once, as the
   AppArmor profile does; the first `lea` leaves it to `lea init` when `sudo` would prompt. Internal
   networks now get a bridge named `lea` plus 12 hex digits so that one rule covers them all.

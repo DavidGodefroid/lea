@@ -1,18 +1,22 @@
 # shellcheck shell=sh
-# The egress log (#104): an nftables table of lea's own, inet lea_egress, that logs (rate-limited,
-# prefix "lea-egress: ") every packet coming from an agent network that bypasses the proxy: one
-# the host would route elsewhere (a direct connection to 1.1.1.1, to 169.254.169.254) or take
-# itself. Agents have no route but their network, so a normal session never sends one: a logged
-# packet means something got around lea's containment (an agent with NET_ADMIN, a misconfigured
-# network). The packets are dropped as before (Docker's rules for internal networks); this only
+# The egress log (#104): an nftables table of lea's own, bridge lea_egress, that logs
+# (rate-limited, prefix "lea-egress: ") every IP packet an agent network sends to the host itself
+# rather than across its bridge to the proxy: a direct connection to 1.1.1.1 or 169.254.169.254
+# routed through the bridge, or one to the host. Agents have no route but their network, so a
+# normal session never sends one: a logged packet means something got around lea's containment
+# (a container with NET_ADMIN, a misconfigured network). The packets are dropped as before (the
+# host has no address on an isolated bridge, Docker's rules for internal networks); this only
 # makes them visible, in the kernel log (journalctl -k -g lea-egress), and lea doctor counts them.
+# The bridge family's input hook sees exactly those frames (addressed to the bridge, pkttype
+# host) before the routing that drops them; agent-proxy traffic is bridged and never reaches it.
 # Every internal network lea creates has a bridge named lea<12 hex digits> (the launcher's
-# bridgeName), so one rule on iifname "lea*" covers them all without root at each start. Its own
-# table, not Docker's DOCKER-USER chain: Docker's nftables firewall backend has no DOCKER-USER,
-# and a table of its own is left alone by Docker and firewalld. Installed by lea init (sudo, like
-# the AppArmor profile) with a systemd unit that loads it at boot and after nftables.service.
+# bridgeName), so one rule on ibrname "lea*" covers them all without root at each start. Its own
+# table, not Docker's DOCKER-USER chain: DOCKER-USER (FORWARD) never sees these packets, Docker's
+# nftables firewall backend has none, and a table of its own is left alone by Docker and
+# firewalld. Installed by lea init (sudo, like the AppArmor profile) with a systemd unit that
+# loads it at boot and after nftables.service.
 
-LEA_EGRESS_LOG_TABLE='inet lea_egress'
+LEA_EGRESS_LOG_TABLE='bridge lea_egress'
 LEA_EGRESS_LOG_UNIT_NAME=lea-egress-log.service
 
 lea__egress_log_nft_path() { printf '%s' "${LEA_EGRESS_LOG_NFT:-/etc/lea/egress-log.nft}"; }
@@ -44,19 +48,15 @@ lea_egress_log_skip() {
 lea_egress_log_ruleset() {
   cat <<'EOT'
 #!/usr/sbin/nft -f
-# lea's egress log (#104), installed by lea init: logs every packet from an agent network (bridge
-# lea*) that bypasses lea's proxy. Logging only: Docker's rules drop these packets. Read them with
-# journalctl -k -g lea-egress.
-table inet lea_egress
-delete table inet lea_egress
-table inet lea_egress {
-	chain forward {
-		type filter hook forward priority filter - 10; policy accept;
-		iifname "lea*" oifname != "lea*" meta l4proto != ipv6-icmp limit rate 20/minute burst 20 packets log prefix "lea-egress: " level warn
-	}
+# lea's egress log (#104), installed by lea init: logs every IP packet an agent network (bridge
+# lea*) sends to the host rather than to lea's proxy. Logging only: the host drops these packets.
+# Read them with journalctl -k -g lea-egress.
+table bridge lea_egress
+delete table bridge lea_egress
+table bridge lea_egress {
 	chain input {
 		type filter hook input priority filter - 10; policy accept;
-		iifname "lea*" meta l4proto != ipv6-icmp limit rate 20/minute burst 20 packets log prefix "lea-egress: " level warn
+		meta ibrname "lea*" pkttype host meta protocol { ip, ip6 } meta l4proto != ipv6-icmp limit rate 20/minute burst 20 packets log prefix "lea-egress: " level warn
 	}
 }
 EOT
@@ -132,7 +132,7 @@ lea__doctor_egress_log() {
     lea__warn "egress log" "$(lea__egress_log_nft_path) or $LEA_EGRESS_LOG_UNIT_NAME is not lea's current one: run lea init (needs sudo)"
   elif ! systemctl is-active --quiet "$LEA_EGRESS_LOG_UNIT_NAME" 2>/dev/null; then
     lea__warn "egress log" "$LEA_EGRESS_LOG_UNIT_NAME is not active: sudo systemctl enable --now $LEA_EGRESS_LOG_UNIT_NAME"
-  elif sudo -n true 2>/dev/null && ! sudo -n "$(lea__egress_log_nft_bin)" list table inet lea_egress >/dev/null 2>&1; then
+  elif sudo -n true 2>/dev/null && ! sudo -n "$(lea__egress_log_nft_bin)" list table bridge lea_egress >/dev/null 2>&1; then
     lea__warn "egress log" "table $LEA_EGRESS_LOG_TABLE is not loaded (an nft flush ruleset?): sudo systemctl restart $LEA_EGRESS_LOG_UNIT_NAME"
   else
     lea__ok "egress log ($LEA_EGRESS_LOG_UNIT_NAME)"

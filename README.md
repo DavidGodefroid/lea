@@ -1560,12 +1560,12 @@ starting; it is never ignored. Without the file, lea runs on your configuration 
 - **Egress log.** An agent has no route but its own network, so it can
   reach nothing but the proxy. If something gets around that (a container with `NET_ADMIN` on
   an agent network, a misconfigured network) and sends a packet past the proxy, for example a
-  direct connection to `1.1.1.1` or to `169.254.169.254`, Docker still drops it, and lea's
+  direct connection to `1.1.1.1` or to `169.254.169.254`, the host still drops it, and lea's
   egress log records it in the kernel log. Read it with `journalctl -k -g lea-egress`; each line
-  names the agent network's bridge (`IN=lea…`) and the destination (`DST=`, `DPT=`). The log is
-  an nftables table of lea's own, `inet lea_egress`. It logs only, rate-limited to 20 packets a
-  minute, what comes in from a `lea*` bridge and goes anywhere but another `lea*` bridge
-  (forwarded) or to the host itself. Every internal network lea creates gets a bridge named
+  names the source and the destination (`SRC=`, `DST=`, `DPT=`). The log is an nftables table of
+  lea's own, `bridge lea_egress`. It logs only, rate-limited to 20 packets a minute, the IP
+  packets a `lea*` bridge takes up to the host instead of across to the proxy: traffic between
+  the agents and the proxy stays on the bridge and is never logged. Every internal network lea creates gets a bridge named
   `lea` plus 12 hex digits, so one rule covers all of them, and no `sudo` is needed when an agent
   starts. `lea init` installs it on Linux hosts with a rootful Docker, `nft` and systemd.
   `lea-egress-log.service` loads it at boot and again when `nftables.service` restarts or

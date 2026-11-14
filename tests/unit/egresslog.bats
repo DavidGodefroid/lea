@@ -13,23 +13,21 @@ installed() {
   lea_egress_log_unit >"$LEA_EGRESS_LOG_UNIT"
 }
 
-@test "the ruleset logs, rate-limited, what comes from a lea* bridge and leaves for another interface or the host" {
+@test "the ruleset logs, rate-limited, the IP packets a lea* bridge takes up to the host" {
   run lea_egress_log_ruleset
-  [[ "$output" == *"table inet lea_egress {"* ]]
-  [[ "$output" == *"delete table inet lea_egress"* ]]
-  [[ "$output" == *'type filter hook forward priority filter - 10; policy accept;'* ]]
-  [[ "$output" == *'iifname "lea*" oifname != "lea*" meta l4proto != ipv6-icmp limit rate 20/minute burst 20 packets log prefix "lea-egress: " level warn'* ]]
+  [[ "$output" == *"table bridge lea_egress {"* ]]
+  [[ "$output" == *"delete table bridge lea_egress"* ]]
   [[ "$output" == *'type filter hook input priority filter - 10; policy accept;'* ]]
-  [[ "$output" == *'iifname "lea*" meta l4proto != ipv6-icmp limit rate 20/minute burst 20 packets log prefix "lea-egress: " level warn'* ]]
+  [[ "$output" == *'meta ibrname "lea*" pkttype host meta protocol { ip, ip6 } meta l4proto != ipv6-icmp limit rate 20/minute burst 20 packets log prefix "lea-egress: " level warn'* ]]
   # Logging only: the table drops and accepts nothing on its own.
-  run sh -c 'grep -E "^[[:space:]]*iifname" | grep -wE "drop|reject|accept|return"' <<<"$output"
+  run sh -c 'grep -E "^[[:space:]]*meta ibrname" | grep -wE "drop|reject|accept|return"' <<<"$output"
   [ "$status" -eq 1 ]
 }
 
 @test "the unit loads the table at boot and again after nftables.service" {
   run lea_egress_log_unit
   [[ "$output" == *"ExecStart=$LEA_ROOT/tests/fakes/nft -f $LEA_EGRESS_LOG_NFT"* ]]
-  [[ "$output" == *"ExecStop=$LEA_ROOT/tests/fakes/nft delete table inet lea_egress"* ]]
+  [[ "$output" == *"ExecStop=$LEA_ROOT/tests/fakes/nft delete table bridge lea_egress"* ]]
   [[ "$output" == *"PartOf=nftables.service"* ]]
   [[ "$output" == *"ReloadPropagatedFrom=nftables.service"* ]]
   [[ "$output" == *"WantedBy=multi-user.target"* ]]
@@ -104,7 +102,7 @@ installed() {
   chmod +x "$BATS_TEST_TMPDIR/sbin/sudo"
   PATH="$BATS_TEST_TMPDIR/sbin:$PATH"
   run lea__doctor_egress_log
-  [[ "$output" == *"warn  egress log: table inet lea_egress is not loaded (an nft flush ruleset?): sudo systemctl restart lea-egress-log.service"* ]]
+  [[ "$output" == *"warn  egress log: table bridge lea_egress is not loaded (an nft flush ruleset?): sudo systemctl restart lea-egress-log.service"* ]]
 }
 
 @test "lea doctor is fine with a current, active, loaded egress log" {
