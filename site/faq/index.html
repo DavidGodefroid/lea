@@ -76,23 +76,23 @@
 </section>
 <section aria-labelledby="devcontainer">
   <h2 id="devcontainer">How is it different from a devcontainer?</h2>
-  <p>A devcontainer isolates a toolchain; lea isolates the agent. It adds an egress proxy that refuses private networks, keeps your credentials out, nests its own container engine, audits risky changes on exit, and gives you lea deck for many agents.</p>
+  <p>A devcontainer isolates a toolchain; lea isolates the agent. It adds an egress proxy that refuses private networks, keeps your host&#8217;s credentials out (the agents read only the logins lea gives them), nests its own container engine, audits risky changes on exit, and gives you lea deck for many agents.</p>
 </section>
 <section aria-labelledby="code">
   <h2 id="code">Does my code leave my machine?</h2>
-  <p>Only the way your agent already sends it: to its model API. lea has no server and no account, and sends no telemetry of its own. Usage metrics go nowhere unless you set <code>LEA_OTEL_UPSTREAM</code> to your own collector.</p>
+  <p>Only where the egress allowlist reaches: your agent&#8217;s model API, and the forges and registries your agents push to. lea has no server and no account, and sends no telemetry of its own. Usage metrics go nowhere unless you set <code>LEA_OTEL_UPSTREAM</code> to your own collector.</p>
 </section>
 <section aria-labelledby="approvals">
   <h2 id="approvals">Where do I approve a database query?</h2>
-  <p>In <code>lox run</code>, in a terminal of your own outside lea. Requests to the Locks (locksql, lockmq, lockfile, locklog, lockssh, lockhttp) are decided by the Lock Family&#8217;s hub, never by lea. The deck answers only the agents&#8217; own permission requests. <a href="../install/#locks">Add the Locks</a>.</p>
+  <p>In <code>lox run</code>, in a terminal of your own outside lea. Requests to the Locks (locksql, lockmq, lockfile, locklog, lockssh, lockhttp) are decided by the Lock Family&#8217;s hub, never by lea. lea answers only the agents&#8217; own permission requests: in the deck, or without it with <code>lea requests</code>, <code>lea approve</code> and <code>lea deny</code> (or the agent&#8217;s own dialog). <a href="../install/#locks">Add the Locks</a>.</p>
 </section>
 <section aria-labelledby="lox">
   <h2 id="lox">Does lea need lox?</h2>
-  <p>Not to run agents. You need <code>lox</code> 0.9.0 or later for the Locks: <code>lox add</code> sets a lock up in the projects directory, and <code>lox run</code> runs it and serves the decisions. lea itself runs no <code>lox</code> command.</p>
+  <p>Not to run agents. You need a recent <code>lox</code> for the Locks (<code>lea doctor</code> warns when it is older than the release lea pins): <code>lox add</code> sets a lock up in the projects directory, and <code>lox run</code> runs it and serves the decisions. lea starts no <code>lox</code> command; <code>lea doctor</code> only runs <code>lox version</code>.</p>
 </section>
 <section aria-labelledby="lan">
   <h2 id="lan">Can an agent reach a service on my LAN?</h2>
-  <p>Not by default. List the hosts it may reach in <code>LEA_INTERNAL_HOSTS</code>, with their port. <a href="../security/#egress">Egress</a>.</p>
+  <p>Not by default. List the hosts it may reach in the internal-hosts file, one <code>&lt;host or IPv4&gt; &lt;ports&gt;</code> entry per line (<code>LEA_INTERNAL_HOSTS</code> is its path, by default <code>config/internal-hosts</code> in lea&#8217;s installation). <a href="../security/#egress">Egress</a>.</p>
 </section>
 <section aria-labelledby="deliver">
   <h2 id="deliver">Can agents push and merge on their own?</h2>
@@ -147,7 +147,7 @@
       </nav>
     </div>
     <div class="wrap footer-bottom">
-      <p>Pre-release (v0.15.x). lea is licensed under the <a href="https://github.com/DavidGodefroid/lea/blob/main/LICENSE">Apache License 2.0</a>.</p>
+      <p>Pre-release. lea is licensed under the <a href="https://github.com/DavidGodefroid/lea/blob/main/LICENSE">Apache License 2.0</a>.</p>
       <p>lea is an independent project, not affiliated with Anthropic. Claude and Claude Code are trademarks of Anthropic.</p>
       <p><a href="https://lockfamily.dev">lockfamily.dev</a> · <a href="https://github.com/DavidGodefroid/lockfamily">the family on GitHub</a></p>
     </div>

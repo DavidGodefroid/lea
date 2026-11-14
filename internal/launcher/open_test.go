@@ -545,6 +545,11 @@ func TestDeckNeedsAUsableTmux(t *testing.T) {
 	if msg := l.tmuxMissing(); msg != `tmux is not installed. Install it with: sudo apt install tmux, or build a static one with: make -C "`+l.Root+`" tmux-build` {
 		t.Fatalf("%q", msg)
 	}
+	// A release archive ships no Makefile nor tools/: the package only.
+	l.Root = t.TempDir()
+	if msg := l.tmuxMissing(); msg != `tmux is not installed. Install it with: sudo apt install tmux` {
+		t.Fatalf("%q", msg)
+	}
 }
 
 // Networks and the proxy are set up under the global lock, which is released afterwards.
