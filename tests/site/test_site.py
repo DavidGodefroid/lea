@@ -289,7 +289,7 @@ class Site(unittest.TestCase):
         for page in ('index.html', 'install/index.html', 'faq/index.html', 'how-it-works/index.html'):
             self.assertIn('<code>lox run</code>', self.html[page], page)
         install = self.html['install/index.html']
-        for lock in ('locksql', 'lockmq', 'lockfile', 'locklog', 'lockhttp'):
+        for lock in ('locksql', 'lockmq', 'lockfile', 'locklog', 'lockssh', 'lockhttp'):
             self.assertIn(lock, install, lock)
         self.assertIn('LEA_LOCKHTTP=1', install)
         self.assertIn('curl -fsSL https://leadeck.dev/install.sh | sh', install)

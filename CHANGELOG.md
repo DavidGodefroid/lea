@@ -4,6 +4,16 @@
 
 Features:
 
+- lockssh (#325): `LEA_LOCKSSH=1` (or a lockssh lock under `lox run`) lets lea's agents run
+  commands on SSH hosts through a lockssh console, which alone holds the key. Allowed commands
+  run with their output masked. Any other command, and a session's first connection, wait for
+  your approval at `lox run`. lea's containers get the lock's socket volume, the
+  `lockssh-clients` group (10040), and the profile directory `.lockssh` read-only, so no agent
+  widens its allow list or auto rules. Its client is in lea's image and Codex agents get it as
+  the `lockssh` MCP server. `lea lockssh`, `lea init --lockssh` and `lea doctor` cover it. The
+  set (`config/locks.lock`) moves to lox v0.11.0, the first with the lockssh type, and the
+  releases it runs: locksql v0.18.1, lockmq v0.9.0, lockfile v0.9.1, locklog v0.3.0, lockhttp
+  v0.9.1 and lockssh.
 - A lead can push its team's branches (#406). Before, a lead was always refused: `pushing to
   anything but the agent's own branch is never allowed`. Once a child stopped, its branch could
   be pushed only from the host. Now, under the existing `push` allowance, a lead may run `git push
