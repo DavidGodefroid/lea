@@ -64,8 +64,14 @@ func TestAccountUsageKeepsTheNewestReport(t *testing.T) {
 	if w, _ := usage5h(e); w.pct != 55 {
 		t.Fatalf("an earlier window overwrote: %+v", w)
 	}
-	usageReport(t, e, "a", 5, 23000, -1) // the window reset: a later one
-	if w, _ := usage5h(e); w.pct != 5 || w.resetsAt != 23000 {
+	// Untrusted reports: a reset time in the past or beyond the window's span is not believed.
+	usageReport(t, e, "a", 0, 999_999, -1)
+	usageReport(t, e, "a", 0, 900, -1)
+	if w, _ := usage5h(e); w.pct != 55 {
+		t.Fatalf("an implausible reset time was believed: %+v", w)
+	}
+	usageReport(t, e, "a", 5, 18000, -1) // the window reset: a later one
+	if w, _ := usage5h(e); w.pct != 5 || w.resetsAt != 18000 {
 		t.Fatalf("the next window was dropped: %+v", w)
 	}
 	e.d.mu.Lock()
@@ -74,7 +80,7 @@ func TestAccountUsageKeepsTheNewestReport(t *testing.T) {
 	if !ok || week.pct != 10 {
 		t.Fatalf("7d=%+v %v", week, ok)
 	}
-	e.clock.Store(23000)
+	e.clock.Store(18000)
 	if w, ok := usage5h(e); ok {
 		t.Fatalf("a window that reset is still known: %+v", w)
 	}
@@ -210,7 +216,7 @@ func TestBudgetDrainsTheQueueAndNotesOncePerCrossing(t *testing.T) {
 		t.Fatalf("started while over again: %d", n)
 	}
 	// The window resets: the next report shows little usage, and the queued spawn starts.
-	usageReport(t, e, "kid", 3, 27000, -1)
+	usageReport(t, e, "kid", 3, 18000, -1)
 	waitFor(t, func() bool { return newCount(fa) == 2 })
 	settle(t, e)
 }
@@ -251,7 +257,7 @@ func TestNewerWindow(t *testing.T) {
 		{acctWindow{50, 1000}, acctWindow{1, 2000}, true},
 		{acctWindow{50, 2000}, acctWindow{99, 1000}, false},
 		{acctWindow{50, 0}, acctWindow{10, 0}, true},
-		{acctWindow{50, 1000}, acctWindow{10, 0}, true},
+		{acctWindow{50, 1000}, acctWindow{10, 0}, false},
 	} {
 		if got := newerWindow(c.k, c.r); got != c.want {
 			t.Errorf("newerWindow(%+v, %+v)=%v, want %v", c.k, c.r, got, c.want)

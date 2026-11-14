@@ -21,6 +21,11 @@ import (
 // the provider's, read at each report, and may move by a few seconds.
 const windowSlack = 120
 
+// windowSpan is each window's length: a report whose reset time lies beyond it (or in the past)
+// is not believed. The status reports are the agents' own, untrusted: this bounds how long a
+// made-up report can hold or free spawns.
+var windowSpan = map[string]int64{"5h": 5 * 3600, "7d": 7 * 24 * 3600}
+
 // acctWindow is the account's latest usage of one window: its used share and when it resets (0:
 // unknown).
 type acctWindow struct {
@@ -31,12 +36,14 @@ type acctWindow struct {
 // newerWindow reports whether report r is newer than the kept window k: a later window (a later
 // reset), or the same window with as much usage or more (usage only grows within a window). A
 // report from an earlier window, or with less usage in the same one, is an older status line
-// (an agent idle since) and is not kept. Without a reset time on either side, the latest report
-// wins.
+// (an agent idle since) and is not kept. A report without a reset time replaces only a kept window
+// without one.
 func newerWindow(k, r acctWindow) bool {
 	switch {
-	case k.resetsAt == 0 || r.resetsAt == 0:
+	case k.resetsAt == 0:
 		return true
+	case r.resetsAt == 0:
+		return false
 	case r.resetsAt > k.resetsAt+windowSlack:
 		return true
 	case r.resetsAt < k.resetsAt-windowSlack:
@@ -46,16 +53,24 @@ func newerWindow(k, r acctWindow) bool {
 }
 
 // recordAccount keeps the account's usage of each window ws reports ("5h", "7d") when it is
-// newer than what lea holds; it reports whether anything changed.
+// newer than what lea holds, and its reset time within the window's span from now; it reports
+// whether anything changed.
 func (d *Daemon) recordAccount(ws map[string]acctWindow) bool {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	if d.account == nil {
 		d.account = map[string]acctWindow{}
 	}
+	now := d.now()
 	changed := false
 	for label, r := range ws {
+		if r.resetsAt != 0 && (r.resetsAt <= now || r.resetsAt > now+windowSpan[label]+windowSlack) {
+			continue
+		}
 		k, ok := d.account[label]
+		if ok && k.resetsAt > 0 && now >= k.resetsAt {
+			ok = false // that window reset: any report is newer
+		}
 		if ok && (k == r || !newerWindow(k, r)) {
 			continue
 		}
