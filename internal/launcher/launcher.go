@@ -586,11 +586,11 @@ func (l *Launcher) allow(args []string) error {
 }
 
 // web is lea web [--port N] [--open] (#414): the deck in the browser, served by the core for this
-// projects dir's lea (LEA_PROJECTS_DIR for another one).
+// projects dir's lea (LEA_PROJECTS_DIR for another one), and that directory.
 func (l *Launcher) web(args []string) error {
 	for _, a := range args {
-		if a == "--container" {
-			l.logf("error: lea web names no --container: run it from the lea's projects directory (or set LEA_PROJECTS_DIR)")
+		if a == "--container" || a == "--projects" {
+			l.logf("error: lea web names no --container or --projects: run it from the lea's projects directory (or set LEA_PROJECTS_DIR)")
 			return exitError{2}
 		}
 	}
@@ -598,7 +598,8 @@ func (l *Launcher) web(args []string) error {
 	if err != nil {
 		return err
 	}
-	if l.coreCall(append([]string{"web", "--container", l.Cfg.ContainerName(proj)}, args...)...) != nil {
+	// The projects directory: lea allow from the page reads its repositories' origins (#415).
+	if l.coreCall(append([]string{"web", "--container", l.Cfg.ContainerName(proj), "--projects", proj}, args...)...) != nil {
 		return exitError{1}
 	}
 	return nil

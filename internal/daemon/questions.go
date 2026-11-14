@@ -201,6 +201,12 @@ func (d *Daemon) answerOpen(me, by string) string {
 		return ""
 	}
 	d.changed()
+	return answeredText(d, a, next, by)
+}
+
+// answeredText is the context that tells the tower question a is answered by by, and that next
+// (ID 0: none) is now open.
+func answeredText(d *Daemon, a, next store.UserQuestion, by string) string {
 	text := fmt.Sprintf("lea: question #%d is answered by %s.", a.ID, by)
 	switch {
 	case a.Message != 0:
@@ -354,4 +360,48 @@ func (d *Daemon) questionDrop(raw json.RawMessage) (any, error) {
 	}
 	d.changed()
 	return viewQuestion(q), nil
+}
+
+// questionAnswer is the user's answer to a tower's open question, typed in lea web (#415; host
+// only): the tower gets it as the user's request, then lea's note that it answers the question,
+// which closes as the user's prompt would close it, and what opens next.
+func (d *Daemon) questionAnswer(raw json.RawMessage) (any, error) {
+	var p struct {
+		ID   int64  `json:"id"`
+		Text string `json:"text"`
+	}
+	if err := json.Unmarshal(raw, &p); err != nil {
+		return nil, err
+	}
+	if strings.TrimSpace(p.Text) == "" {
+		return nil, errors.New("text: write the answer")
+	}
+	q, err := d.st.GetQuestion(p.ID)
+	if errors.Is(err, store.ErrNotFound) {
+		return nil, fmt.Errorf("no question #%d", p.ID)
+	}
+	if err != nil {
+		return nil, err
+	}
+	if q.State != store.QuestionOpen {
+		return nil, fmt.Errorf("question #%d is %s: only the open question is answered", p.ID, q.State)
+	}
+	body := fmt.Sprintf("Answer to question #%d:\n%s", q.ID, p.Text)
+	if _, err := d.send("user", q.Agent, body, "request", 0); err != nil {
+		return nil, err
+	}
+	a, next, err := d.st.AnswerQuestionByID(q.ID, d.now())
+	if err != nil {
+		if errors.Is(err, store.ErrDecided) {
+			return nil, fmt.Errorf("question #%d was answered meanwhile: your answer was sent to the tower as a message", q.ID)
+		}
+		return nil, err
+	}
+	d.changed()
+	d.post("lea", q.Agent, "note", answeredText(d, a, next, "the user's message just before this note (written in lea web)"), 0)
+	out := map[string]any{"answered": viewQuestion(a)}
+	if next.ID != 0 {
+		out["open"] = viewQuestion(next)
+	}
+	return out, nil
 }

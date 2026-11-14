@@ -8,6 +8,7 @@
 <link rel="icon" href="data:,">
 <link rel="stylesheet" href="/static/app.css">
 <script src="/static/app.js" defer></script>
+<script src="/static/requests.js" defer></script>
 </head>
 <body>
 <header class="bar">
@@ -15,12 +16,15 @@
   <span id="link" class="link" role="status" aria-live="polite">connecting…</span>
   <nav class="actions">
     <button type="button" id="btn-tower" class="ghost" title="Talk to the control tower (t)">Tower</button>
+    <button type="button" id="btn-allow" class="ghost" title="What agents may do without asking (g)">Allowances</button>
+    <button type="button" id="btn-egress" class="ghost" title="The web hosts agents may reach (w)">Egress</button>
     <button type="button" id="btn-new" class="primary" title="Start an agent (n)">New agent</button>
     <button type="button" id="btn-theme" class="ghost icon" title="Light or dark theme" aria-label="Switch theme">◐</button>
     <button type="button" id="btn-help" class="ghost icon" title="Keyboard shortcuts (?)" aria-label="Keyboard shortcuts">?</button>
   </nav>
 </header>
 <section id="prompts" class="prompts" aria-live="assertive" aria-label="Permissions waiting for you"></section>
+<section id="decisions" class="prompts" aria-live="polite" aria-label="Requests and questions waiting for you"></section>
 <main class="layout">
   <section class="rack" aria-label="Agents">
     <ol id="strips" class="strips" role="listbox" aria-label="Agents"></ol>
@@ -86,9 +90,41 @@
       <dt><kbd>n</kbd> <kbd>N</kbd></dt><dd>start an agent, a control tower</dd>
       <dt><kbd>t</kbd></dt><dd>talk to the control tower</dd>
       <dt><kbd>a</kbd> <kbd>d</kbd> <kbd>A</kbd></dt><dd>allow, deny, always allow the first permission</dd>
+      <dt><kbd>g</kbd> <kbd>w</kbd></dt><dd>allowances, egress</dd>
       <dt><kbd>Esc</kbd></dt><dd>close</dd>
     </dl>
     <div class="row"><button value="ok" class="primary">Close</button></div>
+  </form>
+</dialog>
+<dialog id="dlg-allow" class="dlg wide">
+  <form method="dialog" id="form-allow">
+    <h2>Allowances</h2>
+    <p class="hint">What every agent of this lea may do without asking, until you revoke it. A one-off grant request (gN) covers one lead and its children for a while; an allowance covers them all.</p>
+    <ul id="allow-sets" class="sets"></ul>
+    <fieldset class="caps" id="allow-caps"><legend>Allow</legend></fieldset>
+    <div class="grid2">
+      <label>Repositories <input name="repos" placeholder="every one with a forge origin" autocomplete="off"></label>
+      <label>Release tags <input name="tag" placeholder="any semver tag (v0.15.*)" autocomplete="off"></label>
+      <label>Branches <input name="branch" placeholder="every agent branch" autocomplete="off"></label>
+      <label>Agent <input name="agent" placeholder="every agent (or one and its children)" autocomplete="off"></label>
+      <label>For <input name="for" placeholder="until revoked (or 720h)" autocomplete="off"></label>
+    </div>
+    <div id="allow-preview" class="preview" hidden></div>
+    <p class="err" id="allow-err" role="alert"></p>
+    <div class="row"><button value="cancel" formnovalidate>Close</button><button type="button" id="allow-check">Preview</button><button type="button" class="primary" id="allow-ok" disabled>Record</button></div>
+  </form>
+</dialog>
+<dialog id="dlg-egress" class="dlg wide">
+  <form method="dialog" id="form-egress">
+    <h2>Egress</h2>
+    <p class="hint">Agents reach the web through lea-proxy's allowlist. There is no one-off egress approval: allowing a host lasts until you deny it, and applies live to every agent.</p>
+    <h3>Refused lately</h3>
+    <ul id="egress-list" class="sets"><li class="sub">Loading…</li></ul>
+    <label>Host <input id="egress-host" placeholder="deb.debian.org" autocomplete="off" spellcheck="false"></label>
+    <p class="hint">Same as <code>lea egress allow HOST</code> and <code>lea egress deny HOST</code> on the host. A domain covers its subdomains.</p>
+    <pre id="egress-said" class="said" hidden></pre>
+    <p class="err" id="egress-err" role="alert"></p>
+    <div class="row"><button value="cancel" formnovalidate>Close</button><button type="button" id="egress-deny" class="danger">Deny</button><button type="button" id="egress-allow" class="primary">Allow</button></div>
   </form>
 </dialog>
 <div id="toast" class="toast" role="status" aria-live="polite" hidden></div>

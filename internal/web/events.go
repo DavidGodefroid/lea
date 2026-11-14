@@ -7,6 +7,8 @@ import (
 	"net/http"
 	"strings"
 	"time"
+
+	"github.com/DavidGodefroid/lea/internal/grants"
 )
 
 // watchWait is how long the daemon holds one agents_watch (seconds); a stream with no change
@@ -21,15 +23,19 @@ func sleepRetry(ctx context.Context) {
 }
 
 // State is one event of the stream: the lea's agents as agents_watch reports them, their tasks
-// (board_list: status, next, blocker), the permissions they wait on and their questions to the
-// user, all of this lea's only.
+// (board_list: status, next, blocker), the permissions they wait on, their questions to the
+// user, the spawn requests (sN) and grant requests (gN) waiting for the user, the latter with
+// the advice that groups them (#415), all of this lea's only.
 type State struct {
-	Version   int64             `json:"version"`
-	Container string            `json:"container"`
-	Snapshot  json.RawMessage   `json:"snapshot"`
-	Tasks     []json.RawMessage `json:"tasks"`
-	Approvals []json.RawMessage `json:"approvals"`
-	Questions []json.RawMessage `json:"questions"`
+	Version       int64              `json:"version"`
+	Container     string             `json:"container"`
+	Snapshot      json.RawMessage    `json:"snapshot"`
+	Tasks         []json.RawMessage  `json:"tasks"`
+	Approvals     []json.RawMessage  `json:"approvals"`
+	Questions     []json.RawMessage  `json:"questions"`
+	Requests      []json.RawMessage  `json:"requests"`
+	GrantRequests []grantRequestView `json:"grant_requests"`
+	GrantAdvice   *grants.Advice     `json:"grant_advice,omitempty"`
 }
 
 // events serves GET /api/events, a server-sent event stream: a "state" event at once and at
@@ -122,8 +128,12 @@ func (s *Server) state(ctx context.Context, since int64) (*State, error) {
 	if err := s.call(cctx, "question_list", nil, &questions); err != nil {
 		return nil, err
 	}
+	spawn, grantRequests, advice, err := s.requests(cctx)
+	if err != nil {
+		return nil, err
+	}
 	return &State{Version: v.Version, Container: s.container, Snapshot: snap, Tasks: nonNil(board.Items),
-		Approvals: s.mine(approvals), Questions: s.mine(questions)}, nil
+		Approvals: s.mine(approvals), Questions: s.mine(questions), Requests: spawn, GrantRequests: grantRequests, GrantAdvice: advice}, nil
 }
 
 // mine keeps the entries whose agent is one of this lea's.
