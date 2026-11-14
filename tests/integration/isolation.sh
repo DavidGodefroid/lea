@@ -369,7 +369,7 @@ if [ -n "$(dns_leaks)" ]; then
 else echo "ok   no DNS query from inside lea reached the decoy"; fi
 # #104: a normal session (the checks inside lea: the Claude API, GitHub, nested containers) logs
 # no packet bypassing the proxy. A container on the agents' network with NET_ADMIN, which routes
-# around the proxy through the bridge (a default route, the bridge's MAC as the neighbour), has its
+# around the proxy through the bridge (a default route, the bridge's MAC in its ARP table), has its
 # connections to 169.254.169.254 and 1.1.1.1 dropped, and logged within 10 s with the bridge and
 # the destination; lea doctor counts them.
 if [ -n "$egress_since" ]; then
@@ -396,7 +396,7 @@ if [ -n "$egress_since" ]; then
   for dst in 169.254.169.254 1.1.1.1; do
     # shellcheck disable=SC2016 # expanded by the inner shell
     if docker run --rm --network "lea-test-internal-$id" --cap-add NET_ADMIN busybox:1.37 sh -c \
-      'ip route add default dev eth0 && ip neigh add "$1" lladdr "$2" dev eth0 nud permanent && ip route && ip neigh && nc -w 3 "$1" 80 </dev/null' sh "$dst" "$mac" >>"$work/egress-run.out" 2>&1; then
+      'ip route add default dev eth0 && arp -i eth0 -s "$1" "$2" && ip route && arp -n && nc -w 3 "$1" 80 </dev/null' sh "$dst" "$mac" >>"$work/egress-run.out" 2>&1; then
       echo "FAIL a connection to $dst:80 that bypasses the proxy is dropped"; rc=1
     else echo "ok   a connection to $dst:80 that bypasses the proxy is dropped"; fi
     i=0
