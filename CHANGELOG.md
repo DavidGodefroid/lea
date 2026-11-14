@@ -128,6 +128,13 @@ Fixes:
   matches the call as its plain form: no call is allowed that the plain form was not. The merge
   grant still deletes only the PR's head, the agent's own branch.
 
+Security:
+
+- `LEA_LOCKHTTP_MITM=1` makes its CA (`lockhttp ca init`) through the same check as the gate
+  (#450): lea no longer executes lockhttp's launcher. It runs `ca init` in the image the launcher
+  pins, once that image passed the check above (root-owned launcher, `config/locks.lock` pin or
+  `cosign verify`), confined, as your user, with only the CA directory mounted.
+
 ## v0.15.1 (2026-11-09)
 
 Fixes:
