@@ -153,8 +153,11 @@ agent, `N` for another Control Tower.
 - `curl`, `tar`, `ssh-keygen`.
 - A Claude subscription or API key for Claude Code.
 
-lea never runs `sudo` itself, except once in `lea init` on Linux hosts where Docker uses
-AppArmor: it installs lea's AppArmor profile, and only when that profile changed.
+lea never runs `sudo` itself, except in `lea init` on Linux hosts, and only when what it
+installs changed: lea's AppArmor profile where Docker uses AppArmor, and lea's
+[egress log](#how-lea-keeps-your-machine-safe) (`/etc/lea/egress-log.nft` and `lea-egress-log.service`) where Docker
+runs rootful and `nft` and systemd are installed. The first `lea` skips the egress log when
+`sudo` would prompt and says to run `lea init`.
 
 ### Verify a release
 
@@ -1512,6 +1515,25 @@ so. Changes apply after `lea init` (endpoints, keys, images, locksql) or `lea st
   and where each entry comes from; `lea egress denied [--since 24h]` lists the hosts the proxy
   refused lately, with the containers that asked and the command for each. The command runs on
   the host only: no agent, MCP tool, grant or file in an agent's reach can change the list.
+- **Egress log.** An agent has no route but its own network, so it can
+  reach nothing but the proxy. If something gets around that (a container with `NET_ADMIN` on
+  an agent network, a misconfigured network) and sends a packet past the proxy, for example a
+  direct connection to `1.1.1.1` or to `169.254.169.254`, Docker still drops it, and lea's
+  egress log records it in the kernel log. Read it with `journalctl -k -g lea-egress`; each line
+  names the agent network's bridge (`IN=lea…`) and the destination (`DST=`, `DPT=`). The log is
+  an nftables table of lea's own, `inet lea_egress`. It logs only, rate-limited to 20 packets a
+  minute, what comes in from a `lea*` bridge and goes anywhere but another `lea*` bridge
+  (forwarded) or to the host itself. Every internal network lea creates gets a bridge named
+  `lea` plus 12 hex digits, so one rule covers all of them, and no `sudo` is needed when an agent
+  starts. `lea init` installs it on Linux hosts with a rootful Docker, `nft` and systemd.
+  `lea-egress-log.service` loads it at boot and again when `nftables.service` restarts or
+  reloads. `lea doctor` checks that it is installed, current and active, and loaded when `sudo -n`
+  works. It names any internal network the log does not cover (made by an older lea: `lea stop
+  --all`, `docker network rm` it, then `lea`), and warns with a count when packets were logged in
+  the last 24 hours. Hosts with a rootless engine or Docker Desktop get no egress log, because the
+  agents' bridges are not in the host's network namespace there, and `lea doctor` says so. HTTP
+  and HTTPS that go through the proxy are not logged here: the proxy refuses what is not on the
+  allowlist (`lea egress denied`).
 - You can also edit `LEA_EGRESS_ALLOW="default,corp.example,docs.example.org"` yourself (`default`
   keeps lea's list); without `default`, only the domains you list (and the model API) are
   reachable. The next `lea` applies an edited list to the running proxy live, the same way. To
@@ -1683,7 +1705,8 @@ nowhere unless you set `LEA_OTEL_UPSTREAM`.
 ## Troubleshooting
 
 - **Start with `lea doctor`.** It checks lea's managed settings, Docker and the host versions
-  (kernel, Docker Engine, containerd, runc), the images, the proxy and the internal networks, tmux, the AppArmor profile,
+  (kernel, Docker Engine, containerd, runc), the images, the proxy and the internal networks, the
+  [egress log](#how-lea-keeps-your-machine-safe), tmux, the AppArmor profile,
   the projects directory and the configuration, then each lock lox runs against lea's client of its
   type (`config/locks.lock`), with the fix to run when they differ.
 - **An agent cannot reach a host.** Private and link-local addresses are refused on purpose; add

@@ -67,6 +67,8 @@ made_settings=''; made_plugins=''
 facade_dir="$work/run/lockhub"; facade="$facade_dir/facade.sock"; facade_pid=
 web_pid=
 export LEA_HUB_SOCKET="$facade"
+# The egress log (#104): loaded by this test only when the host does not already have it.
+egress_log_loaded='' egress_nft=''
 
 # hold DIR: a background lea session on DIR, serving HTTP on port 8765 inside its container,
 # that ends when DIR/.lea-release exists.
@@ -105,6 +107,7 @@ cleanup() {
   release_holders
   if [ -n "$facade_pid" ]; then kill "$facade_pid" 2>/dev/null || true; fi
   if [ -n "$web_pid" ]; then kill "$web_pid" 2>/dev/null || true; fi
+  if [ -n "$egress_log_loaded" ]; then sudo -n "$egress_nft" delete table inet lea_egress 2>/dev/null || true; fi
   docker rm -f lea-canary lea-canary-dns lea-canary-dns-host >/dev/null 2>&1 || true
   docker network rm lea-canary-net >/dev/null 2>&1 || true
   "$root/bin/lea" stop --all >/dev/null 2>&1 || true
@@ -308,6 +311,29 @@ else
 fi
 docker network rm "lea-test-internal-$pid" >/dev/null
 rc=0
+# #104: the egress log. Every internal network lea creates has a bridge named lea<12 hex digits>,
+# which lea_egress's one rule covers. The table is loaded as lea init's unit loads it (sudo -n),
+# unless the host already has it, and removed at the end; from now on to the end of the checks
+# inside lea, a normal session must log no packet.
+abr=$(docker network inspect -f '{{index .Options "com.docker.network.bridge.name"}}' "lea-test-internal-$id")
+sbr=$(docker network inspect -f '{{index .Options "com.docker.network.bridge.name"}}' "lea-test-internal-$sid")
+case $abr in lea????????????) echo "ok   the agents' bridge is named lea* ($abr)" ;; *) echo "FAIL the agents' bridge is named lea* (got '$abr')"; rc=1 ;; esac
+egress_nft=$(command -v nft 2>/dev/null || echo /usr/sbin/nft)
+egress_since=''
+if sudo -n true 2>/dev/null && [ -x "$egress_nft" ] && [ -e "/sys/class/net/$abr" ]; then
+  if ! sudo -n "$egress_nft" list table inet lea_egress >/dev/null 2>&1; then
+    # shellcheck disable=SC2016 # expanded by the inner shell
+    sh -c '. "$1/libexec/lib/egresslog.sh" && lea_egress_log_ruleset' sh "$root" | sudo -n "$egress_nft" -f - && egress_log_loaded=1
+  fi
+  if sudo -n "$egress_nft" list table inet lea_egress >/dev/null 2>&1; then
+    egress_since=$(date '+%Y-%m-%d %H:%M:%S')
+    sleep 1
+  else
+    echo "FAIL the egress log's table inet lea_egress loads"; rc=1
+  fi
+else
+  echo "note: sudo -n, nft or the bridge $abr is unavailable: the egress log checks did not run"
+fi
 # The GitHub token went to the proxy (0600, the user's), and out of the agents' state.
 ft="$XDG_DATA_HOME/lea/proxy/forge/github.com"
 if [ "$(cat "$ft" 2>/dev/null)" = "$forge_token" ] && [ "$(stat -c %a "$ft")" = 600 ]; then echo "ok   the GitHub token moved to the proxy"
@@ -341,6 +367,41 @@ dns_leaks() { for d in lea-canary-dns lea-canary-dns-host; do docker logs "$d" 2
 if [ -n "$(dns_leaks)" ]; then
   echo "FAIL no DNS query from inside lea reached the decoy:"; dns_leaks | sed 's/^/     | /'; rc=1
 else echo "ok   no DNS query from inside lea reached the decoy"; fi
+# #104: a normal session (the checks inside lea: the Claude API, GitHub, nested containers) logs
+# no packet bypassing the proxy. A container on the agents' network with NET_ADMIN, which routes
+# around the proxy through the bridge (a default route, the bridge's MAC as the neighbour), has its
+# connections to 169.254.169.254 and 1.1.1.1 dropped, and logged within 10 s with the bridge and
+# the destination; lea doctor counts them.
+if [ -n "$egress_since" ]; then
+  egress_lines() { sudo -n journalctl -k -q --no-pager --since "$egress_since" 2>/dev/null | grep 'lea-egress: ' | grep -E "IN=($abr|$sbr) " || true; }
+  if [ -n "$(egress_lines)" ]; then
+    echo "FAIL a normal session logs no packet bypassing the proxy:"; egress_lines | sed 's/^/     | /'; rc=1
+  else echo "ok   a normal session logs no packet bypassing the proxy"; fi
+  mac=$(cat "/sys/class/net/$abr/address")
+  for dst in 169.254.169.254 1.1.1.1; do
+    # shellcheck disable=SC2016 # expanded by the inner shell
+    if docker run --rm --network "lea-test-internal-$id" --cap-add NET_ADMIN busybox:1.37 sh -c \
+      'ip route add default dev eth0 && ip neigh replace "$1" lladdr "$2" dev eth0 nud permanent && nc -w 3 "$1" 80 </dev/null' sh "$dst" "$mac" >/dev/null 2>&1; then
+      echo "FAIL a connection to $dst:80 that bypasses the proxy is dropped"; rc=1
+    else echo "ok   a connection to $dst:80 that bypasses the proxy is dropped"; fi
+    i=0
+    until egress_lines | grep -q "IN=$abr .*DST=$dst .*DPT=80 "; do
+      i=$((i + 1))
+      if [ "$i" -ge 10 ]; then break; fi
+      sleep 1
+    done
+    if [ "$i" -lt 10 ]; then echo "ok   a connection to $dst:80 that bypasses the proxy is logged (lea-egress)"
+    else echo "FAIL a connection to $dst:80 that bypasses the proxy is logged (lea-egress): nothing in the kernel log within 10 s"; rc=1; fi
+  done
+  "$root/bin/lea" doctor >"$work/doctor.out" 2>&1 || true
+  if [ -n "$(journalctl -k -q --no-pager --since "$egress_since" 2>/dev/null | grep 'lea-egress: ' || true)" ]; then
+    if grep -qE '^warn  egress log: [0-9]+ packet\(s\) from an agent network bypassed the proxy in the last 24 hours' "$work/doctor.out"; then
+      echo "ok   lea doctor counts the packets the egress log logged"
+    else cat "$work/doctor.out" >&2; echo "FAIL lea doctor counts the packets the egress log logged"; rc=1; fi
+  else
+    echo "note: this user cannot read the kernel log (journalctl -k): lea doctor's count of logged packets was not checked"
+  fi
+fi
 # What the agents did to their copies never reached the host (#111).
 if [ "$(host_claude_sum)" = "$host_sum" ]; then echo "ok   host ~/.claude settings.json and plugins unchanged"
 else echo "FAIL host ~/.claude settings.json and plugins unchanged"; rc=1; fi

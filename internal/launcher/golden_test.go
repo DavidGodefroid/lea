@@ -229,6 +229,7 @@ func normalize(w *world, s string) string {
 	if r := (&Launcher{Root: w.root}).proxyRules(proxyConfine); r != "" {
 		s = strings.ReplaceAll(s, r, "$RULES")
 	}
+	s = strings.ReplaceAll(s, bridgeName("lea-internal-"+ID(w.proj)), "$BRIDGE")
 	return strings.ReplaceAll(s, ID(w.proj), "$ID")
 }
 
@@ -401,7 +402,7 @@ func TestCommandsMatchTheGoldenFiles(t *testing.T) {
 			want: []string{"docker [rm] [-f] [lea-proxy]", "docker [run] [-d] [--name] [lea-proxy]", open}},
 		{name: "networks missing are created", env: map[string]string{"FAKE_DOCKER_RC_NETWORK_INSPECT": "1"},
 			want: []string{"docker [network] [create] [--label] [lea.prefix=lea] [lea-egress]",
-				"[--internal] [-o] [com.docker.network.bridge.gateway_mode_ipv4=isolated] [lea-internal-$ID]", open}},
+				"[--internal] [-o] [com.docker.network.bridge.gateway_mode_ipv4=isolated] [-o] [com.docker.network.bridge.name=$BRIDGE] [lea-internal-$ID]", open}},
 		{name: "proxy not on the internal network is connected", env: map[string]string{"FAKE_DOCKER_OUTSEQ_CONTAINER_INSPECT": "|172.18.0.5"},
 			want: []string{"docker [network] [connect] [--alias] [lea-proxy] [lea-internal-$ID] [lea-proxy]", open}},
 		{name: "proxy connected but without an address", env: map[string]string{"FAKE_DOCKER_OUT_CONTAINER_INSPECT": ""}, exit: 1,
@@ -679,7 +680,7 @@ func TestCommandsMatchTheGoldenFiles(t *testing.T) {
 			setup: func(w *world) {
 				os.Remove(w.env["XDG_CONFIG_HOME"] + "/lea/lea.conf") // doctor reads the machine's own state: no user file
 				os.WriteFile(w.dir+"/os-release", []byte("ID=ubuntu\nVERSION_ID=\"24.04\"\n"), 0o644)
-				os.WriteFile(w.dir+"/bin/uname", []byte("#!/bin/sh\necho 7.0.0-38-generic\n"), 0o755)
+				os.WriteFile(w.dir+"/bin/uname", []byte("#!/bin/sh\ncase $1 in -s) echo Linux ;; *) echo 7.0.0-38-generic ;; esac\n"), 0o755)
 			},
 			want: []string{"ok    docker reachable", "ok    Docker Engine 29.4.2 (containerd v2.1.4, runc 1.3.0)",
 				"warn  kernel 7.0.0-38-generic: no known minimum for ubuntu 24.04", "FAIL  user config",
@@ -691,7 +692,7 @@ func TestCommandsMatchTheGoldenFiles(t *testing.T) {
 			setup: func(w *world) {
 				os.Remove(w.env["XDG_CONFIG_HOME"] + "/lea/lea.conf") // doctor reads the machine's own state: no user file
 				os.WriteFile(w.dir+"/os-release", []byte("ID=ubuntu\nVERSION_ID=\"24.04\"\n"), 0o644)
-				os.WriteFile(w.dir+"/bin/uname", []byte("#!/bin/sh\necho 7.0.0-38-generic\n"), 0o755)
+				os.WriteFile(w.dir+"/bin/uname", []byte("#!/bin/sh\ncase $1 in -s) echo Linux ;; *) echo 7.0.0-38-generic ;; esac\n"), 0o755)
 			},
 			want: []string{"ok    docker reachable", "warn  kernel 7.0.0-38-generic: no known minimum for ubuntu 24.04"}, absent: []string{"core [allow]"}},
 		// lea lock was removed (#300): lea shows no lock console, and says lox run shows what the

@@ -4,6 +4,18 @@
 
 Features:
 
+- lea logs packets that get past its proxy (#104). lea's agents have no route but their own
+  network, so they reach nothing but the proxy. If something gets around that (a container with
+  `NET_ADMIN` on an agent network, a misconfigured network), the packet it sends past the proxy,
+  for example a direct connection to `1.1.1.1` or `169.254.169.254`, is still dropped. Before, it
+  was dropped silently. Now it is logged in the kernel log, rate-limited, with the agent
+  network's bridge and the destination: `journalctl -k -g lea-egress`. On Linux hosts with a
+  rootful Docker, `nft` and systemd, `lea init` installs an nftables table of lea's own, `inet
+  lea_egress`, and `lea-egress-log.service`, which loads it at boot. This takes `sudo` once, as the
+  AppArmor profile does; the first `lea` leaves it to `lea init` when `sudo` would prompt. Internal
+  networks now get a bridge named `lea` plus 12 hex digits so that one rule covers them all.
+  `lea doctor` checks the log and names any internal network it does not cover. It also warns,
+  with a count, when packets were logged in the last 24 hours.
 - A lead picks each child's model and advisor (#407). `agents_spawn` and `agents_request_spawn`
   take an optional `advisor`: with `model: sonnet, advisor: opus` the child runs `claude --model
   sonnet --advisor opus`, a Sonnet session that consults Opus on demand through Claude Code's

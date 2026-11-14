@@ -3,7 +3,15 @@ status 0
 docker [image] [inspect] [lea:dev]
 docker [image] [inspect] [lea-proxy:dev]
 docker [info] [--format] [{{json .SecurityOptions}}]
+docker [info] [--format] [{{.OperatingSystem}} {{json .SecurityOptions}}]
+sudo [install] [-d] [-m] [0755] [$W/etc/lea]
+sudo [install] [-m] [0644] [$W/data/lea/host/egress-log.nft] [$W/etc/lea/egress-log.nft]
+sudo [install] [-m] [0644] [$W/data/lea/host/lea-egress-log.service] [$W/etc/systemd/lea-egress-log.service]
+sudo [systemctl] [daemon-reload]
+sudo [systemctl] [enable] [lea-egress-log.service]
+sudo [systemctl] [restart] [lea-egress-log.service]
 -- lea
 lea: $W/home/.local/bin is not on your PATH: add it in your shell profile to run lea by name
+lea: installing the egress log in $W/etc/lea/egress-log.nft and lea-egress-log.service (needs sudo)
 lea: ready. Run: lea
 -- stdout

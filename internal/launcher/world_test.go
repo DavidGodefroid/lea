@@ -156,7 +156,10 @@ func newWorld(t *testing.T, root string) *world {
 		// The engine (docker version): a Docker Engine with gateway_mode_ipv4=isolated (#105); an
 		// unknown engine is refused an internal network.
 		engineFormat: "Engine=29.4.2",
-		"PATH":       repoRoot(t) + "/tests/fakes:" + dir + "/bin:/usr/local/bin:/usr/bin:/bin",
+		// The egress log's installed files (#104): never the host's /etc.
+		"LEA_EGRESS_LOG_NFT":  dir + "/etc/lea/egress-log.nft",
+		"LEA_EGRESS_LOG_UNIT": dir + "/etc/systemd/lea-egress-log.service",
+		"PATH":                repoRoot(t) + "/tests/fakes:" + dir + "/bin:/usr/local/bin:/usr/bin:/bin",
 	}
 	// What a daemon started with the default provider settings records.
 	write(w.data+"/lea/host/daemon.providers", DaemonProvidersStamp(nil, nil, stampMap{"LEA_PROVIDER": "claude",
