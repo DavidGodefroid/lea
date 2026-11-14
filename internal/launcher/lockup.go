@@ -178,7 +178,7 @@ func (l *Launcher) lockUpSockets(proj, lf string, on func(tool string) bool) map
 		return nil
 	}
 	tools, off := upTools(s, on)
-	// A lock lox run runs for a tool lea leaves off (locksql, lockmq, lockfile and locklog are off
+	// A lock lox run runs for a tool lea leaves off (locksql, lockmq, lockfile, locklog and lockssh are off
 	// by default): said once, the agents get none of its socket.
 	for _, t := range locks.Registry {
 		if off[t.Name] {
@@ -283,7 +283,7 @@ func (c *Config) UpLocksMounted(environ []string, proj string, logf func(string,
 }
 
 // lockUpArgs are the docker run arguments of the sockets socks of a lock tool, switched by
-// env (LEA_LOCKSQL, LEA_LOCKMQ, LEA_LOCKFILE, LEA_LOCKLOG), with its clients group gid: the switch, the group
+// env (LEA_LOCKSQL, LEA_LOCKMQ, LEA_LOCKFILE, LEA_LOCKLOG, LEA_LOCKSSH), with its clients group gid: the switch, the group
 // and each socket's read-only mount; with several locks of the tool (lockUpSockets' Several),
 // <env>_INSTANCES names the instances the agents reach (each on /run/<tool>/<instance>), space
 // separated.

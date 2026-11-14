@@ -173,7 +173,7 @@ lea allow off 1                # take allowance 1 back</code></pre>
   <h2 id="locks">The Locks</h2>
   <div class="prose">
     <p>A Lock is a console that stands between your agents and a resource and alone holds its credentials. lea starts none of them: <a href="https://github.com/DavidGodefroid/lockhub"><code>lox run</code></a> does, for the projects directory, and decides their requests.</p>
-    <p>For each lock <code>lox run</code> runs (locksql, lockmq, lockfile, locklog), lea mounts that lock&#8217;s socket volume read-only on <code>/run/&lt;tool&gt;</code>, once Docker confirms it belongs to this projects directory. The agents reach the socket and nothing else: no credential, no profile, no audit log.</p>
+    <p>For each lock <code>lox run</code> runs (locksql, lockmq, lockfile, locklog, lockssh), lea mounts that lock&#8217;s socket volume read-only on <code>/run/&lt;tool&gt;</code>, once Docker confirms it belongs to this projects directory. The agents reach the socket and nothing else: no credential, no profile, no audit log.</p>
     <p>lockhttp works differently: its gate sits in the proxy&#8217;s network and every outbound request goes through it. Only the proxy joins the hub&#8217;s network; no agent reaches the hub.</p>
   </div>
 </section>

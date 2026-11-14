@@ -33,7 +33,7 @@ var protectedKeys = map[string]bool{
 // core subcommands and libexec/lea-sh.
 var ExportedKeys = []string{
 	"LEA_PREFIX", "LEA_IMAGE", "LEA_PROXY_IMAGE", "LEA_CTL", "LEA_CTL_IMAGE", "LEA_GIT_SSH", "LEA_GIT_KNOWN_HOSTS", "LEA_LOCKSQL", "LEA_LOCKSQL_REF",
-	"LEA_LOCKMQ", "LEA_LOCKFILE", "LEA_LOCK_TOOL_TIMEOUT", "LEA_LOCKMQ_REF", "LEA_LOCKFILE_REF", "LEA_LOCKLOG", "LEA_LOCKLOG_REF", "LEA_LOCKHTTP", "LEA_LOCKHTTP_MITM", "LEA_HUB", "LEA_HUB_KEEPALIVE",
+	"LEA_LOCKMQ", "LEA_LOCKFILE", "LEA_LOCK_TOOL_TIMEOUT", "LEA_LOCKMQ_REF", "LEA_LOCKFILE_REF", "LEA_LOCKLOG", "LEA_LOCKLOG_REF", "LEA_LOCKSSH", "LEA_LOCKSSH_REF", "LEA_LOCKHTTP", "LEA_LOCKHTTP_MITM", "LEA_HUB", "LEA_HUB_KEEPALIVE",
 	"LEA_OTEL_UPSTREAM", "LEA_NESTED_NETWORKS", "LEA_K8S_NAMESPACE", "LEA_INTERNAL_HOSTS", "LEA_EGRESS_ALLOW", "LEA_PROJECTS_DIR",
 	"LEA_APPROVALS", "LEA_APPROVAL_TIMEOUT", "LEA_SOUND", "LEA_SOUND_ATTENTION", "LEA_DECK", "LEA_THEME", "LEA_TOOL",
 	"LEA_PROVIDER", "LEA_MODEL", "LEA_PROVIDERS", "LEA_AUTO_RESUME", "LEA_RESUME_DELAY",
@@ -680,7 +680,7 @@ func (c *Config) Ctl() bool { return c.Get("LEA_CTL") == "1" }
 func (c *Config) LockHTTPMITM() bool { return c.LockHTTP() && c.Get("LEA_LOCKHTTP_MITM") == "1" }
 
 // toolOn is whether the lock tool switched by key (LEA_LOCKSQL, LEA_LOCKMQ, LEA_LOCKFILE,
-// LEA_LOCKLOG) is on: what the user's configuration sets for it, and when it does not set the key
+// LEA_LOCKLOG, LEA_LOCKSSH) is on: what the user's configuration sets for it, and when it does not set the key
 // (only the shipped default speaks), on when the trusted up.json names a lock of that type (upNames): a lock the
 // user added with lox add is the sign they want it. An explicit LEA_<TOOL>=0 keeps it off.
 func (c *Config) toolOn(key string, upNames bool) bool {
@@ -694,7 +694,7 @@ func (c *Config) toolOn(key string, upNames bool) bool {
 // inside lea keep their credentials: git's credential store, gh and glab.
 var gitStateDirs = []string{"git", "gh", "glab-cli"}
 
-// ToolsOn is, by tool (locksql, lockmq, lockfile, locklog), whether lea wires it for the projects
+// ToolsOn is, by tool (locksql, lockmq, lockfile, locklog, lockssh), whether lea wires it for the projects
 // directory proj: toolOn, with the locks of the trusted up.json of proj (the checks of
 // readLockUp; its warnings go to logf). The one decision the mounts, the Codex MCP list, the
 // daemon's stamp and the deck's lock console share.

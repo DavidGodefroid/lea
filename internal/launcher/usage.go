@@ -2,9 +2,9 @@ package launcher
 
 // Usage is lea's usage (recorded in testdata/golden/command-help.txt).
 const Usage = `Usage:
-  lea init [--no-locksql] [--lockmq] [--lockfile] [--locklog]
+  lea init [--no-locksql] [--lockmq] [--lockfile] [--locklog] [--lockssh]
                               set up lea on this workstation (once; rerun at will)
-  lea locksql | lea lockmq | lea lockfile | lea locklog
+  lea locksql | lea lockmq | lea lockfile | lea locklog | lea lockssh
                               whether agents reach that tool's console, and how it runs
                               (under lox run only, in another terminal: lea starts none)
   lea                         open the deck: your agents on the left, the selected one on the right
@@ -69,7 +69,7 @@ const Usage = `Usage:
                               kept in lea's configuration, from the next lea container
   lea update [--deps ask|all|none]
                               the latest lea, then each newer locksql release (lockmq,
-                              lockfile, locklog: their launchers update themselves)
+                              lockfile, locklog, lockssh: their launchers update themselves)
                               (asked one by one; all or none without asking; signatures checked)
   lea rollback                back to the previous version; the background update skips this one
   lea doctor

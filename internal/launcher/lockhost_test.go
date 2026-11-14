@@ -141,8 +141,75 @@ func TestLockLogWired(t *testing.T) {
 	}
 }
 
+// lockssh (lea#325), as locklog: lox run's socket volume of the lock on /run/lockssh, read-only,
+// the lockssh-clients group (10040) and LEA_LOCKSSH=1 for the entrypoint, and, as locksql's, its
+// profile directory .lockssh read-only (its allowed commands and the auto rules lox run applies:
+// no agent widens them). With two locks, each on /run/lockssh/<instance>; off, no trace of it.
+func TestLockSSHWired(t *testing.T) {
+	w := newWorld(t, repoRoot(t))
+	writeUserConf(t, w, "LEA_LOCKSSH=1\n")
+	writeUp(t, w, lockUp("web", "lockssh"))
+	labels(w, "web", "lockssh", "socket")
+	d := w.proj + "/.lockssh"
+	args := lockArgs(t, w)
+	for _, m := range []string{"LEA_LOCKSSH=1", "10040", "type=volume,src=" + upProjectOf(w) + "_web-run,dst=/run/lockssh,readonly",
+		"type=bind,src=" + d + ",dst=" + d + ",readonly"} {
+		if !contains(args, m) {
+			t.Errorf("missing %q in %v", m, args)
+		}
+	}
+	for _, a := range args {
+		if strings.Contains(a, "/etc/lockssh") || strings.Contains(a, "/home/lockssh") || strings.Contains(a, "lockssh-home") ||
+			strings.HasPrefix(a, "LEA_LOCKSSH_INSTANCES=") {
+			t.Errorf("host or console files, or instances, reach the container: %s", a)
+		}
+	}
+	if strings.Contains(w.errb.String(), "warning") {
+		t.Errorf("warnings: %s", w.errb.String())
+	}
+	if fi, err := os.Lstat(d); err != nil || !fi.IsDir() {
+		t.Fatalf("%s not made: %v", d, err)
+	}
+	// A link in its place is refused: no container starts.
+	if err := os.Remove(d); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(w.home, d); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := w.launcher().runArgs(w.proj, "172.18.0.5"); err == nil || !strings.Contains(err.Error(), "is not a directory") {
+		t.Fatalf("a symbolic link: %v", err)
+	}
+
+	w = newWorld(t, repoRoot(t))
+	writeUserConf(t, w, "LEA_LOCKSSH=1\n")
+	writeUp(t, w, lockUp("web", "lockssh")+","+lockUp("db", "lockssh"))
+	labels(w, "web", "lockssh", "socket")
+	labels(w, "db", "lockssh", "socket")
+	args = lockArgs(t, w)
+	for _, m := range []string{"LEA_LOCKSSH_INSTANCES=db web",
+		"type=volume,src=" + upProjectOf(w) + "_db-run,dst=/run/lockssh/db,readonly",
+		"type=volume,src=" + upProjectOf(w) + "_web-run,dst=/run/lockssh/web,readonly"} {
+		if !contains(args, m) {
+			t.Errorf("missing %q in %v", m, args)
+		}
+	}
+	// Off: no trace of it, though lox run runs a lockssh lock.
+	w = newWorld(t, repoRoot(t))
+	writeUserConf(t, w, "LEA_LOCKSSH=0\n")
+	writeUp(t, w, lockUp("web", "lockssh"))
+	labels(w, "web", "lockssh", "socket")
+	// Only its profile directory, made empty and read-only (lea#473).
+	ro := "type=bind,src=" + w.proj + "/.lockssh,dst=" + w.proj + "/.lockssh,readonly"
+	for _, a := range lockArgs(t, w) {
+		if (strings.Contains(a, "lockssh") && a != ro) || a == "10040" {
+			t.Errorf("LEA_LOCKSSH=0: %s in the run args", a)
+		}
+	}
+}
+
 // A profile directory is read-only whatever the switch and lox run say (lea#467, lea#473): with
-// the Lock off, and before `lox add` (on, no lock yet), .locklog and .locksql are made when
+// the Lock off, and before `lox add` (on, no lock yet), .locklog, .locksql and .lockssh are made when
 // missing and mounted read-only, so no agent creates them; an existing one is mounted as is; a
 // link or a file in its place stops lea, as when the Lock is wired.
 func TestProfileDirReadOnlyUnwired(t *testing.T) {
@@ -154,19 +221,20 @@ func TestProfileDirReadOnlyUnwired(t *testing.T) {
 		name, conf string
 		up, off    bool
 	}{
-		{"off", "LEA_LOCKSQL=0\nLEA_LOCKLOG=0\n", false, true},
-		{"off, though lox run runs the locks", "LEA_LOCKSQL=0\nLEA_LOCKLOG=0\n", true, true},
-		{"on, before lox add", "LEA_LOCKSQL=1\nLEA_LOCKLOG=1\n", false, false},
+		{"off", "LEA_LOCKSQL=0\nLEA_LOCKLOG=0\nLEA_LOCKSSH=0\n", false, true},
+		{"off, though lox run runs the locks", "LEA_LOCKSQL=0\nLEA_LOCKLOG=0\nLEA_LOCKSSH=0\n", true, true},
+		{"on, before lox add", "LEA_LOCKSQL=1\nLEA_LOCKLOG=1\nLEA_LOCKSSH=1\n", false, false},
 	} {
 		w := newWorld(t, repoRoot(t))
 		writeUserConf(t, w, c.conf)
 		if c.up {
-			writeUp(t, w, lockUp("crm", "locksql")+","+lockUp("logs", "locklog"))
+			writeUp(t, w, lockUp("crm", "locksql")+","+lockUp("logs", "locklog")+","+lockUp("web", "lockssh"))
 			labels(w, "crm", "locksql", "socket")
 			labels(w, "logs", "locklog", "socket")
+			labels(w, "web", "lockssh", "socket")
 		}
 		args := lockArgs(t, w)
-		for _, n := range []string{".locksql", ".locklog"} {
+		for _, n := range []string{".locksql", ".locklog", ".lockssh"} {
 			if !contains(args, ro(w, n)) {
 				t.Errorf("%s: missing %q in %v", c.name, ro(w, n), args)
 			}
@@ -181,7 +249,7 @@ func TestProfileDirReadOnlyUnwired(t *testing.T) {
 		}
 		// An existing one, with what the user wrote, is mounted as is.
 		args = lockArgs(t, w)
-		for _, n := range []string{".locksql", ".locklog"} {
+		for _, n := range []string{".locksql", ".locklog", ".lockssh"} {
 			if !contains(args, ro(w, n)) {
 				t.Errorf("%s: missing %q in %v", c.name, ro(w, n), args)
 			}
@@ -196,13 +264,16 @@ func TestProfileDirReadOnlyUnwired(t *testing.T) {
 			if c.off && (strings.Contains(a, "/run/locklog") || a == "10050" || a == "LEA_LOCKLOG=1") {
 				t.Errorf("%s: locklog wired: %s", c.name, a)
 			}
+			if c.off && (strings.Contains(a, "/run/lockssh") || a == "10040" || a == "LEA_LOCKSSH=1") {
+				t.Errorf("%s: lockssh wired: %s", c.name, a)
+			}
 		}
 	}
 	// A link or a file in its place, the Lock off: lea refuses to start and leaves it.
-	for _, n := range []string{".locksql", ".locklog"} {
+	for _, n := range []string{".locksql", ".locklog", ".lockssh"} {
 		for _, link := range []bool{true, false} {
 			w := newWorld(t, repoRoot(t))
-			writeUserConf(t, w, "LEA_LOCKSQL=0\nLEA_LOCKLOG=0\n")
+			writeUserConf(t, w, "LEA_LOCKSQL=0\nLEA_LOCKLOG=0\nLEA_LOCKSSH=0\n")
 			d := w.proj + "/" + n
 			if link {
 				must(t, os.Symlink(w.home, d))
@@ -262,6 +333,8 @@ func TestLockHostConfig(t *testing.T) {
 		"LEA_LOCKFILE_REF=v0.1.0\n": "sandbox",
 		"LEA_LOCKLOG=yes\n":         "LEA_LOCKLOG must be 1",
 		"LEA_LOCKLOG_REF=main\n":    "LEA_LOCKLOG_REF must be a locklog release",
+		"LEA_LOCKSSH=on\n":          "LEA_LOCKSSH must be 1",
+		"LEA_LOCKSSH_REF=latest\n":  "LEA_LOCKSSH_REF must be a lockssh release",
 	} {
 		w := newWorld(t, repoRoot(t))
 		writeUserConf(t, w, conf)

@@ -326,7 +326,7 @@ func TestLockHTTPBrewLauncherOfTheSet(t *testing.T) {
 		t.Fatalf("the set's launcher:\n%s", strings.Join(w.calls(), "\n"))
 	}
 	// The set's digest under another release is not the set's.
-	w, _ = userLauncherWorld(t, "0.9.1", locks.Digest(pin.Image))
+	w, _ = userLauncherWorld(t, "0.9.0", locks.Digest(pin.Image))
 	w.env["FAKE_COSIGN_RC"] = "1"
 	if err := w.launcher().ensureProxy(w.proj); err == nil || len(cosignCalls(w)) == 0 {
 		t.Fatalf("the set's digest under another release: err = %v", err)

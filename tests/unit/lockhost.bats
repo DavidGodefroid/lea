@@ -107,6 +107,70 @@ launcher() {
   [[ "$output" == *"usage: lea-sh"* ]]
 }
 
+# lea#325: lockssh, wired as locklog.
+@test "lockssh is off by default, its client the set's release" {
+  [ "$LEA_LOCKSSH" = 0 ]
+  [ -z "$LEA_LOCKSSH_REF" ]
+  lea__semver "$(lea__lock_version lockssh)" >/dev/null
+  [ "$(lea__tool_var lockssh)" = LEA_LOCKSSH ]
+  lea__tool_on lockssh && false
+  LEA_LOCKSSH=1
+  lea__tool_on lockssh
+}
+
+@test "the configuration refuses a bad LEA_LOCKSSH or an unpinned LEA_LOCKSSH_REF" {
+  for c in LEA_LOCKSSH=yes LEA_LOCKSSH=2 LEA_LOCKSSH_REF=latest LEA_LOCKSSH_REF=main; do
+    echo "$c" >"$LEA_CONFIG"
+    run lea_load_config
+    [ "$status" -ne 0 ]
+  done
+  [[ "$output" == *"LEA_LOCKSSH_REF must be a lockssh release (vX.Y.Z), not 'main'"* ]]
+  echo "LEA_LOCKSSH=1" >"$LEA_CONFIG"
+  lea_load_config
+  [ "$LEA_LOCKSSH" = 1 ]
+}
+
+@test "the image has lockssh's account and clients group with its image's ids, the entrypoint its group" {
+  c="$LEA_ROOT/image/Containerfile"
+  grep -q 'groupadd -g 10040 lockssh-clients && useradd -r -u 10041 ' "$c"
+  grep -q 'install -d -m 2710 -o 10041 -g 10040 /run/lockssh' "$c"
+  grep -q 'if \[ "${LEA_LOCKSSH:-0}" = 1 \]; then usermod -aG lockssh-clients "$user"; fi' "$LEA_ROOT/image/entrypoint"
+}
+
+@test "lea lockssh: off, it says how to turn it on; on, the launcher and lox run; it never starts anything" {
+  run lea_lockhost lockssh
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"lockssh is off (LEA_LOCKSSH=0): lea init --lockssh turns it on"* ]]
+  LEA_LOCKSSH=1
+  run lea_lockhost lockssh
+  [[ "$output" == *"lockssh: install its launcher"*"DavidGodefroid/lockssh/"*"scripts/install.sh"* ]]
+  [[ "$output" == *"lockssh console: it runs under lox run only: no such lock yet: \`lox add lockssh\`"* ]]
+  launcher lockssh
+  run lea_lockhost lockssh
+  [[ "$output" == *"lockssh launcher: $B/lockssh (lea's image has the $(lea__lock_version lockssh) client, config/locks.lock)"* ]]
+  [ -z "$(calls)" ]
+}
+
+@test "lea init --lockssh: on, how lox add lockssh sets up the profile, runs nothing; --no-lockssh records the opt-out" {
+  lea__lockhost_set lockssh 1
+  grep -qx "LEA_LOCKSSH='1'" "$LEA_CONFIG"
+  launcher lockssh
+  LEA_INIT_NONINTERACTIVE=1 run lea__init_lockhost lockssh </dev/null
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"lockssh: lox add lockssh NAME"*".lockssh/config.toml"*"read-only"* ]]
+  [[ "$output" == *"lockssh console: it runs under lox run only"* ]]
+  [ -z "$(calls)" ]
+  lea__lockhost_set lockssh 0
+  grep -qx "LEA_LOCKSSH='0'" "$LEA_CONFIG"
+  [ "$LEA_LOCKSSH" = 0 ]
+}
+
+@test "lea-sh lockssh refuses arguments before any lea function" {
+  run "$LEA_ROOT/libexec/lea-sh" lockssh --auto
+  [ "$status" -eq 2 ]
+  [[ "$output" == *"usage: lea-sh"* ]]
+}
+
 @test "lea lockmq: off, it says how to turn it on; it never starts anything" {
   run lea_lockhost lockmq
   [ "$status" -eq 0 ]
@@ -230,10 +294,15 @@ launcher() {
   LEA_LOCKLOG=1
   run lea__doctor_lockhost locklog
   [[ "$output" == *"warn  locklog launcher: not installed: https://github.com/DavidGodefroid/locklog#install"* ]]
+  run lea__doctor_lockhost lockssh
+  [ -z "$output" ]
+  LEA_LOCKSSH=1
+  run lea__doctor_lockhost lockssh
+  [[ "$output" == *"warn  lockssh launcher: not installed: https://github.com/DavidGodefroid/lockssh#install"* ]]
 }
 
 @test "the entrypoint refuses a session whose uid or gid is a lock console's id in the image" {
-  for ids in "10011 4243" "4242 10030" "10001 4243" "4242 10010" "10031 4243" "4242 10000" "10051 4243" "4242 10050" "10090 4243" "4242 10090"; do
+  for ids in "10011 4243" "4242 10030" "10001 4243" "4242 10010" "10031 4243" "4242 10000" "10051 4243" "4242 10050" "10041 4243" "4242 10040" "10090 4243" "4242 10090"; do
     set -- $ids
     run env LEA_UID="$1" LEA_GID="$2" LEA_USER=u HOME="$BATS_TEST_TMPDIR" LEA_PROXY_IP=10.0.0.2 sh "$LEA_ROOT/image/entrypoint" true
     [ "$status" -ne 0 ]

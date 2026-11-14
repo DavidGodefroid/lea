@@ -1,4 +1,4 @@
-.PHONY: test build test-proxy test-isolation test-update-brew test-ctl test-lockhost test-phase0 test-locklog test-pressure go-test go-build go-test-tmux go-get tmux-build test-site test-web
+.PHONY: test build test-proxy test-isolation test-update-brew test-ctl test-lockhost test-phase0 test-locklog test-lockssh test-pressure go-test go-build go-test-tmux go-get tmux-build test-site test-web
 test:
 	tests/run.sh
 build:
@@ -25,6 +25,10 @@ test-phase0:
 # (tests/integration/locklog.sh); needs make build, build/lea, cosign, sudo.
 test-locklog:
 	tests/integration/locklog.sh
+# lea#325: a lea agent's masked allowed command and approved other command over lockssh under lox
+# run (tests/integration/lockssh.sh); needs make build, build/lea, cosign, ssh-keygen.
+test-lockssh:
+	tests/integration/lockssh.sh
 test-isolation:
 	tests/integration/isolation.sh
 # lea update on Homebrew-shaped and install.sh installs (#354), real release images; needs go, cosign.

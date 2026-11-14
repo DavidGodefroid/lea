@@ -302,7 +302,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     env:
-      LOCKHUB_VERSION: "0.10.0"
+      LOCKHUB_VERSION: "0.12.0"
     steps:
       - name: is lockhub's release there yet
         id: release
@@ -576,6 +576,61 @@ jobs:
           n=$(grep -c '^ok ' locklog.log)
           echo "$n locklog checks passed"
           [ "$n" -eq 22 ]
+  # lea#325, the lockssh end to end (tests/integration/lockssh.sh): an agent in a real lea (lea:dev,
+  # LEA_LOCKSSH=1) runs an allowed command over SSH, its first connection approved and its output
+  # masked, then a command outside the allow list that waits on the hub and is approved at lox
+  # approve, on a lockssh console of the release config/locks.lock pins (cosign-verified) that
+  # lockhub's released lox run runs. The lea images come from the GitHub Actions cache phase0
+  # fills when unchanged.
+  lockssh:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+        with:
+          go-version-file: go.mod
+      - run: go build -trimpath -o build/lea ./cmd/lea
+      - uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+        with:
+          cosign-release: v3.1.3
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
+      - uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
+        with:
+          context: .
+          file: proxy/Containerfile
+          tags: lea-proxy:dev
+          load: true
+          cache-from: type=gha,scope=lea-proxy-dev
+      - uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
+        with:
+          context: .
+          file: image/Containerfile
+          build-args: LEA_VERSION=dev
+          tags: lea:dev
+          load: true
+          cache-from: type=gha,scope=lea-dev
+      - name: AppArmor profile (as lea init loads it)
+        run: |
+          if docker info --format '{{json .SecurityOptions}}' | grep -q 'name=apparmor'; then
+            if [ -e /etc/apparmor.d/abi/4.0 ]; then abi=4.0 userns='  userns,'; else abi=3.0 userns=''; fi
+            sed -e "s|@ABI@|$abi|" -e "s|^@USERNS@\$|$userns|" apparmor/lea.tmpl | sudo tee /etc/apparmor.d/lea >/dev/null
+            sudo apparmor_parser -r /etc/apparmor.d/lea
+          fi
+      - name: make test-lockssh, every check run, the masked allowed command and the approved one
+        shell: bash
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          make test-lockssh 2>&1 | tee lockssh.log
+          if grep '^FAIL' lockssh.log; then exit 1; fi
+          grep -qx "ok    lea's agent: lockssh_run of an allowed command runs on the server, its e-mail addresses masked (pseudonyms)" lockssh.log
+          grep -qx "ok    lea's agent: the approved lockssh_run runs the command on the server" lockssh.log
+          n=$(grep -c '^ok ' lockssh.log)
+          echo "$n lockssh checks passed"
+          [ "$n" -eq 21 ]
   images:
     runs-on: ubuntu-latest
     steps:

@@ -101,9 +101,9 @@ func TestToolsRoundTrip(t *testing.T) {
 // to choose, one sentence per tool; none with one lock.
 func TestLockGuidance(t *testing.T) {
 	env := map[string]string{"LEA_LOCKSQL_INSTANCES": "orders stock", "LEA_LOCKMQ_INSTANCES": "events", "LEA_LOCKFILE_INSTANCES": "invoices reports",
-		"LEA_LOCKLOG_INSTANCES": "app infra"}
+		"LEA_LOCKLOG_INSTANCES": "app infra", "LEA_LOCKSSH_INSTANCES": "db web"}
 	got := LockGuidance(func(k string) string { return env[k] })
-	if want := "several locksql locks: orders stock; pass --instance NAME\nseveral lockfile locks: invoices reports; pass --instance NAME\nseveral locklog locks: app infra; pass --instance NAME"; got != want {
+	if want := "several locksql locks: orders stock; pass --instance NAME\nseveral lockfile locks: invoices reports; pass --instance NAME\nseveral locklog locks: app infra; pass --instance NAME\nseveral lockssh locks: db web; pass --instance NAME"; got != want {
 		t.Fatalf("guidance %q, want %q", got, want)
 	}
 	if got := LockGuidance(func(string) string { return "" }); got != "" {

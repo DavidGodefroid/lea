@@ -141,7 +141,7 @@
     <li><h3>A real dev box</h3><p><code>make test</code> and <code>docker run</code> work: agents get their own rootless Podman inside lea, under seccomp and, on Linux, AppArmor.</p></li>
     <li><h3>Any agent CLI</h3><p>Claude Code is the default, with your own status line, and <code>lea config claude</code> sets its settings in lea. Codex runs too, and through it any OpenAI-compatible endpoint (Ollama, vLLM); the endpoint&#8217;s key stays in the proxy.</p></li>
     <li><h3>A control tower</h3><p>The first agent is a Control Tower: you talk to it, it starts devs and reviewers, follows them and briefs you in a line per agent. Agents message each other and lease the files they edit; only you change a role.</p></li>
-    <li><h3>Wired to the Locks</h3><p>With <code>lox add</code>, agents reach locksql, lockmq, lockfile, locklog and lockhttp through their sockets, read-only. The consoles alone hold the credentials.</p></li>
+    <li><h3>Wired to the Locks</h3><p>With <code>lox add</code>, agents reach locksql, lockmq, lockfile, locklog, lockssh and lockhttp through their sockets, read-only. The consoles alone hold the credentials.</p></li>
     <li><h3>Signed releases</h3><p>Every release and image is signed with cosign. The installer and <code>lea update</code> refuse a release whose signature does not check.</p></li>
   </ul>
 </section>

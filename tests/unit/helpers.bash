@@ -11,7 +11,7 @@ setup_fakes() {
   # The egress log's installed files (#104): never the host's /etc.
   export LEA_EGRESS_LOG_NFT="$BATS_TEST_TMPDIR/etc/lea/egress-log.nft" LEA_EGRESS_LOG_UNIT="$BATS_TEST_TMPDIR/etc/systemd/lea-egress-log.service"
   unset LEA_CONFIG LEA_PROJECTS_DIR XDG_CONFIG_HOME LEA_UI LEA_LAUNCHER LEA_TMUX_BIN \
-    LEA_GIT_SSH LEA_GIT_KNOWN_HOSTS LEA_GITLAB_SSH LEA_GITLAB_KNOWN_HOSTS LEA_LOCKSQL LEA_LOCKMQ LEA_LOCKFILE LEA_LOCKLOG
+    LEA_GIT_SSH LEA_GIT_KNOWN_HOSTS LEA_GITLAB_SSH LEA_GITLAB_KNOWN_HOSTS LEA_LOCKSQL LEA_LOCKMQ LEA_LOCKFILE LEA_LOCKLOG LEA_LOCKSSH
 }
 calls() { cat "$FAKE_LOG"; }
 # load_lea: the shell parts of lea (libexec/lib/*.sh) and the configuration, as libexec/lea-sh

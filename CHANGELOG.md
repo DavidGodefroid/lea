@@ -4,6 +4,18 @@
 
 Features:
 
+- lockssh (#325): `LEA_LOCKSSH=1` (or a lockssh lock under `lox run`) lets lea's agents run
+  commands on SSH hosts through a lockssh console, which alone holds the key. Allowed commands
+  run with their output masked. Any other command, and a session's first connection, wait for
+  your approval at `lox run`. lea's containers get the lock's socket volume, the
+  `lockssh-clients` group (10040), and the profile directory `.lockssh` read-only, so no agent
+  widens its allow list or auto rules. Its client is in lea's image and Codex agents get it as
+  the `lockssh` MCP server. `lea lockssh`, `lea init --lockssh` and `lea doctor` cover it. The
+  set (`config/locks.lock`) moves to lockkit v0.20.0 and lox v0.12.0, and the releases it runs:
+  locksql v0.20.0, lockmq v0.10.0, lockfile v0.10.0, locklog v0.4.0, lockhttp v0.11.0, with
+  lockssh v0.3.0. Their consoles refuse a client that does not report its confinement
+  (lockkit v0.20.0): `lea doctor`'s hello probe now sends the report lockkit's `confine.Check`
+  makes in lea's image.
 - lea logs packets that get past its proxy (#104). lea's agents have no route but their own
   network, so they reach nothing but the proxy. If something gets around that (a container with
   `NET_ADMIN` on an agent network, a misconfigured network), the packet it sends past the proxy,

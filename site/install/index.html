@@ -104,10 +104,10 @@ lea</code></pre></li>
 <section aria-labelledby="locks">
   <h2 id="locks">Add the Locks</h2>
   <div class="prose">
-    <p>The Locks keep a human between your agents and production: locksql (SQL databases), lockmq (RabbitMQ), lockfile (files), locklog (logs) and lockhttp (outbound HTTP). Each runs as a console that alone holds the credentials.</p>
+    <p>The Locks keep a human between your agents and production: locksql (SQL databases), lockmq (RabbitMQ), lockfile (files), locklog (logs), lockssh (commands over SSH) and lockhttp (outbound HTTP). Each runs as a console that alone holds the credentials.</p>
     <p>Run <a href="https://github.com/DavidGodefroid/lockhub/blob/main/docs/lox-add.md"><code>lox add</code></a> in lea&#8217;s projects directory, then keep <code>lox run</code> open in a terminal of its own, outside lea (<code>lox</code> 0.9.0 or later).</p>
   </div>
-  <pre tabindex="0"><code>lox add locksql      <span class="cmt"># or lockmq, lockfile, locklog</span>
+  <pre tabindex="0"><code>lox add locksql      <span class="cmt"># or lockmq, lockfile, locklog, lockssh</span>
 lox run</code></pre>
   <div class="prose">
     <p><code>lox run</code> starts the projects directory&#8217;s hub and locks, approves what the rules allow on its own, and asks you for the rest. A Lock is on for lea as soon as <code>lox run</code> runs a lock of its type there; <code>LEA_LOCKSQL=0</code> (and so on) keeps one off.</p>
