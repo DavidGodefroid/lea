@@ -1073,6 +1073,7 @@ lea attach [--print] [AGENT] # the tool in the lea container, or an agent's term
 lea requests                 # what waits for you; lea approve ID [always], lea deny ID [reason]
 lea questions [drop ID]      # the control towers' questions to you: the open one, then the queue
 lea hold [--off] [AGENT]     # hold the messages agents send the tower while you answer it; --off releases them
+lea limits [set KEY VALUE | reset KEY]  # the live limits (max_running), changed on the running lea at once
 lea config deck on|off       # the deck, or your own tool (lea config tool CMD...), from the next lea
 lea config claude [KEY ...]  # Claude's base settings for your agents (defaultMode, allow, deny, env...)
 lea new [name] [-- args]     # one more agent (its CLI's arguments after --; -p provider, -m model)
@@ -1148,7 +1149,8 @@ projects directory cannot be `/`, your home directory or one of its parents, nor
 The deck's `,` opens a settings screen over the same file: the keys that matter, grouped, each
 with its value, where it comes from (default, your file, the environment) and a one-line help.
 `enter` or `space` flips a toggle, takes the next choice or opens a field (enter saves, esc
-cancels); a value is checked before it is written. Sounds, the theme and the deck width apply at once; the screen says
+cancels); a value is checked before it is written. Sounds, the theme, the deck width and the
+[live limits](#live-limits) (the Limits group, set through the running daemon) apply at once; the screen says
 when the others apply (after `lea stop --all`, or at the next `lea`). A key the environment sets
 (`LEA_PROJECTS_DIR`, `LEA_APPROVALS`, `LEA_APPROVAL_TIMEOUT`) wins over the files, so it is shown
 read-only. The screen runs in the deck on the host: agents cannot open or drive it.
@@ -1176,6 +1178,7 @@ read-only. The screen runs in the deck on the host: agents cannot open or drive 
 | `LEA_AUTO_RESUME`, `LEA_RESUME_DELAY` | on, `60` | resume agents stopped on a usage limit, so many seconds after its reset (`0`: off) |
 | `LEA_STACK_IDLE` | `10` | minutes an agent stays idle before lea stops (not removes) the containers it started in the nested Podman (`0`: never); `lea board` lists what it freed |
 | `LEA_QUESTION_REMIND` | `120` | minutes a control tower's question waits for your answer before the tower asks it again, once, prefixed with `reminder:` (`0`: never) |
+| `LEA_MAX_RUNNING` | `3` | the most children of leads that run at once, host-wide (`0`: no cap); a [live limit](#live-limits): `lea limits set max_running N` applies it without a restart |
 | `LEA_HOLD_MAX` | `30` | minutes a pause of an inbox (the deck's `H`, `lea hold`) lasts before lea releases it (`0`: never) |
 | `LEA_AGENT_CPUS` | `4` | each agent's CPU window, the least shared CPUs: the agent, its tools and its nested containers run there, so `nproc`, PHPStan, Go… see that many CPUs (`0`: no window) |
 | `LEA_HEAVY_SLOTS`, `LEA_HEAVY_WORKERS` | `0` (¾ of the CPUs ÷ workers), `4` | heavy jobs (`lea heavy -- <command>`): how many run at once per container, and the CPUs and workers each gets |
@@ -1513,6 +1516,32 @@ they may use, such as `nproc`, see that many) with `GOMAXPROCS`, `MAKEFLAGS=-jN`
 `LEA_HEAVY_WORKERS` set. A slot whose job was killed frees itself within three minutes; a job holds its slot two hours at
 most. `lea board`
 lists the jobs that run and wait.
+
+## Live limits
+
+Some limits change while agents run, without a restart: models change fast, a plan changes, a
+heavy day needs a tighter cap than a quiet one. `lea limits` shows each one with its value, its
+default and where the value comes from (lea's default, your file, the environment):
+
+```sh
+lea limits                       # max_running  3      (default 3, from lea's default; 2 in use)
+lea limits set max_running 2     # applies now, kept in ~/.config/lea/lea.conf
+lea limits reset max_running     # back to the environment's value, else lea's default
+```
+
+The running daemon checks the value, writes it to your file and applies it at once; the next
+`lea` keeps it and does not restart the daemon for it. The deck's settings screen (`,`) lists the
+same keys in its Limits group and sets them the same way. A key set in your file wins over the
+environment, which stays a fallback. Agents read the limits with the `limits_get` tool, so a
+tower can adapt; no agent can set one.
+
+| Limit | Default | What it caps |
+|---|---|---|
+| `max_running` (`LEA_MAX_RUNNING`) | `3` | the children of leads that run at once, host-wide (`0`: no cap). Your own sessions and the leads do not count. At the cap a lead's `agents_spawn` is refused (`3 children already running (limit max_running 3): retry with queue: true or wait for one to end`), or with `queue: true` waits and starts once a child ends; `lea board` and `agents_list` show why (`queued: max_running 3/3`). A spawn request a lead accepts goes through the same check |
+
+A change never stops a running agent: a cap lowered below what runs holds new spawns until
+enough children end; a raised one starts the queued spawns at once, up to the new cap (one per
+pressure sample).
 
 ## Host pressure
 

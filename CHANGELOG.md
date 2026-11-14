@@ -4,6 +4,17 @@
 
 Changes:
 
+- Live limits (#420): `lea limits` shows the limits you can change while agents run, with their
+  value, default and source; `lea limits set KEY VALUE` and `lea limits reset KEY` change one on
+  the running lea, at once, without a restart, and keep it in your file (the next `lea` does not
+  restart the daemon for it). The deck's settings screen lists them in its Limits group and sets
+  them the same way; agents read them with the `limits_get` tool and cannot set them. The first
+  one, `max_running` (`LEA_MAX_RUNNING`, default `3`, `0`: no cap), caps the children of leads
+  that run at once, host-wide: at the cap a lead's `agents_spawn` is refused, or with
+  `queue: true` waits and starts once a child ends; `lea board` and `agents_list` show why it
+  waits (`queued: max_running 3/3`). A change never stops a running agent. **This caps a busy
+  tower at 3 children by default**: `lea limits set max_running 0` turns the cap off.
+
 - lea no longer copies on select (#419): a drag in an agent's terminal no longer enters tmux's
   copy mode, copies the selection or flashes "Copied". Claude Code copies on select itself, through
   the same clipboard bridge: a copy worked and looked one way or the other depending on whether
