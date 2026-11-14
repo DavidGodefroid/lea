@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased
+
+- A granted `git commit` runs at once (#393): the pinned commit no longer runs `rm -rf` in its
+  `sh -c` script (Claude Code's safety check asked for approval, hook allow or not, and the commit
+  timed out). It copies the index to `lea-commit/index` in the worktree's git directory, reused
+  and overwritten at each commit, beside `lea-push` (#381); nothing is left in `/tmp`.
+
 ## v0.15.1 (2026-11-09)
 
 Fixes:
