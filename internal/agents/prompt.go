@@ -46,7 +46,8 @@ func firstPrompt(a store.Agent, repo, worktree string, brief bool, covered []str
 		b.WriteString(" When you need another agent, ask a lead with agents_request_spawn.")
 	}
 	b.WriteString(" Report progress with task_update: set next while something is still to happen (CI, a review, a reply)," +
-		" blocked_on when a human must act, and clear both once your work is done.")
+		" blocked_on when a human must act, and clear both once your work is done." +
+		" lea clears blocked_on when you get a prompt or a message from the user, your lead or lea: set it again if you are still blocked.")
 	// Idle stacks (#132): what the agent started stops while it waits.
 	b.WriteString(" lea stops the containers you started (compose stacks, pods) while you are idle: start them again before you use them" +
 		" (docker compose up -d, podman start).")

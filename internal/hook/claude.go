@@ -130,7 +130,7 @@ func Claude(ctx context.Context, event string, stdin io.Reader, stdout io.Writer
 	}
 	// A tool event says who runs the tool, by id only: the agent itself (an empty id) or a
 	// subagent, an agent-type Stop hook's among them (the daemon tells a blocked stop by it).
-	if (event == "PreToolUse" || event == "PostToolUse") && (p.AgentID == "" || subagentID.MatchString(p.AgentID)) {
+	if (event == "PreToolUse" || event == "PostToolUse" || event == "PostToolUseFailure") && (p.AgentID == "" || subagentID.MatchString(p.AgentID)) {
 		payload["agent_id"] = p.AgentID
 	}
 	bctx, cancel := context.WithTimeout(ctx, budget)

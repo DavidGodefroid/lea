@@ -217,7 +217,7 @@ func (d *Daemon) limitProgress(me, event string, payload json.RawMessage) {
 		if json.Unmarshal(payload, &p) == nil && p.Source == "resume" {
 			return
 		}
-	case "PreToolUse", "PostToolUse", "Stop", "SessionEnd":
+	case "PreToolUse", "PostToolUse", "PostToolUseFailure", "Stop", "SessionEnd":
 	case "UserPromptSubmit":
 		if a.LimitUntil == 0 {
 			return

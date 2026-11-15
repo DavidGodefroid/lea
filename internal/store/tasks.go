@@ -155,6 +155,18 @@ func (s *Store) UpdateTask(agent, status, next, blocked string, now int64) (bool
 	return n > 0 || open == 0, nil
 }
 
+// ClearBlocker empties the blocker of agent's open task (#484): the human it waited on acted. It
+// reports whether there was one; an agent without an open task has none.
+func (s *Store) ClearBlocker(agent string, now int64) (bool, error) {
+	res, err := s.db.Exec(`UPDATE tasks SET blocked_on='', updated=?
+		WHERE id=(SELECT task_id FROM agents WHERE key=?) AND ended=0 AND blocked_on<>''`, now, agent)
+	if err != nil {
+		return false, err
+	}
+	n, err := res.RowsAffected()
+	return n > 0, err
+}
+
 // TaskState is what a row shows of its agent's open task: its status text, and whether something
 // is still to happen (next) or blocks it (blocked_on). The deck shows the flags, never their text.
 type TaskState struct {

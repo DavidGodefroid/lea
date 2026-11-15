@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
+	"slices"
 	"strings"
 	"unicode/utf8"
 
@@ -83,6 +85,41 @@ func (d *Daemon) taskUpdate(ctx context.Context, o Origin, me string, raw json.R
 		d.attention(ctx, o.Container, me, shortName(me)+" is blocked on you: lea board")
 	}
 	return struct{}{}, nil
+}
+
+// unblock clears the blocker of me's task once a human may have acted on it (#484): the agent
+// gets a prompt (the user typed, or a turn starts), or a message that can carry the answer. Its
+// row then shows what it really does, and the board no longer says it waits; an agent still
+// blocked sets blocked_on again. Only the user, its lead or lea can answer: messages from other
+// agents (a lead's team reporting results while it waits on the user) never clear it. from nil:
+// a prompt, which always clears it.
+func (d *Daemon) unblock(me string, from []string) {
+	if from != nil && !slices.ContainsFunc(from, func(f string) bool { return d.answers(me, f) }) {
+		return
+	}
+	defer d.lockKey("task:" + me)()
+	cleared, err := d.st.ClearBlocker(me, d.now())
+	if err != nil {
+		log.Printf("lea daemon: clear the blocker of %s: %v", me, err)
+		return
+	}
+	if cleared {
+		d.changed()
+	}
+}
+
+// answers says a message from sender can answer agent me's blocker: the user's, its lead's, or
+// lea's own (a decided grant or request); not another agent's.
+func (d *Daemon) answers(me, sender string) bool {
+	if sender == "user" {
+		return true
+	}
+	a, err := d.st.AgentByKey(me)
+	if err == nil && a.Parent != "" && sender == a.Parent {
+		return true
+	}
+	_, err = d.st.AgentByKey(sender)
+	return errors.Is(err, store.ErrNotFound)
 }
 
 type boardItem struct {

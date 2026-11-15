@@ -498,7 +498,7 @@ lea_sha256_file() { sha256sum "$1" | cut -d' ' -f1; }
 # Claude Code runs once (TestClaudeManagedAndFlagHooksRunOnce).
 @test "lea's Claude hooks are in the managed settings and the --settings file, identical" {
   s="$I/claude-settings.json" m="$I/managed-settings.json"
-  for e in SessionStart UserPromptSubmit PreToolUse PostToolUse PermissionRequest Notification SubagentStart SubagentStop Stop StopFailure SessionEnd; do
+  for e in SessionStart UserPromptSubmit PreToolUse PostToolUse PostToolUseFailure PermissionRequest Notification SubagentStart SubagentStop Stop StopFailure SessionEnd; do
     jq -e --arg e "$e" '.hooks[$e][0].hooks[0].command | contains("/usr/local/bin/lea hook claude " + $e)' "$s" >/dev/null
   done
   [ "$(jq -r '.hooks.PermissionRequest[0].hooks[0].timeout' "$s")" = 620 ]

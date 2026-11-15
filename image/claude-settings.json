@@ -90,6 +90,16 @@
         ]
       }
     ],
+    "PostToolUseFailure": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "[ -x /usr/local/bin/lea ] && exec /usr/local/bin/lea hook claude PostToolUseFailure; exit 0"
+          }
+        ]
+      }
+    ],
     "PermissionRequest": [
       {
         "hooks": [
