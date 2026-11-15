@@ -709,3 +709,52 @@ func TestSnapshotTaskFlagsDecode(t *testing.T) {
 		t.Fatalf("agent=%+v err=%v", a, err)
 	}
 }
+
+// Issue #484: an agent that was blocked and works again shows the spinner, not the red dot, once
+// lea cleared its blocker (the user typed, or an answer reached it) or its permission dialog was
+// answered: shown state, colour, label, rank and the folder summary agree.
+func TestAnUnblockedAgentSpinsAgain(t *testing.T) {
+	now := clock.Unix()
+	plain := func(s lipgloss.Style) lipgloss.Style { return s }
+	summary := func(a Agent) string {
+		t.Helper()
+		st := &memStore{l: Layout{Folders: []Folder{{ID: "f1", Name: "web", Agents: []string{a.Key}}}}}
+		m := withFolders(t, st, a)
+		s, _ := m.folderSummary(0, asciiSet, 40, plain)
+		return sgr.ReplaceAllString(s, "")
+	}
+	for _, c := range []struct {
+		name          string
+		before, after Agent
+	}{
+		{"task blocker", withTask(ag("t", "working", now), false, true), withTask(ag("t", "working", now), false, false)},
+		{"permission dialog", ag("p", "blocked", now), ag("p", "working", now)},
+	} {
+		if got := shownState(c.before); got != "blocked" {
+			t.Fatalf("%s: before shown %q, want blocked", c.name, got)
+		}
+		if s := summary(c.before); s != "1 ! 1" {
+			t.Errorf("%s: before folder summary %q", c.name, s)
+		}
+		a := c.after
+		m := loaded(t, &fakeAPI{}, "", a)
+		if got := shownState(a); got != "working" || !busy(a) {
+			t.Errorf("%s: after shown %q, want working", c.name, got)
+		}
+		if _, col := stateMark(shownState(a), now, now, 0, false); col != theme.Working {
+			t.Errorf("%s: after colour %v, want working", c.name, col)
+		}
+		if got := m.label(a); got != "working" {
+			t.Errorf("%s: after label %q", c.name, got)
+		}
+		if got := rank(a, m.seen); got != 3 {
+			t.Errorf("%s: after rank %d, want 3", c.name, got)
+		}
+		if r := rowOf(t, m, a.Name); strings.Contains(r, "●") {
+			t.Errorf("%s: after row %q still shows the red dot", c.name, r)
+		}
+		if s := summary(a); s != "1 + 1" {
+			t.Errorf("%s: after folder summary %q", c.name, s)
+		}
+	}
+}

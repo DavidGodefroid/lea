@@ -271,7 +271,8 @@ pointer over a row shows its whole name (cut in the row when long) with the agen
 profile and state in the bottom border.
 
 - **States.** A red `●` needs you (a permission, or a blocker the agent named with
-  `task_update`), an orange spinner is working or waiting (its subagents, or a next step it
+  `task_update`, until you answer: lea clears the blocker when you type to the agent or when a
+  message from you, its lead or lea reaches it, and the dot turns back to the spinner), an orange spinner is working or waiting (its subagents, or a next step it
   named: CI, a review, a reply), a green `●` has finished with nothing pending, an empty `○` has
   been quiet for 30 minutes, a grey `‖` is paused (`p`: lea freezes the
   agent's processes, tool calls included, until you resume it), a lavender `◷` stopped on its

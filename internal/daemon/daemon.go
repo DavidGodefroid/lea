@@ -787,6 +787,11 @@ func (d *Daemon) take(me string) (batch, error) {
 	}
 	if len(ids) > 0 {
 		d.changed()
+		from := make([]string, len(out.items))
+		for i, v := range out.items {
+			from[i] = v.From
+		}
+		d.unblock(me, from)
 	}
 	return out, nil
 }
@@ -966,11 +971,19 @@ func (d *Daemon) watch(ctx context.Context, me string, timeoutS int, rewake bool
 var hookState = map[string]string{
 	"SessionStart": "idle", "UserPromptSubmit": "working", "PreToolUse": "working",
 	"PostToolUse": "working", "PermissionRequest": "blocked", "Stop": "idle", "SessionEnd": "done",
+	// PostToolUseFailure fires instead of PostToolUse when a tool failed, an approved one
+	// included: the agent works on (#484).
+	"PostToolUseFailure": "working",
 	// StopFailure fires instead of Stop when an API error ended the turn: the turn is over.
 	"StopFailure": "idle",
 }
 
 const maxStopBlocks = 3
+
+// toolEvent says a hook reports a tool call: before it runs, or after it ran or failed.
+func toolEvent(e string) bool {
+	return e == "PreToolUse" || e == "PostToolUse" || e == "PostToolUseFailure"
+}
 
 // foreignSession says a hook comes from a Claude session that is not the agent's own (#350):
 // a nested Claude that inherits LEA_AGENT (claude -p from a shell, a delegated CLI) runs lea's
@@ -1088,6 +1101,10 @@ func (d *Daemon) dispatchHooks(ctx context.Context, o Origin, me string, req wir
 			return struct{}{}, nil
 		}
 		d.trackSubagents(me, p.Event, p.Payload)
+		if p.Event == "UserPromptSubmit" {
+			// A new turn: the user typed, or lea woke the agent for a message (#484).
+			d.unblock(me, nil)
+		}
 		if p.Event == "SessionEnd" {
 			// An agent lea stop marked stopped ends with its container: it is not done, and the
 			// next container resumes it, a pending usage-limit resume included (#83).
@@ -1120,7 +1137,7 @@ func (d *Daemon) dispatchHooks(ctx context.Context, o Origin, me string, req wir
 		}
 		d.mu.Lock()
 		stopped := d.stopped[me]
-		if stopped && (p.Event == "PreToolUse" || p.Event == "PostToolUse") {
+		if stopped && toolEvent(p.Event) {
 			// After Stop, a tool is an agent-type Stop hook at work, or the agent itself once
 			// another hook blocked the stop: then it works again.
 			var t struct {
@@ -1166,11 +1183,11 @@ func (d *Daemon) dispatchHooks(ctx context.Context, o Origin, me string, req wir
 			// The turn is over: a rewake watch looks again at the messages that came during it.
 			d.wake(me)
 		}
-		if ok && stopped && (p.Event == "PreToolUse" || p.Event == "PostToolUse") {
+		if ok && stopped && toolEvent(p.Event) {
 			// A Stop hook of the agent or prompt type runs its own tools after Stop, under the
 			// agent's identity: they do not start a turn. An approval it asked for is answered.
 			ok = false
-			if p.Event == "PostToolUse" {
+			if p.Event != "PreToolUse" {
 				if a, err := d.st.AgentByKey(me); err == nil && a.State == "blocked" {
 					s, ok = "idle", true
 				}
