@@ -1,5 +1,20 @@
 # Changelog
 
+## v0.17.2 (2026-11-15)
+
+Fixes:
+
+- lea deck: an agent's status dot no longer stays red once it is unblocked and works again
+  (#484). Before, a blocker the agent reported with `task_update` (`blocked_on`) kept its row red
+  until the agent cleared it itself, often only at the end of its work. lea now clears the
+  blocker as soon as a human may have answered: the agent gets a prompt (you type to it), or a
+  message from you, its lead or lea reaches it. Messages from other agents keep it, so a lead
+  waiting on you stays red while its team reports. `lea board` shows the same; an agent still
+  blocked sets `blocked_on` again. A permission granted whose tool then failed also left the
+  agent red until its next tool call: lea's Claude Code hooks now forward `PostToolUseFailure`,
+  so the agent shows working. The new hook is in lea's image, which a running container keeps
+  until it stops: after `lea update`, run `lea stop --all` and restart lea.
+
 ## v0.17.1 (2026-11-14)
 
 Security:
