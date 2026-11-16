@@ -64,8 +64,8 @@ func TestRealLockPaneTakesNoPasteAndNoCopy(t *testing.T) {
 		}
 	}
 
-	// The one way into copy mode, the wheel's condition, per pane (a drag enters none, #419).
-	for _, bind := range []string{"WheelUpPane"} {
+	// The two ways into copy mode: the wheel's and the drag's conditions, per pane.
+	for _, bind := range []string{"WheelUpPane", "MouseDrag1Pane"} {
 		line := ""
 		for _, l := range strings.Split(Conf(), "\n") {
 			if strings.HasPrefix(l, "bind-key -n "+bind+" ") {

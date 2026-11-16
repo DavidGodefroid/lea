@@ -1,5 +1,17 @@
 # Changelog
 
+## Unreleased
+
+Fixes:
+
+- lea deck: drag-selecting text in an agent's pane selects and copies again (#489). Since #419
+  a drag reached only a program that had asked for the mouse, on the assumption that Claude Code
+  always copies on select; it does only in its fullscreen mode. In its default mode, as in Codex,
+  a split shell or the history, a drag selected nothing. lea's own selection is back for those
+  panes, as before #419: releasing the button copies through the clipboard bridge, flashes
+  "Copied", and a drag held at a pane's edge scrolls on. A pane whose program takes the mouse
+  still gets the drag, so a copy is still made once.
+
 ## v0.17.2 (2026-11-15)
 
 Fixes:
