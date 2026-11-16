@@ -329,13 +329,14 @@ profile and state in the bottom border.
   `label (name)`. Labels are unique among the running agents: a clash gets ` 2`, ` 3`…, and a
   rename to a running agent's label is refused. `user`, `lea` and `Control Tower…` are reserved:
   only the user gives them, never a lead's `label` nor the automatic name.
-- **Copy and paste.** Copying is the agent's own: on Linux, select text in Claude Code's
-  terminal and lea's copy bridge puts it on your clipboard (with `wl-copy` or `xclip`; without
-  them, copying from lea reaches no clipboard). On macOS the bridge has no `pbcopy` path yet, so
-  use your terminal's own selection, which bypasses the mouse (`option`+drag in iTerm2, `fn`+drag
-  in Terminal.app). lea makes no selection of its own; in a pane whose program does not take the
-  mouse (a split shell, the scrolled-back history), `shift`+drag lets your terminal select and
-  copy, as in any tmux. `ctrl+v` pastes your
+- **Copy and paste.** Drag to select text in an agent's terminal: releasing the button copies it
+  and flashes "Copied". A program that takes the mouse (Claude Code in its fullscreen mode,
+  `/tui fullscreen`) selects and copies itself; in any other pane (Claude Code's default mode,
+  Codex, a split shell, the scrolled-back history) lea selects. On Linux lea's copy bridge puts
+  the copy on your clipboard (with `wl-copy` or `xclip`; without them, copying from lea reaches no
+  clipboard). On macOS the bridge has no `pbcopy` path yet, so use your terminal's own selection,
+  which bypasses the mouse (`option`+drag in iTerm2, `fn`+drag in Terminal.app; `shift`+drag
+  elsewhere). `ctrl+v` pastes your
   clipboard's text into the pane that has the keyboard (the agent's input, a shell, the deck). lea
   reads your clipboard only when you press `ctrl+v` (with `wl-paste`, `xclip` or `pbpaste`);
   agents never read it.
