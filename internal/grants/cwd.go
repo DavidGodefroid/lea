@@ -62,8 +62,9 @@ func dirProtected(cmd, cwd string) bool {
 
 // looseRe: a command that may change how the shell globs (shopt, zsh's options and qualifiers,
 // GLOBIGNORE, or a word, script or program lea cannot read), however spelled: its globs may
-// match dot files and ignore case.
-var looseRe = regexp.MustCompile("shopt|setopt|unsetopt|emulate|GLOBIGNORE|(?i:glob)|[^\\s$<>|&;(]\\(|" +
+// match dot files and ignore case. A zsh qualifier counts only after a word that holds a
+// wildcard: without one, foo(D) names the file foo alone, and SQL such as COUNT(*) is no glob.
+var looseRe = regexp.MustCompile("shopt|setopt|unsetopt|emulate|GLOBIGNORE|(?i:glob)|[*?[\\]{}][^\\s$<>|&;()]*\\(|" +
 	"\\beval\\b|\\bsource\\b|(^|[;&|(\\s])\\.\\s|[$`]")
 
 // extglobRe: an extended glob's group; extglobOpenRe its start.

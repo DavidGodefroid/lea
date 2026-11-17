@@ -478,6 +478,13 @@ func TestProtectedCwdAndGlobs(t *testing.T) {
 		{"empty brackets in sh -c", "/work", "Bash", "sh -c 'ls .[]'", ""},
 		{"empty brackets in home", "/home/u", "Bash", "sh -c 'touch .[]'", ""},
 		{"jq index", "/work", "Bash", "gh pr list --jq '.[0] | .title'", ""},
+		// A quoted SQL argument: its "(*)" is text, not a glob or a zsh qualifier.
+		{"quoted sql count star", "/work", "Bash", `dbq plan --db d --intent "Count rows, by status" "SELECT status, COUNT(*) AS n FROM t WHERE id = 3 GROUP BY status LIMIT 50"`, ""},
+		{"quoted sql count star single", "/work", "Bash", `dbq plan 'SELECT COUNT(*) FROM t LIMIT 1'`, ""},
+		// With no cwd, a lone star may still be settings.json under some directory: fail closed.
+		{"quoted sql count star unknown cwd", "", "Bash", `dbq plan "SELECT COUNT(*) FROM t LIMIT 1"`, Deny},
+		// A wildcard before the qualifier still makes it one that may match dot files.
+		{"glob zsh qualifier after star", "/w", "Bash", "cp x .claude/s*(D)", Deny},
 		// A real class on a protected file still fails closed.
 		{"class with leading ]", "/work", "Bash", "sh -c 'cat > .[]g]itconfig'", Deny},
 		{"class with leading ] unknown cwd", "", "Bash", "sh -c 'cat > .[]g]itconfig'", Deny},
