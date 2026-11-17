@@ -1,5 +1,16 @@
 # Changelog
 
+## v0.17.4 (2026-11-17)
+
+Fixes:
+
+- Grants: a plain command whose quoted argument holds SQL with a star count, such as
+  `"SELECT COUNT(*) FROM t"`, is no longer refused as an edit of Claude's, git's or the shell's
+  settings (#494). lea read `COUNT(` as a zsh glob qualifier, which let the star in the quoted
+  text match dot files such as `.gitconfig`. A qualifier now counts only after a word that holds
+  a wildcard; `*/settings.json(D)` stays refused, and a lone star with no known working
+  directory still fails closed.
+
 ## v0.17.3 (2026-11-16)
 
 Fixes:
