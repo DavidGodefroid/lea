@@ -205,7 +205,10 @@ davidgodefroid/tap`, then `brew install davidgodefroid/tap/lea`), from the same 
 curl -fsSL https://leadeck.dev/install.sh | LEA_REQUIRE_COSIGN=1 sh
 ```
 
-By hand, with the same identity and issuer:
+By hand, with the same identity and issuer. The images are signed in the Sigstore bundle
+format: verifying them needs cosign v3 or later, or cosign v2.6 or later with
+`--new-bundle-format`. Without that flag cosign v2 answers `no signatures found`, although the
+image is signed. `verify-blob --bundle` works with either:
 
 ```sh
 cosign verify-blob --bundle checksums.txt.sigstore.json \
@@ -216,6 +219,7 @@ cosign verify \
   --certificate-identity-regexp '^https://github\.com/DavidGodefroid/lea/\.github/workflows/release\.yml@refs/tags/v[0-9]' \
   --certificate-oidc-issuer https://token.actions.githubusercontent.com \
   ghcr.io/davidgodefroid/lea:<version>   # and ghcr.io/davidgodefroid/lea-proxy:<version>
+# cosign v2 (2.6 or later): cosign verify --new-bundle-format, then the same arguments
 ```
 
 The limit: the installer comes from the same GitHub account as the release. The signature
