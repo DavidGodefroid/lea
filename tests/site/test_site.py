@@ -32,7 +32,7 @@ PAGES = {
 NAV = ['Home', 'Install', 'How it works', 'Security', 'FAQ', 'GitHub']
 FAMILY = ['locksql', 'lockmq', 'lockfile', 'lockhttp', 'locklog', 'lockssh', 'lockhub', 'lockkit', 'lea']
 
-# The kit's shared files, byte for byte as lockfamily ships them (lockfamily 94661f1:
+# The kit's shared files, byte for byte as lockfamily ships them (lockfamily e8bf7b6:
 # site-kit/assets/, assets/tokens.css, assets/fonts/, assets/lea.svg). Never edit them in lea:
 # change them in lockfamily, copy them here, then update these hashes.
 KIT = {
