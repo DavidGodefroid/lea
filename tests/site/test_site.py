@@ -32,14 +32,14 @@ PAGES = {
 NAV = ['Home', 'Install', 'How it works', 'Security', 'FAQ', 'GitHub']
 FAMILY = ['locksql', 'lockmq', 'lockfile', 'lockhttp', 'locklog', 'lockssh', 'lockhub', 'lockkit', 'lea']
 
-# The kit's shared files, byte for byte as lockfamily ships them (lockfamily c58cac8:
+# The kit's shared files, byte for byte as lockfamily ships them (lockfamily e8bf7b6:
 # site-kit/assets/, assets/tokens.css, assets/fonts/, assets/lea.svg). Never edit them in lea:
 # change them in lockfamily, copy them here, then update these hashes.
 KIT = {
-    'assets/lock-site.css': 'b242351c1ade49409d46cc8dbcc4c0a309b75fc8e07894d6cb29fad475241bbe',
+    'assets/lock-site.css': 'a279c765186a93e0abfd057ec7d1e73589560e216912fdcbd05ba56a01b9f2cb',
     'assets/copy.js': '878219924a4c11c0c264e0cc5f675f81648cf7f2af22a50c4b9e42a8b3938a62',
-    'assets/tokens.css': '6ae81028f853ea660d885a7b6bc2db151fc7eab23197bb9d6709a64d994a8ebe',
-    'assets/logo.svg': 'f997cefee8926ee94d4834b30559d6643133d50880d53dec0c2d2e7bd585c4b9',
+    'assets/tokens.css': '92859be85c10938bfeb716120da5cf582fcd64f3597392b0b50340e2c6f4ef91',
+    'assets/logo.svg': '89bf0705dc27ec3c7833d3a32120f1694d0d7c37903c4b43307ed48d36e62780',
     'assets/fonts/OFL-ibm-plex-mono.txt': '7e6b2818edbd8f6a01ae80641cc8f16a51080d08fb4e532be3a0b6f74adb07da',
     'assets/fonts/OFL-source-serif-4.txt': '5f94c3fd3a23131a417ab5a0c8452de57e70c3cfb9f604d88241f7065ebf9fd9',
     'assets/fonts/OFL-zilla-slab.txt': '240b385d3ec8c8d5c1d4af2bbba6ac72bac0309a80c1a8ff112c168643cc6811',
@@ -124,7 +124,7 @@ class Site(unittest.TestCase):
     def test_every_page_has_the_kits_head(self):
         for page, (path, _, root) in PAGES.items():
             h = self.html[page]
-            self.assertTrue(h.startswith('<!doctype html>\n<html lang="en">\n<head>\n'), page)
+            self.assertTrue(h.startswith('<!doctype html>\n<html lang="en" data-accent="lea">\n<head>\n'), page)
             self.assertNotIn('{{', h, page)
             url = DOMAIN + path
             for line in ('<link rel="canonical" href="%s">' % url,
@@ -132,8 +132,8 @@ class Site(unittest.TestCase):
                          '<meta property="og:image" content="%s/assets/og.png">' % DOMAIN,
                          '<meta name="twitter:card" content="summary_large_image">',
                          '<meta name="color-scheme" content="light dark">',
-                         '<meta name="theme-color" content="#f4efe4" media="(prefers-color-scheme: light)">',
-                         '<meta name="theme-color" content="#16140f" media="(prefers-color-scheme: dark)">',
+                         '<meta name="theme-color" content="#fbf7ee" media="(prefers-color-scheme: light)">',
+                         '<meta name="theme-color" content="#1f1d26" media="(prefers-color-scheme: dark)">',
                          '<link rel="icon" href="%sassets/logo.svg" type="image/svg+xml">' % root,
                          '<link rel="apple-touch-icon" href="%sassets/apple-touch-icon.png">' % root,
                          '<link rel="preload" href="%sassets/fonts/zilla-slab-700.woff2" as="font" type="font/woff2" crossorigin>' % root,

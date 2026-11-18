@@ -25,11 +25,16 @@ Agent-neutral: name Claude Code as the default, never as the only agent lea runs
 [`site/`](../site) follows the family's site kit
 ([`site-kit/KIT.md`](https://github.com/DavidGodefroid/lockfamily/blob/main/site-kit/KIT.md)):
 
-- `site/assets/tokens.css` (the paper and carbon themes, `--ink`, `--sign`, `--stamp`…),
+- `site/assets/tokens.css` (the paper and dyed dark themes, `--ink`, `--sign`, `--stamp`, the
+  accents…),
   `fonts/` (Zilla Slab, Source Serif 4, IBM Plex Mono, self-hosted woff2), `lock-site.css` and
   `copy.js` are lockfamily's files, byte for byte: change them in lockfamily, then copy them
   here and update the hashes in `tests/site/test_site.py`.
 - `site/assets/logo.svg` is lockfamily's `assets/lea.svg` (light and dark inside the file).
+- Colour follows the family's
+  [`site-kit/COLOUR.md`](https://github.com/DavidGodefroid/lockfamily/blob/main/site-kit/COLOUR.md):
+  every page names lea's accent once, `<html lang="en" data-accent="lea">`, and writes no accent
+  colour itself.
 - `site/assets/og.png` (1200x630) and `apple-touch-icon.png` (180x180) are rendered from the
   kit's `tools/og.html`, as KIT.md step 9 says.
 - `tools/site/assemble.sh` builds what `.github/workflows/pages.yml` publishes: `site/`, plus the
