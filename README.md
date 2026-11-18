@@ -7,6 +7,8 @@
 
 <h3 align="center">Many agents. None of your machine.</h3>
 
+<p align="center">lea is the confined runtime of the <a href="https://github.com/DavidGodefroid/lockfamily">Lock Family</a>.</p>
+
 <p align="center"><a href="https://leadeck.dev"><strong>leadeck.dev</strong></a></p>
 
 <p align="center">
